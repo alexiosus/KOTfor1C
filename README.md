@@ -81,13 +81,13 @@
 
 <table width="100%" >
 <tr>
-    <td width="40%" align="center" valign="center">
+    <td width="50%" align="center" valign="center">
     <img src="./res/commands.png" alt="Список команд" width="500"/>
     <br>
     <em>Список команд в контекстном меню</em>
     </td>
-    <td width="60%" align="center" valign="center">
-    <img src="./res/PhaseSwitcherUI.png" alt="PhaseSwitcher" width="400"/>
+    <td width="50%" align="center" valign="center">
+    <img src="./res/PhaseSwitcherUI.png" alt="PhaseSwitcher" width="350"/>
     <br>
     <em>Панель PhaseSwitcher</em>
     </td>
