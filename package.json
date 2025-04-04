@@ -1,0 +1,184 @@
+{
+  "name": "1c-drive-test-helper",
+  "displayName": "1C:Drive Test Helper",
+  "description": "An extension to work with 1C:Drive tests",
+  "icon": "res/1CDriveTestHelper.png",
+  "publisher": "kakoytochelik",
+  "author": {
+    "name": "Alexey Eremeev"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
+  "version": "1.0.0",
+  "engines": {
+    "vscode": "^1.98.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+      "onCommand:1cDriveHelper.openSubscenario",
+      "onCommand:1cDriveHelper.createNestedScenario",
+      "onCommand:1cDriveHelper.createMainScenario",
+      "onCommand:1cDriveHelper.insertNestedScenarioRef",
+      "onCommand:1cDriveHelper.insertScenarioParam",
+      "onCommand:1cDriveHelper.insertUid",
+      "onCommand:1cDriveHelper.findCurrentFileReferences",
+      "onView:1cDriveHelper.phaseSwitcherView"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "1cDriveHelper.openSubscenario",
+        "title": "1C:Drive - Открыть сценарий"
+      },
+      {
+        "command": "1cDriveHelper.findCurrentFileReferences",
+        "title": "1C:Drive - Найти вызовы текущего сценария"
+      },
+      {
+        "command": "1cDriveHelper.createNestedScenario",
+        "title": "1C:Drive - Создать вложенный сценарий"
+      },
+      {
+        "command": "1cDriveHelper.createMainScenario",
+        "title": "1C:Drive - Создать главный сценарий"
+      },
+      {
+        "command": "1cDriveHelper.insertNestedScenarioRef",
+        "title": "1C:Drive - Добавить блок ВложенныеСценарии"
+      },
+      {
+        "command": "1cDriveHelper.insertScenarioParam",
+        "title": "1C:Drive - Добавить блок ПараметрыСценария"
+      },
+      {
+        "command": "1cDriveHelper.insertUid",
+        "title": "1C:Drive - Сгенерировать UID"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "1cDriveHelper.openSubscenario",
+        "key": "ctrl+alt+=",
+        "win": "ctrl+alt+=",
+        "mac": "cmd+alt+=",
+        "linux": "ctrl+alt+=",
+        "when": "editorTextFocus && !editorReadonly"
+      },
+      {
+        "command": "1cDriveHelper.findCurrentFileReferences",
+        "key": "ctrl+alt+J",
+        "win": "ctrl+alt+J",
+        "mac": "cmd+alt+J",
+        "linux": "ctrl+alt+J",
+        "when": "editorTextFocus && !editorReadonly"
+      },
+      {
+        "command": "1cDriveHelper.insertNestedScenarioRef",
+        "key": "ctrl+alt+N",
+        "win": "ctrl+alt+N",
+        "mac": "cmd+alt+N",
+        "linux": "ctrl+alt+N",
+        "when": "editorTextFocus && !editorReadonly"
+      },
+      {
+        "command": "1cDriveHelper.insertScenarioParam",
+        "key": "ctrl+alt+M",
+        "win": "ctrl+alt+M",
+        "mac": "cmd+alt+M",
+        "linux": "ctrl+alt+M",
+        "when": "editorTextFocus && !editorReadonly"
+      },
+      {
+        "command": "1cDriveHelper.insertUid",
+        "key": "ctrl+alt+U",
+        "win": "ctrl+alt+U",
+        "mac": "cmd+alt+U",
+        "linux": "ctrl+alt+U",
+        "when": "editorTextFocus && !editorReadonly"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "1cDriveHelper.openSubscenario",
+          "when": "editorTextFocus",
+          "group": "0_modification@0"
+        },
+        {
+          "command": "1cDriveHelper.findCurrentFileReferences",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "0_modification@1"
+        },
+        {
+          "command": "1cDriveHelper.insertNestedScenarioRef",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "0_modification@2"
+        },
+        {
+          "command": "1cDriveHelper.insertScenarioParam",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "0_modification@3"
+        },
+        {
+          "command": "1cDriveHelper.insertUid",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "0_modification@4"
+        },
+        {
+          "command": "1cDriveHelper.createNestedScenario",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "0_modification@5"
+        },
+        {
+          "command": "1cDriveHelper.createMainScenario",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "0_modification@6"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "1cDriveHelperContainer", 
+          "title": "1C:Drive",       
+          "icon": "res/1CDriveTestHelperTransparent.png"             
+        }
+      ]
+    },
+    "views": {
+      "1cDriveHelperContainer": [
+        {
+          "id": "1cDriveHelper.phaseSwitcherView",
+          "name": "Phase Switcher",  
+          "type": "webview",        
+          "contextualTitle": "Phase Switcher" 
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run esbuild-base -- --minify",
+    "compile": "npm run esbuild-base -- --sourcemap", 
+    "watch": "npm run esbuild-base -- --sourcemap --watch", 
+    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
+    "test": "vscode-test" 
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@types/uuid": "^10.0.0",
+    "@types/vscode": "^1.98.0",
+    "@typescript-eslint/eslint-plugin": "^8.28.0",
+    "@typescript-eslint/parser": "^8.28.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
+    "eslint": "^9.23.0",
+    "typescript": "^5.8.2"
+  },
+  "dependencies": {
+    "uuid": "^11.1.0"
+  }
+}

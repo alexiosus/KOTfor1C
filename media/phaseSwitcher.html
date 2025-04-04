@@ -1,0 +1,41 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; img-src ${webview.cspSource} https:; script-src 'nonce-${nonce}';">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="${stylesUri}" rel="stylesheet">
+    <title>Phase Switcher</title>
+</head>
+<body>
+    <h2>Phase Switcher</h2>
+
+    <div class="selector-container">
+         <label for="phaseSelector">Фаза:</label>
+
+         <select id="phaseSelector" name="phases">
+             <option value="">Загрузка...</option>
+         </select>
+         <button class="controls-top" id="refreshBtn" title="Обновить состояние с диска">Обновить</button>
+
+    </div>
+     <div id="checkbox-container">
+         <p>Загрузка тестов...</p>
+     </div>
+    <div class="controls">
+        <div class="controls-row">
+            <button id="selectAllBtn">Переключить все</button>
+            <button id="selectVisibleBtn">Переключить фазу</button>
+        </div>
+        <div class="controls-row">
+            <button id="selectDefaultsBtn">По умолчанию</button>
+        </div>
+        <div class="controls-row">
+            <button id="applyChangesBtn">Применить изменения</button>
+        </div>
+    </div>
+    <div id="statusBar" class="status-bar">Статус: Инициализация...</div>
+
+    <script type="application/javascript" nonce="${nonce}" src="${scriptUri}"></script>
+</body>
+</html>

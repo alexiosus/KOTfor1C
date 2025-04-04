@@ -1,0 +1,37 @@
+﻿# PhaseSwitcher_Tab: Phase_Placeholder
+# PhaseSwitcher_OrderOnTab: Order_Placeholder
+# PhaseSwitcher_Default: Default_Placeholder
+ТипФайла: "Сценарий"
+ДанныеСценария:
+    UID: "UID_Placeholder"
+    Имя: "Name_Placeholder"
+    Код: "Code_Placeholder"
+    Проект: "Drive"
+    ФункцияСистемы: "Drive automation testing"
+    РазрешеноИспользоватьВДругихФункциях: "Yes"
+    UIDФункцияСистемы: "98999f57-13dc-11e8-aed1-005056a5c4e8"
+    ПрофильПользователя: "Administrator"
+    УровеньОтчета1: "Drive"
+    УровеньОтчета2: "Purchase"
+
+ПараметрыСценария:
+
+ВложенныеСценарии:
+
+ТекстСценария: |
+
+    #language: en
+    
+    And I set "Administrator" synonym to the current TestClient
+
+    And I initialize TestClient connections
+
+    And I save key parameters from pipeline and initialize main variables
+
+    And I click Infobase was transferred button
+
+    And I get main constant values
+    
+    # Include scenarios here
+
+    And I close TestClient main window

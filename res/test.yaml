@@ -1,0 +1,14 @@
+﻿ТипФайла: "НастройкаТеста"
+ДанныеТеста:
+    UID: "Random_UID"
+    Код: "Name_Placeholder"
+    UIDСценария: "UID_Placeholder"
+    Имя: "Name_Placeholder"
+    ЭталоннаяБазаИмя: "EtalonDrive"
+    ПрофильПользователя: "Administrator"
+    СценарийНаименование: "Name_Placeholder"
+    ИдентификаторБазы: "EtalonDrive"
+    ПараметрыЗапуска: ""
+
+ПараметрыТеста:
+

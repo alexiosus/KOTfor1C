@@ -1,0 +1,156 @@
+{
+    "tabs": [
+        {
+            "name": "FirstTest",
+            "items": [
+                {"label": "Phase5_Vanessa_First_Test"},
+                {"test": "001_Company_tests", 						"default": true, 	"path": "Company/000004555/"}
+            ]
+        },
+		{
+			"name": "Purchases subsystem 1",
+			"items": [
+				{"label": "Phase_5.3_Purchases_subsystem_tests"},
+                {"test": "003_I_test_purchases", 					"default": true, 	"path": "Purchase/000004046/"},
+                {"test": "006_Debit_note", 							"default": true, 	"path": "VAT/000003680/"},
+                {"test": "0081_Goods_issue_after_sales_invoice", 	"default": true, 	"path": "Sales/000007264/"},
+                {"test": "0085_Monkey_tests", 						"default": true,	"path": "Monkey/000009073/"}
+			]
+		},
+		{
+			"name": "Purchases subsystem 2",
+			"items": [
+				{"label": "Phase_5.3_Purchases_subsystem_tests_2"},
+                {"test": "0031_Purchases_reverse_charge", 			"default": true, 	"path": "Purchase/000006381/"},
+                {"test": "0032_Purchases_ZERO_VAT", 				"default": true, 	"path": "Purchase/000006383/"},
+                {"test": "0034_Stocktaking_documents", 				"default": true, 	"path": "Purchase/000006741/"},
+                {"test": "0035_Goods_receipt", 						"default": true,	"path": "Purchase/000006814/"}
+			]
+		},
+		{
+			"name": "Purchases subsystem 3",
+			"items": [
+				{"label": "Phase_5.3_Purchases_subsystem_tests_3"},
+                {"test": "0036_Supplier_invoice_Continental", 		"default": true, 	"path": "Purchase/000007315/"},
+                {"test": "0037_Subcontractor_order_Continental", 	"default": true, 	"path": "Purchase/000007348/"},
+                {"test": "0038_Subcontractor_order_anglo-saxon", 	"default": true, 	"path": "Purchase/000007352/"},
+                {"test": "0039_Assembly_Disassembly", 				"default": true,	"path": "Production/000008290/"}
+			]
+		},
+		{
+			"name": "Sales tests 1",
+			"items": [
+				{"label": "Phase_5.4_Sales_test"},
+                {"test": "0083_Work_orders", 						"default": true, 	"path": "Sales/000007286/"},
+                {"test": "008_FIFO", 								"default": true, 	"path": "FIFO/000006867/"}
+			]
+		},
+		{
+			"name": "Sales tests 2",
+			"items": [
+				{"label": "Phase_5.4_Sales_test_2"},
+                {"test": "002_Payments_terms_Advance_payments", 	"default": true, 	"path": "Sales/000004047/"}
+			]
+		},
+		{
+			"name": "Sales tests 3",
+			"items": [
+				{"label": "Phase_5.4_Sales_test_3"},
+                {"test": "0051_Credit_note_plus_GoodsReturn", 		"default": true, 	"path": "VAT/000006369/"},
+                {"test": "0052_Credit_note_do_not_use_GR_and_TI", 	"default": true, 	"path": "VAT/000003534/"},
+				{"test": "0053_Credit_note_withoutVat", 			"default": true, 	"path": "VAT/000004823/"},
+				{"test": "0086_Monkey_tests", 						"default": true, 	"path": "Sales/000004050/"}
+			]
+		},
+		{
+			"name": "Sales tests 4",
+			"items": [
+				{"label": "Phase_5.4_Sales_test_4"},
+                {"test": "0082_Retail_tests_sales_without_VAT", 	"default": true, 	"path": "Retail/000006515/"},
+                {"test": "0081_Retail_tests_operations_with_VAT", 	"default": true, 	"path": "Retail/000006512/"},
+				{"test": "0041_Loans_tests", 						"default": true, 	"path": "Financial managment/000002382/"},
+				{"test": "0042_Loans_tests", 						"default": true, 	"path": "Financial managment/000002336/"},
+				{"test": "0043_Loans_tests", 						"default": true, 	"path": "Financial managment/000002422/"},
+				{"test": "0044_Loans_tests", 						"default": true, 	"path": "Financial managment/000002387/"},
+				{"test": "0045_Foreign_currency_exchanges", 		"default": true, 	"path": "Financial managment/000007312/"},
+				{"test": "0046_AR_AP_adjustment", 					"default": true, 	"path": "Company/000008202/"}
+			]
+		},
+		{
+			"name": "Sales tests 5",
+			"items": [
+				{"label": "Phase_5.4_Sales_test_5"},
+                {"test": "002_Subcontracting", 						"default": true, 	"path": "Sales/000007343/"},
+                {"test": "0021_Direct_debit", 						"default": true, 	"path": "Sales/000004049/"},
+				{"test": "007_I_test_users_creation", 				"default": true, 	"path": "Settings/000003975/"},
+				{"test": "009_CRM", 								"default": true, 	"path": "CRM/000007261/"}
+			]
+		},
+		{
+			"name": "Production",
+			"items": [
+				{"label": "Phase_5.4_Production_1"},
+                {"test": "002_Production", 							"default": true, 	"path": "Production/000014094/"},
+				{"label": " "},
+				{"label": "Phase_5.4_Production_2"},
+                {"test": "004_Production", 							"default": true, 	"path": "Production/000012183/"}
+			]
+		},
+
+		{
+			"name": "Smoke tests",
+			"items": [
+				{"label": "Phase_10_Check_Update_Base_With_Templates"},
+                {"test": "I_start_my_first_launch_templates", 		"default": false, 	"path": "Accounting/000012117/"},
+				{"label": " "},
+				{"label": "Phase_6_Smoke_tests"},
+                {"test": "I_start_my_first_launch", 				"default": false, 	"path": "Company/000001859/"},
+                {"test": "0084_Monkey_tests", 						"default": true, 	"path": "Monkey/000007291/"},
+				{"label":  "Reset tests on this tab before push! (Default values -> Run)", "note": true}
+			]
+		},
+		{
+			"name": "Templates",
+			"items": [
+				{"label": "Phase_7_Templates"},
+                {"test": "0098_Accounting_templates_and_subconto",	"default": false, 	"path": "Accounting/000012098/"},
+				{"label": " "},
+				{"label": "Phase_7_Templates_2"},
+                {"test": "0100_Templates_in_invoices", 				"default": false, 	"path": "Accounting/000012166/"},
+				{"label": " "},
+				{"label": "Phase_7_Templates_3"},
+                {"test": "0101_Templates_in_documents_and_reports", "default": false, 	"path": "Accounting/000012167/"},
+				{"label": " "},
+				{"label": "Phase_7_Templates_4"},
+                {"test": "0102_Accounting_entries_data_register", 	"default": false, 	"path": "Accounting/000012168/"},
+				{"label": " "},
+				{"label": "Phase_7_Templates_5"},
+                {"test": "0103_Transferred_accounting_templates", 	"default": false, 	"path": "Accounting/000012182/"},
+				{"label": " "},
+				{"label": "420_Templates (legacy/for regions)"},
+                {"test": "420_Templates", 							"default": false, 	"path": "CRM/000012098/"},
+				{"label": " "},
+				{"label":  "Reset tests on this tab before push! (Default values -> Run)", "note": true}
+			]
+		},
+		{
+			"name": "Regions",
+			"items": [
+				{"label": "Turkey:"},
+                {"test": "0089_Turkey_tests",						"default": true, 	"path": "Turkey/000008062/"},
+				{"label": " "},
+				{"label": "Colombia:"},
+                {"test": "0089_Colombian_tests", 					"default": true, 	"path": "Company/000009287/"},
+				{"label": " "},
+				{"label": "Germany:"},
+                {"test": "0088_Germany_tests", 						"default": true, 	"path": "Germany/000013001/"},
+				{"label": " "},
+				{"label": "Poland:"},
+                {"test": "0087_Poland_tests", 						"default": true, 	"path": "Sales/000008787/"},
+				{"label": " "},
+				{"label": "Mexico:"},
+                {"test": "0089_Mexico_tests", 						"default": true, 	"path": ""}
+			]
+		}
+    ]
+}
