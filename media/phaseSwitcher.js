@@ -70,20 +70,21 @@
         const relativePath = testInfo.relativePath || '';
         const defaultState = !!testInfo.defaultState;
         const safeName = name.replace(/[^a-zA-Z0-9_\\-]/g, '_');
-        // Используем функцию экранирования (убедитесь, что она есть)
+        // Используем функцию экранирования
         const escapedNameAttr = escapeHtmlAttr(name);
         const escapedTitleAttr = escapeHtmlAttr(relativePath);
-
-        // Возвращаем HTML строку с правильными переменными
+    
+        // Добавляем название в title атрибут для отображения полного текста при наведении
         return `
             <div class="item-container">
-                <label class="checkbox-item" id="label-${safeName}" title="${escapedTitleAttr}">
+                <label class="checkbox-item" id="label-${safeName}" title="${escapedNameAttr} (${escapedTitleAttr})">
                     <input
                         type="checkbox"
                         id="chk-${safeName}"
                         name="${escapedNameAttr}"
                         data-default="${defaultState}">
                     <span class="checkbox-label-text">${name}</span>
+                    <button class="open-scenario-btn" data-name="${escapedNameAttr}" title="Открыть сценарий">⧁</button>
                 </label>
             </div>
         `;
@@ -101,7 +102,6 @@
               .replace(/"/g, "&quot;")
               .replace(/'/g, "&#039;");
      }
-
 
     /** Генерирует HTML для содержимого выбранной фазы */
     function createPhaseContentHtml(phaseName, testsInPhase) {
@@ -170,6 +170,19 @@
         });
     }
 
+
+    /** Обработчик клика по кнопке открытия сценария */
+    function handleOpenScenarioClick(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        const name = event.target.getAttribute('data-name');
+        log(`Open scenario button clicked for: ${name}`);
+        vscode.postMessage({ 
+            command: 'openScenario', 
+            name: name 
+        });
+    }
+
     /** Применяет состояния (checked, disabled) к видимым чекбоксам и вешает обработчики */
     function applyCheckboxStatesToVisible() {
         log('Applying states to visible checkboxes...');
@@ -189,6 +202,14 @@
             } else if (name) { cb.disabled = true; if(label) label.classList.add('disabled'); }
             else { log("ERROR: Checkbox found with NO NAME attribute!"); }
         });
+        
+        // Добавляем обработчики для кнопок открытия сценария
+        const openButtons = checkboxContainer.querySelectorAll('.open-scenario-btn');
+        openButtons.forEach(btn => {
+            btn.removeEventListener('click', handleOpenScenarioClick);
+            btn.addEventListener('click', handleOpenScenarioClick);
+        });
+        
         log(`Applied states to ${count} visible checkboxes.`);
         updateHighlighting(); // Обновляем подсветку сразу
     }

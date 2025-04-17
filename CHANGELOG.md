@@ -1,9 +1,11 @@
 # Change Log
 
-All notable changes to the "1c-drive-tests-helper" extension will be documented in this file.
+## [1.1.1]
 
-Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
+- Добавлена возможность переходить к родительским сценариям из Phase Switcher
+- Вставка блоков ВложенныеСценарии и ПараметрыСценария теперь происходит автоматически в соответствующие секции, а не в позицию курсора
+- Улучшено отображение длинных названий сценариев в Phase Switcher
 
-## [Unreleased]
+## [1.0.0]
 
-- Initial release
+- Первый релиз

@@ -102,6 +102,22 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 case 'log': // Сообщение для логирования из Webview
                     console.log(message.text); // Выводим текст лога в консоль Extension Host
                     return;
+                case 'openScenario':
+                    if (message.name && this._testCache) {
+                        const testInfo = this._testCache.get(message.name);
+                        if (testInfo) {
+                            try {
+                                const doc = await vscode.workspace.openTextDocument(testInfo.yamlFileUri);
+                                await vscode.window.showTextDocument(doc, { preview: false });
+                            } catch (error) {
+                                console.error(`[PhaseSwitcherProvider] Error opening scenario file: ${error}`);
+                                vscode.window.showErrorMessage(`Не удалось открыть файл сценария: ${error}`);
+                            }
+                        } else {
+                            vscode.window.showWarningMessage(`Сценарий "${message.name}" не найден в кэше.`);
+                        }
+                    }
+                    return;
             }
         }, undefined, this._context.subscriptions); // Добавляем в подписки контекста
 
