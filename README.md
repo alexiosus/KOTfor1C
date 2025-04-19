@@ -11,6 +11,10 @@
 
 ## Возможности
 
+* **Автодополнение и Подсказки:** 
+    * Предлагает варианты шагов Gherkin для Vanessa Automation (используется Fuzzy Match).
+    * Показывает описание шага из библиотеки шагов Vanessa Automation при наведении мыши на строку шага в YAML файле.
+
 * **Быстрая Навигация:**
     * **Переход к определению сценария:** Находясь на строке вида `And ИмяСценария`, нажмите комбинацию клавиш (`Command+Option+=` или `Ctrl+Alt+=`) или выберите пункт в контекстном меню, чтобы быстро открыть `.yaml` файл, где определено `Имя: "ИмяСценария"`.
     * **Поиск всех использований сценария:** Откройте файл сценария (`scen.yaml`), кликните правой кнопкой мыши в любом месте текущего сценария и выберите "1C:Drive - Найти вызовы текущего сценария" или используйте комбинацию `Ctrl+Alt+J` или `Command+Option+J`. Расширение покажет список всех мест (`And Имя...`), где используется этот сценарий, в виде удобного списка QuickPick.
@@ -80,19 +84,28 @@
 
 ## Скриншоты
 
-<table width="100%" >
-<tr>
-    <td width="50%" align="center" valign="center">
-    <img src="./res/commands.png" alt="Список команд" width="500"/>
-    <br>
-    <em>Список команд в контекстном меню</em>
+<table width="100%" border="0" style="border-collapse: collapse;">
+ <tr>
+    <td width="35%" valign="top" align="center" style="padding-right: 15px; border: none;">
+       <img src="./res/PhaseSwitcherUI.png" alt="Панель Phase Switcher" width="350"/>
+       <br><em>Панель Phase Switcher</em>
     </td>
-    <td width="50%" align="center" valign="center">
-    <img src="./res/PhaseSwitcherUI.png" alt="PhaseSwitcher" width="350"/>
-    <br>
-    <em>Панель PhaseSwitcher</em>
-    </td>
-</tr>
+    <td width="65%" valign="top" align="center" style="border: none;">
+       <img src="./res/autocomplete.gif" alt="Автодополнение строк" width="700"/>
+       <br><em>Автодополнение шагов</em>
+       <br><br> <table width="100%" border="0" style="border-collapse: collapse;">
+         <tr>
+            <td width="50%" align="center" valign="center" style="padding-right: 5px; border: none;">
+                <img src="./res/hover.png" alt="Описание шага" width="450"/>
+                <br><em>Подсказка при наведении</em>
+            </td>
+            <td width="50%" align="center" valign="center" style="padding-left: 5px; border: none;">
+                <img src="./res/commands.png" alt="Список команд" width="450"/>
+                <br><em>Контекстное меню команд</em>
+            </td>
+         </tr>
+       </table>
+       </td> </tr>
 </table>
 
 ## Известные Проблемы

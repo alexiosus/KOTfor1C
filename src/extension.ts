@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { handleCreateNestedScenario, handleCreateMainScenario } from './scenarioCreator';
 import {
@@ -8,6 +10,9 @@ import {
     insertScenarioParamHandler,
     insertUidHandler
 } from './commandHandlers';
+
+import { DriveCompletionProvider } from './completionProvider';
+import { DriveHoverProvider } from './hoverProvider';
 
 /**
  * Вызывается при активации расширения.
@@ -26,6 +31,29 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // --- Регистрация Команд ---
+
+    const completionProvider = new DriveCompletionProvider(context);
+    const hoverProvider = new DriveHoverProvider(context);
+    context.subscriptions.push(
+        vscode.languages.registerCompletionItemProvider(
+            { pattern: '**/*.yaml' },
+            completionProvider,
+            ' ', '.', ',', ':', ';', '(', ')', '"', "'",
+            'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+            'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+            'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 
+            'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerHoverProvider(
+            { pattern: '**/*.yaml' },
+            hoverProvider
+        )
+    );
+
+
     // Используем импортированные обработчики
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         '1cDriveHelper.openSubscenario', openSubscenarioHandler

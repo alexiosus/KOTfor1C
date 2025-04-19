@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -17,14 +17,7 @@
     "Other"
   ],
   "activationEvents": [
-      "onCommand:1cDriveHelper.openSubscenario",
-      "onCommand:1cDriveHelper.createNestedScenario",
-      "onCommand:1cDriveHelper.createMainScenario",
-      "onCommand:1cDriveHelper.insertNestedScenarioRef",
-      "onCommand:1cDriveHelper.insertScenarioParam",
-      "onCommand:1cDriveHelper.insertUid",
-      "onCommand:1cDriveHelper.findCurrentFileReferences",
-      "onView:1cDriveHelper.phaseSwitcherView"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -142,9 +135,9 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "1cDriveHelperContainer", 
-          "title": "1C:Drive",       
-          "icon": "res/1CDriveTestHelperTransparent.png"             
+          "id": "1cDriveHelperContainer",
+          "title": "1C:Drive",
+          "icon": "res/1CDriveTestHelperTransparent.png"
         }
       ]
     },
@@ -152,19 +145,19 @@
       "1cDriveHelperContainer": [
         {
           "id": "1cDriveHelper.phaseSwitcherView",
-          "name": "Phase Switcher",  
-          "type": "webview",        
-          "contextualTitle": "Phase Switcher" 
+          "name": "Phase Switcher",
+          "type": "webview",
+          "contextualTitle": "Phase Switcher"
         }
       ]
     }
   },
   "scripts": {
     "vscode:prepublish": "npm run esbuild-base -- --minify",
-    "compile": "npm run esbuild-base -- --sourcemap", 
-    "watch": "npm run esbuild-base -- --sourcemap --watch", 
+    "compile": "npm run esbuild-base -- --sourcemap",
+    "watch": "npm run esbuild-base -- --sourcemap --watch",
     "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
-    "test": "vscode-test" 
+    "test": "vscode-test"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -179,6 +172,7 @@
     "typescript": "^5.8.2"
   },
   "dependencies": {
+    "node-html-parser": "^7.0.1",
     "uuid": "^11.1.0"
   }
 }
