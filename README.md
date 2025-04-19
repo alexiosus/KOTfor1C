@@ -84,29 +84,37 @@
 
 ## Скриншоты
 
-<table width="100%" border="0" style="border-collapse: collapse;">
- <tr>
-    <td width="35%" valign="top" align="center" style="padding-right: 15px; border: none;">
-       <img src="./res/PhaseSwitcherUI.png" alt="Панель Phase Switcher" width="350"/>
-       <br><em>Панель Phase Switcher</em>
-    </td>
-    <td width="65%" valign="top" align="center" style="border: none;">
-       <img src="./res/autocomplete.gif" alt="Автодополнение строк" width="700"/>
-       <br><em>Автодополнение шагов</em>
-       <br><br> <table width="100%" border="0" style="border-collapse: collapse;">
-         <tr>
-            <td width="50%" align="center" valign="center" style="padding-right: 5px; border: none;">
-                <img src="./res/hover.png" alt="Описание шага" width="450"/>
-                <br><em>Подсказка при наведении</em>
-            </td>
-            <td width="50%" align="center" valign="center" style="padding-left: 5px; border: none;">
-                <img src="./res/commands.png" alt="Список команд" width="450"/>
-                <br><em>Контекстное меню команд</em>
-            </td>
-         </tr>
-       </table>
-       </td> </tr>
-</table>
+<p align="center">
+  <img src="./res/PhaseSwitcherUI.png" alt="Панель Phase Switcher" width="450"/>
+  <br>
+  <em>Панель Phase Switcher</em>
+  <br>
+  <br>
+</p>
+
+<p align="center">
+  <img src="./res/commands.png" alt="Список команд" width="600"/>
+  <br>
+  <em>Контекстное меню</em>
+  <br>
+  <br>
+</p>
+
+<p align="center">
+  <img src="./res/autocomplete.gif" alt="Автодополнение строк" width="700"/>
+  <br>
+  <em>Автодополнение строк</em>
+  <br>
+  <br>
+</p>
+
+<p align="center">
+  <img src="./res/hover.png" alt="Описание шага" width="700"/>
+  <br>
+  <em>Окно описания шага</em>
+  <br>
+  <br>
+</p>
 
 ## Известные Проблемы
 
