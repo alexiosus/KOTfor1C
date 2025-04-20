@@ -1,6 +1,6 @@
 # 1C:Drive Test Helper
 ### Помощник для тестов 1С:Drive
-[![Версия](https://img.shields.io/badge/version-1.0.0-blue)](./package.json) 
+[![Версия](https://img.shields.io/badge/version-1.2.0-blue)](./package.json) 
 
 <p align="center">
   <img src="./res/1CDriveTestHelper.png" alt="Иконка 1C:Drive Test Helper" width="128"/>
