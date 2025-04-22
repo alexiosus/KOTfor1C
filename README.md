@@ -1,6 +1,6 @@
 # 1C:Drive Test Helper
 ## Помощник для тестов 1C:Drive
-[![Версия](https://img.shields.io/badge/version-1.3.2-blue)](./package.json) 
+[![Версия](https://img.shields.io/badge/version-1.3.3-blue)](./package.json) 
 
 <p align="center">
   <img src="./res/icons/1CDriveTestHelper.png" alt="Иконка 1C:Drive Test Helper" width="128"/>
@@ -87,7 +87,8 @@
 ## Настройка и использование
 
 1.  **Установка:**
-    * Extensions View -> "..." -> "Install from VSIX..." -> Выберите скачанный/собранный `.vsix` файл.
+    * Установить из [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=AlexeyEremeev.1c-drive-test-helper)
+    * Или Extensions View -> "..." -> "Install from VSIX..." -> Выберите скачанный/собранный `.vsix` файл.
 2.  **Настройка:**<br>
     В настройки расширения можно перейти стандартным методом через общие настройки или **по кнопке настроек с панели Activity Bar**.
     * `Включить панель "Phase Switcher"`: переключает отображение секции **Phase Switcher в Activity Bar** (по умолчанию вкл.)
