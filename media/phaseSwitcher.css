@@ -1,98 +1,299 @@
-﻿body {
+﻿/* --- Общие стили --- */
+
+html, body {
+    height: 100vh; /* Занимаем всю высоту видимой области */
+    margin: 0;
+    padding: 0;
+    overflow: hidden; /* Предотвращаем двойной скроллбар у body */
+    display: flex; /* Включаем Flexbox для body */
+    flex-direction: column; /* Направляем элементы в колонку */
     font-family: var(--vscode-font-family); font-size: var(--vscode-font-size);
     color: var(--vscode-editor-foreground); background-color: var(--vscode-editor-background);
-    padding: 1em;
 }
-h1 { font-size: 1.5em; margin-bottom: 1em; font-weight: 600;}
+
+h1 { /* Главный заголовок панели */
+    font-size: 1.4em; margin-bottom: 0.8em; margin-top: 0; font-weight: 600; padding-bottom: 0.3em;
+    border-bottom: 1px solid var(--vscode-settings-headerBorder);
+ }
+h2 { /* Заголовки секций (PS, Сборка) */
+    font-size: 1.1em; margin-bottom: 10px; margin-top: 0; font-weight: 600;
+    padding-bottom: 4px; border-bottom: 1px solid var(--vscode-panel-border);
+}
 
 
-/* --- Селектор фазы --- */
-.selector-container { margin-bottom: 1em; display: flex; align-items: center; gap: 10px; flex-grow: 1; }
+.main-content-area {
+    flex-grow: 1; /* Занимает всё доступное пространство по вертикали */
+    overflow-y: auto; /* Позволяет прокручивать ТОЛЬКО эту область */
+    min-height: 0; /* Важно для правильной работы overflow в flex-колонке */
+    padding: 0.8em 1em; /* Внутренние отступы для контента */
+}
+
+/* --- Верхние контролы (Кнопка Обновить) --- */
+.controls-top {
+    align-items: center;
+    justify-content: flex-end;
+}
+
+/* --- Секция PhaseSwitcher --- */
+.phase-switcher-section {
+    margin-bottom: 1em;
+}
+
+.selector-container {
+    margin-top: 0.5em;
+    margin-bottom: 1em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
 .selector-container label { font-weight: bold; white-space: nowrap; }
 #phaseSelector {
     padding: 5px; border-radius: 3px;
     border: 1px solid var(--vscode-dropdown-border, var(--vscode-contrastBorder));
     background-color: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground);
-    flex-grow: 1; min-width: 150px;
+    flex-grow: 1; min-width: 100px;
 }
+#phaseSelector:disabled { 
+    opacity: 0.7; 
+    cursor: not-allowed; }
 
-/* --- Контейнер чекбоксов --- */
+/* Контейнер чекбоксов */
 #checkbox-container {
-    padding: 10px 0;
-    max-height: 45vh; 
+    padding: 10px 5px 10px 5px;
+    margin-top: 0.5em;
+    margin-bottom: 1em;
+    max-height: 35vh;
     overflow-y: auto;
-    border-top: 1px solid var(--vscode-panel-border);
-    margin-top: 1em;
+    border: 1px solid var(--vscode-panel-border); /* Рамка вокруг */
+    border-radius: 3px;
 }
-
-/* --- Стили для чекбоксов и меток --- */
-.item-container { 
-    margin-bottom: 0.5em; 
+.item-container {
+    margin-bottom: 0.3em;
 }
-
-label.checkbox-item { 
-    display: flex;
-    align-items: center;
+/* Выравнивание элементов внутри строки чекбокса */
+label.checkbox-item {
+    display: flex;          /* Используем Flexbox для label */
+    align-items: center;    /* Выравниваем все дочерние элементы по вертикальному центру */
     cursor: pointer;
     padding: 3px 0;
-    justify-content: space-between;
-    min-width: 0;
-    overflow: hidden;
+    min-width: 0;           /* Для корректного text-overflow */
+    gap: 5px;               /* Добавляем небольшой отступ между чекбоксом, текстом и кнопкой */
 }
-
-label.checkbox-item input[type=checkbox] { margin-right: 8px; cursor: pointer; width: 16px; height: 16px; flex-shrink: 0; }
-label.checkbox-item span.checkbox-label-text { 
-    flex-grow: 1;
-    white-space: nowrap;
-    overflow: hidden;
+label.checkbox-item input[type=checkbox] { 
+    margin-right: 3px;
+    cursor: pointer; 
+    width: 16px; 
+    height: 16px; 
+    flex-shrink: 0; 
+    accent-color: var(--vscode-button-background); 
+}
+label.checkbox-item span.checkbox-label-text {
+    flex-grow: 1; 
+    white-space: nowrap; 
+    overflow: hidden; 
     text-overflow: ellipsis;
-    margin-right: 5px;
-    min-width: 0;
+    margin-right: 5px; 
+    min-width: 0; /* Для корректного text-overflow */
 }
-label.checkbox-item.disabled { cursor: not-allowed; color: var(--vscode-disabledForeground); }
-label.checkbox-item.disabled input[type=checkbox] { cursor: not-allowed; }
-label.checkbox-item.changed span.checkbox-label-text { font-weight: bold; } /* Подсветка измененных */
+label.checkbox-item.disabled { 
+    cursor: not-allowed; 
+    color: var(--vscode-disabledForeground); 
+}
+label.checkbox-item.disabled input[type=checkbox] { 
+    cursor: not-allowed; 
+}
+label.checkbox-item.changed span.checkbox-label-text { 
+    font-weight: bold; 
+}
 
 /* Кнопка открытия сценария */
 .open-scenario-btn {
     background: none;
     border: none;
     cursor: pointer;
-    font-size: 20px;
     padding: 0 4px;
-    opacity: 0.7;
-    margin-left: 8px;
+    margin: 0; /* Убран margin-left т.к. есть gap у родителя */
     flex-shrink: 0;
-    margin-left: auto;
-    color: var(--vscode-editor-foreground);
+    color: var(--vscode-foreground); /* Используем основной цвет текста по умолчанию */
+    opacity: 0.7; /* Немного прозрачности по умолчанию */
+    line-height: 1;
+    display: inline-flex; /* Для выравнивания иконки */
+    align-items: center;  /* Для выравнивания иконки */
+    vertical-align: middle;
 }
-
+.open-scenario-btn .codicon {
+    vertical-align: middle; /* Дополнительное выравнивание для иконки */
+}
 .open-scenario-btn:hover {
-    opacity: 1;
+    opacity: 1; /* Полная непрозрачность при наведении */
+    color: var(--vscode-textLink-activeForeground); /* Цвет как у активной ссылки при наведении */
 }
 
-/* --- Нижние кнопки управления --- */
-.controls { margin-top: 1em; padding-top: 1em; border-top: 1px solid var(--vscode-panel-border); }
-.controls-row { display: flex; gap: 10px; margin-bottom: 10px; }
-.controls-row:last-child { margin-bottom: 0; }
+/* Контролы Phasw switcher */
+.phase-switcher-controls {
+    margin-top: 1em;
+    padding-top: 1em;
+    border-top: 1px solid var(--vscode-panel-border);
+}
+.phase-switcher-controls .controls-row {
+     display: flex;
+     gap: 10px;
+     margin-bottom: 10px;
+     flex-wrap: wrap;
+}
+.phase-switcher-controls .controls-row:last-child {
+    margin-bottom: 0;
+}
+.phase-switcher-controls .controls-row > button {
+    flex: 1 1 auto;
+    min-width: 60px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.phase-switcher-controls #applyChangesBtn {
+    flex: none;
+    width: 100%;
+}
 
-/* Общий стиль для всех кнопок */
-.controls button, .controls-top, .controls-top button {
-    background-color: var(--vscode-button-background); color: var(--vscode-button-foreground);
+
+/* === Основной Статус Бар (Всегда Видим) === */
+.status-bar {
+    margin-top: 1em; color: var(--vscode-descriptionForeground);
+    min-height: 1.5em; white-space: pre-wrap;
+    padding-top: 0.5em; border-top: 1px solid var(--vscode-panel-border);
+}
+
+/* === Разделитель === */
+.section-separator {
+    border: none; border-top: 1px dashed var(--vscode-panel-border);
+    margin: 20px 0 15px 0;
+    position: static;
+}
+
+/* === Секция Сборки Тестов === */
+#assembleSection {
+    flex-shrink: 0;
+    background-color: var(--vscode-editor-background);
+    border-top: 1px solid var(--vscode-panel-border);
+    padding: 10px 1em 10px 1em; /* Внутренние отступы */
+    margin-top: 0;
+}
+
+.assemble-options { margin-bottom: 15px; margin-top: 5px; }
+.assemble-options .select-item label { flex-shrink: 0; font-weight: normal; } /* Убрал bold */
+#recordGLSelect {
+    padding: 4px 6px; border-radius: 3px;
+    border: 1px solid var(--vscode-dropdown-border, var(--vscode-contrastBorder));
+    background-color: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground);
+    flex-grow: 1; min-width: 100px;
+}
+#recordGLSelect:disabled { opacity: 0.7; cursor: not-allowed; background-color: var(--vscode-input-background); }
+/* Стили для чекбокса DriveTrade */
+.assemble-options label.setting-item { 
+    display: flex; 
+    align-items: center; 
+    cursor: pointer; 
+    margin-bottom: 5px; 
+}
+
+.assemble-options label.setting-item input[type="checkbox"] {
+    margin-right: 8px; 
+    cursor: pointer;
+    width: 16px;  
+    height: 16px;  
+    vertical-align: middle; 
+    accent-color: var(--vscode-button-background); 
+    background-color: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, var(--vscode-contrastBorder));
+    color: var(--vscode-input-foreground); 
+}
+.assemble-options label.setting-item input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+    accent-color: var(--vscode-disabledForeground);
+}
+
+.assemble-options label.setting-item input[type="checkbox"] { margin-right: 8px; cursor: pointer; }
+.assemble-options label.setting-item span { font-size: var(--vscode-font-size); }
+
+.assemble-controls { margin-bottom: 10px; } /* Уменьшил отступ */
+#assembleStatus { font-size: var(--vscode-editor-font-size); color: var(--vscode-descriptionForeground); min-height: 1.5em; margin-top: 5px;}
+
+
+.assemble-options-inline {
+    display: flex;          /* Выстраиваем в ряд */
+    align-items: center;    /* Выравниваем по вертикали */
+    gap: 15px;              /* Пробел между элементами */
+    margin-bottom: 15px;    /* Отступ снизу */
+    flex-wrap: wrap;        /* Разрешаем перенос на узких экранах */
+}
+
+.assemble-options-inline #recordGLSelect {
+    flex-grow: 1;       /* Позволяем растягиваться */
+    flex-basis: 50px;  /* Минимальная желаемая ширина */
+    min-width: 50px;   /* Абсолютный минимум */
+}
+
+.assemble-options-inline .drive-trade-label {
+    margin-bottom: 0;   /* Убираем лишний отступ снизу от .setting-item */
+    flex-shrink: 0;     /* Не сжимать метку с чекбоксом */
+    white-space: nowrap;/* Предотвратить перенос текста метки */
+}
+
+/* --- НОВЫЕ СТИЛИ для кнопок с иконками --- */
+
+/* Общий класс для кнопок, содержащих иконку и текст */
+.button-with-icon {
+  display: inline-flex; /* Используем inline-flex, чтобы кнопка вела себя как строчно-блочный элемент */
+  align-items: center;  /* Выравниваем иконку и текст по вертикальному центру */
+  justify-content: center; /* Центрируем содержимое по горизонтали (если нужно для кнопки 100% ширины) */
+  gap: 0.4em; /* Добавляем отступ между иконкой и текстом (настройте по вкусу) */
+}
+
+/* Дополнительно для иконки внутри таких кнопок (на всякий случай) */
+.button-with-icon .codicon {
+  vertical-align: middle; /* Помогает точному выравниванию с текстом */
+  /* Можно добавить небольшой сдвиг, если нужно, например: */
+  /* position: relative; */
+  /* top: 1px; */
+}
+
+
+/* === ОБЩИЕ СТИЛИ КНОПОК (уточненные селекторы) === */
+
+#refreshBtn,
+#openSettingsBtn,
+.phase-switcher-controls button,
+#assembleTestsBtn {
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
     border: 1px solid var(--vscode-button-border, var(--vscode-contrastBorder));
-    padding: 5px 7px; cursor: pointer; border-radius: 2px;
-    text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    padding: 5px 10px;
+    cursor: pointer;
+    border-radius: 2px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: var(--vscode-font-size);
+    min-width: min-content;
 }
-.controls button:hover, .controls-top button:hover { background-color: var(--vscode-button-hoverBackground); }
-.controls button:disabled, .controls-top button:disabled {
+#refreshBtn:hover,
+#openSettingsBtn:hover,
+.phase-switcher-controls button:hover,
+#assembleTestsBtn:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+#refreshBtn:disabled,
+#openSettingsBtn:disabled,
+.phase-switcher-controls button:disabled,
+#assembleTestsBtn:disabled {
     background-color: var(--vscode-button-secondaryBackground); color: var(--vscode-disabledForeground);
     cursor: not-allowed; border-color: var(--vscode-button-border, var(--vscode-disabledForeground));
+    opacity: 0.7;
 }
+#assembleTestsBtn {
+    width: 100%;
+ }
 
-/* Расположение нижних кнопок */
-.controls-row > button { flex: 1; min-width: 60px; } /* Растягиваем кнопки в ряду */
-#applyChangesBtn { flex: none; width: 100%; } /* Кнопка Apply на всю ширину */
-
-/* Статус бар */
-.status-bar { margin-top: 1em; color: var(--vscode-descriptionForeground); min-height: 1.5em; white-space: pre-wrap;}
-.error { color: var(--vscode-errorForeground); border: 1px solid var(--vscode-inputValidation-errorBorder); padding: 10px; margin-bottom: 10px; }

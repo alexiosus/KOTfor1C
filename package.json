@@ -2,14 +2,14 @@
   "name": "1c-drive-test-helper",
   "displayName": "1C:Drive Test Helper",
   "description": "An extension to work with 1C:Drive tests",
-  "icon": "res/1CDriveTestHelper.png",
+  "icon": "res/icons/1CDriveTestHelper.png",
   "publisher": "kakoytochelik",
   "author": {
     "name": "Alexey Eremeev"
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.2.0",
+  "version": "1.3.2",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -21,34 +21,178 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": [
+      {
+        "title": "1C:Drive Test Helper",
+        "properties": {
+          "1cDriveHelper.features.enablePhaseSwitcher": {
+            "type": "boolean",
+            "default": true,
+            "description": "Включить панель \"Phase Switcher\".",
+            "order": 10
+          },
+          "1cDriveHelper.features.enableAssembleTests": {
+            "type": "boolean",
+            "default": true,
+            "description": "Включить панель \"Сборка Тестов\".\nПока работает только на Windows.",
+            "order": 11
+          }
+        }
+      },
+      {
+        "title": "Настройки тестовой почты",
+        "properties": {
+          "1cDriveHelper.params.emailAddress": {
+            "type": "string",
+            "default": "user@example.com",
+            "description": "Тестовый Email адрес (EMailTestEmailAddress).",
+            "order": 20
+          },
+          "1cDriveHelper.params.emailPasswordInfo": {
+            "type": "null",
+            "default": null,
+            "description": "Пароль для тестовой почты хранится в безопасном хранилище VS Code (`SecretStorage`) и задается через палитру команд (Ctrl+Shift+P):\n[1C:Drive - Установить пароль тестовой почты](command:1cDriveHelper.setEmailPassword 'Нажмите, чтобы установить пароль')\n[1C:Drive - Очистить пароль тестовой почты](command:1cDriveHelper.clearEmailPassword 'Нажмите, чтобы удалить сохраненный пароль')",
+            "markdownDescription": "**Пароль тестовой почты**\n\nПароль хранится в безопасном хранилище VS Code (`SecretStorage`) и задается через палитру команд (Ctrl+Shift+P):\n* [`1C:Drive - Установить пароль тестовой почты`](command:1cDriveHelper.setEmailPassword 'Нажмите, чтобы установить пароль')\n* [`1C:Drive - Очистить пароль тестовой почты`](command:1cDriveHelper.clearEmailPassword 'Нажмите, чтобы удалить сохраненный пароль')",
+            "order": 21 
+          },
+          "1cDriveHelper.params.emailIncomingServer": {
+            "type": "string",
+            "default": "imap.example.com",
+            "description": "Сервер входящей почты (EMailTestIncomingMailServer).",
+            "order": 22
+          },
+          "1cDriveHelper.params.emailIncomingPort": {
+            "type": "string",
+            "default": "993",
+            "description": "Порт входящей почты (EMailTestIncomingMailPort).",
+            "order": 23
+          },
+          "1cDriveHelper.params.emailOutgoingServer": {
+            "type": "string",
+            "default": "imap.example.com",
+            "description": "Сервер исходящей почты (EMailTestOutgoingMailServer).",
+            "order": 24
+          },
+          "1cDriveHelper.params.emailOutgoingPort": {
+            "type": "string",
+            "default": "587",
+            "description": "Порт исходящей почты (EMailTestOutgoingMailPort).",
+            "order": 25
+          },
+          "1cDriveHelper.params.emailProtocol": {
+            "type": "string",
+            "default": "IMAP",
+            "enum": [
+              "IMAP",
+              "POP3"
+            ],
+            "description": "Протокол почты (EMailTestProtocol).",
+            "order": 26
+          }
+        }
+      },
+      {
+        "title": "Настройки базы сборки",
+        "properties": {
+          "1cDriveHelper.paths.emptyInfobase": {
+            "type": "string",
+            "default": "C:\\EmptyIB\\",
+            "description": "Путь к каталогу пустой файловой информационной базы (EmptyInfobasePath).",
+            "order": 30
+          },
+          "1cDriveHelper.params.dbUser": {
+            "type": "string",
+            "default": "Administrator",
+            "description": "Имя пользователя для подключения к пустой ИБ (DBUser).",
+            "order": 31
+          },
+          "1cDriveHelper.params.dbPassword": {
+            "type": "string",
+            "default": "",
+            "description": "Пароль пользователя для подключения к пустой ИБ (DBPassword).",
+            "order": 32
+          },
+          "1cDriveHelper.params.splitFeatureFiles": {
+            "type": "string",
+            "default": "False",
+            "enum": [
+              "True",
+              "False"
+            ],
+            "description": "Значение для SplitFeatureFiles (если не задано VanessaTestFile).",
+            "order": 33
+          }
+        }
+      },
+      {
+        "title": "Настройки системных путей",
+        "properties": {
+          "1cDriveHelper.assembleScript.buildPath": {
+            "type": "string",
+            "default": "C:\\EtalonDrive\\",
+            "description": "Путь к папке для собранных тестов (BuildPath).",
+            "order": 40
+          },
+          "1cDriveHelper.paths.oneCEnterpriseExe": {
+            "type": "string",
+            "default": "C:\\Program Files (x86)\\1cv8\\8.3.24.1738\\bin\\1cv8.exe",
+            "description": "Полный путь к исполняемому файлу 1cv8.exe",
+            "order": 41
+          },
+          "1cDriveHelper.paths.powershell": {
+            "type": "string",
+            "default": "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "description": "Путь к исполняемому файлу PowerShell (PSPath).",
+            "order": 42
+          }
+        }
+      }
+    ],
     "commands": [
       {
+        "command": "1cDriveHelper.setEmailPassword",
+        "title": "1C:Drive - Установить пароль тестовой почты",
+        "category": "1C:Drive Test Helper"
+      },
+      {
+        "command": "1cDriveHelper.clearEmailPassword",
+        "title": "1C:Drive - Очистить пароль тестовой почты",
+        "category": "1C:Drive Test Helper"
+      },
+      {
         "command": "1cDriveHelper.openSubscenario",
-        "title": "1C:Drive - Открыть сценарий"
+        "title": "1C:Drive - Открыть сценарий",
+        "category": "1C:Drive Test Helper"
       },
       {
         "command": "1cDriveHelper.findCurrentFileReferences",
-        "title": "1C:Drive - Найти вызовы текущего сценария"
+        "title": "1C:Drive - Найти вызовы текущего сценария",
+        "category": "1C:Drive Test Helper"
       },
       {
         "command": "1cDriveHelper.createNestedScenario",
-        "title": "1C:Drive - Создать вложенный сценарий"
+        "title": "1C:Drive - Создать вложенный сценарий",
+        "category": "1C:Drive Test Helper"
       },
       {
         "command": "1cDriveHelper.createMainScenario",
-        "title": "1C:Drive - Создать главный сценарий"
+        "title": "1C:Drive - Создать главный сценарий",
+        "category": "1C:Drive Test Helper"
       },
       {
         "command": "1cDriveHelper.insertNestedScenarioRef",
-        "title": "1C:Drive - Добавить блок ВложенныеСценарии"
+        "title": "1C:Drive - Добавить блок ВложенныеСценарии",
+        "category": "1C:Drive Test Helper"
       },
       {
         "command": "1cDriveHelper.insertScenarioParam",
-        "title": "1C:Drive - Добавить блок ПараметрыСценария"
+        "title": "1C:Drive - Добавить блок ПараметрыСценария",
+        "category": "1C:Drive Test Helper"
       },
       {
         "command": "1cDriveHelper.insertUid",
-        "title": "1C:Drive - Сгенерировать UID"
+        "title": "1C:Drive - Сгенерировать UID",
+        "category": "1C:Drive Test Helper"
       }
     ],
     "keybindings": [
@@ -130,14 +274,25 @@
           "when": "editorTextFocus && !editorReadonly",
           "group": "0_modification@6"
         }
+      ],
+      "commandPalette": [
+        {
+          "command": "1cDriveHelper.setEmailPassword",
+          "when": "true"
+        },
+        {
+          "command": "1cDriveHelper.clearEmailPassword",
+          "when": "true"
+        }
       ]
     },
     "viewsContainers": {
       "activitybar": [
         {
           "id": "1cDriveHelperContainer",
-          "title": "1C:Drive",
-          "icon": "res/1CDriveTestHelperTransparent.png"
+          "title": "1C:Drive Test Helper",
+          "icon": "res/icons/1CDriveTestHelperTransparent.png",
+          "when": "config.1cDriveHelper.features.enablePhaseSwitcher == true || config.1cDriveHelper.features.enableAssembleTests == true"
         }
       ]
     },
@@ -145,17 +300,18 @@
       "1cDriveHelperContainer": [
         {
           "id": "1cDriveHelper.phaseSwitcherView",
-          "name": "Phase Switcher",
+          "name": "1C:Drive Test Helper",
           "type": "webview",
-          "contextualTitle": "Phase Switcher"
+          "contextualTitle": "1C:Drive Test Helper"
         }
       ]
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run esbuild-base -- --minify",
-    "compile": "npm run esbuild-base -- --sourcemap",
-    "watch": "npm run esbuild-base -- --sourcemap --watch",
+    "vscode:prepublish": "npm run copy-codicons && npm run esbuild-base -- --minify",
+    "compile": "npm run copy-codicons && npm run esbuild-base -- --sourcemap",
+    "watch": "npm run copy-codicons && npm run esbuild-base -- --sourcemap --watch",
+    "copy-codicons": "cpy node_modules/@vscode/codicons/dist/codicon.css node_modules/@vscode/codicons/dist/codicon.ttf media --flat",
     "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
     "test": "vscode-test"
   },
@@ -168,10 +324,12 @@
     "@typescript-eslint/parser": "^8.28.0",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
+    "cpy-cli": "^5.0.0",
     "eslint": "^9.23.0",
     "typescript": "^5.8.2"
   },
   "dependencies": {
+    "@vscode/codicons": "^0.0.36",
     "node-html-parser": "^7.0.1",
     "uuid": "^11.1.0"
   }
