@@ -189,7 +189,8 @@ h1 {
     flex-grow: 1;         
     flex-shrink: 1;       
     flex-basis: auto;     
-    min-width: 120px;     
+    min-width: 20ch;
+    width: 20ch; 
     white-space: normal;  
     text-align: center;   
     padding: 5px 8px;     
