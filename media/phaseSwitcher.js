@@ -19,7 +19,7 @@
     // === Получение ссылок на элементы DOM ===
     const refreshBtn = document.getElementById('refreshBtn');
     const openSettingsBtn = document.getElementById('openSettingsBtn');
-    const collapseAllBtn = document.getElementById('collapseAllBtn'); // Новая кнопка
+    const collapseAllBtn = document.getElementById('collapseAllBtn');
 
     const phaseSwitcherSectionElements = document.querySelectorAll('.phase-switcher-section');
     const phaseTreeContainer = document.getElementById('phaseTreeContainer');
@@ -62,10 +62,7 @@
         if (refreshButtonEnabled !== undefined && refreshBtn instanceof HTMLButtonElement) {
             refreshBtn.disabled = !refreshButtonEnabled;
         }
-        // Обновляем состояние кнопки Свернуть/Развернуть все
         if (collapseAllBtn instanceof HTMLButtonElement) {
-            // Кнопка "Свернуть/Развернуть все" должна быть активна, если активна кнопка "Обновить"
-            // и если есть фазы для сворачивания/разворачивания.
             const hasPhases = Object.keys(testDataByPhase).length > 0;
             collapseAllBtn.disabled = !(refreshButtonEnabled && hasPhases && settings.switcherEnabled);
         }
@@ -85,12 +82,10 @@
         if (selectAllBtn instanceof HTMLButtonElement) selectAllBtn.disabled = isDisabled;
         if (selectDefaultsBtn instanceof HTMLButtonElement) selectDefaultsBtn.disabled = isDisabled;
 
-        // Управление кнопкой "Свернуть/Развернуть все"
         if (collapseAllBtn instanceof HTMLButtonElement) {
             const hasPhases = Object.keys(testDataByPhase).length > 0;
             collapseAllBtn.disabled = isDisabled || !hasPhases;
         }
-
 
         if (phaseTreeContainer) {
             const checkboxes = phaseTreeContainer.querySelectorAll('input[type="checkbox"]');
@@ -163,10 +158,9 @@
         const safeName = name.replace(/[^a-zA-Z0-9_\\-]/g, '_'); // Для ID
         const escapedNameAttr = escapeHtmlAttr(name);
         const escapedTitleAttr = escapeHtmlAttr(relativePath);
-        const fileUriString = testInfo.yamlFileUriString || ''; // Предполагается, что это строка URI
+        const fileUriString = testInfo.yamlFileUriString || '';
         const escapedIconTitle = escapeHtmlAttr(`Открыть файл сценария ${name}`);
 
-        // Кнопка открытия файла сценария
         const openButtonHtml = fileUriString
             ? `<button class="open-scenario-btn" data-name="${escapedNameAttr}" title="${escapedIconTitle}">
                    <span class="codicon codicon-edit"></span>
@@ -195,7 +189,7 @@
     function renderPhaseTree(allPhaseData) {
         log('Rendering phase tree...');
         if (!phaseTreeContainer) { log("Error: Phase tree container not found!"); return; }
-        phaseTreeContainer.innerHTML = ''; // Очищаем контейнер
+        phaseTreeContainer.innerHTML = '';
 
         const sortedPhaseNames = Object.keys(allPhaseData).sort();
 
@@ -204,42 +198,39 @@
             if (collapseAllBtn instanceof HTMLButtonElement) collapseAllBtn.disabled = true;
             return;
         } else {
-             // Включаем кнопку, если есть фазы и Phase Switcher включен
              if (collapseAllBtn instanceof HTMLButtonElement) {
                 collapseAllBtn.disabled = !settings.switcherEnabled;
             }
         }
 
-
-        // Инициализируем или сохраняем состояние раскрытия для каждой фазы
         const newPhaseExpandedState = {};
         sortedPhaseNames.forEach(phaseName => {
-            if (phaseExpandedState.hasOwnProperty(phaseName)) {
-                newPhaseExpandedState[phaseName] = phaseExpandedState[phaseName];
-            } else {
-                // По умолчанию все свернуты
-                newPhaseExpandedState[phaseName] = false;
-            }
+            newPhaseExpandedState[phaseName] = phaseExpandedState.hasOwnProperty(phaseName) ? phaseExpandedState[phaseName] : false;
         });
         phaseExpandedState = newPhaseExpandedState;
-        updateAreAllPhasesExpandedState(); // Обновляем состояние кнопки "Свернуть/Развернуть все"
+        updateAreAllPhasesExpandedState();
 
         sortedPhaseNames.forEach(phaseName => {
             const testsInPhase = allPhaseData[phaseName];
-            // Создание уникальных ID
             const phaseGroupId = 'phase-group-' + phaseName.replace(/[^a-zA-Z0-9_\\-]/g, '_');
             const phaseHeaderId = 'phase-header-' + phaseName.replace(/[^a-zA-Z0-9_\\-]/g, '_');
             const testsListId = 'tests-list-' + phaseName.replace(/[^a-zA-Z0-9_\\-]/g, '_');
 
-            // Подсчет включенных/всего тестов в фазе
             let enabledCount = 0;
             let totalInPhase = 0;
+            let hasUnappliedChangesInGroup = false;
+
             if (Array.isArray(testsInPhase)) {
                 testsInPhase.forEach(testInfo => {
                     if (testInfo && initialTestStates[testInfo.name] !== 'disabled') {
                         totalInPhase++;
                         if (currentCheckboxStates[testInfo.name]) {
                             enabledCount++;
+                        }
+                        const initialChecked = initialTestStates[testInfo.name] === 'checked';
+                        const currentChecked = !!currentCheckboxStates[testInfo.name];
+                        if (initialChecked !== currentChecked) {
+                            hasUnappliedChangesInGroup = true;
                         }
                     }
                 });
@@ -252,13 +243,12 @@
             const phaseHeaderDiv = document.createElement('div');
             phaseHeaderDiv.className = 'phase-header';
             phaseHeaderDiv.id = phaseHeaderId;
-            phaseHeaderDiv.dataset.phaseName = phaseName; // Сохраняем имя фазы
+            phaseHeaderDiv.dataset.phaseName = phaseName;
 
-            // Кнопка для сворачивания/разворачивания
             const expandCollapseButton = document.createElement('button');
             expandCollapseButton.className = 'phase-expand-collapse-btn button-with-icon';
             expandCollapseButton.setAttribute('role', 'button');
-            expandCollapseButton.setAttribute('tabindex', '0'); // Для доступности
+            expandCollapseButton.setAttribute('tabindex', '0');
             expandCollapseButton.setAttribute('aria-expanded', phaseExpandedState[phaseName] ? 'true' : 'false');
             expandCollapseButton.setAttribute('aria-controls', testsListId);
             expandCollapseButton.title = phaseExpandedState[phaseName] ? "Свернуть фазу" : "Развернуть фазу";
@@ -270,26 +260,24 @@
             const titleSpan = document.createElement('span');
             titleSpan.className = 'phase-title';
             titleSpan.textContent = phaseName;
-            expandCollapseButton.appendChild(titleSpan); // Добавляем название фазы в кнопку
+            expandCollapseButton.appendChild(titleSpan);
 
-            // Счетчик тестов
             const countSpan = document.createElement('span');
             countSpan.className = 'phase-test-count';
             countSpan.textContent = `${enabledCount}/${totalInPhase}`;
+            countSpan.classList.toggle('group-changed', hasUnappliedChangesInGroup);
 
-            // Кнопка для переключения всех чекбоксов в фазе
             const toggleCheckboxesBtn = document.createElement('button');
             toggleCheckboxesBtn.className = 'phase-toggle-checkboxes-btn button-with-icon';
             toggleCheckboxesBtn.title = 'Переключить все тесты в этой фазе';
             toggleCheckboxesBtn.dataset.phaseName = phaseName;
             const toggleIcon = document.createElement('span');
-            toggleIcon.className = 'codicon codicon-check-all'; // Иконка для переключения чекбоксов
+            toggleIcon.className = 'codicon codicon-check-all';
             toggleCheckboxesBtn.appendChild(toggleIcon);
 
             phaseHeaderDiv.appendChild(expandCollapseButton);
             phaseHeaderDiv.appendChild(countSpan);
             phaseHeaderDiv.appendChild(toggleCheckboxesBtn);
-
 
             const testsListDiv = document.createElement('div');
             testsListDiv.className = 'phase-tests-list';
@@ -312,9 +300,8 @@
             phaseGroupDiv.appendChild(testsListDiv);
             phaseTreeContainer.appendChild(phaseGroupDiv);
 
-            // Добавляем обработчики событий
             expandCollapseButton.addEventListener('click', handlePhaseHeaderClick);
-            expandCollapseButton.addEventListener('keydown', (event) => { // Для доступности с клавиатуры
+            expandCollapseButton.addEventListener('keydown', (event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault();
                     handlePhaseHeaderClick(event);
@@ -322,7 +309,7 @@
             });
             toggleCheckboxesBtn.addEventListener('click', handleTogglePhaseCheckboxesClick);
         });
-        applyCheckboxStatesToVisible(); // Применяем состояния к созданным чекбоксам
+        applyCheckboxStatesToVisible();
         log('Phase tree rendered.');
         updateAreAllPhasesExpandedState();
     }
@@ -332,7 +319,7 @@
      * @param {Event} event - Событие клика.
      */
     function handlePhaseHeaderClick(event) {
-        const button = event.currentTarget; // Теперь это кнопка
+        const button = event.currentTarget;
         if (!(button instanceof HTMLElement)) return;
         const phaseHeader = button.closest('.phase-header');
         if (!phaseHeader || !(phaseHeader instanceof HTMLElement)) return;
@@ -342,18 +329,18 @@
 
         const testsListId = 'tests-list-' + phaseName.replace(/[^a-zA-Z0-9_\\-]/g, '_');
         const testsList = document.getElementById(testsListId);
-        const icon = button.querySelector('.phase-toggle-icon'); // Иконка внутри кнопки
+        const icon = button.querySelector('.phase-toggle-icon');
 
         if (!testsList || !icon) return;
 
-        phaseExpandedState[phaseName] = !phaseExpandedState[phaseName]; // Инвертируем состояние
+        phaseExpandedState[phaseName] = !phaseExpandedState[phaseName];
         testsList.classList.toggle('expanded');
         icon.classList.toggle('codicon-chevron-right', !phaseExpandedState[phaseName]);
         icon.classList.toggle('codicon-chevron-down', phaseExpandedState[phaseName]);
         button.setAttribute('aria-expanded', phaseExpandedState[phaseName] ? 'true' : 'false');
         button.title = phaseExpandedState[phaseName] ? "Свернуть фазу" : "Развернуть фазу";
         log(`Phase '${phaseName}' expanded state: ${phaseExpandedState[phaseName]}`);
-        updateAreAllPhasesExpandedState(); // Обновляем состояние общей кнопки
+        updateAreAllPhasesExpandedState();
     }
 
     /**
@@ -363,7 +350,7 @@
     function handleTogglePhaseCheckboxesClick(event) {
         const button = event.currentTarget;
         if (!(button instanceof HTMLButtonElement)) return;
-        event.stopPropagation(); // Предотвращаем всплытие до заголовка фазы
+        event.stopPropagation();
 
         const phaseName = button.dataset.phaseName;
         if (!phaseName) {
@@ -379,11 +366,10 @@
         const checkboxesInPhase = testsList.querySelectorAll('input[type="checkbox"]:not(:disabled)');
         if (checkboxesInPhase.length === 0) return;
 
-        // Определяем, нужно ли отметить все или снять все
         let shouldCheckAll = false;
         for (const cb of checkboxesInPhase) {
             if (cb instanceof HTMLInputElement && !cb.checked) {
-                shouldCheckAll = true; // Если хотя бы один не отмечен, то отмечаем все
+                shouldCheckAll = true;
                 break;
             }
         }
@@ -396,8 +382,8 @@
             }
         });
 
-        updatePendingStatus(); // Обновляем статус изменений
-        updateHighlighting(); // Обновляем подсветку
+        updatePendingStatus();
+        updateHighlighting();
     }
 
     /**
@@ -449,11 +435,11 @@
                 if (!phaseName) return;
 
                 if (phaseExpandedState[phaseName] !== shouldExpandAll) {
-                    button.click(); // Имитируем клик для переключения
+                    button.click();
                 }
             }
         });
-        updateAreAllPhasesExpandedState(); // Обновляем состояние кнопки в конце
+        updateAreAllPhasesExpandedState();
     }
 
     /**
@@ -467,7 +453,7 @@
             const name = cb.getAttribute('name');
             const label = cb.closest('.checkbox-item');
             if (!label || !name || !initialTestStates.hasOwnProperty(name) || initialTestStates[name] === 'disabled') {
-                label?.classList.remove('changed'); // Убираем подсветку, если элемент неактивен или нет данных
+                label?.classList.remove('changed');
                 return;
             }
             const initialChecked = initialTestStates[name] === 'checked';
@@ -483,11 +469,11 @@
     function handleOpenScenarioClick(event) {
         if (!(event.target instanceof Element)) return;
         const button = event.target.closest('.open-scenario-btn');
-        if (!(button instanceof HTMLButtonElement)) return; // Убедимся, что это кнопка
+        if (!(button instanceof HTMLButtonElement)) return;
 
-        event.preventDefault(); // Предотвращаем стандартное действие (если есть)
-        event.stopPropagation(); // Останавливаем всплытие, чтобы не сработал клик по label
-        const name = button.getAttribute('data-name'); // Получаем имя из data-атрибута
+        event.preventDefault();
+        event.stopPropagation();
+        const name = button.getAttribute('data-name');
         if (!name) {
             log("ERROR: Open scenario button clicked without data-name attribute!");
             return;
@@ -510,38 +496,37 @@
         checkboxes.forEach(cb => {
             if (!(cb instanceof HTMLInputElement)) return;
             const name = cb.getAttribute('name');
-            const label = cb.closest('.checkbox-item'); // Находим родительский label
-            cb.removeEventListener('change', handleCheckboxChange); // Удаляем старый обработчик
+            const label = cb.closest('.checkbox-item');
+            cb.removeEventListener('change', handleCheckboxChange);
 
-            if (name && initialTestStates.hasOwnProperty(name)) { // Проверяем, что имя есть и для него есть начальное состояние
+            if (name && initialTestStates.hasOwnProperty(name)) {
                 count++;
-                const initialState = initialTestStates[name]; // 'checked', 'unchecked', или 'disabled'
-                cb.disabled = (initialState === 'disabled'); // Отключаем, если начальное состояние 'disabled'
-                cb.checked = !!currentCheckboxStates[name]; // Устанавливаем текущее состояние
+                const initialState = initialTestStates[name];
+                cb.disabled = (initialState === 'disabled');
+                cb.checked = !!currentCheckboxStates[name];
                 if(label) {
-                    label.classList.toggle('disabled', cb.disabled); // Добавляем/удаляем класс disabled для стилизации
-                    label.classList.remove('changed'); // Убираем подсветку изменений при перерисовке
+                    label.classList.toggle('disabled', cb.disabled);
+                    label.classList.remove('changed');
                 }
-                if (!cb.disabled) { // Добавляем обработчик только если чекбокс не отключен
+                if (!cb.disabled) {
                     cb.addEventListener('change', handleCheckboxChange);
                 }
-            } else if (name) { // Если имя есть, но нет начального состояния (не должно быть, но на всякий случай)
-                cb.disabled = true; // Отключаем
+            } else if (name) {
+                cb.disabled = true;
                 if(label) label.classList.add('disabled');
-            } else { // Если у чекбокса вообще нет имени
+            } else {
                 log("ERROR: Checkbox found with NO NAME attribute!");
             }
         });
 
-        // Переназначаем обработчики для кнопок открытия сценариев
         const openButtons = phaseTreeContainer.querySelectorAll('.open-scenario-btn');
         openButtons.forEach(btn => {
-            btn.removeEventListener('click', handleOpenScenarioClick); // Удаляем старый
-            btn.addEventListener('click', handleOpenScenarioClick); // Добавляем новый
+            btn.removeEventListener('click', handleOpenScenarioClick);
+            btn.addEventListener('click', handleOpenScenarioClick);
         });
 
         log(`Applied states to ${count} visible checkboxes.`);
-        updateHighlighting(); // Обновляем подсветку измененных
+        updateHighlighting();
         updateAreAllPhasesExpandedState();
     }
 
@@ -551,9 +536,8 @@
      * @param {boolean} isChecked - Новое состояние чекбокса.
      */
     function updateCurrentState(name, isChecked) {
-        // Обновляем только если тест не был изначально 'disabled'
         if (initialTestStates.hasOwnProperty(name) && initialTestStates[name] !== 'disabled') {
-            currentCheckboxStates[name] = !!isChecked; // Приводим к boolean
+            currentCheckboxStates[name] = !!isChecked;
         }
     }
 
@@ -562,17 +546,17 @@
      * @param {Event} event - Событие изменения.
      */
     function handleCheckboxChange(event) {
-        if(!(event.target instanceof HTMLInputElement)) return; // Убедимся, что это input
-        const name = event.target.name; // Имя теста
-        const isChecked = event.target.checked; // Новое состояние
+        if(!(event.target instanceof HTMLInputElement)) return;
+        const name = event.target.name;
+        const isChecked = event.target.checked;
         log(`Checkbox changed: ${name} = ${isChecked}`);
-        updateCurrentState(name, isChecked); // Обновляем внутреннее состояние
-        updatePendingStatus(); // Обновляем статус о наличии несохраненных изменений
-        updateHighlighting(); // Обновляем подсветку
+        updateCurrentState(name, isChecked);
+        updatePendingStatus();
+        updateHighlighting();
     }
 
     /**
-     * Обновляет счетчики тестов для каждой фазы.
+     * Обновляет счетчики тестов для каждой фазы, включая индикацию изменений.
      */
     function updatePhaseCounts() {
         if (!phaseTreeContainer) return;
@@ -585,13 +569,19 @@
             const testsInPhase = testDataByPhase[phaseName];
             let enabledCount = 0;
             let totalInPhase = 0;
+            let hasUnappliedChangesInGroup = false;
+
             if (Array.isArray(testsInPhase)) {
                 testsInPhase.forEach(testInfo => {
-                    // Считаем только активные (не 'disabled') тесты
                     if (testInfo && initialTestStates[testInfo.name] !== 'disabled') {
                         totalInPhase++;
                         if (currentCheckboxStates[testInfo.name]) {
                             enabledCount++;
+                        }
+                        const initialChecked = initialTestStates[testInfo.name] === 'checked';
+                        const currentChecked = !!currentCheckboxStates[testInfo.name];
+                        if (initialChecked !== currentChecked) {
+                            hasUnappliedChangesInGroup = true;
                         }
                     }
                 });
@@ -599,24 +589,25 @@
             const countElement = header.querySelector('.phase-test-count');
             if (countElement) {
                 countElement.textContent = `${enabledCount}/${totalInPhase}`;
+                countElement.classList.toggle('group-changed', hasUnappliedChangesInGroup);
             }
         });
     }
+
 
     /**
      * Обновляет статус-бар информацией о несохраненных изменениях.
      */
     function updatePendingStatus() {
         log('Updating pending status...');
-        if (!(applyChangesBtn instanceof HTMLButtonElement)) return; // Проверяем, что кнопка существует
+        if (!(applyChangesBtn instanceof HTMLButtonElement)) return;
 
-        let changed=0, enabled=0, disabled=0; // Счетчик изменений
-        // Сравниваем текущие состояния с начальными
+        let changed=0, enabled=0, disabled=0;
         for (const name in initialTestStates) {
-            if (initialTestStates.hasOwnProperty(name) && initialTestStates[name] !== 'disabled') { // Учитываем только активные тесты
-                const initial = initialTestStates[name] === 'checked'; // Начальное состояние (boolean)
-                const current = !!currentCheckboxStates[name]; // Текущее состояние (boolean)
-                if (initial !== current) { // Если состояние изменилось
+            if (initialTestStates.hasOwnProperty(name) && initialTestStates[name] !== 'disabled') {
+                const initial = initialTestStates[name] === 'checked';
+                const current = !!currentCheckboxStates[name];
+                if (initial !== current) {
                     changed++;
                     if (current) { enabled++; } else { disabled++; }
                 }
@@ -625,55 +616,50 @@
 
         const mainControlsActive = settings.switcherEnabled && !!testDataByPhase && Object.keys(testDataByPhase).length > 0;
 
-        if (changed > 0) { // Если есть изменения
-            updateStatus(`Всего изменено: ${changed} \nВключено тестов: ${enabled} \nВыключено тестов: ${disabled}\n\nНажмите "Применить"`, 'main', mainControlsActive);
-            applyChangesBtn.disabled = false; // Включаем кнопку "Применить"
-        } else { // Если изменений нет
-            // Не перезаписываем статус, если идет загрузка или применение
+        if (changed > 0) {
+            updateStatus(`Всего изменено: ${changed} \nВключено: ${enabled} \nВыключено: ${disabled}\n\nНажмите "Применить"`, 'main', mainControlsActive);
+            applyChangesBtn.disabled = false;
+        } else {
             if (!statusBar || !statusBar.textContent?.includes('Загрузка') && !statusBar.textContent?.includes('Применение')) {
                 updateStatus('Нет несохраненных изменений.', 'main', mainControlsActive);
             }
-            applyChangesBtn.disabled = true; // Отключаем кнопку "Применить"
+            applyChangesBtn.disabled = true;
         }
         log(`Pending status: ${changed} changes. Apply btn disabled: ${applyChangesBtn.disabled}`);
-        updateHighlighting(); // Обновляем подсветку
-        updatePhaseCounts(); // Обновляем счетчики фаз
+        updateHighlighting();
+        updatePhaseCounts();
         updateAreAllPhasesExpandedState();
     }
 
     // Обработчик сообщений от расширения
     window.addEventListener('message', event => {
-        const message = event.data; // Сообщение от расширения
+        const message = event.data;
         log('Received message command: ' + message?.command);
 
         switch (message?.command) {
             case 'loadInitialState':
-                if (assembleStatus instanceof HTMLElement) assembleStatus.textContent = ''; // Очищаем статус сборки
+                if (assembleStatus instanceof HTMLElement) assembleStatus.textContent = '';
 
-                if (message.error) { // Если пришла ошибка
+                if (message.error) {
                      updateStatus(`Ошибка: ${message.error}`, 'main', true);
-                      // Скрываем секции, если ошибка
                       phaseSwitcherSectionElements.forEach(el => { if (el instanceof HTMLElement) el.style.display = 'none'; });
                      if (assembleSection instanceof HTMLElement) assembleSection.style.display = 'none';
                      if (separator instanceof HTMLElement) separator.style.display = 'none';
                      enablePhaseControls(false, true); enableAssembleControls(false);
-                     if (openSettingsBtn instanceof HTMLButtonElement) openSettingsBtn.disabled = false; // Кнопка настроек всегда доступна
-                } else { // Если данные загружены успешно
+                     if (openSettingsBtn instanceof HTMLButtonElement) openSettingsBtn.disabled = false;
+                } else {
                     testDataByPhase = message.tabData || {};
                     initialTestStates = message.states || {};
                     settings = message.settings || { assemblerEnabled: true, switcherEnabled: true };
                     log("Received settings in webview:");
-                    console.log(settings); // Логируем полученные настройки
+                    console.log(settings);
 
-                    // Сбрасываем и инициализируем состояния
                     currentCheckboxStates = {}; testDefaultStates = {};
-                    // Инициализируем phaseExpandedState, если он еще не инициализирован
                     if (Object.keys(phaseExpandedState).length === 0 && testDataByPhase) {
                         Object.keys(testDataByPhase).forEach(phaseName => {
-                            phaseExpandedState[phaseName] = false; // Все свернуты по умолчанию
+                            phaseExpandedState[phaseName] = false;
                         });
                     }
-
 
                     Object.keys(testDataByPhase).forEach(phaseName => {
                         if (Array.isArray(testDataByPhase[phaseName])) {
@@ -683,7 +669,7 @@
                                     if (initialTestStates[name] !== 'disabled') {
                                         currentCheckboxStates[name] = initialTestStates[name] === 'checked';
                                     }
-                                    testDefaultStates[name] = !!info.defaultState; // Сохраняем состояние по умолчанию
+                                    testDefaultStates[name] = !!info.defaultState;
                                 }
                             });
                         }
@@ -691,7 +677,6 @@
 
                     log("State caches initialized.");
 
-                    // Применяем видимость секций на основе настроек
                     const phaseSwitcherVisible = settings.switcherEnabled;
                     const assemblerVisible = settings.assemblerEnabled;
                     log(`Applying visibility based on settings: Switcher=${phaseSwitcherVisible}, Assembler=${assemblerVisible}`);
@@ -710,42 +695,39 @@
                     } else { log("WARN: Separator element not found!"); }
 
                     if (phaseSwitcherVisible) {
-                        renderPhaseTree(testDataByPhase); // Отрисовываем дерево
-                    } else { // Если Phase Switcher отключен
+                        renderPhaseTree(testDataByPhase);
+                    } else {
                         if(phaseTreeContainer instanceof HTMLElement) phaseTreeContainer.innerHTML = '<p>Phase Switcher отключен в настройках.</p>';
                          if (collapseAllBtn instanceof HTMLButtonElement) collapseAllBtn.disabled = true;
                     }
 
-                    updatePendingStatus(); // Обновляем статус о несохраненных изменениях
-                    // Включаем/отключаем контролы на основе видимости и наличия данных
+                    updatePendingStatus();
                     enablePhaseControls(phaseSwitcherVisible && !!testDataByPhase && Object.keys(testDataByPhase).length > 0, true);
                     enableAssembleControls(assemblerVisible);
-                    if (openSettingsBtn instanceof HTMLButtonElement) openSettingsBtn.disabled = false; // Кнопка настроек
+                    if (openSettingsBtn instanceof HTMLButtonElement) openSettingsBtn.disabled = false;
 
-                    updateStatus('Готово к работе.', 'main', true); // Обновляем статус
+                    updateStatus('Готово к работе.', 'main', true);
                 }
                 break;
 
-             case 'updateStatus': // Обновление статуса из расширения
-                 const target = message.target || 'main'; // main или assemble
+             case 'updateStatus':
+                 const target = message.target || 'main';
                  const controlsEnabled = message.enableControls === undefined ? undefined : message.enableControls;
                  let refreshEnabled = message.refreshButtonEnabled;
 
-                 // Если состояние кнопки Обновить не передано, определяем его на основе controlsEnabled
-                 // или оставляем текущее, если controlsEnabled тоже не передано
                  if (refreshEnabled === undefined) {
                      refreshEnabled = controlsEnabled === undefined ? (refreshBtn ? !refreshBtn.disabled : true) : controlsEnabled;
                  }
 
-                 updateStatus(message.text, target, refreshEnabled); // Обновляем текст и кнопку Обновить
+                 updateStatus(message.text, target, refreshEnabled);
 
-                 if (controlsEnabled !== undefined) { // Если передано состояние для контролов
-                     enablePhaseControls(controlsEnabled && settings.switcherEnabled, refreshEnabled); // Управляем контролами Phase Switcher
-                     enableAssembleControls(controlsEnabled && settings.assemblerEnabled); // Управляем контролами сборки
+                 if (controlsEnabled !== undefined) {
+                     enablePhaseControls(controlsEnabled && settings.switcherEnabled, refreshEnabled);
+                     enableAssembleControls(controlsEnabled && settings.assemblerEnabled);
                  }
                  break;
 
-            case 'setRefreshButtonState': // Явное управление состоянием кнопки Обновить
+            case 'setRefreshButtonState':
                 if (refreshBtn instanceof HTMLButtonElement) {
                     refreshBtn.disabled = !message.enabled;
                     log(`External: Refresh button state set to enabled: ${message.enabled}`);
@@ -758,72 +740,63 @@
          }
     });
 
-    // Обработчик кнопки "Применить"
     if(applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.addEventListener('click', () => {
         log('Apply Phase Changes button clicked.');
-        const statesToSend = { ...currentCheckboxStates }; // Копируем текущие состояния для отправки
-        updateStatus('Применение изменений фаз...', 'main', false); // Обновляем статус, отключаем кнопку Обновить
-        enablePhaseControls(false, false); enableAssembleControls(false); // Отключаем все контролы
-        if(applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true; // Отключаем саму кнопку
+        const statesToSend = { ...currentCheckboxStates };
+        updateStatus('Применение изменений фаз...', 'main', false);
+        enablePhaseControls(false, false); enableAssembleControls(false);
+        if(applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;
         vscode.postMessage({ command: 'applyChanges', states: statesToSend });
     });
 
-    // Обработчик кнопки "Переключить все" (чекбоксы)
     if(selectAllBtn instanceof HTMLButtonElement) selectAllBtn.addEventListener('click', () => {
         log('Toggle ALL clicked.');
-        const keys = Object.keys(initialTestStates).filter(n => initialTestStates[n] !== 'disabled'); // Получаем ключи активных тестов
-        if(keys.length === 0) return; // Если нет активных тестов, ничего не делаем
-        // Определяем, нужно ли отметить все или снять все
+        const keys = Object.keys(initialTestStates).filter(n => initialTestStates[n] !== 'disabled');
+        if(keys.length === 0) return;
         let check = false;
-        for(const name of keys){ if(!currentCheckboxStates[name]) { check = true; break; } } // Если хотя бы один не отмечен, то отмечаем все
+        for(const name of keys){ if(!currentCheckboxStates[name]) { check = true; break; } }
         log(`New state for ALL enabled will be: ${check}`);
-        keys.forEach(name => { currentCheckboxStates[name] = check; }); // Устанавливаем новое состояние для всех
-        applyCheckboxStatesToVisible(); // Применяем к видимым чекбоксам
-        updatePendingStatus(); // Обновляем статус изменений
+        keys.forEach(name => { currentCheckboxStates[name] = check; });
+        applyCheckboxStatesToVisible();
+        updatePendingStatus();
     });
 
-
-    // Обработчик кнопки "По умолчанию"
     if(selectDefaultsBtn instanceof HTMLButtonElement) selectDefaultsBtn.addEventListener('click', () => {
         log('Select Defaults for ALL clicked.');
         for (const name in initialTestStates) {
             if (initialTestStates.hasOwnProperty(name) && initialTestStates[name] !== 'disabled') {
-                const defaultState = !!testDefaultStates[name]; // Получаем состояние по умолчанию
-                currentCheckboxStates[name] = defaultState; // Устанавливаем его как текущее
+                const defaultState = !!testDefaultStates[name];
+                currentCheckboxStates[name] = defaultState;
             }
         }
-        applyCheckboxStatesToVisible(); // Применяем к видимым чекбоксам
-        updatePendingStatus(); // Обновляем статус изменений
+        applyCheckboxStatesToVisible();
+        updatePendingStatus();
         const mainControlsShouldBeActive = settings.switcherEnabled && !!testDataByPhase && Object.keys(testDataByPhase).length > 0;
-        enablePhaseControls(mainControlsShouldBeActive, true); // Включаем контролы
+        enablePhaseControls(mainControlsShouldBeActive, true);
     });
 
-    // Обработчик кнопки "Обновить"
     if(refreshBtn instanceof HTMLButtonElement) refreshBtn.addEventListener('click', () => {
         log('Refresh button clicked.');
-        requestInitialState(); // Запрашиваем начальное состояние
+        requestInitialState();
     });
 
-    // Обработчик кнопки "Открыть настройки"
     if (openSettingsBtn instanceof HTMLButtonElement) openSettingsBtn.addEventListener('click', () => {
         log('Open Settings button clicked.');
-        vscode.postMessage({ command: 'openSettings' }); // Отправляем команду в расширение
+        vscode.postMessage({ command: 'openSettings' });
     });
 
-    // Обработчик для новой кнопки "Свернуть/Развернуть все"
     if (collapseAllBtn instanceof HTMLButtonElement) {
         collapseAllBtn.addEventListener('click', handleCollapseAllClick);
     }
 
-    // Обработчик кнопки "Собрать тесты"
     if(assembleBtn instanceof HTMLButtonElement) {
         assembleBtn.addEventListener('click', () => {
             log('Assemble tests button clicked.');
             const recordGLValue = (recordGLSelect instanceof HTMLSelectElement) ? recordGLSelect.value : '0';
             const driveTradeValue = (driveTradeChk instanceof HTMLInputElement) && driveTradeChk.checked ? '1' : '0';
-            updateStatus('Запуск сборки...', 'assemble', false); // Обновляем статус сборки, отключаем кнопку Обновить
-            enablePhaseControls(false, false); // Отключаем контролы Phase Switcher
-            enableAssembleControls(false); // Отключаем контролы сборки
+            updateStatus('Запуск сборки...', 'assemble', false);
+            enablePhaseControls(false, false);
+            enableAssembleControls(false);
             vscode.postMessage({
                 command: 'runAssembleScript',
                 params: { recordGL: recordGLValue, driveTrade: driveTradeValue }
@@ -831,24 +804,20 @@
         });
     }
 
-    /**
-     * Запрашивает начальное состояние у расширения.
-     */
     function requestInitialState() {
         log('Requesting initial state...');
-        updateStatus('Запрос данных...', 'main', false); // Обновляем статус, отключаем кнопку Обновить
-        enablePhaseControls(false, false); // Отключаем контролы Phase Switcher
-        enableAssembleControls(false); // Отключаем контролы сборки
-        if (applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true; // Отключаем кнопку "Применить"
+        updateStatus('Запрос данных...', 'main', false);
+        enablePhaseControls(false, false);
+        enableAssembleControls(false);
+        if (applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;
         vscode.postMessage({ command: 'getInitialState' });
     }
 
-    // Инициализация при загрузке webview
     log('Webview script initialized.');
-    updateStatus('Загрузка...', 'main', false); // Начальный статус, кнопка Обновить отключена
-    enablePhaseControls(false, false); // Контролы Phase Switcher отключены
-    enableAssembleControls(false); // Контролы сборки отключены
-    if (applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true; // Кнопка "Применить" отключена
-    requestInitialState(); // Запрашиваем начальное состояние
+    updateStatus('Загрузка...', 'main', false);
+    enablePhaseControls(false, false);
+    enableAssembleControls(false);
+    if (applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;
+    requestInitialState();
 
 }());

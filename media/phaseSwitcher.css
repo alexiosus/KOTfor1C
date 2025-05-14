@@ -196,6 +196,11 @@ h1 {
     font-family: monospace;
 }
 
+.phase-test-count.group-changed {
+    font-weight: bold;
+    color: rgb(239, 174, 43);
+}
+
 .phase-toggle-checkboxes-btn {
     background: none;
     border: none;
@@ -256,11 +261,6 @@ h1 {
     padding: 5px 8px;     
 }
 
-/* .phase-switcher-controls #applyChangesBtn {
-    width: 100%;
-    flex-basis: 100%; 
-} */
-
 #statusBar {
     color: var(--vscode-descriptionForeground);
     min-height: 7em; 
@@ -305,6 +305,7 @@ label.checkbox-item.disabled input[type=checkbox] {
 }
 label.checkbox-item.changed span.checkbox-label-text { 
     font-weight: bold; 
+    /* color: rgb(239, 174, 43); */
 }
 
 .open-scenario-btn {
