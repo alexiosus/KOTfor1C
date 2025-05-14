@@ -9,11 +9,12 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.3.3",
+  "version": "1.4.0",
   "engines": {
     "vscode": "^1.98.0"
   },
   "categories": [
+    "Testing",
     "Other"
   ],
   "activationEvents": [
@@ -34,7 +35,7 @@
           "1cDriveHelper.features.enableAssembleTests": {
             "type": "boolean",
             "default": true,
-            "description": "Включить панель \"Сборка Тестов\".\nПока работает только на Windows.",
+            "description": "Включить панель \"Сборка Тестов\".",
             "order": 11
           }
         }
@@ -136,14 +137,8 @@
           "1cDriveHelper.paths.oneCEnterpriseExe": {
             "type": "string",
             "default": "C:\\Program Files (x86)\\1cv8\\8.3.24.1738\\bin\\1cv8.exe",
-            "description": "Полный путь к исполняемому файлу 1cv8.exe",
+            "description": "Полный путь к исполняемому файлу 1cv8.exe (Windows) или 1cestart (macOS)",
             "order": 41
-          },
-          "1cDriveHelper.paths.powershell": {
-            "type": "string",
-            "default": "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-            "description": "Путь к исполняемому файлу PowerShell (PSPath).",
-            "order": 42
           }
         }
       }

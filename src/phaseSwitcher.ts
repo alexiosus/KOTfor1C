@@ -1,8 +1,8 @@
 ﻿import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import * as path from 'path';
-import * as fs from 'fs';
-import { scanWorkspaceForTests, SCAN_DIR_RELATIVE_PATH } from './workspaceScanner'; 
+import * as fs from 'fs'; // Используем fs для синхронной проверки существования файла, если нужно
+import { scanWorkspaceForTests, SCAN_DIR_RELATIVE_PATH } from './workspaceScanner';
 import { TestInfo } from './types';
 
 // Ключ для хранения пароля в SecretStorage
@@ -17,6 +17,14 @@ function getNonce(): string {
     }
     return text;
 }
+
+interface CompletionMarker {
+    filePath: string; // Путь к файлу, который сигнализирует о завершении
+    successContent?: string; // Ожидаемое содержимое при успехе (если null, проверяется только существование)
+    checkIntervalMs?: number; // Интервал проверки в мс
+    timeoutMs?: number; // Таймаут ожидания в мс
+}
+
 
 /**
  * Провайдер для Webview в боковой панели, управляющий переключением тестов и сборкой.
@@ -36,7 +44,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this._extensionUri = extensionUri;
         this._context = context;
         console.log("[PhaseSwitcherProvider] Initialized.");
-        // Инициализация OutputChannel
         this._outputChannel = vscode.window.createOutputChannel("1cDrive Test Assembly", { log: true });
 
 
@@ -126,7 +133,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     const params = message.params || {};
                     const recordGL = typeof params.recordGL === 'string' ? params.recordGL : 'No';
                     const driveTrade = typeof params.driveTrade === 'string' ? params.driveTrade : '0';
-                    await this._handleRunAssembleScriptTypeScript(recordGL, driveTrade); // <--- ИЗМЕНЕН ВЫЗОВ
+                    await this._handleRunAssembleScriptTypeScript(recordGL, driveTrade);
                     return;
                 case 'openScenario':
                     if (message.name && this._testCache) {
@@ -166,7 +173,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
         console.log("[PhaseSwitcherProvider:_sendInitialState] Preparing and sending initial state...");
-        webview.postMessage({ command: 'updateStatus', text: 'Сканирование файлов...', enableControls: false });
+        webview.postMessage({ command: 'updateStatus', text: 'Сканирование файлов...', enableControls: false, refreshButtonEnabled: false });
 
         const config = vscode.workspace.getConfiguration('1cDriveHelper.features');
         const switcherEnabled = config.get<boolean>('enablePhaseSwitcher') ?? true;
@@ -176,7 +183,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (!workspaceFolders || workspaceFolders.length === 0) {
             vscode.window.showErrorMessage("Пожалуйста, откройте папку проекта.");
             webview.postMessage({ command: 'loadInitialState', error: "Папка проекта не открыта" });
-            webview.postMessage({ command: 'updateStatus', text: 'Ошибка: Папка проекта не открыта' });
+            webview.postMessage({ command: 'updateStatus', text: 'Ошибка: Папка проекта не открыта', refreshButtonEnabled: true });
             return;
         }
         const workspaceRootUri = workspaceFolders[0].uri;
@@ -192,7 +199,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         if (this._testCache) {
             status = "Проверка состояния тестов...";
-            webview.postMessage({ command: 'updateStatus', text: status });
+            webview.postMessage({ command: 'updateStatus', text: status, refreshButtonEnabled: false });
 
             const baseOnDirUri = vscode.Uri.joinPath(workspaceRootUri, SCAN_DIR_RELATIVE_PATH);
             const baseOffDirUri = vscode.Uri.joinPath(workspaceRootUri, 'RegressionTests_Disabled', 'Yaml', 'Drive');
@@ -229,14 +236,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             },
             error: !this._testCache ? status : undefined
         });
-        webview.postMessage({ command: 'updateStatus', text: status, enableControls: !!this._testCache });
+        webview.postMessage({ command: 'updateStatus', text: status, enableControls: !!this._testCache, refreshButtonEnabled: true });
     }
 
-    /**
-     * Запускает процесс сборки тестов с использованием TypeScript логики.
-     * @param recordGLValue Значение для RecordGLAccounts.
-     * @param driveTradeValue Значение для DriveTrade (0 или 1).
-     */
     private async _handleRunAssembleScriptTypeScript(recordGLValue: string, driveTradeValue: string): Promise<void> {
         const methodStartLog = "[PhaseSwitcherProvider:_handleRunAssembleScriptTypeScript]";
         console.log(`${methodStartLog} Starting with RecordGL=${recordGLValue}, DriveTrade=${driveTradeValue}`);
@@ -252,18 +254,23 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const sendStatus = (text: string, enableControls: boolean = false, target: 'main' | 'assemble' = 'assemble') => {
+        const sendStatus = (text: string, enableControls: boolean = false, target: 'main' | 'assemble' = 'assemble', refreshButtonEnabled?: boolean) => {
             if (this._view?.webview) {
-                this._view.webview.postMessage({ command: 'updateStatus', text: text, enableControls: enableControls, target: target });
+                this._view.webview.postMessage({ 
+                    command: 'updateStatus', 
+                    text: text, 
+                    enableControls: enableControls, 
+                    target: target,
+                    refreshButtonEnabled: refreshButtonEnabled 
+                });
             } else {
                 console.warn(`${methodStartLog} Cannot send status, view is not available. Status: ${text}`);
             }
         };
         
-        sendStatus(`Сборка тестов в процессе...`, false, 'assemble');
+        sendStatus(`Сборка тестов в процессе...`, false, 'assemble', false);
 
         try {
-            // 1. Получаем настройки VS Code и пути
             const config = vscode.workspace.getConfiguration('1cDriveHelper');
             const workspaceFolders = vscode.workspace.workspaceFolders;
             if (!workspaceFolders?.length) {
@@ -273,14 +280,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const workspaceRootPath = workspaceRootUri.fsPath;
 
             const oneCPath_raw = config.get<string>('paths.oneCEnterpriseExe');
-            if (!oneCPath_raw || !fs.existsSync(oneCPath_raw)) { // Синхронная проверка, т.к. это критично для запуска
+            if (!oneCPath_raw || !fs.existsSync(oneCPath_raw)) { 
                 throw new Error(`Путь к 1С (настройка '1cDriveHelper.paths.oneCEnterpriseExe') не указан или файл не найден: ${oneCPath_raw}`);
             }
-            const oneCExePath = oneCPath_raw; // Уже проверенный путь
+            const oneCExePath = oneCPath_raw; 
 
             const emptyIbPath_raw = config.get<string>('paths.emptyInfobase');
             
-            // --- ИСПРАВЛЕНИЕ ФОРМИРОВАНИЯ ПУТИ СБОРКИ ---
             const buildPathSetting = config.get<string>('assembleScript.buildPath');
             let absoluteBuildPathUri: vscode.Uri;
 
@@ -288,15 +294,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 absoluteBuildPathUri = vscode.Uri.file(buildPathSetting);
                 outputChannel.appendLine(`Using absolute build path from settings: ${absoluteBuildPathUri.fsPath}`);
             } else {
-                // Если путь не абсолютный или не задан, используем относительный путь от корня рабочей области
-                const relativeBuildPath = buildPathSetting || '.vscode/1cdrive_build'; // Значение по умолчанию, если настройка пуста
+                const relativeBuildPath = buildPathSetting || '.vscode/1cdrive_build'; 
                 absoluteBuildPathUri = vscode.Uri.joinPath(workspaceRootUri, relativeBuildPath);
                 outputChannel.appendLine(`Using relative build path: ${relativeBuildPath} from workspace ${workspaceRootPath}, resolved to: ${absoluteBuildPathUri.fsPath}`);
             }
             const absoluteBuildPath = absoluteBuildPathUri.fsPath;
-            // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
             
-            // Убедимся, что папка сборки существует
             try {
                 await vscode.workspace.fs.createDirectory(absoluteBuildPathUri);
                 outputChannel.appendLine(`Build directory ensured: ${absoluteBuildPath}`);
@@ -308,11 +311,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
             }
 
-
             const pathVanessa = vscode.Uri.joinPath(workspaceRootUri, 'tools', 'vanessa', 'vanessa-automation.epf').fsPath;
             outputChannel.appendLine(`PathVanessa: ${pathVanessa}`);
 
-            // 2. Подготовка yaml_parameters.json
             const localSettingsPath = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_parameters.json');
             const yamlParamsSourcePath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'develop_parallel', 'yaml_parameters.json');
             
@@ -330,40 +331,38 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const vanessaTestFileEnv = process.env.VanessaTestFile; 
             const splitFeatureFilesValue = vanessaTestFileEnv ? "True" : (config.get<string>('params.splitFeatureFiles') || "False");
 
-
             yamlParamsContent = yamlParamsContent.replace(/#BuildPath/g, buildPathForwardSlash);
             yamlParamsContent = yamlParamsContent.replace(/#SourcesPath/g, sourcesPathForwardSlash);
             yamlParamsContent = yamlParamsContent.replace(/#SplitFeatureFiles/g, splitFeatureFilesValue);
             await vscode.workspace.fs.writeFile(localSettingsPath, Buffer.from(yamlParamsContent, 'utf-8'));
             outputChannel.appendLine(`yaml_parameters.json prepared at ${localSettingsPath.fsPath}`);
 
-            // 3. Условное выполнение CutCodeByTags.epf
             if (driveTradeValue === '1') {
                 outputChannel.appendLine(`DriveTrade is 1, running CutCodeByTags.epf...`);
                 const cutCodeEpfPath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'DriveTrade', 'CutCodeByTags.epf').fsPath;
+                const errorLogPathForCut = vscode.Uri.joinPath(absoluteBuildPathUri, 'CutTestsByTags_error.log');
                 const cutCodeParams = [
                     "ENTERPRISE",
                     `/IBConnectionString`, `"File=${emptyIbPath_raw};"`,
                     `/L`, `en`, 
                     `/DisableStartupMessages`,
                     `/DisableStartupDialogs`,
-                    `/C"Execute;SourceDirectory=${path.join(workspaceRootPath, 'tests', 'RegressionTests', 'yaml')}\\; Extensions=yaml,txt,xml; ErrorFile=${path.join(absoluteBuildPath, 'CutTestsByTags_error.log')}"`,
+                    `/C"Execute;SourceDirectory=${path.join(workspaceRootPath, 'tests', 'RegressionTests', 'yaml')}\\; Extensions=yaml,txt,xml; ErrorFile=${errorLogPathForCut.fsPath}"`,
                     `/Execute${cutCodeEpfPath}`
                 ];
-                await this.execute1CProcess(oneCExePath, cutCodeParams, workspaceRootPath, "CutCodeByTags.epf");
+                await this.execute1CProcess(oneCExePath, cutCodeParams, workspaceRootPath, "CutCodeByTags.epf", 
+                    { filePath: errorLogPathForCut.fsPath, successContent: undefined, timeoutMs: 60000 });
                 
-                const errorLogPath = vscode.Uri.joinPath(absoluteBuildPathUri, 'CutTestsByTags_error.log');
                 try {
-                    const errorLogContent = Buffer.from(await vscode.workspace.fs.readFile(errorLogPath)).toString('utf-8');
+                    const errorLogContent = Buffer.from(await vscode.workspace.fs.readFile(errorLogPathForCut)).toString('utf-8');
                     if (errorLogContent.includes("Result: failed") || errorLogContent.includes("The number of start tags is not equal to the number of end tags")) {
-                        throw new Error(`Ошибка в CutCodeByTags.epf. См. лог: ${errorLogPath.fsPath}`);
+                        throw new Error(`Ошибка в CutCodeByTags.epf. См. лог: ${errorLogPathForCut.fsPath}`);
                     }
                 } catch (e:any) { 
-                    if (e.code !== 'FileNotFound') outputChannel.appendLine(`Warning: Could not read CutTestsByTags_error.log: ${e.message}`);
+                    if (e.code !== 'FileNotFound') outputChannel.appendLine(`Warning: Could not read CutTestsByTags_error.log or it's empty: ${e.message}`);
                 }
             }
 
-            // 4. Сборка YAML в Feature файлы (BuildScenarioBDD.epf)
             outputChannel.appendLine(`Building YAML files to feature file...`);
             const yamlBuildLogFileUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_build_log.txt');
             const yamlBuildResultFileUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_build_result.txt');
@@ -378,7 +377,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 `/Execute`, `"${buildScenarioBddEpfPath}"`,
                 `/C"СобратьСценарии;JsonParams=${localSettingsPath.fsPath};ResultFile=${yamlBuildResultFileUri.fsPath};LogFile=${yamlBuildLogFileUri.fsPath}"`
             ];
-            await this.execute1CProcess(oneCExePath, yamlBuildParams, workspaceRootPath, "BuildScenarioBDD.epf");
+            await this.execute1CProcess(oneCExePath, yamlBuildParams, workspaceRootPath, "BuildScenarioBDD.epf", 
+                { filePath: yamlBuildResultFileUri.fsPath, successContent: "0", timeoutMs: 600000 }); 
             
             try {
                 const buildResultContent = Buffer.from(await vscode.workspace.fs.readFile(yamlBuildResultFileUri)).toString('utf-8');
@@ -388,7 +388,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     throw new Error(`Ошибка сборки YAML. См. лог: ${yamlBuildLogFileUri.fsPath}`);
                 }
             } catch (e: any) {
-                 if (e.code === 'FileNotFound') throw new Error(`Файл результата сборки ${yamlBuildResultFileUri.fsPath} не найден.`);
+                 if (e.code === 'FileNotFound') throw new Error(`Файл результата сборки ${yamlBuildResultFileUri.fsPath} не найден после ожидания.`);
                  throw e; 
             }
             outputChannel.appendLine(`YAML build successful.`);
@@ -396,7 +396,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const vanessaErrorLogsDir = vscode.Uri.joinPath(absoluteBuildPathUri, "vanessa_error_logs");
             try { await vscode.workspace.fs.createDirectory(vanessaErrorLogsDir); } catch (e:any) { if(e.code !== 'EEXIST' && e.code !== 'FileExists') throw e;}
 
-            // 5. Замена параметров в .feature файлах
             outputChannel.appendLine(`Writing parameters from pipeline into tests...`);
             const featureFileDirUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'tests', 'EtalonDrive');
             const featureFilesPattern = new vscode.RelativePattern(featureFileDirUri, '**/*.feature');
@@ -434,7 +433,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 outputChannel.appendLine(`  Finished writing parameters from pipeline into tests.`);
             }
             
-            // 6. "Ремонт" специфичных feature файлов
             outputChannel.appendLine(`Repairing specific feature files...`);
             const filesToRepairRelative = [
                 'tests/EtalonDrive/001_Company_tests.feature',
@@ -444,7 +442,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const repairScriptEpfPath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'RepairTestFile.epf').fsPath;
 
             for (const relativePathSuffix of filesToRepairRelative) {
-                const featureFileToRepairUri = vscode.Uri.joinPath(featureFileDirUri, path.basename(relativePathSuffix)); // Строим путь от featureFileDirUri
+                const featureFileToRepairUri = vscode.Uri.joinPath(featureFileDirUri, path.basename(relativePathSuffix)); 
                 outputChannel.appendLine(`Checking for ${featureFileToRepairUri.fsPath}`);
                 try {
                     await vscode.workspace.fs.stat(featureFileToRepairUri); 
@@ -464,13 +462,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     if (error.code === 'FileNotFound') {
                         outputChannel.appendLine(`  Skipped: ${featureFileToRepairUri.fsPath} not found.`);
                     } else {
-                        throw new Error(`Ошибка при проверке/ремонте файла ${featureFileToRepairUri.fsPath}: ${error.message || error}`);
+                        outputChannel.appendLine(`--- WARNING: Error repairing file ${featureFileToRepairUri.fsPath}: ${error.message || error} ---`);
                     }
                 }
             }
             
             outputChannel.appendLine(`TypeScript YAML build process completed successfully.`);
-            sendStatus('Сборка тестов завершена успешно.', true, 'assemble');
+            sendStatus('Сборка тестов завершена успешно.', true, 'assemble', true); 
             vscode.window.showInformationMessage('Сборка тестов успешно завершена.');
 
         } catch (error: any) {
@@ -480,23 +478,36 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 outputChannel.appendLine(`Stack: ${error.stack}`);
             }
             vscode.window.showErrorMessage(`Ошибка сборки: ${error.message || error}. Смотрите Output.`);
-            sendStatus(`Ошибка сборки: ${error.message || error}`, true, 'assemble');
+            sendStatus(`Ошибка сборки: ${error.message || error}`, true, 'assemble', true); 
         }
     }
 
-    /**
-     * Вспомогательный метод для выполнения процесса 1С.
-     * @param exePath Путь к 1cv8.exe.
-     * @param args Массив аргументов для процесса.
-     * @param cwd Рабочая директория.
-     * @param processName Имя процесса для логирования.
-     * @returns Promise, который разрешается при успешном завершении или отклоняется при ошибке.
-     */
-    private execute1CProcess(exePath: string, args: string[], cwd: string, processName: string): Promise<void> {
+    private async execute1CProcess( // Добавлен async, так как внутри есть await
+        exePath: string, 
+        args: string[], 
+        cwd: string, 
+        processName: string,
+        completionMarker?: CompletionMarker
+    ): Promise<void> {
         const outputChannel = this.getOutputChannel();
+        
+        if (process.platform === 'darwin' && completionMarker && completionMarker.filePath) {
+            try {
+                await vscode.workspace.fs.delete(vscode.Uri.file(completionMarker.filePath), { useTrash: false });
+                outputChannel.appendLine(`Deleted previous marker file (if existed): ${completionMarker.filePath}`);
+            } catch (e: any) {
+                if (e.code === 'FileNotFound') {
+                    outputChannel.appendLine(`No previous marker file to delete: ${completionMarker.filePath}`);
+                } else {
+                    outputChannel.appendLine(`Warning: Could not delete marker file ${completionMarker.filePath}: ${e.message}`);
+                    // Не прерываем процесс, если не удалось удалить старый файл, но логируем
+                }
+            }
+        }
+
         return new Promise((resolve, reject) => {
             outputChannel.appendLine(`Executing 1C process: ${processName} with args: ${args.join(' ')}`);
-            const command = exePath.includes(' ') ? `"${exePath}"` : exePath;
+            const command = exePath.includes(' ') && !exePath.startsWith('"') ? `"${exePath}"` : exePath;
             
             const child = cp.spawn(command, args, {
                 cwd: cwd,
@@ -504,22 +515,83 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 windowsHide: true
             });
 
-            child.stdout?.on('data', (data) => { outputChannel.append(data.toString()); });
-            child.stderr?.on('data', (data) => { outputChannel.append(`STDERR for ${processName}: ${data.toString()}`); });
+            let stdoutData = '';
+            let stderrData = '';
+
+            child.stdout?.on('data', (data) => { 
+                const strData = data.toString();
+                stdoutData += strData;
+                outputChannel.append(strData); 
+            });
+            child.stderr?.on('data', (data) => { 
+                const strData = data.toString();
+                stderrData += strData;
+                outputChannel.append(`STDERR for ${processName}: ${strData}`); 
+            });
 
             child.on('error', (error) => {
                 outputChannel.appendLine(`--- ERROR STARTING 1C PROCESS ${processName}: ${error.message} ---`);
                 reject(new Error(`Ошибка запуска процесса ${processName}: ${error.message}`));
             });
 
-            child.on('close', (code) => {
-                outputChannel.appendLine(`--- 1C Process ${processName} finished with exit code ${code} ---`);
+            const handleClose = (code: number | null) => {
+                outputChannel.appendLine(`--- 1C Process ${processName} (launcher) finished with exit code ${code} ---`);
                 if (code !== 0 && code !== 255) { 
-                    reject(new Error(`Процесс ${processName} завершился с кодом ${code}.`));
+                    reject(new Error(`Процесс ${processName} (лаунчер) завершился с кодом ${code}. stderr: ${stderrData}`));
                 } else {
                     resolve();
                 }
-            });
+            };
+
+            if (process.platform === 'darwin' && completionMarker) {
+                outputChannel.appendLine(`macOS detected. Will poll for completion marker: ${completionMarker.filePath}`);
+                let pollInterval: NodeJS.Timeout;
+                const startTime = Date.now();
+                const timeoutMs = completionMarker.timeoutMs || 180000; 
+                const checkIntervalMs = completionMarker.checkIntervalMs || 2000; 
+
+                const checkCompletion = async () => {
+                    if (Date.now() - startTime > timeoutMs) {
+                        clearInterval(pollInterval);
+                        outputChannel.appendLine(`--- TIMEOUT waiting for completion marker for ${processName} ---`);
+                        reject(new Error(`Таймаут ожидания завершения процесса ${processName} по маркеру ${completionMarker.filePath}`));
+                        return;
+                    }
+
+                    try {
+                        await vscode.workspace.fs.stat(vscode.Uri.file(completionMarker.filePath!));
+                        outputChannel.appendLine(`Completion marker ${completionMarker.filePath} found for ${processName}.`);
+                        
+                        if (completionMarker.successContent) {
+                            const content = Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.file(completionMarker.filePath!))).toString('utf-8');
+                            if (content.includes(completionMarker.successContent)) {
+                                outputChannel.appendLine(`Success content "${completionMarker.successContent}" found in marker file.`);
+                                clearInterval(pollInterval);
+                                resolve();
+                            } else {
+                                outputChannel.appendLine(`Marker file found, but success content "${completionMarker.successContent}" NOT found. Continuing polling.`);
+                            }
+                        } else {
+                            clearInterval(pollInterval);
+                            resolve();
+                        }
+                    } catch (e: any) {
+                        if (e.code === 'FileNotFound') {
+                            outputChannel.appendLine(`Polling for ${completionMarker.filePath}... not found yet.`);
+                        } else {
+                            outputChannel.appendLine(`Error checking marker file ${completionMarker.filePath}: ${e.message}. Continuing polling.`);
+                        }
+                    }
+                };
+                child.on('close', (code) => {
+                     outputChannel.appendLine(`--- 1C Launcher ${processName} exited with code ${code}. Polling for completion continues... ---`);
+                });
+                pollInterval = setInterval(checkCompletion, checkIntervalMs);
+                checkCompletion(); 
+
+            } else {
+                child.on('close', handleClose);
+            }
         });
     }
 
@@ -563,7 +635,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const baseOffDirUri = vscode.Uri.joinPath(workspaceRootUri, 'RegressionTests_Disabled', 'Yaml', 'Drive');
 
         if (this._view.webview) {
-            this._view.webview.postMessage({ command: 'updateStatus', text: 'Применение изменений...', enableControls: false });
+            this._view.webview.postMessage({ command: 'updateStatus', text: 'Применение изменений...', enableControls: false, refreshButtonEnabled: false });
         } else {
             console.warn("[PhaseSwitcherProvider:_handleApplyChanges] Cannot send status, view is not available.");
         }
@@ -621,7 +693,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
             if (this._view?.webview) {
                 console.log("[PhaseSwitcherProvider] Refreshing state after apply...");
-                await this._sendInitialState(this._view.webview);
+                await this._sendInitialState(this._view.webview); 
             } else {
                 console.warn("[PhaseSwitcherProvider] Cannot refresh state after apply, view is not available.");
             }
