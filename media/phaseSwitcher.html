@@ -8,38 +8,42 @@
     <link href="${stylesUri}" rel="stylesheet">
 </head>
 <body>
-    <div class="main-content-area"> 
-        
-        <div class="phase-switcher-section"> 
-            <div class="controls-top-bar"> 
+    <div class="main-content-area">
+
+        <div class="phase-switcher-section">
+            <div class="controls-top-bar">
                  <h1>Phase Switcher</h1>
                  <div class="controls-top-buttons">
-                    <button class="button-with-icon" id="refreshBtn" title="Обновить состояние с диска">
-                        <span class="codicon codicon-refresh"></span>
-                    </button>
-                    <button class="button-with-icon" id="openSettingsBtn" title="Открыть настройки расширения">
+                    <button class="button-with-icon compact-top-btn" id="openSettingsBtn" title="Открыть настройки расширения">
                         <span class="codicon codicon-settings-gear"></span>
                     </button>
                 </div>
             </div>
 
-            <div id="phaseTreeContainer" class="phase-tree-container"> 
+            <div class="global-list-actions">
+                <button id="refreshBtn" class="button-with-icon compact-action-btn" title="Обновить состояние с диска">
+                    <span class="codicon codicon-refresh"></span>
+                </button>
+                <button id="collapseAllBtn" class="button-with-icon compact-action-btn" title="Свернуть/Развернуть все фазы">
+                    <span class="codicon codicon-list-tree"></span>
+                </button>
+                <button id="selectAllBtn" class="button-with-icon compact-action-btn" title="Переключить состояние всех чекбоксов">
+                    <span class="codicon codicon-checklist"></span>
+                </button>
+            </div>
+
+            <div id="phaseTreeContainer" class="phase-tree-container">
                 <p>Загрузка фаз и тестов...</p>
             </div>
 
-            <div class="phase-switcher-controls-fixed-bottom"> 
+            <div class="phase-switcher-controls-fixed-bottom">
                 <div class="phase-switcher-controls">
                     <div class="controls-row">
-                        <button id="selectAllBtn" class="button-with-icon">
-                            <span class="codicon codicon-check-all"></span>Переключить все
-                        </button>
                         <button id="selectDefaultsBtn" class="button-with-icon">
                             <span class="codicon codicon-discard"></span>По умолчанию
                         </button>
-                    </div>
-                    <div class="controls-row">
                         <button id="applyChangesBtn" class="button-with-icon">
-                            <span class="codicon codicon-rocket"></span>Применить изменения
+                            <span class="codicon codicon-rocket"></span>Применить
                         </button>
                     </div>
                 </div>

@@ -49,9 +49,69 @@ h1 {
 
 .controls-top-buttons {
     display: flex;
-    gap: 10px; 
+    /* justify-content: flex-end; /* Теперь кнопка Настройки будет справа */
 }
-
+/* Стили для компактных кнопок в верхней панели (Обновить, Настройки) */
+.compact-top-btn {
+    background-color: transparent;
+    color: var(--vscode-icon-foreground);
+    border: none;
+    padding: 4px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.compact-top-btn .codicon {
+    font-size: 14px;
+}
+.compact-top-btn:hover {
+    background-color: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+.compact-top-btn:disabled {
+    background-color: transparent;
+    color: var(--vscode-disabledForeground);
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+/* Блок для глобальных действий над списком (Обновить, Свернуть/Развернуть, Переключить все) */
+.global-list-actions {
+    display: flex;
+    justify-content: flex-end; /* Выравнивание кнопок справа */
+    align-items: center;
+    padding: 4px 0;
+    margin-bottom: 6px;
+    /* border-bottom: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border)); */
+    flex-shrink: 0;
+}
+.compact-action-btn {
+    background-color: transparent;
+    color: var(--vscode-icon-foreground);
+    border: none;
+    padding: 4px 6px;
+    margin-left: 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.compact-action-btn:first-child {
+    margin-left: 0; /* Убираем отступ у первой кнопки в группе, если нужно */
+}
+.compact-action-btn .codicon {
+    font-size: 18px;
+}
+.compact-action-btn:hover {
+    background-color: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+.compact-action-btn:disabled {
+    background-color: transparent;
+    color: var(--vscode-disabledForeground);
+    cursor: not-allowed;
+    opacity: 0.5;
+}
 #phaseTreeContainer {
     flex-grow: 1; 
     overflow-y: auto; 
@@ -196,10 +256,10 @@ h1 {
     padding: 5px 8px;     
 }
 
-.phase-switcher-controls #applyChangesBtn {
+/* .phase-switcher-controls #applyChangesBtn {
     width: 100%;
     flex-basis: 100%; 
-}
+} */
 
 #statusBar {
     color: var(--vscode-descriptionForeground);
@@ -349,8 +409,7 @@ label.checkbox-item.changed span.checkbox-label-text {
     white-space: nowrap;
 }
 
-#refreshBtn,
-#openSettingsBtn,
+/* Общие стили для кнопок в нижнем блоке управления */
 .phase-switcher-controls button, 
 #assembleTestsBtn {
     background-color: var(--vscode-button-background);
@@ -362,14 +421,10 @@ label.checkbox-item.changed span.checkbox-label-text {
     text-align: center;
     font-size: var(--vscode-font-size);
 }
-#refreshBtn:hover,
-#openSettingsBtn:hover,
 .phase-switcher-controls button:hover, 
 #assembleTestsBtn:hover {
     background-color: var(--vscode-button-hoverBackground);
 }
-#refreshBtn:disabled,
-#openSettingsBtn:disabled,
 .phase-switcher-controls button:disabled, 
 #assembleTestsBtn:disabled {
     background-color: var(--vscode-button-secondaryBackground); 
