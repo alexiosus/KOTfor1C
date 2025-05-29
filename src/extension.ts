@@ -7,13 +7,14 @@ import {
     insertNestedScenarioRefHandler,
     insertScenarioParamHandler,
     insertUidHandler
-} from './commandHandlers'; // Предполагается, что эти обработчики существуют и импортированы
+} from './commandHandlers';
 
-import { DriveCompletionProvider } from './completionProvider'; // Предполагается, что эти классы существуют и импортированы
+import { DriveCompletionProvider } from './completionProvider';
 import { DriveHoverProvider } from './hoverProvider';
 
 // Ключ для хранения пароля в SecretStorage (должен совпадать с ключом в phaseSwitcher.ts)
 const EMAIL_PASSWORD_KEY = '1cDriveHelper.emailPassword';
+const EXTERNAL_STEPS_URL_CONFIG_KEY = '1cDriveHelper.steps.externalUrl'; // Ключ для отслеживания изменений
 
 /**
  * Функция активации расширения. Вызывается VS Code при первом запуске команды расширения
@@ -46,9 +47,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.languages.registerCompletionItemProvider(
             { pattern: '**/*.yaml' }, // Применяется ко всем файлам .yaml в рабочей области
             completionProvider,
-            // Символы, после которых будет срабатывать автодополнение
             ' ', '.', ',', ':', ';', '(', ')', '"', "'",
-            // Буквы (для автодополнения сразу после начала ввода слова)
             'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
             'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
             'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
@@ -70,10 +69,10 @@ export function activate(context: vscode.ExtensionContext) {
         '1cDriveHelper.openSubscenario', openSubscenarioHandler
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.createNestedScenario', () => handleCreateNestedScenario(context) // Передаем context, если он нужен обработчику
+        '1cDriveHelper.createNestedScenario', () => handleCreateNestedScenario(context)
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.createMainScenario', () => handleCreateMainScenario(context) // Передаем context
+        '1cDriveHelper.createMainScenario', () => handleCreateMainScenario(context)
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         '1cDriveHelper.insertNestedScenarioRef', insertNestedScenarioRefHandler
@@ -94,10 +93,10 @@ export function activate(context: vscode.ExtensionContext) {
         '1cDriveHelper.setEmailPassword', async () => {
             // Запрашиваем ввод пароля у пользователя
             const password = await vscode.window.showInputBox({
-                prompt: 'Введите пароль для тестовой почты', // Текст подсказки
-                password: true, // Скрывать вводимые символы (отображать точки)
-                ignoreFocusOut: true, // Не закрывать окно ввода при потере фокуса
-                placeHolder: 'Пароль не будет сохранен в настройках' // Дополнительная подсказка
+                prompt: 'Введите пароль для тестовой почты',
+                password: true,
+                ignoreFocusOut: true,
+                placeHolder: 'Пароль не будет сохранен в настройках'
             });
 
             // Проверяем, что пользователь ввел значение и не нажал Escape (password !== undefined)
@@ -106,11 +105,11 @@ export function activate(context: vscode.ExtensionContext) {
                     try {
                         // Сохраняем пароль в безопасное хранилище VS Code
                         await context.secrets.store(EMAIL_PASSWORD_KEY, password);
-                        vscode.window.showInformationMessage('Пароль тестовой почты сохранен.'); // Уведомляем пользователя
+                        vscode.window.showInformationMessage('Пароль тестовой почты сохранен.');
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         console.error("Error saving password via command:", message);
-                        vscode.window.showErrorMessage(`Ошибка сохранения пароля: ${message}`); // Показываем ошибку, если сохранение не удалось
+                        vscode.window.showErrorMessage(`Ошибка сохранения пароля: ${message}`);
                     }
                 } else {
                     // Если пользователь ввел пустую строку, считаем это отменой
@@ -130,7 +129,7 @@ export function activate(context: vscode.ExtensionContext) {
             const confirmation = await vscode.window.showWarningMessage(
                 'Вы уверены, что хотите удалить сохраненный пароль тестовой почты?',
                 { modal: true }, // Делаем диалог модальным (блокирует остальной интерфейс)
-                'Удалить' // Текст кнопки подтверждения
+                'Удалить'
             );
 
             // Если пользователь нажал кнопку "Удалить"
@@ -138,11 +137,11 @@ export function activate(context: vscode.ExtensionContext) {
                 try {
                     // Удаляем пароль из безопасного хранилища
                     await context.secrets.delete(EMAIL_PASSWORD_KEY);
-                    vscode.window.showInformationMessage('Сохраненный пароль тестовой почты удален.'); // Уведомляем пользователя
+                    vscode.window.showInformationMessage('Сохраненный пароль тестовой почты удален.');
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
                     console.error("Error clearing password via command:", message);
-                    vscode.window.showErrorMessage(`Ошибка удаления пароля: ${message}`); // Показываем ошибку, если удаление не удалось
+                    vscode.window.showErrorMessage(`Ошибка удаления пароля: ${message}`);
                 }
             } else {
                  // Если пользователь закрыл диалог или нажал отмену
@@ -151,6 +150,36 @@ export function activate(context: vscode.ExtensionContext) {
         }
     ));
 
+    const refreshGherkinStepsCommand = async () => {
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "Обновление шагов Gherkin...",
+            cancellable: false
+        }, async (progress) => {
+            progress.report({ increment: 0, message: "Загрузка определений шагов..." });
+            try {
+                await completionProvider.refreshSteps();
+                progress.report({ increment: 50, message: "Обновление автодополнения завершено." });
+                await hoverProvider.refreshSteps();
+                progress.report({ increment: 100, message: "Обновление подсказок завершено." });
+            } catch (error: any) {
+                console.error("[refreshGherkinSteps Command] Error during refresh:", error.message);
+            }
+        });
+    };
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        '1cDriveHelper.refreshGherkinSteps', 
+        refreshGherkinStepsCommand // Используем созданную функцию
+    ));
+
+    // Слушатель изменения конфигурации
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async (event) => {
+        if (event.affectsConfiguration(EXTERNAL_STEPS_URL_CONFIG_KEY)) {
+            console.log(`[Extension] Configuration for '${EXTERNAL_STEPS_URL_CONFIG_KEY}' changed. Refreshing Gherkin steps.`);
+            await refreshGherkinStepsCommand(); // Вызываем функцию обновления
+        }
+    }));
 
     console.log('1cDriveHelper commands and providers registered.');
 }
@@ -161,6 +190,4 @@ export function activate(context: vscode.ExtensionContext) {
  */
 export function deactivate() {
      console.log('1cDriveHelper extension deactivated.');
-     // Здесь можно добавить код для очистки, если это необходимо
-     // (VS Code автоматически очистит ресурсы, добавленные в context.subscriptions)
 }

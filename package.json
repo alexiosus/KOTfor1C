@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -37,6 +37,12 @@
             "default": true,
             "description": "Включить панель \"Сборка Тестов\".",
             "order": 11
+          },
+          "1cDriveHelper.steps.externalUrl": {
+            "type": "string",
+            "default": "https://raw.githubusercontent.com/kakoytochelik/1cDriveTestHelper/main/res/steps.htm",
+            "description": "URL для загрузки файла steps.htm с определениями шагов Gherkin. Оставьте пустым, чтобы использовать файл из расширения.",
+            "order": 15
           }
         }
       },
@@ -54,7 +60,7 @@
             "default": null,
             "description": "Пароль для тестовой почты хранится в безопасном хранилище VS Code (`SecretStorage`) и задается через палитру команд (Ctrl+Shift+P):\n[1C:Drive - Установить пароль тестовой почты](command:1cDriveHelper.setEmailPassword 'Нажмите, чтобы установить пароль')\n[1C:Drive - Очистить пароль тестовой почты](command:1cDriveHelper.clearEmailPassword 'Нажмите, чтобы удалить сохраненный пароль')",
             "markdownDescription": "**Пароль тестовой почты**\n\nПароль хранится в безопасном хранилище VS Code (`SecretStorage`) и задается через палитру команд (Ctrl+Shift+P):\n* [`1C:Drive - Установить пароль тестовой почты`](command:1cDriveHelper.setEmailPassword 'Нажмите, чтобы установить пароль')\n* [`1C:Drive - Очистить пароль тестовой почты`](command:1cDriveHelper.clearEmailPassword 'Нажмите, чтобы удалить сохраненный пароль')",
-            "order": 21 
+            "order": 21
           },
           "1cDriveHelper.params.emailIncomingServer": {
             "type": "string",
@@ -188,6 +194,11 @@
         "command": "1cDriveHelper.insertUid",
         "title": "1C:Drive - Сгенерировать UID",
         "category": "1C:Drive Test Helper"
+      },
+      {
+        "command": "1cDriveHelper.refreshGherkinSteps",
+        "title": "1C:Drive - Обновить библиотеку шагов Gherkin",
+        "category": "1C:Drive Test Helper"
       }
     ],
     "keybindings": [
@@ -277,6 +288,10 @@
         },
         {
           "command": "1cDriveHelper.clearEmailPassword",
+          "when": "true"
+        },
+        {
+          "command": "1cDriveHelper.refreshGherkinSteps",
           "when": "true"
         }
       ]

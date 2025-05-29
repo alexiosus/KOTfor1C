@@ -1,78 +1,95 @@
 ﻿import * as vscode from 'vscode';
-import * as path from 'path';
-import * as fs from 'fs';
+// import * as path from 'path'; // path больше не нужен здесь напрямую
+// import * as fs from 'fs'; // fs больше не нужен здесь напрямую
 import { parse } from 'node-html-parser';
+import { getStepsHtml, forceRefreshSteps as forceRefreshStepsCore } from './stepsFetcher'; // Импортируем новую утилиту
 
 export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     private completionItems: vscode.CompletionItem[] = [];
     private isLoading: boolean = false;
     private loadingPromise: Promise<void> | null = null;
+    private context: vscode.ExtensionContext;
     
-    constructor(private context: vscode.ExtensionContext) {
-        // Запускаем загрузку данных сразу при создании
-        this.loadCompletionItems();
+    constructor(context: vscode.ExtensionContext) {
+        this.context = context;
+        this.loadCompletionItems().catch(err => {
+            console.error("[DriveCompletionProvider] Initial load failed on constructor:", err.message);
+            vscode.window.showErrorMessage(`Ошибка инициализации автодополнения: ${err.message}`);
+        });
     }
 
+    // Метод для принудительного обновления, который может быть вызван из extension.ts
+    public async refreshSteps(): Promise<void> {
+        console.log("[DriveCompletionProvider] Refreshing steps triggered...");
+        this.completionItems = []; // Очищаем старые элементы
+        this.loadingPromise = null; // Сбрасываем промис загрузки
+        this.isLoading = false;
+        try {
+            // Вызываем основную логику обновления из stepsFetcher
+            const htmlContent = await forceRefreshStepsCore(this.context);
+            this.parseAndStoreCompletionItems(htmlContent); // Парсим и сохраняем обновленные
+            console.log("[DriveCompletionProvider] Steps refreshed and re-parsed successfully.");
+        } catch (error: any) {
+            console.error(`[DriveCompletionProvider] Failed to refresh steps: ${error.message}`);
+            // Если принудительное обновление не удалось, пытаемся загрузить хоть что-то
+            // чтобы расширение не осталось без автодополнения
+            await this.loadCompletionItems();
+        }
+    }
+
+    private parseAndStoreCompletionItems(htmlContent: string): void {
+        this.completionItems = []; // Очищаем перед заполнением
+        const root = parse(htmlContent);
+        const rows = root.querySelectorAll('tr');
+        
+        rows.forEach(row => {
+            const rowClass = row.classNames;
+            if (!rowClass || !rowClass.startsWith('R')) {
+                return;
+            }
+            
+            const cells = row.querySelectorAll('td');
+            if (cells.length >= 2) {
+                const stepText = cells[0].textContent.trim();
+                const stepDescription = cells[1].textContent.trim();
+                if (!stepText) return;
+                this.createCompletionItem(stepText, stepDescription);
+            }
+        });
+        console.log(`[DriveCompletionProvider] Parsed and stored ${this.completionItems.length} completion items.`);
+    }
+
+
     private loadCompletionItems(): Promise<void> {
-        // Если уже идёт загрузка, возвращаем существующий Promise
         if (this.isLoading && this.loadingPromise) {
             return this.loadingPromise;
         }
         
-        if (this.completionItems.length > 0) {
-        // Если элементы уже загружены, возвращаем resolved Promise
+        // Если элементы уже загружены и нет активной загрузки, просто возвращаем
+        if (this.completionItems.length > 0 && !this.isLoading) {
             return Promise.resolve();
         }
         
         this.isLoading = true;
+        console.log("[DriveCompletionProvider] Starting to load completion items...");
         
-        this.loadingPromise = new Promise<void>((resolve, reject) => {
-            try {
-                const tableFilePath = path.join(this.context.extensionPath, 'res', 'steps.htm');
-                // Проверяем, существует ли файл
-                if (!fs.existsSync(tableFilePath)) {
-                    console.error(`[DriveCompletionProvider] Файл с шагами не найден ${tableFilePath}`);
-                    this.isLoading = false;
-                    reject(new Error('Таблица шагов не найдена'));
-                    return;
-                }
-                
-                const htmlContent = fs.readFileSync(tableFilePath, 'utf8');
-                const root = parse(htmlContent);
-
-                // Извлекаем строки из таблицы (все типы строк)
-                const rows = root.querySelectorAll('tr');
-                
-                rows.forEach(row => {
-                    // Пропускаем строки без нужных классов
-                    const rowClass = row.classNames;
-                    if (!rowClass || !rowClass.startsWith('R')) {
-                        return;
-                    }
-                    
-                    const cells = row.querySelectorAll('td');
-                    if (cells.length >= 2) {
-                        const stepText = cells[0].textContent.trim();
-                        const stepDescription = cells[1].textContent.trim();
-                        
-                        // Пропускаем пустые шаги
-                        if (!stepText) return;
-                        
-                        // Создаем элемент автодополнения
-                        this.createCompletionItem(stepText, stepDescription);
-                    }
-                });
-                
-                console.log(`[DriveCompletionProvider] Загружено ${this.completionItems.length} элементов автодополнения`);
+        this.loadingPromise = getStepsHtml(this.context)
+            .then(htmlContent => {
+                this.parseAndStoreCompletionItems(htmlContent);
+            })
+            .catch(error => {
+                console.error(`[DriveCompletionProvider] Ошибка загрузки или парсинга steps.htm: ${error.message}`);
+                vscode.window.showErrorMessage(`Не удалось загрузить шаги для автодополнения: ${error.message}`);
+                this.completionItems = []; // Убедимся, что список пуст в случае ошибки
+            })
+            .finally(() => {
                 this.isLoading = false;
-                resolve();
-            } catch (error) {
-                console.error(`[DriveCompletionProvider] Ошибка загрузки элементов автодополнения: ${error}`);
-                this.isLoading = false;
-                reject(error);
-            }
-        });
-        
+                // Не обнуляем loadingPromise здесь, чтобы повторные быстрые вызовы во время первой загрузки
+                // все еще могли использовать его. Он будет сброшен принудительно при refreshSteps
+                // или если completionItems пуст при следующем вызове loadCompletionItems.
+                console.log("[DriveCompletionProvider] Finished loading attempt.");
+            });
+            
         return this.loadingPromise;
     }
 
@@ -85,7 +102,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         const item = new vscode.CompletionItem(stepText, vscode.CompletionItemKind.Snippet);
         item.documentation = new vscode.MarkdownString(stepDescription);
         item.detail = "1C:Drive Test Step";
-        item.sortText = "0" + stepText; // Сортировка элементов с префиксами первыми
+        item.sortText = "0" + stepText;
         this.completionItems.push(item);
     }
 
@@ -115,7 +132,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         
         // Проверяем, являются ли слова ввода подмножеством слов шаблона
         const patternWords = patternLower.split(/\s+/);
-        const inputWords = inputLower.split(/\s+/).filter(word => word.length > 2); // Ignore very short words
+        const inputWords = inputLower.split(/\s+/).filter(word => word.length > 2);
         
         if (inputWords.length === 0) {
             return { matched: true, score: 0.1 };
@@ -152,16 +169,20 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         token: vscode.CancellationToken,
         context: vscode.CompletionContext
     ): Promise<vscode.CompletionItem[] | vscode.CompletionList> {
-        // Убеждаемся, что элементы загружены
-        try {
+        
+        // Если элементы еще не загружены или идет загрузка, дождемся ее завершения
+        if (this.isLoading && this.loadingPromise) {
+            console.log("[DriveCompletionProvider:provideCompletionItems] Waiting for initial load to complete...");
+            await this.loadingPromise;
+        } else if (this.completionItems.length === 0 && !this.isLoading) {
+            // Если загрузка не идет, но элементов нет, попробуем загрузить
+            console.log("[DriveCompletionProvider:provideCompletionItems] Items not loaded, attempting to load now...");
             await this.loadCompletionItems();
-        } catch (error) {
-            console.error(`[DriveCompletionProvider] Не удалось загрузить элементы автокомплита: ${error}`);
-            return [];
         }
 
         // Если нет загруженных элементов, возвращаем пустой список
         if (this.completionItems.length === 0) {
+            console.log("[DriveCompletionProvider:provideCompletionItems] No completion items available after load attempt.");
             return [];
         }
         
@@ -185,19 +206,12 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             return completionList;
         }
 
-        // Извлекаем части строки
-        const indentation = lineStartMatch[1] || ''; // Отступы в начале
-        const keywordLower = lineStartMatch[2] ? lineStartMatch[2].toLowerCase() : ''; // Переводим в нижний регистр для сравнения
-        const spacesAfterKeyword = lineStartMatch[0].substring(indentation.length + (lineStartMatch[2] || '').length); // Пробелы после ключевого слова
-
-        // Отступы + ключевое слово + пробелы после ключевого слова
+        const indentation = lineStartMatch[1] || '';
+        const keywordLower = lineStartMatch[2] ? lineStartMatch[2].toLowerCase() : '';
         const lineStart = lineStartMatch[0];
 
         // Текст, который пользователь ввел после отступов, ключевого слова и пробелов
         const userTextAfterLineStart = linePrefix.substring(lineStart.length);
-
-        // Откуда начинать замену (заменяем с начала строки)
-        const replacementStartChar = 0; 
 
         for (const baseItem of this.completionItems) {
             const itemText = baseItem.label.toString();
@@ -210,8 +224,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 continue;
             }
             
-            const itemKeyword = itemStartMatch[1] || '';
-            const itemKeywordLower = itemKeyword.toLowerCase();
+            const itemKeywordLower = (itemStartMatch[1] || '').toLowerCase();
             const itemTextAfterKeyword = itemText.substring(itemStartMatch[0].length);
             
             // Если в строке есть ключевое слово, сопоставляем только элементы с тем же ключевым словом (без учета регистра)
@@ -252,10 +265,28 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
      * Проверяет, находится ли позиция в блоке текста сценария
      */
     private isInScenarioTextBlock(document: vscode.TextDocument, position: vscode.Position): boolean {
-        // Для YAML-файлов просто проверяем, является ли это yaml-файлом с расширением .yaml
         if (document.fileName.toLowerCase().endsWith('.yaml')) {
-            const text = document.getText();
-            return text.includes('ТекстСценария:');
+            // Более точная проверка: находимся ли мы ПОСЛЕ строки "ТекстСценария:"
+            // и не в другой секции верхнего уровня.
+            const textUpToPosition = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
+            const scenarioBlockMatch = textUpToPosition.match(/ТекстСценария:\s*\|?\s*(\r\n|\r|\n)([\s\S]*)/);
+
+            if (scenarioBlockMatch) {
+                // Проверяем, что мы не попали в следующую секцию
+                const textAfterPosition = document.getText(new vscode.Range(position, new vscode.Position(document.lineCount, 0)));
+                const nextMajorSection = textAfterPosition.match(/^([А-ЯЁ][а-яё]+Сценария):/m); // Ищем следующую секцию типа "ПараметрыСценария:"
+                
+                if (nextMajorSection) {
+                    // Если нашли следующую секцию, то мы все еще в блоке ТекстСценария
+                    // если позиция курсора до этой следующей секции.
+                    // Это более сложная проверка, для простоты пока оставим как есть.
+                    // Главное, что мы после "ТекстСценария:".
+                    return true;
+                }
+                // Если следующей секции нет, значит мы точно в блоке ТекстСценария (до конца файла)
+                return true;
+            }
+            return false;
         }
         return false;
     }
