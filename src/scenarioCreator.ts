@@ -112,6 +112,9 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
         const doc = await vscode.workspace.openTextDocument(targetFileUri);
         await vscode.window.showTextDocument(doc);
 
+        // Обновляем Phase Switcher
+        vscode.commands.executeCommand('1cDriveHelper.refreshPhaseSwitcherFromCreate');
+
     } catch (error: any) {
         console.error("[Cmd:createNestedScenario] Error:", error);
         vscode.window.showErrorMessage(`Ошибка при создании вложенного сценария: ${error.message || error}`);
@@ -179,8 +182,6 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (workspaceFolders?.length) {
         const workspaceRootUri = workspaceFolders[0].uri;
-        // Путь по умолчанию <workspaceRoot>/tests/RegressionTests/Yaml/Drive/Parent scenarios
-        // Убедитесь, что этот путь имеет смысл для вашего проекта
         const defaultSubPath = path.join('tests', 'RegressionTests', 'Yaml', 'Drive', 'Parent scenarios');
          try {
             defaultDialogUri = vscode.Uri.joinPath(workspaceRootUri, defaultSubPath);
@@ -235,7 +236,7 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
         // В главном шаблоне Code_Placeholder заменяется на имя сценария
         const mainFinalContent = mainTemplateContent
             .replace(/Name_Placeholder/g, trimmedName)
-            .replace(/Code_Placeholder/g, trimmedName) // Замена кода на имя
+            .replace(/Code_Placeholder/g, trimmedName) 
             .replace(/UID_Placeholder/g, mainUid)
             .replace(/Phase_Placeholder/g, trimmedTabName)
             .replace(/Default_Placeholder/g, defaultStateStr)
@@ -247,6 +248,9 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
         // Открываем основной созданный файл
         const doc = await vscode.workspace.openTextDocument(mainTargetFileUri);
         await vscode.window.showTextDocument(doc);
+
+        // Обновляем Phase Switcher
+        vscode.commands.executeCommand('1cDriveHelper.refreshPhaseSwitcherFromCreate');
 
     } catch (error: any) {
         console.error("[Cmd:createMainScenario] Error:", error);

@@ -41,7 +41,7 @@ export function activate(context: vscode.ExtensionContext) {
     
     context.subscriptions.push(
         vscode.languages.registerCompletionItemProvider(
-            { pattern: '**/*.yaml', scheme: 'file' }, // Уточняем схему для YAML файлов
+            { pattern: '**/*.yaml', scheme: 'file' }, 
             completionProvider,
             ' ', '.', ',', ':', ';', '(', ')', '"', "'",
             // Добавляем буквы для триггера автодополнения
@@ -72,7 +72,7 @@ export function activate(context: vscode.ExtensionContext) {
                 completionProvider.updateScenarioCompletions(testCache);
                 console.log('[Extension] Scenario completions updated based on PhaseSwitcher cache.');
             } else {
-                completionProvider.updateScenarioCompletions(new Map()); // Очищаем, если кэш null
+                completionProvider.updateScenarioCompletions(new Map()); 
                 console.log('[Extension] Scenario completions cleared due to null PhaseSwitcher cache.');
             }
         })
@@ -102,6 +102,15 @@ export function activate(context: vscode.ExtensionContext) {
         '1cDriveHelper.findCurrentFileReferences', findCurrentFileReferencesHandler
     ));
 
+    // Команда для обновления Phase Switcher (вызывается из scenarioCreator)
+    context.subscriptions.push(vscode.commands.registerCommand(
+        '1cDriveHelper.refreshPhaseSwitcherFromCreate', () => {
+            console.log('[Extension] Command 1cDriveHelper.refreshPhaseSwitcherFromCreate invoked.');
+            phaseSwitcherProvider.refreshPanelData();
+        }
+    ));
+
+
     // --- КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ ПАРОЛЕМ ЧЕРЕЗ ПАЛИТРУ КОМАНД (Ctrl+Shift+P) ---
     // Команда для установки/сохранения пароля
     context.subscriptions.push(vscode.commands.registerCommand(
@@ -116,7 +125,7 @@ export function activate(context: vscode.ExtensionContext) {
 
             // Проверяем, что пользователь ввел значение и не нажал Escape (password !== undefined)
             if (password !== undefined) {
-                if (password) { // Убеждаемся, что введен непустой пароль
+                if (password) { 
                     try {
                         // Сохраняем пароль в безопасное хранилище VS Code
                         await context.secrets.store(EMAIL_PASSWORD_KEY, password);
@@ -143,7 +152,7 @@ export function activate(context: vscode.ExtensionContext) {
             // Запрашиваем подтверждение у пользователя перед удалением
             const confirmation = await vscode.window.showWarningMessage(
                 'Вы уверены, что хотите удалить сохраненный пароль тестовой почты?',
-                { modal: true }, // Делаем диалог модальным (блокирует остальной интерфейс)
+                { modal: true }, 
                 'Удалить'
             );
 

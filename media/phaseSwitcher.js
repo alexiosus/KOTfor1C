@@ -9,17 +9,23 @@
     let initialTestStates = {};
     let currentCheckboxStates = {};
     let testDefaultStates = {};
-    let phaseExpandedState = {}; // Состояние раскрытия для каждой фазы
+    let phaseExpandedState = {}; 
     let settings = {
         assemblerEnabled: true,
         switcherEnabled: true
     };
-    let areAllPhasesCurrentlyExpanded = false; // Для отслеживания состояния всех групп
+    let areAllPhasesCurrentlyExpanded = false; 
 
     // === Получение ссылок на элементы DOM ===
     const refreshBtn = document.getElementById('refreshBtn');
     const openSettingsBtn = document.getElementById('openSettingsBtn');
     const collapseAllBtn = document.getElementById('collapseAllBtn');
+    
+    // Новые элементы для выпадающего меню
+    const addScenarioDropdownBtn = document.getElementById('addScenarioDropdownBtn');
+    const addScenarioDropdownContent = document.getElementById('addScenarioDropdownContent');
+    const createMainScenarioFromDropdownBtn = document.getElementById('createMainScenarioFromDropdownBtn');
+    const createNestedScenarioFromDropdownBtn = document.getElementById('createNestedScenarioFromDropdownBtn');
 
     const phaseSwitcherSectionElements = document.querySelectorAll('.phase-switcher-section');
     const phaseTreeContainer = document.getElementById('phaseTreeContainer');
@@ -66,6 +72,10 @@
             const hasPhases = Object.keys(testDataByPhase).length > 0;
             collapseAllBtn.disabled = !(refreshButtonEnabled && hasPhases && settings.switcherEnabled);
         }
+        // Кнопка создания сценариев (плюс)
+        if (addScenarioDropdownBtn instanceof HTMLButtonElement) {
+            addScenarioDropdownBtn.disabled = !settings.switcherEnabled;
+        }
         log(`Status updated [${target}]: ${text}. Refresh button enabled: ${refreshButtonEnabled === undefined ? 'unchanged' : refreshButtonEnabled}`);
     }
 
@@ -86,6 +96,11 @@
             const hasPhases = Object.keys(testDataByPhase).length > 0;
             collapseAllBtn.disabled = isDisabled || !hasPhases;
         }
+        
+        if (addScenarioDropdownBtn instanceof HTMLButtonElement) {
+            addScenarioDropdownBtn.disabled = !isPhaseSwitcherVisible;
+        }
+
 
         if (phaseTreeContainer) {
             const checkboxes = phaseTreeContainer.querySelectorAll('input[type="checkbox"]');
@@ -155,7 +170,7 @@
         const name = testInfo.name;
         const relativePath = testInfo.relativePath || '';
         const defaultState = !!testInfo.defaultState;
-        const safeName = name.replace(/[^a-zA-Z0-9_\\-]/g, '_'); // Для ID
+        const safeName = name.replace(/[^a-zA-Z0-9_\\-]/g, '_'); 
         const escapedNameAttr = escapeHtmlAttr(name);
         const escapedTitleAttr = escapeHtmlAttr(relativePath);
         const fileUriString = testInfo.yamlFileUriString || '';
@@ -683,6 +698,11 @@
 
                     const switcherDisplay = phaseSwitcherVisible ? '' : 'none';
                     phaseSwitcherSectionElements.forEach(el => { if (el instanceof HTMLElement) el.style.display = switcherDisplay; });
+                    
+                    if (addScenarioDropdownBtn instanceof HTMLButtonElement) { // Управление видимостью новой кнопки
+                        addScenarioDropdownBtn.style.display = phaseSwitcherVisible ? 'inline-flex' : 'none';
+                    }
+
 
                     if (assembleSection instanceof HTMLElement) {
                         assembleSection.style.display = assemblerVisible ? 'block' : 'none';
@@ -788,6 +808,44 @@
     if (collapseAllBtn instanceof HTMLButtonElement) {
         collapseAllBtn.addEventListener('click', handleCollapseAllClick);
     }
+
+    // Обработчики для новой кнопки и выпадающего меню
+    if (addScenarioDropdownBtn && addScenarioDropdownContent) {
+        addScenarioDropdownBtn.addEventListener('click', (event) => {
+            event.stopPropagation(); // Предотвращаем закрытие при клике на кнопку
+            const container = addScenarioDropdownBtn.closest('.dropdown-container');
+            container?.classList.toggle('show');
+            log('Add scenario dropdown toggled.');
+        });
+
+        if (createMainScenarioFromDropdownBtn) {
+            createMainScenarioFromDropdownBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                log('Create Main Scenario from dropdown clicked.');
+                vscode.postMessage({ command: 'createMainScenario' });
+                addScenarioDropdownBtn.closest('.dropdown-container')?.classList.remove('show');
+            });
+        }
+
+        if (createNestedScenarioFromDropdownBtn) {
+            createNestedScenarioFromDropdownBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                log('Create Nested Scenario from dropdown clicked.');
+                vscode.postMessage({ command: 'createNestedScenario' });
+                addScenarioDropdownBtn.closest('.dropdown-container')?.classList.remove('show');
+            });
+        }
+    }
+    // Закрытие выпадающего списка при клике вне его
+    window.addEventListener('click', (event) => {
+        if (addScenarioDropdownBtn && addScenarioDropdownContent) {
+            const container = addScenarioDropdownBtn.closest('.dropdown-container');
+            if (container && !container.contains(event.target)) {
+                container.classList.remove('show');
+            }
+        }
+    });
+
 
     if(assembleBtn instanceof HTMLButtonElement) {
         assembleBtn.addEventListener('click', () => {

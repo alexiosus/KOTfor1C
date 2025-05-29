@@ -21,6 +21,19 @@
             </div>
 
             <div class="global-list-actions">
+                <div class="dropdown-container">
+                    <button id="addScenarioDropdownBtn" class="button-with-icon compact-action-btn" title="Создать сценарий">
+                        <span class="codicon codicon-add"></span>
+                    </button>
+                    <div id="addScenarioDropdownContent" class="dropdown-content">
+                        <a href="#" id="createMainScenarioFromDropdownBtn" class="dropdown-item">
+                            <span class="codicon codicon-code-oss"></span> Главный сценарий
+                        </a>
+                        <a href="#" id="createNestedScenarioFromDropdownBtn" class="dropdown-item">
+                            <span class="codicon codicon-references"></span> Вложенный сценарий
+                        </a>
+                    </div>
+                </div>
                 <button id="refreshBtn" class="button-with-icon compact-action-btn" title="Обновить состояние с диска">
                     <span class="codicon codicon-refresh"></span>
                 </button>

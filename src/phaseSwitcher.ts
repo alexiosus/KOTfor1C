@@ -74,6 +74,20 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return this._outputChannel;
     }
 
+    /**
+     * Публичный метод для принудительного обновления данных панели.
+     * Может быть вызван извне, например, после создания нового сценария.
+     */
+    public async refreshPanelData() {
+        if (this._view && this._view.webview && this._view.visible) {
+            console.log("[PhaseSwitcherProvider] Refreshing panel data programmatically...");
+            await this._sendInitialState(this._view.webview);
+        } else {
+            console.log("[PhaseSwitcherProvider] Panel not visible or not resolved, cannot refresh programmatically yet. Will refresh on next resolve/show.");
+            // Можно установить флаг, чтобы _sendInitialState вызвался при следующем resolveWebviewView или onDidChangeVisibility
+        }
+    }
+
 
     public async resolveWebviewView(
         webviewView: vscode.WebviewView,
@@ -129,7 +143,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 case 'getInitialState': 
                 case 'refreshData': 
                     await this._sendInitialState(webviewView.webview);
-                    // Событие _onDidUpdateTestCache.fire(this._testCache) теперь вызывается ВНУТРИ _sendInitialState
                     return;
                 case 'log':
                     console.log(message.text);
@@ -160,24 +173,46 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     console.log("[PhaseSwitcherProvider] Opening extension settings...");
                     vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper');
                     return;
+                case 'createMainScenario':
+                    console.log("[PhaseSwitcherProvider] Received createMainScenario command from webview.");
+                    vscode.commands.executeCommand('1cDriveHelper.createMainScenario');
+                    return;
+                case 'createNestedScenario':
+                    console.log("[PhaseSwitcherProvider] Received createNestedScenario command from webview.");
+                    vscode.commands.executeCommand('1cDriveHelper.createNestedScenario');
+                    return;
             }
         }, undefined, this._context.subscriptions);
+
+        // Добавляем обработчик изменения видимости
+        webviewView.onDidChangeVisibility(async () => {
+            if (webviewView.visible) {
+                console.log("[PhaseSwitcherProvider] View became visible. Refreshing state.");
+                await this._sendInitialState(webviewView.webview);
+            }
+        }, null, this._context.subscriptions);
+
 
         webviewView.onDidDispose(() => {
             console.log("[PhaseSwitcherProvider] View disposed.");
             this._view = undefined;
         }, null, this._context.subscriptions);
 
+        // Первоначальная загрузка данных при первом разрешении
+        if (webviewView.visible) {
+            await this._sendInitialState(webviewView.webview);
+        }
+
         console.log("[PhaseSwitcherProvider] Webview resolved successfully.");
     }
 
     private async _sendInitialState(webview: vscode.Webview) {
         if (this._isScanning) {
-            console.log("[PhaseSwitcherProvider-v6:_sendInitialState] Scan already in progress...");
+            console.log("[PhaseSwitcherProvider:_sendInitialState] Scan already in progress...");
             webview.postMessage({ command: 'updateStatus', text: 'Идет сканирование...' });
             return;
         }
-        console.log("[PhaseSwitcherProvider-v6:_sendInitialState] Preparing and sending initial state...");
+        console.log("[PhaseSwitcherProvider:_sendInitialState] Preparing and sending initial state...");
         webview.postMessage({ command: 'updateStatus', text: 'Сканирование файлов...', enableControls: false, refreshButtonEnabled: false });
 
         const config = vscode.workspace.getConfiguration('1cDriveHelper.features');
@@ -196,8 +231,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const workspaceRootUri = workspaceFolders[0].uri;
 
         this._isScanning = true;
-        this._testCache = await scanWorkspaceForTests(workspaceRootUri); // scanWorkspaceForTests теперь возвращает ВСЕ сценарии
-        this._isScanning = false;
+        try {
+            this._testCache = await scanWorkspaceForTests(workspaceRootUri); 
+        } catch (scanError: any) {
+            console.error("[PhaseSwitcherProvider:_sendInitialState] Error during scanWorkspaceForTests:", scanError);
+            vscode.window.showErrorMessage(`Ошибка сканирования файлов сценариев: ${scanError.message}`);
+            this._testCache = null;
+        } finally {
+            this._isScanning = false;
+        }
+
 
         let states: { [key: string]: 'checked' | 'unchecked' | 'disabled' } = {};
         let status = "Ошибка сканирования или тесты не найдены";
@@ -246,7 +289,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             status = "Тесты не найдены или ошибка сканирования.";
         }
 
-        console.log(`[PhaseSwitcherProvider-v6:_sendInitialState] State check complete. Status: ${status}`);
+        console.log(`[PhaseSwitcherProvider:_sendInitialState] State check complete. Status: ${status}`);
 
         webview.postMessage({
             command: 'loadInitialState',
@@ -265,7 +308,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private async _handleRunAssembleScriptTypeScript(recordGLValue: string, driveTradeValue: string): Promise<void> {
-        const methodStartLog = "[PhaseSwitcherProvider-v6:_handleRunAssembleScriptTypeScript]";
+        const methodStartLog = "[PhaseSwitcherProvider:_handleRunAssembleScriptTypeScript]";
         console.log(`${methodStartLog} Starting with RecordGL=${recordGLValue}, DriveTrade=${driveTradeValue}`);
         const outputChannel = this.getOutputChannel();
         outputChannel.clear();
@@ -657,14 +700,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private async _handleApplyChanges(states: { [testName: string]: boolean }) {
-        console.log("[PhaseSwitcherProvider-v6:_handleApplyChanges] Starting...");
+        console.log("[PhaseSwitcherProvider:_handleApplyChanges] Starting...");
         if (!this._view || !this._testCache) { 
-            console.warn("[PhaseSwitcherProvider-v6:_handleApplyChanges] View or testCache is not available.");
+            console.warn("[PhaseSwitcherProvider:_handleApplyChanges] View or testCache is not available.");
             return; 
         }
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders?.length) { 
-            console.warn("[PhaseSwitcherProvider-v6:_handleApplyChanges] No workspace folder open.");
+            console.warn("[PhaseSwitcherProvider:_handleApplyChanges] No workspace folder open.");
             return; 
         }
         const workspaceRootUri = workspaceFolders[0].uri;
@@ -675,7 +718,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (this._view.webview) {
             this._view.webview.postMessage({ command: 'updateStatus', text: 'Применение изменений...', enableControls: false, refreshButtonEnabled: false });
         } else {
-            console.warn("[PhaseSwitcherProvider-v6:_handleApplyChanges] Cannot send status, webview is not available.");
+            console.warn("[PhaseSwitcherProvider:_handleApplyChanges] Cannot send status, webview is not available.");
         }
 
         await vscode.window.withProgress({
