@@ -214,7 +214,7 @@ export async function forceRefreshSteps(context: vscode.ExtensionContext): Promi
     // getStepsHtml с forceRemote=true сделает всю работу: загрузит, сохранит в кеш.
     try {
         const htmlContent = await getStepsHtml(context, true);
-        vscode.window.showInformationMessage('Шаги успешно обновлены с внешнего ресурса.');
+        vscode.window.showInformationMessage('Библиотека шагов успешно обновлена.');
         return htmlContent;
     } catch (error: any) {
         console.error(`[StepsFetcher:forceRefreshSteps] Error during forced refresh: ${error.message}`);

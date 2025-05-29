@@ -1,7 +1,7 @@
 ﻿import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import * as path from 'path';
-import * as fs from 'fs'; // Используем fs для синхронной проверки существования файла, если нужно
+import * as fs from 'fs'; 
 import { scanWorkspaceForTests, SCAN_DIR_RELATIVE_PATH } from './workspaceScanner';
 import { TestInfo } from './types';
 
@@ -19,10 +19,10 @@ function getNonce(): string {
 }
 
 interface CompletionMarker {
-    filePath: string; // Путь к файлу, который сигнализирует о завершении
-    successContent?: string; // Ожидаемое содержимое при успехе (если null, проверяется только существование)
-    checkIntervalMs?: number; // Интервал проверки в мс
-    timeoutMs?: number; // Таймаут ожидания в мс
+    filePath: string; 
+    successContent?: string; 
+    checkIntervalMs?: number; 
+    timeoutMs?: number; 
 }
 
 
@@ -38,6 +38,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _testCache: Map<string, TestInfo> | null = null;
     private _isScanning: boolean = false;
     private _outputChannel: vscode.OutputChannel | undefined;
+
+    // Событие, которое будет генерироваться после обновления _testCache
+    private _onDidUpdateTestCache: vscode.EventEmitter<Map<string, TestInfo> | null> = new vscode.EventEmitter<Map<string, TestInfo> | null>();
+    public readonly onDidUpdateTestCache: vscode.Event<Map<string, TestInfo> | null> = this._onDidUpdateTestCache.event;
 
 
     constructor(extensionUri: vscode.Uri, context: vscode.ExtensionContext) {
@@ -122,9 +126,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         this._view?.webview.postMessage({ command: 'updateStatus', text: 'Ошибка: неверные данные.', enableControls: true });
                     }
                     return;
-                case 'getInitialState':
-                case 'refreshData':
+                case 'getInitialState': 
+                case 'refreshData': 
                     await this._sendInitialState(webviewView.webview);
+                    // Событие _onDidUpdateTestCache.fire(this._testCache) теперь вызывается ВНУТРИ _sendInitialState
                     return;
                 case 'log':
                     console.log(message.text);
@@ -168,11 +173,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private async _sendInitialState(webview: vscode.Webview) {
         if (this._isScanning) {
-            console.log("[PhaseSwitcherProvider:_sendInitialState] Scan already in progress...");
+            console.log("[PhaseSwitcherProvider-v6:_sendInitialState] Scan already in progress...");
             webview.postMessage({ command: 'updateStatus', text: 'Идет сканирование...' });
             return;
         }
-        console.log("[PhaseSwitcherProvider:_sendInitialState] Preparing and sending initial state...");
+        console.log("[PhaseSwitcherProvider-v6:_sendInitialState] Preparing and sending initial state...");
         webview.postMessage({ command: 'updateStatus', text: 'Сканирование файлов...', enableControls: false, refreshButtonEnabled: false });
 
         const config = vscode.workspace.getConfiguration('1cDriveHelper.features');
@@ -184,18 +189,22 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             vscode.window.showErrorMessage("Пожалуйста, откройте папку проекта.");
             webview.postMessage({ command: 'loadInitialState', error: "Папка проекта не открыта" });
             webview.postMessage({ command: 'updateStatus', text: 'Ошибка: Папка проекта не открыта', refreshButtonEnabled: true });
+            this._testCache = null; 
+            this._onDidUpdateTestCache.fire(this._testCache); // Уведомляем об отсутствии данных
             return;
         }
         const workspaceRootUri = workspaceFolders[0].uri;
 
         this._isScanning = true;
-        this._testCache = await scanWorkspaceForTests(workspaceRootUri);
+        this._testCache = await scanWorkspaceForTests(workspaceRootUri); // scanWorkspaceForTests теперь возвращает ВСЕ сценарии
         this._isScanning = false;
 
         let states: { [key: string]: 'checked' | 'unchecked' | 'disabled' } = {};
         let status = "Ошибка сканирования или тесты не найдены";
-        let tabData: { [tabName: string]: TestInfo[] } = {};
+        let tabDataForUI: { [tabName: string]: TestInfo[] } = {}; // Данные только для UI Phase Switcher
         let checkedCount = 0;
+        let testsForPhaseSwitcherCount = 0;
+
 
         if (this._testCache) {
             status = "Проверка состояния тестов...";
@@ -204,7 +213,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const baseOnDirUri = vscode.Uri.joinPath(workspaceRootUri, SCAN_DIR_RELATIVE_PATH);
             const baseOffDirUri = vscode.Uri.joinPath(workspaceRootUri, 'RegressionTests_Disabled', 'Yaml', 'Drive');
 
-            await Promise.all(Array.from(this._testCache.values()).map(async (info) => {
+            const testsForPhaseSwitcherProcessing: TestInfo[] = [];
+            this._testCache.forEach(info => {
+                // Для Phase Switcher UI используем только тесты, у которых есть tabName
+                if (info.tabName && typeof info.tabName === 'string' && info.tabName.trim() !== "") {
+                    testsForPhaseSwitcherProcessing.push(info);
+                }
+            });
+            testsForPhaseSwitcherCount = testsForPhaseSwitcherProcessing.length;
+
+
+            await Promise.all(testsForPhaseSwitcherProcessing.map(async (info) => {
                 const onPathTestDir = vscode.Uri.joinPath(baseOnDirUri, info.relativePath, 'test');
                 const offPathTestDir = vscode.Uri.joinPath(baseOffDirUri, info.relativePath, 'test');
                 let stateResult: 'checked' | 'unchecked' | 'disabled' = 'disabled';
@@ -217,30 +236,36 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     checkedCount++;
                 }
             }));
+            
+            // Группируем и сортируем данные только для тех тестов, что идут в UI
+            tabDataForUI = this._groupAndSortTestData(new Map(testsForPhaseSwitcherProcessing.map(info => [info.name, info])));
 
-            status = `Состояние загружено: \n${checkedCount} / ${this._testCache.size} включено`;
-            tabData = this._groupAndSortTestData(this._testCache);
+
+            status = `Состояние загружено: \n${checkedCount} / ${testsForPhaseSwitcherCount} включено`;
         } else {
             status = "Тесты не найдены или ошибка сканирования.";
         }
 
-        console.log(`[PhaseSwitcherProvider:_sendInitialState] State check complete. Status: ${status}`);
+        console.log(`[PhaseSwitcherProvider-v6:_sendInitialState] State check complete. Status: ${status}`);
 
         webview.postMessage({
             command: 'loadInitialState',
-            tabData: tabData,
+            tabData: tabDataForUI, // Передаем отфильтрованные и сгруппированные данные для UI
             states: states,
             settings: {
                 assemblerEnabled: assemblerEnabled,
                 switcherEnabled: switcherEnabled
             },
-            error: !this._testCache ? status : undefined
+            error: !this._testCache ? status : undefined // Ошибка, если _testCache пуст
         });
-        webview.postMessage({ command: 'updateStatus', text: status, enableControls: !!this._testCache, refreshButtonEnabled: true });
+        webview.postMessage({ command: 'updateStatus', text: status, enableControls: !!this._testCache && testsForPhaseSwitcherCount > 0, refreshButtonEnabled: true });
+        
+        // Генерируем событие с ПОЛНЫМ кэшем для других компонентов (например, CompletionProvider)
+        this._onDidUpdateTestCache.fire(this._testCache);
     }
 
     private async _handleRunAssembleScriptTypeScript(recordGLValue: string, driveTradeValue: string): Promise<void> {
-        const methodStartLog = "[PhaseSwitcherProvider:_handleRunAssembleScriptTypeScript]";
+        const methodStartLog = "[PhaseSwitcherProvider-v6:_handleRunAssembleScriptTypeScript]";
         console.log(`${methodStartLog} Starting with RecordGL=${recordGLValue}, DriveTrade=${driveTradeValue}`);
         const outputChannel = this.getOutputChannel();
         outputChannel.clear();
@@ -482,7 +507,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async execute1CProcess( // Добавлен async, так как внутри есть await
+    private async execute1CProcess( 
         exePath: string, 
         args: string[], 
         cwd: string, 
@@ -500,7 +525,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     outputChannel.appendLine(`No previous marker file to delete: ${completionMarker.filePath}`);
                 } else {
                     outputChannel.appendLine(`Warning: Could not delete marker file ${completionMarker.filePath}: ${e.message}`);
-                    // Не прерываем процесс, если не удалось удалить старый файл, но логируем
                 }
             }
         }
@@ -595,28 +619,36 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         });
     }
 
-
-    private _groupAndSortTestData(cache: Map<string, TestInfo>): { [tabName: string]: TestInfo[] } {
+    /**
+     * Группирует и сортирует данные тестов для отображения в Phase Switcher.
+     * Использует только тесты, у которых есть tabName.
+     */
+    private _groupAndSortTestData(testCacheForUI: Map<string, TestInfo>): { [tabName: string]: TestInfo[] } {
         const grouped: { [tabName: string]: TestInfo[] } = {};
-        if (!cache) {
+        if (!testCacheForUI) {
             return grouped;
         }
 
-        for (const info of cache.values()) {
-            let finalUriString = '';
-            if (info.yamlFileUri && typeof info.yamlFileUri.toString === 'function') {
-                finalUriString = info.yamlFileUri.toString();
-            }
-            const infoWithUriString = { ...info, yamlFileUriString: finalUriString };
+        for (const info of testCacheForUI.values()) {
+            // Убедимся, что tabName существует и является строкой для группировки
+            if (info.tabName && typeof info.tabName === 'string' && info.tabName.trim() !== "") {
+                let finalUriString = '';
+                if (info.yamlFileUri && typeof info.yamlFileUri.toString === 'function') {
+                    finalUriString = info.yamlFileUri.toString();
+                }
+                const infoWithUriString = { ...info, yamlFileUriString: finalUriString };
 
-            if (!grouped[info.tabName]) { grouped[info.tabName] = []; }
-            grouped[info.tabName].push(infoWithUriString);
+                if (!grouped[info.tabName]) { grouped[info.tabName] = []; }
+                grouped[info.tabName].push(infoWithUriString);
+            }
         }
 
         for (const tabName in grouped) {
             grouped[tabName].sort((a, b) => {
-                if (a.order !== b.order) {
-                    return a.order - b.order;
+                const orderA = a.order !== undefined ? a.order : Infinity;
+                const orderB = b.order !== undefined ? b.order : Infinity;
+                if (orderA !== orderB) {
+                    return orderA - orderB;
                 }
                 return a.name.localeCompare(b.name);
             });
@@ -625,10 +657,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private async _handleApplyChanges(states: { [testName: string]: boolean }) {
-        console.log("[PhaseSwitcherProvider:_handleApplyChanges] Starting...");
-        if (!this._view || !this._testCache) { return; }
+        console.log("[PhaseSwitcherProvider-v6:_handleApplyChanges] Starting...");
+        if (!this._view || !this._testCache) { 
+            console.warn("[PhaseSwitcherProvider-v6:_handleApplyChanges] View or testCache is not available.");
+            return; 
+        }
         const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders?.length) { return; }
+        if (!workspaceFolders?.length) { 
+            console.warn("[PhaseSwitcherProvider-v6:_handleApplyChanges] No workspace folder open.");
+            return; 
+        }
         const workspaceRootUri = workspaceFolders[0].uri;
 
         const baseOnDirUri = vscode.Uri.joinPath(workspaceRootUri, SCAN_DIR_RELATIVE_PATH);
@@ -637,7 +675,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (this._view.webview) {
             this._view.webview.postMessage({ command: 'updateStatus', text: 'Применение изменений...', enableControls: false, refreshButtonEnabled: false });
         } else {
-            console.warn("[PhaseSwitcherProvider:_handleApplyChanges] Cannot send status, view is not available.");
+            console.warn("[PhaseSwitcherProvider-v6:_handleApplyChanges] Cannot send status, webview is not available.");
         }
 
         await vscode.window.withProgress({
@@ -653,7 +691,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 progress.report({ increment: increment , message: `Обработка ${name}...` });
 
                 const info = this._testCache!.get(name);
-                if (!info) { stats.error++; continue; }
+                // Применяем изменения только для тестов, которые имеют tabName (т.е. управляются через Phase Switcher)
+                if (!info || !info.tabName) { 
+                    // console.log(`[PhaseSwitcherProvider-v6:_handleApplyChanges] Skipping "${name}" as it's not part of Phase Switcher UI (no tabName).`);
+                    stats.skipped++; 
+                    continue; 
+                }
 
                 const onPathTestDir = vscode.Uri.joinPath(baseOnDirUri, info.relativePath, 'test');
                 const offPathTestDir = vscode.Uri.joinPath(baseOffDirUri, info.relativePath, 'test');
@@ -686,13 +729,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
             }
 
-            const resultMessage = `Включено: ${stats.enabled}, Выключено: ${stats.disabled}, Пропущено: ${stats.skipped}, Ошибки: ${stats.error}`;
+            const resultMessage = `Включено: ${stats.enabled}, Выключено: ${stats.disabled}, Пропущено (не в UI): ${stats.skipped}, Ошибки: ${stats.error}`;
             if (stats.error > 0) { vscode.window.showWarningMessage(`Изменения применены с ошибками! ${resultMessage}`); }
             else if (stats.enabled > 0 || stats.disabled > 0) { vscode.window.showInformationMessage(`Изменения фаз успешно применены! ${resultMessage}`); }
             else { vscode.window.showInformationMessage(`Изменения фаз: нечего применять. ${resultMessage}`); }
 
             if (this._view?.webview) {
                 console.log("[PhaseSwitcherProvider] Refreshing state after apply...");
+                // _sendInitialState вызовет _onDidUpdateTestCache с полным списком
                 await this._sendInitialState(this._view.webview); 
             } else {
                 console.warn("[PhaseSwitcherProvider] Cannot refresh state after apply, view is not available.");

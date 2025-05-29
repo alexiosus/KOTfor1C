@@ -11,6 +11,7 @@ import {
 
 import { DriveCompletionProvider } from './completionProvider';
 import { DriveHoverProvider } from './hoverProvider';
+import { TestInfo } from './types'; // Импортируем TestInfo
 
 // Ключ для хранения пароля в SecretStorage (должен совпадать с ключом в phaseSwitcher.ts)
 const EMAIL_PASSWORD_KEY = '1cDriveHelper.emailPassword';
@@ -25,46 +26,60 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('Extension "1cDriveHelper" activated.');
 
     // --- Регистрация Провайдера для Webview (Phase Switcher) ---
-    // Создаем экземпляр провайдера, передавая ему URI расширения и контекст
-    // Контекст необходим для доступа к SecretStorage и управления подписками
-    const provider = new PhaseSwitcherProvider(context.extensionUri, context);
-    // Регистрируем провайдер для вида '1cDriveHelper.phaseSwitcherView'
-    context.subscriptions.push( // Добавляем в подписки для автоматической очистки при деактивации
+    const phaseSwitcherProvider = new PhaseSwitcherProvider(context.extensionUri, context);
+    context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
-            PhaseSwitcherProvider.viewType, // Статический ID вида из класса провайдера
-            provider,
-            // Опции Webview: сохранять контекст, когда панель скрыта
+            PhaseSwitcherProvider.viewType,
+            phaseSwitcherProvider,
             { webviewOptions: { retainContextWhenHidden: true } }
         )
     );
 
     // --- Регистрация Провайдеров Языковых Функций (Автодополнение и Подсказки) ---
-    // Создаем экземпляры провайдеров
     const completionProvider = new DriveCompletionProvider(context);
     const hoverProvider = new DriveHoverProvider(context);
-    // Регистрируем провайдер автодополнения для YAML файлов
+    
     context.subscriptions.push(
         vscode.languages.registerCompletionItemProvider(
-            { pattern: '**/*.yaml' }, // Применяется ко всем файлам .yaml в рабочей области
+            { pattern: '**/*.yaml', scheme: 'file' }, // Уточняем схему для YAML файлов
             completionProvider,
             ' ', '.', ',', ':', ';', '(', ')', '"', "'",
+            // Добавляем буквы для триггера автодополнения
             'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
             'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
             'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
-            'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'
+            'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+            'а', 'б', 'в', 'г', 'д', 'е', 'ё', 'ж', 'з', 'и', 'й', 'к', 'л', 'м',
+            'н', 'о', 'п', 'р', 'с', 'т', 'у', 'ф', 'х', 'ц', 'ч', 'ш', 'щ',
+            'ъ', 'ы', 'ь', 'э', 'ю', 'я',
+            'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ё', 'Ж', 'З', 'И', 'Й', 'К', 'Л', 'М',
+            'Н', 'О', 'П', 'Р', 'С', 'Т', 'У', 'Ф', 'Х', 'Ц', 'Ч', 'Ш', 'Щ',
+            'Ъ', 'Ы', 'Ь', 'Э', 'Ю', 'Я'
         )
     );
-    // Регистрируем провайдер подсказок при наведении для YAML файлов
     context.subscriptions.push(
         vscode.languages.registerHoverProvider(
-            { pattern: '**/*.yaml' },
+            { pattern: '**/*.yaml', scheme: 'file' },
             hoverProvider
         )
     );
 
+    // Подписываемся на событие обновления кэша тестов от PhaseSwitcherProvider
+    // и обновляем автодополнение сценариев
+    context.subscriptions.push(
+        phaseSwitcherProvider.onDidUpdateTestCache((testCache: Map<string, TestInfo> | null) => {
+            if (testCache) {
+                completionProvider.updateScenarioCompletions(testCache);
+                console.log('[Extension] Scenario completions updated based on PhaseSwitcher cache.');
+            } else {
+                completionProvider.updateScenarioCompletions(new Map()); // Очищаем, если кэш null
+                console.log('[Extension] Scenario completions cleared due to null PhaseSwitcher cache.');
+            }
+        })
+    );
+
+
     // --- Регистрация Команд ---
-    // Регистрируем команды, определенные в package.json, связывая их с обработчиками
-    // Команды для работы со сценариями (предполагается, что обработчики импортированы)
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         '1cDriveHelper.openSubscenario', openSubscenarioHandler
     ));
@@ -156,12 +171,20 @@ export function activate(context: vscode.ExtensionContext) {
             title: "Обновление шагов Gherkin...",
             cancellable: false
         }, async (progress) => {
-            progress.report({ increment: 0, message: "Загрузка определений шагов..." });
+            progress.report({ increment: 0, message: "Загрузка определений шагов Gherkin..." });
             try {
-                await completionProvider.refreshSteps();
-                progress.report({ increment: 50, message: "Обновление автодополнения завершено." });
+                await completionProvider.refreshSteps(); // Обновляет только Gherkin шаги
+                progress.report({ increment: 50, message: "Обновление автодополнения Gherkin завершено." });
                 await hoverProvider.refreshSteps();
-                progress.report({ increment: 100, message: "Обновление подсказок завершено." });
+                progress.report({ increment: 100, message: "Обновление подсказок Gherkin завершено." });
+                
+                // Для обновления автодополнения сценариев, мы полагаемся на событие от PhaseSwitcherProvider,
+                // которое должно сработать, если пользователь нажмет "Обновить" в панели Phase Switcher.
+                // Если нужно принудительное обновление сценариев здесь, то нужно будет вызвать
+                // логику сканирования сценариев и затем completionProvider.updateScenarioCompletions().
+                // Пока что команда `refreshGherkinSteps` обновляет только Gherkin.
+                // Обновление сценариев происходит через Phase Switcher UI.
+
             } catch (error: any) {
                 console.error("[refreshGherkinSteps Command] Error during refresh:", error.message);
             }
@@ -170,14 +193,14 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.commands.registerCommand(
         '1cDriveHelper.refreshGherkinSteps', 
-        refreshGherkinStepsCommand // Используем созданную функцию
+        refreshGherkinStepsCommand
     ));
 
     // Слушатель изменения конфигурации
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async (event) => {
         if (event.affectsConfiguration(EXTERNAL_STEPS_URL_CONFIG_KEY)) {
             console.log(`[Extension] Configuration for '${EXTERNAL_STEPS_URL_CONFIG_KEY}' changed. Refreshing Gherkin steps.`);
-            await refreshGherkinStepsCommand(); // Вызываем функцию обновления
+            await refreshGherkinStepsCommand(); 
         }
     }));
 

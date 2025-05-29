@@ -197,7 +197,7 @@
       },
       {
         "command": "1cDriveHelper.refreshGherkinSteps",
-        "title": "1C:Drive - Обновить библиотеку шагов Gherkin",
+        "title": "1C:Drive - Обновить библиотеку шагов",
         "category": "1C:Drive Test Helper"
       }
     ],
