@@ -92,7 +92,7 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                         parametersList = []; 
                         inParameterListItem = false; 
                         parameterListItemIndent = -1;
-                        console.log(`[scanner] Entered 'ПараметрыСценария' section in ${path.basename(fileUri.fsPath)} for scenario: ${name || 'Unknown'}. Indent: ${parametersMainSectionIndent}`);
+                        // console.log(`[scanner] Entered 'ПараметрыСценария' section in ${path.basename(fileUri.fsPath)} for scenario: ${name || 'Unknown'}. Indent: ${parametersMainSectionIndent}`);
                         continue; 
                     }
 
@@ -105,7 +105,7 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                             trimmedLine.includes(":") &&
                             (trimmedLine.startsWith("ВложенныеСценарии:") || trimmedLine.startsWith("ТекстСценария:"))
                             ) {
-                            console.log(`[scanner] Exiting 'ПараметрыСценария' section in ${path.basename(fileUri.fsPath)} for scenario ${name || 'Unknown'} due to line: "${trimmedLine.substring(0,30)}..."`);
+                            // console.log(`[scanner] Exiting 'ПараметрыСценария' section in ${path.basename(fileUri.fsPath)} for scenario ${name || 'Unknown'} due to line: "${trimmedLine.substring(0,30)}..."`);
                             inParametersMainSection = false;
                         }
                     }
@@ -120,7 +120,7 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                                 inParameterListItem = true;
                                 // Отступ самого элемента списка (дефиса)
                                 parameterListItemIndent = (normalizedLineStart.match(/^(\s*)-/)?.[1] || "").length; 
-                                console.log(`[scanner] Found parameter list item in ${path.basename(fileUri.fsPath)} for scenario ${name || 'Unknown'}. Item indent: ${parameterListItemIndent}. Line: "${trimmedLine.substring(0,40)}"`);
+                                // console.log(`[scanner] Found parameter list item in ${path.basename(fileUri.fsPath)} for scenario ${name || 'Unknown'}. Item indent: ${parameterListItemIndent}. Line: "${trimmedLine.substring(0,40)}"`);
                                 // Ключ самого элемента списка (например, "ПараметрыСценария1:") может быть на этой же строке или на следующей
                                 const listItemKeyMatch = trimmedLine.match(/^-\s*([A-Za-z0-9_А-Яа-я]+Сценария\d*):/);
                                 if (listItemKeyMatch) {
@@ -136,12 +136,12 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                                 const paramNameMatch = trimmedLine.match(/^Имя:\s*\"(.+?)\"\s*$/);
                                 if (paramNameMatch && paramNameMatch[1]) {
                                     parametersList.push(paramNameMatch[1]);
-                                    console.log(`[scanner] Found param name: "${paramNameMatch[1]}" in ${path.basename(fileUri.fsPath)} for scenario ${name || 'Unknown'}. Current params: [${parametersList.join(', ')}]`);
+                                    // console.log(`[scanner] Found param name: "${paramNameMatch[1]}" in ${path.basename(fileUri.fsPath)} for scenario ${name || 'Unknown'}. Current params: [${parametersList.join(', ')}]`);
                                 }
                             } else if (trimmedLine !== "" && !trimmedLine.startsWith("#") && currentLineIndent <= parameterListItemIndent) {
                                 // Если отступ стал меньше или равен отступу элемента списка,
                                 // и это не пустая строка/комментарий, значит, текущий элемент списка параметров закончился.
-                                console.log(`[scanner] Exiting parameter list item (due to indent) in ${path.basename(fileUri.fsPath)} for scenario ${name || 'Unknown'} from line: "${trimmedLine.substring(0,30)}..." (indent ${currentLineIndent} <= ${parameterListItemIndent})`);
+                                // console.log(`[scanner] Exiting parameter list item (due to indent) in ${path.basename(fileUri.fsPath)} for scenario ${name || 'Unknown'} from line: "${trimmedLine.substring(0,30)}..." (indent ${currentLineIndent} <= ${parameterListItemIndent})`);
                                 inParameterListItem = false;
                                 parameterListItemIndent = -1;
                                 // Если эта строка - новый элемент списка, она будет обработана на следующей итерации
@@ -150,7 +150,7 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                                      if (afterDashCheck.startsWith("ПараметрыСценария") || afterDashCheck.match(/^[A-Za-z0-9_А-Яа-я]+Сценария\d*:/)) {
                                         inParameterListItem = true;
                                         parameterListItemIndent = (normalizedLineStart.match(/^(\s*)-/)?.[1] || "").length;
-                                        console.log(`[scanner] Found new parameter list item '${trimmedLine.split(':')[0]}' immediately after previous one. Item indent: ${parameterListItemIndent}`);
+                                        // console.log(`[scanner] Found new parameter list item '${trimmedLine.split(':')[0]}' immediately after previous one. Item indent: ${parameterListItemIndent}`);
                                         // continue; // Пропускаем обработку этой же строки как поля параметра
                                      }
                                 }
@@ -163,7 +163,7 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                 // Информация для PhaseSwitcher (tabName, defaultState, order) добавляется, только если был найден маркер # PhaseSwitcher_Tab
                 if (name) {
                     if (discoveredTests.has(name)) {
-                         console.warn(`[scanWorkspaceForTests] Duplicate test name "${name}". Overwriting with ${fileUri.fsPath}`);
+                        //  console.warn(`[scanWorkspaceForTests] Duplicate test name "${name}". Overwriting with ${fileUri.fsPath}`);
                     }
                     const parentDirFsPath = path.dirname(fileUri.fsPath);
                     const scanDirFsPath = scanDirUri.fsPath;
@@ -172,7 +172,7 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                          relativePathValue = path.relative(scanDirFsPath, parentDirFsPath).replace(/\\/g, '/');
                     } else {
                          relativePathValue = vscode.workspace.asRelativePath(parentDirFsPath, false);
-                         console.warn(`[scanWorkspaceForTests] File path ${relativePathValue} for scenario "${name}" might be incorrect relative to scan dir ${scanDirFsPath}`);
+                        //  console.warn(`[scanWorkspaceForTests] File path ${relativePathValue} for scenario "${name}" might be incorrect relative to scan dir ${scanDirFsPath}`);
                     }
                     
                     const uniqueParameters = parametersList.length > 0 ? [...new Set(parametersList)] : undefined;
@@ -194,17 +194,17 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
 
                     const logParams = uniqueParameters ? `Parameters: [${uniqueParameters.join(', ')}]` : "(No parameters found)";
                     const logTab = testInfo.tabName ? `Tab: ${testInfo.tabName}` : "(No tab for PhaseSwitcher)";
-                    console.log(`[scanWorkspaceForTests] ADDED Scenario: ${name}, ${logTab}, ${logParams}, File: ${path.basename(fileUri.fsPath)}`);
+                    // console.log(`[scanWorkspaceForTests] ADDED Scenario: ${name}, ${logTab}, ${logParams}, File: ${path.basename(fileUri.fsPath)}`);
 
                 } else {
-                    console.log(`[scanWorkspaceForTests] SKIPPED file (missing name): ${fileUri.fsPath}.`);
+                    // console.log(`[scanWorkspaceForTests] SKIPPED file (missing name): ${fileUri.fsPath}.`);
                 }
             } catch (readErr: any) {
-                 console.error(`[scanWorkspaceForTests] Error reading/parsing ${fileUri.fsPath}: ${readErr.message || readErr}`);
+                //  console.error(`[scanWorkspaceForTests] Error reading/parsing ${fileUri.fsPath}: ${readErr.message || readErr}`);
             }
         } // end for (const fileUri of potentialFiles)
     } catch (findErr: any) {
-        console.error(`[scanWorkspaceForTests] Error finding files: ${findErr.message || findErr}`);
+        // console.error(`[scanWorkspaceForTests] Error finding files: ${findErr.message || findErr}`);
         vscode.window.showErrorMessage("Ошибка при поиске файлов сценариев.");
         return null; 
     }
