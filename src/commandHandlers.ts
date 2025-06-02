@@ -10,17 +10,24 @@ export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit
     const document = textEditor.document;
     const position = textEditor.selection.active;
     const line = document.lineAt(position.line);
-    const lineMatch = line.text.match(/^(\s*)And\s+(.*)/);
+    const lineMatch = line.text.match(/^(\s*)(?:And|Then|When|И|Когда|Тогда)\s+(.*)/i);
     if (!lineMatch) { return; }
-    const searchText = lineMatch[2].trim();
-    if (!searchText) { return; }
-    const leadingWhitespace = lineMatch[1].length;
-    const startChar = leadingWhitespace + 4;
-    const endChar = startChar + lineMatch[2].length;
+    const scenarioNameFromLine = lineMatch[2].trim();
+    if (!scenarioNameFromLine) { return; }
+    
+    const keywordAndSpaceLength = lineMatch[0].length - lineMatch[2].length - lineMatch[1].length; 
+    const startChar = lineMatch[1].length + keywordAndSpaceLength;
+    const endChar = startChar + scenarioNameFromLine.length;
     const range = new vscode.Range(position.line, startChar, position.line, endChar);
-    if (!range.contains(position)) { return; }
-    console.log(`[Cmd:openSubscenario] Request for: "${searchText}"`);
-    const targetUri = await findFileByName(searchText); // Вызов из navigationUtils
+
+    if (!range.contains(position) && !range.isEmpty) { 
+        if (!(range.end.isEqual(position) && textEditor.selection.isEmpty)) {
+            return;
+        }
+    }
+
+    console.log(`[Cmd:openSubscenario] Request for: "${scenarioNameFromLine}"`);
+    const targetUri = await findFileByName(scenarioNameFromLine);
     if (targetUri && targetUri.fsPath !== document.uri.fsPath) {
          console.log(`[Cmd:openSubscenario] Target found: ${targetUri.fsPath}. Opening...`);
          try {
@@ -28,7 +35,7 @@ export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit
              await vscode.window.showTextDocument(docToOpen, { preview: false, preserveFocus: false });
          } catch (error: any) { console.error(`[Cmd:openSubscenario] Error opening ${targetUri.fsPath}:`, error); vscode.window.showErrorMessage(`Не удалось открыть файл: ${error.message || error}`); }
      } else if (targetUri) { console.log("[Cmd:openSubscenario] Target is current file."); }
-       else { console.log("[Cmd:openSubscenario] Target not found."); vscode.window.showInformationMessage(`Файл для "${searchText}" не найден.`); }
+       else { console.log("[Cmd:openSubscenario] Target not found."); vscode.window.showInformationMessage(`Файл для "${scenarioNameFromLine}" не найден.`); }
 }
 
 /**
@@ -73,10 +80,62 @@ export async function findCurrentFileReferencesHandler() {
 /**
  * Обработчик команды вставки ссылки на вложенный сценарий.
  * Вставляет в конец блока "ВложенныеСценарии:" без пустых строк между элементами.
+ * Если выделена строка вида "And ИмяСценария", пытается заполнить UID и Имя из найденного сценария.
  */
-export function insertNestedScenarioRefHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+export async function insertNestedScenarioRefHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
     const document = textEditor.document;
     const text = document.getText();
+
+    let uidValue = "$1"; // Плейсхолдер для UID по умолчанию
+    let nameValue = "$2"; // Плейсхолдер для Имени по умолчанию
+    let finalCursor = "$0"; // Позиция курсора после вставки по умолчанию
+
+    const selection = textEditor.selection;
+    if (selection && !selection.isEmpty) {
+        const selectedText = document.getText(selection).trim();
+        const scenarioCallMatch = selectedText.match(/^\s*(?:And|И|Допустим)\s+(.+)/i);
+
+        if (scenarioCallMatch && scenarioCallMatch[1]) {
+            const scenarioNameFromSelection = scenarioCallMatch[1].trim();
+            console.log(`[Cmd:insertNestedScenarioRef] Selected text matches, trying to find scenario: "${scenarioNameFromSelection}"`);
+            const targetFileUri = await findFileByName(scenarioNameFromSelection);
+
+            if (targetFileUri) {
+                console.log(`[Cmd:insertNestedScenarioRef] Found target file: ${targetFileUri.fsPath}`);
+                try {
+                    const fileContentBytes = await vscode.workspace.fs.readFile(targetFileUri);
+                    const fileContent = Buffer.from(fileContentBytes).toString('utf-8');
+                    const dataScenarioBlockRegex = /ДанныеСценария:\s*([\s\S]*?)(?=\n[А-Яа-яЁёA-Za-z]+:|\n*$)/;
+                    const dataScenarioBlockMatch = fileContent.match(dataScenarioBlockRegex);
+
+                    if (dataScenarioBlockMatch && dataScenarioBlockMatch[1]) {
+                        const blockContent = dataScenarioBlockMatch[1];
+                        const uidMatch = blockContent.match(/^\s*UID:\s*"([^"]+)"/m);
+                        const nameFileMatch = blockContent.match(/^\s*Имя:\s*"([^"]+)"/m);
+
+                        if (uidMatch && uidMatch[1] && nameFileMatch && nameFileMatch[1]) {
+                            uidValue = uidMatch[1].replace(/\$/g, '\\$').replace(/\}/g, '\\}').replace(/"/g, '\\"');
+                            nameValue = nameFileMatch[1].replace(/\$/g, '\\$').replace(/\}/g, '\\}').replace(/"/g, '\\"');
+                            finalCursor = "";
+                            console.log(`[Cmd:insertNestedScenarioRef] Extracted UID: "${uidValue}", Name: "${nameValue}"`);
+                        } else {
+                            console.log(`[Cmd:insertNestedScenarioRef] Could not extract UID or Name from target file for "${scenarioNameFromSelection}".`);
+                        }
+                    } else {
+                         console.log(`[Cmd:insertNestedScenarioRef] 'ДанныеСценария:' block not found in target file for "${scenarioNameFromSelection}".`);
+                    }
+                } catch (error: any) {
+                    console.error(`[Cmd:insertNestedScenarioRef] Error reading/parsing target file ${targetFileUri.fsPath}:`, error);
+                }
+            } else {
+                console.log(`[Cmd:insertNestedScenarioRef] Target file not found for "${scenarioNameFromSelection}".`);
+            }
+        } else {
+             console.log(`[Cmd:insertNestedScenarioRef] Selected text "${selectedText}" does not match scenario call pattern.`);
+        }
+    } else {
+        console.log("[Cmd:insertNestedScenarioRef] No selection or selection is empty.");
+    }
     
     // Ищем блок ВложенныеСценарии:
     const nestedSectionRegex = /ВложенныеСценарии:/;
@@ -151,11 +210,12 @@ export function insertNestedScenarioRefHandler(textEditor: vscode.TextEditor, ed
                 
                 insertPosition = document.positionAt(offset);
                 
+                // Используем новые uidValue, nameValue, finalCursor
                 // Создаем сниппет с тем же отступом, что и предыдущий элемент, но без пустой строки
                 snippet = new vscode.SnippetString(
                     `${indent}- ВложенныеСценарии:\n` +
-                    `${indent}    UIDВложенныйСценарий: "$1"\n` +
-                    `${indent}    ИмяСценария: "$2"\n$0`
+                    `${indent}    UIDВложенныйСценарий: "${uidValue}"\n` +
+                    `${indent}    ИмяСценария: "${nameValue}"\n${finalCursor}`
                 );
                 
                 // Проверяем, нет ли пустой строки перед местом вставки
@@ -164,8 +224,8 @@ export function insertNestedScenarioRefHandler(textEditor: vscode.TextEditor, ed
                     // Если перед местом вставки пустая строка, меняем сниппет, убирая лишний перенос
                     snippet = new vscode.SnippetString(
                         `${indent}- ВложенныеСценарии:\n` +
-                        `${indent}    UIDВложенныйСценарий: "$1"\n` +
-                        `${indent}    ИмяСценария: "$2"\n$0`
+                        `${indent}    UIDВложенныйСценарий: "${uidValue}"\n` +
+                        `${indent}    ИмяСценария: "${nameValue}"\n${finalCursor}`
                     );
                 }
             } else {
@@ -173,8 +233,8 @@ export function insertNestedScenarioRefHandler(textEditor: vscode.TextEditor, ed
                 insertPosition = document.positionAt(sectionStartIndex + nestedMatch[0].length);
                 snippet = new vscode.SnippetString(
                     '\n    - ВложенныеСценарии:\n' +
-                    '        UIDВложенныйСценарий: "$1"\n' +
-                    '        ИмяСценария: "$2"\n$0'
+                    '        UIDВложенныйСценарий: "' + uidValue + '"\n' +
+                    '        ИмяСценария: "' + nameValue + '"\n' + finalCursor
                 );
             }
         } else {
@@ -182,8 +242,8 @@ export function insertNestedScenarioRefHandler(textEditor: vscode.TextEditor, ed
             insertPosition = document.positionAt(sectionStartIndex + nestedMatch[0].length);
             snippet = new vscode.SnippetString(
                 '\n    - ВложенныеСценарии:\n' +
-                '        UIDВложенныйСценарий: "$1"\n' +
-                '        ИмяСценария: "$2"$0'
+                '        UIDВложенныйСценарий: "' + uidValue + '"\n' +
+                '        ИмяСценария: "' + nameValue + '"' + finalCursor 
             );
         }
         
@@ -193,8 +253,8 @@ export function insertNestedScenarioRefHandler(textEditor: vscode.TextEditor, ed
         // Если блок не найден, вставляем в текущую позицию как раньше
         const snippet = new vscode.SnippetString(
             '- ВложенныеСценарии:\n' +
-            '\tUIDВложенныйСценарий: "$1"\n' +
-            '\tИмяСценария: "$2"\n$0'
+            '\tUIDВложенныйСценарий: "${uidValue}"\n' +
+            '\tИмяСценария: "${nameValue}"\n${finalCursor}'
         );
         textEditor.insertSnippet(snippet);
     }
