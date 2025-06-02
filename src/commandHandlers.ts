@@ -10,17 +10,26 @@ export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit
     const document = textEditor.document;
     const position = textEditor.selection.active;
     const line = document.lineAt(position.line);
-    const lineMatch = line.text.match(/^(\s*)And\s+(.*)/);
+    const lineMatch = line.text.match(/^(\s*)(?:And|When|Then|И)\s+(.*)/i);
     if (!lineMatch) { return; }
-    const searchText = lineMatch[2].trim();
-    if (!searchText) { return; }
-    const leadingWhitespace = lineMatch[1].length;
-    const startChar = leadingWhitespace + 4;
-    const endChar = startChar + lineMatch[2].length;
+    const scenarioNameFromLine = lineMatch[2].trim();
+    if (!scenarioNameFromLine) { return; }
+    
+    // Определяем диапазон только для имени сценария для проверки позиции курсора
+    const keywordAndSpaceLength = lineMatch[0].length - lineMatch[2].length - lineMatch[1].length; // Длина "And " или "И " и т.д.
+    const startChar = lineMatch[1].length + keywordAndSpaceLength;
+    const endChar = startChar + scenarioNameFromLine.length;
     const range = new vscode.Range(position.line, startChar, position.line, endChar);
-    if (!range.contains(position)) { return; }
-    console.log(`[Cmd:openSubscenario] Request for: "${searchText}"`);
-    const targetUri = await findFileByName(searchText); // Вызов из navigationUtils
+
+    if (!range.contains(position) && !range.isEmpty) { // Если курсор не внутри имени сценария (и диапазон не пустой)
+        // Если выделение пустое и курсор сразу после имени, тоже считаем валидным
+        if (!(range.end.isEqual(position) && textEditor.selection.isEmpty)) {
+            return;
+        }
+    }
+
+    console.log(`[Cmd:openSubscenario] Request for: "${scenarioNameFromLine}"`);
+    const targetUri = await findFileByName(scenarioNameFromLine);
     if (targetUri && targetUri.fsPath !== document.uri.fsPath) {
          console.log(`[Cmd:openSubscenario] Target found: ${targetUri.fsPath}. Opening...`);
          try {
@@ -28,7 +37,7 @@ export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit
              await vscode.window.showTextDocument(docToOpen, { preview: false, preserveFocus: false });
          } catch (error: any) { console.error(`[Cmd:openSubscenario] Error opening ${targetUri.fsPath}:`, error); vscode.window.showErrorMessage(`Не удалось открыть файл: ${error.message || error}`); }
      } else if (targetUri) { console.log("[Cmd:openSubscenario] Target is current file."); }
-       else { console.log("[Cmd:openSubscenario] Target not found."); vscode.window.showInformationMessage(`Файл для "${searchText}" не найден.`); }
+       else { console.log("[Cmd:openSubscenario] Target not found."); vscode.window.showInformationMessage(`Файл для "${scenarioNameFromLine}" не найден.`); }
 }
 
 /**
@@ -73,130 +82,182 @@ export async function findCurrentFileReferencesHandler() {
 /**
  * Обработчик команды вставки ссылки на вложенный сценарий.
  * Вставляет в конец блока "ВложенныеСценарии:" без пустых строк между элементами.
+ * Если выделена строка вида "And ИмяСценария", пытается заполнить UID и Имя из найденного сценария.
  */
-export function insertNestedScenarioRefHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+export async function insertNestedScenarioRefHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
     const document = textEditor.document;
     const text = document.getText();
-    
-    // Ищем блок ВложенныеСценарии:
-    const nestedSectionRegex = /ВложенныеСценарии:/;
-    const nestedMatch = text.match(nestedSectionRegex);
-    
-    if (nestedMatch && nestedMatch.index !== undefined) {
-        const sectionStartIndex = nestedMatch.index;
-        
-        // Находим следующую основную секцию после "ВложенныеСценарии:"
-        const nextSectionRegex = /\n[А-Яа-я]+:/g;
-        let nextSectionMatch;
-        let insertIndex = text.length; // По умолчанию - конец файла
-        
-        nextSectionRegex.lastIndex = sectionStartIndex;
-        while ((nextSectionMatch = nextSectionRegex.exec(text)) !== null) {
-            const matchedLine = nextSectionMatch[0];
-            // Проверяем, это не вложенная секция (без отступов)
-            if (matchedLine.match(/^\n[А-Яа-я]+:/) && !matchedLine.match(/^\n\s+[А-Яа-я]+:/)) {
-                insertIndex = nextSectionMatch.index;
-                break;
-            }
-        }
-        
-        // Проверяем, есть ли уже элементы в секции
-        const sectionText = text.substring(sectionStartIndex, insertIndex);
-        const hasItems = sectionText.includes('- ВложенныеСценарии');
-        
-        // Определяем позицию для вставки
-        let insertPosition;
-        let snippet;
-        
-        if (hasItems) {
-            // Ищем последний блок элемента в секции
-            const lines = sectionText.split('\n');
-            
-            // Находим все строки, начинающиеся с "- ВложенныеСценарии"
-            const itemStartLines = [];
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].match(/\s+- ВложенныеСценарии/)) {
-                    itemStartLines.push(i);
-                }
-            }
-            
-            if (itemStartLines.length > 0) {
-                const lastItemStartLineIndex = itemStartLines[itemStartLines.length - 1];
-                const indentMatch = lines[lastItemStartLineIndex].match(/^(\s+)/);
-                const indent = indentMatch ? indentMatch[1] : '    ';
-                
-                let lastElementEndLineIndex = lastItemStartLineIndex;
-                
-                for (let i = lastItemStartLineIndex + 1; i < lines.length; i++) {
-                    const line = lines[i];
-                    
-                    if (line.trim() === '') {
-                        continue;
+
+    let uidToInsert = "$1"; // Плейсхолдер для UID
+    let nameToInsert = "$2"; // Плейсхолдер для Имени
+
+    const selection = textEditor.selection;
+    // Проверяем, есть ли выделение и не пустое ли оно
+    if (selection && !selection.isEmpty) {
+        const selectedText = document.getText(selection).trim();
+        // Ищем совпадение с вызовом сценария (And/И/Допустим ИмяСценария)
+        const scenarioCallMatch = selectedText.match(/^\s*(?:And|И|Допустим)\s+(.+)/i);
+
+        if (scenarioCallMatch && scenarioCallMatch[1]) {
+            const scenarioNameFromSelection = scenarioCallMatch[1].trim();
+            console.log(`[Cmd:insertNestedScenarioRef] Selected text matches, trying to find scenario: "${scenarioNameFromSelection}"`);
+
+            const targetFileUri = await findFileByName(scenarioNameFromSelection);
+
+            if (targetFileUri) {
+                console.log(`[Cmd:insertNestedScenarioRef] Found target file for selected scenario: ${targetFileUri.fsPath}`);
+                try {
+                    const fileContentBytes = await vscode.workspace.fs.readFile(targetFileUri);
+                    const fileContent = Buffer.from(fileContentBytes).toString('utf-8');
+
+                    // Ищем блок ДанныеСценария
+                    const dataScenarioBlockRegex = /ДанныеСценария:\s*([\s\S]*?)(?=\n[А-Яа-яЁёA-Za-z]+:|\n*$)/;
+                    const dataScenarioBlockMatch = fileContent.match(dataScenarioBlockRegex);
+
+                    if (dataScenarioBlockMatch && dataScenarioBlockMatch[1]) {
+                        const blockContent = dataScenarioBlockMatch[1];
+                        // Ищем UID и Имя внутри блока
+                        const uidMatch = blockContent.match(/^\s*UID:\s*"([^"]+)"/m);
+                        const nameFileMatch = blockContent.match(/^\s*Имя:\s*"([^"]+)"/m);
+
+                        let extractedUidFromFile: string | undefined;
+                        let extractedNameFromFile: string | undefined;
+
+                        if (uidMatch && uidMatch[1]) {
+                            extractedUidFromFile = uidMatch[1];
+                        }
+                        if (nameFileMatch && nameFileMatch[1]) {
+                            extractedNameFromFile = nameFileMatch[1];
+                        }
+
+                        if (extractedUidFromFile && extractedNameFromFile) {
+                            // Используем извлеченные данные, экранируя специальные символы для сниппета
+                            uidToInsert = extractedUidFromFile.replace(/\$/g, '\\$').replace(/\}/g, '\\}').replace(/"/g, '\\"');
+                            nameToInsert = extractedNameFromFile.replace(/\$/g, '\\$').replace(/\}/g, '\\}').replace(/"/g, '\\"');
+                            console.log(`[Cmd:insertNestedScenarioRef] Extracted UID: "${uidToInsert}", Name: "${nameToInsert}" from target file.`);
+                        } else {
+                            console.log(`[Cmd:insertNestedScenarioRef] Could not extract UID or Name from target file content for "${scenarioNameFromSelection}".`);
+                        }
+                    } else {
+                         console.log(`[Cmd:insertNestedScenarioRef] 'ДанныеСценария:' block not found or empty in target file for "${scenarioNameFromSelection}".`);
                     }
-                    
-                    const indentMatch = line.match(/^\s+/);
-                    if (indentMatch && indentMatch[0].length > indent.length) {
-                        lastElementEndLineIndex = i;
-                    } 
-                    else {
-                        break;
-                    }
-                }
-                
-                // Вычисляем позицию конца последнего элемента
-                let offset = sectionStartIndex;
-                for (let i = 0; i <= lastElementEndLineIndex; i++) {
-                    offset += lines[i].length + 1; // +1 за \n
-                }
-                
-                insertPosition = document.positionAt(offset);
-                
-                // Создаем сниппет с тем же отступом, что и предыдущий элемент, но без пустой строки
-                snippet = new vscode.SnippetString(
-                    `${indent}- ВложенныеСценарии:\n` +
-                    `${indent}    UIDВложенныйСценарий: "$1"\n` +
-                    `${indent}    ИмяСценария: "$2"\n$0`
-                );
-                
-                // Проверяем, нет ли пустой строки перед местом вставки
-                const currentText = document.getText(new vscode.Range(document.positionAt(offset - 2), document.positionAt(offset)));
-                if (currentText === '\n\n') {
-                    // Если перед местом вставки пустая строка, меняем сниппет, убирая лишний перенос
-                    snippet = new vscode.SnippetString(
-                        `${indent}- ВложенныеСценарии:\n` +
-                        `${indent}    UIDВложенныйСценарий: "$1"\n` +
-                        `${indent}    ИмяСценария: "$2"\n$0`
-                    );
+                } catch (error: any) {
+                    console.error(`[Cmd:insertNestedScenarioRef] Error reading or parsing target file ${targetFileUri.fsPath}:`, error);
                 }
             } else {
-                // Если не удалось найти элементы, добавляем в начало секции
-                insertPosition = document.positionAt(sectionStartIndex + nestedMatch[0].length);
-                snippet = new vscode.SnippetString(
-                    '\n    - ВложенныеСценарии:\n' +
-                    '        UIDВложенныйСценарий: "$1"\n' +
-                    '        ИмяСценария: "$2"\n$0'
+                console.log(`[Cmd:insertNestedScenarioRef] Target file not found for selected scenario name: "${scenarioNameFromSelection}". Inserting with placeholders.`);
+            }
+        } else {
+            console.log(`[Cmd:insertNestedScenarioRef] Selected text "${selectedText}" does not match scenario call pattern. Inserting with placeholders.`);
+        }
+    } else {
+        console.log("[Cmd:insertNestedScenarioRef] No selection or selection is empty. Inserting with placeholders.");
+    }
+    
+    // Ищем блок ВложенныеСценарии:
+    const nestedSectionRegex = /^ВложенныеСценарии:/m; // /m для многострочного поиска, ^ для начала строки
+    const nestedMatch = text.match(nestedSectionRegex);
+    
+    let insertPosition: vscode.Position;
+    let snippet: vscode.SnippetString;
+    let indent = '    '; // Отступ по умолчанию
+
+    if (nestedMatch && nestedMatch.index !== undefined) {
+        const sectionStartOffset = nestedMatch.index;
+        const sectionStartLine = document.positionAt(sectionStartOffset).line;
+        
+        // Определяем отступ самой секции "ВложенныеСценарии:"
+        const sectionLineText = document.lineAt(sectionStartLine).text;
+        const sectionIndentMatch = sectionLineText.match(/^(\s*)ВложенныеСценарии:/);
+        const baseSectionIndent = sectionIndentMatch ? sectionIndentMatch[1] : "";
+        indent = baseSectionIndent + '    '; // Отступ для элементов списка
+
+        // Находим конец секции "ВложенныеСценарии:"
+        // Ищем следующую основную секцию или конец файла
+        let endOfSectionOffset = text.length;
+        const nextMajorSectionRegex = new RegExp(`^(${baseSectionIndent}[А-Яа-яЁёA-Za-z]+:)`, "gm");
+        nextMajorSectionRegex.lastIndex = sectionStartOffset + nestedMatch[0].length; // Начинаем поиск после "ВложенныеСценарии:"
+        
+        const nextMatch = nextMajorSectionRegex.exec(text);
+        if (nextMatch) {
+            endOfSectionOffset = nextMatch.index;
+        }
+
+        const sectionContent = text.substring(sectionStartOffset + nestedMatch[0].length, endOfSectionOffset);
+        const lines = sectionContent.split('\n');
+        
+        let lastItemEndOffset = -1;
+        const itemStartRegex = new RegExp(`^${indent.replace(/\s/g, "\\s")}- ВложенныеСценарии:`);
+
+        for (let i = lines.length - 1; i >= 0; i--) {
+            if (lines[i].trim() !== "") { // Находим последнюю непустую строку в секции
+                // Проверяем, является ли эта строка началом элемента списка или его частью
+                if (lines[i].match(itemStartRegex) || lines[i].startsWith(indent + '  ')) { // '  ' для полей внутри элемента
+                    // Нашли конец последнего элемента
+                    let currentOffset = sectionStartOffset + nestedMatch[0].length;
+                    for (let j = 0; j <= i; j++) {
+                        currentOffset += lines[j].length + 1; // +1 за \n
+                    }
+                    lastItemEndOffset = currentOffset;
+                    break;
+                }
+            }
+        }
+
+        if (lastItemEndOffset !== -1) {
+            // Вставляем после последнего элемента
+            insertPosition = document.positionAt(lastItemEndOffset);
+            // Убедимся, что вставляем с новой строки, если последняя строка не пустая
+            const lineAtInsert = document.lineAt(insertPosition.line);
+            if (lineAtInsert.text.substring(insertPosition.character).trim() !== "" || lineAtInsert.text.trim() !== "") {
+                 snippet = new vscode.SnippetString(
+                    `\n${indent}- ВложенныеСценарии:\n` +
+                    `${indent}    UIDВложенныйСценарий: "${uidToInsert}"\n` +
+                    `${indent}    ИмяСценария: "${nameToInsert}"$0`
+                );
+            } else {
+                 snippet = new vscode.SnippetString(
+                    `${indent}- ВложенныеСценарии:\n` +
+                    `${indent}    UIDВложенныйСценарий: "${uidToInsert}"\n` +
+                    `${indent}    ИмяСценария: "${nameToInsert}"$0`
                 );
             }
         } else {
-            // Если элементов нет, вставляем первый с отступом
-            insertPosition = document.positionAt(sectionStartIndex + nestedMatch[0].length);
-            snippet = new vscode.SnippetString(
-                '\n    - ВложенныеСценарии:\n' +
-                '        UIDВложенныйСценарий: "$1"\n' +
-                '        ИмяСценария: "$2"$0'
+            // Секция "ВложенныеСценарии:" есть, но она пуста или содержит только пустые строки/комментарии
+            // Вставляем как первый элемент
+            let firstContentLineOffset = sectionStartOffset + nestedMatch[0].length;
+            // Пропускаем пустые строки после "ВложенныеСценарии:"
+            for (const line of lines) {
+                if (line.trim() === "") {
+                    firstContentLineOffset += line.length + 1;
+                } else {
+                    break;
+                }
+            }
+            insertPosition = document.positionAt(firstContentLineOffset);
+             snippet = new vscode.SnippetString(
+                `\n${indent}- ВложенныеСценарии:\n` + // Начинаем с новой строки
+                `${indent}    UIDВложенныйСценарий: "${uidToInsert}"\n` +
+                `${indent}    ИмяСценария: "${nameToInsert}"$0`
             );
         }
         
         // Вставляем сниппет в найденную позицию
         textEditor.insertSnippet(snippet, insertPosition);
     } else {
-        // Если блок не найден, вставляем в текущую позицию как раньше
-        const snippet = new vscode.SnippetString(
-            '- ВложенныеСценарии:\n' +
-            '\tUIDВложенныйСценарий: "$1"\n' +
-            '\tИмяСценария: "$2"\n$0'
+        // Если блок "ВложенныеСценарии:" не найден, вставляем в текущую позицию курсора (старое поведение)
+        // Определяем отступ текущей строки
+        const currentLine = textEditor.document.lineAt(textEditor.selection.active.line);
+        const currentLineIndentMatch = currentLine.text.match(/^(\s*)/);
+        const currentIndent = currentLineIndentMatch ? currentLineIndentMatch[1] : "";
+        indent = currentIndent; // Используем отступ текущей строки
+
+        snippet = new vscode.SnippetString(
+            `${indent}- ВложенныеСценарии:\n` +
+            `${indent}\tUIDВложенныйСценарий: "${uidToInsert}"\n` + // Используем \t для вложенности относительно текущего отступа
+            `${indent}\tИмяСценария: "${nameToInsert}"$0`
         );
-        textEditor.insertSnippet(snippet);
+        textEditor.insertSnippet(snippet); // Вставка в текущую позицию курсора
     }
 }
 
@@ -209,139 +270,106 @@ export function insertScenarioParamHandler(textEditor: vscode.TextEditor, edit: 
     const text = document.getText();
     
     // Ищем блок ПараметрыСценария:
-    const paramsRegex = /ПараметрыСценария:/;
+    const paramsRegex = /ПараметрыСценария:/m;
     const paramsMatch = text.match(paramsRegex);
     
+    let insertPosition: vscode.Position;
+    let snippet: vscode.SnippetString;
+    let indent = '    ';
+
     if (paramsMatch && paramsMatch.index !== undefined) {
-        const sectionStartIndex = paramsMatch.index;
+        const sectionStartOffset = paramsMatch.index;
+        const sectionStartLine = document.positionAt(sectionStartOffset).line;
+
+        const sectionLineText = document.lineAt(sectionStartLine).text;
+        const sectionIndentMatch = sectionLineText.match(/^(\s*)ПараметрыСценария:/);
+        const baseSectionIndent = sectionIndentMatch ? sectionIndentMatch[1] : "";
+        indent = baseSectionIndent + '    '; // Отступ для элементов списка "- ПараметрыСценария"
+
+        let endOfSectionOffset = text.length;
+        const nextMajorSectionRegex = new RegExp(`^(${baseSectionIndent}[А-Яа-яЁёA-Za-z]+:)`, "gm");
+        nextMajorSectionRegex.lastIndex = sectionStartOffset + paramsMatch[0].length;
         
-        // Находим следующую основную секцию после "ПараметрыСценария:"
-        const nextSectionRegex = /\n[А-Яа-я]+:/g;
-        let nextSectionMatch;
-        let insertIndex = text.length; // По умолчанию - конец файла
+        const nextMatch = nextMajorSectionRegex.exec(text);
+        if (nextMatch) {
+            endOfSectionOffset = nextMatch.index;
+        }
+
+        const sectionContent = text.substring(sectionStartOffset + paramsMatch[0].length, endOfSectionOffset);
+        const lines = sectionContent.split('\n');
         
-        nextSectionRegex.lastIndex = sectionStartIndex;
-        while ((nextSectionMatch = nextSectionRegex.exec(text)) !== null) {
-            const matchedLine = nextSectionMatch[0];
-            // Проверяем, это не вложенная секция (без отступов)
-            if (matchedLine.match(/^\n[А-Яа-я]+:/) && !matchedLine.match(/^\n\s+[А-Яа-я]+:/)) {
-                insertIndex = nextSectionMatch.index;
-                break;
+        let lastItemEndOffset = -1;
+        // Регулярное выражение для поиска начала элемента списка параметров
+        const itemStartRegex = new RegExp(`^${indent.replace(/\s/g, "\\s")}- ПараметрыСценария`);
+
+        for (let i = lines.length - 1; i >= 0; i--) {
+            if (lines[i].trim() !== "") { 
+                if (lines[i].match(itemStartRegex) || lines[i].startsWith(indent + '  ')) {
+                    let currentOffset = sectionStartOffset + paramsMatch[0].length;
+                    for (let j = 0; j <= i; j++) {
+                        currentOffset += lines[j].length + 1;
+                    }
+                    lastItemEndOffset = currentOffset;
+                    break;
+                }
             }
         }
-        
-        // Проверяем, есть ли уже элементы в секции
-        const sectionText = text.substring(sectionStartIndex, insertIndex);
-        const hasItems = sectionText.includes('- ПараметрыСценария');
-        
-        // Определяем позицию для вставки
-        let insertPosition;
-        let snippet;
-        
-        if (hasItems) {
-            // Ищем последний блок элемента в секции
-            const lines = sectionText.split('\n');
-            
-            // Находим все строки, начинающиеся с "- ПараметрыСценария"
-            const itemStartLines = [];
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].match(/\s+- ПараметрыСценария/)) {
-                    itemStartLines.push(i);
-                }
-            }
-            
-            if (itemStartLines.length > 0) {
-                const lastItemStartLineIndex = itemStartLines[itemStartLines.length - 1];
-                const indentMatch = lines[lastItemStartLineIndex].match(/^(\s+)/);
-                const indent = indentMatch ? indentMatch[1] : '    ';
-                
-                // Определяем конец последнего элемента
-                // Ищем последнюю строку, относящуюся к последнему элементу
-                let lastElementEndLineIndex = lastItemStartLineIndex;
-                
-                for (let i = lastItemStartLineIndex + 1; i < lines.length; i++) {
-                    const line = lines[i];
-                    
-                    if (line.trim() === '') {
-                        continue;
-                    }
-                    
-                    const indentMatch = line.match(/^\s+/);
-                    if (indentMatch && indentMatch[0].length > indent.length) {
-                        lastElementEndLineIndex = i;
-                    } 
-                    else {
-                        break;
-                    }
-                }
-                
-                // Вычисляем позицию конца последнего элемента
-                let offset = sectionStartIndex;
-                for (let i = 0; i <= lastElementEndLineIndex; i++) {
-                    offset += lines[i].length + 1; // +1 за \n
-                }
-                
-                insertPosition = document.positionAt(offset);
-                
-                // Проверяем, нет ли пустой строки перед местом вставки
-                const currentText = document.getText(new vscode.Range(document.positionAt(offset - 2), document.positionAt(offset)));
-                if (currentText === '\n\n') {
-                    // Если перед местом вставки пустая строка, меняем сниппет, убирая лишний перенос
-                    snippet = new vscode.SnippetString(
-                        `${indent}- ПараметрыСценария:\n` +
-                        `${indent}    НомерСтроки: "$1"\n` +
-                        `${indent}    Имя: "$2"\n` +
-                        `${indent}    Значение: "$3"\n` +
-                        `${indent}    ТипПараметра: "\${4|Строка,Число,Булево,Массив,Дата|}"\n` +
-                        `${indent}    ИсходящийПараметр: "\${5|No,Yes|}"\n$0`
-                    );
-                } else {
-                    // Обычная вставка с переносом строки
-                    snippet = new vscode.SnippetString(
-                        `${indent}- ПараметрыСценария:\n` +
-                        `${indent}    НомерСтроки: "$1"\n` +
-                        `${indent}    Имя: "$2"\n` +
-                        `${indent}    Значение: "$3"\n` +
-                        `${indent}    ТипПараметра: "\${4|Строка,Число,Булево,Массив,Дата|}"\n` +
-                        `${indent}    ИсходящийПараметр: "\${5|No,Yes|}"\n$0`
-                    );
-                }
-            } else {
-                // Если не удалось найти элементы, добавляем в начало секции
-                insertPosition = document.positionAt(sectionStartIndex + paramsMatch[0].length);
+
+        if (lastItemEndOffset !== -1) {
+            insertPosition = document.positionAt(lastItemEndOffset);
+            const lineAtInsert = document.lineAt(insertPosition.line);
+             if (lineAtInsert.text.substring(insertPosition.character).trim() !== "" || lineAtInsert.text.trim() !== "") {
                 snippet = new vscode.SnippetString(
-                    '\n    - ПараметрыСценария:\n' +
-                    '        НомерСтроки: "$1"\n' +
-                    '        Имя: "$2"\n' +
-                    '        Значение: "$3"\n' +
-                    '        ТипПараметра: "\${4|Строка,Число,Булево,Массив,Дата|}"\n' +
-                    '        ИсходящийПараметр: "\${5|No,Yes|}"\n$0'
+                    `\n${indent}- ПараметрыСценария:\n` +
+                    `${indent}    НомерСтроки: "$1"\n` +
+                    `${indent}    Имя: "$2"\n` +
+                    `${indent}    Значение: "$3"\n` +
+                    `${indent}    ТипПараметра: "\${4|Строка,Число,Булево,Массив,Дата|}"\n` +
+                    `${indent}    ИсходящийПараметр: "\${5|No,Yes|}"$0`
+                );
+            } else {
+                 snippet = new vscode.SnippetString(
+                    `${indent}- ПараметрыСценария:\n` +
+                    `${indent}    НомерСтроки: "$1"\n` +
+                    `${indent}    Имя: "$2"\n` +
+                    `${indent}    Значение: "$3"\n` +
+                    `${indent}    ТипПараметра: "\${4|Строка,Число,Булево,Массив,Дата|}"\n` +
+                    `${indent}    ИсходящийПараметр: "\${5|No,Yes|}"$0`
                 );
             }
         } else {
-            // Если элементов нет, вставляем первый с отступом
-            insertPosition = document.positionAt(sectionStartIndex + paramsMatch[0].length);
+            let firstContentLineOffset = sectionStartOffset + paramsMatch[0].length;
+            for (const line of lines) {
+                if (line.trim() === "") {
+                    firstContentLineOffset += line.length + 1;
+                } else {
+                    break;
+                }
+            }
+            insertPosition = document.positionAt(firstContentLineOffset);
             snippet = new vscode.SnippetString(
-                '\n    - ПараметрыСценария:\n' +
-                '        НомерСтроки: "$1"\n' +
-                '        Имя: "$2"\n' +
-                '        Значение: "$3"\n' +
-                '        ТипПараметра: "\${4|Строка,Число,Булево,Массив,Дата|}"\n' +
-                '        ИсходящийПараметр: "\${5|No,Yes|}"$0'
+                `\n${indent}- ПараметрыСценария:\n` +
+                `${indent}    НомерСтроки: "$1"\n` +
+                `${indent}    Имя: "$2"\n` +
+                `${indent}    Значение: "$3"\n` +
+                `${indent}    ТипПараметра: "\${4|Строка,Число,Булево,Массив,Дата|}"\n` +
+                `${indent}    ИсходящийПараметр: "\${5|No,Yes|}"$0`
             );
         }
-        
-        // Вставляем сниппет в найденную позицию
         textEditor.insertSnippet(snippet, insertPosition);
     } else {
-        // Если блок не найден, вставляем в текущую позицию как раньше
-        const snippet = new vscode.SnippetString(
-            '- ПараметрыСценария:\n' +
-            '\tНомерСтроки: "$1"\n' +
-            '\tИмя: "$2"\n' +
-            '\tЗначение: "$3"\n' +
-            '\tТипПараметра: "\${4\\|Строка,Число,Булево,Массив,Дата}"\n' +
-            '\tИсходящийПараметр: "\${5\\|No,Yes}"\n$0'
+        const currentLine = textEditor.document.lineAt(textEditor.selection.active.line);
+        const currentLineIndentMatch = currentLine.text.match(/^(\s*)/);
+        const currentIndent = currentLineIndentMatch ? currentLineIndentMatch[1] : "";
+        indent = currentIndent;
+
+        snippet = new vscode.SnippetString(
+            `${indent}- ПараметрыСценария:\n` +
+            `${indent}\tНомерСтроки: "$1"\n` +
+            `${indent}\tИмя: "$2"\n` +
+            `${indent}\tЗначение: "$3"\n` +
+            `${indent}\tТипПараметра: "\${4|Строка,Число,Булево,Массив,Дата|}"\n` +
+            `${indent}\tИсходящийПараметр: "\${5|No,Yes|}"$0`
         );
         textEditor.insertSnippet(snippet);
     }

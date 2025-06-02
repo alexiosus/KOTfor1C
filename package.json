@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -182,17 +182,17 @@
       },
       {
         "command": "1cDriveHelper.insertNestedScenarioRef",
-        "title": "1C:Drive - Добавить блок ВложенныеСценарии",
+        "title": "1C:Drive - Вставить блок ВложенныеСценарии",
         "category": "1C:Drive Test Helper"
       },
       {
         "command": "1cDriveHelper.insertScenarioParam",
-        "title": "1C:Drive - Добавить блок ПараметрыСценария",
+        "title": "1C:Drive - Вставить блок ПараметрыСценария",
         "category": "1C:Drive Test Helper"
       },
       {
         "command": "1cDriveHelper.insertUid",
-        "title": "1C:Drive - Сгенерировать UID",
+        "title": "1C:Drive - Вставить новый UID",
         "category": "1C:Drive Test Helper"
       },
       {
@@ -258,27 +258,27 @@
         {
           "command": "1cDriveHelper.insertNestedScenarioRef",
           "when": "editorTextFocus && !editorReadonly",
-          "group": "0_modification@2"
+          "group": "01_modification@2"
         },
         {
           "command": "1cDriveHelper.insertScenarioParam",
           "when": "editorTextFocus && !editorReadonly",
-          "group": "0_modification@3"
+          "group": "01_modification@3"
         },
         {
           "command": "1cDriveHelper.insertUid",
           "when": "editorTextFocus && !editorReadonly",
-          "group": "0_modification@4"
+          "group": "01_modification@4"
         },
         {
           "command": "1cDriveHelper.createNestedScenario",
           "when": "editorTextFocus && !editorReadonly",
-          "group": "0_modification@5"
+          "group": "02_modification@5"
         },
         {
           "command": "1cDriveHelper.createMainScenario",
           "when": "editorTextFocus && !editorReadonly",
-          "group": "0_modification@6"
+          "group": "02_modification@6"
         }
       ],
       "commandPalette": [
