@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -199,6 +199,11 @@
         "command": "1cDriveHelper.refreshGherkinSteps",
         "title": "1C:Drive - Обновить библиотеку шагов",
         "category": "1C:Drive Test Helper"
+      },
+      {
+        "command": "1cDriveHelper.replaceTabsWithSpacesYaml",
+        "title": "1C:Drive - Заменить табы на пробелы",
+        "category": "1C:Drive Test Helper"
       }
     ],
     "keybindings": [
@@ -271,6 +276,11 @@
           "group": "01_modification@4"
         },
         {
+          "command": "1cDriveHelper.replaceTabsWithSpacesYaml",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "01_modification@5"
+        },
+        {
           "command": "1cDriveHelper.createNestedScenario",
           "when": "editorTextFocus && !editorReadonly",
           "group": "02_modification@5"
@@ -292,6 +302,10 @@
         },
         {
           "command": "1cDriveHelper.refreshGherkinSteps",
+          "when": "true"
+        },
+        {
+          "command": "1cDriveHelper.replaceTabsWithSpacesYaml",
           "when": "true"
         }
       ]

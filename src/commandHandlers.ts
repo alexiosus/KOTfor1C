@@ -419,3 +419,28 @@ export function insertUidHandler(textEditor: vscode.TextEditor, edit: vscode.Tex
         }).then(success => { if (!success) { vscode.window.showErrorMessage("Не удалось вставить UID."); } });
     } catch (error: any) { vscode.window.showErrorMessage(`Ошибка при генерации UID: ${error.message || error}`); }
 }
+
+/**
+ * Обработчик команды замены табов на пробелы в YAML файлах.
+ */
+export async function replaceTabsWithSpacesYamlHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+    const document = textEditor.document;
+    const fullText = document.getText();
+    // Используем глобальный флаг 'g' для замены всех вхождений
+    const newText = fullText.replace(/\t/g, '    '); 
+
+    // Если текст изменился, применяем правки
+    if (newText !== fullText) {
+        const fullRange = new vscode.Range(
+            document.positionAt(0),
+            document.positionAt(fullText.length)
+        );
+        // Применяем изменения ко всему документу
+        await textEditor.edit(editBuilder => {
+            editBuilder.replace(fullRange, newText);
+        });
+        vscode.window.showInformationMessage('Табы заменены на 4 пробела.');
+    } else {
+        vscode.window.showInformationMessage('Табы не найдены в документе.');
+    }
+}
