@@ -7,7 +7,8 @@ import {
     insertNestedScenarioRefHandler,
     insertScenarioParamHandler,
     insertUidHandler,
-    replaceTabsWithSpacesYamlHandler
+    replaceTabsWithSpacesYamlHandler,
+    checkAndFillNestedScenariosHandler
 } from './commandHandlers';
 
 import { DriveCompletionProvider } from './completionProvider';
@@ -102,9 +103,11 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         '1cDriveHelper.findCurrentFileReferences', findCurrentFileReferencesHandler
     ));
-    // Регистрация новой команды
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         '1cDriveHelper.replaceTabsWithSpacesYaml', replaceTabsWithSpacesYamlHandler
+    ));
+    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+        '1cDriveHelper.checkAndFillNestedScenarios', checkAndFillNestedScenariosHandler
     ));
 
 

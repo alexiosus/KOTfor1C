@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.5.3",
+  "version": "1.6.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -204,6 +204,11 @@
         "command": "1cDriveHelper.replaceTabsWithSpacesYaml",
         "title": "1C:Drive - Заменить табы на пробелы",
         "category": "1C:Drive Test Helper"
+      },
+      {
+        "command": "1cDriveHelper.checkAndFillNestedScenarios",
+        "title": "1C:Drive - Проверить и дополнить ВложенныеСценарии",
+        "category": "1C:Drive Test Helper"
       }
     ],
     "keybindings": [
@@ -253,42 +258,47 @@
         {
           "command": "1cDriveHelper.openSubscenario",
           "when": "editorTextFocus",
-          "group": "0_modification@0"
+          "group": "0_navigation@0"
         },
         {
           "command": "1cDriveHelper.findCurrentFileReferences",
           "when": "editorTextFocus && !editorReadonly",
-          "group": "0_modification@1"
-        },
-        {
-          "command": "1cDriveHelper.insertNestedScenarioRef",
-          "when": "editorTextFocus && !editorReadonly",
-          "group": "01_modification@2"
-        },
-        {
-          "command": "1cDriveHelper.insertScenarioParam",
-          "when": "editorTextFocus && !editorReadonly",
-          "group": "01_modification@3"
-        },
-        {
-          "command": "1cDriveHelper.insertUid",
-          "when": "editorTextFocus && !editorReadonly",
-          "group": "01_modification@4"
-        },
-        {
-          "command": "1cDriveHelper.replaceTabsWithSpacesYaml",
-          "when": "editorTextFocus && !editorReadonly",
-          "group": "01_modification@5"
+          "group": "0_navigation@1"
         },
         {
           "command": "1cDriveHelper.createNestedScenario",
           "when": "editorTextFocus && !editorReadonly",
-          "group": "02_modification@5"
+          "group": "01_creation@0"
         },
         {
           "command": "1cDriveHelper.createMainScenario",
           "when": "editorTextFocus && !editorReadonly",
-          "group": "02_modification@6"
+          "group": "01_creation@1"
+        },
+        {
+          "command": "1cDriveHelper.replaceTabsWithSpacesYaml",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "02_refactor@0"
+        },
+        {
+          "command": "1cDriveHelper.checkAndFillNestedScenarios",
+          "when": "editorTextFocus",
+          "group": "02_refactor@1"
+        },
+        {
+          "command": "1cDriveHelper.insertNestedScenarioRef",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "03_modification@0"
+        },
+        {
+          "command": "1cDriveHelper.insertScenarioParam",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "03_modification@1"
+        },
+        {
+          "command": "1cDriveHelper.insertUid",
+          "when": "editorTextFocus && !editorReadonly",
+          "group": "03_modification@2"
         }
       ],
       "commandPalette": [
@@ -306,6 +316,10 @@
         },
         {
           "command": "1cDriveHelper.replaceTabsWithSpacesYaml",
+          "when": "true"
+        },
+        {
+          "command": "1cDriveHelper.checkAndFillNestedScenarios",
           "when": "true"
         }
       ]

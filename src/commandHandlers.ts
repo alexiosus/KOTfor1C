@@ -444,3 +444,238 @@ export async function replaceTabsWithSpacesYamlHandler(textEditor: vscode.TextEd
         vscode.window.showInformationMessage('Табы не найдены в документе.');
     }
 }
+
+/**
+ * Извлекает имена сценариев из секции "ВложенныеСценарии".
+ * @param documentText Полный текст документа.
+ * @returns Массив имен вложенных сценариев.
+ */
+function parseExistingNestedScenarios(documentText: string): string[] {
+    const existingScenarios: string[] = [];
+    const nestedSectionRegex = /ВложенныеСценарии:\s*([\s\S]*?)(?=\n[А-Яа-яЁёA-Za-z]+:|\n*$)/;
+    const nestedMatch = documentText.match(nestedSectionRegex);
+
+    if (nestedMatch && nestedMatch[1]) {
+        const sectionContent = nestedMatch[1];
+        const nameRegex = /^\s*ИмяСценария:\s*"([^"]+)"/gm; // gm для глобального поиска по нескольким строкам
+        let match;
+        while ((match = nameRegex.exec(sectionContent)) !== null) {
+            existingScenarios.push(match[1]);
+        }
+    }
+    console.log(`[parseExistingNestedScenarios] Found: ${existingScenarios.join(', ')}`);
+    return existingScenarios;
+}
+
+/**
+ * Извлекает имена сценариев, вызываемых в "ТекстСценария".
+ * @param documentText Полный текст документа.
+ * @returns Массив имен вызываемых сценариев.
+ */
+function parseCalledScenariosFromScriptBody(documentText: string): string[] {
+    const calledScenarios = new Set<string>(); // Используем Set для автоматического удаления дубликатов
+    const scriptBodyRegex = /ТекстСценария:\s*\|?\s*([\s\S]*?)(?=\n[А-Яа-яЁёA-Za-z]+:|\n*$)/;
+    const scriptBodyMatch = documentText.match(scriptBodyRegex);
+
+    if (scriptBodyMatch && scriptBodyMatch[1]) {
+        const scriptContent = scriptBodyMatch[1];
+        const lines = scriptContent.split('\n');
+        const callRegex = /^\s*(?:And|И|Допустим)\s+([^\s"'(][^"'(]*?)(?:\s*\(.*|\s*$)/i; // Более точное регулярное выражение
+
+        for (const line of lines) {
+            const trimmedLine = line.trim();
+            if (trimmedLine.startsWith('#') || trimmedLine === '') continue; // Пропускаем комментарии и пустые строки
+
+            const match = trimmedLine.match(callRegex);
+            if (match && match[1]) {
+                // Убираем возможные параметры в скобках или строки в кавычках в конце
+                let scenarioName = match[1].trim();
+                // Дополнительная очистка, если имя содержит параметры внутри себя без явных скобок (менее вероятно, но на всякий случай)
+                // Это эвристика, может потребоваться более сложный парсер для сложных случаев
+                const paramsMatch = scenarioName.match(/^(.*?)\s*<<.+>>\s*$/); // Удаление параметров типа <<...>>
+                if (paramsMatch && paramsMatch[1]) {
+                    scenarioName = paramsMatch[1].trim();
+                }
+                
+                // Проверяем, что это не стандартный Gherkin шаг, который может случайно совпасть
+                // Эвристика: если имя содержит кавычки или состоит из нескольких слов с пробелами,
+                // и не является вызовом известного сложного шага, то это, скорее всего, имя сценария.
+                // Простые шаги типа "Я нажимаю кнопку" не должны сюда попадать.
+                // Имена сценариев обычно более описательны.
+                if (scenarioName.includes(' ') || scenarioName.length > 20 || !/^(Я|I|Затем|Потом|Если|When|Then|Given)\s/i.test(scenarioName)) {
+                     // Проверка, чтобы не добавлять строки, которые являются параметрами многострочного шага
+                    if (!/^\s*\|/.test(line) && !/^\s*"""/.test(line)) {
+                        calledScenarios.add(scenarioName);
+                    }
+                }
+            }
+        }
+    }
+    const result = Array.from(calledScenarios);
+    console.log(`[parseCalledScenariosFromScriptBody] Found: ${result.join(', ')}`);
+    return result;
+}
+
+
+/**
+ * Обработчик команды проверки и заполнения вложенных сценариев.
+ */
+export async function checkAndFillNestedScenariosHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+    console.log("[Cmd:checkAndFillNestedScenarios] Starting...");
+    const document = textEditor.document;
+    const fullText = document.getText();
+
+    const existingNestedScenarios = parseExistingNestedScenarios(fullText);
+    const calledScenariosInBody = parseCalledScenariosFromScriptBody(fullText);
+
+    const scenariosToAdd: { name: string; uid: string }[] = [];
+
+    for (const calledName of calledScenariosInBody) {
+        if (!existingNestedScenarios.includes(calledName)) {
+            let uid = uuidv4(); // Генерируем новый UID по умолчанию
+            let nameForBlock = calledName; // Используем имя из вызова по умолчанию
+
+            const targetFileUri = await findFileByName(calledName);
+            if (targetFileUri) {
+                try {
+                    const fileContentBytes = await vscode.workspace.fs.readFile(targetFileUri);
+                    const fileContent = Buffer.from(fileContentBytes).toString('utf-8');
+                    const dataScenarioBlockRegex = /ДанныеСценария:\s*([\s\S]*?)(?=\n[А-Яа-яЁёA-Za-z]+:|\n*$)/;
+                    const dataScenarioBlockMatch = fileContent.match(dataScenarioBlockRegex);
+
+                    if (dataScenarioBlockMatch && dataScenarioBlockMatch[1]) {
+                        const blockContent = dataScenarioBlockMatch[1];
+                        const uidMatch = blockContent.match(/^\s*UID:\s*"([^"]+)"/m);
+                        const nameFileMatch = blockContent.match(/^\s*Имя:\s*"([^"]+)"/m);
+
+                        if (uidMatch && uidMatch[1]) {
+                            uid = uidMatch[1];
+                        }
+                        if (nameFileMatch && nameFileMatch[1]) {
+                            // nameForBlock = nameFileMatch[1]; // Используем имя из файла, если оно найдено
+                        }
+                         console.log(`[Cmd:checkAndFillNestedScenarios] Found details for "${calledName}": UID=${uid}, NameInFile=${nameFileMatch ? nameFileMatch[1] : 'N/A'}`);
+                    }
+                } catch (error) {
+                    console.error(`[Cmd:checkAndFillNestedScenarios] Error reading/parsing target file for "${calledName}":`, error);
+                }
+            }
+            scenariosToAdd.push({ name: nameForBlock, uid: uid });
+        }
+    }
+
+    if (scenariosToAdd.length === 0) {
+        vscode.window.showInformationMessage("Все вызываемые сценарии уже присутствуют в секции 'ВложенныеСценарии'.");
+        console.log("[Cmd:checkAndFillNestedScenarios] No scenarios to add.");
+        return;
+    }
+
+    // Логика вставки (адаптирована из insertNestedScenarioRefHandler)
+    const nestedSectionRegex = /ВложенныеСценарии:/;
+    const nestedMatch = fullText.match(nestedSectionRegex);
+    let insertPosition: vscode.Position;
+    let baseIndent = '    '; // Отступ по умолчанию для элементов списка
+    let initialOffset = 0; // Смещение от начала документа до начала секции "ВложенныеСценарии:"
+    let needsInitialNewline = false; // Нужен ли перенос строки перед первым новым элементом
+
+    if (nestedMatch && nestedMatch.index !== undefined) {
+        initialOffset = nestedMatch.index + nestedMatch[0].length;
+        
+        const sectionEndRegex = /\n[А-Яа-яЁёA-Za-z]+:|\n*$/g; // Ищем следующую секцию или конец файла
+        sectionEndRegex.lastIndex = initialOffset;
+        const nextSectionMatch = sectionEndRegex.exec(fullText);
+        const sectionEndOffset = nextSectionMatch ? nestedMatch.index + nestedMatch[0].length + nextSectionMatch.index : fullText.length;
+        
+        const sectionContent = fullText.substring(initialOffset, sectionEndOffset);
+        const lines = sectionContent.split('\n');
+        
+        let lastItemEndLineIndex = -1;
+        let lastItemIndent = '';
+
+        for (let i = lines.length - 1; i >= 0; i--) {
+            const line = lines[i];
+            if (line.match(/^\s*- ВложенныеСценарии:/)) { // Нашли начало последнего элемента
+                const indentMatch = line.match(/^(\s*)/);
+                lastItemIndent = indentMatch ? indentMatch[0] : baseIndent;
+                
+                // Ищем конец этого элемента
+                for (let j = i + 1; j < lines.length; j++) {
+                    const subLine = lines[j];
+                    const subIndentMatch = subLine.match(/^(\s*)/);
+                    if (subLine.trim() === '' || (subIndentMatch && subIndentMatch[0].length > lastItemIndent.length)) {
+                        lastItemEndLineIndex = j;
+                    } else {
+                        break;
+                    }
+                }
+                if (lastItemEndLineIndex === -1) lastItemEndLineIndex = i; // Если элемент однострочный
+                break;
+            }
+        }
+
+        if (lastItemEndLineIndex !== -1) {
+            // Вставка после последнего существующего элемента
+            let currentOffset = initialOffset;
+            for (let i = 0; i <= lastItemEndLineIndex; i++) {
+                currentOffset += lines[i].length + 1; // +1 за \n
+            }
+            insertPosition = document.positionAt(currentOffset -1); // -1 чтобы быть на той же строке или перед \n
+            baseIndent = lastItemIndent;
+            needsInitialNewline = true; // Нужен перенос строки перед первым новым элементом
+        } else {
+            // Секция "ВложенныеСценарии:" есть, но она пуста
+            insertPosition = document.positionAt(initialOffset);
+            needsInitialNewline = true; // Нужен перенос строки
+        }
+    } else {
+        // Секция "ВложенныеСценарии:" не найдена, добавляем ее в конец файла (или перед ТекстСценария, если он есть)
+        const textScriptRegex = /\nТекстСценария:/;
+        const textScriptMatch = fullText.match(textScriptRegex);
+        let endPositionOffset = fullText.length;
+        if (textScriptMatch && textScriptMatch.index !== undefined) {
+            endPositionOffset = textScriptMatch.index;
+        }
+        insertPosition = document.positionAt(endPositionOffset);
+        
+        const textToInsert = (endPositionOffset < fullText.length ? '\n' : (fullText.endsWith('\n\n') ? '' : (fullText.endsWith('\n') ? '\n' : '\n\n'))) +
+                             'ВложенныеСценарии:';
+        
+        await textEditor.edit(editBuilder => {
+            editBuilder.insert(insertPosition, textToInsert);
+        });
+        // Обновляем позицию вставки и initialOffset после добавления секции
+        initialOffset = insertPosition.character + textToInsert.length;
+        insertPosition = document.positionAt(initialOffset);
+        needsInitialNewline = true;
+    }
+    
+    // Формируем текст для вставки
+    let textToInsert = "";
+    scenariosToAdd.forEach((scenario, index) => {
+        if (index === 0 && needsInitialNewline) {
+            textToInsert += '\n';
+        } else if (index > 0) {
+            textToInsert += '\n'; // Перенос строки между элементами
+        }
+        textToInsert += `${baseIndent}- ВложенныеСценарии:\n`;
+        textToInsert += `${baseIndent}    UIDВложенныйСценарий: "${scenario.uid.replace(/"/g, '\\"')}"\n`; // Экранируем кавычки в UID
+        textToInsert += `${baseIndent}    ИмяСценария: "${scenario.name.replace(/"/g, '\\"')}"`; // Экранируем кавычки в имени
+    });
+
+
+    if (textToInsert) {
+        // Проверяем, нужно ли добавить перенос строки в конце, если это последняя секция
+        const isLastSection = !fullText.substring(insertPosition.character + textToInsert.length).includes('\n');
+        if (isLastSection && !textToInsert.endsWith('\n')) {
+            // textToInsert += '\n'; // Не добавляем, если это конец файла и нет других секций
+        }
+
+
+        const finalInsertPosition = insertPosition; // Сохраняем позицию перед edit
+        await textEditor.edit(editBuilder => {
+            editBuilder.insert(finalInsertPosition, textToInsert);
+        });
+        vscode.window.showInformationMessage(`Добавлено ${scenariosToAdd.length} вложенных сценариев.`);
+        console.log(`[Cmd:checkAndFillNestedScenarios] Added ${scenariosToAdd.length} scenarios.`);
+    }
+}
