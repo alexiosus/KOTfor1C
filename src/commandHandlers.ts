@@ -593,12 +593,15 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
 
     let foundExistingItems = false;
     let lastItemBlockEndGlobalOffset = -1;
+    let maxExistingItemNumber = 0;
 
     // Используем contentLinesForParsing для определения существующих элементов и их отступов
     // Начальный listItemsAreaStartRelativeOffset нужен, чтобы правильно считать смещения внутри rawSectionContent
     const listItemsAreaStartRelativeOffset = rawSectionContent.startsWith('\n') ? 1 : 0;
     const contentLinesForParsing = rawSectionContent.substring(listItemsAreaStartRelativeOffset).split('\n');
-
+    
+    // Regex to find the start of an item, allowing for optional numbering
+    const itemStartRegex = /^(\s*)- ВложенныеСценарии(\d*):/;
 
     if (rawSectionContent.trim() !== "") {
         let currentItemBaseIndent = '';
@@ -607,16 +610,24 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
             // Проверяем, что строка не пустая перед матчингом, чтобы избежать ложных срабатываний на пустых строках в contentLinesForParsing
             if (lineText.trim() === "") continue;
 
-            const itemStartMatch = lineText.match(/^(\s*)- ВложенныеСценарии:/);
+            const itemStartMatch = lineText.match(itemStartRegex);
             if (itemStartMatch) {
                 foundExistingItems = true;
                 currentItemBaseIndent = itemStartMatch[1];
                 baseIndentForNewItems = currentItemBaseIndent;
+
+                if (itemStartMatch[2]) { // If digits are present (group 2 of regex)
+                    const num = parseInt(itemStartMatch[2], 10);
+                    if (num > maxExistingItemNumber) {
+                        maxExistingItemNumber = num;
+                    }
+                }
+                
                 let currentItemLastLineIndex = i;
 
                 for (let j = i + 1; j < contentLinesForParsing.length; j++) {
                     const subLineText = contentLinesForParsing[j];
-                    if (subLineText.trim() === "" || subLineText.match(/^(\s*)- ВложенныеСценарии:/)) {
+                    if (subLineText.trim() === "" || subLineText.match(itemStartRegex)) {
                         break;
                     }
                     const subIndentMatch = subLineText.match(/^(\s*)/);
@@ -630,7 +641,8 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
                 let currentItemBlockEndRelativeOffset = listItemsAreaStartRelativeOffset;
                 for (let k = 0; k <= currentItemLastLineIndex; k++) {
                     currentItemBlockEndRelativeOffset += contentLinesForParsing[k].length;
-                     if (k < contentLinesForParsing.length -1 || (k === contentLinesForParsing.length -1 && rawSectionContent.substring(listItemsAreaStartRelativeOffset).split('\n')[k] + (rawSectionContent.endsWith('\n') ? '\n' : '') === contentLinesForParsing[k] + '\n') ) {
+                    if (k < contentLinesForParsing.length - 1 || 
+                        (k === contentLinesForParsing.length - 1 && rawSectionContent.substring(listItemsAreaStartRelativeOffset).endsWith('\n'))) {
                         currentItemBlockEndRelativeOffset++;
                     }
                 }
@@ -655,7 +667,7 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
         if (index > 0) { // Для второго и последующих элементов в добавляемом блоке
             itemsToInsertString += "\n"; // Перенос строки между элементами
         }
-        itemsToInsertString += `${baseIndentForNewItems}- ВложенныеСценарии${index + 1}:\n`;
+        itemsToInsertString += `${baseIndentForNewItems}- ВложенныеСценарии${maxExistingItemNumber + index + 1}:\n`;
         itemsToInsertString += `${baseIndentForNewItems}    UIDВложенныйСценарий: "${scenario.uid.replace(/"/g, '\\"')}"\n`;
         itemsToInsertString += `${baseIndentForNewItems}    ИмяСценария: "${scenario.name.replace(/"/g, '\\"')}"`;
 
@@ -670,8 +682,7 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
     const finalTextToInsert = newItemsBlockPrefix + itemsToInsertString;
 
     if (finalTextToInsert.trim() !== "" || (newItemsBlockPrefix === "\n" && itemsToInsertString.trim() === "")) {
-        if (!foundExistingItems && rawSectionContent.trim() === "" && rawSectionContent.length > 0) {
-            // Был только whitespace/newline после заголовка. Заменяем его.
+        if (!foundExistingItems && rawSectionContent.trim() === "" && rawSectionContent.length > 0 && newItemsBlockPrefix === "\n") {
              const rangeToReplace = new vscode.Range(
                 document.positionAt(afterHeaderOffset),
                 document.positionAt(afterHeaderOffset + rawSectionContent.length)
@@ -750,7 +761,7 @@ function parseDefinedScenarioParameters(documentText: string): string[] {
 export async function checkAndFillScenarioParametersHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
     console.log("[Cmd:checkAndFillScenarioParameters] Starting...");
     const document = textEditor.document;
-    let fullText = document.getText(); // Make it 'let' for potential updates if section is created
+    let fullText = document.getText(); 
 
     const usedParametersInBody = parseUsedParametersFromScriptBody(fullText);
     const definedParametersInSection = parseDefinedScenarioParameters(fullText);
@@ -768,11 +779,9 @@ export async function checkAndFillScenarioParametersHandler(textEditor: vscode.T
         return;
     }
 
-    const PARAM_SECTION_KEY = "ПараметрыСценария"; // Base key for section and items
+    const PARAM_SECTION_KEY = "ПараметрыСценария"; 
     const PARAM_SECTION_HEADER = `${PARAM_SECTION_KEY}:`;
-    // Regex for finding existing items. Note it does NOT look for an index.
-    // If existing items can be indexed, this regex needs to be more complex.
-    const PARAM_ITEM_EXISTING_REGEX_STR = `^(\\s*)-\\s*${PARAM_SECTION_KEY}(?:\\d+)?:`;
+    const PARAM_ITEM_EXISTING_REGEX_STR = `^(\\s*)-\\s*${PARAM_SECTION_KEY}(\\d*)?:`;
 
 
     let effectiveInsertPosition: vscode.Position;
@@ -781,6 +790,7 @@ export async function checkAndFillScenarioParametersHandler(textEditor: vscode.T
     let foundExistingItems = false;
     let rangeToReplaceForEmptySection: vscode.Range | null = null;
     let nextMajorKeyMatchResultAfterSection: RegExpExecArray | null = null;
+    let maxExistingParamItemNumber = 0;
 
 
     const sectionHeaderRegex = new RegExp(`^${PARAM_SECTION_HEADER}`, "m");
@@ -804,7 +814,7 @@ export async function checkAndFillScenarioParametersHandler(textEditor: vscode.T
 
         if (rawSectionContent.trim() !== "") {
             let currentItemBaseIndent = '';
-            const itemStartRegex = new RegExp(PARAM_ITEM_EXISTING_REGEX_STR);
+            const itemStartRegex = new RegExp(PARAM_ITEM_EXISTING_REGEX_STR.replace("(\\d*)?", "(\\d*)")); // Ensure capturing group for digits
 
             for (let i = 0; i < contentLinesForParsing.length; i++) {
                 const lineText = contentLinesForParsing[i];
@@ -815,8 +825,15 @@ export async function checkAndFillScenarioParametersHandler(textEditor: vscode.T
                     foundExistingItems = true;
                     currentItemBaseIndent = itemStartMatch[1];
                     baseIndentForNewItems = currentItemBaseIndent;
-                    let currentItemLastLineIndex = i;
 
+                    if (itemStartMatch[2]) {
+                        const num = parseInt(itemStartMatch[2], 10);
+                        if (num > maxExistingParamItemNumber) {
+                            maxExistingParamItemNumber = num;
+                        }
+                    }
+
+                    let currentItemLastLineIndex = i;
                     for (let j = i + 1; j < contentLinesForParsing.length; j++) {
                         const subLineText = contentLinesForParsing[j];
                         if (subLineText.trim() === "" || subLineText.match(itemStartRegex)) {
@@ -863,9 +880,8 @@ export async function checkAndFillScenarioParametersHandler(textEditor: vscode.T
             if (index > 0) {
                 itemsToInsertString += "\n";
             }
-            // Добавляем индекс к новым элементам
-            itemsToInsertString += `${baseIndentForNewItems}- ${PARAM_SECTION_KEY}${index + 1}:\n`;
-            itemsToInsertString += `${baseIndentForNewItems}    НомерСтроки: "${index + 1}"\n`; // Этот индекс тоже связан
+            itemsToInsertString += `${baseIndentForNewItems}- ${PARAM_SECTION_KEY}${maxExistingParamItemNumber + index + 1}:\n`;
+            itemsToInsertString += `${baseIndentForNewItems}    НомерСтроки: "${maxExistingParamItemNumber + index + 1}"\n`; 
             itemsToInsertString += `${baseIndentForNewItems}    Имя: "${paramName.replace(/"/g, '\\"')}"\n`;
             itemsToInsertString += `${baseIndentForNewItems}    Значение: "${paramName.replace(/"/g, '\\"')}"\n`;
             itemsToInsertString += `${baseIndentForNewItems}    ТипПараметра: "Строка"\n`;
@@ -892,8 +908,9 @@ export async function checkAndFillScenarioParametersHandler(textEditor: vscode.T
             }
         }
     } else {
-        // SECTION DOES NOT EXIST - Create it and add items
+        // SECTION DOES NOT EXIST
         baseIndentForNewItems = "    ";
+        maxExistingParamItemNumber = 0;
 
         let newSectionTargetInsertionOffset = fullText.length;
         const knownSectionsToInsertBefore = ["ВложенныеСценарии:", "ТекстСценария:"];
@@ -933,9 +950,8 @@ export async function checkAndFillScenarioParametersHandler(textEditor: vscode.T
         let itemsToInsertString = "";
         parametersToAdd.forEach((paramName, index) => {
             if (index > 0) itemsToInsertString += "\n";
-            // Добавляем индекс к новым элементам
-            itemsToInsertString += `${baseIndentForNewItems}- ${PARAM_SECTION_KEY}${index + 1}:\n`;
-            itemsToInsertString += `${baseIndentForNewItems}    НомерСтроки: "${index + 1}"\n`; // Этот индекс тоже связан
+            itemsToInsertString += `${baseIndentForNewItems}- ${PARAM_SECTION_KEY}${maxExistingParamItemNumber + index + 1}:\n`;
+            itemsToInsertString += `${baseIndentForNewItems}    НомерСтроки: "${maxExistingParamItemNumber + index + 1}"\n`; 
             itemsToInsertString += `${baseIndentForNewItems}    Имя: "${paramName.replace(/"/g, '\\"')}"\n`;
             itemsToInsertString += `${baseIndentForNewItems}    Значение: "${paramName.replace(/"/g, '\\"')}"\n`;
             itemsToInsertString += `${baseIndentForNewItems}    ТипПараметра: "Строка"\n`;
