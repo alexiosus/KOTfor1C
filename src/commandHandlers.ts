@@ -480,7 +480,7 @@ function parseCalledScenariosFromScriptBody(documentText: string): string[] {
     if (scriptBodyMatch && scriptBodyMatch[1]) {
         const scriptContent = scriptBodyMatch[1];
         const lines = scriptContent.split('\n');
-        const callRegex = /^\s*(?:And|И|Допустим)\s+([^\s"'(][^"'(]*?)(?:\s*\(.*|\s*$)/i; // Более точное регулярное выражение
+        const callRegex = /^(?!.*")\s*(?:And|И)\s+(.+)/i;
 
         for (const line of lines) {
             const trimmedLine = line.trim();
@@ -532,11 +532,10 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
 
     for (const calledName of calledScenariosInBody) {
         if (!existingNestedScenarios.includes(calledName)) {
-            let uid = uuidv4(); // Генерируем новый UID по умолчанию
-            let nameForBlock = calledName; // Используем имя из вызова по умолчанию
-
             const targetFileUri = await findFileByName(calledName);
             if (targetFileUri) {
+                let uid = uuidv4();
+                let nameForBlock = calledName;
                 try {
                     const fileContentBytes = await vscode.workspace.fs.readFile(targetFileUri);
                     const fileContent = Buffer.from(fileContentBytes).toString('utf-8');
@@ -551,13 +550,17 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
                         if (uidMatch && uidMatch[1]) {
                             uid = uidMatch[1];
                         }
-                        console.log(`[Cmd:checkAndFillNestedScenarios] Found details for "${calledName}": UID=${uid}, NameInFile=${nameFileMatch ? nameFileMatch[1] : 'N/A'}`);
+                        // console.log(`[Cmd:checkAndFillNestedScenarios] Found details for "${calledName}": UID=${uid}, NameInFile=${nameFileMatch ? nameFileMatch[1] : 'N/A'}`);
+                    } else {
+                        // console.log(`[Cmd:checkAndFillNestedScenarios] 'ДанныеСценария:' block not found in target file for "${calledName}". Using generated UID.`);
                     }
                 } catch (error) {
-                    console.error(`[Cmd:checkAndFillNestedScenarios] Error reading/parsing target file for "${calledName}":`, error);
+                    // console.error(`[Cmd:checkAndFillNestedScenarios] Error reading/parsing target file for "${calledName}":`, error, ". Using generated UID.");
                 }
+                scenariosToAdd.push({ name: nameForBlock, uid: uid });
+            } else {
+                // console.log(`[Cmd:checkAndFillNestedScenarios] Scenario file not found for "${calledName}". It will not be added to 'ВложенныеСценарии'.`);
             }
-            scenariosToAdd.push({ name: nameForBlock, uid: uid });
         }
     }
 
