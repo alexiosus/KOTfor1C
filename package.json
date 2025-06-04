@@ -207,7 +207,12 @@
       },
       {
         "command": "1cDriveHelper.checkAndFillNestedScenarios",
-        "title": "1C:Drive - Проверить и дополнить ВложенныеСценарии",
+        "title": "1C:Drive - Заполнить секцию ВложенныеСценарии",
+        "category": "1C:Drive Test Helper"
+      },
+      {
+        "command": "1cDriveHelper.checkAndFillScriptParameters",
+        "title": "1C:Drive - Заполнить секцию ПараметрыСценария",
         "category": "1C:Drive Test Helper"
       }
     ],
@@ -258,12 +263,12 @@
         {
           "command": "1cDriveHelper.openSubscenario",
           "when": "editorTextFocus",
-          "group": "0_navigation@0"
+          "group": "00_navigation@0"
         },
         {
           "command": "1cDriveHelper.findCurrentFileReferences",
           "when": "editorTextFocus && !editorReadonly",
-          "group": "0_navigation@1"
+          "group": "00_navigation@1"
         },
         {
           "command": "1cDriveHelper.createNestedScenario",
@@ -276,29 +281,24 @@
           "group": "01_creation@1"
         },
         {
-          "command": "1cDriveHelper.replaceTabsWithSpacesYaml",
-          "when": "editorTextFocus && !editorReadonly",
-          "group": "02_refactor@0"
-        },
-        {
           "command": "1cDriveHelper.checkAndFillNestedScenarios",
           "when": "editorTextFocus",
-          "group": "02_refactor@1"
+          "group": "02_modification@0"
         },
         {
-          "command": "1cDriveHelper.insertNestedScenarioRef",
-          "when": "editorTextFocus && !editorReadonly",
-          "group": "03_modification@0"
+          "command": "1cDriveHelper.checkAndFillScriptParameters",
+          "when": "editorTextFocus",
+          "group": "02_modification@1"
         },
         {
-          "command": "1cDriveHelper.insertScenarioParam",
+          "command": "1cDriveHelper.replaceTabsWithSpacesYaml",
           "when": "editorTextFocus && !editorReadonly",
-          "group": "03_modification@1"
+          "group": "02_modification@2"
         },
         {
           "command": "1cDriveHelper.insertUid",
           "when": "editorTextFocus && !editorReadonly",
-          "group": "03_modification@2"
+          "group": "02_modification@3"
         }
       ],
       "commandPalette": [
@@ -320,6 +320,10 @@
         },
         {
           "command": "1cDriveHelper.checkAndFillNestedScenarios",
+          "when": "true"
+        },
+        {
+          "command": "1cDriveHelper.checkAndFillScriptParameters",
           "when": "true"
         }
       ]

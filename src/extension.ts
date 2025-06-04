@@ -8,7 +8,8 @@ import {
     insertScenarioParamHandler,
     insertUidHandler,
     replaceTabsWithSpacesYamlHandler,
-    checkAndFillNestedScenariosHandler
+    checkAndFillNestedScenariosHandler,
+    checkAndFillScenarioParametersHandler
 } from './commandHandlers';
 
 import { DriveCompletionProvider } from './completionProvider';
@@ -108,6 +109,9 @@ export function activate(context: vscode.ExtensionContext) {
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         '1cDriveHelper.checkAndFillNestedScenarios', checkAndFillNestedScenariosHandler
+    ));
+    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+        '1cDriveHelper.checkAndFillScriptParameters', checkAndFillScenarioParametersHandler
     ));
 
 
