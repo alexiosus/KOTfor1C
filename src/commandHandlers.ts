@@ -551,10 +551,7 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
                         if (uidMatch && uidMatch[1]) {
                             uid = uidMatch[1];
                         }
-                        if (nameFileMatch && nameFileMatch[1]) {
-                            // nameForBlock = nameFileMatch[1]; // Используем имя из файла, если оно найдено
-                        }
-                         console.log(`[Cmd:checkAndFillNestedScenarios] Found details for "${calledName}": UID=${uid}, NameInFile=${nameFileMatch ? nameFileMatch[1] : 'N/A'}`);
+                        console.log(`[Cmd:checkAndFillNestedScenarios] Found details for "${calledName}": UID=${uid}, NameInFile=${nameFileMatch ? nameFileMatch[1] : 'N/A'}`);
                     }
                 } catch (error) {
                     console.error(`[Cmd:checkAndFillNestedScenarios] Error reading/parsing target file for "${calledName}":`, error);
@@ -570,112 +567,128 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
         return;
     }
 
-    // Логика вставки (адаптирована из insertNestedScenarioRefHandler)
-    const nestedSectionRegex = /ВложенныеСценарии:/;
-    const nestedMatch = fullText.match(nestedSectionRegex);
-    let insertPosition: vscode.Position;
-    let baseIndent = '    '; // Отступ по умолчанию для элементов списка
-    let initialOffset = 0; // Смещение от начала документа до начала секции "ВложенныеСценарии:"
-    let needsInitialNewline = false; // Нужен ли перенос строки перед первым новым элементом
+    const nestedSectionHeaderRegex = /ВложенныеСценарии:/;
+    const nestedMatch = fullText.match(nestedSectionHeaderRegex);
 
-    if (nestedMatch && nestedMatch.index !== undefined) {
-        initialOffset = nestedMatch.index + nestedMatch[0].length;
-        
-        const sectionEndRegex = /\n[А-Яа-яЁёA-Za-z]+:|\n*$/g; // Ищем следующую секцию или конец файла
-        sectionEndRegex.lastIndex = initialOffset;
-        const nextSectionMatch = sectionEndRegex.exec(fullText);
-        const sectionEndOffset = nextSectionMatch ? nestedMatch.index + nestedMatch[0].length + nextSectionMatch.index : fullText.length;
-        
-        const sectionContent = fullText.substring(initialOffset, sectionEndOffset);
-        const lines = sectionContent.split('\n');
-        
-        let lastItemEndLineIndex = -1;
-        let lastItemIndent = '';
+    if (!nestedMatch || nestedMatch.index === undefined) {
+        vscode.window.showInformationMessage("Секция 'ВложенныеСценарии:' не найдена. Новые сценарии не будут добавлены.");
+        console.log("[Cmd:checkAndFillNestedScenarios] 'ВложенныеСценарии:' section not found.");
+        return;
+    }
 
-        for (let i = lines.length - 1; i >= 0; i--) {
-            const line = lines[i];
-            if (line.match(/^\s*- ВложенныеСценарии:/)) { // Нашли начало последнего элемента
-                const indentMatch = line.match(/^(\s*)/);
-                lastItemIndent = indentMatch ? indentMatch[0] : baseIndent;
-                
-                // Ищем конец этого элемента
-                for (let j = i + 1; j < lines.length; j++) {
-                    const subLine = lines[j];
-                    const subIndentMatch = subLine.match(/^(\s*)/);
-                    if (subLine.trim() === '' || (subIndentMatch && subIndentMatch[0].length > lastItemIndent.length)) {
-                        lastItemEndLineIndex = j;
+    const sectionHeaderGlobalStartOffset = nestedMatch.index;
+    const sectionHeaderLineText = nestedMatch[0];
+    const afterHeaderOffset = sectionHeaderGlobalStartOffset + sectionHeaderLineText.length;
+
+    const nextMajorKeyRegex = /\n(?![ \t])([А-Яа-яЁёA-Za-z]+:)/g;
+    nextMajorKeyRegex.lastIndex = afterHeaderOffset;
+    const nextMajorKeyMatchResult = nextMajorKeyRegex.exec(fullText);
+    const sectionContentEndOffset = nextMajorKeyMatchResult ? nextMajorKeyMatchResult.index : fullText.length;
+
+    const rawSectionContent = fullText.substring(afterHeaderOffset, sectionContentEndOffset);
+
+    let effectiveInsertPosition: vscode.Position;
+    let baseIndentForNewItems = '    ';
+    let newItemsBlockPrefix = "";
+
+    let foundExistingItems = false;
+    let lastItemBlockEndGlobalOffset = -1;
+
+    // Используем contentLinesForParsing для определения существующих элементов и их отступов
+    // Начальный listItemsAreaStartRelativeOffset нужен, чтобы правильно считать смещения внутри rawSectionContent
+    const listItemsAreaStartRelativeOffset = rawSectionContent.startsWith('\n') ? 1 : 0;
+    const contentLinesForParsing = rawSectionContent.substring(listItemsAreaStartRelativeOffset).split('\n');
+
+
+    if (rawSectionContent.trim() !== "") {
+        let currentItemBaseIndent = '';
+        for (let i = 0; i < contentLinesForParsing.length; i++) {
+            const lineText = contentLinesForParsing[i];
+            // Проверяем, что строка не пустая перед матчингом, чтобы избежать ложных срабатываний на пустых строках в contentLinesForParsing
+            if (lineText.trim() === "") continue;
+
+            const itemStartMatch = lineText.match(/^(\s*)- ВложенныеСценарии:/);
+            if (itemStartMatch) {
+                foundExistingItems = true;
+                currentItemBaseIndent = itemStartMatch[1];
+                baseIndentForNewItems = currentItemBaseIndent;
+                let currentItemLastLineIndex = i;
+
+                for (let j = i + 1; j < contentLinesForParsing.length; j++) {
+                    const subLineText = contentLinesForParsing[j];
+                    if (subLineText.trim() === "" || subLineText.match(/^(\s*)- ВложенныеСценарии:/)) {
+                        break;
+                    }
+                    const subIndentMatch = subLineText.match(/^(\s*)/);
+                    if (subIndentMatch && subIndentMatch[0].length > currentItemBaseIndent.length) {
+                        currentItemLastLineIndex = j;
                     } else {
                         break;
                     }
                 }
-                if (lastItemEndLineIndex === -1) lastItemEndLineIndex = i; // Если элемент однострочный
-                break;
-            }
-        }
 
-        if (lastItemEndLineIndex !== -1) {
-            // Вставка после последнего существующего элемента
-            let currentOffset = initialOffset;
-            for (let i = 0; i <= lastItemEndLineIndex; i++) {
-                currentOffset += lines[i].length + 1; // +1 за \n
+                let currentItemBlockEndRelativeOffset = listItemsAreaStartRelativeOffset;
+                for (let k = 0; k <= currentItemLastLineIndex; k++) {
+                    currentItemBlockEndRelativeOffset += contentLinesForParsing[k].length;
+                     if (k < contentLinesForParsing.length -1 || (k === contentLinesForParsing.length -1 && rawSectionContent.substring(listItemsAreaStartRelativeOffset).split('\n')[k] + (rawSectionContent.endsWith('\n') ? '\n' : '') === contentLinesForParsing[k] + '\n') ) {
+                        currentItemBlockEndRelativeOffset++;
+                    }
+                }
+                lastItemBlockEndGlobalOffset = afterHeaderOffset + currentItemBlockEndRelativeOffset;
+                i = currentItemLastLineIndex;
             }
-            insertPosition = document.positionAt(currentOffset -1); // -1 чтобы быть на той же строке или перед \n
-            baseIndent = lastItemIndent;
-            needsInitialNewline = true; // Нужен перенос строки перед первым новым элементом
-        } else {
-            // Секция "ВложенныеСценарии:" есть, но она пуста
-            insertPosition = document.positionAt(initialOffset);
-            needsInitialNewline = true; // Нужен перенос строки
         }
-    } else {
-        // Секция "ВложенныеСценарии:" не найдена, добавляем ее в конец файла (или перед ТекстСценария, если он есть)
-        const textScriptRegex = /\nТекстСценария:/;
-        const textScriptMatch = fullText.match(textScriptRegex);
-        let endPositionOffset = fullText.length;
-        if (textScriptMatch && textScriptMatch.index !== undefined) {
-            endPositionOffset = textScriptMatch.index;
-        }
-        insertPosition = document.positionAt(endPositionOffset);
-        
-        const textToInsert = (endPositionOffset < fullText.length ? '\n' : (fullText.endsWith('\n\n') ? '' : (fullText.endsWith('\n') ? '\n' : '\n\n'))) +
-                             'ВложенныеСценарии:';
-        
-        await textEditor.edit(editBuilder => {
-            editBuilder.insert(insertPosition, textToInsert);
-        });
-        // Обновляем позицию вставки и initialOffset после добавления секции
-        initialOffset = insertPosition.character + textToInsert.length;
-        insertPosition = document.positionAt(initialOffset);
-        needsInitialNewline = true;
     }
-    
-    // Формируем текст для вставки
-    let textToInsert = "";
+
+    if (foundExistingItems && lastItemBlockEndGlobalOffset !== -1) {
+        effectiveInsertPosition = document.positionAt(lastItemBlockEndGlobalOffset);
+        newItemsBlockPrefix = ""; // Вставляем сразу после последнего элемента, без доп. префикса
+    } else {
+        // Секция пуста или содержит только комментарии/пустые строки после заголовка
+        effectiveInsertPosition = document.positionAt(afterHeaderOffset);
+        baseIndentForNewItems = '    '; // Отступ по умолчанию для первого элемента
+        newItemsBlockPrefix = "\n";    // Всегда начинаем с новой строки
+    }
+
+    let itemsToInsertString = "";
     scenariosToAdd.forEach((scenario, index) => {
-        if (index === 0 && needsInitialNewline) {
-            textToInsert += '\n';
-        } else if (index > 0) {
-            textToInsert += '\n'; // Перенос строки между элементами
+        if (index > 0) { // Для второго и последующих элементов в добавляемом блоке
+            itemsToInsertString += "\n"; // Перенос строки между элементами
         }
-        textToInsert += `${baseIndent}- ВложенныеСценарии:\n`;
-        textToInsert += `${baseIndent}    UIDВложенныйСценарий: "${scenario.uid.replace(/"/g, '\\"')}"\n`; // Экранируем кавычки в UID
-        textToInsert += `${baseIndent}    ИмяСценария: "${scenario.name.replace(/"/g, '\\"')}"`; // Экранируем кавычки в имени
+        itemsToInsertString += `${baseIndentForNewItems}- ВложенныеСценарии:\n`;
+        itemsToInsertString += `${baseIndentForNewItems}    UIDВложенныйСценарий: "${scenario.uid.replace(/"/g, '\\"')}"\n`;
+        itemsToInsertString += `${baseIndentForNewItems}    ИмяСценария: "${scenario.name.replace(/"/g, '\\"')}"`;
+
+        if (index === scenariosToAdd.length - 1) { // Если это последний элемент в добавляемом блоке
+            if (nextMajorKeyMatchResult && sectionContentEndOffset < fullText.length) {
+                // Если есть следующая основная секция, добавляем перенос строки после нашего последнего элемента
+                itemsToInsertString += "\n";
+            }
+        }
     });
 
+    const finalTextToInsert = newItemsBlockPrefix + itemsToInsertString;
 
-    if (textToInsert) {
-        // Проверяем, нужно ли добавить перенос строки в конце, если это последняя секция
-        const isLastSection = !fullText.substring(insertPosition.character + textToInsert.length).includes('\n');
-        if (isLastSection && !textToInsert.endsWith('\n')) {
-            // textToInsert += '\n'; // Не добавляем, если это конец файла и нет других секций
+    if (finalTextToInsert.trim() !== "" || (newItemsBlockPrefix === "\n" && itemsToInsertString.trim() === "")) {
+        if (!foundExistingItems && rawSectionContent.trim() === "" && rawSectionContent.length > 0) {
+            // Был только whitespace/newline после заголовка. Заменяем его.
+             const rangeToReplace = new vscode.Range(
+                document.positionAt(afterHeaderOffset),
+                document.positionAt(afterHeaderOffset + rawSectionContent.length)
+            );
+            await textEditor.edit(editBuilder => {
+                editBuilder.replace(rangeToReplace, finalTextToInsert);
+            });
+
+        } else {
+            await textEditor.edit(editBuilder => {
+                editBuilder.insert(effectiveInsertPosition, finalTextToInsert);
+            });
         }
 
-
-        const finalInsertPosition = insertPosition; // Сохраняем позицию перед edit
-        await textEditor.edit(editBuilder => {
-            editBuilder.insert(finalInsertPosition, textToInsert);
-        });
         vscode.window.showInformationMessage(`Добавлено ${scenariosToAdd.length} вложенных сценариев.`);
-        console.log(`[Cmd:checkAndFillNestedScenarios] Added ${scenariosToAdd.length} scenarios.`);
+        console.log(`[Cmd:checkAndFillNestedScenarios] Added ${scenariosToAdd.length} scenarios. InsertPos Char: ${effectiveInsertPosition.character}, Line: ${effectiveInsertPosition.line}. Prefix: '${newItemsBlockPrefix.replace(/\n/g, "\\n")}'`);
+    } else {
+        console.log("[Cmd:checkAndFillNestedScenarios] Calculated text to insert was empty or whitespace.");
     }
 }
