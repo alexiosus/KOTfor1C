@@ -213,6 +213,15 @@ export function activate(context: vscode.ExtensionContext) {
         });
     };
 
+    context.subscriptions.push(
+        vscode.window.onDidChangeActiveTextEditor(editor => {
+            foldSectionsInEditor(editor);
+        })
+    );
+    if (vscode.window.activeTextEditor) {
+        foldSectionsInEditor(vscode.window.activeTextEditor);
+    }
+
     context.subscriptions.push(vscode.commands.registerCommand(
         '1cDriveHelper.refreshGherkinSteps', 
         refreshGherkinStepsCommand
@@ -227,6 +236,51 @@ export function activate(context: vscode.ExtensionContext) {
     }));
 
     console.log('1cDriveHelper commands and providers registered.');
+}
+
+async function foldSectionsInEditor(editor: vscode.TextEditor | undefined) {
+    if (!editor) {
+        return;
+    }
+
+    // Проверяем, включена ли настройка
+    const config = vscode.workspace.getConfiguration('1cDriveHelper');
+    if (!config.get<boolean>('editor.autoCollapseOnOpen')) {
+        return;
+    }
+
+    const document = editor.document;
+    // Проверяем, что это YAML файл
+    if (!document.fileName.endsWith('.yaml')) {
+        return;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Сохраняем исходное положение курсора и выделения
+    const originalSelections = editor.selections;
+    const originalVisibleRanges = editor.visibleRanges;
+
+
+    const text = document.getText();
+    const sectionsToFold = ['ВложенныеСценарии', 'ПараметрыСценария'];
+
+    for (const sectionName of sectionsToFold) {
+        const sectionRegex = new RegExp(`${sectionName}:`, 'm');
+        const match = text.match(sectionRegex);
+
+        if (match && typeof match.index === 'number') {
+            const startPosition = document.positionAt(match.index);
+            // Устанавливаем курсор на начало секции и вызываем команду сворачивания
+            editor.selections = [new vscode.Selection(startPosition, startPosition)];
+            await vscode.commands.executeCommand('editor.fold');
+        }
+    }
+    // Восстанавливаем исходное положение курсора и выделения
+    editor.selections = originalSelections;
+    if (originalSelections.length > 0) {
+        editor.revealRange(originalVisibleRanges[0], vscode.TextEditorRevealType.AtTop);
+    }
 }
 
 /**
