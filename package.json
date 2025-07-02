@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -37,6 +37,11 @@
             "default": true,
             "description": "Включить панель \"Сборка Тестов\".",
             "order": 11
+          },
+          "1cDriveHelper.editor.autoCollapseOnOpen": {
+            "type": "boolean",
+            "default": true,
+            "description": "Автоматически сворачивать секции 'ВложенныеСценарии' и 'ПараметрыСценария' при открытии файла."
           },
           "1cDriveHelper.steps.externalUrl": {
             "type": "string",
