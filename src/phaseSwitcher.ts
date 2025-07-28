@@ -321,7 +321,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         outputChannel.clear();
         
         const config = vscode.workspace.getConfiguration('1cDriveHelper');
-        const showOutputOnError = config.get<boolean>('assembleScript.showOutputOnError');
+        const showOutputPanel = config.get<boolean>('assembleScript.showOutputPanel');
+
+        if (showOutputPanel) {
+            outputChannel.show(true);
+        }
 
         const webview = this._view?.webview;
         if (!webview) {
@@ -351,6 +355,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             title: "Сборка тестов 1C:Drive",
             cancellable: false
         }, async (progress) => {
+            let featureFileDirUri: vscode.Uri; // Объявляем здесь, чтобы была доступна в конце
             try {
                 progress.report({ increment: 0, message: "Подготовка..." });
                 outputChannel.appendLine(`[${new Date().toISOString()}] Starting TypeScript YAML build process...`);
@@ -457,7 +462,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 await vscode.workspace.fs.createDirectory(vanessaErrorLogsDir);
 
                 outputChannel.appendLine(`Writing parameters from pipeline into tests...`);
-                const featureFileDirUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'tests', 'EtalonDrive');
+                featureFileDirUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'tests', 'EtalonDrive');
                 const featureFilesPattern = new vscode.RelativePattern(featureFileDirUri, '**/*.feature');
                 const featureFiles = await vscode.workspace.findFiles(featureFilesPattern);
 
@@ -533,7 +538,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 progress.report({ increment: 100, message: "Завершено!" });
                 outputChannel.appendLine(`TypeScript YAML build process completed successfully.`);
                 sendStatus('Сборка тестов завершена успешно.', true, 'assemble', true); 
-                vscode.window.showInformationMessage('Сборка тестов успешно завершена.');
+                vscode.window.showInformationMessage(
+                    'Сборка тестов успешно завершена.',
+                    'Открыть папку'
+                ).then(selection => {
+                    if (selection === 'Открыть папку') {
+                        vscode.commands.executeCommand('1cDriveHelper.openBuildFolder', featureFileDirUri.fsPath);
+                    }
+                });
 
             } catch (error: any) {
                 console.error(`${methodStartLog} Error:`, error);
@@ -541,10 +553,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 outputChannel.appendLine(`--- ERROR: ${errorMessage} ---`);
                 if (error.stack) {
                     outputChannel.appendLine(`Stack: ${error.stack}`);
-                }
-
-                if (showOutputOnError) {
-                    outputChannel.show(true);
                 }
 
                 const logFileMatch = errorMessage.match(/См\. лог:\s*(.*)/);
