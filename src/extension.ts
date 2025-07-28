@@ -9,7 +9,11 @@ import {
     insertUidHandler,
     replaceTabsWithSpacesYamlHandler,
     checkAndFillNestedScenariosHandler,
-    checkAndFillScenarioParametersHandler
+    checkAndFillScenarioParametersHandler,
+    openMxlFileFromExplorerHandler,
+    openMxlFileFromTextHandler,
+    revealFileInExplorerHandler,
+    revealFileInOSHandler
 } from './commandHandlers';
 
 import { DriveCompletionProvider } from './completionProvider';
@@ -112,6 +116,18 @@ export function activate(context: vscode.ExtensionContext) {
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         '1cDriveHelper.checkAndFillScriptParameters', checkAndFillScenarioParametersHandler
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        '1cDriveHelper.openMxlFileFromExplorer', (uri: vscode.Uri) => openMxlFileFromExplorerHandler(uri)
+    ));
+    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+        '1cDriveHelper.openMxlFile', (editor, edit) => openMxlFileFromTextHandler(editor, edit, phaseSwitcherProvider)
+    ));
+    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+        '1cDriveHelper.revealFileInExplorer', (editor, edit) => revealFileInExplorerHandler(editor, edit, phaseSwitcherProvider)
+    ));
+    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+        '1cDriveHelper.revealFileInOS', (editor, edit) => revealFileInOSHandler(editor, edit, phaseSwitcherProvider)
     ));
 
 

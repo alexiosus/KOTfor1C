@@ -2,7 +2,7 @@
 import * as path from 'path'; // Используется для path.basename в логах или QuickPick
 
 /**
- * Асинхронно ищет первый YAML файл в воркспейсе,
+ * Асинхронно ищет первый YAML файл в папке tests,
  * содержащий строку 'Имя: "searchText"'.
  * @param searchText Текст имени для поиска (значение из кавычек).
  * @returns Promise с Uri найденного файла или null.
@@ -13,8 +13,8 @@ export async function findFileByName(searchText: string): Promise<vscode.Uri | n
         console.warn("[findFileByName] Рабочая область не открыта.");
         return null;
     }
-    // Ищем во всех YAML файлах воркспейса
-    const globPattern = '**/*.yaml';
+    // Ищем во всех YAML файлах в папке tests
+    const globPattern = 'tests/**/*.yaml';
     const excludePattern = '**/node_modules/**'; // Стандартное исключение
 
     try {
@@ -45,7 +45,7 @@ export async function findFileByName(searchText: string): Promise<vscode.Uri | n
 }
 
 /**
- * Асинхронно ищет все строки вида 'And targetName' во всех YAML файлах воркспейса.
+ * Асинхронно ищет все строки вида 'And targetName' во всех YAML файлах в папке tests.
  * @param targetName Имя сценария для поиска ссылок (значение из поля "Имя:").
  * @param token Токен отмены операции (опционально).
  * @returns Promise с массивом найденных местоположений (vscode.Location).
@@ -53,7 +53,7 @@ export async function findFileByName(searchText: string): Promise<vscode.Uri | n
 export async function findScenarioReferences(targetName: string, token?: vscode.CancellationToken): Promise<vscode.Location[]> {
     console.log(`[findScenarioReferences] Searching for references: "And ${targetName}"...`);
     const locations: vscode.Location[] = [];
-    const searchPattern = '**/*.yaml';
+    const searchPattern = 'tests/**/*.yaml';
     const excludePattern = '**/node_modules/**';
 
     const workspaceFolders = vscode.workspace.workspaceFolders;
