@@ -104,41 +104,31 @@
         }
       },
       {
-        "title": "Настройки базы сборки",
+        "title": "Настройки сборки тестов",
         "properties": {
-          "1cDriveHelper.paths.emptyInfobase": {
-            "type": "string",
-            "default": "",
-            "description": "Путь к каталогу пустой файловой информационной базы (EmptyInfobasePath).",
-            "order": 30
-          },
-          "1cDriveHelper.params.dbUser": {
-            "type": "string",
-            "default": "Administrator",
-            "description": "Имя пользователя для подключения к пустой ИБ (DBUser).",
-            "order": 31
-          },
-          "1cDriveHelper.params.dbPassword": {
-            "type": "string",
-            "default": "",
-            "description": "Пароль пользователя для подключения к пустой ИБ (DBPassword).",
-            "order": 32
-          },
           "1cDriveHelper.params.splitFeatureFiles": {
-            "type": "string",
-            "default": "False",
-            "enum": [
-              "True",
-              "False"
-            ],
-            "description": "Значение для SplitFeatureFiles (если не задано VanessaTestFile).",
+            "type": "boolean",
+            "default": true,
+            "description": "Сохранять при сборке приложенные к тестам файлы в отдельную папку.",
             "order": 33
+          },
+          "1cDriveHelper.assembleScript.showOutputPanel": {
+            "type": "boolean",
+            "default": false,
+            "description": "Автоматически показывать панель Output при запуске сборки тестов.",
+            "order": 35
           }
         }
       },
       {
         "title": "Настройки системных путей",
         "properties": {
+          "1cDriveHelper.paths.emptyInfobase": {
+            "type": "string",
+            "default": "",
+            "description": "Путь к каталогу пустой файловой информационной базы (EmptyInfobasePath).",
+            "order": 38
+          },
           "1cDriveHelper.assembleScript.buildPath": {
             "type": "string",
             "default": "C:\\EtalonDrive\\",
@@ -156,12 +146,6 @@
             "default": "C:\\Program Files (x86)\\1cv8fv\\bin\\1cv8fv.exe",
             "description": "Полный путь к '1С:Предприятие — работа с файлами' (1cv8fv.exe).",
             "order": 42
-          },
-          "1cDriveHelper.assembleScript.showOutputPanel": {
-            "type": "boolean",
-            "default": false,
-            "description": "Автоматически показывать панель Output при запуске сборки тестов.",
-            "order": 43
           }
         }
       }

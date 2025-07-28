@@ -122,13 +122,11 @@
       * `Email Outgoing Server`: Сервер исходящей почты (EMailTestOutgoingMailServer).
       * `Email Outgoing Port`: Порт исходящей почты (EMailTestOutgoingMailPort).
       * `Email Protocol`: Протокол почты, IMAP или POP3 (EMailTestProtocol).
-    * **Настройки базы сборки**:
-      * `Empty Infobase`: Путь к каталогу пустой файловой информационной базы, на которой будет запускаться обработка сборки сценариев (EmptyInfobasePath).
-      * `Db User`: Имя пользователя для подключения к пустой ИБ (DBUser).
-      * `Db Password`: Пароль пользователя для подключения к пустой ИБ (DBPassword).
-      * `Split Feature Files`: Значение для SplitFeatureFiles (по умолчанию выкл.)
+    * **Настройки сборки**:
+      * `Split Feature Files`: Сохранять приложенные к тестам файлы в отдельную папку (по умолчанию вкл.).
       * `Show Output Panel`: Показывать панель Output при сборке тестов (по умолчанию выкл.).
     * **Настройки системных путей**:
+      * `Empty Infobase`: Путь к каталогу пустой файловой информационной базы, на которой будет запускаться обработка сборки сценариев (EmptyInfobasePath).
       * `Build Path`: Путь к папке для собранных тестов (BuildPath).
       * `one CEnterprise Exe`: Полный путь к исполняемому файлу 1cv8.exe (Windows) или 1cestart (macOS).
       * `File Workshop Exe`: Полный путь к '1С:Предприятие — работа с файлами' (1cv8fv.exe).

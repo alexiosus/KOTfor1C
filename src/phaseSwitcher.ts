@@ -445,7 +445,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const sourcesPathForwardSlash = workspaceRootPath.replace(/\\/g, '/');
                 
                 const vanessaTestFileEnv = process.env.VanessaTestFile; 
-                const splitFeatureFilesValue = vanessaTestFileEnv ? "True" : (config.get<string>('params.splitFeatureFiles') || "False");
+                const splitFeatureFilesFromConfig = config.get<boolean>('params.splitFeatureFiles');
+                const splitFeatureFilesValue = vanessaTestFileEnv ? "True" : (splitFeatureFilesFromConfig ? "True" : "False");
 
                 yamlParamsContent = yamlParamsContent.replace(/#BuildPath/g, buildPathForwardSlash);
                 yamlParamsContent = yamlParamsContent.replace(/#SourcesPath/g, sourcesPathForwardSlash);
