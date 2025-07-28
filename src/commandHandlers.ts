@@ -138,10 +138,15 @@ async function openMxlWithFileWorkshop(filePath: string) {
         return;
     }
 
-    try {
-        await fs.promises.access(fileWorkshopPath, fs.constants.F_OK);
-    } catch (error) {
-        vscode.window.showErrorMessage(`Исполняемый файл не найден по пути: ${fileWorkshopPath}`);
+    if (!fs.existsSync(fileWorkshopPath)) {
+        vscode.window.showErrorMessage(
+            `Исполняемый файл '1С:Предприятие — работа с файлами' не найден по пути: ${fileWorkshopPath}`,
+            "Открыть настройки"
+        ).then(selection => {
+            if (selection === "Открыть настройки") {
+                vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.fileWorkshopExe');
+            }
+        });
         return;
     }
 

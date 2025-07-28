@@ -368,12 +368,57 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const workspaceRootPath = workspaceRootUri.fsPath;
 
                 const oneCPath_raw = config.get<string>('paths.oneCEnterpriseExe');
-                if (!oneCPath_raw || !fs.existsSync(oneCPath_raw)) { 
-                    throw new Error(`Путь к 1С (настройка '1cDriveHelper.paths.oneCEnterpriseExe') не указан или файл не найден: ${oneCPath_raw}`);
+                if (!oneCPath_raw) {
+                    sendStatus('Ошибка сборки.', true, 'assemble', true);
+                    vscode.window.showErrorMessage(
+                        "Путь к 1С:Предприятие (1cv8.exe) не указан в настройках.",
+                        "Открыть настройки"
+                    ).then(selection => {
+                        if (selection === "Открыть настройки") {
+                            vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.oneCEnterpriseExe');
+                        }
+                    });
+                    return;
                 }
-                const oneCExePath = oneCPath_raw; 
+                if (!fs.existsSync(oneCPath_raw)) {
+                    sendStatus('Ошибка сборки.', true, 'assemble', true);
+                    vscode.window.showErrorMessage(
+                        `Файл 1С:Предприятие (1cv8.exe) не найден по пути: ${oneCPath_raw}`,
+                        "Открыть настройки"
+                    ).then(selection => {
+                        if (selection === "Открыть настройки") {
+                            vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.oneCEnterpriseExe');
+                        }
+                    });
+                    return;
+                }
+                const oneCExePath = oneCPath_raw;
 
                 const emptyIbPath_raw = config.get<string>('paths.emptyInfobase');
+                if (!emptyIbPath_raw) {
+                    sendStatus('Ошибка сборки.', true, 'assemble', true);
+                    vscode.window.showErrorMessage(
+                        "Путь к пустой информационной базе не указан в настройках.",
+                        "Открыть настройки"
+                    ).then(selection => {
+                        if (selection === "Открыть настройки") {
+                            vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.emptyInfobase');
+                        }
+                    });
+                    return;
+                }
+                if (!fs.existsSync(emptyIbPath_raw)) {
+                    sendStatus('Ошибка сборки.', true, 'assemble', true);
+                    vscode.window.showErrorMessage(
+                        `Каталог пустой информационной базы не найден по пути: ${emptyIbPath_raw}`,
+                        "Открыть настройки"
+                    ).then(selection => {
+                        if (selection === "Открыть настройки") {
+                            vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.emptyInfobase');
+                        }
+                    });
+                    return;
+                }
                 
                 const buildPathSetting = config.get<string>('assembleScript.buildPath');
                 let absoluteBuildPathUri: vscode.Uri;
