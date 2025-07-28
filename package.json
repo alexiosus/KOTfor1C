@@ -157,10 +157,10 @@
             "description": "Полный путь к '1С:Предприятие — работа с файлами' (1cv8fv.exe).",
             "order": 42
           },
-          "1cDriveHelper.assembleScript.showOutputOnError": {
+          "1cDriveHelper.assembleScript.showOutputPanel": {
             "type": "boolean",
             "default": false,
-            "description": "Автоматически показывать панель Output во время сборки тестов.",
+            "description": "Автоматически показывать панель Output при запуске сборки тестов.",
             "order": 43
           }
         }
@@ -251,6 +251,11 @@
         "command": "1cDriveHelper.revealFileInOS",
         "title": "1C:Drive - Показать файл в системном проводнике",
         "category": "1C:Drive Test Helper"
+      },
+      {
+        "command": "1cDriveHelper.openBuildFolder",
+        "title": "1C:Drive - Открыть папку сборки",
+        "category": "1C:Drive Test Helper"
       }
     ],
     "keybindings": [
@@ -300,7 +305,7 @@
         {
           "command": "1cDriveHelper.openMxlFileFromExplorer",
           "when": "resourceExtname == .mxl",
-          "group": "00_navigation@0"
+          "group": "00_mxl@0"
         }
       ],
       "editor/context": [
@@ -317,17 +322,17 @@
         {
           "command": "1cDriveHelper.openMxlFile",
           "when": "editorTextFocus && editorHasSelection",
-          "group": "01_navigation@0"
+          "group": "01_search@0"
         },
         {
           "command": "1cDriveHelper.revealFileInExplorer",
           "when": "editorTextFocus && editorHasSelection",
-          "group": "01_navigation@1"
+          "group": "01_search@1"
         },
         {
           "command": "1cDriveHelper.revealFileInOS",
           "when": "editorTextFocus && editorHasSelection",
-          "group": "01_navigation@2"
+          "group": "01_search@2"
         },
         {
           "command": "1cDriveHelper.createNestedScenario",

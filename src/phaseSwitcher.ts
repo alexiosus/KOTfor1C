@@ -509,6 +509,27 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     }
                 }
                 
+                const companyTestFeaturePath = vscode.Uri.joinPath(featureFileDirUri, '001_Company_tests.feature');
+                try {
+                    outputChannel.appendLine(`Removing "Administrator" from 001_Company_tests...`);
+                    await vscode.workspace.fs.stat(companyTestFeaturePath);
+                    outputChannel.appendLine(`  - Correcting user in ${companyTestFeaturePath.fsPath}`);
+                    const companyTestContentBytes = await vscode.workspace.fs.readFile(companyTestFeaturePath);
+                    let companyTestContent = Buffer.from(companyTestContentBytes).toString('utf-8');
+    
+                    companyTestContent = companyTestContent.replace(/using "Administrator"/g, 'using ""');
+                    
+                    await vscode.workspace.fs.writeFile(companyTestFeaturePath, Buffer.from(companyTestContent, 'utf-8'));
+                    outputChannel.appendLine(`  - Correction applied successfully.`);
+    
+                } catch (error: any) {
+                    if (error.code === 'FileNotFound') {
+                        outputChannel.appendLine(`  - Skipped user correction: ${companyTestFeaturePath.fsPath} not found.`);
+                    } else {
+                        outputChannel.appendLine(`--- WARNING: Error applying correction to ${companyTestFeaturePath.fsPath}: ${error.message || error} ---`);
+                    }
+                }
+
                 progress.report({ increment: 100, message: "Завершено!" });
                 outputChannel.appendLine(`TypeScript YAML build process completed successfully.`);
                 sendStatus('Сборка тестов завершена успешно.', true, 'assemble', true); 

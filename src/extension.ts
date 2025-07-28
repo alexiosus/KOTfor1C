@@ -129,6 +129,13 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         '1cDriveHelper.revealFileInOS', (editor, edit) => revealFileInOSHandler(editor, edit, phaseSwitcherProvider)
     ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        '1cDriveHelper.openBuildFolder', (folderPath: string) => {
+            if (folderPath) {
+                vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(folderPath));
+            }
+        }
+    ));
 
 
     // Команда для обновления Phase Switcher (вызывается из scenarioCreator)
