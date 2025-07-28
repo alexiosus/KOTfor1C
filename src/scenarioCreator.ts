@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 /**
  * Обработчик команды создания вложенного сценария.
- * Запрашивает имя, код, папку, создает папку с кодом и файл scen.yaml по шаблону.
+ * Запрашивает имя, код, папку, создает папку с кодом, файл scen.yaml и папку files.
  * @param context Контекст расширения для доступа к ресурсам (шаблонам).
  */
 export async function handleCreateNestedScenario(context: vscode.ExtensionContext): Promise<void> {
@@ -82,6 +82,7 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
     // 5. Создание папок и файла
     const newUid = uuidv4();
     const scenarioFolderUri = vscode.Uri.joinPath(baseFolderUri, trimmedCode); // Итоговая папка: parent/code
+    const filesFolderUri = vscode.Uri.joinPath(scenarioFolderUri, 'files'); // Папка для файлов
     const templateUri = vscode.Uri.joinPath(context.extensionUri, 'res', 'scen.yaml'); // Шаблон
     const targetFileUri = vscode.Uri.joinPath(scenarioFolderUri, 'scen.yaml'); // Итоговый файл: parent/code/scen.yaml
 
@@ -91,6 +92,8 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
     try {
         // Создаем папку сценария (fs.createDirectory рекурсивна)
         await vscode.workspace.fs.createDirectory(scenarioFolderUri);
+        // Создаем пустую папку files
+        await vscode.workspace.fs.createDirectory(filesFolderUri);
 
         // Читаем шаблон
         const templateBytes = await vscode.workspace.fs.readFile(templateUri);
@@ -124,7 +127,7 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
 
 /**
  * Обработчик команды создания главного сценария.
- * Запрашивает имя, папку, создает папку с именем, файл scen.yaml и папку test с файлом name.yaml.
+ * Запрашивает имя, папку, создает папку с именем, файл scen.yaml, папку test с файлом name.yaml и папку files.
  * @param context Контекст расширения для доступа к ресурсам (шаблонам).
  */
 export async function handleCreateMainScenario(context: vscode.ExtensionContext): Promise<void> {
@@ -207,6 +210,7 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
     const testRandomUid = uuidv4();
     const scenarioFolderUri = vscode.Uri.joinPath(baseFolderUri, trimmedName); // parent/ScenarioName
     const testFolderUri = vscode.Uri.joinPath(scenarioFolderUri, 'test'); // parent/ScenarioName/test
+    const filesFolderUri = vscode.Uri.joinPath(scenarioFolderUri, 'files'); // parent/ScenarioName/files
     const testTemplateUri = vscode.Uri.joinPath(context.extensionUri, 'res', 'test.yaml'); // Шаблон теста
     const mainTemplateUri = vscode.Uri.joinPath(context.extensionUri, 'res', 'main.yaml'); // Шаблон основного файла
     const testTargetFileUri = vscode.Uri.joinPath(testFolderUri, `${trimmedName}.yaml`);
@@ -217,8 +221,9 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
     // console.log(`[Cmd:createMainScenario] Main template: ${mainTemplateUri.fsPath}`);
 
     try {
-        // Создаем папку сценария и вложенную папку test (рекурсивно)
+        // Создаем папку сценария и вложенные папки test и files (рекурсивно)
         await vscode.workspace.fs.createDirectory(testFolderUri);
+        await vscode.workspace.fs.createDirectory(filesFolderUri);
 
         // --- Создаем тестовый файл ---
         const testTemplateBytes = await vscode.workspace.fs.readFile(testTemplateUri);

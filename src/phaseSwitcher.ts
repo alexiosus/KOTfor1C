@@ -43,6 +43,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _onDidUpdateTestCache: vscode.EventEmitter<Map<string, TestInfo> | null> = new vscode.EventEmitter<Map<string, TestInfo> | null>();
     public readonly onDidUpdateTestCache: vscode.Event<Map<string, TestInfo> | null> = this._onDidUpdateTestCache.event;
 
+    /**
+     * Публичный геттер для доступа к кешу тестов.
+     */
+    public getTestCache(): Map<string, TestInfo> | null {
+        return this._testCache;
+    }
+
 
     constructor(extensionUri: vscode.Uri, context: vscode.ExtensionContext) {
         this._extensionUri = extensionUri;
@@ -312,8 +319,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         console.log(`${methodStartLog} Starting with RecordGL=${recordGLValue}, DriveTrade=${driveTradeValue}`);
         const outputChannel = this.getOutputChannel();
         outputChannel.clear();
-        outputChannel.show(true);
-        outputChannel.appendLine(`[${new Date().toISOString()}] Starting TypeScript YAML build process...`);
+        
+        const config = vscode.workspace.getConfiguration('1cDriveHelper');
+        const showOutputPanel = config.get<boolean>('assembleScript.showOutputPanel');
+
+        if (showOutputPanel) {
+            outputChannel.show(true);
+        }
 
         const webview = this._view?.webview;
         if (!webview) {
@@ -338,216 +350,229 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         
         sendStatus(`Сборка тестов в процессе...`, false, 'assemble', false);
 
-        try {
-            const config = vscode.workspace.getConfiguration('1cDriveHelper');
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            if (!workspaceFolders?.length) {
-                throw new Error("Необходимо открыть папку проекта.");
-            }
-            const workspaceRootUri = workspaceFolders[0].uri;
-            const workspaceRootPath = workspaceRootUri.fsPath;
-
-            const oneCPath_raw = config.get<string>('paths.oneCEnterpriseExe');
-            if (!oneCPath_raw || !fs.existsSync(oneCPath_raw)) { 
-                throw new Error(`Путь к 1С (настройка '1cDriveHelper.paths.oneCEnterpriseExe') не указан или файл не найден: ${oneCPath_raw}`);
-            }
-            const oneCExePath = oneCPath_raw; 
-
-            const emptyIbPath_raw = config.get<string>('paths.emptyInfobase');
-            
-            const buildPathSetting = config.get<string>('assembleScript.buildPath');
-            let absoluteBuildPathUri: vscode.Uri;
-
-            if (buildPathSetting && path.isAbsolute(buildPathSetting)) {
-                absoluteBuildPathUri = vscode.Uri.file(buildPathSetting);
-                outputChannel.appendLine(`Using absolute build path from settings: ${absoluteBuildPathUri.fsPath}`);
-            } else {
-                const relativeBuildPath = buildPathSetting || '.vscode/1cdrive_build'; 
-                absoluteBuildPathUri = vscode.Uri.joinPath(workspaceRootUri, relativeBuildPath);
-                outputChannel.appendLine(`Using relative build path: ${relativeBuildPath} from workspace ${workspaceRootPath}, resolved to: ${absoluteBuildPathUri.fsPath}`);
-            }
-            const absoluteBuildPath = absoluteBuildPathUri.fsPath;
-            
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "Сборка тестов 1C:Drive",
+            cancellable: false
+        }, async (progress) => {
+            let featureFileDirUri: vscode.Uri; // Объявляем здесь, чтобы была доступна в конце
             try {
+                progress.report({ increment: 0, message: "Подготовка..." });
+                outputChannel.appendLine(`[${new Date().toISOString()}] Starting TypeScript YAML build process...`);
+
+                const workspaceFolders = vscode.workspace.workspaceFolders;
+                if (!workspaceFolders?.length) {
+                    throw new Error("Необходимо открыть папку проекта.");
+                }
+                const workspaceRootUri = workspaceFolders[0].uri;
+                const workspaceRootPath = workspaceRootUri.fsPath;
+
+                const oneCPath_raw = config.get<string>('paths.oneCEnterpriseExe');
+                if (!oneCPath_raw || !fs.existsSync(oneCPath_raw)) { 
+                    throw new Error(`Путь к 1С (настройка '1cDriveHelper.paths.oneCEnterpriseExe') не указан или файл не найден: ${oneCPath_raw}`);
+                }
+                const oneCExePath = oneCPath_raw; 
+
+                const emptyIbPath_raw = config.get<string>('paths.emptyInfobase');
+                
+                const buildPathSetting = config.get<string>('assembleScript.buildPath');
+                let absoluteBuildPathUri: vscode.Uri;
+
+                if (buildPathSetting && path.isAbsolute(buildPathSetting)) {
+                    absoluteBuildPathUri = vscode.Uri.file(buildPathSetting);
+                } else {
+                    const relativeBuildPath = buildPathSetting || '.vscode/1cdrive_build'; 
+                    absoluteBuildPathUri = vscode.Uri.joinPath(workspaceRootUri, relativeBuildPath);
+                }
+                const absoluteBuildPath = absoluteBuildPathUri.fsPath;
+                
                 await vscode.workspace.fs.createDirectory(absoluteBuildPathUri);
                 outputChannel.appendLine(`Build directory ensured: ${absoluteBuildPath}`);
-            } catch(dirError: any) {
-                if (dirError.code !== 'EEXIST' && dirError.code !== 'FileExists') {
-                     throw new Error(`Ошибка создания директории сборки ${absoluteBuildPath}: ${dirError.message || dirError}`);
-                } else {
-                    outputChannel.appendLine(`Build directory already exists: ${absoluteBuildPath}`);
-                }
-            }
 
-            const pathVanessa = vscode.Uri.joinPath(workspaceRootUri, 'tools', 'vanessa', 'vanessa-automation.epf').fsPath;
-            outputChannel.appendLine(`PathVanessa: ${pathVanessa}`);
-
-            const localSettingsPath = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_parameters.json');
-            const yamlParamsSourcePath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'develop_parallel', 'yaml_parameters.json');
-            
-            outputChannel.appendLine(`Copying ${yamlParamsSourcePath.fsPath} to ${localSettingsPath.fsPath}`);
-            try {
-                await vscode.workspace.fs.copy(yamlParamsSourcePath, localSettingsPath, { overwrite: true });
-            } catch (copyError: any) {
-                 throw new Error(`Ошибка копирования yaml_parameters.json: ${copyError.message || copyError}`);
-            }
-
-            let yamlParamsContent = Buffer.from(await vscode.workspace.fs.readFile(localSettingsPath)).toString('utf-8');
-            const buildPathForwardSlash = absoluteBuildPath.replace(/\\/g, '/');
-            const sourcesPathForwardSlash = workspaceRootPath.replace(/\\/g, '/');
-            
-            const vanessaTestFileEnv = process.env.VanessaTestFile; 
-            const splitFeatureFilesValue = vanessaTestFileEnv ? "True" : (config.get<string>('params.splitFeatureFiles') || "False");
-
-            yamlParamsContent = yamlParamsContent.replace(/#BuildPath/g, buildPathForwardSlash);
-            yamlParamsContent = yamlParamsContent.replace(/#SourcesPath/g, sourcesPathForwardSlash);
-            yamlParamsContent = yamlParamsContent.replace(/#SplitFeatureFiles/g, splitFeatureFilesValue);
-            await vscode.workspace.fs.writeFile(localSettingsPath, Buffer.from(yamlParamsContent, 'utf-8'));
-            outputChannel.appendLine(`yaml_parameters.json prepared at ${localSettingsPath.fsPath}`);
-
-            if (driveTradeValue === '1') {
-                outputChannel.appendLine(`DriveTrade is 1, running CutCodeByTags.epf...`);
-                const cutCodeEpfPath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'DriveTrade', 'CutCodeByTags.epf').fsPath;
-                const errorLogPathForCut = vscode.Uri.joinPath(absoluteBuildPathUri, 'CutTestsByTags_error.log');
-                const cutCodeParams = [
-                    "ENTERPRISE",
-                    `/IBConnectionString`, `"File=${emptyIbPath_raw};"`,
-                    `/L`, `en`, 
-                    `/DisableStartupMessages`,
-                    `/DisableStartupDialogs`,
-                    `/C"Execute;SourceDirectory=${path.join(workspaceRootPath, 'tests', 'RegressionTests', 'yaml')}\\; Extensions=yaml,txt,xml; ErrorFile=${errorLogPathForCut.fsPath}"`,
-                    `/Execute${cutCodeEpfPath}`
-                ];
-                await this.execute1CProcess(oneCExePath, cutCodeParams, workspaceRootPath, "CutCodeByTags.epf", 
-                    { filePath: errorLogPathForCut.fsPath, successContent: undefined, timeoutMs: 60000 });
+                progress.report({ increment: 10, message: "Копирование параметров..." });
+                const localSettingsPath = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_parameters.json');
+                const yamlParamsSourcePath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'develop_parallel', 'yaml_parameters.json');
                 
-                try {
-                    const errorLogContent = Buffer.from(await vscode.workspace.fs.readFile(errorLogPathForCut)).toString('utf-8');
-                    if (errorLogContent.includes("Result: failed") || errorLogContent.includes("The number of start tags is not equal to the number of end tags")) {
-                        throw new Error(`Ошибка в CutCodeByTags.epf. См. лог: ${errorLogPathForCut.fsPath}`);
-                    }
-                } catch (e:any) { 
-                    if (e.code !== 'FileNotFound') outputChannel.appendLine(`Warning: Could not read CutTestsByTags_error.log or it's empty: ${e.message}`);
-                }
-            }
+                await vscode.workspace.fs.copy(yamlParamsSourcePath, localSettingsPath, { overwrite: true });
 
-            outputChannel.appendLine(`Building YAML files to feature file...`);
-            const yamlBuildLogFileUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_build_log.txt');
-            const yamlBuildResultFileUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_build_result.txt');
-            const buildScenarioBddEpfPath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'BuildScenarioBDD.epf').fsPath;
+                let yamlParamsContent = Buffer.from(await vscode.workspace.fs.readFile(localSettingsPath)).toString('utf-8');
+                const buildPathForwardSlash = absoluteBuildPath.replace(/\\/g, '/');
+                const sourcesPathForwardSlash = workspaceRootPath.replace(/\\/g, '/');
+                
+                const vanessaTestFileEnv = process.env.VanessaTestFile; 
+                const splitFeatureFilesValue = vanessaTestFileEnv ? "True" : (config.get<string>('params.splitFeatureFiles') || "False");
 
-            const yamlBuildParams = [
-                "ENTERPRISE",
-                `/IBConnectionString`, `"File=${emptyIbPath_raw};"`,
-                `/L`, `en`,
-                `/DisableStartupMessages`,
-                `/DisableStartupDialogs`,
-                `/Execute`, `"${buildScenarioBddEpfPath}"`,
-                `/C"СобратьСценарии;JsonParams=${localSettingsPath.fsPath};ResultFile=${yamlBuildResultFileUri.fsPath};LogFile=${yamlBuildLogFileUri.fsPath}"`
-            ];
-            await this.execute1CProcess(oneCExePath, yamlBuildParams, workspaceRootPath, "BuildScenarioBDD.epf", 
-                { filePath: yamlBuildResultFileUri.fsPath, successContent: "0", timeoutMs: 600000 }); 
-            
-            try {
-                const buildResultContent = Buffer.from(await vscode.workspace.fs.readFile(yamlBuildResultFileUri)).toString('utf-8');
-                if (!buildResultContent.includes("0")) { 
-                    const buildLogContent = Buffer.from(await vscode.workspace.fs.readFile(yamlBuildLogFileUri)).toString('utf-8');
-                    outputChannel.appendLine("BuildScenarioBDD Error Log:\n" + buildLogContent);
-                    throw new Error(`Ошибка сборки YAML. См. лог: ${yamlBuildLogFileUri.fsPath}`);
-                }
-            } catch (e: any) {
-                 if (e.code === 'FileNotFound') throw new Error(`Файл результата сборки ${yamlBuildResultFileUri.fsPath} не найден после ожидания.`);
-                 throw e; 
-            }
-            outputChannel.appendLine(`YAML build successful.`);
+                yamlParamsContent = yamlParamsContent.replace(/#BuildPath/g, buildPathForwardSlash);
+                yamlParamsContent = yamlParamsContent.replace(/#SourcesPath/g, sourcesPathForwardSlash);
+                yamlParamsContent = yamlParamsContent.replace(/#SplitFeatureFiles/g, splitFeatureFilesValue);
+                await vscode.workspace.fs.writeFile(localSettingsPath, Buffer.from(yamlParamsContent, 'utf-8'));
+                outputChannel.appendLine(`yaml_parameters.json prepared at ${localSettingsPath.fsPath}`);
 
-            const vanessaErrorLogsDir = vscode.Uri.joinPath(absoluteBuildPathUri, "vanessa_error_logs");
-            try { await vscode.workspace.fs.createDirectory(vanessaErrorLogsDir); } catch (e:any) { if(e.code !== 'EEXIST' && e.code !== 'FileExists') throw e;}
-
-            outputChannel.appendLine(`Writing parameters from pipeline into tests...`);
-            const featureFileDirUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'tests', 'EtalonDrive');
-            const featureFilesPattern = new vscode.RelativePattern(featureFileDirUri, '**/*.feature');
-            const featureFiles = await vscode.workspace.findFiles(featureFilesPattern);
-
-            if (featureFiles.length === 0) {
-                outputChannel.appendLine(`WARNING: No .feature files found in ${featureFileDirUri.fsPath}, skipping replacement.`);
-            } else {
-                const emailAddr = config.get<string>('params.emailAddress') || '';
-                const emailPass = await this._context.secrets.get(EMAIL_PASSWORD_KEY) || '';
-                const emailIncServer = config.get<string>('params.emailIncomingServer') || '';
-                const emailIncPort = config.get<string>('params.emailIncomingPort') || '';
-                const emailOutServer = config.get<string>('params.emailOutgoingServer') || '';
-                const emailOutPort = config.get<string>('params.emailOutgoingPort') || '';
-                const emailProto = config.get<string>('params.emailProtocol') || '';
-                const azureProjectName = process.env.SYSTEM_TEAM_PROJECT || ''; 
-
-                for (const fileUri of featureFiles) {
-                    outputChannel.appendLine(`  Processing feature file: "${fileUri.fsPath}"`);
-                    let fileContent = Buffer.from(await vscode.workspace.fs.readFile(fileUri)).toString('utf-8');
-                    
-                    fileContent = fileContent.replace(/RecordGLAccountsParameterFromPipeline/g, recordGLValue);
-                    fileContent = fileContent.replace(/AzureProjectNameParameterFromPipeline/g, azureProjectName);
-                    fileContent = fileContent.replace(/EMailTestEmailAddressParameterFromPipeline/g, emailAddr);
-                    fileContent = fileContent.replace(/EMailTestPasswordParameterFromPipeline/g, emailPass);
-                    fileContent = fileContent.replace(/EMailTestIncomingMailServerParameterFromPipeline/g, emailIncServer);
-                    fileContent = fileContent.replace(/EMailTestIncomingMailPortParameterFromPipeline/g, emailIncPort);
-                    fileContent = fileContent.replace(/EMailTestOutgoingMailServerParameterFromPipeline/g, emailOutServer);
-                    fileContent = fileContent.replace(/EMailTestOutgoingMailPortParameterFromPipeline/g, emailOutPort);
-                    fileContent = fileContent.replace(/EMailTestProtocolParameterFromPipeline/g, emailProto);
-                    fileContent = fileContent.replace(/DriveTradeParameterFromPipeline/g, driveTradeValue === '1' ? 'Yes' : 'No');
-                    
-                    await vscode.workspace.fs.writeFile(fileUri, Buffer.from(fileContent, 'utf-8'));
-                }
-                outputChannel.appendLine(`  Finished writing parameters from pipeline into tests.`);
-            }
-            
-            outputChannel.appendLine(`Repairing specific feature files...`);
-            const filesToRepairRelative = [
-                'tests/EtalonDrive/001_Company_tests.feature',
-                'tests/EtalonDrive/I_start_my_first_launch.feature',
-                'tests/EtalonDrive/I_start_my_first_launch_templates.feature'
-            ];
-            const repairScriptEpfPath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'RepairTestFile.epf').fsPath;
-
-            for (const relativePathSuffix of filesToRepairRelative) {
-                const featureFileToRepairUri = vscode.Uri.joinPath(featureFileDirUri, path.basename(relativePathSuffix)); 
-                outputChannel.appendLine(`Checking for ${featureFileToRepairUri.fsPath}`);
-                try {
-                    await vscode.workspace.fs.stat(featureFileToRepairUri); 
-                    outputChannel.appendLine(`  Found. Repairing ${featureFileToRepairUri.fsPath}`);
-                    const repairParams = [
+                if (driveTradeValue === '1') {
+                    progress.report({ increment: 20, message: "Обработка DriveTrade..." });
+                    outputChannel.appendLine(`DriveTrade is 1, running CutCodeByTags.epf...`);
+                    const cutCodeEpfPath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'DriveTrade', 'CutCodeByTags.epf').fsPath;
+                    const errorLogPathForCut = vscode.Uri.joinPath(absoluteBuildPathUri, 'CutTestsByTags_error.log');
+                    const cutCodeParams = [
                         "ENTERPRISE",
                         `/IBConnectionString`, `"File=${emptyIbPath_raw};"`,
-                        `/L`, `en`,
+                        `/L`, `en`, 
                         `/DisableStartupMessages`,
                         `/DisableStartupDialogs`,
-                        `/Execute`, `"${repairScriptEpfPath}"`,
-                        `/C"TestFile=${featureFileToRepairUri.fsPath}"`
+                        `/C"Execute;SourceDirectory=${path.join(workspaceRootPath, 'tests', 'RegressionTests', 'yaml')}\\; Extensions=yaml,txt,xml; ErrorFile=${errorLogPathForCut.fsPath}"`,
+                        `/Execute${cutCodeEpfPath}`
                     ];
-                    await this.execute1CProcess(oneCExePath, repairParams, workspaceRootPath, "RepairTestFile.epf");
-                    outputChannel.appendLine(`  Repaired ${featureFileToRepairUri.fsPath} successfully.`);
-                } catch (error: any) {
-                    if (error.code === 'FileNotFound') {
-                        outputChannel.appendLine(`  Skipped: ${featureFileToRepairUri.fsPath} not found.`);
-                    } else {
-                        outputChannel.appendLine(`--- WARNING: Error repairing file ${featureFileToRepairUri.fsPath}: ${error.message || error} ---`);
+                    await this.execute1CProcess(oneCExePath, cutCodeParams, workspaceRootPath, "CutCodeByTags.epf", 
+                        { filePath: errorLogPathForCut.fsPath, successContent: undefined, timeoutMs: 60000 });
+                }
+
+                progress.report({ increment: 40, message: "Сборка YAML в feature..." });
+                outputChannel.appendLine(`Building YAML files to feature file...`);
+                const yamlBuildLogFileUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_build_log.txt');
+                const yamlBuildResultFileUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_build_result.txt');
+                const buildScenarioBddEpfPath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'BuildScenarioBDD.epf').fsPath;
+
+                const yamlBuildParams = [
+                    "ENTERPRISE",
+                    `/IBConnectionString`, `"File=${emptyIbPath_raw};"`,
+                    `/L`, `en`,
+                    `/DisableStartupMessages`,
+                    `/DisableStartupDialogs`,
+                    `/Execute`, `"${buildScenarioBddEpfPath}"`,
+                    `/C"СобратьСценарии;JsonParams=${localSettingsPath.fsPath};ResultFile=${yamlBuildResultFileUri.fsPath};LogFile=${yamlBuildLogFileUri.fsPath}"`
+                ];
+                await this.execute1CProcess(oneCExePath, yamlBuildParams, workspaceRootPath, "BuildScenarioBDD.epf", 
+                    { filePath: yamlBuildResultFileUri.fsPath, successContent: "0", timeoutMs: 600000 }); 
+                
+                try {
+                    const buildResultContent = Buffer.from(await vscode.workspace.fs.readFile(yamlBuildResultFileUri)).toString('utf-8');
+                    if (!buildResultContent.includes("0")) { 
+                        const buildLogContent = Buffer.from(await vscode.workspace.fs.readFile(yamlBuildLogFileUri)).toString('utf-8');
+                        outputChannel.appendLine("BuildScenarioBDD Error Log:\n" + buildLogContent);
+                        throw new Error(`Ошибка сборки YAML. См. лог: ${yamlBuildLogFileUri.fsPath}`);
+                    }
+                } catch (e: any) {
+                     if (e.code === 'FileNotFound') throw new Error(`Файл результата сборки ${yamlBuildResultFileUri.fsPath} не найден после ожидания.`);
+                     throw e; 
+                }
+                outputChannel.appendLine(`YAML build successful.`);
+
+                progress.report({ increment: 70, message: "Запись параметров..." });
+                const vanessaErrorLogsDir = vscode.Uri.joinPath(absoluteBuildPathUri, "vanessa_error_logs");
+                await vscode.workspace.fs.createDirectory(vanessaErrorLogsDir);
+
+                outputChannel.appendLine(`Writing parameters from pipeline into tests...`);
+                featureFileDirUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'tests', 'EtalonDrive');
+                const featureFilesPattern = new vscode.RelativePattern(featureFileDirUri, '**/*.feature');
+                const featureFiles = await vscode.workspace.findFiles(featureFilesPattern);
+
+                if (featureFiles.length > 0) {
+                    const emailAddr = config.get<string>('params.emailAddress') || '';
+                    const emailPass = await this._context.secrets.get(EMAIL_PASSWORD_KEY) || '';
+                    const emailIncServer = config.get<string>('params.emailIncomingServer') || '';
+                    const emailIncPort = config.get<string>('params.emailIncomingPort') || '';
+                    const emailOutServer = config.get<string>('params.emailOutgoingServer') || '';
+                    const emailOutPort = config.get<string>('params.emailOutgoingPort') || '';
+                    const emailProto = config.get<string>('params.emailProtocol') || '';
+                    const azureProjectName = process.env.SYSTEM_TEAM_PROJECT || ''; 
+
+                    for (const fileUri of featureFiles) {
+                        let fileContent = Buffer.from(await vscode.workspace.fs.readFile(fileUri)).toString('utf-8');
+                        fileContent = fileContent.replace(/RecordGLAccountsParameterFromPipeline/g, recordGLValue);
+                        fileContent = fileContent.replace(/AzureProjectNameParameterFromPipeline/g, azureProjectName);
+                        fileContent = fileContent.replace(/EMailTestEmailAddressParameterFromPipeline/g, emailAddr);
+                        fileContent = fileContent.replace(/EMailTestPasswordParameterFromPipeline/g, emailPass);
+                        fileContent = fileContent.replace(/EMailTestIncomingMailServerParameterFromPipeline/g, emailIncServer);
+                        fileContent = fileContent.replace(/EMailTestIncomingMailPortParameterFromPipeline/g, emailIncPort);
+                        fileContent = fileContent.replace(/EMailTestOutgoingMailServerParameterFromPipeline/g, emailOutServer);
+                        fileContent = fileContent.replace(/EMailTestOutgoingMailPortParameterFromPipeline/g, emailOutPort);
+                        fileContent = fileContent.replace(/EMailTestProtocolParameterFromPipeline/g, emailProto);
+                        fileContent = fileContent.replace(/DriveTradeParameterFromPipeline/g, driveTradeValue === '1' ? 'Yes' : 'No');
+                        await vscode.workspace.fs.writeFile(fileUri, Buffer.from(fileContent, 'utf-8'));
                     }
                 }
-            }
-            
-            outputChannel.appendLine(`TypeScript YAML build process completed successfully.`);
-            sendStatus('Сборка тестов завершена успешно.', true, 'assemble', true); 
-            vscode.window.showInformationMessage('Сборка тестов успешно завершена.');
+                
+                progress.report({ increment: 90, message: "Корректировка файлов..." });
+                outputChannel.appendLine(`Repairing specific feature files...`);
+                const filesToRepairRelative = [
+                    'tests/EtalonDrive/001_Company_tests.feature',
+                    'tests/EtalonDrive/I_start_my_first_launch.feature',
+                    'tests/EtalonDrive/I_start_my_first_launch_templates.feature'
+                ];
+                const repairScriptEpfPath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'RepairTestFile.epf').fsPath;
 
-        } catch (error: any) {
-            console.error(`${methodStartLog} Error:`, error);
-            outputChannel.appendLine(`--- ERROR: ${error.message || error} ---`);
-            if (error.stack) {
-                outputChannel.appendLine(`Stack: ${error.stack}`);
+                for (const relativePathSuffix of filesToRepairRelative) {
+                    const featureFileToRepairUri = vscode.Uri.joinPath(featureFileDirUri, path.basename(relativePathSuffix)); 
+                    try {
+                        await vscode.workspace.fs.stat(featureFileToRepairUri); 
+                        const repairParams = ["ENTERPRISE", `/IBConnectionString`, `"File=${emptyIbPath_raw};"`, `/L`, `en`, `/DisableStartupMessages`, `/DisableStartupDialogs`, `/Execute`, `"${repairScriptEpfPath}"`, `/C"TestFile=${featureFileToRepairUri.fsPath}"`];
+                        await this.execute1CProcess(oneCExePath, repairParams, workspaceRootPath, "RepairTestFile.epf");
+                    } catch (error: any) {
+                        if (error.code !== 'FileNotFound') {
+                            outputChannel.appendLine(`--- WARNING: Error repairing file ${featureFileToRepairUri.fsPath}: ${error.message || error} ---`);
+                        }
+                    }
+                }
+                
+                const companyTestFeaturePath = vscode.Uri.joinPath(featureFileDirUri, '001_Company_tests.feature');
+                try {
+                    outputChannel.appendLine(`Removing "Administrator" from 001_Company_tests...`);
+                    await vscode.workspace.fs.stat(companyTestFeaturePath);
+                    outputChannel.appendLine(`  - Correcting user in ${companyTestFeaturePath.fsPath}`);
+                    const companyTestContentBytes = await vscode.workspace.fs.readFile(companyTestFeaturePath);
+                    let companyTestContent = Buffer.from(companyTestContentBytes).toString('utf-8');
+    
+                    companyTestContent = companyTestContent.replace(/using "Administrator"/g, 'using ""');
+                    
+                    await vscode.workspace.fs.writeFile(companyTestFeaturePath, Buffer.from(companyTestContent, 'utf-8'));
+                    outputChannel.appendLine(`  - Correction applied successfully.`);
+    
+                } catch (error: any) {
+                    if (error.code === 'FileNotFound') {
+                        outputChannel.appendLine(`  - Skipped user correction: ${companyTestFeaturePath.fsPath} not found.`);
+                    } else {
+                        outputChannel.appendLine(`--- WARNING: Error applying correction to ${companyTestFeaturePath.fsPath}: ${error.message || error} ---`);
+                    }
+                }
+
+                progress.report({ increment: 100, message: "Завершено!" });
+                outputChannel.appendLine(`TypeScript YAML build process completed successfully.`);
+                sendStatus('Сборка тестов завершена успешно.', true, 'assemble', true); 
+                vscode.window.showInformationMessage(
+                    'Сборка тестов успешно завершена.',
+                    'Открыть папку'
+                ).then(selection => {
+                    if (selection === 'Открыть папку') {
+                        vscode.commands.executeCommand('1cDriveHelper.openBuildFolder', featureFileDirUri.fsPath);
+                    }
+                });
+
+            } catch (error: any) {
+                console.error(`${methodStartLog} Error:`, error);
+                const errorMessage = error.message || String(error);
+                outputChannel.appendLine(`--- ERROR: ${errorMessage} ---`);
+                if (error.stack) {
+                    outputChannel.appendLine(`Stack: ${error.stack}`);
+                }
+
+                const logFileMatch = errorMessage.match(/См\. лог:\s*(.*)/);
+                if (logFileMatch && logFileMatch[1]) {
+                    const logFilePath = logFileMatch[1].trim();
+                    vscode.window.showErrorMessage(`Ошибка сборки.`, 'Открыть лог')
+                        .then(selection => {
+                            if (selection === 'Открыть лог') {
+                                vscode.workspace.openTextDocument(vscode.Uri.file(logFilePath)).then(doc => {
+                                    vscode.window.showTextDocument(doc);
+                                });
+                            }
+                        });
+                } else {
+                    vscode.window.showErrorMessage(`Ошибка сборки: ${errorMessage}. Смотрите Output.`);
+                }
+                
+                sendStatus(`Ошибка сборки.`, true, 'assemble', true); 
             }
-            vscode.window.showErrorMessage(`Ошибка сборки: ${error.message || error}. Смотрите Output.`);
-            sendStatus(`Ошибка сборки: ${error.message || error}`, true, 'assemble', true); 
-        }
+        });
     }
 
     private async execute1CProcess( 

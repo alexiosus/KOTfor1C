@@ -1,7 +1,219 @@
 ﻿import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
+import { exec } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import { findFileByName, findScenarioReferences } from './navigationUtils';
+import { PhaseSwitcherProvider } from './phaseSwitcher';
+import { TestInfo } from './types';
+
+/**
+ * Общая функция для поиска файла по выделенному тексту в редакторе.
+ * Реализует "умный" поиск: сначала в приоритетных директориях, затем глобально.
+ * @param textEditor Активный текстовый редактор.
+ * @param phaseSwitcherProvider Провайдер панели для доступа к кешу тестов.
+ * @param specificExtension Если указано, поиск будет в первую очередь нацелен на это расширение.
+ * @returns Promise с Uri найденного файла или null.
+ */
+async function findFileFromText(
+    textEditor: vscode.TextEditor,
+    phaseSwitcherProvider: PhaseSwitcherProvider,
+    specificExtension?: string
+): Promise<vscode.Uri | null> {
+    const selection = textEditor.selection;
+    if (selection.isEmpty) {
+        vscode.window.showInformationMessage("Выделите имя файла для поиска.");
+        return null;
+    }
+
+    const fileNameRaw = textEditor.document.getText(selection).trim().replace(/["']/g, '');
+    if (!fileNameRaw) return null;
+
+    const hasExtension = path.extname(fileNameRaw) !== '';
+    const potentialFileNames = new Set<string>([fileNameRaw]);
+
+    // Если ищем конкретное расширение и его нет в выделении, добавляем его
+    if (specificExtension && !hasExtension) {
+        potentialFileNames.add(`${fileNameRaw}${specificExtension}`);
+    } 
+    // Если расширение есть, также ищем файл без него (на случай, если это часть имени)
+    else if (hasExtension) {
+        potentialFileNames.add(path.basename(fileNameRaw, path.extname(fileNameRaw)));
+    }
+
+    console.log(`[Cmd:findFileFromText] Searching for: ${Array.from(potentialFileNames).join(' or ')}`);
+
+    const searchPaths = new Set<string>();
+
+    // Приоритет №1: Папка 'files' рядом с текущим файлом
+    const currentFileDir = path.dirname(textEditor.document.uri.fsPath);
+    searchPaths.add(path.join(currentFileDir, 'files'));
+
+    // Приоритет №2: Папки 'files' из вложенных сценариев
+    const testCache = phaseSwitcherProvider.getTestCache();
+    const documentText = textEditor.document.getText();
+    if (testCache) {
+        const callRegex = /^\s*(?:And|И)\s+(.+)/gm;
+        let match;
+        while ((match = callRegex.exec(documentText)) !== null) {
+            const scenarioName = match[1].trim();
+            const testInfo = testCache.get(scenarioName);
+            if (testInfo) {
+                const scenarioDir = path.dirname(testInfo.yamlFileUri.fsPath);
+                searchPaths.add(path.join(scenarioDir, 'files'));
+            }
+        }
+    }
+    console.log(`[Cmd:findFileFromText] Priority search paths:`, Array.from(searchPaths));
+
+    // Единый поиск по приоритетным путям
+    for (const dir of searchPaths) {
+        for (const name of potentialFileNames) {
+            const fullPath = path.join(dir, name);
+            try {
+                await fs.promises.access(fullPath, fs.constants.F_OK);
+                console.log(`[Cmd:findFileFromText] Found file in priority path: ${fullPath}`);
+                return vscode.Uri.file(fullPath);
+            } catch (error) {
+                // Файл не найден, продолжаем
+            }
+        }
+    }
+
+    // Поиск файла сценария по имени (только для имен без расширения)
+    for (const name of potentialFileNames) {
+        if (path.extname(name) === '') {
+            const scenarioUri = await findFileByName(name);
+            if (scenarioUri) {
+                console.log(`[Cmd:findFileFromText] Found scenario file: ${scenarioUri.fsPath}`);
+                return scenarioUri;
+            }
+        }
+    }
+
+    // Запасной вариант: Глобальный поиск по всем потенциальным именам в папке tests
+    console.log(`[Cmd:findFileFromText] File not in priority paths. Starting global search in 'tests' folder...`);
+    const globPattern = `tests/**/{${Array.from(potentialFileNames).map(n => n.replace(/[\[\]\{\}]/g, '?')).join(',')}}`;
+    const foundFiles = await vscode.workspace.findFiles(globPattern, '**/node_modules/**', 1);
+
+    if (foundFiles.length > 0) {
+        console.log(`[Cmd:findFileFromText] Found file via global search: ${foundFiles[0].fsPath}`);
+        return foundFiles[0];
+    }
+
+    // Если ничего не найдено, а расширения не было, делаем последний глобальный поиск по имени файла с любым расширением в папке tests
+    if (!hasExtension) {
+        console.log(`[Cmd:findFileFromText] Final attempt: global search for 'tests/**/${fileNameRaw}.*'`);
+        const finalGlobPattern = `tests/**/${fileNameRaw}.*`;
+        const finalFound = await vscode.workspace.findFiles(finalGlobPattern, '**/node_modules/**', 1);
+        if (finalFound.length > 0) {
+            console.log(`[Cmd:findFileFromText] Found file via final global search: ${finalFound[0].fsPath}`);
+            return finalFound[0];
+        }
+    }
+
+    vscode.window.showInformationMessage(`Файл "${fileNameRaw}" не найден в проекте.`);
+    return null;
+}
+
+
+/**
+ * Открывает указанный файл с помощью '1С:Предприятие — работа с файлами'.
+ * @param filePath Абсолютный путь к MXL файлу.
+ */
+async function openMxlWithFileWorkshop(filePath: string) {
+    console.log(`[Cmd:openMxl] Attempting to open: ${filePath}`);
+    const config = vscode.workspace.getConfiguration('1cDriveHelper.paths');
+    const fileWorkshopPath = config.get<string>('fileWorkshopExe');
+
+    if (!fileWorkshopPath) {
+        vscode.window.showErrorMessage(
+            "Путь к '1С:Предприятие — работа с файлами' не настроен. Укажите его в настройках `1cDriveHelper.paths.fileWorkshopExe`.",
+            "Открыть настройки"
+        ).then(selection => {
+            if (selection === "Открыть настройки") {
+                vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.fileWorkshopExe');
+            }
+        });
+        return;
+    }
+
+    try {
+        await fs.promises.access(fileWorkshopPath, fs.constants.F_OK);
+    } catch (error) {
+        vscode.window.showErrorMessage(`Исполняемый файл не найден по пути: ${fileWorkshopPath}`);
+        return;
+    }
+
+    const command = `"${fileWorkshopPath}" "${filePath}"`;
+    exec(command, (error, stdout, stderr) => {
+        if (error) {
+            console.error(`[Cmd:openMxl] Exec error: ${error}`);
+            vscode.window.showErrorMessage(`Ошибка при открытии MXL файла: ${error.message}`);
+            return;
+        }
+        if (stderr) {
+            console.error(`[Cmd:openMxl] Stderr: ${stderr}`);
+        }
+        console.log(`[Cmd:openMxl] Successfully executed: ${command}`);
+    });
+}
+
+/**
+ * Обработчик команды открытия MXL из проводника VS Code.
+ * @param uri URI выбранного файла.
+ */
+export function openMxlFileFromExplorerHandler(uri: vscode.Uri) {
+    if (uri && uri.fsPath) {
+        openMxlWithFileWorkshop(uri.fsPath);
+    } else {
+        console.warn('[Cmd:openMxlFromExplorer] Command triggered without a valid URI.');
+    }
+}
+
+/**
+ * Обработчик команды открытия MXL из текстового редактора.
+ * @param textEditor Активный текстовый редактор.
+ * @param edit Объект для редактирования.
+ * @param phaseSwitcherProvider Провайдер панели для доступа к кешу тестов.
+ */
+export async function openMxlFileFromTextHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit, phaseSwitcherProvider: PhaseSwitcherProvider) {
+    const fileUri = await findFileFromText(textEditor, phaseSwitcherProvider, '.mxl');
+    if (fileUri) {
+        if (path.extname(fileUri.fsPath).toLowerCase() === '.mxl') {
+            await openMxlWithFileWorkshop(fileUri.fsPath);
+        } else {
+            vscode.window.showWarningMessage(`Найденный файл не является MXL файлом: ${fileUri.fsPath}`);
+        }
+    }
+}
+
+/**
+ * Обработчик команды "Показать файл в проводнике VS Code".
+ * @param textEditor Активный текстовый редактор.
+ * @param edit Объект для редактирования.
+ * @param phaseSwitcherProvider Провайдер панели для доступа к кешу тестов.
+ */
+export async function revealFileInExplorerHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit, phaseSwitcherProvider: PhaseSwitcherProvider) {
+    const fileUri = await findFileFromText(textEditor, phaseSwitcherProvider);
+    if (fileUri) {
+        await vscode.commands.executeCommand('revealInExplorer', fileUri);
+    }
+}
+
+/**
+ * Обработчик команды "Открыть в проводнике".
+ * @param textEditor Активный текстовый редактор.
+ * @param edit Объект для редактирования.
+ * @param phaseSwitcherProvider Провайдер панели для доступа к кешу тестов.
+ */
+export async function revealFileInOSHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit, phaseSwitcherProvider: PhaseSwitcherProvider) {
+    const fileUri = await findFileFromText(textEditor, phaseSwitcherProvider);
+    if (fileUri) {
+        await vscode.commands.executeCommand('revealFileInOS', fileUri);
+    }
+}
+
 
 /**
  * Обработчик команды перехода к вложенному сценарию.

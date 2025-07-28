@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -148,8 +148,20 @@
           "1cDriveHelper.paths.oneCEnterpriseExe": {
             "type": "string",
             "default": "C:\\Program Files (x86)\\1cv8\\8.3.24.1738\\bin\\1cv8.exe",
-            "description": "Полный путь к исполняемому файлу 1cv8.exe (Windows) или 1cestart (macOS)",
+            "description": "Полный путь к исполняемому файлу 1cv8.exe (Windows) или 1cestart (macOS).",
             "order": 41
+          },
+          "1cDriveHelper.paths.fileWorkshopExe": {
+            "type": "string",
+            "default": "C:\\Program Files (x86)\\1cv8fv\\bin\\1cv8fv.exe",
+            "description": "Полный путь к '1С:Предприятие — работа с файлами' (1cv8fv.exe).",
+            "order": 42
+          },
+          "1cDriveHelper.assembleScript.showOutputPanel": {
+            "type": "boolean",
+            "default": false,
+            "description": "Автоматически показывать панель Output при запуске сборки тестов.",
+            "order": 43
           }
         }
       }
@@ -219,6 +231,31 @@
         "command": "1cDriveHelper.checkAndFillScriptParameters",
         "title": "1C:Drive - Заполнить секцию ПараметрыСценария",
         "category": "1C:Drive Test Helper"
+      },
+      {
+        "command": "1cDriveHelper.openMxlFileFromExplorer",
+        "title": "1C:Drive - Открыть MXL файл в редакторе",
+        "category": "1C:Drive Test Helper"
+      },
+      {
+        "command": "1cDriveHelper.openMxlFile",
+        "title": "1C:Drive - Открыть MXL файл в редакторе",
+        "category": "1C:Drive Test Helper"
+      },
+      {
+        "command": "1cDriveHelper.revealFileInExplorer",
+        "title": "1C:Drive - Показать файл в проводнике VS Code",
+        "category": "1C:Drive Test Helper"
+      },
+      {
+        "command": "1cDriveHelper.revealFileInOS",
+        "title": "1C:Drive - Показать файл в системном проводнике",
+        "category": "1C:Drive Test Helper"
+      },
+      {
+        "command": "1cDriveHelper.openBuildFolder",
+        "title": "1C:Drive - Открыть папку сборки",
+        "category": "1C:Drive Test Helper"
       }
     ],
     "keybindings": [
@@ -264,6 +301,13 @@
       }
     ],
     "menus": {
+      "explorer/context": [
+        {
+          "command": "1cDriveHelper.openMxlFileFromExplorer",
+          "when": "resourceExtname == .mxl",
+          "group": "00_mxl@0"
+        }
+      ],
       "editor/context": [
         {
           "command": "1cDriveHelper.openSubscenario",
@@ -276,34 +320,49 @@
           "group": "00_navigation@1"
         },
         {
+          "command": "1cDriveHelper.openMxlFile",
+          "when": "editorTextFocus && editorHasSelection",
+          "group": "01_search@0"
+        },
+        {
+          "command": "1cDriveHelper.revealFileInExplorer",
+          "when": "editorTextFocus && editorHasSelection",
+          "group": "01_search@1"
+        },
+        {
+          "command": "1cDriveHelper.revealFileInOS",
+          "when": "editorTextFocus && editorHasSelection",
+          "group": "01_search@2"
+        },
+        {
           "command": "1cDriveHelper.createNestedScenario",
           "when": "editorTextFocus && !editorReadonly",
-          "group": "01_creation@0"
+          "group": "02_creation@0"
         },
         {
           "command": "1cDriveHelper.createMainScenario",
           "when": "editorTextFocus && !editorReadonly",
-          "group": "01_creation@1"
+          "group": "02_creation@1"
         },
         {
           "command": "1cDriveHelper.checkAndFillNestedScenarios",
           "when": "editorTextFocus",
-          "group": "02_modification@0"
+          "group": "03_modification@0"
         },
         {
           "command": "1cDriveHelper.checkAndFillScriptParameters",
           "when": "editorTextFocus",
-          "group": "02_modification@1"
+          "group": "03_modification@1"
         },
         {
           "command": "1cDriveHelper.replaceTabsWithSpacesYaml",
           "when": "editorTextFocus && !editorReadonly",
-          "group": "02_modification@2"
+          "group": "03_modification@2"
         },
         {
           "command": "1cDriveHelper.insertUid",
           "when": "editorTextFocus && !editorReadonly",
-          "group": "02_modification@3"
+          "group": "03_modification@3"
         }
       ],
       "commandPalette": [
