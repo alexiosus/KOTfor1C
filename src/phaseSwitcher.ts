@@ -188,6 +188,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     console.log("[PhaseSwitcherProvider] Received createNestedScenario command from webview.");
                     vscode.commands.executeCommand('1cDriveHelper.createNestedScenario');
                     return;
+                case 'createFirstLaunchZip':
+                    console.log("[PhaseSwitcherProvider] Received createFirstLaunchZip command from webview.");
+                    vscode.commands.executeCommand('1cDriveHelper.createFirstLaunchZip');
+                    return;
             }
         }, undefined, this._context.subscriptions);
 

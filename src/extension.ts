@@ -13,7 +13,8 @@ import {
     openMxlFileFromExplorerHandler,
     openMxlFileFromTextHandler,
     revealFileInExplorerHandler,
-    revealFileInOSHandler
+    revealFileInOSHandler,
+    handleCreateFirstLaunchZip
 } from './commandHandlers';
 
 import { DriveCompletionProvider } from './completionProvider';
@@ -257,6 +258,11 @@ export function activate(context: vscode.ExtensionContext) {
             await refreshGherkinStepsCommand(); 
         }
     }));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        '1cDriveHelper.createFirstLaunchZip', 
+        () => handleCreateFirstLaunchZip(context)
+    ));
 
     console.log('1cDriveHelper commands and providers registered.');
 }

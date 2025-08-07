@@ -67,22 +67,24 @@
         <hr id="sectionSeparator" class="section-separator">
         
         <div id="assembleSection" class="assemble-tests-section">
-            <h1>Сборка Тестов</h1>
+            <h1>Сборка</h1>
             <div class="assemble-options assemble-options-inline">
-                Accounting:
+                Accounting mode:
                 <select id="recordGLSelect" name="recordGLAccounts" title="Record GL Accounts (0=No, 1=Yes, 2=Templates)">
                     <option value="0">GL-</option>
                     <option value="1">GL+</option>
                     <option value="2" selected>Templates</option>
                 </select>
-                <label class="setting-item drive-trade-label">
-                    <input type="checkbox" id="driveTradeChk">
-                    <span>DriveTrade</span> </label>
             </div>
             <div class="assemble-controls">
-                 <button id="assembleTestsBtn" class="button-with-icon">
-                     <span class="codicon codicon-beaker"></span> Собрать тесты
-                 </button>
+                <div class="controls-row">
+                    <button id="createFirstLaunchBtn" class="button-with-icon" title="Собрать архив FirstLaunch">
+                        <span class="codicon codicon-file-zip"></span> Собрать FL
+                    </button>
+                    <button id="assembleTestsBtn" class="button-with-icon">
+                        <span class="codicon codicon-beaker"></span> Собрать тесты
+                    </button>
+                </div>
             </div>
             <div id="assembleStatus" class="status-area">
             </div>

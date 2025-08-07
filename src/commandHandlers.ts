@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { findFileByName, findScenarioReferences } from './navigationUtils';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { TestInfo } from './types';
+import JSZip = require('jszip');
 
 /**
  * Общая функция для поиска файла по выделенному тексту в редакторе.
@@ -1195,4 +1196,109 @@ export async function checkAndFillScenarioParametersHandler(textEditor: vscode.T
 
     vscode.window.showInformationMessage(`Добавлено ${parametersToAdd.length} параметров сценария.`);
     console.log(`[Cmd:checkAndFillScenarioParameters] Added ${parametersToAdd.length} parameters.`);
+}
+
+
+/**
+ * Обработчик команды создания архива FirstLaunch.zip.
+ * @param context Контекст расширения.
+ */
+export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContext): Promise<void> {
+    console.log("[Cmd:createFirstLaunchZip] Starting...");
+
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+        vscode.window.showErrorMessage("Рабочая область не открыта.");
+        return;
+    }
+    const workspaceRoot = workspaceFolders[0].uri;
+
+    try {
+        // --- 1. Чтение версии из Configuration.xml ---
+        const configXmlUri = vscode.Uri.joinPath(workspaceRoot, 'cf', 'Configuration.xml');
+        let version = '';
+        try {
+            const xmlContentBytes = await vscode.workspace.fs.readFile(configXmlUri);
+            const xmlContent = Buffer.from(xmlContentBytes).toString('utf-8');
+            const versionMatch = xmlContent.match(/<Version>([^<]+)<\/Version>/);
+            if (!versionMatch || !versionMatch[1]) {
+                vscode.window.showErrorMessage("Не удалось найти тег <Version> в cf/Configuration.xml.");
+                return;
+            }
+            version = versionMatch[1];
+            console.log(`[Cmd:createFirstLaunchZip] Found version: ${version}`);
+        } catch (error) {
+            vscode.window.showErrorMessage("Не удалось прочитать файл cf/Configuration.xml.");
+            return;
+        }
+
+        // --- 2. Рекурсивный обход папки и замена версии ---
+        const zip = new JSZip();
+        const firstLaunchFolderUri = vscode.Uri.joinPath(workspaceRoot, 'first_launch');
+
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "Сборка FirstLaunch.zip",
+            cancellable: false
+        }, async (progress) => {
+            progress.report({ message: "Чтение файлов..." });
+            
+            async function processDirectory(dirUri: vscode.Uri, zipFolder: JSZip) {
+                const entries = await vscode.workspace.fs.readDirectory(dirUri);
+                for (const [name, type] of entries) {
+                    const fullUri = vscode.Uri.joinPath(dirUri, name);
+                    if (type === vscode.FileType.Directory) {
+                        const subFolder = zipFolder.folder(name);
+                        if(subFolder) {
+                            await processDirectory(fullUri, subFolder);
+                        }
+                    } else if (type === vscode.FileType.File) {
+                        const fileBytes = await vscode.workspace.fs.readFile(fullUri);
+                        let fileContent = Buffer.from(fileBytes).toString('utf-8');
+                        
+                        const newFileContent = fileContent.replace(/version="[^"]*">/g, `version="${version}">`);
+                        
+                        zipFolder.file(name, newFileContent);
+                    }
+                }
+            }
+
+            await processDirectory(firstLaunchFolderUri, zip);
+
+            // --- 3. Сохранение ZIP архива ---
+            progress.report({ message: "Создание архива..." });
+
+            const saveUri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.joinPath(workspaceRoot, 'FirstLaunch.zip'),
+                filters: {
+                    'Zip-архивы': ['zip']
+                },
+                title: "Сохранить FirstLaunch.zip"
+            });
+
+            if (saveUri) {
+                const zipContent = await zip.generateAsync({ type: "nodebuffer" });
+                await vscode.workspace.fs.writeFile(saveUri, zipContent);
+                console.log(`[Cmd:createFirstLaunchZip] Archive saved to ${saveUri.fsPath}`);
+
+                // Показываем уведомление с кнопкой
+                vscode.window.showInformationMessage(
+                    `Архив FirstLaunch.zip успешно сохранен`,
+                    'Открыть директорию'
+                ).then(selection => {
+                    if (selection === 'Открыть директорию') {
+                        // Открыть системный проводник и выделить файл
+                        vscode.commands.executeCommand('revealFileInOS', saveUri);
+                    }
+                });
+            } else {
+                console.log("[Cmd:createFirstLaunchZip] Save dialog cancelled.");
+                vscode.window.showInformationMessage("Сохранение архива отменено.");
+            }
+        });
+
+    } catch (error: any) {
+        console.error("[Cmd:createFirstLaunchZip] Error:", error);
+        vscode.window.showErrorMessage(`Ошибка при создании FirstLaunch.zip: ${error.message || error}`);
+    }
 }

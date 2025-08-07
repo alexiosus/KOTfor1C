@@ -286,17 +286,17 @@ h1 {
     font-style: italic;
 }
 
-.phase-switcher-controls .controls-row {
+.controls-row {
      display: flex;
      gap: 10px;
      margin-bottom: 10px;
      flex-wrap: wrap; 
 }
-.phase-switcher-controls .controls-row:last-child {
+.controls-row:last-child {
     margin-bottom: 0; 
 }
 
-.phase-switcher-controls .controls-row > button {
+.controls-row > button {
     flex-grow: 1;         
     flex-shrink: 1;       
     flex-basis: auto;     
@@ -430,6 +430,14 @@ label.checkbox-item.changed span.checkbox-label-text {
 }
 .assemble-options label.setting-item span { font-size: var(--vscode-font-size); }
 .assemble-controls { margin-bottom: 10px; }
+.assemble-controls .controls-row {
+    display: flex;
+    gap: 10px;
+}
+.assemble-controls .controls-row > button {
+    flex-grow: 1;
+    flex-basis: 0;
+}
 #assembleStatus { 
     font-size: var(--vscode-editor-font-size); 
     color: var(--vscode-descriptionForeground); 
@@ -457,7 +465,7 @@ label.checkbox-item.changed span.checkbox-label-text {
 
 /* Общие стили для кнопок в нижнем блоке управления */
 .phase-switcher-controls button, 
-#assembleTestsBtn {
+.assemble-controls button {
     background-color: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
     border: 1px solid var(--vscode-button-border, var(--vscode-contrastBorder));
@@ -468,20 +476,17 @@ label.checkbox-item.changed span.checkbox-label-text {
     font-size: var(--vscode-font-size);
 }
 .phase-switcher-controls button:hover, 
-#assembleTestsBtn:hover {
+.assemble-controls button:hover {
     background-color: var(--vscode-button-hoverBackground);
 }
 .phase-switcher-controls button:disabled, 
-#assembleTestsBtn:disabled {
+.assemble-controls button:disabled {
     background-color: var(--vscode-button-secondaryBackground); 
     color: var(--vscode-disabledForeground);
     cursor: not-allowed; 
     border-color: var(--vscode-button-border, var(--vscode-disabledForeground));
     opacity: 0.7;
 }
-#assembleTestsBtn {
-    width: 100%;
- }
 
 .button-with-icon {
   display: inline-flex; 

@@ -20,7 +20,8 @@
     const refreshBtn = document.getElementById('refreshBtn');
     const openSettingsBtn = document.getElementById('openSettingsBtn');
     const collapseAllBtn = document.getElementById('collapseAllBtn');
-    
+    const createFirstLaunchBtn = document.getElementById('createFirstLaunchBtn');
+
     // Новые элементы для выпадающего меню
     const addScenarioDropdownBtn = document.getElementById('addScenarioDropdownBtn');
     const addScenarioDropdownContent = document.getElementById('addScenarioDropdownContent');
@@ -878,4 +879,10 @@
     if (applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;
     requestInitialState();
 
+    if(createFirstLaunchBtn instanceof HTMLButtonElement) {
+        createFirstLaunchBtn.addEventListener('click', () => {
+            log('Create FirstLaunch.zip button clicked.');
+            vscode.postMessage({ command: 'createFirstLaunchZip' });
+        });
+    }
 }());
