@@ -1,4 +1,5 @@
 ﻿import * as vscode from 'vscode';
+import { getTranslator } from './localization';
 import * as path from 'path'; 
 import { v4 as uuidv4 } from 'uuid'; 
 
@@ -8,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
  * @param context Контекст расширения для доступа к ресурсам (шаблонам).
  */
 export async function handleCreateNestedScenario(context: vscode.ExtensionContext): Promise<void> {
+    const t = await getTranslator(context.extensionUri);
     console.log("[Cmd:createNestedScenario] Starting...");
     let prefilledName = '';
     const editor = vscode.window.activeTextEditor;
@@ -27,10 +29,10 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
 
     // 1. Запрос имени
     const name = await vscode.window.showInputBox({
-        prompt: "Введите имя вложенного сценария",
-        value: prefilledName, // Предзаполненное значение
+        prompt: t('Enter nested scenario name'),
+        value: prefilledName,
         ignoreFocusOut: true,
-        validateInput: value => value?.trim() ? null : "Имя не может быть пустым" // Проверка на пустоту
+        validateInput: value => value?.trim() ? null : t('Name cannot be empty')
     });
     // Если пользователь нажал Escape или не ввел имя
     if (name === undefined) { console.log("[Cmd:createNestedScenario] Cancelled at name input."); return; }
@@ -38,13 +40,13 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
 
     // 2. Запрос кода
     const code = await vscode.window.showInputBox({
-        prompt: "Введите номерной код сценария (только цифры)",
+        prompt: t('Enter scenario numeric code (digits only)'),
         ignoreFocusOut: true,
         validateInput: value => {
             const trimmedValue = value?.trim();
-            if (!trimmedValue) return "Код не может быть пустым";
-            if (!/^\d+$/.test(trimmedValue)) return "Код должен содержать только цифры";
-            return null; // Все в порядке
+            if (!trimmedValue) return t('Code cannot be empty');
+            if (!/^\d+$/.test(trimmedValue)) return t('Code must contain digits only');
+            return null;
         }
     });
     if (code === undefined) { console.log("[Cmd:createNestedScenario] Cancelled at code input."); return; }
@@ -71,8 +73,8 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
         canSelectFiles: false,
         canSelectFolders: true, // Разрешаем выбор только папок
         canSelectMany: false, // Только одну папку
-        openLabel: `Создать в папке '${trimmedCode}' здесь`, // Текст на кнопке подтверждения
-        title: 'Выберите родительскую папку для вложенного сценария', // Заголовок окна
+        openLabel: t('Create folder "{0}" here', trimmedCode),
+        title: t('Select parent folder for nested scenario'),
         defaultUri: defaultDialogUri // Начинаем с пути по умолчанию
     });
     // Если пользователь не выбрал папку
@@ -109,7 +111,7 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
         await vscode.workspace.fs.writeFile(targetFileUri, Buffer.from(finalContent, 'utf-8'));
 
         console.log(`[Cmd:createNestedScenario] Success! Created: ${targetFileUri.fsPath}`);
-        vscode.window.showInformationMessage(`Вложенный сценарий '${trimmedName}' (${trimmedCode}) успешно создан!`);
+        vscode.window.showInformationMessage(t('Nested scenario "{0}" ({1}) has been created successfully!', trimmedName, trimmedCode));
 
         // Открываем созданный файл в редакторе
         const doc = await vscode.workspace.openTextDocument(targetFileUri);
@@ -120,7 +122,7 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
 
     } catch (error: any) {
         console.error("[Cmd:createNestedScenario] Error:", error);
-        vscode.window.showErrorMessage(`Ошибка при создании вложенного сценария: ${error.message || error}`);
+        vscode.window.showErrorMessage(t('Error creating nested scenario: {0}', error.message || String(error)));
     }
 }
 
@@ -131,16 +133,16 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
  * @param context Контекст расширения для доступа к ресурсам (шаблонам).
  */
 export async function handleCreateMainScenario(context: vscode.ExtensionContext): Promise<void> {
+    const t = await getTranslator(context.extensionUri);
     console.log("[Cmd:createMainScenario] Starting...");
     // 1. Запрос имени
     const name = await vscode.window.showInputBox({
-        prompt: "Введите имя главного сценария (будет именем папки)",
+        prompt: t('Enter main scenario name (folder name)'),
         ignoreFocusOut: true,
         validateInput: value => {
             const trimmedValue = value?.trim();
-            if (!trimmedValue) return "Имя не может быть пустым";
-            // TODO: Добавить проверку на недопустимые символы в имени файла/папки (/, \\, :, *, ?, ", <, >, |)
-            if (/[/\\:*\?"<>|]/.test(trimmedValue)) return "Имя содержит недопустимые символы";
+            if (!trimmedValue) return t('Name cannot be empty');
+            if (/[/\\:*\?"<>|]/.test(trimmedValue)) return t('Name contains invalid characters');
             return null;
         }
     });
@@ -149,20 +151,20 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
 
     // 2. Запрос имени вкладки/фазы
     const tabName = await vscode.window.showInputBox({
-        prompt: "Введите название фазы",
-        placeHolder: "Например, 'Sales tests 1' или 'Новая Фаза'",
+        prompt: t('Enter phase name'),
+        placeHolder: t('For example, "Sales tests 1" or "New Phase"'),
         ignoreFocusOut: true,
-        validateInput: value => value?.trim() ? null : "Имя фазы не может быть пустым (нужно для отображения)"
+        validateInput: value => value?.trim() ? null : t('Phase name cannot be empty (required for display)')
     });
     if (tabName === undefined) { console.log("[Cmd:createMainScenario] Cancelled at tab name input."); return; }
     const trimmedTabName = tabName.trim();
 
     // 3. Запрос порядка сортировки (необязательно)
     const orderStr = await vscode.window.showInputBox({
-        prompt: "Введите порядок внутри фазы",
-        placeHolder: "Необязательно",
+        prompt: t('Enter order within the phase'),
+        placeHolder: t('Optional'),
         ignoreFocusOut: true,
-        validateInput: value => (!value || /^\d+$/.test(value.trim())) ? null : "Должно быть целым числом или пустым"
+        validateInput: value => (!value || /^\d+$/.test(value.trim())) ? null : t('Must be an integer or empty')
     });
     // Если пользователь нажал Esc, orderStr будет undefined. Если ввел и стер - пустая строка.
     if (orderStr === undefined) { console.log("[Cmd:createMainScenario] Cancelled at order input."); return; }
@@ -171,10 +173,10 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
 
     // 4. Запрос состояния по умолчанию (QuickPick)
     const defaultStatePick = await vscode.window.showQuickPick(['true', 'false'], {
-        placeHolder: 'Состояние по умолчанию в Phase Switcher (необязательно)',
+        placeHolder: t('Default state in Phase Switcher (optional)'),
         canPickMany: false,
         ignoreFocusOut: true,
-        title: "Чекбокс будет включен по умолчанию?"
+        title: t('Checkbox enabled by default?')
     });
     // Если пользователь нажал Esc, defaultStatePick будет undefined. Считаем это как 'true'.
     const defaultStateStr = defaultStatePick || 'true'; // Строка 'true' или 'false'
@@ -198,8 +200,8 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
     // 3. Запрос пути для создания (родительской папки)
     const folderUris = await vscode.window.showOpenDialog({
         canSelectFiles: false, canSelectFolders: true, canSelectMany: false,
-        openLabel: `Создать папку '${trimmedName}' здесь`,
-        title: 'Выберите родительскую папку для главного сценария',
+        openLabel: t('Create folder "{0}" here', trimmedName),
+        title: t('Select parent folder for main scenario'),
         defaultUri: defaultDialogUri
     });
     if (!folderUris || folderUris.length === 0) { console.log("[Cmd:createMainScenario] Cancelled at folder selection."); return; }
@@ -249,7 +251,7 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
         await vscode.workspace.fs.writeFile(mainTargetFileUri, Buffer.from(mainFinalContent, 'utf-8'));
         console.log(`[Cmd:createMainScenario] Created main scenario file: ${mainTargetFileUri.fsPath}`);
 
-        vscode.window.showInformationMessage(`Главный сценарий '${trimmedName}' успешно создан!`);
+        vscode.window.showInformationMessage(t('Main scenario "{0}" has been created successfully!', trimmedName));
         // Открываем основной созданный файл
         const doc = await vscode.workspace.openTextDocument(mainTargetFileUri);
         await vscode.window.showTextDocument(doc);
@@ -259,6 +261,6 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
 
     } catch (error: any) {
         console.error("[Cmd:createMainScenario] Error:", error);
-        vscode.window.showErrorMessage(`Ошибка при создании главного сценария: ${error.message || error}`);
+        vscode.window.showErrorMessage(t('Error creating main scenario: {0}', error.message || String(error)));
     }
 }

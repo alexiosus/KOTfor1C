@@ -38,6 +38,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _testCache: Map<string, TestInfo> | null = null;
     private _isScanning: boolean = false;
     private _outputChannel: vscode.OutputChannel | undefined;
+    private _langOverride: 'System' | 'English' | 'Русский' = 'System';
+    private _ruBundle: Record<string, string> | null = null;
 
     // Событие, которое будет генерироваться после обновления _testCache
     private _onDidUpdateTestCache: vscode.EventEmitter<Map<string, TestInfo> | null> = new vscode.EventEmitter<Map<string, TestInfo> | null>();
@@ -72,6 +74,43 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
             }
         }));
+    }
+
+    private async loadLocalizationBundleIfNeeded(): Promise<void> {
+        const cfg = vscode.workspace.getConfiguration('1cDriveHelper.localization');
+        const override = (cfg.get<string>('languageOverride') as 'System' | 'English' | 'Русский') || 'System';
+        this._langOverride = override;
+        if (override === 'Русский') {
+            try {
+                const ruUri = vscode.Uri.joinPath(this._extensionUri, 'l10n', 'bundle.l10n.ru.json');
+                const bytes = await vscode.workspace.fs.readFile(ruUri);
+                this._ruBundle = JSON.parse(Buffer.from(bytes).toString('utf-8')) as Record<string, string>;
+            } catch (e) {
+                console.warn('[PhaseSwitcherProvider] Failed to load RU bundle:', e);
+                this._ruBundle = null;
+            }
+        } else {
+            this._ruBundle = null;
+        }
+    }
+
+    private formatPlaceholders(template: string, args: string[]): string {
+        return template.replace(/\{(\d+)\}/g, (m, idx) => {
+            const i = Number(idx);
+            return i >= 0 && i < args.length ? args[i] : m;
+        });
+    }
+
+    private t(message: string, ...args: string[]): string {
+        if (this._langOverride === 'System') {
+            return vscode.l10n.t(message, ...args);
+        }
+        if (this._langOverride === 'Русский') {
+            const translated = (this._ruBundle && this._ruBundle[message]) || message;
+            return args.length ? this.formatPlaceholders(translated, args) : translated;
+        }
+        // en override: return default English and format placeholders
+        return args.length ? this.formatPlaceholders(message, args) : message;
     }
 
     private getOutputChannel(): vscode.OutputChannel {
@@ -114,6 +153,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             ]
         };
 
+        await this.loadLocalizationBundleIfNeeded();
         const nonce = getNonce();
         const styleUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'phaseSwitcher.css'));
         const scriptUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'phaseSwitcher.js'));
@@ -128,6 +168,55 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             htmlContent = htmlContent.replace('${scriptUri}', scriptUri.toString());
             htmlContent = htmlContent.replace('${codiconsUri}', codiconsUri.toString());
             htmlContent = htmlContent.replace(/\$\{webview.cspSource\}/g, webviewView.webview.cspSource);
+
+            const langOverride = this._langOverride;
+            const effectiveLang = langOverride === 'System' ? (vscode.env.language || 'English') : langOverride;
+            const localeHtmlLang = effectiveLang.split('-')[0];
+            const extDisplayName = this.t('1C:Drive Test Helper');
+            const loc = {
+                phaseSwitcherTitle: this.t('Phase Switcher'),
+                openSettingsTitle: this.t('Open extension settings'),
+                createScenarioTitle: this.t('Create scenario'),
+                createMainScenario: this.t('Main scenario'),
+                createNestedScenario: this.t('Nested scenario'),
+                refreshTitle: this.t('Refresh from disk'),
+                collapseExpandAllTitle: this.t('Collapse/Expand all phases'),
+                toggleAllCheckboxesTitle: this.t('Toggle all checkboxes'),
+                loadingPhasesAndTests: this.t('Loading phases and tests...'),
+                defaults: this.t('Defaults'),
+                apply: this.t('Apply'),
+                statusInit: this.t('Status: Initializing...'),
+                assemblyTitle: this.t('Assembly'),
+                accountingMode: this.t('Accounting mode'),
+                createFirstLaunchZipTitle: this.t('Create FirstLaunch archive'),
+                buildFL: this.t('Build FL'),
+                buildTests: this.t('Build tests'),
+                collapsePhaseTitle: this.t('Collapse phase'),
+                expandPhaseTitle: this.t('Expand phase'),
+                toggleAllInPhaseTitle: this.t('Toggle all tests in this phase'),
+                noTestsInPhase: this.t('No tests in this phase.'),
+                errorLoadingTests: this.t('Error loading tests.'),
+                expandAllPhasesTitle: this.t('Expand all phases'),
+                collapseAllPhasesTitle: this.t('Collapse all phases'),
+                phaseSwitcherDisabled: this.t('Phase Switcher is disabled in settings.'),
+                openScenarioFileTitle: this.t('Open scenario file {0}', '{0}'),
+                statusLoadingShort: this.t('Loading...'),
+                statusRequestingData: this.t('Requesting data...'),
+                statusApplyingPhaseChanges: this.t('Applying phase changes...'),
+                statusStartingAssembly: this.t('Starting assembly...'),
+                pendingNoChanges: this.t('No pending changes.'),
+                pendingTotalChanged: this.t('Total changed: {0}'),
+                pendingEnabled: this.t('Enabled: {0}'),
+                pendingDisabled: this.t('Disabled: {0}'),
+                pendingPressApply: this.t('Press "Apply"')
+            };
+
+            htmlContent = htmlContent.replace('${localeHtmlLang}', localeHtmlLang);
+            htmlContent = htmlContent.replace('${extDisplayName}', extDisplayName);
+            for (const [k, v] of Object.entries(loc)) {
+                htmlContent = htmlContent.replace(new RegExp(`\\$\\{loc\\.${k}\\}`, 'g'), v);
+            }
+            htmlContent = htmlContent.replace('${webviewLoc}', JSON.stringify(loc));
             webviewView.webview.html = htmlContent;
             console.log("[PhaseSwitcherProvider] HTML content set from template.");
         } catch (err: any) {
@@ -220,11 +309,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private async _sendInitialState(webview: vscode.Webview) {
         if (this._isScanning) {
             console.log("[PhaseSwitcherProvider:_sendInitialState] Scan already in progress...");
-            webview.postMessage({ command: 'updateStatus', text: 'Идет сканирование...' });
+            webview.postMessage({ command: 'updateStatus', text: this.t('Scanning in progress...') });
             return;
         }
         console.log("[PhaseSwitcherProvider:_sendInitialState] Preparing and sending initial state...");
-        webview.postMessage({ command: 'updateStatus', text: 'Сканирование файлов...', enableControls: false, refreshButtonEnabled: false });
+        webview.postMessage({ command: 'updateStatus', text: this.t('Scanning files...'), enableControls: false, refreshButtonEnabled: false });
 
         const config = vscode.workspace.getConfiguration('1cDriveHelper.features');
         const switcherEnabled = config.get<boolean>('enablePhaseSwitcher') ?? true;
@@ -232,9 +321,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders || workspaceFolders.length === 0) {
-            vscode.window.showErrorMessage("Пожалуйста, откройте папку проекта.");
-            webview.postMessage({ command: 'loadInitialState', error: "Папка проекта не открыта" });
-            webview.postMessage({ command: 'updateStatus', text: 'Ошибка: Папка проекта не открыта', refreshButtonEnabled: true });
+            vscode.window.showErrorMessage(this.t('Please open a project folder.'));
+            webview.postMessage({ command: 'loadInitialState', error: this.t('Project folder is not open') });
+            webview.postMessage({ command: 'updateStatus', text: this.t('Error: Project folder is not open'), refreshButtonEnabled: true });
             this._testCache = null; 
             this._onDidUpdateTestCache.fire(this._testCache); // Уведомляем об отсутствии данных
             return;
@@ -246,7 +335,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._testCache = await scanWorkspaceForTests(workspaceRootUri); 
         } catch (scanError: any) {
             console.error("[PhaseSwitcherProvider:_sendInitialState] Error during scanWorkspaceForTests:", scanError);
-            vscode.window.showErrorMessage(`Ошибка сканирования файлов сценариев: ${scanError.message}`);
+            vscode.window.showErrorMessage(this.t('Error scanning scenario files: {0}', scanError.message));
             this._testCache = null;
         } finally {
             this._isScanning = false;
@@ -254,14 +343,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
 
         let states: { [key: string]: 'checked' | 'unchecked' | 'disabled' } = {};
-        let status = "Ошибка сканирования или тесты не найдены";
+        let status = this.t('Scan error or no tests found');
         let tabDataForUI: { [tabName: string]: TestInfo[] } = {}; // Данные только для UI Phase Switcher
         let checkedCount = 0;
         let testsForPhaseSwitcherCount = 0;
 
 
         if (this._testCache) {
-            status = "Проверка состояния тестов...";
+            status = this.t('Checking test state...');
             webview.postMessage({ command: 'updateStatus', text: status, refreshButtonEnabled: false });
 
             const baseOnDirUri = vscode.Uri.joinPath(workspaceRootUri, SCAN_DIR_RELATIVE_PATH);
@@ -295,9 +384,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             tabDataForUI = this._groupAndSortTestData(new Map(testsForPhaseSwitcherProcessing.map(info => [info.name, info])));
 
 
-            status = `Состояние загружено: \n${checkedCount} / ${testsForPhaseSwitcherCount} включено`;
+            status = this.t('State loaded: \n{0} / {1} enabled', String(checkedCount), String(testsForPhaseSwitcherCount));
         } else {
-            status = "Тесты не найдены или ошибка сканирования.";
+            status = this.t('No tests found or scan error.');
         }
 
         console.log(`[PhaseSwitcherProvider:_sendInitialState] State check complete. Status: ${status}`);
@@ -352,45 +441,45 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         };
         
-        sendStatus(`Сборка тестов в процессе...`, false, 'assemble', false);
+        sendStatus(this.t('Building tests in progress...'), false, 'assemble', false);
 
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
-            title: "Сборка тестов 1C:Drive",
+            title: this.t('Building 1C:Drive tests'),
             cancellable: false
         }, async (progress) => {
             let featureFileDirUri: vscode.Uri; // Объявляем здесь, чтобы была доступна в конце
             try {
-                progress.report({ increment: 0, message: "Подготовка..." });
+                progress.report({ increment: 0, message: this.t('Preparing...') });
                 outputChannel.appendLine(`[${new Date().toISOString()}] Starting TypeScript YAML build process...`);
 
                 const workspaceFolders = vscode.workspace.workspaceFolders;
                 if (!workspaceFolders?.length) {
-                    throw new Error("Необходимо открыть папку проекта.");
+                    throw new Error(this.t('Project folder must be opened.'));
                 }
                 const workspaceRootUri = workspaceFolders[0].uri;
                 const workspaceRootPath = workspaceRootUri.fsPath;
 
                 const oneCPath_raw = config.get<string>('paths.oneCEnterpriseExe');
                 if (!oneCPath_raw) {
-                    sendStatus('Ошибка сборки.', true, 'assemble', true);
+                    sendStatus(this.t('Build error.'), true, 'assemble', true);
                     vscode.window.showErrorMessage(
-                        "Путь к 1С:Предприятие (1cv8.exe) не указан в настройках.",
-                        "Открыть настройки"
+                        this.t('Path to 1C:Enterprise (1cv8.exe) is not specified in settings.'),
+                        this.t('Open Settings')
                     ).then(selection => {
-                        if (selection === "Открыть настройки") {
+                        if (selection === this.t('Open Settings')) {
                             vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.oneCEnterpriseExe');
                         }
                     });
                     return;
                 }
                 if (!fs.existsSync(oneCPath_raw)) {
-                    sendStatus('Ошибка сборки.', true, 'assemble', true);
+                    sendStatus(this.t('Build error.'), true, 'assemble', true);
                     vscode.window.showErrorMessage(
-                        `Файл 1С:Предприятие (1cv8.exe) не найден по пути: ${oneCPath_raw}`,
-                        "Открыть настройки"
+                        this.t('1C:Enterprise file (1cv8.exe) not found at path: {0}', oneCPath_raw),
+                        this.t('Open Settings')
                     ).then(selection => {
-                        if (selection === "Открыть настройки") {
+                        if (selection === this.t('Open Settings')) {
                             vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.oneCEnterpriseExe');
                         }
                     });
@@ -400,24 +489,24 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
                 const emptyIbPath_raw = config.get<string>('paths.emptyInfobase');
                 if (!emptyIbPath_raw) {
-                    sendStatus('Ошибка сборки.', true, 'assemble', true);
+                    sendStatus(this.t('Build error.'), true, 'assemble', true);
                     vscode.window.showErrorMessage(
-                        "Путь к пустой информационной базе не указан в настройках.",
-                        "Открыть настройки"
+                        this.t('Path to empty infobase is not specified in settings.'),
+                        this.t('Open Settings')
                     ).then(selection => {
-                        if (selection === "Открыть настройки") {
+                        if (selection === this.t('Open Settings')) {
                             vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.emptyInfobase');
                         }
                     });
                     return;
                 }
                 if (!fs.existsSync(emptyIbPath_raw)) {
-                    sendStatus('Ошибка сборки.', true, 'assemble', true);
+                    sendStatus(this.t('Build error.'), true, 'assemble', true);
                     vscode.window.showErrorMessage(
-                        `Каталог пустой информационной базы не найден по пути: ${emptyIbPath_raw}`,
-                        "Открыть настройки"
+                        this.t('Empty infobase directory not found at path: {0}', emptyIbPath_raw),
+                        this.t('Open Settings')
                     ).then(selection => {
-                        if (selection === "Открыть настройки") {
+                        if (selection === this.t('Open Settings')) {
                             vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.emptyInfobase');
                         }
                     });
@@ -438,7 +527,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 await vscode.workspace.fs.createDirectory(absoluteBuildPathUri);
                 outputChannel.appendLine(`Build directory ensured: ${absoluteBuildPath}`);
 
-                progress.report({ increment: 10, message: "Копирование параметров..." });
+                progress.report({ increment: 10, message: this.t('Copying parameters...') });
                 const localSettingsPath = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_parameters.json');
                 const yamlParamsSourcePath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'develop_parallel', 'yaml_parameters.json');
                 
@@ -459,7 +548,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 outputChannel.appendLine(`yaml_parameters.json prepared at ${localSettingsPath.fsPath}`);
 
                 if (driveTradeValue === '1') {
-                    progress.report({ increment: 20, message: "Обработка DriveTrade..." });
+                    progress.report({ increment: 20, message: this.t('Processing DriveTrade...') });
                     outputChannel.appendLine(`DriveTrade is 1, running CutCodeByTags.epf...`);
                     const cutCodeEpfPath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'DriveTrade', 'CutCodeByTags.epf').fsPath;
                     const errorLogPathForCut = vscode.Uri.joinPath(absoluteBuildPathUri, 'CutTestsByTags_error.log');
@@ -476,7 +565,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         { filePath: errorLogPathForCut.fsPath, successContent: undefined, timeoutMs: 60000 });
                 }
 
-                progress.report({ increment: 40, message: "Сборка YAML в feature..." });
+                progress.report({ increment: 40, message: this.t('Building YAML in feature...') });
                 outputChannel.appendLine(`Building YAML files to feature file...`);
                 const yamlBuildLogFileUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_build_log.txt');
                 const yamlBuildResultFileUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_build_result.txt');
@@ -499,15 +588,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     if (!buildResultContent.includes("0")) { 
                         const buildLogContent = Buffer.from(await vscode.workspace.fs.readFile(yamlBuildLogFileUri)).toString('utf-8');
                         outputChannel.appendLine("BuildScenarioBDD Error Log:\n" + buildLogContent);
-                        throw new Error(`Ошибка сборки YAML. См. лог: ${yamlBuildLogFileUri.fsPath}`);
+                        throw new Error(this.t('YAML build error. See log: {0}', yamlBuildLogFileUri.fsPath));
                     }
                 } catch (e: any) {
-                     if (e.code === 'FileNotFound') throw new Error(`Файл результата сборки ${yamlBuildResultFileUri.fsPath} не найден после ожидания.`);
+                     if (e.code === 'FileNotFound') throw new Error(this.t('Build result file {0} not found after waiting.', yamlBuildResultFileUri.fsPath));
                      throw e; 
                 }
                 outputChannel.appendLine(`YAML build successful.`);
 
-                progress.report({ increment: 70, message: "Запись параметров..." });
+                progress.report({ increment: 70, message: this.t('Writing parameters...') });
                 const vanessaErrorLogsDir = vscode.Uri.joinPath(absoluteBuildPathUri, "vanessa_error_logs");
                 await vscode.workspace.fs.createDirectory(vanessaErrorLogsDir);
 
@@ -542,7 +631,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     }
                 }
                 
-                progress.report({ increment: 90, message: "Корректировка файлов..." });
+                progress.report({ increment: 90, message: this.t('Correcting files...') });
                 outputChannel.appendLine(`Repairing specific feature files...`);
                 const filesToRepairRelative = [
                     'tests/EtalonDrive/001_Company_tests.feature',
@@ -585,14 +674,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     }
                 }
 
-                progress.report({ increment: 100, message: "Завершено!" });
+                progress.report({ increment: 100, message: this.t('Completed!') });
                 outputChannel.appendLine(`TypeScript YAML build process completed successfully.`);
                 sendStatus('Сборка тестов завершена успешно.', true, 'assemble', true); 
                 vscode.window.showInformationMessage(
-                    'Сборка тестов успешно завершена.',
-                    'Открыть папку'
+                    this.t('Tests successfully built.'),
+                    this.t('Open folder')
                 ).then(selection => {
-                    if (selection === 'Открыть папку') {
+                    if (selection === this.t('Open folder')) {
                         vscode.commands.executeCommand('1cDriveHelper.openBuildFolder', featureFileDirUri.fsPath);
                     }
                 });
@@ -608,19 +697,19 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const logFileMatch = errorMessage.match(/См\. лог:\s*(.*)/);
                 if (logFileMatch && logFileMatch[1]) {
                     const logFilePath = logFileMatch[1].trim();
-                    vscode.window.showErrorMessage(`Ошибка сборки.`, 'Открыть лог')
+                    vscode.window.showErrorMessage(this.t('Build error.'), this.t('Open log'))
                         .then(selection => {
-                            if (selection === 'Открыть лог') {
+                            if (selection === this.t('Open log')) {
                                 vscode.workspace.openTextDocument(vscode.Uri.file(logFilePath)).then(doc => {
                                     vscode.window.showTextDocument(doc);
                                 });
                             }
                         });
                 } else {
-                    vscode.window.showErrorMessage(`Ошибка сборки: ${errorMessage}. Смотрите Output.`);
+                    vscode.window.showErrorMessage(this.t('Build error: {0}. See Output.', errorMessage));
                 }
                 
-                sendStatus(`Ошибка сборки.`, true, 'assemble', true); 
+                sendStatus(this.t('Build error.'), true, 'assemble', true); 
             }
         });
     }
@@ -673,13 +762,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
             child.on('error', (error) => {
                 outputChannel.appendLine(`--- ERROR STARTING 1C PROCESS ${processName}: ${error.message} ---`);
-                reject(new Error(`Ошибка запуска процесса ${processName}: ${error.message}`));
+                reject(new Error(this.t('Error starting process {0}: {1}', processName, error.message)));
             });
 
             const handleClose = (code: number | null) => {
                 outputChannel.appendLine(`--- 1C Process ${processName} (launcher) finished with exit code ${code} ---`);
                 if (code !== 0 && code !== 255) { 
-                    reject(new Error(`Процесс ${processName} (лаунчер) завершился с кодом ${code}. stderr: ${stderrData}`));
+                    reject(new Error(this.t('Process {0} (launcher) finished with code {1}. stderr: {2}', processName, String(code), stderrData)));
                 } else {
                     resolve();
                 }
@@ -696,7 +785,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     if (Date.now() - startTime > timeoutMs) {
                         clearInterval(pollInterval);
                         outputChannel.appendLine(`--- TIMEOUT waiting for completion marker for ${processName} ---`);
-                        reject(new Error(`Таймаут ожидания завершения процесса ${processName} по маркеру ${completionMarker.filePath}`));
+                        reject(new Error(this.t('Timeout waiting for process {0} completion by marker {1}', processName, completionMarker.filePath)));
                         return;
                     }
 
@@ -791,14 +880,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const baseOffDirUri = vscode.Uri.joinPath(workspaceRootUri, 'RegressionTests_Disabled', 'Yaml', 'Drive');
 
         if (this._view.webview) {
-            this._view.webview.postMessage({ command: 'updateStatus', text: 'Применение изменений...', enableControls: false, refreshButtonEnabled: false });
+            this._view.webview.postMessage({ command: 'updateStatus', text: this.t('Applying changes...'), enableControls: false, refreshButtonEnabled: false });
         } else {
             console.warn("[PhaseSwitcherProvider:_handleApplyChanges] Cannot send status, webview is not available.");
         }
 
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
-            title: "Применение изменений фаз...",
+            title: this.t('Applying phase changes...'),
             cancellable: false
         }, async (progress) => {
             let stats = { enabled: 0, disabled: 0, skipped: 0, error: 0 };
@@ -806,7 +895,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const increment = total > 0 ? 100 / total : 0;
 
             for (const [name, shouldBeEnabled] of Object.entries(states)) {
-                progress.report({ increment: increment , message: `Обработка ${name}...` });
+                progress.report({ increment: increment , message: this.t('Processing {0}...', name) });
 
                 const info = this._testCache!.get(name);
                 // Применяем изменения только для тестов, которые имеют tabName (т.е. управляются через Phase Switcher)
@@ -842,15 +931,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     }
                 } catch (moveError: any) {
                     console.error(`[PhaseSwitcherProvider] Error moving test "${name}":`, moveError);
-                    vscode.window.showErrorMessage(`Ошибка перемещения "${name}": ${moveError.message || moveError}`);
+                    vscode.window.showErrorMessage(this.t('Error moving "{0}": {1}', name, moveError.message || moveError));
                     stats.error++;
                 }
             }
 
-            const resultMessage = `Включено: ${stats.enabled}, Выключено: ${stats.disabled}, Пропущено (не в UI): ${stats.skipped}, Ошибки: ${stats.error}`;
-            if (stats.error > 0) { vscode.window.showWarningMessage(`Изменения применены с ошибками! ${resultMessage}`); }
-            else if (stats.enabled > 0 || stats.disabled > 0) { vscode.window.showInformationMessage(`Изменения фаз успешно применены! ${resultMessage}`); }
-            else { vscode.window.showInformationMessage(`Изменения фаз: нечего применять. ${resultMessage}`); }
+            const resultMessage = this.t('Enabled: {0}, Disabled: {1}, Skipped (not in UI): {2}, Errors: {3}', 
+                String(stats.enabled), String(stats.disabled), String(stats.skipped), String(stats.error));
+            if (stats.error > 0) { vscode.window.showWarningMessage(this.t('Changes applied with errors! {0}', resultMessage)); }
+            else if (stats.enabled > 0 || stats.disabled > 0) { vscode.window.showInformationMessage(this.t('Phase changes successfully applied! {0}', resultMessage)); }
+            else { vscode.window.showInformationMessage(this.t('Phase changes: nothing to apply. {0}', resultMessage)); }
 
             if (this._view?.webview) {
                 console.log("[PhaseSwitcherProvider] Refreshing state after apply...");

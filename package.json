@@ -1,7 +1,7 @@
 {
   "name": "1c-drive-test-helper",
-  "displayName": "1C:Drive Test Helper",
-  "description": "An extension to work with 1C:Drive tests",
+  "displayName": "%ext.displayName%",
+  "description": "%ext.description%",
   "icon": "res/icons/1CDriveTestHelper.png",
   "publisher": "AlexeyEremeev",
   "author": {
@@ -9,10 +9,11 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "engines": {
     "vscode": "^1.98.0"
   },
+  "l10n": "./l10n",
   "categories": [
     "Testing",
     "Other"
@@ -24,71 +25,83 @@
   "contributes": {
     "configuration": [
       {
-        "title": "1C:Drive Test Helper",
+        "title": "%config.generalTitle%",
         "properties": {
+          "1cDriveHelper.localization.languageOverride": {
+            "type": "string",
+            "default": "System",
+            "enum": ["System", "English", "Русский"],
+            "enumDescriptions": [
+              "%config.localization.system.desc%",
+              "%config.localization.en.desc%",
+              "%config.localization.ru.desc%"
+            ],
+            "description": "%config.localization.languageOverride.description%",
+            "order": 1
+          },
           "1cDriveHelper.features.enablePhaseSwitcher": {
             "type": "boolean",
             "default": true,
-            "description": "Включить панель \"Phase Switcher\".",
+            "description": "%config.enablePhaseSwitcher.description%",
             "order": 10
           },
           "1cDriveHelper.features.enableAssembleTests": {
             "type": "boolean",
             "default": true,
-            "description": "Включить панель \"Сборка\".",
+            "description": "%config.enableAssembleTests.description%",
             "order": 11
           },
           "1cDriveHelper.editor.autoCollapseOnOpen": {
             "type": "boolean",
             "default": true,
-            "description": "Автоматически сворачивать секции 'ВложенныеСценарии' и 'ПараметрыСценария' при открытии файла."
+            "description": "%config.autoCollapseOnOpen.description%"
           },
           "1cDriveHelper.steps.externalUrl": {
             "type": "string",
             "default": "https://raw.githubusercontent.com/kakoytochelik/1cDriveTestHelper/main/res/steps.htm",
-            "description": "URL для загрузки файла steps.htm с определениями шагов Gherkin. Оставьте пустым, чтобы использовать файл из расширения.",
+            "description": "%config.stepsExternalUrl.description%",
             "order": 15
           }
         }
       },
       {
-        "title": "Настройки тестовой почты",
+        "title": "%config.mailSettings.title%",
         "properties": {
           "1cDriveHelper.params.emailAddress": {
             "type": "string",
             "default": "user@example.com",
-            "description": "Тестовый Email адрес (EMailTestEmailAddress).",
+            "description": "%config.emailAddress.description%",
             "order": 20
           },
           "1cDriveHelper.params.emailPasswordInfo": {
             "type": "null",
             "default": null,
-            "description": "Пароль для тестовой почты хранится в безопасном хранилище VS Code (`SecretStorage`) и задается через палитру команд (Ctrl+Shift+P):\n[1C:Drive - Установить пароль тестовой почты](command:1cDriveHelper.setEmailPassword 'Нажмите, чтобы установить пароль')\n[1C:Drive - Очистить пароль тестовой почты](command:1cDriveHelper.clearEmailPassword 'Нажмите, чтобы удалить сохраненный пароль')",
-            "markdownDescription": "**Пароль тестовой почты**\n\nПароль хранится в безопасном хранилище VS Code (`SecretStorage`) и задается через палитру команд (Ctrl+Shift+P):\n* [`1C:Drive - Установить пароль тестовой почты`](command:1cDriveHelper.setEmailPassword 'Нажмите, чтобы установить пароль')\n* [`1C:Drive - Очистить пароль тестовой почты`](command:1cDriveHelper.clearEmailPassword 'Нажмите, чтобы удалить сохраненный пароль')",
+            "description": "%config.emailPasswordInfo.description%",
+            "markdownDescription": "%config.emailPasswordInfo.markdownDescription%",
             "order": 21
           },
           "1cDriveHelper.params.emailIncomingServer": {
             "type": "string",
             "default": "imap.example.com",
-            "description": "Сервер входящей почты (EMailTestIncomingMailServer).",
+            "description": "%config.emailIncomingServer.description%",
             "order": 22
           },
           "1cDriveHelper.params.emailIncomingPort": {
             "type": "string",
             "default": "993",
-            "description": "Порт входящей почты (EMailTestIncomingMailPort).",
+            "description": "%config.emailIncomingPort.description%",
             "order": 23
           },
           "1cDriveHelper.params.emailOutgoingServer": {
             "type": "string",
             "default": "imap.example.com",
-            "description": "Сервер исходящей почты (EMailTestOutgoingMailServer).",
+            "description": "%config.emailOutgoingServer.description%",
             "order": 24
           },
           "1cDriveHelper.params.emailOutgoingPort": {
             "type": "string",
             "default": "587",
-            "description": "Порт исходящей почты (EMailTestOutgoingMailPort).",
+            "description": "%config.emailOutgoingPort.description%",
             "order": 25
           },
           "1cDriveHelper.params.emailProtocol": {
@@ -98,53 +111,53 @@
               "IMAP",
               "POP3"
             ],
-            "description": "Протокол почты (EMailTestProtocol).",
+            "description": "%config.emailProtocol.description%",
             "order": 26
           }
         }
       },
       {
-        "title": "Настройки сборки тестов",
+        "title": "%config.assemblySettings.title%",
         "properties": {
           "1cDriveHelper.params.splitFeatureFiles": {
             "type": "boolean",
             "default": false,
-            "description": "Сохранять при сборке приложенные к тестам файлы в отдельную папку.",
+            "description": "%config.splitFeatureFiles.description%",
             "order": 33
           },
           "1cDriveHelper.assembleScript.showOutputPanel": {
             "type": "boolean",
             "default": false,
-            "description": "Автоматически показывать панель Output при запуске сборки тестов.",
+            "description": "%config.showOutputPanel.description%",
             "order": 35
           }
         }
       },
       {
-        "title": "Настройки системных путей",
+        "title": "%config.pathsSettings.title%",
         "properties": {
           "1cDriveHelper.paths.emptyInfobase": {
             "type": "string",
             "default": "",
-            "description": "Путь к каталогу пустой файловой информационной базы (EmptyInfobasePath).",
+            "description": "%config.emptyInfobase.description%",
             "order": 38
           },
           "1cDriveHelper.assembleScript.buildPath": {
             "type": "string",
             "default": "C:\\EtalonDrive\\",
-            "description": "Путь к папке для собранных тестов (BuildPath).",
+            "description": "%config.buildPath.description%",
             "order": 40
           },
           "1cDriveHelper.paths.oneCEnterpriseExe": {
             "type": "string",
             "default": "C:\\Program Files (x86)\\1cv8\\8.3.24.1738\\bin\\1cv8.exe",
-            "description": "Полный путь к исполняемому файлу 1cv8.exe (Windows) или 1cestart (macOS).",
+            "description": "%config.oneCEnterpriseExe.description%",
             "order": 41
           },
           "1cDriveHelper.paths.fileWorkshopExe": {
             "type": "string",
             "default": "C:\\Program Files (x86)\\1cv8fv\\bin\\1cv8fv.exe",
-            "description": "Полный путь к '1С:Предприятие — работа с файлами' (1cv8fv.exe).",
+            "description": "%config.fileWorkshopExe.description%",
             "order": 42
           }
         }
@@ -153,98 +166,98 @@
     "commands": [
       {
         "command": "1cDriveHelper.setEmailPassword",
-        "title": "1C:Drive - Установить пароль тестовой почты",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.setEmailPassword.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.clearEmailPassword",
-        "title": "1C:Drive - Очистить пароль тестовой почты",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.clearEmailPassword.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.openSubscenario",
-        "title": "1C:Drive - Открыть сценарий",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.openSubscenario.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.findCurrentFileReferences",
-        "title": "1C:Drive - Найти вызовы текущего сценария",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.findCurrentFileReferences.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.createNestedScenario",
-        "title": "1C:Drive - Создать вложенный сценарий",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.createNestedScenario.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.createMainScenario",
-        "title": "1C:Drive - Создать главный сценарий",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.createMainScenario.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.insertNestedScenarioRef",
-        "title": "1C:Drive - Вставить блок ВложенныеСценарии",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.insertNestedScenarioRef.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.insertScenarioParam",
-        "title": "1C:Drive - Вставить блок ПараметрыСценария",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.insertScenarioParam.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.insertUid",
-        "title": "1C:Drive - Вставить новый UID",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.insertUid.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.refreshGherkinSteps",
-        "title": "1C:Drive - Обновить библиотеку шагов",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.refreshGherkinSteps.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.replaceTabsWithSpacesYaml",
-        "title": "1C:Drive - Заменить табы на пробелы",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.replaceTabsWithSpacesYaml.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.checkAndFillNestedScenarios",
-        "title": "1C:Drive - Заполнить секцию ВложенныеСценарии",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.checkAndFillNestedScenarios.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.checkAndFillScriptParameters",
-        "title": "1C:Drive - Заполнить секцию ПараметрыСценария",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.checkAndFillScriptParameters.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.openMxlFileFromExplorer",
-        "title": "1C:Drive - Открыть MXL файл в редакторе",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.openMxlFileFromExplorer.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.openMxlFile",
-        "title": "1C:Drive - Открыть MXL файл в редакторе",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.openMxlFile.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.revealFileInExplorer",
-        "title": "1C:Drive - Показать файл в проводнике VS Code",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.revealFileInExplorer.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.revealFileInOS",
-        "title": "1C:Drive - Показать файл в системном проводнике",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.revealFileInOS.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.openBuildFolder",
-        "title": "1C:Drive - Открыть папку сборки",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.openBuildFolder.title%",
+        "category": "%cmd.category%"
       },
       {
         "command": "1cDriveHelper.createFirstLaunchZip",
-        "title": "1C:Drive - Собрать архив FirstLaunch",
-        "category": "1C:Drive Test Helper"
+        "title": "%cmd.createFirstLaunchZip.title%",
+        "category": "%cmd.category%"
       }
     ],
     "keybindings": [
@@ -389,7 +402,7 @@
       "activitybar": [
         {
           "id": "1cDriveHelperContainer",
-          "title": "1C:Drive Test Helper",
+          "title": "%ext.displayName%",
           "icon": "res/icons/1CDriveTestHelperTransparent.png",
           "when": "config.1cDriveHelper.features.enablePhaseSwitcher == true || config.1cDriveHelper.features.enableAssembleTests == true"
         }
@@ -399,9 +412,9 @@
       "1cDriveHelperContainer": [
         {
           "id": "1cDriveHelper.phaseSwitcherView",
-          "name": "1C:Drive Test Helper",
+          "name": "%view.phaseSwitcher.name%",
           "type": "webview",
-          "contextualTitle": "1C:Drive Test Helper"
+          "contextualTitle": "%view.phaseSwitcher.contextualTitle%"
         }
       ]
     }

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
+import { setExtensionUri } from './appContext';
 import { handleCreateNestedScenario, handleCreateMainScenario } from './scenarioCreator';
 import {
     openSubscenarioHandler,
@@ -32,6 +33,7 @@ const EXTERNAL_STEPS_URL_CONFIG_KEY = '1cDriveHelper.steps.externalUrl'; // Кл
  */
 export function activate(context: vscode.ExtensionContext) {
     console.log('Extension "1cDriveHelper" activated.');
+    setExtensionUri(context.extensionUri);
 
     // --- Регистрация Провайдера для Webview (Phase Switcher) ---
     const phaseSwitcherProvider = new PhaseSwitcherProvider(context.extensionUri, context);
@@ -154,10 +156,10 @@ export function activate(context: vscode.ExtensionContext) {
         '1cDriveHelper.setEmailPassword', async () => {
             // Запрашиваем ввод пароля у пользователя
             const password = await vscode.window.showInputBox({
-                prompt: 'Введите пароль для тестовой почты',
+                prompt: vscode.l10n.t('Enter password for test email'),
                 password: true,
                 ignoreFocusOut: true,
-                placeHolder: 'Пароль не будет сохранен в настройках'
+                placeHolder: vscode.l10n.t('Password will not be saved in settings')
             });
 
             // Проверяем, что пользователь ввел значение и не нажал Escape (password !== undefined)
@@ -166,19 +168,19 @@ export function activate(context: vscode.ExtensionContext) {
                     try {
                         // Сохраняем пароль в безопасное хранилище VS Code
                         await context.secrets.store(EMAIL_PASSWORD_KEY, password);
-                        vscode.window.showInformationMessage('Пароль тестовой почты сохранен.');
+                        vscode.window.showInformationMessage(vscode.l10n.t('Test email password saved.'));
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         console.error("Error saving password via command:", message);
-                        vscode.window.showErrorMessage(`Ошибка сохранения пароля: ${message}`);
+                        vscode.window.showErrorMessage(vscode.l10n.t('Error saving password: {0}', message));
                     }
                 } else {
                     // Если пользователь ввел пустую строку, считаем это отменой
-                    vscode.window.showWarningMessage('Сохранение пароля отменено (пустое значение).');
+                    vscode.window.showWarningMessage(vscode.l10n.t('Password saving cancelled (empty value).'));
                 }
             } else {
                  // Если пользователь нажал Escape (password === undefined)
-                 vscode.window.showInformationMessage('Сохранение пароля отменено.');
+                 vscode.window.showInformationMessage(vscode.l10n.t('Password saving cancelled.'));
             }
         }
     ));
@@ -188,25 +190,25 @@ export function activate(context: vscode.ExtensionContext) {
         '1cDriveHelper.clearEmailPassword', async () => {
             // Запрашиваем подтверждение у пользователя перед удалением
             const confirmation = await vscode.window.showWarningMessage(
-                'Вы уверены, что хотите удалить сохраненный пароль тестовой почты?',
+                vscode.l10n.t('Are you sure you want to delete the saved test email password?'),
                 { modal: true }, 
-                'Удалить'
+                vscode.l10n.t('Delete')
             );
 
             // Если пользователь нажал кнопку "Удалить"
-            if (confirmation === 'Удалить') {
+            if (confirmation === vscode.l10n.t('Delete')) {
                 try {
                     // Удаляем пароль из безопасного хранилища
                     await context.secrets.delete(EMAIL_PASSWORD_KEY);
-                    vscode.window.showInformationMessage('Сохраненный пароль тестовой почты удален.');
+                    vscode.window.showInformationMessage(vscode.l10n.t('Saved test email password deleted.'));
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
                     console.error("Error clearing password via command:", message);
-                    vscode.window.showErrorMessage(`Ошибка удаления пароля: ${message}`);
+                    vscode.window.showErrorMessage(vscode.l10n.t('Error deleting password: {0}', message));
                 }
             } else {
                  // Если пользователь закрыл диалог или нажал отмену
-                 vscode.window.showInformationMessage('Удаление пароля отменено.');
+                 vscode.window.showInformationMessage(vscode.l10n.t('Password deletion cancelled.'));
             }
         }
     ));
@@ -214,15 +216,15 @@ export function activate(context: vscode.ExtensionContext) {
     const refreshGherkinStepsCommand = async () => {
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
-            title: "Обновление шагов Gherkin...",
+            title: vscode.l10n.t('Updating Gherkin steps...'),
             cancellable: false
         }, async (progress) => {
-            progress.report({ increment: 0, message: "Загрузка определений шагов Gherkin..." });
+            progress.report({ increment: 0, message: vscode.l10n.t('Loading Gherkin step definitions...') });
             try {
                 await completionProvider.refreshSteps(); // Обновляет только Gherkin шаги
-                progress.report({ increment: 50, message: "Обновление автодополнения Gherkin завершено." });
+                progress.report({ increment: 50, message: vscode.l10n.t('Gherkin autocompletion update completed.') });
                 await hoverProvider.refreshSteps();
-                progress.report({ increment: 100, message: "Обновление подсказок Gherkin завершено." });
+                progress.report({ increment: 100, message: vscode.l10n.t('Gherkin hints update completed.') });
                 
                 // Для обновления автодополнения сценариев, мы полагаемся на событие от PhaseSwitcherProvider,
                 // которое должно сработать, если пользователь нажмет "Обновить" в панели Phase Switcher.
@@ -256,6 +258,17 @@ export function activate(context: vscode.ExtensionContext) {
         if (event.affectsConfiguration(EXTERNAL_STEPS_URL_CONFIG_KEY)) {
             console.log(`[Extension] Configuration for '${EXTERNAL_STEPS_URL_CONFIG_KEY}' changed. Refreshing Gherkin steps.`);
             await refreshGherkinStepsCommand(); 
+        }
+
+        if (event.affectsConfiguration('1cDriveHelper.localization.languageOverride')) {
+            console.log('[Extension] Language override setting changed. Prompting for reload.');
+            const message = vscode.l10n.t('Language setting changed. Reload window to apply?');
+            const reloadNow = vscode.l10n.t('Reload Window');
+            const later = vscode.l10n.t('Later');
+            const choice = await vscode.window.showInformationMessage(message, reloadNow, later);
+            if (choice === reloadNow) {
+                await vscode.commands.executeCommand('workbench.action.reloadWindow');
+            }
         }
     }));
 

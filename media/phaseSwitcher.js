@@ -175,7 +175,7 @@
         const escapedNameAttr = escapeHtmlAttr(name);
         const escapedTitleAttr = escapeHtmlAttr(relativePath);
         const fileUriString = testInfo.yamlFileUriString || '';
-        const escapedIconTitle = escapeHtmlAttr(`Открыть файл сценария ${name}`);
+        const escapedIconTitle = escapeHtmlAttr((window.__loc?.openScenarioFileTitle || 'Open scenario file {0}').replace('{0}', name));
 
         const openButtonHtml = fileUriString
             ? `<button class="open-scenario-btn" data-name="${escapedNameAttr}" title="${escapedIconTitle}">
@@ -267,7 +267,9 @@
             expandCollapseButton.setAttribute('tabindex', '0');
             expandCollapseButton.setAttribute('aria-expanded', phaseExpandedState[phaseName] ? 'true' : 'false');
             expandCollapseButton.setAttribute('aria-controls', testsListId);
-            expandCollapseButton.title = phaseExpandedState[phaseName] ? "Свернуть фазу" : "Развернуть фазу";
+            expandCollapseButton.title = phaseExpandedState[phaseName]
+                ? (window.__loc?.collapsePhaseTitle || 'Collapse phase')
+                : (window.__loc?.expandPhaseTitle || 'Expand phase');
 
             const iconSpan = document.createElement('span');
             iconSpan.className = `codicon phase-toggle-icon ${phaseExpandedState[phaseName] ? 'codicon-chevron-down' : 'codicon-chevron-right'}`;
@@ -285,7 +287,7 @@
 
             const toggleCheckboxesBtn = document.createElement('button');
             toggleCheckboxesBtn.className = 'phase-toggle-checkboxes-btn button-with-icon';
-            toggleCheckboxesBtn.title = 'Переключить все тесты в этой фазе';
+            toggleCheckboxesBtn.title = window.__loc?.toggleAllInPhaseTitle || 'Toggle all tests in this phase';
             toggleCheckboxesBtn.dataset.phaseName = phaseName;
             const toggleIcon = document.createElement('span');
             toggleIcon.className = 'codicon codicon-check-all';
@@ -304,12 +306,14 @@
 
             if (Array.isArray(testsInPhase)) {
                 if (testsInPhase.length === 0) {
-                    testsListDiv.innerHTML = '<p class="no-tests-in-phase">Нет тестов в этой фазе.</p>';
+                    const txt = window.__loc?.noTestsInPhase || 'No tests in this phase.';
+                    testsListDiv.innerHTML = `<p class="no-tests-in-phase">${txt}</p>`;
                 } else {
                     testsInPhase.forEach(info => { if (info?.name) testsListDiv.innerHTML += createCheckboxHtml(info); });
                 }
             } else {
-                testsListDiv.innerHTML = '<p style="color:var(--vscode-errorForeground);">Ошибка загрузки тестов.</p>';
+                const txt = window.__loc?.errorLoadingTests || 'Error loading tests.';
+                testsListDiv.innerHTML = `<p style="color:var(--vscode-errorForeground);">${txt}</p>`;
             }
 
             phaseGroupDiv.appendChild(phaseHeaderDiv);
@@ -354,7 +358,9 @@
         icon.classList.toggle('codicon-chevron-right', !phaseExpandedState[phaseName]);
         icon.classList.toggle('codicon-chevron-down', phaseExpandedState[phaseName]);
         button.setAttribute('aria-expanded', phaseExpandedState[phaseName] ? 'true' : 'false');
-        button.title = phaseExpandedState[phaseName] ? "Свернуть фазу" : "Развернуть фазу";
+        button.title = phaseExpandedState[phaseName]
+            ? (window.__loc?.collapsePhaseTitle || 'Collapse phase')
+            : (window.__loc?.expandPhaseTitle || 'Expand phase');
         log(`Phase '${phaseName}' expanded state: ${phaseExpandedState[phaseName]}`);
         updateAreAllPhasesExpandedState();
     }
@@ -411,7 +417,7 @@
         if (phaseHeaders.length === 0) {
             areAllPhasesCurrentlyExpanded = false;
             if (collapseAllBtn.firstElementChild) collapseAllBtn.firstElementChild.className = 'codicon codicon-expand-all';
-            collapseAllBtn.title = "Развернуть все фазы";
+            collapseAllBtn.title = window.__loc?.expandAllPhasesTitle || 'Expand all phases';
             return;
         }
 
@@ -429,7 +435,9 @@
         if (collapseAllBtn.firstElementChild) {
              collapseAllBtn.firstElementChild.className = areAllPhasesCurrentlyExpanded ? 'codicon codicon-collapse-all' : 'codicon codicon-expand-all';
         }
-        collapseAllBtn.title = areAllPhasesCurrentlyExpanded ? "Свернуть все фазы" : "Развернуть все фазы";
+        collapseAllBtn.title = areAllPhasesCurrentlyExpanded
+            ? (window.__loc?.collapseAllPhasesTitle || 'Collapse all phases')
+            : (window.__loc?.expandAllPhasesTitle || 'Expand all phases');
     }
 
     /**
@@ -633,11 +641,18 @@
         const mainControlsActive = settings.switcherEnabled && !!testDataByPhase && Object.keys(testDataByPhase).length > 0;
 
         if (changed > 0) {
-            updateStatus(`Всего изменено: ${changed} \nВключено: ${enabled} \nВыключено: ${disabled}\n\nНажмите "Применить"`, 'main', mainControlsActive);
+            const t = window.__loc || {};
+            const parts = [
+                (t.pendingTotalChanged || 'Total changed: {0}').replace('{0}', String(changed)),
+                (t.pendingEnabled || 'Enabled: {0}').replace('{0}', String(enabled)),
+                (t.pendingDisabled || 'Disabled: {0}').replace('{0}', String(disabled))
+            ];
+            const tail = t.pendingPressApply || 'Press "Apply"';
+            updateStatus(`${parts.join(' \n')}\n\n${tail}`, 'main', mainControlsActive);
             applyChangesBtn.disabled = false;
         } else {
-            if (!statusBar || !statusBar.textContent?.includes('Загрузка') && !statusBar.textContent?.includes('Применение')) {
-                updateStatus('Нет несохраненных изменений.', 'main', mainControlsActive);
+            if (!statusBar || !statusBar.textContent?.includes((window.__loc?.statusLoadingShort || 'Loading...')) && !statusBar.textContent?.includes((window.__loc?.statusApplyingPhaseChanges || 'Applying phase changes...'))) {
+                updateStatus((window.__loc?.pendingNoChanges || 'No pending changes.'), 'main', mainControlsActive);
             }
             applyChangesBtn.disabled = true;
         }
@@ -764,7 +779,7 @@
     if(applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.addEventListener('click', () => {
         log('Apply Phase Changes button clicked.');
         const statesToSend = { ...currentCheckboxStates };
-        updateStatus('Применение изменений фаз...', 'main', false);
+        updateStatus(window.__loc?.statusApplyingPhaseChanges || 'Applying phase changes...', 'main', false);
         enablePhaseControls(false, false); enableAssembleControls(false);
         if(applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;
         vscode.postMessage({ command: 'applyChanges', states: statesToSend });
@@ -853,7 +868,7 @@
             log('Assemble tests button clicked.');
             const recordGLValue = (recordGLSelect instanceof HTMLSelectElement) ? recordGLSelect.value : '0';
             const driveTradeValue = (driveTradeChk instanceof HTMLInputElement) && driveTradeChk.checked ? '1' : '0';
-            updateStatus('Запуск сборки...', 'assemble', false);
+            updateStatus(window.__loc?.statusStartingAssembly || 'Starting assembly...', 'assemble', false);
             enablePhaseControls(false, false);
             enableAssembleControls(false);
             vscode.postMessage({

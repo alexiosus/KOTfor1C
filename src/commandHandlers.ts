@@ -1,4 +1,6 @@
 ﻿import * as vscode from 'vscode';
+import { getTranslator } from './localization';
+import { getExtensionUri } from './appContext';
 import * as path from 'path';
 import * as fs from 'fs';
 import { exec } from 'child_process';
@@ -22,8 +24,9 @@ async function findFileFromText(
     specificExtension?: string
 ): Promise<vscode.Uri | null> {
     const selection = textEditor.selection;
+    const t = await getTranslator(getExtensionUri());
     if (selection.isEmpty) {
-        vscode.window.showInformationMessage("Выделите имя файла для поиска.");
+        vscode.window.showInformationMessage(t('Select a file name to search.'));
         return null;
     }
 
@@ -113,7 +116,7 @@ async function findFileFromText(
         }
     }
 
-    vscode.window.showInformationMessage(`Файл "${fileNameRaw}" не найден в проекте.`);
+    vscode.window.showInformationMessage(t('File "{0}" not found in the project.', fileNameRaw));
     return null;
 }
 
@@ -126,13 +129,14 @@ async function openMxlWithFileWorkshop(filePath: string) {
     console.log(`[Cmd:openMxl] Attempting to open: ${filePath}`);
     const config = vscode.workspace.getConfiguration('1cDriveHelper.paths');
     const fileWorkshopPath = config.get<string>('fileWorkshopExe');
+    const t = await getTranslator(getExtensionUri());
 
     if (!fileWorkshopPath) {
         vscode.window.showErrorMessage(
-            "Путь к '1С:Предприятие — работа с файлами' не настроен. Укажите его в настройках `1cDriveHelper.paths.fileWorkshopExe`.",
-            "Открыть настройки"
+            t("Path to '1C:Enterprise — work with files' is not configured. Set it in `1cDriveHelper.paths.fileWorkshopExe`."),
+            t('Open Settings')
         ).then(selection => {
-            if (selection === "Открыть настройки") {
+            if (selection === t('Open Settings')) {
                 vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.fileWorkshopExe');
             }
         });
@@ -141,10 +145,10 @@ async function openMxlWithFileWorkshop(filePath: string) {
 
     if (!fs.existsSync(fileWorkshopPath)) {
         vscode.window.showErrorMessage(
-            `Исполняемый файл '1С:Предприятие — работа с файлами' не найден по пути: ${fileWorkshopPath}`,
-            "Открыть настройки"
+            t(`Executable for '1C:Enterprise — work with files' not found at path: {0}`, fileWorkshopPath),
+            t('Open Settings')
         ).then(selection => {
-            if (selection === "Открыть настройки") {
+            if (selection === t('Open Settings')) {
                 vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.fileWorkshopExe');
             }
         });
@@ -155,7 +159,7 @@ async function openMxlWithFileWorkshop(filePath: string) {
     exec(command, (error, stdout, stderr) => {
         if (error) {
             console.error(`[Cmd:openMxl] Exec error: ${error}`);
-            vscode.window.showErrorMessage(`Ошибка при открытии MXL файла: ${error.message}`);
+            vscode.window.showErrorMessage(t('Error opening MXL file: {0}', error.message));
             return;
         }
         if (stderr) {
@@ -189,7 +193,8 @@ export async function openMxlFileFromTextHandler(textEditor: vscode.TextEditor, 
         if (path.extname(fileUri.fsPath).toLowerCase() === '.mxl') {
             await openMxlWithFileWorkshop(fileUri.fsPath);
         } else {
-            vscode.window.showWarningMessage(`Найденный файл не является MXL файлом: ${fileUri.fsPath}`);
+            const t = await getTranslator(getExtensionUri());
+            vscode.window.showWarningMessage(t('Found file is not an MXL file: {0}', fileUri.fsPath));
         }
     }
 }
@@ -225,6 +230,7 @@ export async function revealFileInOSHandler(textEditor: vscode.TextEditor, edit:
  * Обработчик команды перехода к вложенному сценарию.
  */
 export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+    const t = await getTranslator(getExtensionUri());
     const document = textEditor.document;
     const position = textEditor.selection.active;
     const line = document.lineAt(position.line);
@@ -251,9 +257,9 @@ export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit
          try {
              const docToOpen = await vscode.workspace.openTextDocument(targetUri);
              await vscode.window.showTextDocument(docToOpen, { preview: false, preserveFocus: false });
-         } catch (error: any) { console.error(`[Cmd:openSubscenario] Error opening ${targetUri.fsPath}:`, error); vscode.window.showErrorMessage(`Не удалось открыть файл: ${error.message || error}`); }
-     } else if (targetUri) { console.log("[Cmd:openSubscenario] Target is current file."); }
-       else { console.log("[Cmd:openSubscenario] Target not found."); vscode.window.showInformationMessage(`Файл для "${scenarioNameFromLine}" не найден.`); }
+         } catch (error: any) { console.error(`[Cmd:openSubscenario] Error opening ${targetUri.fsPath}:`, error); vscode.window.showErrorMessage(t('Failed to open file: {0}', error.message || error)); }
+    }
+    else { console.log("[Cmd:openSubscenario] Target not found."); vscode.window.showInformationMessage(t('File for "{0}" not found.', scenarioNameFromLine)); }
 }
 
 /**
@@ -261,8 +267,9 @@ export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit
  */
 export async function findCurrentFileReferencesHandler() {
     console.log("[Cmd:findCurrentFileReferences] Triggered.");
+    const t = await getTranslator(getExtensionUri());
     const editor = vscode.window.activeTextEditor;
-    if (!editor) { vscode.window.showWarningMessage("Нет активного редактора."); return; }
+    if (!editor) { vscode.window.showWarningMessage(t('No active editor.')); return; }
     const document = editor.document;
     // if (document.languageId !== 'yaml') { vscode.window.showWarningMessage("Команда работает только для YAML."); return; }
 
@@ -273,11 +280,11 @@ export async function findCurrentFileReferencesHandler() {
         const line = document.lineAt(i); const nameMatch = line.text.match(nameRegex);
         if (nameMatch) { targetName = nameMatch[1]; break; }
     }
-    if (!targetName) { vscode.window.showInformationMessage("Не удалось найти 'Имя: \"...\"' в текущем файле."); return; }
+    if (!targetName) { const t = await getTranslator(getExtensionUri()); vscode.window.showInformationMessage(t('Could not find "Name: \"...\"" in the current file.')); return; }
 
     console.log(`[Cmd:findCurrentFileReferences] Calling findScenarioReferences for "${targetName}"...`);
     const locations = await findScenarioReferences(targetName); // Вызов из navigationUtils
-    if (!locations?.length) { vscode.window.showInformationMessage(`Ссылки на "${targetName}" не найдены.`); return; }
+    if (!locations?.length) { const t = await getTranslator(getExtensionUri()); vscode.window.showInformationMessage(t('References to "{0}" not found.', targetName)); return; }
 
     // Формируем QuickPickItems
     const quickPickItems: (vscode.QuickPickItem & { location: vscode.Location })[] = await Promise.all(
@@ -286,12 +293,12 @@ export async function findCurrentFileReferencesHandler() {
            return { label: `$(file-code) ${path.basename(loc.uri.fsPath)}:${loc.range.start.line + 1}`, description, detail: loc.uri.fsPath, location: loc };
        })
     );
-    const pickedItem = await vscode.window.showQuickPick(quickPickItems, { matchOnDescription: true, matchOnDetail: true, placeHolder: `Ссылки на "${targetName}":` });
+    const pickedItem = await vscode.window.showQuickPick(quickPickItems, { matchOnDescription: true, matchOnDetail: true, placeHolder: t('References to "{0}":', targetName) });
     if (pickedItem) {
         try {
             const doc = await vscode.workspace.openTextDocument(pickedItem.location.uri);
             await vscode.window.showTextDocument(doc, { selection: pickedItem.location.range, preview: false });
-        } catch (err) { console.error(`[Cmd:findCurrentFileReferences] Error opening picked location:`, err); vscode.window.showErrorMessage("Не удалось открыть местоположение."); }
+        } catch (err) { const t = await getTranslator(getExtensionUri()); console.error(`[Cmd:findCurrentFileReferences] Error opening picked location:`, err); vscode.window.showErrorMessage(t('Failed to open location.')); }
     }
 }
 
@@ -593,7 +600,7 @@ export function insertScenarioParamHandler(textEditor: vscode.TextEditor, edit: 
                     '        Имя: "$2"\n' +
                     '        Значение: "$3"\n' +
                     '        ТипПараметра: "\${4|Строка,Число,Булево,Массив,Дата|}"\n' +
-                    '        ИсходящийПараметр: "\${5|No,Yes|}"\n$0'
+                    '        ИсходящийПараметр: "\${5|No,Yes}"$0'
                 );
             }
         } else {
@@ -605,7 +612,7 @@ export function insertScenarioParamHandler(textEditor: vscode.TextEditor, edit: 
                 '        Имя: "$2"\n' +
                 '        Значение: "$3"\n' +
                 '        ТипПараметра: "\${4|Строка,Число,Булево,Массив,Дата|}"\n' +
-                '        ИсходящийПараметр: "\${5|No,Yes|}"$0'
+                '        ИсходящийПараметр: "\${5|No,Yes}"$0'
             );
         }
         
@@ -634,8 +641,8 @@ export function insertUidHandler(textEditor: vscode.TextEditor, edit: vscode.Tex
             textEditor.selections.forEach(selection => {
                 editBuilder.replace(selection, newUid);
             });
-        }).then(success => { if (!success) { vscode.window.showErrorMessage("Не удалось вставить UID."); } });
-    } catch (error: any) { vscode.window.showErrorMessage(`Ошибка при генерации UID: ${error.message || error}`); }
+        }).then(success => { if (!success) { const p = getTranslator(getExtensionUri()); Promise.resolve(p).then(tt => vscode.window.showErrorMessage(tt('Failed to insert UID.'))); } });
+    } catch (error: any) { const p = getTranslator(getExtensionUri()); Promise.resolve(p).then(tt => vscode.window.showErrorMessage(tt('Error generating UID: {0}', error.message || String(error)))); }
 }
 
 /**
@@ -657,9 +664,11 @@ export async function replaceTabsWithSpacesYamlHandler(textEditor: vscode.TextEd
         await textEditor.edit(editBuilder => {
             editBuilder.replace(fullRange, newText);
         });
-        vscode.window.showInformationMessage('Табы заменены на 4 пробела.');
+        const t2 = await getTranslator(getExtensionUri());
+        vscode.window.showInformationMessage(t2('Tabs replaced with 4 spaces.'));
     } else {
-        vscode.window.showInformationMessage('Табы не найдены в документе.');
+        const t2 = await getTranslator(getExtensionUri());
+        vscode.window.showInformationMessage(t2('No tabs found in the document.'));
     }
 }
 
@@ -739,6 +748,7 @@ function parseCalledScenariosFromScriptBody(documentText: string): string[] {
  * Обработчик команды проверки и заполнения вложенных сценариев.
  */
 export async function checkAndFillNestedScenariosHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+    const t = await getTranslator(getExtensionUri());
     console.log("[Cmd:checkAndFillNestedScenarios] Starting...");
     const document = textEditor.document;
     const fullText = document.getText();
@@ -783,7 +793,7 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
     }
 
     if (scenariosToAdd.length === 0) {
-        vscode.window.showInformationMessage("Все вызываемые сценарии уже присутствуют в секции 'ВложенныеСценарии'.");
+        vscode.window.showInformationMessage(t('All called scenarios are already present in the "NestedScenarios" section.'));
         console.log("[Cmd:checkAndFillNestedScenarios] No scenarios to add.");
         return;
     }
@@ -792,7 +802,7 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
     const nestedMatch = fullText.match(nestedSectionHeaderRegex);
 
     if (!nestedMatch || nestedMatch.index === undefined) {
-        vscode.window.showInformationMessage("Секция 'ВложенныеСценарии:' не найдена. Новые сценарии не будут добавлены.");
+        vscode.window.showInformationMessage(t('Section "NestedScenarios:" not found. New scenarios will not be added.'));
         console.log("[Cmd:checkAndFillNestedScenarios] 'ВложенныеСценарии:' section not found.");
         return;
     }
@@ -918,7 +928,7 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
             });
         }
 
-        vscode.window.showInformationMessage(`Добавлено ${scenariosToAdd.length} вложенных сценариев.`);
+        vscode.window.showInformationMessage(t('Added {0} nested scenarios.', String(scenariosToAdd.length)));
         console.log(`[Cmd:checkAndFillNestedScenarios] Added ${scenariosToAdd.length} scenarios. InsertPos Char: ${effectiveInsertPosition.character}, Line: ${effectiveInsertPosition.line}. Prefix: '${newItemsBlockPrefix.replace(/\n/g, "\\n")}'`);
     } else {
         console.log("[Cmd:checkAndFillNestedScenarios] Calculated text to insert was empty or whitespace.");
@@ -980,6 +990,7 @@ function parseDefinedScenarioParameters(documentText: string): string[] {
  * Обработчик команды проверки и заполнения параметров сценария.
  */
 export async function checkAndFillScenarioParametersHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+    const t = await getTranslator(getExtensionUri());
     console.log("[Cmd:checkAndFillScenarioParameters] Starting...");
     const document = textEditor.document;
     let fullText = document.getText(); 
@@ -995,7 +1006,7 @@ export async function checkAndFillScenarioParametersHandler(textEditor: vscode.T
     }
 
     if (parametersToAdd.length === 0) {
-        vscode.window.showInformationMessage("Все используемые параметры уже определены в секции 'ПараметрыСценария'.");
+        vscode.window.showInformationMessage(t('All used parameters are already defined in the "ScenarioParameters" section.'));
         console.log("[Cmd:checkAndFillScenarioParameters] No parameters to add.");
         return;
     }
@@ -1194,7 +1205,7 @@ export async function checkAndFillScenarioParametersHandler(textEditor: vscode.T
         }
     }
 
-    vscode.window.showInformationMessage(`Добавлено ${parametersToAdd.length} параметров сценария.`);
+    vscode.window.showInformationMessage(t('Added {0} scenario parameters.', String(parametersToAdd.length)));
     console.log(`[Cmd:checkAndFillScenarioParameters] Added ${parametersToAdd.length} parameters.`);
 }
 
@@ -1204,11 +1215,12 @@ export async function checkAndFillScenarioParametersHandler(textEditor: vscode.T
  * @param context Контекст расширения.
  */
 export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContext): Promise<void> {
+    const t = await getTranslator(getExtensionUri());
     console.log("[Cmd:createFirstLaunchZip] Starting...");
 
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
-        vscode.window.showErrorMessage("Рабочая область не открыта.");
+        vscode.window.showErrorMessage(t('Workspace is not open.'));
         return;
     }
     const workspaceRoot = workspaceFolders[0].uri;
@@ -1222,13 +1234,13 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
             const xmlContent = Buffer.from(xmlContentBytes).toString('utf-8');
             const versionMatch = xmlContent.match(/<Version>([^<]+)<\/Version>/);
             if (!versionMatch || !versionMatch[1]) {
-                vscode.window.showErrorMessage("Не удалось найти тег <Version> в cf/Configuration.xml.");
+                vscode.window.showErrorMessage(t('Could not find <Version> tag in cf/Configuration.xml.'));
                 return;
             }
             version = versionMatch[1];
             console.log(`[Cmd:createFirstLaunchZip] Found version: ${version}`);
         } catch (error) {
-            vscode.window.showErrorMessage("Не удалось прочитать файл cf/Configuration.xml.");
+            vscode.window.showErrorMessage(t('Could not read cf/Configuration.xml file.'));
             return;
         }
 
@@ -1238,10 +1250,10 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
 
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
-            title: "Сборка FirstLaunch.zip",
+            title: t('Building FirstLaunch.zip'),
             cancellable: false
         }, async (progress) => {
-            progress.report({ message: "Чтение файлов..." });
+            progress.report({ message: t('Reading files...') });
             
             async function processDirectory(dirUri: vscode.Uri, zipFolder: JSZip) {
                 const entries = await vscode.workspace.fs.readDirectory(dirUri);
@@ -1266,14 +1278,14 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
             await processDirectory(firstLaunchFolderUri, zip);
 
             // --- 3. Сохранение ZIP архива ---
-            progress.report({ message: "Создание архива..." });
+            progress.report({ message: t('Creating archive...') });
 
             const saveUri = await vscode.window.showSaveDialog({
                 defaultUri: vscode.Uri.joinPath(workspaceRoot, 'FirstLaunch.zip'),
                 filters: {
-                    'Zip-архивы': ['zip']
+                    'Zip archives': ['zip']
                 },
-                title: "Сохранить FirstLaunch.zip"
+                title: t('Save FirstLaunch.zip')
             });
 
             if (saveUri) {
@@ -1283,22 +1295,22 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
 
                 // Показываем уведомление с кнопкой
                 vscode.window.showInformationMessage(
-                    `Архив FirstLaunch.zip успешно сохранен`,
-                    'Открыть директорию'
+                    t('FirstLaunch.zip archive successfully saved'),
+                    t('Open directory')
                 ).then(selection => {
-                    if (selection === 'Открыть директорию') {
+                    if (selection === t('Open directory')) {
                         // Открыть системный проводник и выделить файл
                         vscode.commands.executeCommand('revealFileInOS', saveUri);
                     }
                 });
             } else {
                 console.log("[Cmd:createFirstLaunchZip] Save dialog cancelled.");
-                vscode.window.showInformationMessage("Сохранение архива отменено.");
+                vscode.window.showInformationMessage(t('Archive saving cancelled.'));
             }
         });
 
     } catch (error: any) {
         console.error("[Cmd:createFirstLaunchZip] Error:", error);
-        vscode.window.showErrorMessage(`Ошибка при создании FirstLaunch.zip: ${error.message || error}`);
+        vscode.window.showErrorMessage(t('Error creating FirstLaunch.zip: {0}', error.message || error));
     }
 }
