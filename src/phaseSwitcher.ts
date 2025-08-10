@@ -220,21 +220,19 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             webviewView.webview.html = htmlContent;
             console.log("[PhaseSwitcherProvider] HTML content set from template.");
         } catch (err: any) {
-            console.error("[PhaseSwitcherProvider] Failed to read or process webview HTML template:", err);
-            webviewView.webview.html = `<body>Ошибка загрузки интерфейса: ${err.message || err}</body>`;
-            return;
+            console.error('[PhaseSwitcher] Error loading interface:', err);
+            webviewView.webview.html = `<body>${this.t('Error loading interface: {0}', err.message || err)}</body>`;
         }
 
         webviewView.webview.onDidReceiveMessage(async message => {
             switch (message.command) {
                 case 'applyChanges':
-                    if (typeof message.states === 'object' && message.states !== null) {
-                        await this._handleApplyChanges(message.states);
-                    } else {
-                        console.error("Invalid states received for applyChanges:", message.states);
-                        vscode.window.showErrorMessage("Ошибка: Получены неверные данные для применения.");
-                        this._view?.webview.postMessage({ command: 'updateStatus', text: 'Ошибка: неверные данные.', enableControls: true });
+                    if (!message.data || !Array.isArray(message.data)) {
+                        vscode.window.showErrorMessage(this.t('Error: Invalid data received for application.'));
+                        this._view?.webview.postMessage({ command: 'updateStatus', text: this.t('Error: invalid data.'), enableControls: true });
+                        return;
                     }
+                    await this._handleApplyChanges(message.data);
                     return;
                 case 'getInitialState': 
                 case 'refreshData': 
@@ -257,11 +255,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                                 const doc = await vscode.workspace.openTextDocument(testInfo.yamlFileUri);
                                 await vscode.window.showTextDocument(doc, { preview: false });
                             } catch (error: any) {
-                                console.error(`[PhaseSwitcherProvider] Error opening scenario file: ${error}`);
-                                vscode.window.showErrorMessage(`Не удалось открыть файл сценария: ${error.message || error}`);
+                                console.error(`[PhaseSwitcherProvider] Error opening scenario file: ${error.message || error}`);
+                                vscode.window.showErrorMessage(this.t('Failed to open scenario file: {0}', error.message || error));
                             }
                         } else {
-                            vscode.window.showWarningMessage(`Сценарий "${message.name}" не найден или его путь не определен.`);
+                            vscode.window.showWarningMessage(this.t('Scenario "{0}" not found or its path is not defined.', message.name));
                         }
                     }
                     return;
@@ -423,7 +421,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const webview = this._view?.webview;
         if (!webview) {
             console.error(`${methodStartLog} Cannot run script, view is not available.`);
-            vscode.window.showErrorMessage("Не удалось запустить сборку: панель 1cDrive Helper не активна.");
+            vscode.window.showErrorMessage(this.t('Failed to run assembly: Panel is not active.'));
             return;
         }
 
@@ -676,7 +674,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
                 progress.report({ increment: 100, message: this.t('Completed!') });
                 outputChannel.appendLine(`TypeScript YAML build process completed successfully.`);
-                sendStatus('Сборка тестов завершена успешно.', true, 'assemble', true); 
+                sendStatus(this.t('Tests successfully built.'), true, 'assemble', true); 
                 vscode.window.showInformationMessage(
                     this.t('Tests successfully built.'),
                     this.t('Open folder')

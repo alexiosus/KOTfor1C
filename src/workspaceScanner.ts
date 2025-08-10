@@ -1,6 +1,8 @@
 ﻿import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { TestInfo } from './types';
+import { getTranslator } from './localization';
 
 // Путь для сканирования (относительно корня воркспейса)
 export const SCAN_DIR_RELATIVE_PATH = "tests/RegressionTests/Yaml/Drive";
@@ -203,10 +205,10 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                 //  console.error(`[scanWorkspaceForTests] Error reading/parsing ${fileUri.fsPath}: ${readErr.message || readErr}`);
             }
         } // end for (const fileUri of potentialFiles)
-    } catch (findErr: any) {
-        // console.error(`[scanWorkspaceForTests] Error finding files: ${findErr.message || findErr}`);
-        vscode.window.showErrorMessage("Ошибка при поиске файлов сценариев.");
-        return null; 
+    } catch (error) {
+        console.error('[WorkspaceScanner] Error scanning workspace:', error);
+        vscode.window.showErrorMessage(vscode.l10n.t('Error searching for scenario files.'));
+        return new Map();
     }
 
     console.log(`[scanWorkspaceForTests] Scan finished. Total discovered tests: ${discoveredTests.size}.`);

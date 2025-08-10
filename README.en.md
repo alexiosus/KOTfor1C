@@ -1,7 +1,7 @@
 # 1C:Drive Test Helper
 <p align="center">
   <img src="./docs/1CDriveTestHelper_poster.png" alt="1C:Drive Test Helper Icon" width="600"/><br>
-  <img src="https://img.shields.io/badge/version-1.9.0-yellow">
+  <a href="CHANGELOG.en.md"><img src="https://img.shields.io/badge/version-1.9.0-yellow"></a>
 </p>
 
 <p align="center">
@@ -118,7 +118,7 @@ The main difference is that there's no longer a need for external configuration 
     You can access the extension settings through the standard method via general settings or **via the settings button from the Activity Bar panel**.
     * `Enable "Phase Switcher" panel`: toggles the display of the **Phase Switcher section in Activity Bar** (enabled by default)
     * `Enable "Build" panel`: toggles the display of the **Test Builder section in Activity Bar** (enabled by default)
-    * `Language override`: sets the extension's interface language independently of VS Code's language (system/en/ru)
+    * `Language override`: sets the extension's interface language independently of VS Code's language (system/en/ru). Does not affect the display language of settings page and context menus (they are displayed in the VS Code interface language).
     * `Gherkin steps URL`: URL for loading the `steps.htm` file. Leave empty to use the file from the extension, or specify your own for dynamic updates.
     * `Auto collapse on open`: Automatically collapse `NestedScenarios` (`ВложенныеСценарии`) and `ScenarioParameters` (`ПараметрыСценария`) sections when opening a file.
     * **Test email settings**:
@@ -158,39 +158,34 @@ The main difference is that there's no longer a need for external configuration 
 
 ## Screenshots
 
-<p align="center">
-  <img src="./docs/ActivityBar.png" alt="Panel in Activity Bar" width="450"/>
-  <br>
-  <em>Panel in Activity Bar</em>
-  <br>
-  <br>
-</p>
+<div align="center" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; max-width: 100%;">
 
-<p align="center">
-  <img src="./docs/commands.png" alt="Command list" width="600"/>
-  <br>
-  <em>Context menu</em>
-  <br>
-  <br>
-</p>
+<div style="flex: 1; min-width: 300px; max-width: 450px;">
+  <em>Panel in Activity Bar:</em><br>
+  <img src="./docs/ActivityBar_en.png" alt="Panel in Activity Bar" width="100%" style="max-width: 450px;"/>
+</div>
 
-<p align="center">
-  <img src="./docs/autocomplete.gif" alt="Line autocompletion" width="700"/>
-  <br>
-  <em>Line autocompletion</em>
-  <br>
-  <br>
-</p>
+<div style="flex: 1; min-width: 300px; max-width: 600px;">
+  <em>Context menu:</em><br>
+  <img src="./docs/commands_en.png" alt="Command list" width="100%" style="max-width: 600px;"/>
+</div>
+</div>
+<div align="center" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; max-width: 100%;">
 
-<p align="center">
-  <img src="./docs/hover.png" alt="Step description" width="700"/>
-  <br>
-  <em>Step description window</em>
-  <br>
-  <br>
-</p>
+<div style="flex: 1; min-width: 300px; max-width: 700px;">
+  <em>Line autocompletion:</em><br>
+  <img src="./docs/autocomplete.gif" alt="Line autocompletion" width="100%" style="max-width: 700px;"/>
+</div>
+
+<div style="flex: 1; min-width: 300px; max-width: 700px;">
+  <em>Step description window:</em><br>
+  <img src="./docs/hover.png" alt="Step description" width="100%" style="max-width: 700px;"/>
+</div>
+
+</div>
 
 ## Known issues
 
-* Building tests on macOS takes much longer than on Windows (most likely a platform issue). Also, due to the peculiarities of the 1C platform on macOS, tracking the build execution status occurs by tracking the creation of the result file, not by the completion of the 1C process.
+* Building tests on macOS takes much longer than on Windows. Also, due to the peculiarities of the 1C platform on macOS, tracking the build execution status occurs by tracking the creation of the result file, not by the completion of the 1C process.
+* Open MXL in editor feature is unavailable on macOS.
 * Work on Linux has not been tested.

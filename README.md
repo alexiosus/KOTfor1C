@@ -1,7 +1,7 @@
 # 1C:Drive Test Helper
 <p align="center">
   <img src="./docs/1CDriveTestHelper_poster.png" alt="Иконка 1C:Drive Test Helper" width="600"/><br>
-  <img src="https://img.shields.io/badge/version-1.9.0-yellow">
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.9.0-yellow"></a>
 </p>
 
 <p align="center">
@@ -118,7 +118,7 @@
     В настройки расширения можно перейти стандартным методом через общие настройки или **по кнопке настроек с панели Activity Bar**.
     * `Включить панель "Phase Switcher"`: переключает отображение секции **Phase Switcher в Activity Bar** (по умолчанию вкл.)
     * `Включить панель "Сборка"`: переключает отображение секции **Сборщика тестов в Activity Bar** (по умолчанию вкл.)
-    * `Language override`: позволяет переключить язык расширения независимо от языка VS Code (system/en/ru)
+    * `Language override`: позволяет переключить язык расширения независимо от языка VS Code (system/en/ru). Не влияет на язык отображения настроек и контекстного меню (они отображаются на языке интерфейса VS Code).
     * `URL для шагов Gherkin`: URL для загрузки файла `steps.htm`. Оставьте пустым, чтобы использовать файл из расширения, или укажите свой для динамических обновлений.
     * `Auto collapse on open`: Автоматически сворачивать секции `ВложенныеСценарии` и `ПараметрыСценария` при открытии файла.
     * **Настройки тестовой почты**:
@@ -153,44 +153,38 @@
       * Нажмите `Собрать FL`
       * Выберите место для сохранения
     * Сборка тестов:
-      * Выберите режим бух.учета `Accounting mode`
+      * Выберите режим бух.учета `Режим учета`
       * Нажмите `Собрать тесты`
 
 ## Скриншоты
 
-<p align="center">
-  <img src="./docs/ActivityBar.png" alt="Панель в Activity Bar" width="450"/>
-  <br>
-  <em>Панель в Activity Bar</em>
-  <br>
-  <br>
-</p>
+<div align="center" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; max-width: 100%;">
 
-<p align="center">
-  <img src="./docs/commands.png" alt="Список команд" width="600"/>
-  <br>
-  <em>Контекстное меню</em>
-  <br>
-  <br>
-</p>
+<div style="flex: 1; min-width: 300px; max-width: 450px;">
+  <em>Панель в Activity Bar:</em><br>
+  <img src="./docs/ActivityBar_ru.png" alt="Панель в Activity Bar" width="100%" style="max-width: 450px;"/>
+</div>
 
-<p align="center">
-  <img src="./docs/autocomplete.gif" alt="Автодополнение строк" width="700"/>
-  <br>
-  <em>Автодополнение строк</em>
-  <br>
-  <br>
-</p>
+<div style="flex: 1; min-width: 300px; max-width: 600px;">
+  <em>Контекстное меню:</em><br>
+  <img src="./docs/commands_ru.png" alt="Список команд" width="100%" style="max-width: 600px;"/>
+</div>
+</div>
+<div align="center" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; max-width: 100%;">
+<div style="flex: 1; min-width: 300px; max-width: 700px;">
+  <em>Автодополнение строк:</em><br>
+  <img src="./docs/autocomplete.gif" alt="Автодополнение строк" width="100%" style="max-width: 700px;"/>
+</div>
 
-<p align="center">
-  <img src="./docs/hover.png" alt="Описание шага" width="700"/>
-  <br>
-  <em>Окно описания шага</em>
-  <br>
-  <br>
-</p>
+<div style="flex: 1; min-width: 300px; max-width: 700px;">
+  <em>Окно описания шага:</em><br>
+  <img src="./docs/hover.png" alt="Описание шага" width="100%" style="max-width: 700px;"/>
+</div>
+
+</div>
 
 ## Известные проблемы
 
-* Сборка тестов под macOS выполняется гораздо дольше, чем на Windows (скорее всего, проблема платформы). Также из-за особенностей платформы 1С на macOS, отслеживание статуса выполнения сборки происходит путем отслеживания создания файла результата, а не по завершению процесса 1С.
+* Сборка тестов под macOS выполняется гораздо дольше, чем на Windows. Также из-за особенностей платформы 1С на macOS, отслеживание статуса выполнения сборки происходит путем отслеживания создания файла результата, а не по завершению процесса 1С.
+* Открытие файлов MXL в редакторе не работает на macOS (отсутствует дистрибутив).
 * Работа на Linux не проверялась.

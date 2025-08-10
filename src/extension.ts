@@ -1,25 +1,25 @@
 import * as vscode from 'vscode';
+import { DriveCompletionProvider } from './completionProvider';
+import { DriveHoverProvider } from './hoverProvider';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
-import { setExtensionUri } from './appContext';
-import { handleCreateNestedScenario, handleCreateMainScenario } from './scenarioCreator';
-import {
+import { 
+    openMxlFileFromTextHandler, 
+    openMxlFileFromExplorerHandler,
+    revealFileInExplorerHandler, 
+    revealFileInOSHandler,
     openSubscenarioHandler,
     findCurrentFileReferencesHandler,
     insertNestedScenarioRefHandler,
     insertScenarioParamHandler,
     insertUidHandler,
-    replaceTabsWithSpacesYamlHandler,
     checkAndFillNestedScenariosHandler,
     checkAndFillScenarioParametersHandler,
-    openMxlFileFromExplorerHandler,
-    openMxlFileFromTextHandler,
-    revealFileInExplorerHandler,
-    revealFileInOSHandler,
+    replaceTabsWithSpacesYamlHandler,
     handleCreateFirstLaunchZip
 } from './commandHandlers';
-
-import { DriveCompletionProvider } from './completionProvider';
-import { DriveHoverProvider } from './hoverProvider';
+import { getTranslator } from './localization';
+import { setExtensionUri } from './appContext';
+import { handleCreateNestedScenario, handleCreateMainScenario } from './scenarioCreator';
 import { TestInfo } from './types'; // Импортируем TestInfo
 
 // Ключ для хранения пароля в SecretStorage (должен совпадать с ключом в phaseSwitcher.ts)
@@ -151,10 +151,11 @@ export function activate(context: vscode.ExtensionContext) {
 
 
     // --- КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ ПАРОЛЕМ ЧЕРЕЗ ПАЛИТРУ КОМАНД (Ctrl+Shift+P) ---
-    // Команда для установки/сохранения пароля
+    // Команда для сохранения пароля тестовой почты
     context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.setEmailPassword', async () => {
-            // Запрашиваем ввод пароля у пользователя
+        '1cDriveHelper.saveEmailPassword', async () => {
+            const t = await getTranslator(context.extensionUri);
+            // Запрашиваем пароль у пользователя
             const password = await vscode.window.showInputBox({
                 prompt: vscode.l10n.t('Enter password for test email'),
                 password: true,
@@ -168,19 +169,19 @@ export function activate(context: vscode.ExtensionContext) {
                     try {
                         // Сохраняем пароль в безопасное хранилище VS Code
                         await context.secrets.store(EMAIL_PASSWORD_KEY, password);
-                        vscode.window.showInformationMessage(vscode.l10n.t('Test email password saved.'));
+                        vscode.window.showInformationMessage(t('Test email password saved.'));
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         console.error("Error saving password via command:", message);
-                        vscode.window.showErrorMessage(vscode.l10n.t('Error saving password: {0}', message));
+                        vscode.window.showErrorMessage(t('Error saving password: {0}', message));
                     }
                 } else {
                     // Если пользователь ввел пустую строку, считаем это отменой
-                    vscode.window.showWarningMessage(vscode.l10n.t('Password saving cancelled (empty value).'));
+                    vscode.window.showWarningMessage(t('Password saving cancelled (empty value).'));
                 }
             } else {
                  // Если пользователь нажал Escape (password === undefined)
-                 vscode.window.showInformationMessage(vscode.l10n.t('Password saving cancelled.'));
+                 vscode.window.showInformationMessage(t('Password saving cancelled.'));
             }
         }
     ));
@@ -188,43 +189,45 @@ export function activate(context: vscode.ExtensionContext) {
     // Команда для очистки сохраненного пароля
     context.subscriptions.push(vscode.commands.registerCommand(
         '1cDriveHelper.clearEmailPassword', async () => {
+            const t = await getTranslator(context.extensionUri);
             // Запрашиваем подтверждение у пользователя перед удалением
             const confirmation = await vscode.window.showWarningMessage(
-                vscode.l10n.t('Are you sure you want to delete the saved test email password?'),
+                t('Are you sure you want to delete the saved test email password?'),
                 { modal: true }, 
-                vscode.l10n.t('Delete')
+                t('Delete')
             );
 
             // Если пользователь нажал кнопку "Удалить"
-            if (confirmation === vscode.l10n.t('Delete')) {
+            if (confirmation === t('Delete')) {
                 try {
                     // Удаляем пароль из безопасного хранилища
                     await context.secrets.delete(EMAIL_PASSWORD_KEY);
-                    vscode.window.showInformationMessage(vscode.l10n.t('Saved test email password deleted.'));
+                    vscode.window.showInformationMessage(t('Saved test email password deleted.'));
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
                     console.error("Error clearing password via command:", message);
-                    vscode.window.showErrorMessage(vscode.l10n.t('Error deleting password: {0}', message));
+                    vscode.window.showErrorMessage(t('Error deleting password: {0}', message));
                 }
             } else {
                  // Если пользователь закрыл диалог или нажал отмену
-                 vscode.window.showInformationMessage(vscode.l10n.t('Password deletion cancelled.'));
+                 vscode.window.showInformationMessage(t('Password deletion cancelled.'));
             }
         }
     ));
 
     const refreshGherkinStepsCommand = async () => {
+        const t = await getTranslator(context.extensionUri);
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
-            title: vscode.l10n.t('Updating Gherkin steps...'),
+            title: t('Updating Gherkin steps...'),
             cancellable: false
         }, async (progress) => {
-            progress.report({ increment: 0, message: vscode.l10n.t('Loading Gherkin step definitions...') });
+            progress.report({ increment: 0, message: t('Loading Gherkin step definitions...') });
             try {
                 await completionProvider.refreshSteps(); // Обновляет только Gherkin шаги
-                progress.report({ increment: 50, message: vscode.l10n.t('Gherkin autocompletion update completed.') });
+                progress.report({ increment: 50, message: t('Gherkin autocompletion update completed.') });
                 await hoverProvider.refreshSteps();
-                progress.report({ increment: 100, message: vscode.l10n.t('Gherkin hints update completed.') });
+                progress.report({ increment: 100, message: t('Gherkin hints update completed.') });
                 
                 // Для обновления автодополнения сценариев, мы полагаемся на событие от PhaseSwitcherProvider,
                 // которое должно сработать, если пользователь нажмет "Обновить" в панели Phase Switcher.
@@ -276,6 +279,54 @@ export function activate(context: vscode.ExtensionContext) {
         '1cDriveHelper.createFirstLaunchZip', 
         () => handleCreateFirstLaunchZip(context)
     ));
+
+    // Добавляем автоматическую конвертацию табов в пробелы при сохранении
+    context.subscriptions.push(
+        vscode.workspace.onWillSaveTextDocument(async (event) => {
+            const document = event.document;
+            
+            // Проверяем, что это YAML файл
+            if (document.languageId === 'yaml' || document.fileName.toLowerCase().endsWith('.yaml')) {
+                const fullText = document.getText();
+                
+                // Проверяем, есть ли табы в документе
+                if (fullText.includes('\t')) {
+                    // Отменяем стандартное сохранение
+                    event.waitUntil(
+                        (async () => {
+                            try {
+                                // Заменяем табы на пробелы
+                                const newText = fullText.replace(/\t/g, '    ');
+                                
+                                // Проверяем, действительно ли текст изменился
+                                if (newText !== fullText) {
+                                    // Применяем изменения
+                                    const edit = new vscode.WorkspaceEdit();
+                                    const fullRange = new vscode.Range(
+                                        document.positionAt(0),
+                                        document.positionAt(fullText.length)
+                                    );
+                                    edit.replace(document.uri, fullRange, newText);
+                                    
+                                    await vscode.workspace.applyEdit(edit);
+                                    
+                                    // Показываем уведомление только если были замены
+                                    const t = await getTranslator(context.extensionUri);
+                                    vscode.window.showInformationMessage(t('Tabs automatically replaced with spaces on save.'));
+                                }
+                            } catch (error) {
+                                console.error('[Extension] Error replacing tabs with spaces on save:', error);
+                            }
+                        })()
+                    );
+                }
+            }
+        })
+    );
+
+    // Инициализируем загрузку шагов Gherkin
+    completionProvider.refreshSteps();
+    hoverProvider.refreshSteps();
 
     console.log('1cDriveHelper commands and providers registered.');
 }

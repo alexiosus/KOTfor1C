@@ -2,6 +2,7 @@
 import * as https from 'https';
 import * as path from 'path';
 import * as fs from 'fs'; // Используем для синхронной проверки существования локального бандла
+import { getTranslator } from './localization';
 
 // Ключ конфигурации для URL внешнего файла steps.htm
 const EXTERNAL_STEPS_URL_CONFIG_KEY = '1cDriveHelper.steps.externalUrl';
@@ -202,7 +203,7 @@ export async function getStepsHtml(context: vscode.ExtensionContext, forceRemote
         return htmlContent;
     }
 
-    throw new Error('Не удалось загрузить определения шагов ни с внешнего ресурса, ни из кеша, ни из локального бандла.');
+    throw new Error('Failed to load step definitions from external resource, cache, or local bundle.');
 }
 
 /**
@@ -214,11 +215,12 @@ export async function forceRefreshSteps(context: vscode.ExtensionContext): Promi
     // getStepsHtml с forceRemote=true сделает всю работу: загрузит, сохранит в кеш.
     try {
         const htmlContent = await getStepsHtml(context, true);
-        vscode.window.showInformationMessage('Библиотека шагов успешно обновлена.');
+        const t = await getTranslator(context.extensionUri);
+        vscode.window.showInformationMessage(t('Steps library successfully updated.'));
         return htmlContent;
     } catch (error: any) {
-        console.error(`[StepsFetcher:forceRefreshSteps] Error during forced refresh: ${error.message}`);
-        vscode.window.showErrorMessage(`Ошибка при обновлении шагов: ${error.message}`);
+        const t = await getTranslator(context.extensionUri);
+        vscode.window.showErrorMessage(t('Error updating steps: {0}', error.message));
         throw error; // Передаем ошибку дальше, чтобы вызывающий код мог ее обработать
     }
 }

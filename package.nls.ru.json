@@ -3,7 +3,7 @@
   "ext.description": "Расширение для работы с тестами 1C:Drive",
 
   "config.generalTitle": "Общие настройки",
-  "config.localization.languageOverride.description": "Выбор языка интерфейса расширения (может потребоваться перезагрузка панели). Не влияет язык страницы настроек.",
+  "config.localization.languageOverride.description": "Выбор языка интерфейса расширения (может потребоваться перезагрузка панели). Не влияет язык страницы настроек и контекстного меню.",
   "config.localization.system.desc": "Следовать языку интерфейса VS Code",
   "config.localization.en.desc": "Английский",
   "config.localization.ru.desc": "Русский",
@@ -15,7 +15,7 @@
   "config.mailSettings.title": "Настройки тестовой почты",
   "config.emailAddress.description": "Тестовый Email адрес (EMailTestEmailAddress).",
   "config.emailPasswordInfo.description": "Пароль тестовой почты хранится в безопасном хранилище VS Code (SecretStorage) и задается через палитру команд (Ctrl+Shift+P).",
-  "config.emailPasswordInfo.markdownDescription": "**Пароль тестовой почты**\n\nПароль хранится в безопасном хранилище VS Code (`SecretStorage`) и задается через палитру команд (Ctrl+Shift+P):\n* [`1C:Drive - Установить пароль тестовой почты`](command:1cDriveHelper.setEmailPassword 'Нажмите, чтобы установить пароль')\n* [`1C:Drive - Очистить пароль тестовой почты`](command:1cDriveHelper.clearEmailPassword 'Нажмите, чтобы удалить сохраненный пароль')",
+  "config.emailPasswordInfo.markdownDescription": "**Пароль тестовой почты**\n\nПароль хранится в VS Code SecretStorage и может быть установлен через палитру команд (Ctrl+Shift+P):\n* [`1C:Drive - Установить пароль тестовой почты`](command:1cDriveHelper.saveEmailPassword 'Нажмите для установки пароля')\n* [`1C:Drive - Очистить пароль тестовой почты`](command:1cDriveHelper.clearEmailPassword 'Нажмите для удаления сохраненного пароля')",
   "config.emailIncomingServer.description": "Сервер входящей почты (EMailTestIncomingMailServer).",
   "config.emailIncomingPort.description": "Порт входящей почты (EMailTestIncomingMailPort).",
   "config.emailOutgoingServer.description": "Сервер исходящей почты (EMailTestOutgoingMailServer).",
@@ -33,7 +33,7 @@
   "config.fileWorkshopExe.description": "Полный путь к '1С:Предприятие — работа с файлами' (1cv8fv.exe).",
 
   "cmd.category": "1C:Drive Test Helper",
-  "cmd.setEmailPassword.title": "1C:Drive - Установить пароль тестовой почты",
+  "cmd.saveEmailPassword.title": "1C:Drive - Установить пароль тестовой почты",
   "cmd.clearEmailPassword.title": "1C:Drive - Очистить пароль тестовой почты",
   "cmd.openSubscenario.title": "1C:Drive - Открыть сценарий",
   "cmd.findCurrentFileReferences.title": "1C:Drive - Найти вызовы текущего сценария",

@@ -165,8 +165,8 @@
     ],
     "commands": [
       {
-        "command": "1cDriveHelper.setEmailPassword",
-        "title": "%cmd.setEmailPassword.title%",
+        "command": "1cDriveHelper.saveEmailPassword",
+        "title": "%cmd.saveEmailPassword.title%",
         "category": "%cmd.category%"
       },
       {
@@ -357,11 +357,6 @@
           "group": "03_modification@1"
         },
         {
-          "command": "1cDriveHelper.replaceTabsWithSpacesYaml",
-          "when": "editorTextFocus && !editorReadonly",
-          "group": "03_modification@2"
-        },
-        {
           "command": "1cDriveHelper.insertUid",
           "when": "editorTextFocus && !editorReadonly",
           "group": "03_modification@3"
@@ -369,7 +364,7 @@
       ],
       "commandPalette": [
         {
-          "command": "1cDriveHelper.setEmailPassword",
+          "command": "1cDriveHelper.saveEmailPassword",
           "when": "true"
         },
         {

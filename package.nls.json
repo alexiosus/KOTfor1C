@@ -3,7 +3,7 @@
   "ext.description": "An extension to work with 1C:Drive tests",
 
   "config.generalTitle": "General settings",
-  "config.localization.languageOverride.description": "Language override for the extension UI (requires reloading the view). This does not apply to the settings page.",
+  "config.localization.languageOverride.description": "Language override for the extension UI (requires reloading the view). This does not apply to the settings page and context menu.",
   "config.localization.system.desc": "Follow VS Code UI language",
   "config.localization.en.desc": "English",
   "config.localization.ru.desc": "Russian",
@@ -15,7 +15,7 @@
   "config.mailSettings.title": "Test Mail Settings",
   "config.emailAddress.description": "Test email address (EMailTestEmailAddress).",
   "config.emailPasswordInfo.description": "The test mail password is stored in VS Code SecretStorage and is set via the Command Palette (Ctrl+Shift+P).",
-  "config.emailPasswordInfo.markdownDescription": "**Test mail password**\n\nThe password is stored in VS Code SecretStorage and can be set via the Command Palette (Ctrl+Shift+P):\n* [`1C:Drive - Set test mail password`](command:1cDriveHelper.setEmailPassword 'Click to set the password')\n* [`1C:Drive - Clear test mail password`](command:1cDriveHelper.clearEmailPassword 'Click to remove the saved password')",
+  "config.emailPasswordInfo.markdownDescription": "**Test mail password**\n\nThe password is stored in VS Code SecretStorage and can be set via the Command Palette (Ctrl+Shift+P):\n* [`1C:Drive - Set test mail password`](command:1cDriveHelper.saveEmailPassword 'Click to set the password')\n* [`1C:Drive - Clear test mail password`](command:1cDriveHelper.clearEmailPassword 'Click to remove the saved password')",
   "config.emailIncomingServer.description": "Incoming mail server (EMailTestIncomingMailServer).",
   "config.emailIncomingPort.description": "Incoming mail port (EMailTestIncomingMailPort).",
   "config.emailOutgoingServer.description": "Outgoing mail server (EMailTestOutgoingMailServer).",
@@ -33,7 +33,7 @@
   "config.fileWorkshopExe.description": "Full path to '1C:Enterprise — File Workshop' (1cv8fv.exe).",
 
   "cmd.category": "1C:Drive Test Helper",
-  "cmd.setEmailPassword.title": "1C:Drive - Set test mail password",
+  "cmd.saveEmailPassword.title": "1C:Drive - Set test mail password",
   "cmd.clearEmailPassword.title": "1C:Drive - Clear test mail password",
   "cmd.openSubscenario.title": "1C:Drive - Open scenario",
   "cmd.findCurrentFileReferences.title": "1C:Drive - Find references to current scenario",

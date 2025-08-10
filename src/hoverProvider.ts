@@ -1,6 +1,7 @@
 ﻿import * as vscode from 'vscode';
 import { parse } from 'node-html-parser';
-import { getStepsHtml, forceRefreshSteps as forceRefreshStepsCore } from './stepsFetcher'; 
+import { getStepsHtml, forceRefreshSteps as forceRefreshStepsCore } from './stepsFetcher';
+import { getTranslator } from './localization';
 
 // Интерфейс для хранения определений шагов и их описаний
 interface StepDefinition {
@@ -42,7 +43,8 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             })
             .catch(async (error: any) => { // async здесь
                 console.error(`[DriveHoverProvider] Failed to refresh steps: ${error.message}`);
-                vscode.window.showWarningMessage(`Ошибка при обновлении подсказок: ${error.message}. Попытка загрузить из резервных источников.`);
+                const t = await getTranslator(this.context.extensionUri);
+                vscode.window.showWarningMessage(t('Error updating hints: {0}. Attempting to load from backup sources.', error.message));
                 try {
                     const fallbackHtml = await getStepsHtml(this.context, false); // false - не принудительно
                     this.parseAndStoreStepDefinitions(fallbackHtml);
@@ -87,7 +89,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
                     if (russianStepPattern) {
                         const russianStepDef = this.createStepDefinition(russianStepPattern, russianStepDescription);
                         
-                        // Если есть английский вариант, добавляем его
+                        // Если есть английский вариант, добавляем его как russianPattern данные
                         if (stepPattern) {
                             const englishData = this.createStepDefinition(stepPattern, stepDescription);
                             Object.assign(russianStepDef, {
@@ -107,8 +109,8 @@ export class DriveHoverProvider implements vscode.HoverProvider {
                         // Если есть русский вариант, создаем полное определение с английским как основным
                         if (russianStepPattern) {
                             const englishStepDef = this.createStepDefinition(stepPattern, stepDescription);
+                            // Добавляем русские данные как russianPattern
                             const russianData = this.createStepDefinition(russianStepPattern, russianStepDescription);
-                            // Обмениваем местами - английский становится основным, русский становится русским
                             Object.assign(englishStepDef, {
                                 russianPattern: russianData.pattern,
                                 russianFirstLine: russianData.firstLine,
@@ -153,8 +155,10 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             .then(htmlContent => {
                 this.parseAndStoreStepDefinitions(htmlContent);
             })
-            .catch(error => {
+            .catch(async error => {
                 console.error(`[DriveHoverProvider] Ошибка загрузки steps.htm для подсказок: ${error.message}`);
+                const t = await getTranslator(this.context.extensionUri);
+                vscode.window.showWarningMessage(t('Error updating hints: {0}. Attempting to load from backup sources.', error.message));
                 this.stepDefinitions = [];
             })
             .finally(() => {
@@ -175,7 +179,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             const gherkinKeywords = /^(?:And|Then|When|Given|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
             const firstLineWithoutKeywords = firstLineOriginal.replace(gherkinKeywords, '');
 
-            const placeholderRegex = /%\d+\s+[a-zA-Z0-9_]+/g;
+            const placeholderRegex = /"%\d+\s+[^"]*"/g;
             
             // Заменяем каждый плейсхолдер уникальным маркером
             const markerPrefix = '__PLACEHOLDER_';
@@ -222,7 +226,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             const gherkinKeywords = /^(?:And|Then|When|Given|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
             const firstLineWithoutKeywords = firstLineOriginal.replace(gherkinKeywords, '');
 
-            const placeholderRegex = /%\d+\s+[a-zA-Z0-9_]+/g;
+            const placeholderRegex = /"%\d+\s+[^"]*"/g;
             
             // Заменяем каждый плейсхолдер уникальным маркером
             const markerPrefix = '__PLACEHOLDER_';
@@ -268,6 +272,11 @@ export class DriveHoverProvider implements vscode.HoverProvider {
     }
 
     private matchLineToEnglishPattern(line: string, stepDef: StepDefinition): boolean {
+        // Проверяем, что это действительно английский шаг (не содержит кириллицу)
+        if (this.isRussianText(stepDef.firstLine)) {
+            return false; // Если шаблон содержит русский текст, это не английский шаг
+        }
+        
         const gherkinKeywords = /^(?:And|Then|When|Given|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
         const cleanLine = line.trim().replace(gherkinKeywords, '');
         const cleanFirstLineDef = stepDef.firstLine.trim().replace(gherkinKeywords, ''); // Сравниваем тоже с очищенной от Gherkin ключевых слов
@@ -328,6 +337,11 @@ export class DriveHoverProvider implements vscode.HoverProvider {
     private matchLineToRussianPattern(line: string, stepDef: StepDefinition): boolean {
         if (!stepDef.russianFirstLine || !stepDef.russianSegments) {
             return false;
+        }
+
+        // Проверяем, что это действительно русский шаг (содержит кириллицу)
+        if (!this.isRussianText(stepDef.russianFirstLine)) {
+            return false; // Если шаблон не содержит русский текст, это не русский шаг
         }
 
         const gherkinKeywords = /^(?:And|Then|When|Given|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
@@ -394,6 +408,9 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             return null;
         }
         
+        // Получаем переводчик для локализации
+        const t = await getTranslator(this.context.extensionUri);
+        
         for (const stepDef of this.stepDefinitions) {
             if (token.isCancellationRequested) return null;
             try {
@@ -404,18 +421,29 @@ export class DriveHoverProvider implements vscode.HoverProvider {
                     const isRussianInput = this.isRussianText(lineText);
                     
                     // Определяем, какой шаблон сработал
-                    const matchedRussian = stepDef.russianFirstLine && this.matchLineToRussianPattern(lineText, stepDef);
-                    const matchedEnglish = this.matchLineToEnglishPattern(lineText, stepDef);
+                    const isRussianTemplate = this.isRussianText(stepDef.firstLine);
+                    const matchedRussian = isRussianTemplate && this.matchLineToEnglishPattern(lineText, stepDef);
+                    const matchedEnglish = !isRussianTemplate && this.matchLineToEnglishPattern(lineText, stepDef);
+                    
+                    // Debug logging
+                    console.log(`[Hover Debug] Line: "${lineText}"`);
+                    console.log(`[Hover Debug] StepDef pattern: "${stepDef.pattern}"`);
+                    console.log(`[Hover Debug] StepDef russianPattern: "${stepDef.russianPattern}"`);
+                    console.log(`[Hover Debug] isRussianTemplate: ${isRussianTemplate}`);
+                    console.log(`[Hover Debug] matchedRussian: ${matchedRussian}, matchedEnglish: ${matchedEnglish}`);
+                    console.log(`[Hover Debug] isRussianInput: ${isRussianInput}`);
                     
                     if (matchedRussian && stepDef.russianDescription) {
                         // Показываем русское описание + оба варианта шагов
+                        console.log(`[Hover Debug] Using Russian match - showing "Описание"`);
                         content.appendMarkdown(`**Описание:**\n\n${stepDef.russianDescription}\n\n`);
-                        content.appendMarkdown(`---\n\n\n\n\`${stepDef.russianPattern}\``);
-                        if (stepDef.pattern) {
-                            content.appendMarkdown(`\n\n\n\n\`${stepDef.pattern}\``);
+                        content.appendMarkdown(`---\n\n\n\n\`${stepDef.pattern}\``);
+                        if (stepDef.russianPattern) {
+                            content.appendMarkdown(`\n\n\n\n\`${stepDef.russianPattern}\``);
                         }
                     } else if (matchedEnglish) {
                         // Показываем английское описание + оба варианта шагов
+                        console.log(`[Hover Debug] Using English match - showing "Description"`);
                         content.appendMarkdown(`**Description:**\n\n${stepDef.description}\n\n`);
                         content.appendMarkdown(`---\n\n\n\n\`${stepDef.pattern}\``);
                         if (stepDef.russianPattern) {
@@ -424,12 +452,14 @@ export class DriveHoverProvider implements vscode.HoverProvider {
                     } else {
                         // Fallback: показываем описание на языке ввода
                         if (isRussianInput && stepDef.russianDescription) {
+                            console.log(`[Hover Debug] Using Russian fallback - showing "Описание"`);
                             content.appendMarkdown(`**Описание:**\n\n${stepDef.russianDescription}\n\n`);
-                            content.appendMarkdown(`---\n\n\n\n\`${stepDef.russianPattern}\``);
-                            if (stepDef.pattern) {
-                                content.appendMarkdown(`\n\n\n\n\`${stepDef.pattern}\``);
+                            content.appendMarkdown(`---\n\n\n\n\`${stepDef.pattern}\``);
+                            if (stepDef.russianPattern) {
+                                content.appendMarkdown(`\n\n\n\n\`${stepDef.russianPattern}\``);
                             }
                         } else {
+                            console.log(`[Hover Debug] Using English fallback - showing "Description"`);
                             content.appendMarkdown(`**Description:**\n\n${stepDef.description}\n\n`);
                             content.appendMarkdown(`---\n\n\n\n\`${stepDef.pattern}\``);
                             if (stepDef.russianPattern) {
