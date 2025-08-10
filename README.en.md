@@ -160,14 +160,14 @@ The main difference is that there's no longer a need for external configuration 
 
 <table>
 <tr>
-<td width="50%" align="center" valign="top">
-<em>Panel in Activity Bar:</em><br>
-<img src="./docs/ActivityBar_en.png" alt="Panel in Activity Bar" width="600"/>
-</td>
-<td width="50%" align="center" valign="top">
-<em>Context menu:</em><br>
-<img src="./docs/commands_en.png" alt="Command list" width="600"/>
-</td>
+  <td width="50%" align="center" valign="top">
+  <em>Panel in Activity Bar:</em><br>
+  <img src="./docs/ActivityBar_en.png" alt="Panel in Activity Bar" width="350"/>
+  </td>
+  <td width="50%" align="center" valign="top">
+  <em>Context menu:</em><br>
+  <img src="./docs/commands_en.png" alt="Command list" width="500"/>
+  </td>
 </tr>
 <tr>
 <td align="center" valign="top">

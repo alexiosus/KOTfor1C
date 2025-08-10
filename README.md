@@ -160,14 +160,14 @@
 
 <table>
 <tr>
-<td width="50%" align="center" valign="top">
-<em>Панель в Activity Bar:</em><br>
-<img src="./docs/ActivityBar_ru.png" alt="Панель в Activity Bar" width="600"/>
-</td>
-<td width="50%" align="center" valign="top">
-<em>Контекстное меню:</em><br>
-<img src="./docs/commands_ru.png" alt="Список команд" width="600"/>
-</td>
+  <td width="50%" align="center" valign="top">
+  <em>Панель в Activity Bar:</em><br>
+  <img src="./docs/ActivityBar_ru.png" alt="Панель в Activity Bar" width="350"/>
+  </td>
+  <td width="50%" align="center" valign="top">
+  <em>Контекстное меню:</em><br>
+  <img src="./docs/commands_ru.png" alt="Список команд" width="500"/>
+  </td>
 </tr>
 <tr>
 <td align="center" valign="top">
