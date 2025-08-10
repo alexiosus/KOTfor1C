@@ -172,11 +172,11 @@ The main difference is that there's no longer a need for external configuration 
 <tr>
 <td align="center" valign="top">
 <em>Line autocompletion:</em><br>
-<img src="./docs/autocomplete.gif" alt="Line autocompletion" width="600"/>
+<img src="./docs/autocomplete.gif" alt="Line autocompletion" width="350"/>
 </td>
 <td align="center" valign="top">
 <em>Step description window:</em><br>
-<img src="./docs/hover.png" alt="Step description" width="600"/>
+<img src="./docs/hover.png" alt="Step description" width="500"/>
 </td>
 </tr>
 </table>
