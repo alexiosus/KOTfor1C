@@ -8,7 +8,13 @@ interface StepDefinition {
     firstLine: string;    // Только первая строка шаблона
     segments: string[];   // Шаблон, разбитый на сегменты между плейсхолдерами
     description: string;  // Описание шага
-    startsWithPlaceholder: boolean; 
+    startsWithPlaceholder: boolean;
+    // Новые поля для мультиязычности
+    russianPattern?: string;      // Русский шаблон
+    russianFirstLine?: string;    // Первая строка русского шаблона
+    russianSegments?: string[];   // Сегменты русского шаблона
+    russianDescription?: string;  // Русское описание
+    russianStartsWithPlaceholder?: boolean;
 }
 
 export class DriveHoverProvider implements vscode.HoverProvider {
@@ -68,11 +74,61 @@ export class DriveHoverProvider implements vscode.HoverProvider {
                 }
                 
                 const cells = row.querySelectorAll('td');
-                if (cells.length >= 2) {
-                    const stepPattern = cells[0].textContent.trim();
-                    const stepDescription = cells[1].textContent.trim();
-                    if (!stepPattern) return;
-                    this.createStepDefinition(stepPattern, stepDescription);
+                if (cells.length >= 4) {
+                    // Структура: колонки 1-2 русские, колонки 3-4 английские
+                    const russianStepPattern = cells[0].textContent.trim();
+                    const russianStepDescription = cells[1].textContent.trim();
+                    
+                    // Получаем английские варианты, если они есть (колонки 3-4)
+                    const stepPattern = cells.length >= 4 ? cells[2].textContent.trim() : '';
+                    const stepDescription = cells.length >= 4 ? cells[3].textContent.trim() : '';
+                    
+                    // Создаем определение для русского шага (если он есть)
+                    if (russianStepPattern) {
+                        const russianStepDef = this.createStepDefinition(russianStepPattern, russianStepDescription);
+                        
+                        // Если есть английский вариант, добавляем его
+                        if (stepPattern) {
+                            const englishData = this.createStepDefinition(stepPattern, stepDescription);
+                            Object.assign(russianStepDef, {
+                                russianPattern: englishData.pattern,
+                                russianFirstLine: englishData.firstLine,
+                                russianSegments: englishData.segments,
+                                russianDescription: englishData.description,
+                                russianStartsWithPlaceholder: englishData.startsWithPlaceholder
+                            });
+                        }
+                        
+                        this.stepDefinitions.push(russianStepDef);
+                    }
+                    
+                    // Создаем отдельное определение для английского шага (если он есть и отличается от русского)
+                    if (stepPattern && stepPattern !== russianStepPattern) {
+                        // Если есть русский вариант, создаем полное определение с английским как основным
+                        if (russianStepPattern) {
+                            const englishStepDef = this.createStepDefinition(stepPattern, stepDescription);
+                            const russianData = this.createStepDefinition(russianStepPattern, russianStepDescription);
+                            // Обмениваем местами - английский становится основным, русский становится русским
+                            Object.assign(englishStepDef, {
+                                russianPattern: russianData.pattern,
+                                russianFirstLine: russianData.firstLine,
+                                russianSegments: russianData.segments,
+                                russianDescription: russianData.description,
+                                russianStartsWithPlaceholder: russianData.startsWithPlaceholder
+                            });
+                            this.stepDefinitions.push(englishStepDef);
+                        } else {
+                            // Если нет русского варианта, создаем минимальное определение только для английского
+                            const englishStepDef: StepDefinition = {
+                                pattern: stepPattern,
+                                firstLine: stepPattern,
+                                segments: [stepPattern],
+                                description: stepDescription,
+                                startsWithPlaceholder: false
+                            };
+                            this.stepDefinitions.push(englishStepDef);
+                        }
+                    }
                 }
             });
             console.log(`[DriveHoverProvider] Parsed and stored ${this.stepDefinitions.length} step definitions.`);
@@ -138,19 +194,80 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             const segments = tempPattern.split(new RegExp(`${markerPrefix}\\d+__`));
             
             // Сохраняем сегменты шаблона для сопоставления
-            this.stepDefinitions.push({
+            return {
                 pattern: cleanedPattern,
                 firstLine: firstLineOriginal, // Сохраняем оригинальную первую строку
                 segments,
                 description,
                 startsWithPlaceholder // Сохраняем флаг
-            });
+            };
         } catch (error) {
             console.error(`[DriveHoverProvider] Ошибка обработки шаблона "${pattern}": ${error}`);
+            return {
+                pattern: pattern,
+                firstLine: pattern,
+                segments: [],
+                description: description,
+                startsWithPlaceholder: false
+            };
+        }
+    }
+
+    private createRussianStepDefinition(pattern: string, description: string) {
+        try {
+            const lines = pattern.split(/\r?\n/);
+            const firstLineOriginal = lines[0].trim();
+            let cleanedPattern = pattern.replace(/\r?\n\s*/g, ' ').trim();
+
+            const gherkinKeywords = /^(?:And|Then|When|Given|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+            const firstLineWithoutKeywords = firstLineOriginal.replace(gherkinKeywords, '');
+
+            const placeholderRegex = /%\d+\s+[a-zA-Z0-9_]+/g;
+            
+            // Заменяем каждый плейсхолдер уникальным маркером
+            const markerPrefix = '__PLACEHOLDER_';
+            let tempPattern = firstLineOriginal; // Используем оригинальную первую строку для сегментов
+            let placeholderCount = 0; 
+            
+            // Проверяем, начинается ли строка (без Gherkin-ключевых слов) с плейсхолдера
+            const startsWithPlaceholder = placeholderRegex.test(firstLineWithoutKeywords) && firstLineWithoutKeywords.match(placeholderRegex)!.index === 0;
+
+            tempPattern = tempPattern.replace(placeholderRegex, () => {
+                placeholderCount++;
+                return `${markerPrefix}${placeholderCount}__`;
+            });
+            
+            // Разбиваем шаблон по маркерам
+            const segments = tempPattern.split(new RegExp(`${markerPrefix}\\d+__`));
+            
+            return {
+                russianPattern: cleanedPattern,
+                russianFirstLine: firstLineOriginal,
+                russianSegments: segments,
+                russianDescription: description,
+                russianStartsWithPlaceholder: startsWithPlaceholder
+            };
+        } catch (error) {
+            console.error(`[DriveHoverProvider] Ошибка обработки русского шаблона "${pattern}": ${error}`);
+            return {};
         }
     }
     
     private matchLineToPattern(line: string, stepDef: StepDefinition): boolean {
+        // Сначала пробуем сопоставить с английским шаблоном
+        if (this.matchLineToEnglishPattern(line, stepDef)) {
+            return true;
+        }
+        
+        // Если есть русский шаблон, пробуем сопоставить с ним
+        if (stepDef.russianFirstLine && stepDef.russianSegments) {
+            return this.matchLineToRussianPattern(line, stepDef);
+        }
+        
+        return false;
+    }
+
+    private matchLineToEnglishPattern(line: string, stepDef: StepDefinition): boolean {
         const gherkinKeywords = /^(?:And|Then|When|Given|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
         const cleanLine = line.trim().replace(gherkinKeywords, '');
         const cleanFirstLineDef = stepDef.firstLine.trim().replace(gherkinKeywords, ''); // Сравниваем тоже с очищенной от Gherkin ключевых слов
@@ -208,6 +325,49 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         return true; 
     }
 
+    private matchLineToRussianPattern(line: string, stepDef: StepDefinition): boolean {
+        if (!stepDef.russianFirstLine || !stepDef.russianSegments) {
+            return false;
+        }
+
+        const gherkinKeywords = /^(?:And|Then|When|Given|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+        const cleanLine = line.trim().replace(gherkinKeywords, '');
+        const cleanFirstLineDef = stepDef.russianFirstLine.trim().replace(gherkinKeywords, '');
+
+        if (stepDef.russianSegments.length === 1) {
+            return cleanLine === cleanFirstLineDef;
+        }
+        
+        let lineRemainder = cleanLine;
+        
+        for (let i = 0; i < stepDef.russianSegments.length; i++) {
+            const segment = stepDef.russianSegments[i].trim().replace(gherkinKeywords, '');
+
+            if (i === 0 && segment === "" && stepDef.russianStartsWithPlaceholder) {
+                continue;
+            }
+            
+            if (segment) {
+                const segmentIndex = lineRemainder.indexOf(segment);
+                
+                if (segmentIndex === -1 || (i === 0 && !stepDef.russianStartsWithPlaceholder && segmentIndex !== 0)) {
+                    return false;
+                }
+                if (segmentIndex === -1) return false;
+
+                if (i === (stepDef.russianStartsWithPlaceholder ? 1 : 0) && !stepDef.russianSegments[0].trim() && segmentIndex !== 0) {
+                } else if (i === 0 && !stepDef.russianStartsWithPlaceholder && segmentIndex !== 0) {
+                     return false;
+                }
+
+                lineRemainder = lineRemainder.substring(segmentIndex + segment.length);
+            } else if (i < stepDef.russianSegments.length - 1) {
+            }
+        }
+        
+        return true; 
+    }
+
     public async provideHover(
         document: vscode.TextDocument,
         position: vscode.Position,
@@ -239,10 +399,44 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             try {
                 if (this.matchLineToPattern(lineText, stepDef)) {
                     const content = new vscode.MarkdownString();
-                    content.appendMarkdown(`**Описание шага:**\n\n${stepDef.description}`);
                     
-                    // Добавляем оригинальный шаблон для справки
-                    content.appendMarkdown(`\n\n---\n\n**Шаблон:**\n\n\`${stepDef.pattern}\``);
+                    // Определяем, какой язык был использован в строке
+                    const isRussianInput = this.isRussianText(lineText);
+                    
+                    // Определяем, какой шаблон сработал
+                    const matchedRussian = stepDef.russianFirstLine && this.matchLineToRussianPattern(lineText, stepDef);
+                    const matchedEnglish = this.matchLineToEnglishPattern(lineText, stepDef);
+                    
+                    if (matchedRussian && stepDef.russianDescription) {
+                        // Показываем русское описание + оба варианта шагов
+                        content.appendMarkdown(`**Описание:**\n\n${stepDef.russianDescription}\n\n`);
+                        content.appendMarkdown(`---\n\n\n\n\`${stepDef.russianPattern}\``);
+                        if (stepDef.pattern) {
+                            content.appendMarkdown(`\n\n\n\n\`${stepDef.pattern}\``);
+                        }
+                    } else if (matchedEnglish) {
+                        // Показываем английское описание + оба варианта шагов
+                        content.appendMarkdown(`**Description:**\n\n${stepDef.description}\n\n`);
+                        content.appendMarkdown(`---\n\n\n\n\`${stepDef.pattern}\``);
+                        if (stepDef.russianPattern) {
+                            content.appendMarkdown(`\n\n\n\n\`${stepDef.russianPattern}\``);
+                        }
+                    } else {
+                        // Fallback: показываем описание на языке ввода
+                        if (isRussianInput && stepDef.russianDescription) {
+                            content.appendMarkdown(`**Описание:**\n\n${stepDef.russianDescription}\n\n`);
+                            content.appendMarkdown(`---\n\n\n\n\`${stepDef.russianPattern}\``);
+                            if (stepDef.pattern) {
+                                content.appendMarkdown(`\n\n\n\n\`${stepDef.pattern}\``);
+                            }
+                        } else {
+                            content.appendMarkdown(`**Description:**\n\n${stepDef.description}\n\n`);
+                            content.appendMarkdown(`---\n\n\n\n\`${stepDef.pattern}\``);
+                            if (stepDef.russianPattern) {
+                                content.appendMarkdown(`\n\n\n\n\`${stepDef.russianPattern}\``);
+                            }
+                        }
+                    }
                     
                     return new vscode.Hover(content);
                 }
@@ -265,5 +459,12 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             lastScenarioBlockStart = match.index + match[0].length;
         }
         return lastScenarioBlockStart !== -1;
+    }
+
+    private isRussianText(text: string): boolean {
+        // Простая эвристика для определения русского текста
+        // Ищем кириллические символы
+        const russianRegex = /[а-яё]/i;
+        return russianRegex.test(text);
     }
 }

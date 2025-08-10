@@ -1,7 +1,7 @@
 # 1C:Drive Test Helper
 <p align="center">
   <img src="./docs/1CDriveTestHelper_poster.png" alt="1C:Drive Test Helper Icon" width="600"/><br>
-  <img src="https://img.shields.io/badge/version-1.8.0-yellow">
+  <img src="https://img.shields.io/badge/version-1.9.0-yellow">
 </p>
 
 <p align="center">
@@ -15,8 +15,8 @@ Helper for developing and managing 1C:Drive regression tests in VS Code. Speeds 
 ## Working with scenario text:
 * **Autocompletion and hints:** 
     * Suggests scenario call steps from the project folder, including their parameters (uses Fuzzy Match).
-    * Suggests Gherkin steps from Vanessa Automation as you type (uses Fuzzy Match).
-    * Shows step description from the Gherkin step library for Vanessa Automation when hovering over a step line in a YAML file.
+    * Suggests Gherkin steps from Vanessa Automation as you type (uses Fuzzy Match). Supports multiple translations.
+    * Shows step description from the Gherkin step library for Vanessa Automation when hovering over a step line in a YAML file. Shows description in the language of entered text and variant of this step in other language.
     * To ensure the relevance of autocompletion and hints for Gherkin steps for Vanessa Automation, the extension supports loading the `steps.htm` file from an external resource.
 
 * **Quick navigation:**

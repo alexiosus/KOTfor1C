@@ -1,7 +1,7 @@
 # 1C:Drive Test Helper
 <p align="center">
   <img src="./docs/1CDriveTestHelper_poster.png" alt="Иконка 1C:Drive Test Helper" width="600"/><br>
-  <img src="https://img.shields.io/badge/version-1.8.0-yellow">
+  <img src="https://img.shields.io/badge/version-1.9.0-yellow">
 </p>
 
 <p align="center">
@@ -15,8 +15,8 @@
 ## Работа с текстом сценариев:
 * **Автодополнение и подсказки:** 
     * Предлагает варианты шагов вызовов сценариев из папки проекта, в том числе с учетом их параметров (используется Fuzzy Match).
-    * Предлагает варианты шагов Gherkin из Vanessa Automation по мере ввода (используется Fuzzy Match).
-    * Показывает описание шага из библиотеки шагов Gherkin для Vanessa Automation при наведении мыши на строку шага в YAML файле.
+    * Предлагает варианты шагов Gherkin из Vanessa Automation по мере ввода (используется Fuzzy Match). Поддерживаются мультиязычные варианты написания.
+    * Показывает описание шага из библиотеки шагов Gherkin для Vanessa Automation при наведении мыши на строку шага в YAML файле на языке написания шага, а также вариант этого шага на другом языке.
     * Для обеспечения актуальности автодополнения и подсказок по шагам Gherkin для Vanessa Automation, расширение поддерживает загрузку файла `steps.htm` с внешнего ресурса.
 
 * **Быстрая навигация:**

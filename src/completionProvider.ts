@@ -102,21 +102,51 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             }
             
             const cells = row.querySelectorAll('td');
-            // Убедимся, что есть хотя бы две ячейки (шаг и описание)
-            if (cells.length >= 2) { 
-                const stepText = cells[0].textContent.trim();
-                const stepDescription = cells[1].textContent.trim();
-                if (!stepText) return; // Пропускаем, если текст шага пуст
+            // Убедимся, что есть хотя бы 4 ячейки для русского шага
+            if (cells.length >= 4) { 
+                // Структура: колонки 1-2 русские, колонки 3-4 английские
+                const russianStepText = cells[0].textContent.trim();
+                const russianStepDescription = cells[1].textContent.trim();
                 
-                // Создаем элемент автодополнения
-                const item = new vscode.CompletionItem(stepText, vscode.CompletionItemKind.Snippet);
-                item.documentation = new vscode.MarkdownString(stepDescription);
-                item.detail = "Шаг Gherkin (1C:Drive)"; // Дополнительная информация о типе элемента
-                // Используем оригинальный текст для вставки, т.к. он уже содержит плейсхолдеры %N
-                item.insertText = stepText; 
-                // "0" для приоритета, затем текст для алфавитной сортировки
-                // item.sortText = "0" + stepText; // sortText будет формироваться в provideCompletionItems
-                this.gherkinCompletionItems.push(item);
+                // Получаем английские варианты, если они есть (колонки 3-4)
+                const stepText = cells.length >= 4 ? cells[2].textContent.trim() : '';
+                const stepDescription = cells.length >= 4 ? cells[3].textContent.trim() : '';
+                
+                // Создаем элемент автодополнения для русского шага (если он есть)
+                if (russianStepText) {
+                    const russianItem = new vscode.CompletionItem(russianStepText, vscode.CompletionItemKind.Snippet);
+                    
+                    // Создаем документацию: русское описание + оба варианта шагов
+                    const russianDoc = new vscode.MarkdownString();
+                    russianDoc.appendMarkdown(`**Описание:**\n\n${russianStepDescription}\n\n`);
+                    russianDoc.appendMarkdown(`\n\n\n\n\`${russianStepText}\``);
+                    if (stepText) {
+                        russianDoc.appendMarkdown(`\n\n\n\n\`${stepText}\``);
+                    }
+                    
+                    russianItem.documentation = russianDoc;
+                    russianItem.detail = "Gherkin Step (1C:Drive) - Russian";
+                    russianItem.insertText = russianStepText;
+                    this.gherkinCompletionItems.push(russianItem);
+                }
+                
+                // Создаем элемент автодополнения для английского шага (если он есть)
+                if (stepText) {
+                    const item = new vscode.CompletionItem(stepText, vscode.CompletionItemKind.Snippet);
+                    
+                    // Создаем документацию: английское описание + оба варианта шагов
+                    const englishDoc = new vscode.MarkdownString();
+                    englishDoc.appendMarkdown(`**Description:**\n\n${stepDescription}\n\n`);
+                    englishDoc.appendMarkdown(`\n\n\n\n\`${stepText}\``);
+                    if (russianStepText) {
+                        englishDoc.appendMarkdown(`\n\n\n\n\`${russianStepText}\``);
+                    }
+                    
+                    item.documentation = englishDoc;
+                    item.detail = "Gherkin Step (1C:Drive) - English";
+                    item.insertText = stepText; 
+                    this.gherkinCompletionItems.push(item);
+                }
             }
         });
         console.log(`[DriveCompletionProvider] Parsed and stored ${this.gherkinCompletionItems.length} Gherkin completion items.`);
