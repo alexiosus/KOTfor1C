@@ -172,11 +172,11 @@
 <tr>
 <td align="center" valign="top">
 <em>Автодополнение строк:</em><br>
-<img src="./docs/autocomplete.gif" alt="Автодополнение строк" width="600"/>
+<img src="./docs/autocomplete.gif" alt="Автодополнение строк" width="350"/>
 </td>
 <td align="center" valign="top">
 <em>Окно описания шага:</em><br>
-<img src="./docs/hover.png" alt="Описание шага" width="600"/>
+<img src="./docs/hover.png" alt="Описание шага" width="500"/>
 </td>
 </tr>
 </table>
