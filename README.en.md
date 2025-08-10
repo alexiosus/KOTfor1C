@@ -158,31 +158,28 @@ The main difference is that there's no longer a need for external configuration 
 
 ## Screenshots
 
-<div align="center" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; max-width: 100%;">
-
-<div style="flex: 1; min-width: 300px; max-width: 450px;">
-  <em>Panel in Activity Bar:</em><br>
-  <img src="./docs/ActivityBar_en.png" alt="Panel in Activity Bar" width="100%" style="max-width: 450px;"/>
-</div>
-
-<div style="flex: 1; min-width: 300px; max-width: 600px;">
-  <em>Context menu:</em><br>
-  <img src="./docs/commands_en.png" alt="Command list" width="100%" style="max-width: 600px;"/>
-</div>
-</div>
-<div align="center" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; max-width: 100%;">
-
-<div style="flex: 1; min-width: 300px; max-width: 700px;">
-  <em>Line autocompletion:</em><br>
-  <img src="./docs/autocomplete.gif" alt="Line autocompletion" width="100%" style="max-width: 700px;"/>
-</div>
-
-<div style="flex: 1; min-width: 300px; max-width: 700px;">
-  <em>Step description window:</em><br>
-  <img src="./docs/hover.png" alt="Step description" width="100%" style="max-width: 700px;"/>
-</div>
-
-</div>
+<table>
+<tr>
+<td width="50%" align="center" valign="top">
+<em>Panel in Activity Bar:</em><br>
+<img src="./docs/ActivityBar_en.png" alt="Panel in Activity Bar" width="600"/>
+</td>
+<td width="50%" align="center" valign="top">
+<em>Context menu:</em><br>
+<img src="./docs/commands_en.png" alt="Command list" width="600"/>
+</td>
+</tr>
+<tr>
+<td align="center" valign="top">
+<em>Line autocompletion:</em><br>
+<img src="./docs/autocomplete.gif" alt="Line autocompletion" width="600"/>
+</td>
+<td align="center" valign="top">
+<em>Step description window:</em><br>
+<img src="./docs/hover.png" alt="Step description" width="600"/>
+</td>
+</tr>
+</table>
 
 ## Known issues
 

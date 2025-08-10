@@ -158,30 +158,28 @@
 
 ## Скриншоты
 
-<div align="center" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; max-width: 100%;">
-
-<div style="flex: 1; min-width: 300px; max-width: 450px;">
-  <em>Панель в Activity Bar:</em><br>
-  <img src="./docs/ActivityBar_ru.png" alt="Панель в Activity Bar" width="100%" style="max-width: 450px;"/>
-</div>
-
-<div style="flex: 1; min-width: 300px; max-width: 600px;">
-  <em>Контекстное меню:</em><br>
-  <img src="./docs/commands_ru.png" alt="Список команд" width="100%" style="max-width: 600px;"/>
-</div>
-</div>
-<div align="center" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; max-width: 100%;">
-<div style="flex: 1; min-width: 300px; max-width: 700px;">
-  <em>Автодополнение строк:</em><br>
-  <img src="./docs/autocomplete.gif" alt="Автодополнение строк" width="100%" style="max-width: 700px;"/>
-</div>
-
-<div style="flex: 1; min-width: 300px; max-width: 700px;">
-  <em>Окно описания шага:</em><br>
-  <img src="./docs/hover.png" alt="Описание шага" width="100%" style="max-width: 700px;"/>
-</div>
-
-</div>
+<table>
+<tr>
+<td width="50%" align="center" valign="top">
+<em>Панель в Activity Bar:</em><br>
+<img src="./docs/ActivityBar_ru.png" alt="Панель в Activity Bar" width="600"/>
+</td>
+<td width="50%" align="center" valign="top">
+<em>Контекстное меню:</em><br>
+<img src="./docs/commands_ru.png" alt="Список команд" width="600"/>
+</td>
+</tr>
+<tr>
+<td align="center" valign="top">
+<em>Автодополнение строк:</em><br>
+<img src="./docs/autocomplete.gif" alt="Автодополнение строк" width="600"/>
+</td>
+<td align="center" valign="top">
+<em>Окно описания шага:</em><br>
+<img src="./docs/hover.png" alt="Описание шага" width="600"/>
+</td>
+</tr>
+</table>
 
 ## Известные проблемы
 
