@@ -1379,7 +1379,9 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
 
         // --- 2. Рекурсивный обход папки и замена версии ---
         const zip = new JSZip();
-        const firstLaunchFolderUri = vscode.Uri.joinPath(workspaceRoot, 'first_launch');
+        const config = vscode.workspace.getConfiguration('1cDriveHelper');
+        const firstLaunchFolderPath = config.get<string>('paths.firstLaunchFolder') || 'first_launch';
+        const firstLaunchFolderUri = vscode.Uri.joinPath(workspaceRoot, firstLaunchFolderPath);
 
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,

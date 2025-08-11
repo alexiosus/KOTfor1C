@@ -52,7 +52,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             const displayLabel = `And ${scenarioName}`;
             const item = new vscode.CompletionItem(displayLabel, vscode.CompletionItemKind.Function);
 
-            item.detail = "Nested scenario (1C:Drive)";
+            item.detail = "Nested scenario (1C)";
             item.documentation = new vscode.MarkdownString(`Call scenario "${scenarioName}".`);
             // Текст, по которому будет происходить фильтрация при вводе пользователя
             // (без "And ", чтобы можно было просто начать печатать имя сценария)
@@ -121,7 +121,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     }
 
                     russianItem.documentation = russianDoc;
-                    russianItem.detail = "Gherkin Step (1C:Drive) - Russian";
+                    russianItem.detail = "Gherkin Step (1C) - Russian";
                     russianItem.insertText = russianStepText;
                     this.gherkinCompletionItems.push(russianItem);
                 }
@@ -139,7 +139,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     }
 
                     item.documentation = englishDoc;
-                    item.detail = "Gherkin Step (1C:Drive) - English";
+                    item.detail = "Gherkin Step (1C) - English";
                     item.insertText = stepText;
                     this.gherkinCompletionItems.push(item);
                 }

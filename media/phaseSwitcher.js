@@ -37,7 +37,7 @@
     const applyChangesBtn = document.getElementById('applyChangesBtn');
 
     const recordGLSelect = document.getElementById('recordGLSelect');
-    const driveTradeChk = document.getElementById('driveTradeChk');
+
     const assembleBtn = document.getElementById('assembleTestsBtn');
     const assembleStatus = document.getElementById('assembleStatus');
     const assembleSection = document.getElementById('assembleSection');
@@ -139,7 +139,7 @@
 
          if (assembleBtn instanceof HTMLButtonElement) assembleBtn.disabled = !effectiveEnable;
          if (recordGLSelect instanceof HTMLSelectElement) recordGLSelect.disabled = !effectiveEnable;
-         if (driveTradeChk instanceof HTMLInputElement) driveTradeChk.disabled = !effectiveEnable;
+
          log(`Assemble controls enabled: ${effectiveEnable} (request ${enable}, feature ${isAssemblerVisible})`);
      }
 
@@ -710,13 +710,19 @@
 
                     const phaseSwitcherVisible = settings.switcherEnabled;
                     const assemblerVisible = settings.assemblerEnabled;
-                    log(`Applying visibility based on settings: Switcher=${phaseSwitcherVisible}, Assembler=${assemblerVisible}`);
+                    const firstLaunchVisible = settings.firstLaunchFolderExists;
+                    log(`Applying visibility based on settings: Switcher=${phaseSwitcherVisible}, Assembler=${assemblerVisible}, FirstLaunch=${firstLaunchVisible}`);
 
                     const switcherDisplay = phaseSwitcherVisible ? '' : 'none';
                     phaseSwitcherSectionElements.forEach(el => { if (el instanceof HTMLElement) el.style.display = switcherDisplay; });
                     
                     if (addScenarioDropdownBtn instanceof HTMLButtonElement) { // Управление видимостью новой кнопки
                         addScenarioDropdownBtn.style.display = phaseSwitcherVisible ? 'inline-flex' : 'none';
+                    }
+                    
+                    if (createFirstLaunchBtn instanceof HTMLButtonElement) { // Управление видимостью кнопки первого запуска
+                        createFirstLaunchBtn.style.display = firstLaunchVisible ? 'inline-flex' : 'none';
+                        log(`  First Launch button display set to: ${createFirstLaunchBtn.style.display}`);
                     }
 
 
@@ -867,13 +873,12 @@
         assembleBtn.addEventListener('click', () => {
             log('Assemble tests button clicked.');
             const recordGLValue = (recordGLSelect instanceof HTMLSelectElement) ? recordGLSelect.value : '0';
-            const driveTradeValue = (driveTradeChk instanceof HTMLInputElement) && driveTradeChk.checked ? '1' : '0';
             updateStatus(window.__loc?.statusStartingAssembly || 'Starting assembly...', 'assemble', false);
             enablePhaseControls(false, false);
             enableAssembleControls(false);
             vscode.postMessage({
                 command: 'runAssembleScript',
-                params: { recordGL: recordGLValue, driveTrade: driveTradeValue }
+                params: { recordGL: recordGLValue }
             });
         });
     }

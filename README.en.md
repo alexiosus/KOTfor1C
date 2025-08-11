@@ -1,14 +1,14 @@
 # 1C:Drive Test Helper
 <p align="center">
   <img src="./docs/1CDriveTestHelper_poster.png" alt="1C:Drive Test Helper Icon" width="600"/><br>
-  <a href="CHANGELOG.en.md"><img src="https://img.shields.io/badge/version-1.9.1-yellow"></a>
+  <a href="CHANGELOG.en.md"><img src="https://img.shields.io/badge/version-1.9.9-yellow"></a>
 </p>
 
 <p align="center">
   <a href="README.md">🇷🇺 Русский</a> | <a href="README.en.md">🇺🇸 English</a>
 </p>
 
-Helper for developing and managing 1C:Drive regression tests in VS Code. Speeds up navigation between scenarios, creating new scenarios from templates, and managing phases and builds for test runs.
+Helper for developing and managing 1C regression tests in VS Code. Speeds up navigation between scenarios, creating new scenarios from templates, and managing phases and builds for test runs.
 
 # Features
 
@@ -47,7 +47,7 @@ Helper for developing and managing 1C:Drive regression tests in VS Code. Speeds 
 * **Code insertion (Snippets):**
     * **Fill NestedScenarios section:** Quickly inserts missing blocks in the `NestedScenarios` (`ВложенныеСценарии`) section for all found scenario calls in the open file with corresponding `Name` and `UID`.
     * **Fill ScenarioParameters section:** Quickly inserts missing blocks in the `ScenarioParameters` (`ПараметрыСценария`) section for all found parameters in the open file.
-    * **Replace tabs with spaces:** Replaces all tabulations with 4 spaces in the open file.
+    * **Replace tabs with spaces:** When saving the file, it automatically converts tabs to 4 spaces.
     * **Insert new UID:** Generates and inserts a new UUID v4 at the current cursor position.
 
 
@@ -91,7 +91,7 @@ The main difference is that there's no longer a need for external configuration 
   * After successfully building the archive, it offers to choose a location for saving, after which you can open the directory with the saved file from the notification.
 
 #### Test build:
-  * Allows you to run the build script (BuildScenarioBDD) with installed parameters.
+  * Allows you to run the scenario build processing (BuildScenarioBDD/СборкаТекстовСценариев) with configured parameters.
   * **Process indication:** During the build, a progress bar is displayed as a notification.
   * **Error notifications:** In case of unsuccessful build, a notification appears with a button for quick navigation to the log file.
   * In the extension settings, you can specify test email parameters and disable automatic opening of the `Output` panel when starting the build.
@@ -107,7 +107,7 @@ The main difference is that there's no longer a need for external configuration 
 * Visual Studio Code;
 * Project opened in the repository root folder;
 * For opening MXL files from scenario text: installed [1C:Enterprise — File Workshop](https://v8.1c.ru/static/1s-predpriyatie-rabota-s-faylami/);
-* For building scenarios: filled paths and parameters in extension settings.
+* For building scenarios: BuildScenarioBDD/СборкаТекстовСценариев data processor from SPPR (СППР) ([more details](https://its.1c.ru/db/sppr2doc#content:124:hdoc) in Russian), filled paths and parameters in extension settings.
 
 ## Setup and usage
 
@@ -132,11 +132,20 @@ The main difference is that there's no longer a need for external configuration 
     * **Build settings**:
       * `Split Feature Files`: Save files attached to tests in a separate folder (disabled by default).
       * `Show Output Panel`: Show Output panel when building tests (disabled by default).
+    * **Startup parameter settings**:
+      * `Startup Parameters`: 1C:Enterprise startup parameters when running scenario build (default `/L ru /DisableStartupMessages /DisableStartupDialogs`). Any startup flags can be configured.
+      * `BuildScenarioBDD Parameters`: Additional parameters when executing СборкаТекстовСценариев processing (optional).
     * **System path settings**:
-      * `Empty Infobase`: Path to the empty file infobase directory on which the scenario build processing will be launched (EmptyInfobasePath).
-      * `Build Path`: Path to the folder for built tests (BuildPath).
-      * `one CEnterprise Exe`: Full path to the 1cv8.exe executable (Windows) or 1cestart (macOS).
+      * `Empty Infobase`: Path to the empty file infobase directory on which the scenario build processing will be launched.
+      * `Build Path`: Path to the folder for built tests.
+      * `1C Enterprise Exe`: Full path to the 1cv8.exe executable (Windows) or 1cestart (macOS).
       * `File Workshop Exe`: Full path to '1C:Enterprise — File Workshop' (1cv8fv.exe).
+      * `BuildScenarioBDD EPF`: Path to BuildScenarioBDD.epf (СборкаТекстовСценариев.epf) processing within the project (default `build/BuildScenarioBDD.epf`).
+      * `RepairTestFile EPF`: Path to RepairTestFile.epf processing within the project (default `build/RepairTestFile.epf`, optional).
+      * `YAML Parameters Template`: Path to yaml_parameters.json template within the project (default `build/develop_parallel/yaml_parameters.json`).
+      * `YAML Source Directory`: Path to folder within the project with source YAML files (default `tests/RegressionTests/yaml`).
+      * `Disabled Tests Directory`: Path to folder within the project for disabled tests (default `RegressionTests_Disabled/Yaml/Drive`).
+      * `FirstLaunch Folder`: Path to FirstLaunch folder within the project for creating first launch file (default `first_launch`).
 
 3.  **Commands:**
     * Most commands are available through the **context menu** (right-click in editor) or **command palette** (`Ctrl+Shift+P` or `Command+Shift+P`, start typing `1C:Drive`).

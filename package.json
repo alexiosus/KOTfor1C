@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.9.1",
+  "version": "1.9.9",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -54,13 +54,14 @@
           "1cDriveHelper.editor.autoCollapseOnOpen": {
             "type": "boolean",
             "default": true,
-            "description": "%config.autoCollapseOnOpen.description%"
+            "description": "%config.autoCollapseOnOpen.description%",
+            "order": 12
           },
           "1cDriveHelper.steps.externalUrl": {
             "type": "string",
             "default": "https://raw.githubusercontent.com/kakoytochelik/1cDriveTestHelper/main/res/steps.htm",
             "description": "%config.stepsExternalUrl.description%",
-            "order": 15
+            "order": 13
           }
         }
       },
@@ -71,38 +72,38 @@
             "type": "string",
             "default": "user@example.com",
             "description": "%config.emailAddress.description%",
-            "order": 20
+            "order": 14
           },
           "1cDriveHelper.params.emailPasswordInfo": {
             "type": "null",
             "default": null,
             "description": "%config.emailPasswordInfo.description%",
             "markdownDescription": "%config.emailPasswordInfo.markdownDescription%",
-            "order": 21
+            "order": 15
           },
           "1cDriveHelper.params.emailIncomingServer": {
             "type": "string",
             "default": "imap.example.com",
             "description": "%config.emailIncomingServer.description%",
-            "order": 22
+            "order": 16
           },
           "1cDriveHelper.params.emailIncomingPort": {
             "type": "string",
             "default": "993",
             "description": "%config.emailIncomingPort.description%",
-            "order": 23
+            "order": 17
           },
           "1cDriveHelper.params.emailOutgoingServer": {
             "type": "string",
             "default": "imap.example.com",
             "description": "%config.emailOutgoingServer.description%",
-            "order": 24
+            "order": 18
           },
           "1cDriveHelper.params.emailOutgoingPort": {
             "type": "string",
             "default": "587",
             "description": "%config.emailOutgoingPort.description%",
-            "order": 25
+            "order": 19
           },
           "1cDriveHelper.params.emailProtocol": {
             "type": "string",
@@ -112,7 +113,7 @@
               "POP3"
             ],
             "description": "%config.emailProtocol.description%",
-            "order": 26
+            "order": 20
           }
         }
       },
@@ -123,13 +124,30 @@
             "type": "boolean",
             "default": false,
             "description": "%config.splitFeatureFiles.description%",
-            "order": 33
+            "order": 21
           },
           "1cDriveHelper.assembleScript.showOutputPanel": {
             "type": "boolean",
             "default": false,
             "description": "%config.showOutputPanel.description%",
-            "order": 35
+            "order": 22
+          }
+        }
+      },
+      {
+        "title": "%config.startupParameters.title%",
+        "properties": {
+          "1cDriveHelper.startupParams.parameters": {
+            "type": "string",
+            "default": "/L ru /DisableStartupMessages /DisableStartupDialogs",
+            "description": "%config.startupParams.parameters.description%",
+            "order": 23
+          },
+          "1cDriveHelper.startupParams.buildScenarioBddParams": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "%config.startupParams.buildScenarioBddParams.markdownDescription%",
+            "order": 24
           }
         }
       },
@@ -140,25 +158,61 @@
             "type": "string",
             "default": "",
             "description": "%config.emptyInfobase.description%",
-            "order": 38
+            "order": 25
           },
           "1cDriveHelper.assembleScript.buildPath": {
             "type": "string",
             "default": "C:\\EtalonDrive\\",
             "description": "%config.buildPath.description%",
-            "order": 40
+            "order": 26
           },
           "1cDriveHelper.paths.oneCEnterpriseExe": {
             "type": "string",
             "default": "C:\\Program Files (x86)\\1cv8\\8.3.24.1738\\bin\\1cv8.exe",
             "description": "%config.oneCEnterpriseExe.description%",
-            "order": 41
+            "order": 27
           },
           "1cDriveHelper.paths.fileWorkshopExe": {
             "type": "string",
             "default": "C:\\Program Files (x86)\\1cv8fv\\bin\\1cv8fv.exe",
             "description": "%config.fileWorkshopExe.description%",
-            "order": 42
+            "order": 28
+          },
+          "1cDriveHelper.paths.buildScenarioBddEpf": {
+            "type": "string",
+            "default": "build/BuildScenarioBDD.epf",
+            "description": "%config.paths.buildScenarioBddEpf.description%",
+            "order": 29
+          },
+          "1cDriveHelper.paths.repairTestFileEpf": {
+            "type": "string",
+            "default": "build/RepairTestFile.epf",
+            "description": "%config.paths.repairTestFileEpf.description%",
+            "order": 30
+          },
+          "1cDriveHelper.paths.yamlParametersTemplate": {
+            "type": "string",
+            "default": "build/develop_parallel/yaml_parameters.json",
+            "description": "%config.paths.yamlParametersTemplate.description%",
+            "order": 31
+          },
+          "1cDriveHelper.paths.yamlSourceDirectory": {
+            "type": "string",
+            "default": "tests/RegressionTests/yaml",
+            "description": "%config.paths.yamlSourceDirectory.description%",
+            "order": 32
+          },
+          "1cDriveHelper.paths.disabledTestsDirectory": {
+            "type": "string",
+            "default": "RegressionTests_Disabled/Yaml/Drive",
+            "description": "%config.paths.disabledTestsDirectory.description%",
+            "order": 33
+          },
+          "1cDriveHelper.paths.firstLaunchFolder": {
+            "type": "string",
+            "default": "first_launch",
+            "description": "%config.paths.firstLaunchFolder.description%",
+            "order": 34
           }
         }
       }

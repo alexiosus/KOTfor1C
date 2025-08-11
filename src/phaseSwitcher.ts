@@ -244,8 +244,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 case 'runAssembleScript':
                     const params = message.params || {};
                     const recordGL = typeof params.recordGL === 'string' ? params.recordGL : 'No';
-                    const driveTrade = typeof params.driveTrade === 'string' ? params.driveTrade : '0';
-                    await this._handleRunAssembleScriptTypeScript(recordGL, driveTrade);
+                    await this._handleRunAssembleScriptTypeScript(recordGL);
                     return;
                 case 'openScenario':
                     if (message.name && this._testCache) {
@@ -327,6 +326,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
         const workspaceRootUri = workspaceFolders[0].uri;
+        
+        // Check if first launch folder exists (independent of test cache)
+        const projectPaths = this.getProjectPaths(workspaceRootUri);
+        let firstLaunchFolderExists = false;
+        try {
+            await vscode.workspace.fs.stat(projectPaths.firstLaunchFolder);
+            firstLaunchFolderExists = true;
+        } catch {
+            // Folder doesn't exist
+            firstLaunchFolderExists = false;
+        }
 
         this._isScanning = true;
         try {
@@ -352,7 +362,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             webview.postMessage({ command: 'updateStatus', text: status, refreshButtonEnabled: false });
 
             const baseOnDirUri = vscode.Uri.joinPath(workspaceRootUri, SCAN_DIR_RELATIVE_PATH);
-            const baseOffDirUri = vscode.Uri.joinPath(workspaceRootUri, 'RegressionTests_Disabled', 'Yaml', 'Drive');
+            const baseOffDirUri = projectPaths.disabledTestsDirectory;
 
             const testsForPhaseSwitcherProcessing: TestInfo[] = [];
             this._testCache.forEach(info => {
@@ -395,7 +405,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             states: states,
             settings: {
                 assemblerEnabled: assemblerEnabled,
-                switcherEnabled: switcherEnabled
+                switcherEnabled: switcherEnabled,
+                firstLaunchFolderExists: firstLaunchFolderExists
             },
             error: !this._testCache ? status : undefined // Ошибка, если _testCache пуст
         });
@@ -405,9 +416,262 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this._onDidUpdateTestCache.fire(this._testCache);
     }
 
-    private async _handleRunAssembleScriptTypeScript(recordGLValue: string, driveTradeValue: string): Promise<void> {
+    /**
+     * Builds 1C:Enterprise startup parameters based on configuration settings
+     */
+    private buildStartupParams(emptyIbPath: string): string[] {
+        const config = vscode.workspace.getConfiguration('1cDriveHelper');
+        const startupParameters = config.get<string>('startupParams.parameters') || '/L en /DisableStartupMessages /DisableStartupDialogs';
+
+        const params = [
+            "ENTERPRISE",
+            `/IBConnectionString`, `"File=${emptyIbPath};"`
+        ];
+
+        // Add custom startup parameters (split by space and filter empty strings)
+        if (startupParameters.trim()) {
+            const customParams = startupParameters.trim().split(/\s+/).filter(p => p.length > 0);
+            params.push(...customParams);
+            console.log(`[PhaseSwitcherProvider] ${this.t('Using startup parameters: {0}', startupParameters.trim())}`);
+        } else {
+            console.log(`[PhaseSwitcherProvider] ${this.t('Using default startup parameters')}`);
+        }
+
+        return params;
+    }
+
+    /**
+     * Gets project structure paths from configuration
+     */
+    private getProjectPaths(workspaceRootUri: vscode.Uri) {
+        const config = vscode.workspace.getConfiguration('1cDriveHelper');
+        
+        const repairTestFileEpfPath = config.get<string>('paths.repairTestFileEpf')?.trim();
+        
+        return {
+            buildScenarioBddEpf: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.buildScenarioBddEpf') || 'build/BuildScenarioBDD.epf'),
+            repairTestFileEpf: repairTestFileEpfPath ? vscode.Uri.joinPath(workspaceRootUri, repairTestFileEpfPath) : null,
+            yamlParametersTemplate: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.yamlParametersTemplate') || 'build/develop_parallel/yaml_parameters.json'),
+            yamlSourceDirectory: path.join(workspaceRootUri.fsPath, config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml'),
+            disabledTestsDirectory: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.disabledTestsDirectory') || 'RegressionTests_Disabled/Yaml/Drive'),
+            firstLaunchFolder: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.firstLaunchFolder') || 'first_launch')
+        };
+    }
+
+    /**
+     * Builds BuildScenarioBDD /C command with custom parameters and ErrorFolder
+     */
+    private buildBuildScenarioBddCommand(jsonParamsPath: string, resultFilePath: string, logFilePath: string, errorFolderPath: string): string {
+        const config = vscode.workspace.getConfiguration('1cDriveHelper');
+        const customBddParams = config.get<string>('startupParams.buildScenarioBddParams') || '';
+
+        // Ensure ErrorFolder path ends with a slash
+        const errorFolderWithSlash = errorFolderPath.endsWith(path.sep) ? errorFolderPath : errorFolderPath + path.sep;
+
+        let command = `СобратьСценарии;JsonParams=${jsonParamsPath};ResultFile=${resultFilePath};LogFile=${logFilePath};ErrorFolder=${errorFolderWithSlash}`;
+        
+        // Add custom parameters if specified
+        if (customBddParams.trim()) {
+            command += `;${customBddParams.trim()}`;
+            console.log(`[PhaseSwitcherProvider] ${this.t('Using custom BuildScenarioBDD parameters: {0}', customBddParams.trim())}`);
+        }
+
+        return `/C"${command}"`;
+    }
+
+    /**
+     * Ensures BuildErrors folder exists and is empty
+     */
+    private async prepareBuildErrorsFolder(buildPathUri: vscode.Uri, outputChannel: vscode.OutputChannel): Promise<vscode.Uri> {
+        const buildErrorsPathUri = vscode.Uri.joinPath(buildPathUri, 'BuildErrors');
+        
+        try {
+            // Try to stat the directory to see if it exists
+            await vscode.workspace.fs.stat(buildErrorsPathUri);
+            
+            // Directory exists, clear its contents
+            outputChannel.appendLine(this.t('Clearing BuildErrors folder: {0}', buildErrorsPathUri.fsPath));
+            const existingFiles = await vscode.workspace.fs.readDirectory(buildErrorsPathUri);
+            for (const [name, type] of existingFiles) {
+                const itemUri = vscode.Uri.joinPath(buildErrorsPathUri, name);
+                if (type === vscode.FileType.File) {
+                    await vscode.workspace.fs.delete(itemUri);
+                } else if (type === vscode.FileType.Directory) {
+                    await vscode.workspace.fs.delete(itemUri, { recursive: true });
+                }
+            }
+        } catch (error: any) {
+            if (error.code === 'FileNotFound' || error.code === 'ENOENT') {
+                // Directory doesn't exist, create it
+                outputChannel.appendLine(this.t('Creating BuildErrors folder: {0}', buildErrorsPathUri.fsPath));
+                await vscode.workspace.fs.createDirectory(buildErrorsPathUri);
+            } else {
+                throw error;
+            }
+        }
+        
+        return buildErrorsPathUri;
+    }
+
+    /**
+     * Checks BuildErrors folder for error files and notifies user if errors are found
+     * @returns true if errors were found, false if build was successful
+     */
+    private async checkBuildErrors(buildErrorsPathUri: vscode.Uri, outputChannel: vscode.OutputChannel): Promise<{hasErrors: boolean, junitFileUri?: vscode.Uri, errorCount?: number}> {
+        try {
+            const errorFiles = await vscode.workspace.fs.readDirectory(buildErrorsPathUri);
+            
+            if (errorFiles.length === 0) {
+                outputChannel.appendLine(this.t('Build completed successfully - no errors found.'));
+                return {hasErrors: false}; // No errors found
+            }
+
+            // outputChannel.appendLine(this.t('Build errors detected: {0} error files found', errorFiles.length.toString()));
+
+            // Look for JUnit XML files specifically
+            const junitFiles = errorFiles.filter(([name, type]) => 
+                type === vscode.FileType.File && name.toLowerCase().includes('junit') && name.toLowerCase().endsWith('.xml')
+            );
+
+            if (junitFiles.length > 0) {
+                // Parse the first JUnit file to check if there are actual failures
+                const junitFileName = junitFiles[0][0];
+                const junitFileUri = vscode.Uri.joinPath(buildErrorsPathUri, junitFileName);
+                
+                // Read and check the XML content first
+                const junitContent = Buffer.from(await vscode.workspace.fs.readFile(junitFileUri)).toString('utf-8');
+                
+                // Check if there are any actual failures in the XML
+                const testsuiteMatch = junitContent.match(/<testsuites[^>]*failures="(\d+)"[^>]*>/);
+                const totalFailures = testsuiteMatch ? parseInt(testsuiteMatch[1], 10) : 0;
+                
+                if (totalFailures === 0) {
+                    // No actual failures, just an empty XML file
+                    outputChannel.appendLine(this.t('Build completed successfully - no errors found.'));
+                    return {hasErrors: false};
+                }
+                
+                // There are real failures, parse them
+                const errorCount = await this.parseAndShowJunitErrors(junitFileUri, outputChannel, false); // Don't show notification here
+                return {hasErrors: true, junitFileUri, errorCount}; // Return status, file path, and error count
+            } else {
+                // Show generic error message for non-JUnit files
+                const fileNames = errorFiles.map(([name]) => name).join(', ');
+                const errorMessage = this.t('Build failed with errors. Check error files in BuildErrors folder: {0}', fileNames);
+                
+                vscode.window.showErrorMessage(errorMessage, this.t('Open BuildErrors Folder')).then(selection => {
+                    if (selection === this.t('Open BuildErrors Folder')) {
+                        vscode.commands.executeCommand('revealFileInOS', buildErrorsPathUri);
+                    }
+                });
+                return {hasErrors: true}; // Errors found but no JUnit file
+            }
+
+        } catch (error: any) {
+            outputChannel.appendLine(this.t('Error checking build errors: {0}', error.message || error));
+            return {hasErrors: false}; // Assume no errors if we can't check
+        }
+    }
+
+    /**
+     * Parses JUnit XML file and shows detailed error information
+     */
+    private async parseAndShowJunitErrors(junitFileUri: vscode.Uri, outputChannel: vscode.OutputChannel, showNotification: boolean = true): Promise<number> {
+        try {
+            const junitContent = Buffer.from(await vscode.workspace.fs.readFile(junitFileUri)).toString('utf-8');
+            
+            // Simple XML parsing to extract failure information
+            const failureMatches = junitContent.match(/<failure[^>]*message="([^"]*)"[^>]*>(.*?)<\/failure>/gs);
+            
+            if (!failureMatches || failureMatches.length === 0) {
+                outputChannel.appendLine(this.t('No detailed error information found in JUnit file.'));
+                return 0;
+            }
+
+            // Extract failed test names and scenario codes
+            const failedTests: {testName: string, scenarioCode: string}[] = [];
+            const testsuiteMatches = junitContent.match(/<testsuite[^>]*name="([^"]*)"[^>]*failures="[1-9]\d*"[^>]*>/g);
+            
+            if (testsuiteMatches) {
+                for (const testsuiteMatch of testsuiteMatches) {
+                    // Extract test name and remove "Компиляция настройки сценария" prefix
+                    const nameMatch = testsuiteMatch.match(/name="(?:Компиляция настройки сценария )?([^"]*)"/);
+                    if (!nameMatch) continue;
+                    
+                    const testName = nameMatch[1];
+                    
+                    // Find the failure element within this testsuite to extract scenario code and error
+                    const testsuiteStartIndex = junitContent.indexOf(testsuiteMatch);
+                    const testsuiteEndIndex = junitContent.indexOf('</testsuite>', testsuiteStartIndex);
+                    const testsuiteContent = junitContent.substring(testsuiteStartIndex, testsuiteEndIndex);
+                    
+                    // Extract failure message from this specific testsuite
+                    const failureMatch = testsuiteContent.match(/<failure[^>]*message="([^"]*)"[^>]*>/);
+                    if (failureMatch) {
+                        const message = failureMatch[1];
+                        
+                        // Extract scenario code (Код: <Item>) - look for the last occurrence
+                        let scenarioCode = '';
+                        const codeMatches = message.match(/Код:\s*&lt;([^&]*)&gt;/g);
+                        if (codeMatches && codeMatches.length > 0) {
+                            const lastCodeMatch = codeMatches[codeMatches.length - 1].match(/Код:\s*&lt;([^&]*)&gt;/);
+                            if (lastCodeMatch) {
+                                scenarioCode = lastCodeMatch[1];
+                            }
+                        }
+                        
+                        // No need to extract detailed error message - user can check XML file for details
+                        
+                        failedTests.push({
+                            testName,
+                            scenarioCode
+                        });
+                    } else {
+                        // Fallback if no detailed failure message found
+                        failedTests.push({
+                            testName,
+                            scenarioCode: ''
+                        });
+                    }
+                }
+            }
+
+            if (failedTests.length > 0) {
+                outputChannel.appendLine(`  ${this.t('Build failed with {0} compilation error(s):', failedTests.length.toString())}`);
+                failedTests.forEach((failedTest, index) => {
+                    const scenarioInfo = failedTest.scenarioCode ? ` - Scenario ${failedTest.scenarioCode}` : '';
+                    outputChannel.appendLine(`  ${index + 1}. ${failedTest.testName}${scenarioInfo}`);
+                });
+                
+                if (showNotification) {
+                    vscode.window.showErrorMessage(
+                        this.t('Build failed with {0} compilation errors. Open error file for details.', failedTests.length.toString()),
+                        this.t('Open Error File'),
+                        this.t('Show Output')
+                    ).then(selection => {
+                        if (selection === this.t('Open Error File')) {
+                            vscode.commands.executeCommand('vscode.open', junitFileUri);
+                        } else if (selection === this.t('Show Output')) {
+                            outputChannel.show();
+                        }
+                    });
+                }
+                
+                return failedTests.length;
+            }
+            
+            // If no failed tests found, return 0
+            return 0;
+
+        } catch (error: any) {
+            outputChannel.appendLine(this.t('Error parsing JUnit file: {0}', error.message || error));
+            return 0;
+        }
+    }
+
+    private async _handleRunAssembleScriptTypeScript(recordGLValue: string): Promise<void> {
         const methodStartLog = "[PhaseSwitcherProvider:_handleRunAssembleScriptTypeScript]";
-        console.log(`${methodStartLog} Starting with RecordGL=${recordGLValue}, DriveTrade=${driveTradeValue}`);
+        console.log(`${methodStartLog} Starting with RecordGL=${recordGLValue}`);
         const outputChannel = this.getOutputChannel();
         outputChannel.clear();
         
@@ -443,13 +707,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
-            title: this.t('Building 1C:Drive tests'),
+            title: this.t('Building .feature files'),
             cancellable: false
         }, async (progress) => {
             let featureFileDirUri: vscode.Uri; // Объявляем здесь, чтобы была доступна в конце
             try {
                 progress.report({ increment: 0, message: this.t('Preparing...') });
-                outputChannel.appendLine(`[${new Date().toISOString()}] Starting TypeScript YAML build process...`);
+                outputChannel.appendLine(`[${new Date().toISOString()}] ${this.t('Starting build process...')}`);
 
                 const workspaceFolders = vscode.workspace.workspaceFolders;
                 if (!workspaceFolders?.length) {
@@ -523,11 +787,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const absoluteBuildPath = absoluteBuildPathUri.fsPath;
                 
                 await vscode.workspace.fs.createDirectory(absoluteBuildPathUri);
-                outputChannel.appendLine(`Build directory ensured: ${absoluteBuildPath}`);
+                outputChannel.appendLine(this.t('Build directory ensured: {0}', absoluteBuildPath));
 
                 progress.report({ increment: 10, message: this.t('Copying parameters...') });
+                const projectPaths = this.getProjectPaths(workspaceRootUri);
                 const localSettingsPath = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_parameters.json');
-                const yamlParamsSourcePath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'develop_parallel', 'yaml_parameters.json');
+                const yamlParamsSourcePath = projectPaths.yamlParametersTemplate;
                 
                 await vscode.workspace.fs.copy(yamlParamsSourcePath, localSettingsPath, { overwrite: true });
 
@@ -543,40 +808,23 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 yamlParamsContent = yamlParamsContent.replace(/#SourcesPath/g, sourcesPathForwardSlash);
                 yamlParamsContent = yamlParamsContent.replace(/#SplitFeatureFiles/g, splitFeatureFilesValue);
                 await vscode.workspace.fs.writeFile(localSettingsPath, Buffer.from(yamlParamsContent, 'utf-8'));
-                outputChannel.appendLine(`yaml_parameters.json prepared at ${localSettingsPath.fsPath}`);
+                outputChannel.appendLine(this.t('yaml_parameters.json prepared at {0}', localSettingsPath.fsPath));
 
-                if (driveTradeValue === '1') {
-                    progress.report({ increment: 20, message: this.t('Processing DriveTrade...') });
-                    outputChannel.appendLine(`DriveTrade is 1, running CutCodeByTags.epf...`);
-                    const cutCodeEpfPath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'DriveTrade', 'CutCodeByTags.epf').fsPath;
-                    const errorLogPathForCut = vscode.Uri.joinPath(absoluteBuildPathUri, 'CutTestsByTags_error.log');
-                    const cutCodeParams = [
-                        "ENTERPRISE",
-                        `/IBConnectionString`, `"File=${emptyIbPath_raw};"`,
-                        `/L`, `en`, 
-                        `/DisableStartupMessages`,
-                        `/DisableStartupDialogs`,
-                        `/C"Execute;SourceDirectory=${path.join(workspaceRootPath, 'tests', 'RegressionTests', 'yaml')}\\; Extensions=yaml,txt,xml; ErrorFile=${errorLogPathForCut.fsPath}"`,
-                        `/Execute${cutCodeEpfPath}`
-                    ];
-                    await this.execute1CProcess(oneCExePath, cutCodeParams, workspaceRootPath, "CutCodeByTags.epf", 
-                        { filePath: errorLogPathForCut.fsPath, successContent: undefined, timeoutMs: 60000 });
-                }
+
 
                 progress.report({ increment: 40, message: this.t('Building YAML in feature...') });
-                outputChannel.appendLine(`Building YAML files to feature file...`);
+                outputChannel.appendLine(this.t('Building YAML files to feature file...'));
                 const yamlBuildLogFileUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_build_log.txt');
                 const yamlBuildResultFileUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_build_result.txt');
-                const buildScenarioBddEpfPath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'BuildScenarioBDD.epf').fsPath;
+                const buildScenarioBddEpfPath = projectPaths.buildScenarioBddEpf.fsPath;
+
+                // Prepare BuildErrors folder (create if missing, clear if exists)
+                const buildErrorsPathUri = await this.prepareBuildErrorsFolder(absoluteBuildPathUri, outputChannel);
 
                 const yamlBuildParams = [
-                    "ENTERPRISE",
-                    `/IBConnectionString`, `"File=${emptyIbPath_raw};"`,
-                    `/L`, `en`,
-                    `/DisableStartupMessages`,
-                    `/DisableStartupDialogs`,
+                    ...this.buildStartupParams(emptyIbPath_raw),
                     `/Execute`, `"${buildScenarioBddEpfPath}"`,
-                    `/C"СобратьСценарии;JsonParams=${localSettingsPath.fsPath};ResultFile=${yamlBuildResultFileUri.fsPath};LogFile=${yamlBuildLogFileUri.fsPath}"`
+                    this.buildBuildScenarioBddCommand(localSettingsPath.fsPath, yamlBuildResultFileUri.fsPath, yamlBuildLogFileUri.fsPath, buildErrorsPathUri.fsPath)
                 ];
                 await this.execute1CProcess(oneCExePath, yamlBuildParams, workspaceRootPath, "BuildScenarioBDD.epf", 
                     { filePath: yamlBuildResultFileUri.fsPath, successContent: "0", timeoutMs: 600000 }); 
@@ -592,16 +840,18 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                      if (e.code === 'FileNotFound') throw new Error(this.t('Build result file {0} not found after waiting.', yamlBuildResultFileUri.fsPath));
                      throw e; 
                 }
-                outputChannel.appendLine(`YAML build successful.`);
+                outputChannel.appendLine(this.t('YAML build successful.'));
 
                 progress.report({ increment: 70, message: this.t('Writing parameters...') });
                 const vanessaErrorLogsDir = vscode.Uri.joinPath(absoluteBuildPathUri, "vanessa_error_logs");
                 await vscode.workspace.fs.createDirectory(vanessaErrorLogsDir);
 
-                outputChannel.appendLine(`Writing parameters from pipeline into tests...`);
-                featureFileDirUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'tests', 'EtalonDrive');
+                outputChannel.appendLine(this.t('Writing parameters from pipeline into tests...'));
+                featureFileDirUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'tests/EtalonDrive');
                 const featureFilesPattern = new vscode.RelativePattern(featureFileDirUri, '**/*.feature');
                 const featureFiles = await vscode.workspace.findFiles(featureFilesPattern);
+
+
 
                 if (featureFiles.length > 0) {
                     const emailAddr = config.get<string>('params.emailAddress') || '';
@@ -624,65 +874,158 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         fileContent = fileContent.replace(/EMailTestOutgoingMailServerParameterFromPipeline/g, emailOutServer);
                         fileContent = fileContent.replace(/EMailTestOutgoingMailPortParameterFromPipeline/g, emailOutPort);
                         fileContent = fileContent.replace(/EMailTestProtocolParameterFromPipeline/g, emailProto);
-                        fileContent = fileContent.replace(/DriveTradeParameterFromPipeline/g, driveTradeValue === '1' ? 'Yes' : 'No');
+                        fileContent = fileContent.replace(/DriveTradeParameterFromPipeline/g, 'No');
                         await vscode.workspace.fs.writeFile(fileUri, Buffer.from(fileContent, 'utf-8'));
                     }
                 }
                 
                 progress.report({ increment: 90, message: this.t('Correcting files...') });
-                outputChannel.appendLine(`Repairing specific feature files...`);
+                outputChannel.appendLine(this.t('Repairing specific feature files...'));
+                if (projectPaths.repairTestFileEpf) {
                 const filesToRepairRelative = [
                     'tests/EtalonDrive/001_Company_tests.feature',
                     'tests/EtalonDrive/I_start_my_first_launch.feature',
                     'tests/EtalonDrive/I_start_my_first_launch_templates.feature'
                 ];
-                const repairScriptEpfPath = vscode.Uri.joinPath(workspaceRootUri, 'build', 'RepairTestFile.epf').fsPath;
+                    const repairScriptEpfPath = projectPaths.repairTestFileEpf.fsPath;
 
                 for (const relativePathSuffix of filesToRepairRelative) {
                     const featureFileToRepairUri = vscode.Uri.joinPath(featureFileDirUri, path.basename(relativePathSuffix)); 
                     try {
                         await vscode.workspace.fs.stat(featureFileToRepairUri); 
-                        const repairParams = ["ENTERPRISE", `/IBConnectionString`, `"File=${emptyIbPath_raw};"`, `/L`, `en`, `/DisableStartupMessages`, `/DisableStartupDialogs`, `/Execute`, `"${repairScriptEpfPath}"`, `/C"TestFile=${featureFileToRepairUri.fsPath}"`];
+                            const repairParams = [
+                                ...this.buildStartupParams(emptyIbPath_raw),
+                                `/Execute`, `"${repairScriptEpfPath}"`,
+                                `/C"TestFile=${featureFileToRepairUri.fsPath}"`
+                            ];
                         await this.execute1CProcess(oneCExePath, repairParams, workspaceRootPath, "RepairTestFile.epf");
                     } catch (error: any) {
                         if (error.code !== 'FileNotFound') {
                             outputChannel.appendLine(`--- WARNING: Error repairing file ${featureFileToRepairUri.fsPath}: ${error.message || error} ---`);
                         }
                     }
+                    }
+                } else {
+                    outputChannel.appendLine(this.t('Feature file repair processing skipped - RepairTestFile.epf path not configured'));
                 }
                 
                 const companyTestFeaturePath = vscode.Uri.joinPath(featureFileDirUri, '001_Company_tests.feature');
                 try {
-                    outputChannel.appendLine(`Removing "Administrator" from 001_Company_tests...`);
+                    outputChannel.appendLine(this.t('Removing "Administrator" from 001_Company_tests...'));
                     await vscode.workspace.fs.stat(companyTestFeaturePath);
-                    outputChannel.appendLine(`  - Correcting user in ${companyTestFeaturePath.fsPath}`);
+                    outputChannel.appendLine(this.t('  - Correcting user in {0}', companyTestFeaturePath.fsPath));
                     const companyTestContentBytes = await vscode.workspace.fs.readFile(companyTestFeaturePath);
                     let companyTestContent = Buffer.from(companyTestContentBytes).toString('utf-8');
     
                     companyTestContent = companyTestContent.replace(/using "Administrator"/g, 'using ""');
                     
                     await vscode.workspace.fs.writeFile(companyTestFeaturePath, Buffer.from(companyTestContent, 'utf-8'));
-                    outputChannel.appendLine(`  - Correction applied successfully.`);
+                    outputChannel.appendLine(this.t('  - Correction applied successfully.'));
     
                 } catch (error: any) {
                     if (error.code === 'FileNotFound') {
-                        outputChannel.appendLine(`  - Skipped user correction: ${companyTestFeaturePath.fsPath} not found.`);
+                        outputChannel.appendLine(this.t('  - Skipped user correction: {0} not found.', companyTestFeaturePath.fsPath));
                     } else {
-                        outputChannel.appendLine(`--- WARNING: Error applying correction to ${companyTestFeaturePath.fsPath}: ${error.message || error} ---`);
+                        outputChannel.appendLine(this.t('--- WARNING: Error applying correction to {0}: {1} ---', companyTestFeaturePath.fsPath, error.message || error));
                     }
                 }
 
+                                progress.report({ increment: 95, message: this.t('Checking for build errors...') });
+ 
+                // Log build results summary
+                outputChannel.appendLine(`${'='.repeat(60)}`);
+                outputChannel.appendLine(`${this.t('Build Results Summary')}`);
+                outputChannel.appendLine(`${'='.repeat(60)}`);
+                
+                // Log successfully built scenarios first
+                if (featureFiles.length > 0) {
+                    outputChannel.appendLine(`  ${this.t('Successfully built {0} scenario(s):', featureFiles.length.toString())}`);
+                    featureFiles.forEach((fileUri, index) => {
+                        const fileName = path.basename(fileUri.fsPath, '.feature');
+                        outputChannel.appendLine(`  ${index + 1}. ${fileName}`);
+                    });
+                } else {
+                    outputChannel.appendLine(`  ${this.t('No scenarios were built.')}`);
+                }
+                
+                // Check for build errors after showing successes
+                const buildResult = await this.checkBuildErrors(buildErrorsPathUri, outputChannel);
+                const hasErrors = buildResult.hasErrors;
+                const junitFileUri = buildResult.junitFileUri;
+                const errorCount = buildResult.errorCount || 0;
+                
                 progress.report({ increment: 100, message: this.t('Completed!') });
-                outputChannel.appendLine(`TypeScript YAML build process completed successfully.`);
-                sendStatus(this.t('Tests successfully built.'), true, 'assemble', true); 
+                
+                const scenariosBuilt = featureFiles.length > 0;
+                
+                if (hasErrors && scenariosBuilt) {
+                    // Has errors but some scenarios were built
+                    outputChannel.appendLine(this.t('Build process completed with errors, but {0} scenario(s) were built.', featureFiles.length.toString()));
+                    if (junitFileUri) {
+                        outputChannel.appendLine(this.t('For more details, check {0}', junitFileUri.fsPath));
+                    }
+                    sendStatus(this.t('Build completed with errors.'), true, 'assemble', true);
+                    
+                    // Prepare buttons based on whether JUnit file is available
+                    const buttons = [this.t('Open folder'), this.t('Show Output')];
+                    if (junitFileUri) {
+                        buttons.push(this.t('Open Error File'));
+                    }
+                    
+                    vscode.window.showWarningMessage(
+                        this.t('Build completed: {0} successful, {1} errors.', featureFiles.length.toString(), errorCount.toString()),
+                        ...buttons
+                    ).then(selection => {
+                        if (selection === this.t('Open folder')) {
+                            vscode.commands.executeCommand('1cDriveHelper.openBuildFolder', featureFileDirUri.fsPath);
+                        } else if (selection === this.t('Show Output')) {
+                            outputChannel.show();
+                        } else if (selection === this.t('Open Error File') && junitFileUri) {
+                            vscode.commands.executeCommand('vscode.open', junitFileUri);
+                        }
+                    });
+                } else if (hasErrors && !scenariosBuilt) {
+                    // Has errors and no scenarios built
+                    outputChannel.appendLine(this.t('Build process failed - no scenarios were built.'));
+                    if (junitFileUri) {
+                        outputChannel.appendLine(this.t('For more details, check {0}', junitFileUri.fsPath));
+                    }
+                    sendStatus(this.t('Build failed - no scenarios built.'), true, 'assemble', true);
+                    
+                    // Show single simplified notification for complete failure
+                    const buttons = [this.t('Show Output')];
+                    if (junitFileUri) {
+                        buttons.push(this.t('Open Error File'));
+                    }
+                    
+                    vscode.window.showErrorMessage(
+                        this.t('Build failed: {0} errors.', errorCount.toString()),
+                        ...buttons
+                    ).then(selection => {
+                        if (selection === this.t('Show Output')) {
+                            outputChannel.show();
+                        } else if (selection === this.t('Open Error File') && junitFileUri) {
+                            vscode.commands.executeCommand('vscode.open', junitFileUri);
+                        }
+                    });
+                } else if (!hasErrors && scenariosBuilt) {
+                    // No errors and scenarios built - perfect success
+                    outputChannel.appendLine(this.t('Build process completed successfully with {0} scenario(s).', featureFiles.length.toString()));
+                    sendStatus(this.t('Tests successfully built.'), true, 'assemble', true); 
                 vscode.window.showInformationMessage(
-                    this.t('Tests successfully built.'),
-                    this.t('Open folder')
+                        this.t('Build completed: {0} successful.', featureFiles.length.toString()),
+                        this.t('Open folder')
                 ).then(selection => {
-                    if (selection === this.t('Open folder')) {
+                        if (selection === this.t('Open folder')) {
                         vscode.commands.executeCommand('1cDriveHelper.openBuildFolder', featureFileDirUri.fsPath);
                     }
                 });
+                } else {
+                    // No errors but no scenarios built either (strange case)
+                    outputChannel.appendLine(this.t('Build process completed but no scenarios were found.'));
+                    sendStatus(this.t('Build completed - no scenarios found.'), true, 'assemble', true);
+                    vscode.window.showWarningMessage(this.t('Build completed but no scenarios were found.'));
+                }
 
             } catch (error: any) {
                 console.error(`${methodStartLog} Error:`, error);
@@ -875,7 +1218,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const workspaceRootUri = workspaceFolders[0].uri;
 
         const baseOnDirUri = vscode.Uri.joinPath(workspaceRootUri, SCAN_DIR_RELATIVE_PATH);
-        const baseOffDirUri = vscode.Uri.joinPath(workspaceRootUri, 'RegressionTests_Disabled', 'Yaml', 'Drive');
+        const projectPaths = this.getProjectPaths(workspaceRootUri);
+        const baseOffDirUri = projectPaths.disabledTestsDirectory;
+        
+
 
         if (this._view.webview) {
             this._view.webview.postMessage({ command: 'updateStatus', text: this.t('Applying changes...'), enableControls: false, refreshButtonEnabled: false });
@@ -934,7 +1280,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
             }
 
-            const resultMessage = this.t('Enabled: {0}, Disabled: {1}, Skipped (not in UI): {2}, Errors: {3}', 
+            const resultMessage = this.t('Enabled: {0}, Disabled: {1}, Skipped: {2}, Errors: {3}', 
                 String(stats.enabled), String(stats.disabled), String(stats.skipped), String(stats.error));
             if (stats.error > 0) { vscode.window.showWarningMessage(this.t('Changes applied with errors! {0}', resultMessage)); }
             else if (stats.enabled > 0 || stats.disabled > 0) { vscode.window.showInformationMessage(this.t('Phase changes successfully applied! {0}', resultMessage)); }

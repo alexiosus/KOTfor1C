@@ -1,5 +1,24 @@
 # Change Log
 
+# 1.9.9
+- **New Features**:
+    - **Configurable 1C Startup Parameters:**
+        - Added ability to configure all 1C:Enterprise startup parameters through a single settings string.
+        - Separate setting for additional `/C` parameters for BuildScenarioBDD (СборкаТекстовСценариев) processing. Read more about parameters [here](https://its.1c.ru/db/sppr2doc#content:124:hdoc) (Russian).
+    - **Configurable Project Paths:**
+        - All previously hardcoded paths can now be configured through extension settings.
+        - Optional EPF files (`RepairTestFile.epf`) - processing is skipped if path is not set.
+        - FirstLaunch folder path setting with automatic button hiding if folder doesn't exist.
+    - **Enhanced Build Feedback:**
+        - Improved build result notifications.
+        - Improved Output log display.
+        - "Open Error File" button for quick access to JUnit XML file with details.
+        - Accurate error detection through JUnit XML file content analysis.
+- **Fixes and Improvements**:
+    - **Optimized Localization Files:** Removed unused translation strings.
+    - **Fixed Settings Numbering:** All settings now have sequential order numbers for correct display.
+    - **Removed Legacy Functionality:** Completely removed DriveTrade processing.
+
 # 1.9.1
 - **New Features**:
     - **Multilingual Support:**

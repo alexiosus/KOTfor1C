@@ -26,11 +26,23 @@
   "config.splitFeatureFiles.description": "Сохранять при сборке приложенные к тестам файлы в отдельную папку.",
   "config.showOutputPanel.description": "Автоматически показывать панель Output при запуске сборки тестов.",
 
+  "config.startupParameters.title": "Параметры запуска 1С:Предприятие",
+  "config.startupParams.parameters.description": "Параметры запуска 1С:Предприятие (разделенные пробелами, например, '/L ru /DisableStartupMessages /Debug')",
+  "config.startupParams.buildScenarioBddParams.markdownDescription": "Пользовательские параметры для обработки СборкаТекстовСценариев (например, 'CustomParam=Value;AnotherParam=123').  \n[Подробнее на ИТС](https://its.1c.ru/db/sppr2doc#content:124:hdoc)",
+
   "config.pathsSettings.title": "Настройки системных путей",
   "config.emptyInfobase.description": "Путь к каталогу пустой файловой информационной базы (EmptyInfobasePath).",
   "config.buildPath.description": "Путь к папке для собранных тестов (BuildPath).",
   "config.oneCEnterpriseExe.description": "Полный путь к исполняемому файлу 1cv8.exe (Windows) или 1cestart (macOS).",
   "config.fileWorkshopExe.description": "Полный путь к '1С:Предприятие — работа с файлами' (1cv8fv.exe).",
+
+  "config.paths.buildScenarioBddEpf.description": "Относительный путь к обработке СборкаТекстовСценариев.epf для преобразования YAML в Feature",
+  "config.paths.repairTestFileEpf.description": "Относительный путь к RepairTestFile.epf для удаления лишних шагов конкретных feature файлов (оставьте пустым для пропуска)",
+  "config.paths.yamlParametersTemplate.description": "Относительный путь к шаблону yaml_parameters.json с дополнительными параметрами",
+  "config.paths.yamlSourceDirectory.description": "Относительный путь к исходной папке YAML",
+  "config.paths.disabledTestsDirectory.description": "Относительный путь к папке отключенных тестов (Зеркально к Yaml Source Directory)",
+  "config.paths.firstLaunchFolder.description": "Относительный путь к папке набора данных первого запуска (кнопка сборки архива первого запуска показывается только если папка существует)",
+
 
   "cmd.category": "1C:Drive Test Helper",
   "cmd.saveEmailPassword.title": "1C:Drive - Установить пароль тестовой почты",
