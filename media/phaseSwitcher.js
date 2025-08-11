@@ -782,7 +782,7 @@
         updateStatus(window.__loc?.statusApplyingPhaseChanges || 'Applying phase changes...', 'main', false);
         enablePhaseControls(false, false); enableAssembleControls(false);
         if(applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;
-        vscode.postMessage({ command: 'applyChanges', states: statesToSend });
+        vscode.postMessage({ command: 'applyChanges', data: statesToSend });
     });
 
     if(selectAllBtn instanceof HTMLButtonElement) selectAllBtn.addEventListener('click', () => {

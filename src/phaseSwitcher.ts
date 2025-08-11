@@ -227,7 +227,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         webviewView.webview.onDidReceiveMessage(async message => {
             switch (message.command) {
                 case 'applyChanges':
-                    if (!message.data || !Array.isArray(message.data)) {
+                    if (!message.data || typeof message.data !== 'object') {
                         vscode.window.showErrorMessage(this.t('Error: Invalid data received for application.'));
                         this._view?.webview.postMessage({ command: 'updateStatus', text: this.t('Error: invalid data.'), enableControls: true });
                         return;

@@ -1,6 +1,6 @@
 # Change Log
 
-# 1.9.0
+# 1.9.1
 - **New Features**:
     - **Multilingual Support:**
         - Complete localization of the extension interface in Russian and English.

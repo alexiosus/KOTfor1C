@@ -1,7 +1,7 @@
 # 1C:Drive Test Helper
 <p align="center">
   <img src="./docs/1CDriveTestHelper_poster.png" alt="Иконка 1C:Drive Test Helper" width="600"/><br>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.9.0-yellow"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.9.1-yellow"></a>
 </p>
 
 <p align="center">
