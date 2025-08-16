@@ -7,10 +7,13 @@
   "config.localization.system.desc": "Следовать языку интерфейса VS Code",
   "config.localization.en.desc": "Английский",
   "config.localization.ru.desc": "Русский",
-  "config.enablePhaseSwitcher.description": "Включить панель \"Phase Switcher\".",
-  "config.enableAssembleTests.description": "Включить панель \"Сборка\".",
+
   "config.autoCollapseOnOpen.description": "Автоматически сворачивать секции 'ВложенныеСценарии' и 'ПараметрыСценария' при открытии файла.",
   "config.stepsExternalUrl.description": "URL для загрузки файла steps.htm с определениями шагов Gherkin. Оставьте пустым, чтобы использовать файл из расширения.",
+  "config.autoFillNestedScenariosOnSave.description": "Автоматически заполнять секцию 'ВложенныеСценарии' недостающими сценариями при сохранении YAML файлов.",
+  "config.autoFillScenarioParametersOnSave.description": "Автоматически заполнять секцию 'ПараметрыСценария' недостающими параметрами при сохранении YAML файлов.",
+  "config.autoReplaceTabsWithSpacesOnSave.description": "Автоматически заменять табуляции на 4 пробела при сохранении YAML файлов.",
+  "config.showRefillMessages.description": "Показывать уведомления при автоматическом перезаполнении секций при сохранении.",
 
   "config.mailSettings.title": "Настройки тестовой почты",
   "config.emailAddress.description": "Тестовый Email адрес (EMailTestEmailAddress).",

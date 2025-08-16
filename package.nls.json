@@ -7,10 +7,13 @@
   "config.localization.system.desc": "Follow VS Code UI language",
   "config.localization.en.desc": "English",
   "config.localization.ru.desc": "Russian",
-  "config.enablePhaseSwitcher.description": "Enable the \"Phase Switcher\" panel.",
-  "config.enableAssembleTests.description": "Enable the \"Assembly\" panel.",
+
   "config.autoCollapseOnOpen.description": "Automatically collapse 'NestedScenarios' ('ВложенныеСценарии') and 'ScenarioParameters' ('ПараметрыСценария') sections when opening a file.",
   "config.stepsExternalUrl.description": "URL to download steps.htm with Gherkin step definitions. Leave empty to use the file from the extension.",
+  "config.autoFillNestedScenariosOnSave.description": "Automatically fill 'NestedScenarios' section with missing scenarios when saving YAML files.",
+  "config.autoFillScenarioParametersOnSave.description": "Automatically fill 'ScenarioParameters' section with missing parameters when saving YAML files.",
+  "config.autoReplaceTabsWithSpacesOnSave.description": "Automatically replace tabs with 4 spaces when saving YAML files.",
+  "config.showRefillMessages.description": "Show notification messages when sections are automatically refilled on save.",
 
   "config.mailSettings.title": "Test Mail Settings",
   "config.emailAddress.description": "Test email address (EMailTestEmailAddress).",

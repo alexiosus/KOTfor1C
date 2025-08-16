@@ -41,6 +41,7 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                 const lines = fileContent.split('\n');
 
                 let name: string | null = null;
+                let uid: string | null = null;
                 let parsedTabName: string | undefined = undefined;
                 let parsedDefaultState: boolean | undefined = undefined;
                 let parsedOrder: number | undefined = undefined;
@@ -64,6 +65,14 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                         const nameMatch = line.match(/^\s*Имя:\s*\"(.+?)\"\s*$/);
                         if (nameMatch && nameMatch[1]) {
                             name = nameMatch[1];
+                        }
+                    }
+
+                    // Извлечение UID сценария
+                    if (uid === null) {
+                        const uidMatch = line.match(/^\s*UID:\s*\"(.+?)\"\s*$/);
+                        if (uidMatch && uidMatch[1]) {
+                            uid = uidMatch[1];
                         }
                     }
 
@@ -183,7 +192,8 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                         name, 
                         yamlFileUri: fileUri, 
                         relativePath: relativePathValue,
-                        parameters: uniqueParameters
+                        parameters: uniqueParameters,
+                        uid: uid || undefined
                     };
 
                     if (tabMarkerFound) { // Добавляем данные для PhaseSwitcher только если маркер был

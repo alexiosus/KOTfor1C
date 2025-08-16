@@ -1,7 +1,7 @@
 # 1C:Drive Test Helper
 <p align="center">
   <img src="./docs/1CDriveTestHelper_poster.png" alt="1C:Drive Test Helper Icon" width="600"/><br>
-  <a href="CHANGELOG.en.md"><img src="https://img.shields.io/badge/version-1.9.9-yellow"></a>
+  <a href="CHANGELOG.en.md"><img src="https://img.shields.io/badge/version-1.10.5-yellow"></a>
 </p>
 
 <p align="center">
@@ -45,9 +45,12 @@ Helper for developing and managing 1C regression tests in VS Code. Speeds up nav
             * `<Parent folder>/<Name>/files/`
 
 * **Code insertion (Snippets):**
-    * **Fill NestedScenarios section:** Quickly inserts missing blocks in the `NestedScenarios` (`ВложенныеСценарии`) section for all found scenario calls in the open file with corresponding `Name` and `UID`.
-    * **Fill ScenarioParameters section:** Quickly inserts missing blocks in the `ScenarioParameters` (`ПараметрыСценария`) section for all found parameters in the open file.
-    * **Replace tabs with spaces:** When saving the file, it automatically converts tabs to 4 spaces.
+    * **Fill NestedScenarios section:** Refills the `NestedScenarios` (`ВложенныеСценарии`) section with all scenario calls found in the scenario text with corresponding `Name` and `UID`. Supports correct order according to call sequence.
+    * **Fill ScenarioParameters section:** Refills the `ScenarioParameters` (`ПараметрыСценария`) section with all parameters found in the scenario text. Preserves custom parameter values during refill.
+    * **Auto-fill on Save:** Automatic execution of section filling operations when saving YAML files (switchable in Settings):
+        * **Replace tabs with spaces**
+        * **Auto-fill NestedScenarios**
+        * **Auto-fill ScenarioParameters**
     * **Insert new UID:** Generates and inserts a new UUID v4 at the current cursor position.
 
 
@@ -114,6 +117,7 @@ The main difference is that there's no longer a need for external configuration 
 1.  **Installation:**
     * Install from [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=AlexeyEremeev.1c-drive-test-helper)
     * Or Extensions View -> "..." -> "Install from VSIX..." -> Select the downloaded/built `.vsix` file.
+    * **Important:** After updating the extension, it's recommended to restart VS Code for all features to work correctly.
 2.  **Configuration:**<br>
     You can access the extension settings through the standard method via general settings or **via the settings button from the Activity Bar panel**.
     * `Enable "Phase Switcher" panel`: toggles the display of the **Phase Switcher section in Activity Bar** (enabled by default)
@@ -121,6 +125,10 @@ The main difference is that there's no longer a need for external configuration 
     * `Language override`: sets the extension's interface language independently of VS Code's language (system/en/ru). Does not affect the display language of settings page and context menus (they are displayed in the VS Code interface language).
     * `Gherkin steps URL`: URL for loading the `steps.htm` file. Leave empty to use the file from the extension, or specify your own for dynamic updates.
     * `Auto collapse on open`: Automatically collapse `NestedScenarios` (`ВложенныеСценарии`) and `ScenarioParameters` (`ПараметрыСценария`) sections when opening a file.
+    * **Auto-fill on Save settings**:
+      * `Auto Replace Tabs with Spaces on Save`: Automatically replace tabs with spaces when saving YAML files (enabled by default).
+      * `Auto Fill Nested Scenarios on Save`: Automatically fill NestedScenarios section when saving YAML files (enabled by default).
+      * `Auto Fill Scenario Parameters on Save`: Automatically fill ScenarioParameters section when saving YAML files (enabled by default).
     * **Test email settings**:
       * `Email Address`: email address used in tests
       * `Email Password`: password for the email used in tests. For security purposes, it is set separately through a command, saved in VS Code's secure storage (`SecretStorage`). Can be removed from storage with a separate command.

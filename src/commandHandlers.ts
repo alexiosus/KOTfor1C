@@ -87,7 +87,7 @@ async function findFileFromText(
     // Поиск файла сценария по имени (только для имен без расширения)
     for (const name of potentialFileNames) {
         if (path.extname(name) === '') {
-            const scenarioUri = await findFileByName(name);
+            const scenarioUri = await findFileByName(name, testCache);
             if (scenarioUri) {
                 console.log(`[Cmd:findFileFromText] Found scenario file: ${scenarioUri.fsPath}`);
                 return scenarioUri;
@@ -268,7 +268,7 @@ export async function revealFileInOSHandler(textEditor: vscode.TextEditor, edit:
  * Обработчик команды открытия вложенного сценария.
  * Ищет файл сценария по имени и открывает его в редакторе.
  */
-export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit, phaseSwitcherProvider: PhaseSwitcherProvider) {
     const t = await getTranslator(getExtensionUri());
     
     await vscode.window.withProgress({
@@ -305,7 +305,9 @@ export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit
         
         progress.report({ increment: 25, message: t('Opening scenario file...') });
         
-        const targetUri = await findFileByName(scenarioNameFromLine);
+        // Use cached data for fast scenario lookup
+        const testCache = phaseSwitcherProvider.getTestCache();
+        const targetUri = await findFileByName(scenarioNameFromLine, testCache);
         if (targetUri && targetUri.fsPath !== document.uri.fsPath) {
             console.log(`[Cmd:openSubscenario] Target found: ${targetUri.fsPath}. Opening...`);
             try {
@@ -416,7 +418,7 @@ export async function findCurrentFileReferencesHandler() {
  * Вставляет в конец блока "ВложенныеСценарии:" без пустых строк между элементами.
  * Если выделена строка вида "And ИмяСценария", пытается заполнить UID и Имя из найденного сценария.
  */
-export async function insertNestedScenarioRefHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+export async function insertNestedScenarioRefHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit, phaseSwitcherProvider: PhaseSwitcherProvider) {
     const document = textEditor.document;
     const text = document.getText();
 
@@ -432,7 +434,8 @@ export async function insertNestedScenarioRefHandler(textEditor: vscode.TextEdit
         if (scenarioCallMatch && scenarioCallMatch[1]) {
             const scenarioNameFromSelection = scenarioCallMatch[1].trim();
             console.log(`[Cmd:insertNestedScenarioRef] Selected text matches, trying to find scenario: "${scenarioNameFromSelection}"`);
-            const targetFileUri = await findFileByName(scenarioNameFromSelection);
+            const testCache = phaseSwitcherProvider.getTestCache();
+            const targetFileUri = await findFileByName(scenarioNameFromSelection, testCache);
 
             if (targetFileUri) {
                 console.log(`[Cmd:insertNestedScenarioRef] Found target file: ${targetFileUri.fsPath}`);
@@ -856,209 +859,15 @@ function parseCalledScenariosFromScriptBody(documentText: string): string[] {
 /**
  * Обработчик команды проверки и заполнения вложенных сценариев.
  */
-export async function checkAndFillNestedScenariosHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
-    const t = await getTranslator(getExtensionUri());
-    
-    await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: t('Filling nested scenarios...'),
-        cancellable: false
-    }, async (progress) => {
-        console.log("[Cmd:checkAndFillNestedScenarios] Starting...");
-        const document = textEditor.document;
-        const fullText = document.getText();
-
-        progress.report({ increment: 20, message: t('Scanning for called scenarios...') });
-
-        const existingNestedScenarios = parseExistingNestedScenarios(fullText);
-        const calledScenariosInBody = parseCalledScenariosFromScriptBody(fullText);
-
-        const scenariosToAdd: { name: string; uid: string }[] = [];
-
-        progress.report({ increment: 40, message: t('Processing scenario files...') });
-
-        for (const calledName of calledScenariosInBody) {
-            if (!existingNestedScenarios.includes(calledName)) {
-                const targetFileUri = await findFileByName(calledName);
-                if (targetFileUri) {
-                    let uid = uuidv4();
-                    let nameForBlock = calledName;
-                    try {
-                        const fileContentBytes = await vscode.workspace.fs.readFile(targetFileUri);
-                        const fileContent = Buffer.from(fileContentBytes).toString('utf-8');
-                        const dataScenarioBlockRegex = /ДанныеСценария:\s*([\s\S]*?)(?=\n[А-Яа-яЁёA-Za-z]+:|\n*$)/;
-                        const dataScenarioBlockMatch = fileContent.match(dataScenarioBlockRegex);
-
-                        if (dataScenarioBlockMatch && dataScenarioBlockMatch[1]) {
-                            const blockContent = dataScenarioBlockMatch[1];
-                            const uidMatch = blockContent.match(/^\s*UID:\s*"([^"]+)"/m);
-                            const nameFileMatch = blockContent.match(/^\s*Имя:\s*"([^"]+)"/m);
-
-                            if (uidMatch && uidMatch[1]) {
-                                uid = uidMatch[1];
-                            }
-                            // console.log(`[Cmd:checkAndFillNestedScenarios] Found details for "${calledName}": UID=${uid}, NameInFile=${nameFileMatch ? nameFileMatch[1] : 'N/A'}`);
-                        } else {
-                            // console.log(`[Cmd:checkAndFillNestedScenarios] 'ДанныеСценария:' block not found in target file for "${calledName}". Using generated UID.`);
-                        }
-                    } catch (error) {
-                        // console.error(`[Cmd:checkAndFillNestedScenarios] Error reading/parsing target file for "${calledName}":`, error, ". Using generated UID.");
-                    }
-                    scenariosToAdd.push({ name: nameForBlock, uid: uid });
-                } else {
-                    // console.log(`[Cmd:checkAndFillNestedScenarios] Scenario file not found for "${calledName}". It will not be added to 'ВложенныеСценарии'.`);
-                }
-            }
-        }
-
-        if (scenariosToAdd.length === 0) {
-            vscode.window.showInformationMessage(t('All called scenarios are already present in the "NestedScenarios" section.'));
-            console.log("[Cmd:checkAndFillNestedScenarios] No scenarios to add.");
-            return;
-        }
-
-        progress.report({ increment: 60, message: t('Adding nested scenarios to file...') });
-
-        const nestedSectionHeaderRegex = /ВложенныеСценарии:/;
-        const nestedMatch = fullText.match(nestedSectionHeaderRegex);
-
-        if (!nestedMatch || nestedMatch.index === undefined) {
-            vscode.window.showInformationMessage(t('Section "NestedScenarios:" not found. New scenarios will not be added.'));
-            console.log("[Cmd:checkAndFillNestedScenarios] 'ВложенныеСценарии:' section not found.");
-            return;
-        }
-
-        const sectionHeaderGlobalStartOffset = nestedMatch.index;
-        const sectionHeaderLineText = nestedMatch[0];
-        const afterHeaderOffset = sectionHeaderGlobalStartOffset + sectionHeaderLineText.length;
-
-        const nextMajorKeyRegex = /\n(?![ \t])([А-Яа-яЁёA-Za-z]+:)/g;
-        nextMajorKeyRegex.lastIndex = afterHeaderOffset;
-        const nextMajorKeyMatchResult = nextMajorKeyRegex.exec(fullText);
-        const sectionContentEndOffset = nextMajorKeyMatchResult ? nextMajorKeyMatchResult.index : fullText.length;
-
-        const rawSectionContent = fullText.substring(afterHeaderOffset, sectionContentEndOffset);
-
-        let effectiveInsertPosition: vscode.Position;
-        let baseIndentForNewItems = '    ';
-        let newItemsBlockPrefix = "";
-
-        let foundExistingItems = false;
-        let lastItemBlockEndGlobalOffset = -1;
-        let maxExistingItemNumber = 0;
-
-        // Используем contentLinesForParsing для определения существующих элементов и их отступов
-        // Начальный listItemsAreaStartRelativeOffset нужен, чтобы правильно считать смещения внутри rawSectionContent
-        const listItemsAreaStartRelativeOffset = rawSectionContent.startsWith('\n') ? 1 : 0;
-        const contentLinesForParsing = rawSectionContent.substring(listItemsAreaStartRelativeOffset).split('\n');
-    
-    // Regex to find the start of an item, allowing for optional numbering
-    const itemStartRegex = /^(\s*)- ВложенныеСценарии(\d*):/;
-
-    if (rawSectionContent.trim() !== "") {
-        let currentItemBaseIndent = '';
-        for (let i = 0; i < contentLinesForParsing.length; i++) {
-            const lineText = contentLinesForParsing[i];
-            // Проверяем, что строка не пустая перед матчингом, чтобы избежать ложных срабатываний на пустых строках в contentLinesForParsing
-            if (lineText.trim() === "") continue;
-
-            const itemStartMatch = lineText.match(itemStartRegex);
-            if (itemStartMatch) {
-                foundExistingItems = true;
-                currentItemBaseIndent = itemStartMatch[1];
-                baseIndentForNewItems = currentItemBaseIndent;
-
-                if (itemStartMatch[2]) { // If digits are present (group 2 of regex)
-                    const num = parseInt(itemStartMatch[2], 10);
-                    if (num > maxExistingItemNumber) {
-                        maxExistingItemNumber = num;
-                    }
-                }
-                
-                let currentItemLastLineIndex = i;
-
-                for (let j = i + 1; j < contentLinesForParsing.length; j++) {
-                    const subLineText = contentLinesForParsing[j];
-                    if (subLineText.trim() === "" || subLineText.match(itemStartRegex)) {
-                        break;
-                    }
-                    const subIndentMatch = subLineText.match(/^(\s*)/);
-                    if (subIndentMatch && subIndentMatch[0].length > currentItemBaseIndent.length) {
-                        currentItemLastLineIndex = j;
-                    } else {
-                        break;
-                    }
-                }
-
-                let currentItemBlockEndRelativeOffset = listItemsAreaStartRelativeOffset;
-                for (let k = 0; k <= currentItemLastLineIndex; k++) {
-                    currentItemBlockEndRelativeOffset += contentLinesForParsing[k].length;
-                    if (k < contentLinesForParsing.length - 1 || 
-                        (k === contentLinesForParsing.length - 1 && rawSectionContent.substring(listItemsAreaStartRelativeOffset).endsWith('\n'))) {
-                        currentItemBlockEndRelativeOffset++;
-                    }
-                }
-                lastItemBlockEndGlobalOffset = afterHeaderOffset + currentItemBlockEndRelativeOffset;
-                i = currentItemLastLineIndex;
-            }
-        }
-    }
-
-    if (foundExistingItems && lastItemBlockEndGlobalOffset !== -1) {
-        effectiveInsertPosition = document.positionAt(lastItemBlockEndGlobalOffset);
-        newItemsBlockPrefix = ""; // Вставляем сразу после последнего элемента, без доп. префикса
-    } else {
-        // Секция пуста или содержит только комментарии/пустые строки после заголовка
-        effectiveInsertPosition = document.positionAt(afterHeaderOffset);
-        baseIndentForNewItems = '    '; // Отступ по умолчанию для первого элемента
-        newItemsBlockPrefix = "\n";    // Всегда начинаем с новой строки
-    }
-
-    let itemsToInsertString = "";
-    scenariosToAdd.forEach((scenario, index) => {
-        if (index > 0) { // Для второго и последующих элементов в добавляемом блоке
-            itemsToInsertString += "\n"; // Перенос строки между элементами
-        }
-        itemsToInsertString += `${baseIndentForNewItems}- ВложенныеСценарии${maxExistingItemNumber + index + 1}:\n`;
-        itemsToInsertString += `${baseIndentForNewItems}    UIDВложенныйСценарий: "${scenario.uid.replace(/"/g, '\\"')}"\n`;
-        itemsToInsertString += `${baseIndentForNewItems}    ИмяСценария: "${scenario.name.replace(/"/g, '\\"')}"`;
-
-        if (index === scenariosToAdd.length - 1) { // Если это последний элемент в добавляемом блоке
-            if (nextMajorKeyMatchResult && sectionContentEndOffset < fullText.length) {
-                // Если есть следующая основная секция, добавляем перенос строки после нашего последнего элемента
-                itemsToInsertString += "\n";
-            }
-        }
-    });
-
-    const finalTextToInsert = newItemsBlockPrefix + itemsToInsertString;
-
-    if (finalTextToInsert.trim() !== "" || (newItemsBlockPrefix === "\n" && itemsToInsertString.trim() === "")) {
-        if (!foundExistingItems && rawSectionContent.trim() === "" && rawSectionContent.length > 0 && newItemsBlockPrefix === "\n") {
-             const rangeToReplace = new vscode.Range(
-                document.positionAt(afterHeaderOffset),
-                document.positionAt(afterHeaderOffset + rawSectionContent.length)
-            );
-            await textEditor.edit(editBuilder => {
-                editBuilder.replace(rangeToReplace, finalTextToInsert);
-            });
-
-        } else {
-            await textEditor.edit(editBuilder => {
-                editBuilder.insert(effectiveInsertPosition, finalTextToInsert);
-            });
-        }
-
-        vscode.window.showInformationMessage(t('Added {0} nested scenarios.', String(scenariosToAdd.length)));
-        console.log(`[Cmd:checkAndFillNestedScenarios] Added ${scenariosToAdd.length} scenarios. InsertPos Char: ${effectiveInsertPosition.character}, Line: ${effectiveInsertPosition.line}. Prefix: '${newItemsBlockPrefix.replace(/\n/g, "\\n")}'`);
-    } else {
-        console.log("[Cmd:checkAndFillNestedScenarios] Calculated text to insert was empty or whitespace.");
-    }
-});
+export async function checkAndFillNestedScenariosHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit, phaseSwitcherProvider: PhaseSwitcherProvider) {
+    // Use the new clear-and-refill logic with cached data for performance
+    const testCache = phaseSwitcherProvider.getTestCache();
+    await clearAndFillNestedScenarios(textEditor.document, false, testCache);
 }
 
 /**
  * Извлекает имена параметров, используемых в теле сценария (внутри квадратных скобок).
+ * Параметры могут содержать только буквы, цифры, подчеркивания (_) и дефисы (-).
  * @param documentText Полный текст документа.
  * @returns Массив уникальных имен используемых параметров.
  */
@@ -1070,13 +879,16 @@ function parseUsedParametersFromScriptBody(documentText: string): string[] {
     if (scriptBodyMatch && scriptBodyMatch[1]) {
         const scriptContent = scriptBodyMatch[1];
         // Регулярное выражение для поиска параметров вида [ИмяПараметра]
-        // Оно ищет текст внутри квадратных скобок, исключая сами скобки.
-        // [^\[\]]+ означает "один или более символов, которые не являются '[' или ']'"
-        const paramRegex = /\[([^\[\]]+)\]/g;
+        // Параметры могут содержать только: буквы (A-Z, a-z, А-Я, а-я), цифры (0-9), подчеркивания (_) и дефисы (-)
+        // Исключаются строки с точками, запятыми и другими специальными символами
+        const paramRegex = /\[([A-Za-zА-Яа-яЁё0-9_-]+)\]/g;
         let match;
         while ((match = paramRegex.exec(scriptContent)) !== null) {
-            // match[1] содержит текст внутри скобок
-            usedParameters.add(match[1].trim());
+            const paramName = match[1].trim();
+            // Дополнительная проверка: параметр не должен быть пустым
+            if (paramName.length > 0) {
+                usedParameters.add(paramName);
+            }
         }
     }
     const result = Array.from(usedParameters);
@@ -1112,234 +924,8 @@ function parseDefinedScenarioParameters(documentText: string): string[] {
  * Обработчик команды проверки и заполнения параметров сценария.
  */
 export async function checkAndFillScenarioParametersHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
-    const t = await getTranslator(getExtensionUri());
-    
-    await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: t('Filling scenario parameters...'),
-        cancellable: false
-    }, async (progress) => {
-        console.log("[Cmd:checkAndFillScenarioParameters] Starting...");
-        const document = textEditor.document;
-        let fullText = document.getText(); 
-
-        progress.report({ increment: 20, message: t('Scanning for used parameters...') });
-
-        const usedParametersInBody = parseUsedParametersFromScriptBody(fullText);
-        const definedParametersInSection = parseDefinedScenarioParameters(fullText);
-
-        const parametersToAdd: string[] = [];
-        for (const usedParam of usedParametersInBody) {
-            if (!definedParametersInSection.includes(usedParam)) {
-                parametersToAdd.push(usedParam);
-            }
-        }
-
-        if (parametersToAdd.length === 0) {
-            vscode.window.showInformationMessage(t('All used parameters are already defined in the "ScenarioParameters" section.'));
-            console.log("[Cmd:checkAndFillScenarioParameters] No parameters to add.");
-            return;
-        }
-
-        progress.report({ increment: 60, message: t('Adding parameters to file...') });
-
-        const PARAM_SECTION_KEY = "ПараметрыСценария"; 
-        const PARAM_SECTION_HEADER = `${PARAM_SECTION_KEY}:`;
-        const PARAM_ITEM_EXISTING_REGEX_STR = `^(\\s*)-\\s*${PARAM_SECTION_KEY}(\\d*)?:`;
-
-
-        let effectiveInsertPosition: vscode.Position;
-        let baseIndentForNewItems = "    ";
-        let newItemsBlockPrefix = "";
-        let foundExistingItems = false;
-        let rangeToReplaceForEmptySection: vscode.Range | null = null;
-        let nextMajorKeyMatchResultAfterSection: RegExpExecArray | null = null;
-        let maxExistingParamItemNumber = 0;
-
-
-        const sectionHeaderRegex = new RegExp(`^${PARAM_SECTION_HEADER}`, "m");
-        const sectionMatch = fullText.match(sectionHeaderRegex);
-
-        if (sectionMatch && sectionMatch.index !== undefined) {
-            // SECTION EXISTS
-            const sectionHeaderGlobalStartOffset = sectionMatch.index;
-            const sectionHeaderLineText = sectionMatch[0];
-            const afterHeaderOffset = sectionHeaderGlobalStartOffset + sectionHeaderLineText.length;
-
-            const nextMajorKeyRegex = /\n(?![ \t])([А-Яа-яЁёA-Za-z]+:)/g;
-            nextMajorKeyRegex.lastIndex = afterHeaderOffset;
-            nextMajorKeyMatchResultAfterSection = nextMajorKeyRegex.exec(fullText);
-            const sectionContentEndOffset = nextMajorKeyMatchResultAfterSection ? nextMajorKeyMatchResultAfterSection.index : fullText.length;
-            const rawSectionContent = fullText.substring(afterHeaderOffset, sectionContentEndOffset);
-
-            let lastItemBlockEndGlobalOffset = -1;
-            const listItemsAreaStartRelativeOffset = rawSectionContent.startsWith('\n') ? 1 : 0;
-            const contentLinesForParsing = rawSectionContent.substring(listItemsAreaStartRelativeOffset).split('\n');
-
-            if (rawSectionContent.trim() !== "") {
-                let currentItemBaseIndent = '';
-                const itemStartRegex = new RegExp(PARAM_ITEM_EXISTING_REGEX_STR.replace("(\\d*)?", "(\\d*)")); // Ensure capturing group for digits
-
-                for (let i = 0; i < contentLinesForParsing.length; i++) {
-                    const lineText = contentLinesForParsing[i];
-                    if (lineText.trim() === "") continue;
-
-                    const itemStartMatch = lineText.match(itemStartRegex);
-                    if (itemStartMatch) {
-                        foundExistingItems = true;
-                        currentItemBaseIndent = itemStartMatch[1];
-                        baseIndentForNewItems = currentItemBaseIndent;
-
-                        if (itemStartMatch[2]) {
-                            const num = parseInt(itemStartMatch[2], 10);
-                            if (num > maxExistingParamItemNumber) {
-                                maxExistingParamItemNumber = num;
-                            }
-                        }
-
-                        let currentItemLastLineIndex = i;
-                        for (let j = i + 1; j < contentLinesForParsing.length; j++) {
-                            const subLineText = contentLinesForParsing[j];
-                            if (subLineText.trim() === "" || subLineText.match(itemStartRegex)) {
-                                break;
-                            }
-                            const subIndentMatch = subLineText.match(/^(\s*)/);
-                            if (subIndentMatch && subIndentMatch[0].length > currentItemBaseIndent.length) {
-                                currentItemLastLineIndex = j;
-                            } else {
-                                break;
-                            }
-                        }
-
-                        let currentItemBlockEndRelativeOffset = listItemsAreaStartRelativeOffset;
-                        for (let k = 0; k <= currentItemLastLineIndex; k++) {
-                            currentItemBlockEndRelativeOffset += contentLinesForParsing[k].length;
-                            if (k < contentLinesForParsing.length - 1 || (k === contentLinesForParsing.length - 1 && rawSectionContent.substring(listItemsAreaStartRelativeOffset).endsWith('\n'))) {
-                                currentItemBlockEndRelativeOffset++;
-                            }
-                        }
-                        lastItemBlockEndGlobalOffset = afterHeaderOffset + currentItemBlockEndRelativeOffset;
-                        i = currentItemLastLineIndex;
-                    }
-                }
-            }
-
-            if (foundExistingItems && lastItemBlockEndGlobalOffset !== -1) {
-                effectiveInsertPosition = document.positionAt(lastItemBlockEndGlobalOffset);
-                newItemsBlockPrefix = "";
-            } else {
-                effectiveInsertPosition = document.positionAt(afterHeaderOffset);
-                baseIndentForNewItems = '    ';
-                newItemsBlockPrefix = "\n";
-                if (rawSectionContent.trim() === "" && rawSectionContent.length > 0) {
-                    rangeToReplaceForEmptySection = new vscode.Range(
-                        document.positionAt(afterHeaderOffset),
-                        document.positionAt(afterHeaderOffset + rawSectionContent.length)
-                    );
-                }
-            }
-
-            let itemsToInsertString = "";
-            parametersToAdd.forEach((paramName, index) => {
-                if (index > 0) {
-                    itemsToInsertString += "\n";
-                }
-                itemsToInsertString += `${baseIndentForNewItems}- ${PARAM_SECTION_KEY}${maxExistingParamItemNumber + index + 1}:\n`;
-                itemsToInsertString += `${baseIndentForNewItems}    НомерСтроки: "${maxExistingParamItemNumber + index + 1}"\n`; 
-                itemsToInsertString += `${baseIndentForNewItems}    Имя: "${paramName.replace(/"/g, '\\"')}"\n`;
-                itemsToInsertString += `${baseIndentForNewItems}    Значение: "${paramName.replace(/"/g, '\\"')}"\n`;
-                itemsToInsertString += `${baseIndentForNewItems}    ТипПараметра: "Строка"\n`;
-                itemsToInsertString += `${baseIndentForNewItems}    ИсходящийПараметр: "No"`;
-
-                if (index === parametersToAdd.length - 1) {
-                    if (nextMajorKeyMatchResultAfterSection && sectionContentEndOffset < fullText.length) {
-                        itemsToInsertString += "\n";
-                    }
-                }
-            });
-
-            const finalTextToInsert = newItemsBlockPrefix + itemsToInsertString;
-
-            if (finalTextToInsert.trim() !== "" || (newItemsBlockPrefix === "\n" && itemsToInsertString.trim() === "")) {
-                 if (rangeToReplaceForEmptySection) {
-                    await textEditor.edit(editBuilder => {
-                        editBuilder.replace(rangeToReplaceForEmptySection!, finalTextToInsert);
-                    });
-                } else {
-                    await textEditor.edit(editBuilder => {
-                        editBuilder.insert(effectiveInsertPosition, finalTextToInsert);
-                    });
-                }
-            }
-        } else {
-            // SECTION DOES NOT EXIST
-            baseIndentForNewItems = "    ";
-            maxExistingParamItemNumber = 0;
-
-            let newSectionTargetInsertionOffset = fullText.length;
-            const knownSectionsToInsertBefore = ["ВложенныеСценарии:", "ТекстСценария:"];
-            for (const nextSec of knownSectionsToInsertBefore) {
-                const regex = new RegExp(`^${nextSec}`, "m");
-                const match = fullText.match(regex);
-                if (match && match.index !== undefined) {
-                    if (match.index < newSectionTargetInsertionOffset) {
-                        newSectionTargetInsertionOffset = match.index;
-                    }
-                }
-            }
-            
-            const posForHeader = document.positionAt(newSectionTargetInsertionOffset);
-            let headerStringToInsert = "";
-
-            if (newSectionTargetInsertionOffset === 0) {
-                headerStringToInsert = `${PARAM_SECTION_HEADER}\n`;
-            } else if (newSectionTargetInsertionOffset === fullText.length) {
-                if (fullText.endsWith("\n\n")) headerStringToInsert = `${PARAM_SECTION_HEADER}\n`;
-                else if (fullText.endsWith("\n")) headerStringToInsert = `\n${PARAM_SECTION_HEADER}\n`;
-                else headerStringToInsert = `\n\n${PARAM_SECTION_HEADER}\n`;
-            } else {
-                const lineNumberOfHeaderTarget = posForHeader.line;
-                if (lineNumberOfHeaderTarget === 0) {
-                     headerStringToInsert = `${PARAM_SECTION_HEADER}\n`;
-                } else {
-                    const lineBeforeHeaderTarget = document.lineAt(lineNumberOfHeaderTarget - 1);
-                    if (lineBeforeHeaderTarget.isEmptyOrWhitespace) {
-                        headerStringToInsert = `\n${PARAM_SECTION_HEADER}\n`;
-                    } else {
-                        headerStringToInsert = `\n\n${PARAM_SECTION_HEADER}\n`;
-                    }
-                }
-            }
-
-            let itemsToInsertString = "";
-            parametersToAdd.forEach((paramName, index) => {
-                if (index > 0) itemsToInsertString += "\n";
-                itemsToInsertString += `${baseIndentForNewItems}- ${PARAM_SECTION_KEY}${maxExistingParamItemNumber + index + 1}:\n`;
-                itemsToInsertString += `${baseIndentForNewItems}    НомерСтроки: "${maxExistingParamItemNumber + index + 1}"\n`; 
-                itemsToInsertString += `${baseIndentForNewItems}    Имя: "${paramName.replace(/"/g, '\\"')}"\n`;
-                itemsToInsertString += `${baseIndentForNewItems}    Значение: "${paramName.replace(/"/g, '\\"')}"\n`;
-                itemsToInsertString += `${baseIndentForNewItems}    ТипПараметра: "Строка"\n`;
-                itemsToInsertString += `${baseIndentForNewItems}    ИсходящийПараметр: "No"`;
-            });
-            
-            if (newSectionTargetInsertionOffset < fullText.length && itemsToInsertString.length > 0) {
-                if (!itemsToInsertString.endsWith("\n")) {
-                     itemsToInsertString += "\n";
-                }
-            }
-
-            const fullSectionToInsert = headerStringToInsert + itemsToInsertString;
-
-            if (fullSectionToInsert.trim() !== "") {
-                await textEditor.edit(editBuilder => {
-                    editBuilder.insert(posForHeader, fullSectionToInsert);
-                });
-            }
-        }
-
-        vscode.window.showInformationMessage(t('Added {0} scenario parameters.', String(parametersToAdd.length)));
-        console.log(`[Cmd:checkAndFillScenarioParameters] Added ${parametersToAdd.length} parameters.`);
-    });
+    // Use the new clear-and-refill logic
+    await clearAndFillScenarioParameters(textEditor.document, false);
 }
 
 
@@ -1447,5 +1033,312 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
     } catch (error: any) {
         console.error("[Cmd:createFirstLaunchZip] Error:", error);
         vscode.window.showErrorMessage(t('Error creating FirstLaunch.zip: {0}', error.message || error));
+    }
+}
+
+/**
+ * Clears and refills the NestedScenarios section with scenarios in order of their appearance in the script body.
+ * @param document The text document to modify
+ * @param silent If true, don't show progress notifications
+ * @param testCache Optional test cache to use instead of file system searches
+ * @returns Promise<boolean> true if changes were made
+ */
+export async function clearAndFillNestedScenarios(document: vscode.TextDocument, silent: boolean = false, testCache?: Map<string, TestInfo> | null): Promise<boolean> {
+    const t = await getTranslator(getExtensionUri());
+    
+    const progressHandler = async (progress: any) => {
+        console.log("[clearAndFillNestedScenarios] Starting...");
+        const fullText = document.getText();
+
+        if (!silent) progress.report({ increment: 20, message: t('Scanning for called scenarios...') });
+
+        // Parse scenarios in order of appearance in script body
+        const calledScenariosInOrder = parseCalledScenariosFromScriptBody(fullText);
+        
+        console.log(`[clearAndFillNestedScenarios] Found ${calledScenariosInOrder.length} scenarios in script body.`);
+
+        if (!silent) progress.report({ increment: 40, message: t('Processing scenario files...') });
+
+        const scenariosToAdd: { name: string; uid: string }[] = [];
+
+        if (testCache) {
+            // Use cached data for fast lookup
+            console.log("[clearAndFillNestedScenarios] Using cached test data for scenario lookup");
+            for (const calledName of calledScenariosInOrder) {
+                const cachedTestInfo = testCache.get(calledName);
+                if (cachedTestInfo) {
+                    const uid = cachedTestInfo.uid || uuidv4();
+                    scenariosToAdd.push({ name: calledName, uid: uid });
+                    console.log(`[clearAndFillNestedScenarios] Found cached scenario "${calledName}" with UID: ${uid}`);
+                } else {
+                    console.log(`[clearAndFillNestedScenarios] Scenario "${calledName}" not found in cache, skipping`);
+                }
+            }
+        } else {
+            // Fallback to file system search (legacy behavior)
+            console.log("[clearAndFillNestedScenarios] No cache available, falling back to file system search");
+            for (const calledName of calledScenariosInOrder) {
+                const targetFileUri = await findFileByName(calledName, null);
+                if (targetFileUri) {
+                    let uid = uuidv4();
+                    let nameForBlock = calledName;
+                    try {
+                        const fileContentBytes = await vscode.workspace.fs.readFile(targetFileUri);
+                        const fileContent = Buffer.from(fileContentBytes).toString('utf-8');
+                        const dataScenarioBlockRegex = /ДанныеСценария:\s*([\s\S]*?)(?=\n[А-Яа-яЁёA-Za-z]+:|\n*$)/;
+                        const dataScenarioBlockMatch = fileContent.match(dataScenarioBlockRegex);
+
+                        if (dataScenarioBlockMatch && dataScenarioBlockMatch[1]) {
+                            const blockContent = dataScenarioBlockMatch[1];
+                            const uidMatch = blockContent.match(/^\s*UID:\s*"([^"]+)"/m);
+                            const nameFileMatch = blockContent.match(/^\s*Имя:\s*"([^"]+)"/m);
+
+                            if (uidMatch && uidMatch[1]) {
+                                uid = uidMatch[1];
+                            }
+                        }
+                    } catch (error) {
+                        // Use generated UID if file reading fails
+                    }
+                    scenariosToAdd.push({ name: nameForBlock, uid: uid });
+                }
+            }
+        }
+
+        console.log(`[clearAndFillNestedScenarios] Found ${scenariosToAdd.length} valid scenarios to add.`);
+
+        if (!silent) progress.report({ increment: 60, message: t('Clearing and refilling section...') });
+
+        // Find the NestedScenarios section
+        const nestedSectionHeaderRegex = /ВложенныеСценарии:/;
+        const nestedMatch = fullText.match(nestedSectionHeaderRegex);
+
+        if (!nestedMatch || nestedMatch.index === undefined) {
+            console.log("[clearAndFillNestedScenarios] 'ВложенныеСценарии:' section not found. No changes made.");
+            return false;
+        }
+
+        const sectionHeaderGlobalStartOffset = nestedMatch.index;
+        const sectionHeaderLineText = nestedMatch[0];
+        const afterHeaderOffset = sectionHeaderGlobalStartOffset + sectionHeaderLineText.length;
+
+        // Find the end of the section
+        const nextMajorKeyRegex = /\n(?![ \t])([А-Яа-яЁёA-Za-z]+:)/g;
+        nextMajorKeyRegex.lastIndex = afterHeaderOffset;
+        const nextMajorKeyMatchResult = nextMajorKeyRegex.exec(fullText);
+        const sectionContentEndOffset = nextMajorKeyMatchResult ? nextMajorKeyMatchResult.index : fullText.length;
+
+        // Clear the entire section content and rebuild it
+        const baseIndentForNewItems = '    ';
+        let itemsToInsertString = "";
+        
+        scenariosToAdd.forEach((scenario, index) => {
+            if (index > 0) {
+                itemsToInsertString += "\n";
+            }
+            itemsToInsertString += `${baseIndentForNewItems}- ВложенныеСценарии${index + 1}:\n`;
+            itemsToInsertString += `${baseIndentForNewItems}    UIDВложенныйСценарий: "${scenario.uid.replace(/"/g, '\\"')}"\n`;
+            itemsToInsertString += `${baseIndentForNewItems}    ИмяСценария: "${scenario.name.replace(/"/g, '\\"')}"`;
+        });
+
+        // Add final newline if there's a next section
+        if (nextMajorKeyMatchResult && sectionContentEndOffset < fullText.length) {
+            itemsToInsertString += "\n";
+        }
+
+        const finalTextToInsert = "\n" + itemsToInsertString;
+
+        // Apply the edit
+        const edit = new vscode.WorkspaceEdit();
+        const rangeToReplace = new vscode.Range(
+            document.positionAt(afterHeaderOffset),
+            document.positionAt(sectionContentEndOffset)
+        );
+        edit.replace(document.uri, rangeToReplace, finalTextToInsert);
+        await vscode.workspace.applyEdit(edit);
+
+        console.log(`[clearAndFillNestedScenarios] Cleared and refilled with ${scenariosToAdd.length} scenarios.`);
+        return true;
+    };
+
+    if (silent) {
+        return await progressHandler(null);
+    } else {
+        return await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: t('Filling nested scenarios...'),
+            cancellable: false
+        }, progressHandler);
+    }
+}
+
+/**
+ * Parses existing parameter values from the ScenarioParameters section.
+ * @param documentText The full document text
+ * @returns Map of parameter names to their custom values
+ */
+function parseExistingParameterValues(documentText: string): Map<string, string> {
+    const existingValues = new Map<string, string>();
+    
+    const PARAM_SECTION_KEY = "ПараметрыСценария";
+    const PARAM_SECTION_HEADER = `${PARAM_SECTION_KEY}:`;
+    
+    // Find the ScenarioParameters section
+    const sectionHeaderRegex = new RegExp(`^${PARAM_SECTION_HEADER}`, "m");
+    const sectionMatch = documentText.match(sectionHeaderRegex);
+    
+    if (!sectionMatch || sectionMatch.index === undefined) {
+        return existingValues;
+    }
+    
+    const afterHeaderOffset = sectionMatch.index + sectionMatch[0].length;
+    
+    // Find the end of the section
+    const nextMajorKeyRegex = /\n(?![ \t])([А-Яа-яЁёA-Za-z]+:)/g;
+    nextMajorKeyRegex.lastIndex = afterHeaderOffset;
+    const nextMajorKeyMatchResult = nextMajorKeyRegex.exec(documentText);
+    const sectionContentEndOffset = nextMajorKeyMatchResult ? nextMajorKeyMatchResult.index : documentText.length;
+    
+    const sectionContent = documentText.substring(afterHeaderOffset, sectionContentEndOffset);
+    
+    // Parse each parameter block
+    const paramBlockRegex = new RegExp(`^\\s*-\\s*${PARAM_SECTION_KEY}\\d*:\\s*$`, "gm");
+    let match;
+    
+    while ((match = paramBlockRegex.exec(sectionContent)) !== null) {
+        const blockStartOffset = match.index + match[0].length;
+        
+        // Find the end of this parameter block (next parameter or end of section)
+        paramBlockRegex.lastIndex = blockStartOffset;
+        const nextParamMatch = paramBlockRegex.exec(sectionContent);
+        const blockEndOffset = nextParamMatch ? nextParamMatch.index : sectionContent.length;
+        
+        const blockContent = sectionContent.substring(blockStartOffset, blockEndOffset);
+        
+        // Extract parameter name and value
+        const nameMatch = blockContent.match(/^\s*Имя:\s*"([^"]+)"/m);
+        const valueMatch = blockContent.match(/^\s*Значение:\s*"([^"]*)"/m);
+        
+        if (nameMatch && valueMatch) {
+            const paramName = nameMatch[1];
+            const paramValue = valueMatch[1];
+            
+            // Only store if the value is different from the parameter name (i.e., user customized it)
+            if (paramValue !== paramName) {
+                existingValues.set(paramName, paramValue);
+                console.log(`[parseExistingParameterValues] Found custom value for "${paramName}": "${paramValue}"`);
+            }
+        }
+        
+        // Reset regex position to continue searching
+        paramBlockRegex.lastIndex = blockStartOffset;
+    }
+    
+    return existingValues;
+}
+
+/**
+ * Clears and refills the ScenarioParameters section with parameters in order of their appearance in the script body.
+ * Preserves existing custom parameter values.
+ * @param document The text document to modify
+ * @param silent If true, don't show progress notifications
+ * @returns Promise<boolean> true if changes were made
+ */
+export async function clearAndFillScenarioParameters(document: vscode.TextDocument, silent: boolean = false): Promise<boolean> {
+    const t = await getTranslator(getExtensionUri());
+    
+    const progressHandler = async (progress: any) => {
+        console.log("[clearAndFillScenarioParameters] Starting...");
+        const fullText = document.getText();
+
+        if (!silent) progress.report({ increment: 20, message: t('Scanning for used parameters...') });
+
+        // Parse parameters in order of appearance in script body
+        const usedParametersInOrder = parseUsedParametersFromScriptBody(fullText);
+
+        console.log(`[clearAndFillScenarioParameters] Found ${usedParametersInOrder.length} parameters in script body.`);
+
+        // Parse existing parameter values to preserve user customizations
+        const existingValues = parseExistingParameterValues(fullText);
+        console.log(`[clearAndFillScenarioParameters] Found ${existingValues.size} existing custom parameter values.`);
+
+        if (!silent) progress.report({ increment: 60, message: t('Clearing and refilling section...') });
+
+        const PARAM_SECTION_KEY = "ПараметрыСценария";
+        const PARAM_SECTION_HEADER = `${PARAM_SECTION_KEY}:`;
+
+        // Find the ScenarioParameters section
+        const sectionHeaderRegex = new RegExp(`^${PARAM_SECTION_HEADER}`, "m");
+        const sectionMatch = fullText.match(sectionHeaderRegex);
+
+        if (!sectionMatch || sectionMatch.index === undefined) {
+            console.log("[clearAndFillScenarioParameters] 'ПараметрыСценария:' section not found. No changes made.");
+            return false;
+        }
+
+        const sectionHeaderGlobalStartOffset = sectionMatch.index;
+        const sectionHeaderLineText = sectionMatch[0];
+        const afterHeaderOffset = sectionHeaderGlobalStartOffset + sectionHeaderLineText.length;
+
+        // Find the end of the section
+        const nextMajorKeyRegex = /\n(?![ \t])([А-Яа-яЁёA-Za-z]+:)/g;
+        nextMajorKeyRegex.lastIndex = afterHeaderOffset;
+        const nextMajorKeyMatchResult = nextMajorKeyRegex.exec(fullText);
+        const sectionContentEndOffset = nextMajorKeyMatchResult ? nextMajorKeyMatchResult.index : fullText.length;
+
+        // Clear the entire section content and rebuild it
+        const baseIndentForNewItems = '    ';
+        let itemsToInsertString = "";
+
+        usedParametersInOrder.forEach((paramName, index) => {
+            if (index > 0) {
+                itemsToInsertString += "\n";
+            }
+            itemsToInsertString += `${baseIndentForNewItems}- ${PARAM_SECTION_KEY}${index + 1}:\n`;
+            itemsToInsertString += `${baseIndentForNewItems}    НомерСтроки: "${index + 1}"\n`;
+            itemsToInsertString += `${baseIndentForNewItems}    Имя: "${paramName.replace(/"/g, '\\"')}"\n`;
+            
+            // Use existing custom value if available, otherwise use parameter name as default
+            const paramValue = existingValues.get(paramName) || paramName;
+            itemsToInsertString += `${baseIndentForNewItems}    Значение: "${paramValue.replace(/"/g, '\\"')}"\n`;
+            
+            itemsToInsertString += `${baseIndentForNewItems}    ТипПараметра: "Строка"\n`;
+            itemsToInsertString += `${baseIndentForNewItems}    ИсходящийПараметр: "No"`;
+        });
+
+        // Handle empty vs non-empty sections differently
+        let finalTextToInsert: string;
+        if (usedParametersInOrder.length === 0) {
+            // Empty section: no content, but preserve newline before next section if needed
+            finalTextToInsert = nextMajorKeyMatchResult && sectionContentEndOffset < fullText.length ? "\n" : "";
+        } else {
+            // Non-empty section: add leading newline and trailing newline if needed
+            if (nextMajorKeyMatchResult && sectionContentEndOffset < fullText.length) {
+                itemsToInsertString += "\n";
+            }
+            finalTextToInsert = "\n" + itemsToInsertString;
+        }
+
+        // Apply the edit
+        const edit = new vscode.WorkspaceEdit();
+        const rangeToReplace = new vscode.Range(
+            document.positionAt(afterHeaderOffset),
+            document.positionAt(sectionContentEndOffset)
+        );
+        edit.replace(document.uri, rangeToReplace, finalTextToInsert);
+        await vscode.workspace.applyEdit(edit);
+
+        console.log(`[clearAndFillScenarioParameters] Cleared and refilled with ${usedParametersInOrder.length} parameters, preserved ${existingValues.size} custom values.`);
+        return true;
+    };
+
+    if (silent) {
+        return await progressHandler(null);
+    } else {
+        return await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: t('Filling scenario parameters...'),
+            cancellable: false
+        }, progressHandler);
     }
 }

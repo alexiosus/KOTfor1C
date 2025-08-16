@@ -24,4 +24,6 @@ export interface TestInfo {
     relativePath: string;
     /** Параметры сценария (извлекаются из блока ПараметрыСценария) */
     parameters?: string[];
+    /** UID сценария (из блока ДанныеСценария) */
+    uid?: string;
 }

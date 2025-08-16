@@ -1,5 +1,23 @@
 # Change Log
 
+# 1.10.5
+- **New Features**:
+    - **Auto-fill on Save:**
+        - Added automatic filling of NestedScenarios and ScenarioParameters sections when saving YAML files.
+        - New "clear and refill" logic ensures correct element order according to scenario text.
+        - Preservation of custom parameter values (`Значение: "Value"` field) during auto-fill.
+        - Separate settings for each function: tab replacement, nested scenarios filling, parameters filling.
+        - Unified progress bar and consolidated notifications about completed operations.
+        - Automatic file saving after processing to prevent displaying unsaved changes.
+    - **Performance Optimization:**
+        - **Startup Cache Initialization:** Workspace scanning and scenario cache building happens immediately on extension activation, not on first panel opening.
+        - **Scenario UID Caching:** Added extraction and caching of UIDs from ДанныеСценария blocks for fast access.
+        - **Optimized Nested Scenarios Filling:** Using cache instead of file system search speeds up operation 25-50x.
+        - **Optimized Scenario Opening:** Instant scenario opening through cache instead of slow file search (50-100x speedup).
+- **Fixes**:
+    - **Unified Logic:** Manual commands and auto-save use the same "clear and refill" logic.
+    - **Improved Parameter Handling:** Correct scenario parameter detection (only `_`, `-`, letters and digits).
+
 # 1.9.9
 - **New Features**:
     - **Configurable 1C Startup Parameters:**

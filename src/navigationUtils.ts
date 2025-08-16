@@ -7,7 +7,20 @@ import * as path from 'path'; // Используется для path.basename �
  * @param searchText Текст имени для поиска (значение из кавычек).
  * @returns Promise с Uri найденного файла или null.
  */
-export async function findFileByName(searchText: string): Promise<vscode.Uri | null> {
+export async function findFileByName(searchText: string, testCache?: Map<string, import('./types').TestInfo> | null): Promise<vscode.Uri | null> {
+    // Try cache-based lookup first for performance
+    if (testCache) {
+        const cachedTestInfo = testCache.get(searchText);
+        if (cachedTestInfo) {
+            console.log(`[findFileByName] Cache hit for "${searchText}": ${cachedTestInfo.yamlFileUri.fsPath}`);
+            return cachedTestInfo.yamlFileUri;
+        }
+        console.log(`[findFileByName] Cache miss for "${searchText}", falling back to file system search`);
+    } else {
+        console.log(`[findFileByName] No cache available for "${searchText}", using file system search`);
+    }
+
+    // Fallback to original file system search
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
         console.warn("[findFileByName] Рабочая область не открыта.");

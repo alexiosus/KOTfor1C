@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.9.9",
+  "version": "1.10.5",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -39,29 +39,41 @@
             "description": "%config.localization.languageOverride.description%",
             "order": 1
           },
-          "1cDriveHelper.features.enablePhaseSwitcher": {
-            "type": "boolean",
-            "default": true,
-            "description": "%config.enablePhaseSwitcher.description%",
+          "1cDriveHelper.steps.externalUrl": {
+            "type": "string",
+            "default": "https://raw.githubusercontent.com/kakoytochelik/1cDriveTestHelper/main/res/steps.htm",
+            "description": "%config.stepsExternalUrl.description%",
             "order": 10
-          },
-          "1cDriveHelper.features.enableAssembleTests": {
-            "type": "boolean",
-            "default": true,
-            "description": "%config.enableAssembleTests.description%",
-            "order": 11
           },
           "1cDriveHelper.editor.autoCollapseOnOpen": {
             "type": "boolean",
             "default": true,
             "description": "%config.autoCollapseOnOpen.description%",
+            "order": 11
+          },
+          "1cDriveHelper.editor.autoFillNestedScenariosOnSave": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.autoFillNestedScenariosOnSave.description%",
             "order": 12
           },
-          "1cDriveHelper.steps.externalUrl": {
-            "type": "string",
-            "default": "https://raw.githubusercontent.com/kakoytochelik/1cDriveTestHelper/main/res/steps.htm",
-            "description": "%config.stepsExternalUrl.description%",
+          "1cDriveHelper.editor.autoFillScenarioParametersOnSave": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.autoFillScenarioParametersOnSave.description%",
             "order": 13
+          },
+          "1cDriveHelper.editor.autoReplaceTabsWithSpacesOnSave": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.autoReplaceTabsWithSpacesOnSave.description%",
+            "order": 14
+          },
+          "1cDriveHelper.editor.showRefillMessages": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.showRefillMessages.description%",
+            "order": 15
           }
         }
       },

@@ -151,6 +151,20 @@
   "Gherkin autocompletion update completed.": "Обновление автодополнения Gherkin завершено.",
   "Gherkin hints update completed.": "Обновление подсказок Gherkin завершено.",
   "Tabs automatically replaced with spaces on save.": "Табуляции автоматически конвертированы в пробелы при сохранении.",
+  "Auto-filled NestedScenarios section on save.": "Секция ВложенныеСценарии автоматически заполнена при сохранении.",
+  "Auto-filled ScenarioParameters section on save.": "Секция ПараметрыСценария автоматически заполнена при сохранении.",
+  "Clearing and refilling section...": "Очистка и заполнение секции...",
+  "Processing file on save...": "Обработка файла при сохранении...",
+  "Processing file after save...": "Обработка файла после сохранения...",
+  "Error processing file after save: {0}": "Ошибка обработки файла после сохранения: {0}",
+  "Replacing tabs with spaces...": "Замена табуляций на пробелы...",
+  "tabs replaced": "табуляции заменены",
+  "nested scenarios filled": "вложенные сценарии заполнены",
+  "scenario parameters filled": "параметры сценария заполнены",
+  "Save completed: {0}.": "Сохранение завершено: {0}.",
+  "Save completed: {0} and {1}.": "Сохранение завершено: {0} и {1}.",
+  "Save completed: {0}, and {1}.": "Сохранение завершено: {0} и {1}.",
+  "Save completed.": "Сохранение завершено.",
   "Error initializing Gherkin autocompletion: {0}": "Ошибка инициализации автодополнения Gherkin: {0}",
   "Failed to load Gherkin steps for autocompletion: {0}": "Не удалось загрузить шаги Gherkin для автодополнения: {0}",
   "Nested scenario (1C)": "Вложенный сценарий (1C)",
@@ -236,5 +250,6 @@
     "  - Correcting user in {0}": "  - Исправление пользователя в {0}",
     "  - Correction applied successfully.": "  - Исправление применено успешно.",
     "  - Skipped user correction: {0} not found.": "  - Пропущено исправление пользователя: {0} не найден.",
-    "--- WARNING: Error applying correction to {0}: {1} ---": "--- ПРЕДУПРЕЖДЕНИЕ: Ошибка применения исправления к {0}: {1} ---"
+    "--- WARNING: Error applying correction to {0}: {1} ---": "--- ПРЕДУПРЕЖДЕНИЕ: Ошибка применения исправления к {0}: {1} ---",
+    "Show refill section messages": "Показывать сообщения о заполнении секций"
 }

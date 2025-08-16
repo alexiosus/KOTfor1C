@@ -52,6 +52,43 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return this._testCache;
     }
 
+    /**
+     * Инициализирует кеш тестов без UI зависимостей.
+     * Может быть вызван при активации расширения для eager loading.
+     */
+    public async initializeTestCache(): Promise<void> {
+        if (this._isScanning) {
+            console.log("[PhaseSwitcherProvider:initializeTestCache] Scan already in progress, skipping...");
+            return;
+        }
+
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            console.log("[PhaseSwitcherProvider:initializeTestCache] No workspace folder available, skipping cache initialization.");
+            this._testCache = null;
+            this._onDidUpdateTestCache.fire(this._testCache);
+            return;
+        }
+
+        const workspaceRootUri = workspaceFolders[0].uri;
+        console.log("[PhaseSwitcherProvider:initializeTestCache] Starting eager cache initialization...");
+
+        this._isScanning = true;
+        try {
+            this._testCache = await scanWorkspaceForTests(workspaceRootUri);
+            console.log(`[PhaseSwitcherProvider:initializeTestCache] Cache initialized with ${this._testCache?.size || 0} scenarios`);
+            
+            // Notify other components about cache update
+            this._onDidUpdateTestCache.fire(this._testCache);
+        } catch (scanError: any) {
+            console.error("[PhaseSwitcherProvider:initializeTestCache] Error during eager scan:", scanError);
+            this._testCache = null;
+            this._onDidUpdateTestCache.fire(this._testCache);
+        } finally {
+            this._isScanning = false;
+        }
+    }
+
 
     constructor(extensionUri: vscode.Uri, context: vscode.ExtensionContext) {
         this._extensionUri = extensionUri;
@@ -61,17 +98,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
 
         context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
-            const affectsSwitcher = e.affectsConfiguration('1cDriveHelper.features.enablePhaseSwitcher');
-            const affectsAssembler = e.affectsConfiguration('1cDriveHelper.features.enableAssembleTests');
-
-            if (affectsSwitcher || affectsAssembler) {
-                console.log("[PhaseSwitcherProvider] Relevant configuration changed.");
+            // Configuration changes will trigger panel refresh when needed
                 if (this._view && this._view.visible) {
-                    console.log("[PhaseSwitcherProvider] View is visible, sending updated state and settings...");
+                console.log("[PhaseSwitcherProvider] Configuration changed, refreshing panel...");
                     this._sendInitialState(this._view.webview);
-                } else {
-                    console.log("[PhaseSwitcherProvider] View not visible, update will occur on next resolve or activation.");
-                }
             }
         }));
     }
@@ -89,7 +119,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 console.warn('[PhaseSwitcherProvider] Failed to load RU bundle:', e);
                 this._ruBundle = null;
             }
-        } else {
+                } else {
             this._ruBundle = null;
         }
     }
@@ -312,9 +342,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         console.log("[PhaseSwitcherProvider:_sendInitialState] Preparing and sending initial state...");
         webview.postMessage({ command: 'updateStatus', text: this.t('Scanning files...'), enableControls: false, refreshButtonEnabled: false });
 
-        const config = vscode.workspace.getConfiguration('1cDriveHelper.features');
-        const switcherEnabled = config.get<boolean>('enablePhaseSwitcher') ?? true;
-        const assemblerEnabled = config.get<boolean>('enableAssembleTests') ?? true;
+        // Panels are always enabled now
+        const switcherEnabled = true;
+        const assemblerEnabled = true;
 
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders || workspaceFolders.length === 0) {
@@ -326,7 +356,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
         const workspaceRootUri = workspaceFolders[0].uri;
-        
+
         // Check if first launch folder exists (independent of test cache)
         const projectPaths = this.getProjectPaths(workspaceRootUri);
         let firstLaunchFolderExists = false;
@@ -338,15 +368,21 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             firstLaunchFolderExists = false;
         }
 
+        // Use existing cache if available, otherwise scan
+        if (this._testCache === null) {
+            console.log("[PhaseSwitcherProvider:_sendInitialState] No cache available, scanning workspace...");
         this._isScanning = true;
         try {
             this._testCache = await scanWorkspaceForTests(workspaceRootUri); 
         } catch (scanError: any) {
             console.error("[PhaseSwitcherProvider:_sendInitialState] Error during scanWorkspaceForTests:", scanError);
-            vscode.window.showErrorMessage(this.t('Error scanning scenario files: {0}', scanError.message));
+                vscode.window.showErrorMessage(this.t('Error scanning scenario files: {0}', scanError.message));
             this._testCache = null;
         } finally {
             this._isScanning = false;
+            }
+        } else {
+            console.log(`[PhaseSwitcherProvider:_sendInitialState] Using existing cache with ${this._testCache.size} scenarios`);
         }
 
 
@@ -880,7 +916,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
                 
                 progress.report({ increment: 90, message: this.t('Correcting files...') });
-                outputChannel.appendLine(this.t('Repairing specific feature files...'));
                 if (projectPaths.repairTestFileEpf) {
                 const filesToRepairRelative = [
                     'tests/EtalonDrive/001_Company_tests.feature',
@@ -909,24 +944,28 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     outputChannel.appendLine(this.t('Feature file repair processing skipped - RepairTestFile.epf path not configured'));
                 }
                 
+                // Only show repair messages if repairTestFileEpf is configured
+                if (projectPaths.repairTestFileEpf) {
                 const companyTestFeaturePath = vscode.Uri.joinPath(featureFileDirUri, '001_Company_tests.feature');
                 try {
-                    outputChannel.appendLine(this.t('Removing "Administrator" from 001_Company_tests...'));
+                        outputChannel.appendLine(this.t('Repairing specific feature files...'));
+                        outputChannel.appendLine(this.t('Removing "Administrator" from 001_Company_tests...'));
                     await vscode.workspace.fs.stat(companyTestFeaturePath);
-                    outputChannel.appendLine(this.t('  - Correcting user in {0}', companyTestFeaturePath.fsPath));
+                        outputChannel.appendLine(this.t('  - Correcting user in {0}', companyTestFeaturePath.fsPath));
                     const companyTestContentBytes = await vscode.workspace.fs.readFile(companyTestFeaturePath);
                     let companyTestContent = Buffer.from(companyTestContentBytes).toString('utf-8');
     
                     companyTestContent = companyTestContent.replace(/using "Administrator"/g, 'using ""');
                     
                     await vscode.workspace.fs.writeFile(companyTestFeaturePath, Buffer.from(companyTestContent, 'utf-8'));
-                    outputChannel.appendLine(this.t('  - Correction applied successfully.'));
+                        outputChannel.appendLine(this.t('  - Correction applied successfully.'));
     
                 } catch (error: any) {
                     if (error.code === 'FileNotFound') {
-                        outputChannel.appendLine(this.t('  - Skipped user correction: {0} not found.', companyTestFeaturePath.fsPath));
+                            outputChannel.appendLine(this.t('  - Skipped user correction: {0} not found.', companyTestFeaturePath.fsPath));
                     } else {
-                        outputChannel.appendLine(this.t('--- WARNING: Error applying correction to {0}: {1} ---', companyTestFeaturePath.fsPath, error.message || error));
+                            outputChannel.appendLine(this.t('--- WARNING: Error applying correction to {0}: {1} ---', companyTestFeaturePath.fsPath, error.message || error));
+                        }
                     }
                 }
 

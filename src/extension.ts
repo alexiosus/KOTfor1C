@@ -15,12 +15,17 @@ import {
     checkAndFillNestedScenariosHandler,
     checkAndFillScenarioParametersHandler,
     replaceTabsWithSpacesYamlHandler,
-    handleCreateFirstLaunchZip
+    handleCreateFirstLaunchZip,
+    clearAndFillNestedScenarios,
+    clearAndFillScenarioParameters
 } from './commandHandlers';
 import { getTranslator } from './localization';
 import { setExtensionUri } from './appContext';
 import { handleCreateNestedScenario, handleCreateMainScenario } from './scenarioCreator';
 import { TestInfo } from './types'; // Импортируем TestInfo
+
+// Debounce mechanism to prevent double processing from VS Code auto-save
+const processingFiles = new Set<string>();
 
 // Ключ для хранения пароля в SecretStorage (должен совпадать с ключом в phaseSwitcher.ts)
 const EMAIL_PASSWORD_KEY = '1cDriveHelper.emailPassword';
@@ -44,6 +49,11 @@ export function activate(context: vscode.ExtensionContext) {
             { webviewOptions: { retainContextWhenHidden: true } }
         )
     );
+
+    // Инициализируем кеш тестов сразу после активации для быстрого доступа
+    phaseSwitcherProvider.initializeTestCache().catch(error => {
+        console.error('[Extension] Error during eager cache initialization:', error);
+    });
 
     // --- Регистрация Провайдеров Языковых Функций (Автодополнение и Подсказки) ---
     const completionProvider = new DriveCompletionProvider(context);
@@ -91,7 +101,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // --- Регистрация Команд ---
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        '1cDriveHelper.openSubscenario', openSubscenarioHandler
+        '1cDriveHelper.openSubscenario', (editor, edit) => openSubscenarioHandler(editor, edit, phaseSwitcherProvider)
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
         '1cDriveHelper.createNestedScenario', () => handleCreateNestedScenario(context)
@@ -100,7 +110,7 @@ export function activate(context: vscode.ExtensionContext) {
         '1cDriveHelper.createMainScenario', () => handleCreateMainScenario(context)
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        '1cDriveHelper.insertNestedScenarioRef', insertNestedScenarioRefHandler
+        '1cDriveHelper.insertNestedScenarioRef', (editor, edit) => insertNestedScenarioRefHandler(editor, edit, phaseSwitcherProvider)
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         '1cDriveHelper.insertScenarioParam', insertScenarioParamHandler
@@ -115,7 +125,7 @@ export function activate(context: vscode.ExtensionContext) {
         '1cDriveHelper.replaceTabsWithSpacesYaml', replaceTabsWithSpacesYamlHandler
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        '1cDriveHelper.checkAndFillNestedScenarios', checkAndFillNestedScenariosHandler
+        '1cDriveHelper.checkAndFillNestedScenarios', (editor, edit) => checkAndFillNestedScenariosHandler(editor, edit, phaseSwitcherProvider)
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         '1cDriveHelper.checkAndFillScriptParameters', checkAndFillScenarioParametersHandler
@@ -280,45 +290,142 @@ export function activate(context: vscode.ExtensionContext) {
         () => handleCreateFirstLaunchZip(context)
     ));
 
-    // Добавляем автоматическую конвертацию табов в пробелы при сохранении
+    // Добавляем автоматические операции после сохранения YAML файлов
     context.subscriptions.push(
-        vscode.workspace.onWillSaveTextDocument(async (event) => {
-            const document = event.document;
-            
+        vscode.workspace.onDidSaveTextDocument(async (document) => {
             // Проверяем, что это YAML файл
             if (document.languageId === 'yaml' || document.fileName.toLowerCase().endsWith('.yaml')) {
-                const fullText = document.getText();
                 
-                // Проверяем, есть ли табы в документе
-                if (fullText.includes('\t')) {
-                    // Отменяем стандартное сохранение
-                    event.waitUntil(
-                        (async () => {
-                            try {
-                                // Заменяем табы на пробелы
-                                const newText = fullText.replace(/\t/g, '    ');
+                // Debounce mechanism: prevent double processing from VS Code auto-save
+                const fileKey = document.uri.toString();
+                if (processingFiles.has(fileKey)) {
+                    console.log(`[Extension] Skipping processing for ${document.fileName} - already in progress`);
+                    return;
+                }
+                
+                processingFiles.add(fileKey);
+                
+                // Auto-cleanup after 5 seconds to prevent memory leaks
+                setTimeout(() => {
+                    processingFiles.delete(fileKey);
+                }, 5000);
+                const config = vscode.workspace.getConfiguration('1cDriveHelper');
+                
+                // Проверяем, какие операции нужно выполнить
+                const enabledOperations: string[] = [];
+                
+                const tabsEnabled = config.get<boolean>('editor.autoReplaceTabsWithSpacesOnSave', true);
+                const nestedEnabled = config.get<boolean>('editor.autoFillNestedScenariosOnSave', true);
+                const paramsEnabled = config.get<boolean>('editor.autoFillScenarioParametersOnSave', true);
+                const showRefillMessages = config.get<boolean>('editor.showRefillMessages', true);
+                
+                if (tabsEnabled && document.getText().includes('\t')) {
+                    enabledOperations.push('tabs');
+                }
+                if (nestedEnabled) {
+                    enabledOperations.push('nested');
+                }
+                if (paramsEnabled) {
+                    enabledOperations.push('params');
+                }
+
+                // Если есть операции для выполнения, показываем единый прогресс
+                if (enabledOperations.length > 0) {
+                    const t = await getTranslator(context.extensionUri);
+                    
+                    await vscode.window.withProgress({
+                        location: vscode.ProgressLocation.Notification,
+                        title: t('Processing file after save...'),
+                        cancellable: false
+                    }, async (progress) => {
+                        const totalSteps = enabledOperations.length;
+                        const completedOperations: string[] = [];
+                        
+                        try {
+                            // 1. Замена табов на пробелы
+                            if (enabledOperations.includes('tabs')) {
+                                progress.report({ 
+                                    increment: (100 / totalSteps), 
+                                    message: t('Replacing tabs with spaces...') 
+                                });
                                 
-                                // Проверяем, действительно ли текст изменился
+                                const fullText = document.getText();
+                                const newText = fullText.replace(/\t/g, '    ');
                                 if (newText !== fullText) {
-                                    // Применяем изменения
                                     const edit = new vscode.WorkspaceEdit();
                                     const fullRange = new vscode.Range(
                                         document.positionAt(0),
                                         document.positionAt(fullText.length)
                                     );
                                     edit.replace(document.uri, fullRange, newText);
-                                    
                                     await vscode.workspace.applyEdit(edit);
-                                    
-                                    // Показываем уведомление только если были замены
-                                    const t = await getTranslator(context.extensionUri);
-                                    vscode.window.showInformationMessage(t('Tabs automatically replaced with spaces on save.'));
+                                    completedOperations.push('tabs');
                                 }
-                            } catch (error) {
-                                console.error('[Extension] Error replacing tabs with spaces on save:', error);
                             }
-                        })()
-                    );
+
+                            // 2. Заполнение NestedScenarios
+                            if (enabledOperations.includes('nested')) {
+                                progress.report({ 
+                                    increment: (100 / totalSteps), 
+                                    message: t('Filling nested scenarios...') 
+                                });
+                                
+                                // Pass the test cache for fast scenario lookup
+                                const testCache = phaseSwitcherProvider.getTestCache();
+                                const result = await clearAndFillNestedScenarios(document, true, testCache);
+                                if (result) {
+                                    completedOperations.push('nested');
+                                }
+                            }
+
+                            // 3. Заполнение ScenarioParameters
+                            if (enabledOperations.includes('params')) {
+                                progress.report({ 
+                                    increment: (100 / totalSteps), 
+                                    message: t('Filling scenario parameters...') 
+                                });
+                                
+                                const result = await clearAndFillScenarioParameters(document, true);
+                                if (result) {
+                                    completedOperations.push('params');
+                                }
+                            }
+
+                            // Показываем единое сообщение о завершении
+                            if (completedOperations.length > 0) {
+                                const message = await buildCompletionMessage(completedOperations, t, showRefillMessages);
+                                if (showRefillMessages) {
+                                    vscode.window.showInformationMessage(message);
+                                }
+                                
+                                // Save the file after processing to prevent user from seeing unsaved changes
+                                // Extend debounce protection to cover the auto-save
+                                setTimeout(async () => {
+                                    try {
+                                        await document.save();
+                                        console.log(`[Extension] Saved ${document.fileName} after processing`);
+                                    } catch (saveError) {
+                                        console.warn(`[Extension] Failed to save ${document.fileName}:`, saveError);
+                                        // Don't show error to user - they can save manually if needed
+                                    } finally {
+                                        // Remove debounce protection after auto-save is complete
+                                        processingFiles.delete(fileKey);
+                                    }
+                                }, 100); // Small delay to ensure our processing is complete
+                            } else {
+                                // No operations completed, clean up debounce immediately
+                                processingFiles.delete(fileKey);
+                            }
+
+                        } catch (error) {
+                            console.error('[Extension] Error during post-save operations:', error);
+                            const errorMessage = error instanceof Error ? error.message : String(error);
+                            vscode.window.showErrorMessage(t('Error processing file after save: {0}', errorMessage));
+                            // Clean up debounce immediately on error (no auto-save will happen)
+                            processingFiles.delete(fileKey);
+                        }
+                        // Note: debounce cleanup is handled either in the setTimeout callback (success) or catch block (error)
+                    });
                 }
             }
         })
@@ -329,6 +436,34 @@ export function activate(context: vscode.ExtensionContext) {
     hoverProvider.refreshSteps();
 
     console.log('1cDriveHelper commands and providers registered.');
+}
+
+/**
+ * Builds a completion message based on completed operations
+ */
+async function buildCompletionMessage(completedOperations: string[], t: (key: string, ...args: string[]) => string, showRefillMessages: boolean): Promise<string> {
+    const messages: string[] = [];
+    
+    if (completedOperations.includes('tabs')) {
+        messages.push(t('tabs replaced'));
+    }
+    if (completedOperations.includes('nested')) {
+        messages.push(t('nested scenarios filled'));
+    }
+    if (completedOperations.includes('params')) {
+        messages.push(t('scenario parameters filled'));
+    }
+    
+    if (messages.length === 1) {
+        return t('Save completed: {0}.', messages[0]);
+    } else if (messages.length === 2) {
+        return t('Save completed: {0} and {1}.', messages[0], messages[1]);
+    } else if (messages.length >= 3) {
+        const lastMessage = messages.pop()!;
+        return t('Save completed: {0}, and {1}.', messages.join(', '), lastMessage);
+    }
+    
+    return t('Save completed.');
 }
 
 async function foldSectionsInEditor(editor: vscode.TextEditor | undefined) {

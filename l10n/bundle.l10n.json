@@ -151,6 +151,20 @@
   "Gherkin autocompletion update completed.": "Gherkin autocompletion update completed.",
   "Gherkin hints update completed.": "Gherkin hints update completed.",
   "Tabs automatically replaced with spaces on save.": "Tabs automatically replaced with spaces on save.",
+  "Auto-filled NestedScenarios section on save.": "Auto-filled NestedScenarios section on save.",
+  "Auto-filled ScenarioParameters section on save.": "Auto-filled ScenarioParameters section on save.",
+  "Clearing and refilling section...": "Clearing and refilling section...",
+  "Processing file on save...": "Processing file on save...",
+  "Processing file after save...": "Processing file after save...",
+  "Error processing file after save: {0}": "Error processing file after save: {0}",
+  "Replacing tabs with spaces...": "Replacing tabs with spaces...",
+  "tabs replaced": "tabs replaced",
+  "nested scenarios filled": "nested scenarios filled", 
+  "scenario parameters filled": "scenario parameters filled",
+  "Save completed: {0}.": "Save completed: {0}.",
+  "Save completed: {0} and {1}.": "Save completed: {0} and {1}.",
+  "Save completed: {0}, and {1}.": "Save completed: {0}, and {1}.",
+  "Save completed.": "Save completed.",
   "Error initializing Gherkin autocompletion: {0}": "Error initializing Gherkin autocompletion: {0}",
   "Failed to load Gherkin steps for autocompletion: {0}": "Failed to load Gherkin steps for autocompletion: {0}",
   "Nested scenario (1C)": "Nested scenario (1C)",
@@ -236,5 +250,6 @@
     "  - Correcting user in {0}": "  - Correcting user in {0}",
     "  - Correction applied successfully.": "  - Correction applied successfully.",
     "  - Skipped user correction: {0} not found.": "  - Skipped user correction: {0} not found.",
-    "--- WARNING: Error applying correction to {0}: {1} ---": "--- WARNING: Error applying correction to {0}: {1} ---"
+    "--- WARNING: Error applying correction to {0}: {1} ---": "--- WARNING: Error applying correction to {0}: {1} ---",
+    "Show refill section messages": "Show refill section messages"
 }
