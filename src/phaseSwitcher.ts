@@ -40,6 +40,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _outputChannel: vscode.OutputChannel | undefined;
     private _langOverride: 'System' | 'English' | 'Русский' = 'System';
     private _ruBundle: Record<string, string> | null = null;
+    
+    // Этот промис будет хранить состояние первоначального сканирования.
+    // Он создается один раз при вызове initializeTestCache.
+    public initializationPromise: Promise<void> | null = null;
 
     // Событие, которое будет генерироваться после обновления _testCache
     private _onDidUpdateTestCache: vscode.EventEmitter<Map<string, TestInfo> | null> = new vscode.EventEmitter<Map<string, TestInfo> | null>();
@@ -53,40 +57,51 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Инициализирует кеш тестов без UI зависимостей.
-     * Может быть вызван при активации расширения для eager loading.
+     * Инициализирует кеш тестов. Этот метод теперь идемпотентный:
+     * он выполняет сканирование только один раз и возвращает один и тот же промис
+     * при последующих вызовах.
      */
-    public async initializeTestCache(): Promise<void> {
-        if (this._isScanning) {
-            console.log("[PhaseSwitcherProvider:initializeTestCache] Scan already in progress, skipping...");
-            return;
+    public initializeTestCache(): Promise<void> {
+        if (this.initializationPromise) {
+            console.log("[PhaseSwitcherProvider:initializeTestCache] Initialization already started or completed.");
+            return this.initializationPromise;
         }
 
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders || workspaceFolders.length === 0) {
-            console.log("[PhaseSwitcherProvider:initializeTestCache] No workspace folder available, skipping cache initialization.");
-            this._testCache = null;
-            this._onDidUpdateTestCache.fire(this._testCache);
-            return;
-        }
+        console.log("[PhaseSwitcherProvider:initializeTestCache] Starting initial cache load...");
+        // Создаем и сохраняем промис. IIFE (Immediately Invoked Function Expression)
+        // немедленно запускает асинхронную операцию.
+        this.initializationPromise = (async () => {
+            if (this._isScanning) {
+                // Эта проверка на всякий случай, с новой логикой она не должна срабатывать.
+                console.log("[PhaseSwitcherProvider:initializeTestCache] Scan was already in progress.");
+                return;
+            }
 
-        const workspaceRootUri = workspaceFolders[0].uri;
-        console.log("[PhaseSwitcherProvider:initializeTestCache] Starting eager cache initialization...");
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (!workspaceFolders || workspaceFolders.length === 0) {
+                console.log("[PhaseSwitcherProvider:initializeTestCache] No workspace folder, skipping cache initialization.");
+                this._testCache = null;
+                this._onDidUpdateTestCache.fire(this._testCache);
+                return;
+            }
 
-        this._isScanning = true;
-        try {
-            this._testCache = await scanWorkspaceForTests(workspaceRootUri);
-            console.log(`[PhaseSwitcherProvider:initializeTestCache] Cache initialized with ${this._testCache?.size || 0} scenarios`);
-            
-            // Notify other components about cache update
-            this._onDidUpdateTestCache.fire(this._testCache);
-        } catch (scanError: any) {
-            console.error("[PhaseSwitcherProvider:initializeTestCache] Error during eager scan:", scanError);
-            this._testCache = null;
-            this._onDidUpdateTestCache.fire(this._testCache);
-        } finally {
-            this._isScanning = false;
-        }
+            const workspaceRootUri = workspaceFolders[0].uri;
+            this._isScanning = true;
+            try {
+                this._testCache = await scanWorkspaceForTests(workspaceRootUri);
+                console.log(`[PhaseSwitcherProvider:initializeTestCache] Initial cache loaded with ${this._testCache?.size || 0} scenarios`);
+                this._onDidUpdateTestCache.fire(this._testCache);
+            } catch (scanError: any) {
+                console.error("[PhaseSwitcherProvider:initializeTestCache] Error during initial scan:", scanError);
+                this._testCache = null;
+                this._onDidUpdateTestCache.fire(this._testCache);
+            } finally {
+                this._isScanning = false;
+                console.log("[PhaseSwitcherProvider:initializeTestCache] Initial scan finished.");
+            }
+        })();
+
+        return this.initializationPromise;
     }
 
 
@@ -183,6 +198,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 vscode.Uri.joinPath(this._extensionUri, 'node_modules')
             ]
         };
+        // Ждем завершения промиса первоначальной инициализации.
+        // Если он еще не был создан, это не страшно (будет null).
+        // Если он уже выполняется, мы дождемся его завершения.
+        if (this.initializationPromise) {
+            console.log("[PhaseSwitcherProvider] Waiting for initial test cache to be ready...");
+            await this.initializationPromise;
+            console.log("[PhaseSwitcherProvider] Initial test cache is ready.");
+        }
 
         await this.loadLocalizationBundleIfNeeded();
         const nonce = getNonce();
@@ -338,11 +361,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private async _sendInitialState(webview: vscode.Webview) {
-        if (this._isScanning) {
-            console.log("[PhaseSwitcherProvider:_sendInitialState] Scan already in progress...");
-            webview.postMessage({ command: 'updateStatus', text: this.t('Scanning in progress...') });
-            return;
-        }
         console.log("[PhaseSwitcherProvider:_sendInitialState] Preparing and sending initial state...");
         webview.postMessage({ command: 'updateStatus', text: this.t('Scanning files...'), enableControls: false, refreshButtonEnabled: false });
 
