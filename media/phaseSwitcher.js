@@ -819,7 +819,7 @@
 
     if(refreshBtn instanceof HTMLButtonElement) refreshBtn.addEventListener('click', () => {
         log('Refresh button clicked.');
-        requestInitialState();
+        vscode.postMessage({ command: 'refreshData' });
     });
 
     if (openSettingsBtn instanceof HTMLButtonElement) openSettingsBtn.addEventListener('click', () => {

@@ -157,6 +157,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     public async refreshPanelData() {
         if (this._view && this._view.webview && this._view.visible) {
             console.log("[PhaseSwitcherProvider] Refreshing panel data programmatically...");
+            this._testCache = null;
             await this._sendInitialState(this._view.webview);
         } else {
             console.log("[PhaseSwitcherProvider] Panel not visible or not resolved, cannot refresh programmatically yet. Will refresh on next resolve/show.");
@@ -265,7 +266,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     await this._handleApplyChanges(message.data);
                     return;
                 case 'getInitialState': 
+                    await this._sendInitialState(webviewView.webview);
+                    return;
                 case 'refreshData': 
+                    this._testCache = null;
                     await this._sendInitialState(webviewView.webview);
                     return;
                 case 'log':
@@ -376,7 +380,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._testCache = await scanWorkspaceForTests(workspaceRootUri); 
         } catch (scanError: any) {
             console.error("[PhaseSwitcherProvider:_sendInitialState] Error during scanWorkspaceForTests:", scanError);
-                vscode.window.showErrorMessage(this.t('Error scanning scenario files: {0}', scanError.message));
+            vscode.window.showErrorMessage(this.t('Error scanning scenario files: {0}', scanError.message));
             this._testCache = null;
         } finally {
             this._isScanning = false;
@@ -946,30 +950,30 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 
                 // Only show repair messages if repairTestFileEpf is configured
                 if (projectPaths.repairTestFileEpf) {
-                const companyTestFeaturePath = vscode.Uri.joinPath(featureFileDirUri, '001_Company_tests.feature');
-                try {
+                    const companyTestFeaturePath = vscode.Uri.joinPath(featureFileDirUri, '001_Company_tests.feature');
+                    try {
                         outputChannel.appendLine(this.t('Repairing specific feature files...'));
                         outputChannel.appendLine(this.t('Removing "Administrator" from 001_Company_tests...'));
-                    await vscode.workspace.fs.stat(companyTestFeaturePath);
+                        await vscode.workspace.fs.stat(companyTestFeaturePath);
                         outputChannel.appendLine(this.t('  - Correcting user in {0}', companyTestFeaturePath.fsPath));
-                    const companyTestContentBytes = await vscode.workspace.fs.readFile(companyTestFeaturePath);
-                    let companyTestContent = Buffer.from(companyTestContentBytes).toString('utf-8');
-    
-                    companyTestContent = companyTestContent.replace(/using "Administrator"/g, 'using ""');
-                    
-                    await vscode.workspace.fs.writeFile(companyTestFeaturePath, Buffer.from(companyTestContent, 'utf-8'));
+                        const companyTestContentBytes = await vscode.workspace.fs.readFile(companyTestFeaturePath);
+                        let companyTestContent = Buffer.from(companyTestContentBytes).toString('utf-8');
+        
+                        companyTestContent = companyTestContent.replace(/using "Administrator"/g, 'using ""');
+                        
+                        await vscode.workspace.fs.writeFile(companyTestFeaturePath, Buffer.from(companyTestContent, 'utf-8'));
                         outputChannel.appendLine(this.t('  - Correction applied successfully.'));
-    
-                } catch (error: any) {
-                    if (error.code === 'FileNotFound') {
+        
+                    } catch (error: any) {
+                        if (error.code === 'FileNotFound') {
                             outputChannel.appendLine(this.t('  - Skipped user correction: {0} not found.', companyTestFeaturePath.fsPath));
-                    } else {
+                        } else {
                             outputChannel.appendLine(this.t('--- WARNING: Error applying correction to {0}: {1} ---', companyTestFeaturePath.fsPath, error.message || error));
                         }
                     }
                 }
 
-                                progress.report({ increment: 95, message: this.t('Checking for build errors...') });
+                progress.report({ increment: 95, message: this.t('Checking for build errors...') });
  
                 // Log build results summary
                 outputChannel.appendLine(`${'='.repeat(60)}`);
