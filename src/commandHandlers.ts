@@ -1299,7 +1299,7 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
             itemsToInsertString += `${baseIndentForNewItems}    Имя: "${paramName.replace(/"/g, '\\"')}"\n`;
             
             // Use existing custom value if available, otherwise use parameter name as default
-            const paramValue = existingValues.get(paramName) || paramName;
+            const paramValue = existingValues.has(paramName) ? existingValues.get(paramName)! : paramName;
             itemsToInsertString += `${baseIndentForNewItems}    Значение: "${paramValue.replace(/"/g, '\\"')}"\n`;
             
             itemsToInsertString += `${baseIndentForNewItems}    ТипПараметра: "Строка"\n`;

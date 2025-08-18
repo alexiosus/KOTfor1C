@@ -1,5 +1,8 @@
 # Change Log
 
+# 1.10.6
+- Fixed saving parameter values when the value is an empty string.
+
 # 1.10.5
 - **New Features**:
     - **Auto-fill on Save:**
