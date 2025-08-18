@@ -14,8 +14,8 @@ Helper for developing and managing 1C regression tests in VS Code. Speeds up nav
 
 ## Working with scenario text:
 * **Autocompletion and hints:** 
-    * Suggests scenario call steps from the project folder, including their parameters (uses Fuzzy Match).
-    * Suggests Gherkin steps from Vanessa Automation as you type (uses Fuzzy Match). Supports multiple translations.
+    * Suggests scenario call steps from the project folder, including their parameters (IntelliSense).
+    * Suggests Gherkin steps from Vanessa Automation as you type (IntelliSense). Supports multiple translations.
     * Shows step description from the Gherkin step library for Vanessa Automation when hovering over a step line in a YAML file. Shows description in the language of entered text and variant of this step in other language.
     * To ensure the relevance of autocompletion and hints for Gherkin steps for Vanessa Automation, the extension supports loading the `steps.htm` file from an external resource.
 
@@ -63,7 +63,7 @@ Successor of the [Phase Switcher](https://github.com/kakoytochelik/PhaseSwitcher
 
 The main difference is that there's no longer a need for external configuration files, everything happens automatically!
   * **Purpose:** Allows you to quickly enable and disable test sets for different runs.
-  * **Test detection:** The extension scans the `tests/RegressionTests/Yaml/Drive/` folder (therefore VS Code needs to be opened in the project root!).
+  * **Test detection:** The extension scans the tests folder (folder can be set in the settings).
   * **Test metadata:** To display a test in Phase Switcher, the `scen.yaml` file must contain a line `Name: "Test name"` and special comment markers:
       ```yaml
       # PhaseSwitcher_Tab:            # Required - Tab name in UI/test phase
@@ -83,7 +83,7 @@ The main difference is that there's no longer a need for external configuration 
           * `Toggle all`: Toggle the state of **all** active tests in **all** phases.
           * `Toggle phase`: Allows you to toggle tests within a specific phase. Located to the right of the enabled test counter. 
           * `Defaults`: Reset the state of **all** tests according to their `# PhaseSwitcher_Default:` marker.
-          * `Apply`: Physically moves parameter folders `./test/` for changed tests between directories `tests/RegressionTests/Yaml/Drive/` and `RegressionTests_Disabled/Yaml/Drive/`, thus switching the test state.
+          * `Apply`: Physically moves the parametric folders for the selected tests between directories (to support older versions of build processing; later, the list of tests will be passed as a parameter for processing).
       * Click the pencil button to open the scenario in the editor.
       * **Status bar:** Displays current status (loading, presence of changes, application result).
 
@@ -98,7 +98,7 @@ The main difference is that there's no longer a need for external configuration 
   * **Process indication:** During the build, a progress bar is displayed as a notification.
   * **Error notifications:** In case of unsuccessful build, a notification appears with a button for quick navigation to the log file.
   * In the extension settings, you can specify test email parameters and disable automatic opening of the `Output` panel when starting the build.
-  * Automatically cleans up "unnecessary" steps from certain tests (001_Company, I_start_my_first_launch)
+  * If specified in the settings, automatically removes “unnecessary” steps from certain tests (001_Company, I_start_my_first_launch)
   * Build management:
       * `Accounting mode` dropdown: you can select the accounting type before building tests.
       * `Build tests`: runs the build script.
@@ -120,8 +120,6 @@ The main difference is that there's no longer a need for external configuration 
     * **Important:** After updating the extension, it's recommended to restart VS Code for all features to work correctly.
 2.  **Configuration:**<br>
     You can access the extension settings through the standard method via general settings or **via the settings button from the Activity Bar panel**.
-    * `Enable "Phase Switcher" panel`: toggles the display of the **Phase Switcher section in Activity Bar** (enabled by default)
-    * `Enable "Build" panel`: toggles the display of the **Test Builder section in Activity Bar** (enabled by default)
     * `Language override`: sets the extension's interface language independently of VS Code's language (system/en/ru). Does not affect the display language of settings page and context menus (they are displayed in the VS Code interface language).
     * `Gherkin steps URL`: URL for loading the `steps.htm` file. Leave empty to use the file from the extension, or specify your own for dynamic updates.
     * `Auto collapse on open`: Automatically collapse `NestedScenarios` (`ВложенныеСценарии`) and `ScenarioParameters` (`ПараметрыСценария`) sections when opening a file.
