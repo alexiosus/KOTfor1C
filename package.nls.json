@@ -46,7 +46,6 @@
   "config.paths.disabledTestsDirectory.description": "Relative path to disabled tests directory (Mirrored to Yaml Source Directory)",
   "config.paths.firstLaunchFolder.description": "Relative path to first launch data folder (Build FL archive button shown only if this folder exists)",
 
-
   "cmd.category": "1C:Drive Test Helper",
   "cmd.saveEmailPassword.title": "1C:Drive - Set test mail password",
   "cmd.clearEmailPassword.title": "1C:Drive - Clear test mail password",

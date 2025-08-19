@@ -1,5 +1,12 @@
 # Change Log
 
+# 1.10.7
+- **Fixes**:
+    - **Fixed refresh button unavailability:** The "Refresh" button is now always available, even when no tests are found for the Phase Switcher. This allows users to retry scanning when no tests are present or when the directory has changed.
+    - **Fixed hardcoded paths:** Replaced hardcoded `SCAN_DIR_RELATIVE_PATH` constant with the `YamlSourceDirectory` setting.
+    - Fixed untranslated messages.
+    - Fixed wrongly added empty string in the NestedScenario section.
+
 # 1.10.6
 - Fixed saving parameter values when the value is an empty string.
 

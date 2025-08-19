@@ -4,8 +4,12 @@ import * as fs from 'fs';
 import { TestInfo } from './types';
 import { getTranslator } from './localization';
 
-// Путь для сканирования (относительно корня воркспейса)
-export const SCAN_DIR_RELATIVE_PATH = "tests/RegressionTests/Yaml/Drive";
+// Function to get the scan directory path from configuration
+export function getScanDirRelativePath(): string {
+    const config = vscode.workspace.getConfiguration('1cDriveHelper');
+    return config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml';
+}
+
 // Паттерн для поиска файлов сценариев внутри SCAN_DIR_RELATIVE_PATH
 // Используем scen.yaml, т.к. он содержит метаданные
 export const SCAN_GLOB_PATTERN = '**/scen.yaml';
@@ -21,7 +25,8 @@ export const SCAN_GLOB_PATTERN = '**/scen.yaml';
 export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?: vscode.CancellationToken): Promise<Map<string, TestInfo> | null> {
     console.log("[scanWorkspaceForTests] Starting scan...");
     const discoveredTests = new Map<string, TestInfo>();
-    const scanDirUri = vscode.Uri.joinPath(workspaceRootUri, SCAN_DIR_RELATIVE_PATH);
+    const scanDirRelativePath = getScanDirRelativePath();
+    const scanDirUri = vscode.Uri.joinPath(workspaceRootUri, scanDirRelativePath);
     console.log(`[scanWorkspaceForTests] Scanning directory: ${scanDirUri.fsPath} for pattern ${SCAN_GLOB_PATTERN}`);
 
     try {

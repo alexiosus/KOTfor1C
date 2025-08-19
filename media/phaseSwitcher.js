@@ -66,12 +66,15 @@
         if (area instanceof HTMLElement) {
             area.textContent = text;
         }
+        // Always respect explicit refresh button state
         if (refreshButtonEnabled !== undefined && refreshBtn instanceof HTMLButtonElement) {
             refreshBtn.disabled = !refreshButtonEnabled;
+            log(`Refresh button explicitly set to: ${refreshButtonEnabled ? 'enabled' : 'disabled'}`);
         }
         if (collapseAllBtn instanceof HTMLButtonElement) {
             const hasPhases = Object.keys(testDataByPhase).length > 0;
-            collapseAllBtn.disabled = !(refreshButtonEnabled && hasPhases && settings.switcherEnabled);
+            const refreshEnabled = refreshBtn instanceof HTMLButtonElement ? !refreshBtn.disabled : true;
+            collapseAllBtn.disabled = !(refreshEnabled && hasPhases && settings.switcherEnabled);
         }
         // Кнопка создания сценариев (плюс)
         if (addScenarioDropdownBtn instanceof HTMLButtonElement) {
@@ -123,8 +126,13 @@
                 }
             });
         }
-        if (refreshButtonAlso && refreshBtn instanceof HTMLButtonElement) {
+        if (refreshButtonAlso === true && refreshBtn instanceof HTMLButtonElement) {
              refreshBtn.disabled = isDisabled;
+             log(`Refresh button set by enablePhaseControls to: ${isDisabled ? 'disabled' : 'enabled'}`);
+        } else if (refreshButtonAlso === false && refreshBtn instanceof HTMLButtonElement) {
+             // If refreshButtonAlso is explicitly false, don't change the refresh button state
+             // This allows the refresh button to remain enabled even when other controls are disabled
+             log(`Refresh button state preserved by enablePhaseControls (refreshButtonAlso=false)`);
         }
         log(`Phase controls (excluding Apply, Settings) enabled: ${effectiveEnable} (request ${enable}, feature ${isPhaseSwitcherVisible})`);
     }
@@ -166,7 +174,8 @@
     function createCheckboxHtml(testInfo) {
         if (!testInfo || typeof testInfo.name !== 'string' || !testInfo.name) {
              log("ERROR: Invalid testInfo in createCheckboxHtml!");
-             return '<p style="color:var(--vscode-errorForeground);">Ошибка данных чекбокса</p>';
+             const checkboxError = window.__loc?.checkboxDataError || 'Checkbox data error';
+             return `<p style="color:var(--vscode-errorForeground);">${checkboxError}</p>`;
         }
         const name = testInfo.name;
         const relativePath = testInfo.relativePath || '';
@@ -210,7 +219,8 @@
         const sortedPhaseNames = Object.keys(allPhaseData).sort();
 
         if (sortedPhaseNames.length === 0) {
-            phaseTreeContainer.innerHTML = '<p>Нет фаз для отображения.</p>';
+            const noPhasesMessage = window.__loc?.noPhasesToDisplay || 'No phases to display.';
+            phaseTreeContainer.innerHTML = `<p>${noPhasesMessage}</p>`;
             if (collapseAllBtn instanceof HTMLButtonElement) collapseAllBtn.disabled = true;
             return;
         } else {
@@ -748,7 +758,8 @@
                     enableAssembleControls(assemblerVisible);
                     if (openSettingsBtn instanceof HTMLButtonElement) openSettingsBtn.disabled = false;
 
-                    updateStatus('Готово к работе.', 'main', true);
+                    const readyMessage = window.__loc?.readyToWork || 'Ready to work.';
+                    updateStatus(readyMessage, 'main', true);
                 }
                 break;
 
@@ -756,6 +767,7 @@
                  const target = message.target || 'main';
                  const controlsEnabled = message.enableControls === undefined ? undefined : message.enableControls;
                  let refreshEnabled = message.refreshButtonEnabled;
+                 const refreshButtonAlso = message.refreshButtonAlso;
 
                  if (refreshEnabled === undefined) {
                      refreshEnabled = controlsEnabled === undefined ? (refreshBtn ? !refreshBtn.disabled : true) : controlsEnabled;
@@ -764,7 +776,9 @@
                  updateStatus(message.text, target, refreshEnabled);
 
                  if (controlsEnabled !== undefined) {
-                     enablePhaseControls(controlsEnabled && settings.switcherEnabled, refreshEnabled);
+                     // Enable phase controls only if there are tests, but respect refresh button state
+                     const shouldEnablePhaseControls = controlsEnabled && settings.switcherEnabled;
+                     enablePhaseControls(shouldEnablePhaseControls, refreshButtonAlso !== undefined ? refreshButtonAlso : refreshEnabled);
                      enableAssembleControls(controlsEnabled && settings.assemblerEnabled);
                  }
                  break;

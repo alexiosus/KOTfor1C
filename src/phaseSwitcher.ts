@@ -2,7 +2,7 @@
 import * as cp from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs'; 
-import { scanWorkspaceForTests, SCAN_DIR_RELATIVE_PATH } from './workspaceScanner';
+import { scanWorkspaceForTests, getScanDirRelativePath } from './workspaceScanner';
 import { TestInfo } from './types';
 
 // Ключ для хранения пароля в SecretStorage
@@ -402,7 +402,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._testCache = null;
         } finally {
             this._isScanning = false;
-            }
+        }
         } else {
             console.log(`[PhaseSwitcherProvider:_sendInitialState] Using existing cache with ${this._testCache.size} scenarios`);
         }
@@ -419,7 +419,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             status = this.t('Checking test state...');
             webview.postMessage({ command: 'updateStatus', text: status, refreshButtonEnabled: false });
 
-            const baseOnDirUri = vscode.Uri.joinPath(workspaceRootUri, SCAN_DIR_RELATIVE_PATH);
+            const baseOnDirUri = vscode.Uri.joinPath(workspaceRootUri, getScanDirRelativePath());
             const baseOffDirUri = projectPaths.disabledTestsDirectory;
 
             const testsForPhaseSwitcherProcessing: TestInfo[] = [];
@@ -468,7 +468,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             },
             error: !this._testCache ? status : undefined // Ошибка, если _testCache пуст
         });
-        webview.postMessage({ command: 'updateStatus', text: status, enableControls: !!this._testCache && testsForPhaseSwitcherCount > 0, refreshButtonEnabled: true });
+        // Always enable refresh button, but only enable other controls if there are tests
+        const hasTests = !!this._testCache && testsForPhaseSwitcherCount > 0;
+        webview.postMessage({ command: 'updateStatus', text: status, enableControls: hasTests });
+        
+        // Explicitly enable refresh button if there are no tests
+        if (!hasTests) {
+            webview.postMessage({ command: 'setRefreshButtonState', enabled: true });
+        }
         
         // Генерируем событие с ПОЛНЫМ кэшем для других компонентов (например, CompletionProvider)
         this._onDidUpdateTestCache.fire(this._testCache);
@@ -512,7 +519,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             yamlParametersTemplate: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.yamlParametersTemplate') || 'build/develop_parallel/yaml_parameters.json'),
             yamlSourceDirectory: path.join(workspaceRootUri.fsPath, config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml'),
             disabledTestsDirectory: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.disabledTestsDirectory') || 'RegressionTests_Disabled/Yaml/Drive'),
-            firstLaunchFolder: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.firstLaunchFolder') || 'first_launch')
+            firstLaunchFolder: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.firstLaunchFolder') || 'first_launch'),
+            etalonDriveDirectory: 'tests'
         };
     }
 
@@ -905,7 +913,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 await vscode.workspace.fs.createDirectory(vanessaErrorLogsDir);
 
                 outputChannel.appendLine(this.t('Writing parameters from pipeline into tests...'));
-                featureFileDirUri = vscode.Uri.joinPath(absoluteBuildPathUri, 'tests/EtalonDrive');
+                featureFileDirUri = vscode.Uri.joinPath(absoluteBuildPathUri, projectPaths.etalonDriveDirectory);
                 const featureFilesPattern = new vscode.RelativePattern(featureFileDirUri, '**/*.feature');
                 const featureFiles = await vscode.workspace.findFiles(featureFilesPattern);
 
@@ -940,9 +948,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 progress.report({ increment: 90, message: this.t('Correcting files...') });
                 if (projectPaths.repairTestFileEpf) {
                 const filesToRepairRelative = [
-                    'tests/EtalonDrive/001_Company_tests.feature',
-                    'tests/EtalonDrive/I_start_my_first_launch.feature',
-                    'tests/EtalonDrive/I_start_my_first_launch_templates.feature'
+                    `${projectPaths.etalonDriveDirectory}/001_Company_tests.feature`,
+                    `${projectPaths.etalonDriveDirectory}/I_start_my_first_launch.feature`,
+                    `${projectPaths.etalonDriveDirectory}/I_start_my_first_launch_templates.feature`
                 ];
                     const repairScriptEpfPath = projectPaths.repairTestFileEpf.fsPath;
 
@@ -1278,7 +1286,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
         const workspaceRootUri = workspaceFolders[0].uri;
 
-        const baseOnDirUri = vscode.Uri.joinPath(workspaceRootUri, SCAN_DIR_RELATIVE_PATH);
+        const baseOnDirUri = vscode.Uri.joinPath(workspaceRootUri, getScanDirRelativePath());
         const projectPaths = this.getProjectPaths(workspaceRootUri);
         const baseOffDirUri = projectPaths.disabledTestsDirectory;
         

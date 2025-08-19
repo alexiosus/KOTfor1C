@@ -57,8 +57,9 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (workspaceFolders?.length) { // Проверяем, что воркспейс открыт
         const workspaceRootUri = workspaceFolders[0].uri;
-        // Путь по умолчанию <workspaceRoot>/tests/RegressionTests/Yaml/Drive/
-        const defaultSubPath = path.join('tests', 'RegressionTests', 'Yaml', 'Drive');
+        // Путь по умолчанию из настроек
+        const config = vscode.workspace.getConfiguration('1cDriveHelper');
+        const defaultSubPath = config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml';
         try {
             defaultDialogUri = vscode.Uri.joinPath(workspaceRootUri, defaultSubPath);
             // console.log(`[Cmd:createNestedScenario] Default dialog path set to: ${defaultDialogUri.fsPath}`);

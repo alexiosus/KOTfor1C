@@ -46,7 +46,6 @@
   "config.paths.disabledTestsDirectory.description": "Относительный путь к папке отключенных тестов (Зеркально к Yaml Source Directory)",
   "config.paths.firstLaunchFolder.description": "Относительный путь к папке набора данных первого запуска (кнопка сборки архива первого запуска показывается только если папка существует)",
 
-
   "cmd.category": "1C:Drive Test Helper",
   "cmd.saveEmailPassword.title": "1C:Drive - Установить пароль тестовой почты",
   "cmd.clearEmailPassword.title": "1C:Drive - Очистить пароль тестовой почты",
