@@ -1142,11 +1142,15 @@ export async function clearAndFillNestedScenarios(document: vscode.TextDocument,
         });
 
         // Add final newline if there's a next section
-        if (nextMajorKeyMatchResult && sectionContentEndOffset < fullText.length) {
-            itemsToInsertString += "\n";
+        let finalTextToInsert: string;
+        if (scenariosToAdd.length === 0) {
+            finalTextToInsert = nextMajorKeyMatchResult && sectionContentEndOffset < fullText.length ? "\n" : "";
+        } else {
+            if (nextMajorKeyMatchResult && sectionContentEndOffset < fullText.length) {
+                itemsToInsertString += "\n";
+            }
+            finalTextToInsert = "\n" + itemsToInsertString;
         }
-
-        const finalTextToInsert = "\n" + itemsToInsertString;
 
         // Apply the edit
         const edit = new vscode.WorkspaceEdit();
