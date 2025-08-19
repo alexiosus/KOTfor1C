@@ -1346,3 +1346,17 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
         }, progressHandler);
     }
 }
+
+/**
+ * Обработчик команды открытия панели управления YAML параметрами
+ */
+export async function handleOpenYamlParametersManager(context: vscode.ExtensionContext): Promise<void> {
+    try {
+        const { YamlParametersManager } = await import('./yamlParametersManager.js');
+        const manager = YamlParametersManager.getInstance(context);
+        await manager.openYamlParametersPanel();
+    } catch (error) {
+        console.error('[Cmd:openYamlParametersManager] Error:', error);
+                    vscode.window.showErrorMessage(`Error opening Build Scenario Parameters Manager: ${error}`);
+    }
+}

@@ -67,7 +67,14 @@
         <hr id="sectionSeparator" class="section-separator">
         
         <div id="assembleSection" class="assemble-tests-section">
-            <h1>${loc.assemblyTitle}</h1>
+            <div class="controls-top-bar">
+                <h1>${loc.assemblyTitle}</h1>
+                <div class="controls-top-buttons">
+                    <button class="button-with-icon compact-top-btn" id="openYamlParamsBtn" title="${loc.openYamlParametersManagerTitle}">
+                        <span class="codicon codicon-settings-gear"></span>
+                    </button>
+                </div>
+            </div>
             <div class="assemble-options assemble-options-inline">
                 ${loc.accountingMode}:
                 <select id="recordGLSelect" name="recordGLAccounts" title="Record GL Accounts (0=No, 1=Yes, 2=Templates)">

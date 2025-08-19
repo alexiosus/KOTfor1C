@@ -1,11 +1,21 @@
 # Change Log
 
-# 1.10.7
+# 1.11.0
+- **New Features**:
+    - **Build Scenario Parameters Manager:**
+        - New interface for managing `yaml_parameters.json` parameters through a convenient key-value table.
+        - Default parameters generated based on extension settings (BuildPath, yamlSourceDirectory).
+        - Secure storage of settings in VS Code SecretStorage.
+        - Support for loading/saving parameters from/to JSON files.
 - **Fixes**:
-    - **Fixed refresh button unavailability:** The "Refresh" button is now always available, even when no tests are found for the Phase Switcher. This allows users to retry scanning when no tests are present or when the directory has changed.
+    - **Fixed refresh button unavailability:** The "Refresh" button is now always available, even when no tests are found for the Phase Switcher.
     - **Fixed hardcoded paths:** Replaced hardcoded `SCAN_DIR_RELATIVE_PATH` constant with the `YamlSourceDirectory` setting.
-    - Fixed untranslated messages.
+    - Fixed untranslated messages and tooltips.
     - Fixed wrongly added empty string in the NestedScenario section.
+- **Removed**:
+    - **YAML Parameters Template setting:** Removed in favor of the new Build Scenario Parameters Manager.
+    - **Split Feature Files setting:** Removed as it's now configured through the Build Scenario Parameters Manager.
+    - **BuildScenarioBDD Parameters setting:** Removed as all parameters are now managed through the Build Scenario Parameters Manager.
 
 # 1.10.6
 - Fixed saving parameter values when the value is an empty string.

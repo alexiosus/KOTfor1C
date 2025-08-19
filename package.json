@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.10.7",
+  "version": "1.11.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -132,17 +132,18 @@
       {
         "title": "%config.assemblySettings.title%",
         "properties": {
-          "1cDriveHelper.params.splitFeatureFiles": {
-            "type": "boolean",
-            "default": false,
-            "description": "%config.splitFeatureFiles.description%",
-            "order": 21
-          },
           "1cDriveHelper.assembleScript.showOutputPanel": {
             "type": "boolean",
             "default": false,
             "description": "%config.showOutputPanel.description%",
             "order": 22
+          },
+          "1cDriveHelper.paths.openBuildScenarioParametersManager": {
+            "type": "null",
+            "default": null,
+            "description": "%config.paths.openBuildScenarioParametersManager.description%",
+            "markdownDescription": "%config.paths.openBuildScenarioParametersManager.markdownDescription%",
+            "order": 23
           }
         }
       },
@@ -153,12 +154,6 @@
             "type": "string",
             "default": "/L ru /DisableStartupMessages /DisableStartupDialogs",
             "description": "%config.startupParams.parameters.description%",
-            "order": 23
-          },
-          "1cDriveHelper.startupParams.buildScenarioBddParams": {
-            "type": "string",
-            "default": "",
-            "markdownDescription": "%config.startupParams.buildScenarioBddParams.markdownDescription%",
             "order": 24
           }
         }
@@ -170,44 +165,39 @@
             "type": "string",
             "default": "",
             "description": "%config.emptyInfobase.description%",
-            "order": 25
+            "order": 26
           },
           "1cDriveHelper.assembleScript.buildPath": {
             "type": "string",
             "default": "C:\\EtalonDrive\\",
             "description": "%config.buildPath.description%",
-            "order": 26
+            "order": 27
           },
           "1cDriveHelper.paths.oneCEnterpriseExe": {
             "type": "string",
             "default": "C:\\Program Files (x86)\\1cv8\\8.3.24.1738\\bin\\1cv8.exe",
             "description": "%config.oneCEnterpriseExe.description%",
-            "order": 27
+            "order": 28
           },
           "1cDriveHelper.paths.fileWorkshopExe": {
             "type": "string",
             "default": "C:\\Program Files (x86)\\1cv8fv\\bin\\1cv8fv.exe",
             "description": "%config.fileWorkshopExe.description%",
-            "order": 28
+            "order": 29
           },
           "1cDriveHelper.paths.buildScenarioBddEpf": {
             "type": "string",
             "default": "build/BuildScenarioBDD.epf",
             "description": "%config.paths.buildScenarioBddEpf.description%",
-            "order": 29
+            "order": 30
           },
           "1cDriveHelper.paths.repairTestFileEpf": {
             "type": "string",
             "default": "build/RepairTestFile.epf",
             "description": "%config.paths.repairTestFileEpf.description%",
-            "order": 30
-          },
-          "1cDriveHelper.paths.yamlParametersTemplate": {
-            "type": "string",
-            "default": "build/develop_parallel/yaml_parameters.json",
-            "description": "%config.paths.yamlParametersTemplate.description%",
             "order": 31
           },
+
           "1cDriveHelper.paths.yamlSourceDirectory": {
             "type": "string",
             "default": "tests/RegressionTests/yaml",
@@ -323,6 +313,11 @@
       {
         "command": "1cDriveHelper.createFirstLaunchZip",
         "title": "%cmd.createFirstLaunchZip.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "1cDriveHelper.openYamlParametersManager",
+        "title": "%cmd.openYamlParametersManager.title%",
         "category": "%cmd.category%"
       }
     ],
@@ -455,6 +450,10 @@
         },
         {
           "command": "1cDriveHelper.createFirstLaunchZip",
+          "when": "true"
+        },
+        {
+          "command": "1cDriveHelper.openYamlParametersManager",
           "when": "true"
         }
       ]

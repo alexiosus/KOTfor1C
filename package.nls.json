@@ -26,13 +26,10 @@
   "config.emailProtocol.description": "Mail protocol (EMailTestProtocol).",
 
   "config.assemblySettings.title": "Test Assembly Settings",
-  "config.splitFeatureFiles.description": "When assembling, save files attached to tests into a separate folder.",
   "config.showOutputPanel.description": "Automatically show the Output panel when starting test assembly.",
 
   "config.startupParameters.title": "1C:Enterprise Startup Parameters",
-  "config.startupParams.parameters.description": "1C:Enterprise startup parameters (space-separated, e.g., '/L en /DisableStartupMessages /Debug')",
-  "config.startupParams.buildScenarioBddParams.markdownDescription": "Custom parameters for BuildScenarioBDD data processor (e.g., 'CustomParam=Value;AnotherParam=123').  \n[More details (in Russian)](https://its.1c.ru/db/sppr2doc#content:124:hdoc)",
-
+    "config.startupParams.parameters.description": "1C:Enterprise startup parameters (space-separated, e.g., '/L en /DisableStartupMessages /Debug')",
   "config.pathsSettings.title": "System Paths Settings",
   "config.emptyInfobase.description": "Path to the empty file-based infobase directory (EmptyInfobasePath).",
   "config.buildPath.description": "Path to the folder for assembled tests (BuildPath).",
@@ -41,10 +38,13 @@
 
   "config.paths.buildScenarioBddEpf.description": "Relative path to BuildScenarioBDD.epf data processor for YAML to Feature conversion",
   "config.paths.repairTestFileEpf.description": "Relative path to RepairTestFile.epf for fixing specific feature files (leave empty to skip)",
-  "config.paths.yamlParametersTemplate.description": "Relative path to yaml_parameters.json template (used for extra parameters)",
+
   "config.paths.yamlSourceDirectory.description": "Relative path to YAML source directory",
   "config.paths.disabledTestsDirectory.description": "Relative path to disabled tests directory (Mirrored to Yaml Source Directory)",
   "config.paths.firstLaunchFolder.description": "Relative path to first launch data folder (Build FL archive button shown only if this folder exists)",
+  "config.paths.openBuildScenarioParametersManager.description": "Open Build Scenario Parameters Manager",
+  "config.paths.openBuildScenarioParametersManager.markdownDescription": "Click the button below to open the Build Scenario Parameters Manager panel where you can configure test parameters.\n\n[Open Build Scenario Parameters Manager](command:1cDriveHelper.openYamlParametersManager)",
+
 
   "cmd.category": "1C:Drive Test Helper",
   "cmd.saveEmailPassword.title": "1C:Drive - Set test mail password",
@@ -66,6 +66,7 @@
   "cmd.revealFileInOS.title": "1C:Drive - Reveal file in OS file manager",
   "cmd.openBuildFolder.title": "1C:Drive - Open build folder",
   "cmd.createFirstLaunchZip.title": "1C:Drive - Create FirstLaunch archive",
+  "cmd.openYamlParametersManager.title": "1C:Drive - Open Build Scenario Parameters Manager",
 
   "view.phaseSwitcher.name": "1C:Drive Test Helper",
   "view.phaseSwitcher.contextualTitle": "1C:Drive Test Helper"

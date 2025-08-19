@@ -16,6 +16,7 @@ import {
     checkAndFillScenarioParametersHandler,
     replaceTabsWithSpacesYamlHandler,
     handleCreateFirstLaunchZip,
+    handleOpenYamlParametersManager,
     clearAndFillNestedScenarios,
     clearAndFillScenarioParameters
 } from './commandHandlers';
@@ -23,6 +24,7 @@ import { getTranslator } from './localization';
 import { setExtensionUri } from './appContext';
 import { handleCreateNestedScenario, handleCreateMainScenario } from './scenarioCreator';
 import { TestInfo } from './types'; // Импортируем TestInfo
+import { SettingsProvider } from './settingsProvider';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -289,6 +291,15 @@ export function activate(context: vscode.ExtensionContext) {
         '1cDriveHelper.createFirstLaunchZip', 
         () => handleCreateFirstLaunchZip(context)
     ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        '1cDriveHelper.openYamlParametersManager', 
+        () => handleOpenYamlParametersManager(context)
+    ));
+
+    // Регистрируем провайдер настроек
+    const settingsProvider = SettingsProvider.getInstance(context);
+    settingsProvider.registerSettingsProvider();
 
     // Добавляем автоматические операции после сохранения YAML файлов
     context.subscriptions.push(

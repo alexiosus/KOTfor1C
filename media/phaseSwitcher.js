@@ -919,4 +919,13 @@
             vscode.postMessage({ command: 'createFirstLaunchZip' });
         });
     }
+
+    // Обработчик для кнопки YAML параметров
+    const openYamlParamsBtn = document.getElementById('openYamlParamsBtn');
+    if(openYamlParamsBtn instanceof HTMLButtonElement) {
+        openYamlParamsBtn.addEventListener('click', () => {
+            log('Open Build Scenario Parameters Manager button clicked.');
+            vscode.postMessage({ command: 'openYamlParametersManager' });
+        });
+    }
 }());

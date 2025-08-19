@@ -262,7 +262,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 pendingTotalChanged: this.t('Total changed: {0}'),
                 pendingEnabled: this.t('Enabled: {0}'),
                 pendingDisabled: this.t('Disabled: {0}'),
-                pendingPressApply: this.t('Press "Apply"')
+                pendingPressApply: this.t('Press "Apply"'),
+                openYamlParametersManagerTitle: this.t('openYamlParametersManagerTitle'),
+                yamlParameters: this.t('Build Scenario Parameters')
             };
 
             htmlContent = htmlContent.replace('${localeHtmlLang}', localeHtmlLang);
@@ -334,6 +336,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 case 'createFirstLaunchZip':
                     console.log("[PhaseSwitcherProvider] Received createFirstLaunchZip command from webview.");
                     vscode.commands.executeCommand('1cDriveHelper.createFirstLaunchZip');
+                    return;
+                case 'openYamlParametersManager':
+                    console.log("[PhaseSwitcherProvider] Received openYamlParametersManager command from webview.");
+                    vscode.commands.executeCommand('1cDriveHelper.openYamlParametersManager');
                     return;
             }
         }, undefined, this._context.subscriptions);
@@ -516,7 +522,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return {
             buildScenarioBddEpf: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.buildScenarioBddEpf') || 'build/BuildScenarioBDD.epf'),
             repairTestFileEpf: repairTestFileEpfPath ? vscode.Uri.joinPath(workspaceRootUri, repairTestFileEpfPath) : null,
-            yamlParametersTemplate: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.yamlParametersTemplate') || 'build/develop_parallel/yaml_parameters.json'),
+
             yamlSourceDirectory: path.join(workspaceRootUri.fsPath, config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml'),
             disabledTestsDirectory: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.disabledTestsDirectory') || 'RegressionTests_Disabled/Yaml/Drive'),
             firstLaunchFolder: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.firstLaunchFolder') || 'first_launch'),
@@ -528,19 +534,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
      * Builds BuildScenarioBDD /C command with custom parameters and ErrorFolder
      */
     private buildBuildScenarioBddCommand(jsonParamsPath: string, resultFilePath: string, logFilePath: string, errorFolderPath: string): string {
-        const config = vscode.workspace.getConfiguration('1cDriveHelper');
-        const customBddParams = config.get<string>('startupParams.buildScenarioBddParams') || '';
-
         // Ensure ErrorFolder path ends with a slash
         const errorFolderWithSlash = errorFolderPath.endsWith(path.sep) ? errorFolderPath : errorFolderPath + path.sep;
 
-        let command = `СобратьСценарии;JsonParams=${jsonParamsPath};ResultFile=${resultFilePath};LogFile=${logFilePath};ErrorFolder=${errorFolderWithSlash}`;
-        
-        // Add custom parameters if specified
-        if (customBddParams.trim()) {
-            command += `;${customBddParams.trim()}`;
-            console.log(`[PhaseSwitcherProvider] ${this.t('Using custom BuildScenarioBDD parameters: {0}', customBddParams.trim())}`);
-        }
+        const command = `СобратьСценарии;JsonParams=${jsonParamsPath};ResultFile=${resultFilePath};LogFile=${logFilePath};ErrorFolder=${errorFolderWithSlash}`;
 
         return `/C"${command}"`;
     }
@@ -855,28 +852,18 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 await vscode.workspace.fs.createDirectory(absoluteBuildPathUri);
                 outputChannel.appendLine(this.t('Build directory ensured: {0}', absoluteBuildPath));
 
-                progress.report({ increment: 10, message: this.t('Copying parameters...') });
-                const projectPaths = this.getProjectPaths(workspaceRootUri);
+                progress.report({ increment: 10, message: this.t('Preparing parameters...') });
                 const localSettingsPath = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_parameters.json');
-                const yamlParamsSourcePath = projectPaths.yamlParametersTemplate;
                 
-                await vscode.workspace.fs.copy(yamlParamsSourcePath, localSettingsPath, { overwrite: true });
-
-                let yamlParamsContent = Buffer.from(await vscode.workspace.fs.readFile(localSettingsPath)).toString('utf-8');
-                const buildPathForwardSlash = absoluteBuildPath.replace(/\\/g, '/');
-                const sourcesPathForwardSlash = workspaceRootPath.replace(/\\/g, '/');
+                // Генерируем yaml_parameters.json из сохранённых параметров через Build Scenario Parameters Manager
+                const { YamlParametersManager } = await import('./yamlParametersManager.js');
+                const yamlParametersManager = YamlParametersManager.getInstance(this._context);
+                await yamlParametersManager.createYamlParametersFile(localSettingsPath.fsPath);
                 
-                const vanessaTestFileEnv = process.env.VanessaTestFile; 
-                const splitFeatureFilesFromConfig = config.get<boolean>('params.splitFeatureFiles');
-                const splitFeatureFilesValue = vanessaTestFileEnv ? "True" : (splitFeatureFilesFromConfig ? "True" : "False");
+                outputChannel.appendLine(this.t('yaml_parameters.json generated at {0}', localSettingsPath.fsPath));
 
-                yamlParamsContent = yamlParamsContent.replace(/#BuildPath/g, buildPathForwardSlash);
-                yamlParamsContent = yamlParamsContent.replace(/#SourcesPath/g, sourcesPathForwardSlash);
-                yamlParamsContent = yamlParamsContent.replace(/#SplitFeatureFiles/g, splitFeatureFilesValue);
-                await vscode.workspace.fs.writeFile(localSettingsPath, Buffer.from(yamlParamsContent, 'utf-8'));
-                outputChannel.appendLine(this.t('yaml_parameters.json prepared at {0}', localSettingsPath.fsPath));
-
-
+                // Получаем пути проекта
+                const projectPaths = this.getProjectPaths(workspaceRootUri);
 
                 progress.report({ increment: 40, message: this.t('Building YAML in feature...') });
                 outputChannel.appendLine(this.t('Building YAML files to feature file...'));

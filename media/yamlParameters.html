@@ -1,0 +1,87 @@
+<!-- HTML Template for Build Scenario Parameters Manager -->
+<!DOCTYPE html>
+<html lang="${localeHtmlLang}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${loc.title}</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; font-src ${webview.cspSource}; img-src ${webview.cspSource} https:; script-src 'nonce-${nonce}';">
+    <link href="${codiconsUri}" rel="stylesheet">
+    <link href="${stylesUri}" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>${loc.title}</h1>
+            <p>${loc.description}</p>
+        </div>
+
+        <div class="controls">
+            <div class="controls-left">
+                <button id="saveBtn" class="button-with-icon">
+                    <span class="codicon codicon-save"></span> ${loc.save}
+                </button>
+                <button id="addRowBtn" class="button-with-icon">
+                    <span class="codicon codicon-add"></span> ${loc.addParameter}
+                </button>
+            </div>
+            <div class="controls-right">
+                <div class="help-container">
+                    <button id="helpBtn" class="help-button" title="${loc.help}">
+                        <span class="codicon codicon-question"></span>
+                    </button>
+                    <div id="helpTooltip" class="help-tooltip">
+                        <div class="help-content">
+                            <p class="path-hint">${loc.pathHint}</p>
+                            <p class="help-link">
+                                <a href="https://its.1c.ru/db/sppr2doc#content:124:hdoc" target="_blank">
+                                    ${loc.moreInfoOnITS}
+                                </a>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                <div class="dropdown-container">
+                    <button id="moreActionsBtn" class="button-with-icon compact-action-btn" title="${loc.moreActions}">
+                        <span class="codicon codicon-ellipsis"></span> ${loc.moreActions}
+                    </button>
+                    <div id="moreActionsDropdown" class="dropdown-content">
+                        <a href="#" id="createFileFromDropdownBtn" class="dropdown-item">
+                            <span class="codicon codicon-file-code"></span> ${loc.createFile}
+                        </a>
+                        <a href="#" id="loadFromJsonFromDropdownBtn" class="dropdown-item">
+                            <span class="codicon codicon-folder-opened"></span> ${loc.loadFromJson}
+                        </a>
+                        <a href="#" id="resetDefaultsFromDropdownBtn" class="dropdown-item">
+                            <span class="codicon codicon-discard"></span> ${loc.resetDefaults}
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table id="parametersTable">
+                <thead>
+                    <tr>
+                        <th>${loc.parameter}</th>
+                        <th>${loc.value}</th>
+                        <th class="actions-header">${loc.actions}</th>
+                    </tr>
+                </thead>
+                <tbody id="parametersTableBody">
+                    ${parametersRows}
+                </tbody>
+            </table>
+        </div>
+
+
+    </div>
+
+    <script type="application/javascript" nonce="${nonce}">
+        window.__parameters = ${parametersJson};
+        window.__defaultParameters = ${defaultParametersJson};
+    </script>
+    <script type="application/javascript" nonce="${nonce}" src="${scriptUri}"></script>
+</body>
+</html>
