@@ -263,7 +263,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 pendingEnabled: this.t('Enabled: {0}'),
                 pendingDisabled: this.t('Disabled: {0}'),
                 pendingPressApply: this.t('Press "Apply"'),
-                openYamlParametersManagerTitle: this.t('openYamlParametersManagerTitle'),
+                openYamlParametersManagerTitle: this.t('Open Build Scenario Parameters Manager'),
                 yamlParameters: this.t('Build Scenario Parameters')
             };
 

@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -206,7 +206,7 @@
           },
           "1cDriveHelper.paths.disabledTestsDirectory": {
             "type": "string",
-            "default": "RegressionTests_Disabled/Yaml/Drive",
+            "default": "RegressionTests_Disabled/Yaml",
             "description": "%config.paths.disabledTestsDirectory.description%",
             "order": 33
           },

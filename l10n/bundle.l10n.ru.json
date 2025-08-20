@@ -255,7 +255,7 @@
     "  - Skipped user correction: {0} not found.": "  - Пропущено исправление пользователя: {0} не найден.",
     "--- WARNING: Error applying correction to {0}: {1} ---": "--- ПРЕДУПРЕЖДЕНИЕ: Ошибка применения исправления к {0}: {1} ---",
     "Show refill section messages": "Показывать сообщения о заполнении секций",
-    "openYamlParametersManagerTitle": "Открыть Менеджер параметров Сборки Сценариев",
+    "Open Build Scenario Parameters Manager": "Открыть Менеджер параметров Сборки Сценариев",
     "yamlParameters": "Параметры сборки сценариев",
     "Build Scenario Parameters Manager": "Менеджер параметров Сборки Сценариев",
     "Manage build scenario parameters for test configuration": "Управление параметрами сборки сценариев для конфигурации тестов",

@@ -1,12 +1,13 @@
 # Change Log
 
-# 1.11.0
+# 1.11.1
 - **New Features**:
     - **Build Scenario Parameters Manager:**
         - New interface for managing `yaml_parameters.json` parameters through a convenient key-value table.
         - Default parameters generated based on extension settings (BuildPath, yamlSourceDirectory).
         - Secure storage of settings in VS Code SecretStorage.
         - Support for loading/saving parameters from/to JSON files.
+        - The list of supported parameters is available [on ITS](https://its.1c.ru/db/sppr2doc#content:124:hdoc:issogl1_11.8.3).
 - **Fixes**:
     - **Fixed refresh button unavailability:** The "Refresh" button is now always available, even when no tests are found for the Phase Switcher.
     - **Fixed hardcoded paths:** Replaced hardcoded `SCAN_DIR_RELATIVE_PATH` constant with the `YamlSourceDirectory` setting.

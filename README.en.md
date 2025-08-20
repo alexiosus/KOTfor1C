@@ -1,7 +1,7 @@
 # 1C:Drive Test Helper
 <p align="center">
   <img src="./docs/1CDriveTestHelper_poster.png" alt="1C:Drive Test Helper Icon" width="600"/><br>
-  <a href="CHANGELOG.en.md"><img src="https://img.shields.io/badge/version-1.11.0-yellow"></a>
+  <a href="CHANGELOG.en.md"><img src="https://img.shields.io/badge/version-1.11.1-yellow"></a>
 </p>
 
 <p align="center">
@@ -10,7 +10,7 @@
 
 Helper for developing and managing 1C regression tests in VS Code. Speeds up navigation between scenarios, creating new scenarios from templates, and managing phases and builds for test runs.
 
-**Universal Solution:** While initially designed for testing the 1C:Drive configuration, this extension is compatible with any other 1C testing projects that use YAML-based scenario files and use Vanessa Automation. It works with projects built using the [SPPR (СППР)](https://its.1c.ru/db/sppr2doc#content:124:hdoc) and can be used for other 1C projects.
+While initially designed for testing the 1C:Drive configuration, this extension is compatible with any other 1C testing projects that use YAML-based scenario files and use Vanessa Automation.
 
 # Features
 
