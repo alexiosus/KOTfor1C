@@ -125,8 +125,7 @@ The main difference is that there's no longer a need for external configuration 
 
 ## Compatibility
 
-* **SPPR Methodology:** Compatible with projects using the SPPR (СППР) methodology for 1C test automation.
-* **Vanessa Automation:** Works with any projects following YAML-based scenario structure and applicable to any 1C project.
+* **SPPR Methodology:** Compatible with projects using the SPPR (СППР) methodology for 1C test automation. Works with any projects following YAML-based scenario structure and applicable to any 1C project.
 * **Cross-Platform:** Supports Windows, macOS, and Linux (Linux compatibility not fully tested).
 
 ## Setup and usage
@@ -225,6 +224,10 @@ The main difference is that there's no longer a need for external configuration 
   <p><em>Step description hover window</em></p>
   <img src="./docs/hover.png" alt="Step description" width="600" style="max-width: 100%; height: auto; border-radius: 8px;"/>
 </div>
+
+## TODO
+
+* Launch built autotests in Vanessa Automation in one click.
 
 ## Known issues
 
