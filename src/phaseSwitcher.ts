@@ -900,9 +900,29 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 await vscode.workspace.fs.createDirectory(vanessaErrorLogsDir);
 
                 outputChannel.appendLine(this.t('Writing parameters from pipeline into tests...'));
-                featureFileDirUri = vscode.Uri.joinPath(absoluteBuildPathUri, projectPaths.etalonDriveDirectory);
+                
+                // Получаем ModelDBid из параметров YAML для определения правильного пути к сценариям
+                const parameters = await yamlParametersManager.loadParameters();
+                const modelDBidParam = parameters.find(p => p.key === "ModelDBid");
+                const modelDBid = modelDBidParam ? modelDBidParam.value : "EtalonDrive"; // Значение по умолчанию
+                
+                // Определяем путь к сценариям с учетом ModelDBid
+                // Если ModelDBid указан и не пустой, добавляем его к пути
+                const etalonDrivePath = modelDBid && modelDBid.trim() !== ""
+                    ? path.join(projectPaths.etalonDriveDirectory, modelDBid)
+                    : projectPaths.etalonDriveDirectory;
+                
+                outputChannel.appendLine(this.t('Using ModelDBid: {0}, etalonDrivePath: {1}', modelDBid, etalonDrivePath));
+                
+                featureFileDirUri = vscode.Uri.joinPath(absoluteBuildPathUri, etalonDrivePath);
                 const featureFilesPattern = new vscode.RelativePattern(featureFileDirUri, '**/*.feature');
                 const featureFiles = await vscode.workspace.findFiles(featureFilesPattern);
+                
+                outputChannel.appendLine(this.t('Feature files directory: {0}', featureFileDirUri.fsPath));
+                outputChannel.appendLine(this.t('Found {0} feature file(s):', featureFiles.length.toString()));
+                featureFiles.forEach((fileUri, index) => {
+                    outputChannel.appendLine(`  ${index + 1}. ${path.basename(fileUri.fsPath)}`);
+                });
 
 
 
@@ -934,28 +954,44 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 
                 progress.report({ increment: 90, message: this.t('Correcting files...') });
                 if (projectPaths.repairTestFileEpf) {
-                const filesToRepairRelative = [
-                    `${projectPaths.etalonDriveDirectory}/001_Company_tests.feature`,
-                    `${projectPaths.etalonDriveDirectory}/I_start_my_first_launch.feature`,
-                    `${projectPaths.etalonDriveDirectory}/I_start_my_first_launch_templates.feature`
-                ];
+                    outputChannel.appendLine(this.t('Starting file repair processing...'));
+                    outputChannel.appendLine(this.t('RepairTestFile.epf path: {0}', projectPaths.repairTestFileEpf.fsPath));
+                    
+                    const filesToRepairRelative = [
+                        `${etalonDrivePath}/001_Company_tests.feature`,
+                        `${etalonDrivePath}/I_start_my_first_launch.feature`,
+                        `${etalonDrivePath}/I_start_my_first_launch_templates.feature`
+                    ];
+                    
+                    outputChannel.appendLine(this.t('Files to repair (relative paths):'));
+                    filesToRepairRelative.forEach((filePath, index) => {
+                        outputChannel.appendLine(`  ${index + 1}. ${filePath}`);
+                    });
+                    
                     const repairScriptEpfPath = projectPaths.repairTestFileEpf.fsPath;
 
-                for (const relativePathSuffix of filesToRepairRelative) {
-                    const featureFileToRepairUri = vscode.Uri.joinPath(featureFileDirUri, path.basename(relativePathSuffix)); 
-                    try {
-                        await vscode.workspace.fs.stat(featureFileToRepairUri); 
+                    for (const relativePathSuffix of filesToRepairRelative) {
+                        const featureFileToRepairUri = vscode.Uri.joinPath(featureFileDirUri, path.basename(relativePathSuffix));
+                        outputChannel.appendLine(this.t('Processing file: {0}', featureFileToRepairUri.fsPath));
+                        
+                        try {
+                            await vscode.workspace.fs.stat(featureFileToRepairUri);
+                            outputChannel.appendLine(this.t('  ✓ File found, executing repair...'));
+                            
                             const repairParams = [
                                 ...this.buildStartupParams(emptyIbPath_raw),
                                 `/Execute`, `"${repairScriptEpfPath}"`,
                                 `/C"TestFile=${featureFileToRepairUri.fsPath}"`
                             ];
-                        await this.execute1CProcess(oneCExePath, repairParams, workspaceRootPath, "RepairTestFile.epf");
-                    } catch (error: any) {
-                        if (error.code !== 'FileNotFound') {
-                            outputChannel.appendLine(`--- WARNING: Error repairing file ${featureFileToRepairUri.fsPath}: ${error.message || error} ---`);
+                            await this.execute1CProcess(oneCExePath, repairParams, workspaceRootPath, "RepairTestFile.epf");
+                            outputChannel.appendLine(this.t('  ✓ Repair completed successfully'));
+                        } catch (error: any) {
+                            if (error.code === 'FileNotFound') {
+                                outputChannel.appendLine(this.t('  ✗ File not found: {0}', featureFileToRepairUri.fsPath));
+                            } else {
+                                outputChannel.appendLine(`--- WARNING: Error repairing file ${featureFileToRepairUri.fsPath}: ${error.message || error} ---`);
+                            }
                         }
-                    }
                     }
                 } else {
                     outputChannel.appendLine(this.t('Feature file repair processing skipped - RepairTestFile.epf path not configured'));
@@ -963,23 +999,30 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 
                 // Only show repair messages if repairTestFileEpf is configured
                 if (projectPaths.repairTestFileEpf) {
+                    outputChannel.appendLine(this.t('Starting Administrator replacement processing...'));
                     const companyTestFeaturePath = vscode.Uri.joinPath(featureFileDirUri, '001_Company_tests.feature');
+                    outputChannel.appendLine(this.t('Target file path: {0}', companyTestFeaturePath.fsPath));
+                    
                     try {
-                        outputChannel.appendLine(this.t('Repairing specific feature files...'));
-                        outputChannel.appendLine(this.t('Removing "Administrator" from 001_Company_tests...'));
                         await vscode.workspace.fs.stat(companyTestFeaturePath);
-                        outputChannel.appendLine(this.t('  - Correcting user in {0}', companyTestFeaturePath.fsPath));
+                        outputChannel.appendLine(this.t('  ✓ File found, removing "Administrator"...'));
+                        
                         const companyTestContentBytes = await vscode.workspace.fs.readFile(companyTestFeaturePath);
                         let companyTestContent = Buffer.from(companyTestContentBytes).toString('utf-8');
         
+                        const originalContent = companyTestContent;
                         companyTestContent = companyTestContent.replace(/using "Administrator"/g, 'using ""');
                         
-                        await vscode.workspace.fs.writeFile(companyTestFeaturePath, Buffer.from(companyTestContent, 'utf-8'));
-                        outputChannel.appendLine(this.t('  - Correction applied successfully.'));
+                        if (originalContent !== companyTestContent) {
+                            await vscode.workspace.fs.writeFile(companyTestFeaturePath, Buffer.from(companyTestContent, 'utf-8'));
+                            outputChannel.appendLine(this.t('  ✓ Administrator replacement completed successfully'));
+                        } else {
+                            outputChannel.appendLine(this.t('  - No "Administrator" found in file, no changes needed'));
+                        }
         
                     } catch (error: any) {
                         if (error.code === 'FileNotFound') {
-                            outputChannel.appendLine(this.t('  - Skipped user correction: {0} not found.', companyTestFeaturePath.fsPath));
+                            outputChannel.appendLine(this.t('  ✗ File not found: {0}', companyTestFeaturePath.fsPath));
                         } else {
                             outputChannel.appendLine(this.t('--- WARNING: Error applying correction to {0}: {1} ---', companyTestFeaturePath.fsPath, error.message || error));
                         }

@@ -195,6 +195,13 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
         console.log("[DriveCompletionProvider:provideCompletionItems] Triggered.");
 
+        // Проверяем, что это файл сценария YAML
+        const { isScenarioYamlFile } = await import('./yamlValidator.js');
+        if (!isScenarioYamlFile(document)) {
+            console.log("[DriveCompletionProvider:provideCompletionItems] Not a scenario YAML file. Returning empty.");
+            return [];
+        }
+
         // Если элементы Gherkin еще не загружены или идет загрузка, дождемся ее завершения
         if (this.isLoadingGherkin && this.loadingGherkinPromise) {
             console.log("[DriveCompletionProvider:provideCompletionItems] Waiting for Gherkin load to complete...");

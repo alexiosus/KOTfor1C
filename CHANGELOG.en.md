@@ -1,6 +1,6 @@
 # Change Log
 
-# 1.11.1
+# 1.11.2
 - **New Features**:
     - **Build Scenario Parameters Manager:**
         - New interface for managing `yaml_parameters.json` parameters through a convenient key-value table.
@@ -13,6 +13,10 @@
     - **Fixed hardcoded paths:** Replaced hardcoded `SCAN_DIR_RELATIVE_PATH` constant with the `YamlSourceDirectory` setting.
     - Fixed untranslated messages and tooltips.
     - Fixed wrongly added empty string in the NestedScenario section.
+    - Tabs are now replaced only at the beginning of a line.
+    - The FirstLaunch file assembly now processes only the necessary XML files.
+    - Creating new main scenarios now takes into account the ModelBDid setting (specified in the Build Scenario Parameters Manager).
+    - Auto-replacement of tabs and refilling of blocks in the header of scenarios, as well as auto-completion suggestions for steps, now only work in YAML files that have the string `ТипФайла: "Сценарий"` (`FileType: “Scenario”`) (it is a protection of YAML files that are not related to tests).
 - **Removed**:
     - **YAML Parameters Template setting:** Removed in favor of the new Build Scenario Parameters Manager.
     - **Split Feature Files setting:** Removed as it's now configured through the Build Scenario Parameters Manager.

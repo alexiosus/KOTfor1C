@@ -4,10 +4,10 @@
     Код: "Name_Placeholder"
     UIDСценария: "UID_Placeholder"
     Имя: "Name_Placeholder"
-    ЭталоннаяБазаИмя: "EtalonDrive"
+    ЭталоннаяБазаИмя: "ModelDBib_Placeholder"
     ПрофильПользователя: "Administrator"
     СценарийНаименование: "Name_Placeholder"
-    ИдентификаторБазы: "EtalonDrive"
+    ИдентификаторБазы: "ModelDBib_Placeholder"
     ПараметрыЗапуска: ""
 
 ПараметрыТеста:

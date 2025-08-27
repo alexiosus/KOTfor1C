@@ -1,7 +1,8 @@
 ﻿import * as vscode from 'vscode';
 import { getTranslator } from './localization';
-import * as path from 'path'; 
-import { v4 as uuidv4 } from 'uuid'; 
+import * as path from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import { YamlParametersManager } from './yamlParametersManager';
 
 /**
  * Обработчик команды создания вложенного сценария.
@@ -228,15 +229,23 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
         await vscode.workspace.fs.createDirectory(testFolderUri);
         await vscode.workspace.fs.createDirectory(filesFolderUri);
 
+        // --- Получаем ModelDBid из менеджера параметров ---
+        const yamlParametersManager = YamlParametersManager.getInstance(context);
+        const parameters = await yamlParametersManager.loadParameters();
+        const modelDBidParam = parameters.find(p => p.key === "ModelDBid");
+        const modelDBid = modelDBidParam ? modelDBidParam.value : "EtalonDrive"; // Значение по умолчанию, если не найдено
+
         // --- Создаем тестовый файл ---
         const testTemplateBytes = await vscode.workspace.fs.readFile(testTemplateUri);
         const testTemplateContent = Buffer.from(testTemplateBytes).toString('utf-8');
         const testFinalContent = testTemplateContent
             .replace(/Name_Placeholder/g, trimmedName)
             .replace(/UID_Placeholder/g, mainUid) 
-            .replace(/Random_UID/g, testRandomUid);
+            .replace(/Random_UID/g, testRandomUid)
+            .replace(/ModelDBib_Placeholder/g, `${modelDBid}`); 
         await vscode.workspace.fs.writeFile(testTargetFileUri, Buffer.from(testFinalContent, 'utf-8'));
-        console.log(`[Cmd:createMainScenario] Created test file: ${testTargetFileUri.fsPath}`);
+        console.log(`[Cmd:createMainScenario] Created test file: ${testTargetFileUri.fsPath} with ModelDBid: ${modelDBid}`);
+
 
         // --- Создаем основной файл сценария ---
         const mainTemplateBytes = await vscode.workspace.fs.readFile(mainTemplateUri);

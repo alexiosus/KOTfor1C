@@ -304,8 +304,13 @@ export function activate(context: vscode.ExtensionContext) {
     // Добавляем автоматические операции после сохранения YAML файлов
     context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument(async (document) => {
-            // Проверяем, что это YAML файл
+            // Проверяем, что это YAML файл сценария
             if (document.languageId === 'yaml' || document.fileName.toLowerCase().endsWith('.yaml')) {
+                // Проверяем, что это файл сценария YAML
+                const { isScenarioYamlFile } = await import('./yamlValidator.js');
+                if (!isScenarioYamlFile(document)) {
+                    return; // Пропускаем файлы, которые не являются сценариями
+                }
                 
                 // Debounce mechanism: prevent double processing from VS Code auto-save
                 const fileKey = document.uri.toString();
@@ -361,7 +366,7 @@ export function activate(context: vscode.ExtensionContext) {
                                 });
                                 
                                 const fullText = document.getText();
-                                const newText = fullText.replace(/\t/g, '    ');
+                                const newText = fullText.replace(/^\t+/gm, (match) => '    '.repeat(match.length));
                                 if (newText !== fullText) {
                                     const edit = new vscode.WorkspaceEdit();
                                     const fullRange = new vscode.Range(

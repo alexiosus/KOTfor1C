@@ -387,6 +387,12 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         position: vscode.Position,
         token: vscode.CancellationToken
     ): Promise<vscode.Hover | null> {
+        // Проверяем, что это файл сценария YAML
+        const { isScenarioYamlFile } = await import('./yamlValidator.js');
+        if (!isScenarioYamlFile(document)) {
+            return null;
+        }
+
         if (this.isLoading && this.loadingPromise) {
             await this.loadingPromise;
         } else if (this.stepDefinitions.length === 0 && !this.isLoading) {

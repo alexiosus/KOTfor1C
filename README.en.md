@@ -1,7 +1,7 @@
 # 1C:Drive Test Helper
 <p align="center">
   <img src="./docs/1CDriveTestHelper_poster.png" alt="1C:Drive Test Helper Icon" width="600"/><br>
-  <a href="CHANGELOG.en.md"><img src="https://img.shields.io/badge/version-1.11.1-yellow"></a>
+  <a href="CHANGELOG.en.md"><img src="https://img.shields.io/badge/version-1.11.2-yellow"></a>
 </p>
 
 <p align="center">
@@ -122,11 +122,6 @@ The main difference is that there's no longer a need for external configuration 
 * Project opened in the repository root folder;
 * For opening MXL files from scenario text: installed [1C:Enterprise — File Workshop](https://v8.1c.ru/static/1s-predpriyatie-rabota-s-faylami/);
 * For building scenarios: BuildScenarioBDD/СборкаТекстовСценариев data processor from SPPR (СППР) ([more details](https://its.1c.ru/db/sppr2doc#content:124:hdoc) in Russian), filled paths and parameters in extension settings.
-
-## Compatibility
-
-* **SPPR Methodology:** Compatible with projects using the SPPR (СППР) methodology for 1C test automation. Works with any projects following YAML-based scenario structure and applicable to any 1C project.
-* **Cross-Platform:** Supports Windows, macOS, and Linux (Linux compatibility not fully tested).
 
 ## Setup and usage
 

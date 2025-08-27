@@ -601,8 +601,17 @@ export async function insertNestedScenarioRefHandler(textEditor: vscode.TextEdit
  * Обработчик команды вставки параметра сценария.
  * Вставляет в конец блока "ПараметрыСценария:" без пустых строк между элементами.
  */
-export function insertScenarioParamHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+export async function insertScenarioParamHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
     const document = textEditor.document;
+    
+    // Проверяем, что это файл сценария YAML
+    const { isScenarioYamlFile } = await import('./yamlValidator.js');
+    if (!isScenarioYamlFile(document)) {
+        const t = await getTranslator(getExtensionUri());
+        vscode.window.showWarningMessage(t('This command is only available for scenario YAML files.'));
+        return;
+    }
+    
     const text = document.getText();
     
     // Ищем блок ПараметрыСценария:
@@ -746,7 +755,17 @@ export function insertScenarioParamHandler(textEditor: vscode.TextEditor, edit: 
 /**
  * Обработчик команды вставки нового UID.
  */
-export function insertUidHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+export async function insertUidHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+    const document = textEditor.document;
+    
+    // Проверяем, что это файл сценария YAML
+    const { isScenarioYamlFile } = await import('./yamlValidator.js');
+    if (!isScenarioYamlFile(document)) {
+        const t = await getTranslator(getExtensionUri());
+        vscode.window.showWarningMessage(t('This command is only available for scenario YAML files.'));
+        return;
+    }
+    
     try {
         const newUid = uuidv4();
         textEditor.edit(editBuilder => {
@@ -762,6 +781,15 @@ export function insertUidHandler(textEditor: vscode.TextEditor, edit: vscode.Tex
  */
 export async function replaceTabsWithSpacesYamlHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
     const document = textEditor.document;
+    
+    // Проверяем, что это файл сценария YAML
+    const { isScenarioYamlFile } = await import('./yamlValidator.js');
+    if (!isScenarioYamlFile(document)) {
+        const t = await getTranslator(getExtensionUri());
+        vscode.window.showWarningMessage(t('This command is only available for scenario YAML files.'));
+        return;
+    }
+    
     const fullText = document.getText();
     // Используем глобальный флаг 'g' для замены всех вхождений
     const newText = fullText.replace(/\t/g, '    '); 
@@ -860,6 +888,16 @@ function parseCalledScenariosFromScriptBody(documentText: string): string[] {
  * Обработчик команды проверки и заполнения вложенных сценариев.
  */
 export async function checkAndFillNestedScenariosHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit, phaseSwitcherProvider: PhaseSwitcherProvider) {
+    const document = textEditor.document;
+    
+    // Проверяем, что это файл сценария YAML
+    const { isScenarioYamlFile } = await import('./yamlValidator.js');
+    if (!isScenarioYamlFile(document)) {
+        const t = await getTranslator(getExtensionUri());
+        vscode.window.showWarningMessage(t('This command is only available for scenario YAML files.'));
+        return;
+    }
+    
     // Use the new clear-and-refill logic with cached data for performance
     const testCache = phaseSwitcherProvider.getTestCache();
     await clearAndFillNestedScenarios(textEditor.document, false, testCache);
@@ -924,6 +962,16 @@ function parseDefinedScenarioParameters(documentText: string): string[] {
  * Обработчик команды проверки и заполнения параметров сценария.
  */
 export async function checkAndFillScenarioParametersHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+    const document = textEditor.document;
+    
+    // Проверяем, что это файл сценария YAML
+    const { isScenarioYamlFile } = await import('./yamlValidator.js');
+    if (!isScenarioYamlFile(document)) {
+        const t = await getTranslator(getExtensionUri());
+        vscode.window.showWarningMessage(t('This command is only available for scenario YAML files.'));
+        return;
+    }
+    
     // Use the new clear-and-refill logic
     await clearAndFillScenarioParameters(textEditor.document, false);
 }
@@ -967,6 +1015,7 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
         const zip = new JSZip();
         const config = vscode.workspace.getConfiguration('1cDriveHelper');
         const firstLaunchFolderPath = config.get<string>('paths.firstLaunchFolder') || 'first_launch';
+        const buildPath = config.get<string>('assembleScript.buildPath') || '';
         const firstLaunchFolderUri = vscode.Uri.joinPath(workspaceRoot, firstLaunchFolderPath);
 
         await vscode.window.withProgress({
@@ -987,11 +1036,13 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
                         }
                     } else if (type === vscode.FileType.File) {
                         const fileBytes = await vscode.workspace.fs.readFile(fullUri);
-                        let fileContent = Buffer.from(fileBytes).toString('utf-8');
-                        
-                        const newFileContent = fileContent.replace(/version="[^"]*">/g, `version="${version}">`);
-                        
-                        zipFolder.file(name, newFileContent);
+                        if (name.toLowerCase().endsWith('.xml')) {
+                            let fileContent = Buffer.from(fileBytes).toString('utf-8');
+                            const newFileContent = fileContent.replace(/version="[^"]*">/g, `version="${version}">`);
+                            zipFolder.file(name, newFileContent);
+                        } else {
+                            zipFolder.file(name, fileBytes);
+                        }
                     }
                 }
             }
@@ -1001,8 +1052,46 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
             // --- 3. Сохранение ZIP архива ---
             progress.report({ message: t('Creating archive...') });
 
+            // Получаем параметры YAML для определения пути по умолчанию
+            let defaultSaveFolder = workspaceRoot;
+            try {
+                const { YamlParametersManager } = await import('./yamlParametersManager.js');
+                const yamlParametersManager = YamlParametersManager.getInstance(context);
+                const parameters = await yamlParametersManager.loadParameters();
+                
+                const featureFolderParam = parameters.find(p => p.key === "FeatureFolder");
+                const modelDBidParam = parameters.find(p => p.key === "ModelDBid");
+                
+                if (featureFolderParam && featureFolderParam.value) {
+                    const featureFolderPath = featureFolderParam.value;
+                    const modelDBid = modelDBidParam ? modelDBidParam.value : "";
+                    
+                    // Формируем путь с учетом ModelDBid
+                    let targetPath = featureFolderPath;
+                    if (modelDBid && modelDBid.trim() !== "") {
+                        targetPath = path.join(featureFolderPath, modelDBid);
+                    }
+                    
+                    // Проверяем, существует ли директория
+                    try {
+                        const targetUri = vscode.Uri.file(targetPath);
+                        await vscode.workspace.fs.stat(targetUri);
+                        defaultSaveFolder = targetUri;
+                        console.log(`[Cmd:createFirstLaunchZip] Using FeatureFolder path: ${targetPath}`);
+                    } catch (error) {
+                        console.log(`[Cmd:createFirstLaunchZip] FeatureFolder path does not exist: ${targetPath}, using workspace root`);
+                        defaultSaveFolder = workspaceRoot;
+                    }
+                } else {
+                    console.log(`[Cmd:createFirstLaunchZip] FeatureFolder not found in parameters, using workspace root`);
+                }
+            } catch (error) {
+                console.log(`[Cmd:createFirstLaunchZip] Error loading YAML parameters: ${error}, using workspace root`);
+                defaultSaveFolder = workspaceRoot;
+            }
+
             const saveUri = await vscode.window.showSaveDialog({
-                defaultUri: vscode.Uri.joinPath(workspaceRoot, 'FirstLaunch.zip'),
+                defaultUri: vscode.Uri.joinPath(defaultSaveFolder, 'first_launch.zip'),
                 filters: {
                     'Zip archives': ['zip']
                 },

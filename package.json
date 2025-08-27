@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.11.1",
+  "version": "1.11.2",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -374,52 +374,52 @@
       "editor/context": [
         {
           "command": "1cDriveHelper.openSubscenario",
-          "when": "editorTextFocus",
+          "when": "editorTextFocus && resourceExtname == .yaml",
           "group": "00_navigation@0"
         },
         {
           "command": "1cDriveHelper.findCurrentFileReferences",
-          "when": "editorTextFocus && !editorReadonly",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
           "group": "00_navigation@1"
         },
         {
           "command": "1cDriveHelper.openMxlFile",
-          "when": "editorTextFocus && editorHasSelection",
+          "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
           "group": "01_search@0"
         },
         {
           "command": "1cDriveHelper.revealFileInExplorer",
-          "when": "editorTextFocus && editorHasSelection",
+          "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
           "group": "01_search@1"
         },
         {
           "command": "1cDriveHelper.revealFileInOS",
-          "when": "editorTextFocus && editorHasSelection",
+          "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
           "group": "01_search@2"
         },
         {
           "command": "1cDriveHelper.createNestedScenario",
-          "when": "editorTextFocus && !editorReadonly",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
           "group": "02_creation@0"
         },
         {
           "command": "1cDriveHelper.createMainScenario",
-          "when": "editorTextFocus && !editorReadonly",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
           "group": "02_creation@1"
         },
         {
           "command": "1cDriveHelper.checkAndFillNestedScenarios",
-          "when": "editorTextFocus",
+          "when": "editorTextFocus && resourceExtname == .yaml",
           "group": "03_modification@0"
         },
         {
           "command": "1cDriveHelper.checkAndFillScriptParameters",
-          "when": "editorTextFocus",
+          "when": "editorTextFocus && resourceExtname == .yaml",
           "group": "03_modification@1"
         },
         {
           "command": "1cDriveHelper.insertUid",
-          "when": "editorTextFocus && !editorReadonly",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
           "group": "03_modification@3"
         }
       ],

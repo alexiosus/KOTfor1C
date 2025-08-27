@@ -1,7 +1,7 @@
 # 1C:Drive Test Helper
 <p align="center">
   <img src="./docs/1CDriveTestHelper_poster.png" alt="Иконка 1C:Drive Test Helper" width="600"/><br>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.11.1-yellow"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.11.2-yellow"></a>
 </p>
 
 <p align="center">
@@ -122,11 +122,6 @@
 * Проект открыт в корневой папке репозитория;
 * Для открытия MXL файлов из текста сценариев: установленный [1С:Предприятие — работа с файлами](https://v8.1c.ru/static/1s-predpriyatie-rabota-s-faylami/);
 * Для сборки сценариев: обработка СборкаТекстовСценариев из СППР ([подробнее на ИТС](https://its.1c.ru/db/sppr2doc#content:124:hdoc)), заполненные пути и параметры в настройках расширения.
-
-## Совместимость
-
-* **Методология СППР:** Совместимо с проектами, использующими методологию СППР для разработки автотестов 1С. Работает с любыми проектами, следующими структуре YAML-сценариев и применимо к любому проекту 1С.
-* **Кроссплатформенность:** Поддерживает Windows, macOS и Linux (совместимость с Linux не полностью протестирована).
 
 ## Настройка и использование
 
