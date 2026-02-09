@@ -21,6 +21,8 @@ const LOCAL_DEPENDENCY_SCAN_MAX_FILES = 120;
 interface ValidationOptions {
     includeSuggestions: boolean;
     includeStepChecks: boolean;
+    includeStepSuggestions?: boolean;
+    includeScenarioSuggestions?: boolean;
 }
 
 interface WorkspaceDiagnosticsScanOptions {
@@ -44,7 +46,9 @@ const CHANGE_VALIDATION_OPTIONS: ValidationOptions = {
 
 const SAVE_VALIDATION_OPTIONS: ValidationOptions = {
     includeSuggestions: false,
-    includeStepChecks: true
+    includeStepChecks: true,
+    includeStepSuggestions: true,
+    includeScenarioSuggestions: true
 };
 
 const RELATED_VALIDATION_OPTIONS: ValidationOptions = {
@@ -438,11 +442,71 @@ function findClosestStrings(input: string, candidates: string[], max: number): s
         .map(item => item.candidate);
 }
 
+function containsQuotedPlaceholderTemplate(text: string): boolean {
+    return /"%\d+\s+[^"]*"|'%\d+\s+[^']*'/.test(text);
+}
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildMissingQuotesMatcher(suggestion: string): RegExp | null {
+    const placeholderRegex = /"%\d+\s+[^"]*"|'%\d+\s+[^']*'/g;
+    let lastIndex = 0;
+    let placeholdersCount = 0;
+    let pattern = '^';
+    let match: RegExpExecArray | null;
+
+    while ((match = placeholderRegex.exec(suggestion)) !== null) {
+        const chunk = suggestion.slice(lastIndex, match.index);
+        pattern += escapeRegExp(chunk);
+        // Accept both quoted and unquoted argument forms.
+        pattern += '(?:"([^"]+)"|\'([^\']+)\'|([^"\'\\r\\n]+?))';
+        lastIndex = match.index + match[0].length;
+        placeholdersCount++;
+    }
+
+    if (placeholdersCount === 0) {
+        return null;
+    }
+
+    pattern += escapeRegExp(suggestion.slice(lastIndex));
+    pattern += '$';
+    return new RegExp(pattern, 'i');
+}
+
 function looksLikeMissingQuotes(line: string, suggestions: string[]): boolean {
     if (line.includes('"') || line.includes("'")) {
         return false;
     }
-    return suggestions.some(suggestion => suggestion.includes('"') || suggestion.includes("'"));
+
+    const hasPlainSuggestions = suggestions.some(suggestion => !containsQuotedPlaceholderTemplate(suggestion));
+    if (hasPlainSuggestions) {
+        return false;
+    }
+
+    const trimmedLine = line.trim();
+    for (const suggestion of suggestions) {
+        const matcher = buildMissingQuotesMatcher(suggestion);
+        if (!matcher) {
+            continue;
+        }
+
+        const match = matcher.exec(trimmedLine);
+        if (!match) {
+            continue;
+        }
+
+        // Captures are grouped per placeholder:
+        // 1) double-quoted value, 2) single-quoted value, 3) unquoted value.
+        for (let groupIndex = 3; groupIndex < match.length; groupIndex += 3) {
+            if ((match[groupIndex] || '').trim().length > 0) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 function looksLikePotentialGherkinStep(content: string): boolean {
@@ -1213,7 +1277,8 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     continue;
                 }
 
-                const suggestions = options.includeSuggestions
+                const includeScenarioSuggestions = options.includeScenarioSuggestions ?? options.includeSuggestions;
+                const suggestions = includeScenarioSuggestions
                     ? findClosestStrings(block.name, Array.from(testCache.keys()), 3)
                     : [];
                 const suffix = formatSuggestionListSuffix(this.messages, suggestions);
@@ -1289,10 +1354,11 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     continue;
                 }
 
-                const rawSuggestions = options.includeSuggestions
+                const includeStepSuggestions = options.includeStepSuggestions ?? options.includeSuggestions;
+                const rawSuggestions = includeStepSuggestions
                     ? await this.hoverProvider.getStepSuggestions(trimmed, 3)
                     : [];
-                const likelyMissingQuotes = options.includeSuggestions && looksLikeMissingQuotes(trimmed, rawSuggestions);
+                const likelyMissingQuotes = includeStepSuggestions && looksLikeMissingQuotes(trimmed, rawSuggestions);
                 const suggestions = rawSuggestions.map(suggestion => applyStepSuggestionWithOriginalValues(trimmed, suggestion));
                 const suffix = formatSuggestionListSuffix(this.messages, suggestions);
 
