@@ -24,6 +24,10 @@ export interface TestInfo {
     relativePath: string;
     /** Параметры сценария (извлекаются из блока ПараметрыСценария) */
     parameters?: string[];
+    /** Значения по умолчанию параметров сценария (из блока ПараметрыСценария) */
+    parameterDefaults?: Record<string, string>;
+    /** Имена вызываемых вложенных сценариев (из блока ВложенныеСценарии) */
+    nestedScenarioNames?: string[];
     /** UID сценария (из блока ДанныеСценария) */
     uid?: string;
 }

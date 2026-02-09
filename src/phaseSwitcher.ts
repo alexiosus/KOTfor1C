@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs'; 
 import { scanWorkspaceForTests, getScanDirRelativePath } from './workspaceScanner';
 import { TestInfo } from './types';
+import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 
 // Ключ для хранения пароля в SecretStorage
 const EMAIL_PASSWORD_KEY = '1cDriveHelper.emailPassword';
@@ -37,6 +38,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private _testCache: Map<string, TestInfo> | null = null;
     private _isScanning: boolean = false;
+    private _cacheDirty: boolean = false;
+    private _cacheRefreshPromise: Promise<void> | null = null;
+    private _cacheRefreshTimer: NodeJS.Timeout | null = null;
+    private _isBuildInProgress: boolean = false;
     private _outputChannel: vscode.OutputChannel | undefined;
     private _langOverride: 'System' | 'English' | 'Русский' = 'System';
     private _ruBundle: Record<string, string> | null = null;
@@ -54,6 +59,267 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
      */
     public getTestCache(): Map<string, TestInfo> | null {
         return this._testCache;
+    }
+
+    /**
+     * Обеспечивает актуальность кеша перед операциями, чувствительными к свежим данным.
+     */
+    public async ensureFreshTestCache(): Promise<void> {
+        await this.initializeTestCache();
+        if (this._cacheDirty || this._testCache === null) {
+            await this.refreshTestCacheFromDisk('ensureFreshTestCache');
+        }
+    }
+
+    private shouldTrackUriForCache(uri: vscode.Uri): boolean {
+        if (uri.scheme !== 'file') {
+            return false;
+        }
+
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            return false;
+        }
+
+        const workspaceRootPath = workspaceFolders[0].uri.fsPath;
+        const scanDirPath = path.join(workspaceRootPath, getScanDirRelativePath());
+        const normalizedScanDirPath = path.resolve(scanDirPath);
+        const normalizedUriPath = path.resolve(uri.fsPath);
+
+        if (!normalizedUriPath.startsWith(normalizedScanDirPath)) {
+            return false;
+        }
+
+        const lowerPath = normalizedUriPath.toLowerCase();
+        const baseName = path.basename(lowerPath);
+        if (baseName === 'scen.yaml' || baseName === 'scen.yml') {
+            return true;
+        }
+
+        // Folder create/rename/delete events may come without file extension.
+        return path.extname(lowerPath) === '';
+    }
+
+    private parseNestedScenarioNamesFromText(documentText: string): string[] {
+        const names: string[] = [];
+        const sectionRegex = /ВложенныеСценарии:\s*([\s\S]*?)(?=\n(?![ \t])[А-Яа-яЁёA-Za-z]+:|\n*$)/;
+        const match = sectionRegex.exec(documentText);
+        if (!match || !match[1]) {
+            return names;
+        }
+
+        const nameRegex = /^\s*ИмяСценария:\s*"([^"]+)"/gm;
+        let nameMatch: RegExpExecArray | null;
+        while ((nameMatch = nameRegex.exec(match[1])) !== null) {
+            const name = nameMatch[1].trim();
+            if (name.length > 0) {
+                names.push(name);
+            }
+        }
+
+        return names;
+    }
+
+    private extractScenarioNameAndUid(documentText: string): { name: string | null; uid: string | null } {
+        let name: string | null = null;
+        let uid: string | null = null;
+        const lines = documentText.split(/\r\n|\r|\n/);
+
+        for (const line of lines) {
+            if (!name) {
+                const nameMatch = line.match(/^\s*Имя:\s*"(.+?)"\s*$/);
+                if (nameMatch?.[1]) {
+                    name = nameMatch[1].trim();
+                }
+            }
+
+            if (!uid) {
+                const uidMatch = line.match(/^\s*UID:\s*"(.+?)"\s*$/);
+                if (uidMatch?.[1]) {
+                    uid = uidMatch[1].trim();
+                }
+            }
+
+            if (name && uid) {
+                break;
+            }
+        }
+
+        return { name, uid };
+    }
+
+    private computeRelativePathForScenarioFile(fileUri: vscode.Uri): string {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            return path.dirname(fileUri.fsPath);
+        }
+
+        const workspaceRootPath = workspaceFolders[0].uri.fsPath;
+        const scanDirPath = path.join(workspaceRootPath, getScanDirRelativePath());
+        const parentDirPath = path.dirname(fileUri.fsPath);
+
+        if (parentDirPath.startsWith(scanDirPath)) {
+            return path.relative(scanDirPath, parentDirPath).replace(/\\/g, '/');
+        }
+
+        return vscode.workspace.asRelativePath(parentDirPath, false);
+    }
+
+    private buildTestInfoFromDocument(document: vscode.TextDocument): TestInfo | null {
+        const documentText = document.getText();
+        const { name, uid } = this.extractScenarioNameAndUid(documentText);
+        if (!name) {
+            return null;
+        }
+
+        const nestedScenarioNames = this.parseNestedScenarioNamesFromText(documentText);
+        const defaultsMap = parseScenarioParameterDefaults(documentText);
+        const parameters = defaultsMap.size > 0 ? Array.from(defaultsMap.keys()) : undefined;
+        const parameterDefaults = defaultsMap.size > 0 ? Object.fromEntries(defaultsMap.entries()) : undefined;
+
+        return {
+            name,
+            yamlFileUri: document.uri,
+            relativePath: this.computeRelativePathForScenarioFile(document.uri),
+            parameters,
+            parameterDefaults,
+            nestedScenarioNames: nestedScenarioNames.length > 0 ? [...new Set(nestedScenarioNames)] : undefined,
+            uid: uid || undefined
+        };
+    }
+
+    private areStringArraysEqual(left?: string[], right?: string[]): boolean {
+        if (!left?.length && !right?.length) {
+            return true;
+        }
+        if (!left || !right || left.length !== right.length) {
+            return false;
+        }
+        return left.every((item, index) => item === right[index]);
+    }
+
+    private areDefaultsEqual(
+        left?: Record<string, string>,
+        right?: Record<string, string>
+    ): boolean {
+        const leftEntries = Object.entries(left || {});
+        const rightEntries = Object.entries(right || {});
+        if (leftEntries.length !== rightEntries.length) {
+            return false;
+        }
+
+        const rightMap = new Map(rightEntries);
+        for (const [key, value] of leftEntries) {
+            if (rightMap.get(key) !== value) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private isSameTestInfo(left: TestInfo, right: TestInfo): boolean {
+        return (
+            left.name === right.name &&
+            left.yamlFileUri.toString() === right.yamlFileUri.toString() &&
+            left.relativePath === right.relativePath &&
+            (left.uid || '') === (right.uid || '') &&
+            this.areStringArraysEqual(left.parameters, right.parameters) &&
+            this.areDefaultsEqual(left.parameterDefaults, right.parameterDefaults) &&
+            this.areStringArraysEqual(left.nestedScenarioNames, right.nestedScenarioNames) &&
+            left.tabName === right.tabName &&
+            left.defaultState === right.defaultState &&
+            left.order === right.order
+        );
+    }
+
+    public upsertScenarioCacheEntryFromDocument(document: vscode.TextDocument): boolean {
+        if (!this.shouldTrackUriForCache(document.uri)) {
+            return false;
+        }
+
+        try {
+            const updatedInfo = this.buildTestInfoFromDocument(document);
+            if (!this._testCache) {
+                this._testCache = new Map<string, TestInfo>();
+            }
+
+            const uriKey = document.uri.toString();
+            let changed = false;
+
+            for (const [cachedName, cachedInfo] of this._testCache) {
+                if (cachedInfo.yamlFileUri.toString() === uriKey && (!updatedInfo || cachedName !== updatedInfo.name)) {
+                    this._testCache.delete(cachedName);
+                    changed = true;
+                }
+            }
+
+            if (updatedInfo) {
+                const existing = this._testCache.get(updatedInfo.name);
+                if (!existing || !this.isSameTestInfo(existing, updatedInfo)) {
+                    this._testCache.set(updatedInfo.name, updatedInfo);
+                    changed = true;
+                }
+            }
+
+            if (changed) {
+                this._onDidUpdateTestCache.fire(this._testCache);
+            }
+
+            return true;
+        } catch (error) {
+            console.error('[PhaseSwitcherProvider] Failed to incrementally update scenario cache entry:', error);
+            return false;
+        }
+    }
+
+    private markCacheDirtyAndScheduleRefresh(reason: string, immediate: boolean = false): void {
+        this._cacheDirty = true;
+        if (this._cacheRefreshTimer) {
+            clearTimeout(this._cacheRefreshTimer);
+            this._cacheRefreshTimer = null;
+        }
+
+        const delay = immediate ? 0 : 500;
+        this._cacheRefreshTimer = setTimeout(() => {
+            this.refreshTestCacheFromDisk(reason).catch(error => {
+                console.error('[PhaseSwitcherProvider] Scheduled cache refresh failed:', error);
+            });
+        }, delay);
+    }
+
+    private async refreshTestCacheFromDisk(reason: string): Promise<void> {
+        if (this._cacheRefreshPromise) {
+            await this._cacheRefreshPromise;
+            return;
+        }
+
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            this._testCache = null;
+            this._cacheDirty = false;
+            this._onDidUpdateTestCache.fire(this._testCache);
+            return;
+        }
+
+        const workspaceRootUri = workspaceFolders[0].uri;
+        console.log(`[PhaseSwitcherProvider] Refreshing test cache from disk. Reason: ${reason}`);
+
+        this._cacheRefreshPromise = (async () => {
+            this._isScanning = true;
+            try {
+                this._testCache = await scanWorkspaceForTests(workspaceRootUri);
+                this._cacheDirty = false;
+                this._onDidUpdateTestCache.fire(this._testCache);
+                console.log(`[PhaseSwitcherProvider] Cache refreshed. Total scenarios: ${this._testCache?.size || 0}`);
+            } catch (scanError) {
+                console.error('[PhaseSwitcherProvider] Error during cache refresh:', scanError);
+            } finally {
+                this._isScanning = false;
+                this._cacheRefreshPromise = null;
+            }
+        })();
+
+        await this._cacheRefreshPromise;
     }
 
     /**
@@ -81,6 +347,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             if (!workspaceFolders || workspaceFolders.length === 0) {
                 console.log("[PhaseSwitcherProvider:initializeTestCache] No workspace folder, skipping cache initialization.");
                 this._testCache = null;
+                this._cacheDirty = false;
                 this._onDidUpdateTestCache.fire(this._testCache);
                 return;
             }
@@ -89,11 +356,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._isScanning = true;
             try {
                 this._testCache = await scanWorkspaceForTests(workspaceRootUri);
+                this._cacheDirty = false;
                 console.log(`[PhaseSwitcherProvider:initializeTestCache] Initial cache loaded with ${this._testCache?.size || 0} scenarios`);
                 this._onDidUpdateTestCache.fire(this._testCache);
             } catch (scanError: any) {
                 console.error("[PhaseSwitcherProvider:initializeTestCache] Error during initial scan:", scanError);
                 this._testCache = null;
+                this._cacheDirty = true;
                 this._onDidUpdateTestCache.fire(this._testCache);
             } finally {
                 this._isScanning = false;
@@ -119,6 +388,54 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     this._sendInitialState(this._view.webview);
             }
         }));
+
+        context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(document => {
+            if (!this.shouldTrackUriForCache(document.uri)) {
+                return;
+            }
+
+            const updatedIncrementally = this.upsertScenarioCacheEntryFromDocument(document);
+            if (!updatedIncrementally) {
+                this.markCacheDirtyAndScheduleRefresh(`save:${path.basename(document.uri.fsPath)}`);
+            }
+        }));
+
+        context.subscriptions.push(vscode.workspace.onDidCreateFiles(event => {
+            if (event.files.some(uri => this.shouldTrackUriForCache(uri))) {
+                this.markCacheDirtyAndScheduleRefresh('createFiles');
+            }
+        }));
+
+        context.subscriptions.push(vscode.workspace.onDidDeleteFiles(event => {
+            if (event.files.some(uri => this.shouldTrackUriForCache(uri))) {
+                this.markCacheDirtyAndScheduleRefresh('deleteFiles');
+            }
+        }));
+
+        context.subscriptions.push(vscode.workspace.onDidRenameFiles(event => {
+            const affectsCache = event.files.some(({ oldUri, newUri }) =>
+                this.shouldTrackUriForCache(oldUri) || this.shouldTrackUriForCache(newUri)
+            );
+            if (affectsCache) {
+                this.markCacheDirtyAndScheduleRefresh('renameFiles');
+            }
+        }));
+
+        context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => {
+            this._testCache = null;
+            this._cacheDirty = true;
+            this.initializationPromise = null;
+            this.markCacheDirtyAndScheduleRefresh('workspaceFoldersChanged', true);
+        }));
+
+        context.subscriptions.push({
+            dispose: () => {
+                if (this._cacheRefreshTimer) {
+                    clearTimeout(this._cacheRefreshTimer);
+                    this._cacheRefreshTimer = null;
+                }
+            }
+        });
     }
 
     private async loadLocalizationBundleIfNeeded(): Promise<void> {
@@ -173,10 +490,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (this._view && this._view.webview && this._view.visible) {
             console.log("[PhaseSwitcherProvider] Refreshing panel data programmatically...");
             this._testCache = null;
+            this._cacheDirty = true;
             await this._sendInitialState(this._view.webview);
         } else {
             console.log("[PhaseSwitcherProvider] Panel not visible or not resolved, cannot refresh programmatically yet. Will refresh on next resolve/show.");
             // Можно установить флаг, чтобы _sendInitialState вызвался при следующем resolveWebviewView или onDidChangeVisibility
+            this._cacheDirty = true;
         }
     }
 
@@ -258,6 +577,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 statusRequestingData: this.t('Requesting data...'),
                 statusApplyingPhaseChanges: this.t('Applying phase changes...'),
                 statusStartingAssembly: this.t('Starting assembly...'),
+                statusBuildingInProgress: this.t('Building tests in progress...'),
                 pendingNoChanges: this.t('No pending changes.'),
                 pendingTotalChanged: this.t('Total changed: {0}'),
                 pendingEnabled: this.t('Enabled: {0}'),
@@ -295,7 +615,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     return;
                 case 'refreshData': 
                     this._testCache = null;
+                    this._cacheDirty = true;
                     await this._sendInitialState(webviewView.webview);
+                    return;
+                case 'scanWorkspaceDiagnostics':
+                    await vscode.commands.executeCommand('1cDriveHelper.scanWorkspaceDiagnostics');
                     return;
                 case 'log':
                     console.log(message.text);
@@ -396,19 +720,19 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             firstLaunchFolderExists = false;
         }
 
-        // Use existing cache if available, otherwise scan
-        if (this._testCache === null) {
-            console.log("[PhaseSwitcherProvider:_sendInitialState] No cache available, scanning workspace...");
-        this._isScanning = true;
-        try {
-            this._testCache = await scanWorkspaceForTests(workspaceRootUri); 
-        } catch (scanError: any) {
-            console.error("[PhaseSwitcherProvider:_sendInitialState] Error during scanWorkspaceForTests:", scanError);
-            vscode.window.showErrorMessage(this.t('Error scanning scenario files: {0}', scanError.message));
-            this._testCache = null;
-        } finally {
-            this._isScanning = false;
-        }
+        // Use existing cache if available, otherwise scan (or refresh stale cache)
+        if (this._testCache === null || this._cacheDirty) {
+            const reason = this._testCache === null
+                ? "cache is empty"
+                : "cache marked as dirty";
+            console.log(`[PhaseSwitcherProvider:_sendInitialState] Refreshing cache because ${reason}.`);
+            try {
+                await this.refreshTestCacheFromDisk('_sendInitialState');
+            } catch (scanError: any) {
+                console.error("[PhaseSwitcherProvider:_sendInitialState] Error during cache refresh:", scanError);
+                vscode.window.showErrorMessage(this.t('Error scanning scenario files: {0}', scanError.message || scanError));
+                this._testCache = null;
+            }
         } else {
             console.log(`[PhaseSwitcherProvider:_sendInitialState] Using existing cache with ${this._testCache.size} scenarios`);
         }
@@ -470,16 +794,34 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             settings: {
                 assemblerEnabled: assemblerEnabled,
                 switcherEnabled: switcherEnabled,
-                firstLaunchFolderExists: firstLaunchFolderExists
+                firstLaunchFolderExists: firstLaunchFolderExists,
+                buildInProgress: this._isBuildInProgress
             },
             error: !this._testCache ? status : undefined // Ошибка, если _testCache пуст
         });
-        // Always enable refresh button, but only enable other controls if there are tests
+        // Always enable refresh button, but only enable other controls if there are tests and no build is running
         const hasTests = !!this._testCache && testsForPhaseSwitcherCount > 0;
-        webview.postMessage({ command: 'updateStatus', text: status, enableControls: hasTests });
+        if (this._isBuildInProgress) {
+            webview.postMessage({
+                command: 'updateStatus',
+                text: this.t('Building tests in progress...'),
+                enableControls: false,
+                refreshButtonEnabled: false,
+                target: 'main'
+            });
+            webview.postMessage({
+                command: 'updateStatus',
+                text: this.t('Building tests in progress...'),
+                enableControls: false,
+                refreshButtonEnabled: false,
+                target: 'assemble'
+            });
+        } else {
+            webview.postMessage({ command: 'updateStatus', text: status, enableControls: hasTests });
+        }
         
         // Explicitly enable refresh button if there are no tests
-        if (!hasTests) {
+        if (!hasTests && !this._isBuildInProgress) {
             webview.postMessage({ command: 'setRefreshButtonState', enabled: true });
         }
         
@@ -732,6 +1074,25 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    private async openBuiltFeatureFiles(featureFiles: vscode.Uri[]): Promise<void> {
+        if (!featureFiles.length) {
+            return;
+        }
+
+        if (featureFiles.length === 1) {
+            const doc = await vscode.workspace.openTextDocument(featureFiles[0]);
+            await vscode.window.showTextDocument(doc, { preview: false });
+            return;
+        }
+
+        let first = true;
+        for (const featureFile of featureFiles) {
+            const doc = await vscode.workspace.openTextDocument(featureFile);
+            await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: !first });
+            first = false;
+        }
+    }
+
     private async _handleRunAssembleScriptTypeScript(recordGLValue: string): Promise<void> {
         const methodStartLog = "[PhaseSwitcherProvider:_handleRunAssembleScriptTypeScript]";
         console.log(`${methodStartLog} Starting with RecordGL=${recordGLValue}`);
@@ -766,9 +1127,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         };
         
+        this._isBuildInProgress = true;
+        if (this._view?.webview) {
+            this._view.webview.postMessage({ command: 'buildStateChanged', inProgress: true });
+        }
         sendStatus(this.t('Building tests in progress...'), false, 'assemble', false);
 
-        await vscode.window.withProgress({
+        try {
+            await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: this.t('Building .feature files'),
             cancellable: false
@@ -1056,6 +1422,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 progress.report({ increment: 100, message: this.t('Completed!') });
                 
                 const scenariosBuilt = featureFiles.length > 0;
+                const openFeatureButtonLabel = featureFiles.length === 1
+                    ? this.t('Open feature file')
+                    : this.t('Open feature files');
                 
                 if (hasErrors && scenariosBuilt) {
                     // Has errors but some scenarios were built
@@ -1066,7 +1435,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     sendStatus(this.t('Build completed with errors.'), true, 'assemble', true);
                     
                     // Prepare buttons based on whether JUnit file is available
-                    const buttons = [this.t('Open folder'), this.t('Show Output')];
+                    const buttons = [openFeatureButtonLabel, this.t('Open folder'), this.t('Show Output')];
                     if (junitFileUri) {
                         buttons.push(this.t('Open Error File'));
                     }
@@ -1075,7 +1444,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         this.t('Build completed: {0} successful, {1} errors.', featureFiles.length.toString(), errorCount.toString()),
                         ...buttons
                     ).then(selection => {
-                        if (selection === this.t('Open folder')) {
+                        if (selection === openFeatureButtonLabel) {
+                            this.openBuiltFeatureFiles(featureFiles).catch(error => {
+                                console.error('[PhaseSwitcherProvider] Failed to open feature files:', error);
+                            });
+                        } else if (selection === this.t('Open folder')) {
                             vscode.commands.executeCommand('1cDriveHelper.openBuildFolder', featureFileDirUri.fsPath);
                         } else if (selection === this.t('Show Output')) {
                             outputChannel.show();
@@ -1113,9 +1486,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     sendStatus(this.t('Tests successfully built.'), true, 'assemble', true); 
                 vscode.window.showInformationMessage(
                         this.t('Build completed: {0} successful.', featureFiles.length.toString()),
+                        openFeatureButtonLabel,
                         this.t('Open folder')
                 ).then(selection => {
-                        if (selection === this.t('Open folder')) {
+                        if (selection === openFeatureButtonLabel) {
+                            this.openBuiltFeatureFiles(featureFiles).catch(error => {
+                                console.error('[PhaseSwitcherProvider] Failed to open feature files:', error);
+                            });
+                        } else if (selection === this.t('Open folder')) {
                         vscode.commands.executeCommand('1cDriveHelper.openBuildFolder', featureFileDirUri.fsPath);
                     }
                 });
@@ -1152,6 +1530,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 sendStatus(this.t('Build error.'), true, 'assemble', true); 
             }
         });
+        } finally {
+            this._isBuildInProgress = false;
+            if (this._view?.webview) {
+                this._view.webview.postMessage({ command: 'buildStateChanged', inProgress: false });
+            }
+        }
     }
 
     private async execute1CProcess( 

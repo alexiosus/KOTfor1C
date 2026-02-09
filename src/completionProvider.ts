@@ -3,16 +3,25 @@ import { parse } from 'node-html-parser';
 import { getStepsHtml, forceRefreshSteps as forceRefreshStepsCore } from './stepsFetcher';
 import { TestInfo } from './types';
 import { getTranslator } from './localization';
+import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 
 export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     private gherkinCompletionItems: vscode.CompletionItem[] = [];
     private scenarioCompletionItems: vscode.CompletionItem[] = [];
+    private scenarioParametersByName: Map<string, string[]> = new Map();
+    private calledScenarioDefaultsByName: Map<string, Map<string, string>> = new Map();
+    private scenarioDefaultsByDocument = new Map<string, { version: number; defaults: Map<string, string> }>();
     private isLoadingGherkin: boolean = false;
     private loadingGherkinPromise: Promise<void> | null = null;
     private context: vscode.ExtensionContext;
 
     constructor(context: vscode.ExtensionContext) {
         this.context = context;
+        this.context.subscriptions.push(
+            vscode.workspace.onDidCloseTextDocument(document => {
+                this.scenarioDefaultsByDocument.delete(document.uri.toString());
+            })
+        );
         this.loadGherkinCompletionItems().catch(async err => {
             const t = await getTranslator(context.extensionUri);
             vscode.window.showErrorMessage(t('Error initializing Gherkin autocompletion: {0}', err.message));
@@ -42,6 +51,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     // Метод для обновления списка автодополнений сценариев
     public updateScenarioCompletions(scenarios: Map<string, TestInfo> | null): void {
         this.scenarioCompletionItems = []; // Очищаем перед заполнением
+        this.scenarioParametersByName.clear();
+        this.calledScenarioDefaultsByName.clear();
         if (!scenarios || scenarios.size === 0) {
             console.log("[DriveCompletionProvider] No scenarios provided for completion items.");
             return;
@@ -58,19 +69,27 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             // (без "And ", чтобы можно было просто начать печатать имя сценария)
             item.filterText = scenarioName;
 
-            // Формируем SnippetString для вставки
-            // Сниппет теперь ВСЕГДА начинается с "And "
-            let snippetText = `And ${scenarioName}`;
-            if (scenarioInfo.parameters && scenarioInfo.parameters.length > 0) {
-                const paramIndent = "    "; // Стандартный отступ для параметров
-                let paramIndex = 1;
-                // Параметры добавляются с новой строки с отступом
-                scenarioInfo.parameters.forEach(paramName => {
-                    // Формат вызова параметра: ИмяПараметра = "Значение"
-                    snippetText += `\n${paramIndent}${paramName} = "\${${paramIndex++}:${paramName}Value}"`;
-                });
+            item.insertText = `And ${scenarioName}`;
+
+            const scenarioParameters = (scenarioInfo.parameters || [])
+                .map(param => param.trim())
+                .filter(Boolean);
+            if (scenarioParameters.length > 0) {
+                this.scenarioParametersByName.set(scenarioName, scenarioParameters);
             }
-            item.insertText = new vscode.SnippetString(snippetText);
+
+            if (scenarioInfo.parameterDefaults) {
+                const defaultsMap = new Map<string, string>();
+                Object.entries(scenarioInfo.parameterDefaults).forEach(([paramName, defaultValue]) => {
+                    const normalizedParamName = paramName.trim();
+                    if (normalizedParamName && typeof defaultValue === 'string') {
+                        defaultsMap.set(normalizedParamName, defaultValue);
+                    }
+                });
+                if (defaultsMap.size > 0) {
+                    this.calledScenarioDefaultsByName.set(scenarioName, defaultsMap);
+                }
+            }
             // Приоритет ниже, чем у шагов Gherkin (начинающихся с "0"), сортировка по имени сценария
             // sortText будет формироваться в provideCompletionItems на основе оценки совпадения
             // item.sortText = "1" + scenarioName;
@@ -296,6 +315,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         // Добавляем вызовы сценариев
         // Текст, который пользователь ввел после отступа, очищенный от возможного "And " в начале
         const textForScenarioFuzzyMatch = userTextAfterIndentation.replace(/^(And|И|Допустим)\s+/i, '');
+        const scenarioParameterDefaults = this.getScenarioParameterDefaults(document);
         console.log(`[DriveCompletionProvider:provideCompletionItems] Text for scenario fuzzy match: '${textForScenarioFuzzyMatch}' (based on userTextAfterIndentation: '${userTextAfterIndentation}')`);
 
         this.scenarioCompletionItems.forEach(baseScenarioItem => {
@@ -317,9 +337,11 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 );
                 completionItem.range = replacementRange;
 
-                // baseScenarioItem.insertText это SnippetString вида "And ИмяСценария\n    Парам = ..."
-                // Оно будет вставлено вместо всего, что пользователь напечатал после отступа.
-                completionItem.insertText = baseScenarioItem.insertText;
+                completionItem.insertText = this.buildScenarioCallInsertText(
+                    baseScenarioItem.filterText || '',
+                    indentation,
+                    scenarioParameterDefaults
+                );
 
                 completionItem.sortText = "1" + (1 - matchResult.score).toFixed(3) + (baseScenarioItem.filterText || ""); // Используем toFixed(3)
                 console.log(`[Scenario Autocomplete] Label: "${completionItem.label}", Scenario Name: ${baseScenarioItem.filterText}, Input: "${textForScenarioFuzzyMatch}", Score: ${matchResult.score.toFixed(3)}, SortText: ${completionItem.sortText}`);
@@ -471,5 +493,57 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
      */
     private normalizeLineBreaks(text: string): string {
         return text.replace(/\n\s*\n/g, '\n').trim();
+    }
+
+    private getScenarioParameterDefaults(document: vscode.TextDocument): Map<string, string> {
+        const key = document.uri.toString();
+        const cached = this.scenarioDefaultsByDocument.get(key);
+        if (cached && cached.version === document.version) {
+            return cached.defaults;
+        }
+
+        const defaults = parseScenarioParameterDefaults(document.getText());
+        this.scenarioDefaultsByDocument.set(key, {
+            version: document.version,
+            defaults
+        });
+        return defaults;
+    }
+
+    private buildScenarioCallInsertText(
+        scenarioName: string,
+        lineIndent: string,
+        defaults: Map<string, string>
+    ): string | vscode.SnippetString {
+        if (!scenarioName) {
+            return 'And ';
+        }
+
+        const params = this.scenarioParametersByName.get(scenarioName) || [];
+        if (params.length === 0) {
+            return `And ${scenarioName}`;
+        }
+
+        const maxParamLength = params.reduce((max, param) => Math.max(max, param.length), 0);
+        const paramIndent = `${lineIndent}    `;
+        let snippetText = `And ${scenarioName}`;
+        let paramIndex = 1;
+
+        params.forEach(paramName => {
+            const alignedName = paramName.padEnd(maxParamLength, ' ');
+            const calledScenarioDefaults = this.calledScenarioDefaultsByName.get(scenarioName);
+            const defaultValue = calledScenarioDefaults?.get(paramName) ?? defaults.get(paramName) ?? `"${paramName}"`;
+            const escapedDefault = this.escapeSnippetDefaultValue(defaultValue);
+            snippetText += `\n${paramIndent}${alignedName} = \${${paramIndex++}:${escapedDefault}}`;
+        });
+
+        return new vscode.SnippetString(snippetText);
+    }
+
+    private escapeSnippetDefaultValue(value: string): string {
+        return value
+            .replace(/\\/g, '\\\\')
+            .replace(/\$/g, '\\$')
+            .replace(/\}/g, '\\}');
     }
 }

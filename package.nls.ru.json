@@ -13,7 +13,11 @@
   "config.autoFillNestedScenariosOnSave.description": "Автоматически заполнять секцию 'ВложенныеСценарии' недостающими сценариями при сохранении YAML файлов.",
   "config.autoFillScenarioParametersOnSave.description": "Автоматически заполнять секцию 'ПараметрыСценария' недостающими параметрами при сохранении YAML файлов.",
   "config.autoReplaceTabsWithSpacesOnSave.description": "Автоматически заменять табуляции на 4 пробела при сохранении YAML файлов.",
+  "config.autoAlignNestedScenarioParametersOnSave.description": "Автоматически выравнивать параметры вызовов вложенных сценариев по знаку '=' при сохранении.",
+  "config.autoAlignGherkinTablesOnSave.description": "Автоматически выравнивать колонки таблиц Gherkin при сохранении YAML файлов.",
+  "config.scenarioParameterExclusions.description": "Список исключений для распознавания параметров сценария (значения внутри квадратных скобок, которые не нужно добавлять в ПараметрыСценария).",
   "config.showRefillMessages.description": "Показывать уведомления при автоматическом перезаполнении секций при сохранении.",
+  "config.checkRelatedParentScenarios.description": "Автоматически проверять связанные родительские сценарии при открытии/сохранении файла сценария.",
 
   "config.mailSettings.title": "Настройки тестовой почты",
   "config.emailAddress.description": "Тестовый Email адрес (EMailTestEmailAddress).",
@@ -67,6 +71,9 @@
   "cmd.openBuildFolder.title": "1C:Drive - Открыть папку сборки",
   "cmd.createFirstLaunchZip.title": "1C:Drive - Собрать архив FirstLaunch",
   "cmd.openYamlParametersManager.title": "1C:Drive - Открыть Менеджер параметров Сборки Сценариев",
+  "cmd.fixScenarioIssues.title": "1C:Drive - Исправить проблемы сценария",
+  "cmd.addScenarioParameterExclusion.title": "1C:Drive - Добавить исключение параметра сценария",
+  "cmd.scanWorkspaceDiagnostics.title": "1C:Drive - Выполнить сканирование диагностики по проекту",
 
   "view.phaseSwitcher.name": "1C:Drive Test Helper",
   "view.phaseSwitcher.contextualTitle": "1C:Drive Test Helper"

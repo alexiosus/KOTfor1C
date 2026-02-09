@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { TestInfo } from './types';
 import { getTranslator } from './localization';
+import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 
 // Function to get the scan directory path from configuration
 export function getScanDirRelativePath(): string {
@@ -13,6 +14,26 @@ export function getScanDirRelativePath(): string {
 // Паттерн для поиска файлов сценариев внутри SCAN_DIR_RELATIVE_PATH
 // Используем scen.yaml, т.к. он содержит метаданные
 export const SCAN_GLOB_PATTERN = '**/scen.yaml';
+
+function parseNestedScenarioNamesFromText(documentText: string): string[] {
+    const names: string[] = [];
+    const sectionRegex = /ВложенныеСценарии:\s*([\s\S]*?)(?=\n(?![ \t])[А-Яа-яЁёA-Za-z]+:|\n*$)/;
+    const match = sectionRegex.exec(documentText);
+    if (!match || !match[1]) {
+        return names;
+    }
+
+    const nameRegex = /^\s*ИмяСценария:\s*"([^"]+)"/gm;
+    let nameMatch: RegExpExecArray | null;
+    while ((nameMatch = nameRegex.exec(match[1])) !== null) {
+        const name = nameMatch[1].trim();
+        if (name.length > 0) {
+            names.push(name);
+        }
+    }
+
+    return names;
+}
 
 /**
  * Сканирует директорию воркспейса на наличие файлов сценариев,
@@ -44,6 +65,8 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                 const fileContentBytes = await vscode.workspace.fs.readFile(fileUri);
                 const fileContent = Buffer.from(fileContentBytes).toString('utf-8');
                 const lines = fileContent.split('\n');
+                const nestedScenarioNames = parseNestedScenarioNamesFromText(fileContent);
+                const parsedParameterDefaults = parseScenarioParameterDefaults(fileContent);
 
                 let name: string | null = null;
                 let uid: string | null = null;
@@ -191,13 +214,23 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                         //  console.warn(`[scanWorkspaceForTests] File path ${relativePathValue} for scenario "${name}" might be incorrect relative to scan dir ${scanDirFsPath}`);
                     }
                     
-                    const uniqueParameters = parametersList.length > 0 ? [...new Set(parametersList)] : undefined;
+                    const uniqueParameters = parsedParameterDefaults.size > 0
+                        ? Array.from(parsedParameterDefaults.keys())
+                        : (parametersList.length > 0 ? [...new Set(parametersList)] : undefined);
+                    const uniqueNestedScenarioNames = nestedScenarioNames.length > 0
+                        ? [...new Set(nestedScenarioNames)]
+                        : undefined;
+                    const parameterDefaults = parsedParameterDefaults.size > 0
+                        ? Object.fromEntries(parsedParameterDefaults.entries())
+                        : undefined;
 
                     const testInfo: TestInfo = { 
                         name, 
                         yamlFileUri: fileUri, 
                         relativePath: relativePathValue,
                         parameters: uniqueParameters,
+                        parameterDefaults,
+                        nestedScenarioNames: uniqueNestedScenarioNames,
                         uid: uid || undefined
                     };
 

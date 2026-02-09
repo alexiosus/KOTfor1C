@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.11.2",
+  "version": "1.12.1",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -69,11 +69,38 @@
             "description": "%config.autoReplaceTabsWithSpacesOnSave.description%",
             "order": 14
           },
+          "1cDriveHelper.editor.autoAlignNestedScenarioParametersOnSave": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.autoAlignNestedScenarioParametersOnSave.description%",
+            "order": 15
+          },
+          "1cDriveHelper.editor.autoAlignGherkinTablesOnSave": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.autoAlignGherkinTablesOnSave.description%",
+            "order": 16
+          },
+          "1cDriveHelper.editor.scenarioParameterExclusions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "%config.scenarioParameterExclusions.description%",
+            "order": 17
+          },
           "1cDriveHelper.editor.showRefillMessages": {
             "type": "boolean",
             "default": true,
             "description": "%config.showRefillMessages.description%",
-            "order": 15
+            "order": 18
+          },
+          "1cDriveHelper.editor.checkRelatedParentScenarios": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.checkRelatedParentScenarios.description%",
+            "order": 19
           }
         }
       },
@@ -319,6 +346,21 @@
         "command": "1cDriveHelper.openYamlParametersManager",
         "title": "%cmd.openYamlParametersManager.title%",
         "category": "%cmd.category%"
+      },
+      {
+        "command": "1cDriveHelper.fixScenarioIssues",
+        "title": "%cmd.fixScenarioIssues.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "1cDriveHelper.addScenarioParameterExclusion",
+        "title": "%cmd.addScenarioParameterExclusion.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "1cDriveHelper.scanWorkspaceDiagnostics",
+        "title": "%cmd.scanWorkspaceDiagnostics.title%",
+        "category": "%cmd.category%"
       }
     ],
     "keybindings": [
@@ -418,6 +460,11 @@
           "group": "03_modification@1"
         },
         {
+          "command": "1cDriveHelper.addScenarioParameterExclusion",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
+          "group": "03_modification@2"
+        },
+        {
           "command": "1cDriveHelper.insertUid",
           "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
           "group": "03_modification@3"
@@ -454,6 +501,18 @@
         },
         {
           "command": "1cDriveHelper.openYamlParametersManager",
+          "when": "true"
+        },
+        {
+          "command": "1cDriveHelper.fixScenarioIssues",
+          "when": "true"
+        },
+        {
+          "command": "1cDriveHelper.addScenarioParameterExclusion",
+          "when": "true"
+        },
+        {
+          "command": "1cDriveHelper.scanWorkspaceDiagnostics",
           "when": "true"
         }
       ]

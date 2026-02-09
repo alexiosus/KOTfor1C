@@ -18,16 +18,89 @@ import {
     handleCreateFirstLaunchZip,
     handleOpenYamlParametersManager,
     clearAndFillNestedScenarios,
-    clearAndFillScenarioParameters
+    clearAndFillScenarioParameters,
+    clearScenarioParameterSessionCache,
+    alignNestedScenarioCallParameters,
+    alignGherkinTables,
+    parseCalledScenariosFromScriptBody,
+    parseUsedParametersFromScriptBody
 } from './commandHandlers';
 import { getTranslator } from './localization';
 import { setExtensionUri } from './appContext';
 import { handleCreateNestedScenario, handleCreateMainScenario } from './scenarioCreator';
 import { TestInfo } from './types'; // Импортируем TestInfo
 import { SettingsProvider } from './settingsProvider';
+import { ScenarioDiagnosticsProvider } from './scenarioDiagnostics';
+import { extractScenarioParameterNameFromText } from './scenarioParameterUtils';
+import { isScenarioYamlFile } from './yamlValidator';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
+
+interface ScenarioSaveSnapshot {
+    scenarioName: string | null;
+    calledScenariosSignature: string;
+    usedParametersSignature: string;
+}
+
+interface ScenarioDirtyFlags {
+    nameChanged: boolean;
+    calledScenariosChanged: boolean;
+    usedParametersChanged: boolean;
+}
+
+const lastSavedScenarioSnapshots = new Map<string, ScenarioSaveSnapshot>();
+const scenarioDirtyFlagsByUri = new Map<string, ScenarioDirtyFlags>();
+
+function parseScenarioNameFromDocumentText(documentText: string): string | null {
+    const lines = documentText.split(/\r\n|\r|\n/);
+    for (const line of lines) {
+        const match = line.match(/^\s*Имя:\s*"(.+?)"\s*$/);
+        if (match?.[1]) {
+            return match[1].trim();
+        }
+    }
+    return null;
+}
+
+function buildScenarioSaveSnapshot(document: vscode.TextDocument): ScenarioSaveSnapshot {
+    const documentText = document.getText();
+    return {
+        scenarioName: parseScenarioNameFromDocumentText(documentText),
+        calledScenariosSignature: parseCalledScenariosFromScriptBody(documentText).join('\u001f'),
+        usedParametersSignature: parseUsedParametersFromScriptBody(documentText).join('\u001f')
+    };
+}
+
+function calculateScenarioDirtyFlags(
+    currentSnapshot: ScenarioSaveSnapshot,
+    lastSavedSnapshot?: ScenarioSaveSnapshot
+): ScenarioDirtyFlags {
+    if (!lastSavedSnapshot) {
+        return {
+            nameChanged: true,
+            calledScenariosChanged: true,
+            usedParametersChanged: true
+        };
+    }
+
+    return {
+        nameChanged: currentSnapshot.scenarioName !== lastSavedSnapshot.scenarioName,
+        calledScenariosChanged: currentSnapshot.calledScenariosSignature !== lastSavedSnapshot.calledScenariosSignature,
+        usedParametersChanged: currentSnapshot.usedParametersSignature !== lastSavedSnapshot.usedParametersSignature
+    };
+}
+
+function setScenarioSnapshotAsSaved(document: vscode.TextDocument, snapshot?: ScenarioSaveSnapshot): void {
+    const fileKey = document.uri.toString();
+    const savedSnapshot = snapshot ?? buildScenarioSaveSnapshot(document);
+    lastSavedScenarioSnapshots.set(fileKey, savedSnapshot);
+    scenarioDirtyFlagsByUri.set(fileKey, {
+        nameChanged: false,
+        calledScenariosChanged: false,
+        usedParametersChanged: false
+    });
+}
 
 // Ключ для хранения пароля в SecretStorage (должен совпадать с ключом в phaseSwitcher.ts)
 const EMAIL_PASSWORD_KEY = '1cDriveHelper.emailPassword';
@@ -99,6 +172,41 @@ export function activate(context: vscode.ExtensionContext) {
             }
         })
     );
+
+    const scenarioDiagnosticsProvider = new ScenarioDiagnosticsProvider(phaseSwitcherProvider, hoverProvider);
+    context.subscriptions.push(
+        scenarioDiagnosticsProvider,
+        vscode.languages.registerCodeActionsProvider(
+            { pattern: '**/*.yaml', scheme: 'file' },
+            scenarioDiagnosticsProvider,
+            { providedCodeActionKinds: ScenarioDiagnosticsProvider.providedCodeActionKinds }
+        )
+    );
+
+    // Initialize incremental save snapshots for currently open scenario documents.
+    vscode.workspace.textDocuments.forEach(document => {
+        if (!document.isUntitled && isScenarioYamlFile(document)) {
+            setScenarioSnapshotAsSaved(document);
+        }
+    });
+
+    context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(document => {
+        if (!document.isUntitled && isScenarioYamlFile(document)) {
+            setScenarioSnapshotAsSaved(document);
+        }
+    }));
+
+    context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
+        const document = event.document;
+        if (document.isUntitled || !isScenarioYamlFile(document)) {
+            return;
+        }
+
+        const fileKey = document.uri.toString();
+        const currentSnapshot = buildScenarioSaveSnapshot(document);
+        const lastSavedSnapshot = lastSavedScenarioSnapshots.get(fileKey);
+        scenarioDirtyFlagsByUri.set(fileKey, calculateScenarioDirtyFlags(currentSnapshot, lastSavedSnapshot));
+    }));
 
 
     // --- Регистрация Команд ---
@@ -297,6 +405,284 @@ export function activate(context: vscode.ExtensionContext) {
         () => handleOpenYamlParametersManager(context)
     ));
 
+    const runWorkspaceDiagnosticsScan = async (options: {
+        refreshCache?: boolean;
+        showCompletionMessage?: boolean;
+        progressLocation?: vscode.ProgressLocation;
+    } = {}) => {
+        const t = await getTranslator(context.extensionUri);
+        const refreshCache = options.refreshCache ?? true;
+        const showCompletionMessage = options.showCompletionMessage ?? true;
+        const progressLocation = options.progressLocation ?? vscode.ProgressLocation.Notification;
+
+        await vscode.window.withProgress({
+            location: progressLocation,
+            title: t('Scanning workspace scenario diagnostics...'),
+            cancellable: false
+        }, async () => {
+            await scenarioDiagnosticsProvider.scanWorkspaceDiagnostics({ refreshCache });
+        });
+
+        if (showCompletionMessage) {
+            vscode.window.showInformationMessage(t('Workspace scenario diagnostics scan completed.'));
+        }
+    };
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        '1cDriveHelper.scanWorkspaceDiagnostics',
+        async () => {
+            try {
+                const t = await getTranslator(context.extensionUri);
+                const runScanAction = t('Run scan');
+                const confirmation = await vscode.window.showWarningMessage(
+                    t('Workspace diagnostics scan may create high load on large projects. Continue?'),
+                    { modal: true },
+                    runScanAction
+                );
+                if (confirmation !== runScanAction) {
+                    return;
+                }
+
+                await runWorkspaceDiagnosticsScan({
+                    refreshCache: true,
+                    showCompletionMessage: true,
+                    progressLocation: vscode.ProgressLocation.Notification
+                });
+            } catch (error) {
+                const t = await getTranslator(context.extensionUri);
+                const message = error instanceof Error ? error.message : String(error);
+                console.error('[Extension] scanWorkspaceDiagnostics failed:', error);
+                vscode.window.showErrorMessage(t('Failed to scan scenario diagnostics: {0}', message));
+            }
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        '1cDriveHelper.fixScenarioIssues',
+        async (targetUri?: vscode.Uri) => {
+            const t = await getTranslator(context.extensionUri);
+            let document: vscode.TextDocument | undefined;
+
+            if (targetUri) {
+                try {
+                    document = await vscode.workspace.openTextDocument(targetUri);
+                } catch (error) {
+                    console.error('[Extension] Failed to open document for fixScenarioIssues:', error);
+                    vscode.window.showErrorMessage(t('Failed to open file for fixing.'));
+                    return;
+                }
+            } else {
+                document = vscode.window.activeTextEditor?.document;
+            }
+
+            if (!document) {
+                vscode.window.showWarningMessage(t('No active YAML scenario file.'));
+                return;
+            }
+
+            const { isScenarioYamlFile } = await import('./yamlValidator.js');
+            if (!isScenarioYamlFile(document)) {
+                vscode.window.showWarningMessage(t('This command is only available for scenario YAML files.'));
+                return;
+            }
+
+            const fileKey = document.uri.toString();
+            processingFiles.add(fileKey);
+
+            try {
+                const completedOperations: string[] = [];
+                await vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: t('Fixing scenario issues...'),
+                    cancellable: false
+                }, async (progress) => {
+                    progress.report({ increment: 10, message: t('Replacing tabs with spaces...') });
+                    const fullText = document!.getText();
+                    const newText = fullText.replace(/^\t+/gm, (match) => '    '.repeat(match.length));
+                    if (newText !== fullText) {
+                        const edit = new vscode.WorkspaceEdit();
+                        const fullRange = new vscode.Range(
+                            document!.positionAt(0),
+                            document!.positionAt(fullText.length)
+                        );
+                        edit.replace(document!.uri, fullRange, newText);
+                        await vscode.workspace.applyEdit(edit);
+                        completedOperations.push('tabs');
+                    }
+
+                    progress.report({ increment: 20, message: t('Aligning Gherkin tables...') });
+                    if (await alignGherkinTables(document!)) {
+                        completedOperations.push('alignTables');
+                    }
+
+                    progress.report({ increment: 20, message: t('Aligning nested scenario parameters...') });
+                    if (await alignNestedScenarioCallParameters(document!)) {
+                        completedOperations.push('alignNested');
+                    }
+
+                    progress.report({ increment: 20, message: t('Refreshing scenario cache...') });
+                    await phaseSwitcherProvider.ensureFreshTestCache();
+                    const testCache = phaseSwitcherProvider.getTestCache();
+
+                    progress.report({ increment: 15, message: t('Filling nested scenarios...') });
+                    if (await clearAndFillNestedScenarios(document!, true, testCache)) {
+                        completedOperations.push('nested');
+                    }
+
+                    progress.report({ increment: 15, message: t('Filling scenario parameters...') });
+                    if (await clearAndFillScenarioParameters(document!, true)) {
+                        completedOperations.push('params');
+                    }
+                });
+
+                await document.save();
+                if (completedOperations.length > 0) {
+                    vscode.window.showInformationMessage(t('Scenario issues fixed.'));
+                } else {
+                    vscode.window.showInformationMessage(t('No issues to fix.'));
+                }
+            } catch (error) {
+                console.error('[Extension] fixScenarioIssues failed:', error);
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                vscode.window.showErrorMessage(t('Failed to fix scenario issues: {0}', errorMessage));
+            } finally {
+                processingFiles.delete(fileKey);
+            }
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        '1cDriveHelper.addScenarioParameterExclusion',
+        async (rawParameterArg?: unknown, ...restArgs: unknown[]) => {
+            const t = await getTranslator(context.extensionUri);
+
+            const extractNameFromUnknownArg = (arg: unknown): string => {
+                if (!arg) {
+                    return '';
+                }
+
+                if (typeof arg === 'string') {
+                    return extractScenarioParameterNameFromText(arg);
+                }
+
+                if (Array.isArray(arg)) {
+                    for (const item of arg) {
+                        const value = extractNameFromUnknownArg(item);
+                        if (value) {
+                            return value;
+                        }
+                    }
+                    return '';
+                }
+
+                if (typeof arg === 'object') {
+                    const record = arg as Record<string, unknown>;
+                    const candidateKeys = ['parameterName', 'text', 'value', 'label', 'word'];
+                    for (const key of candidateKeys) {
+                        const rawValue = record[key];
+                        if (typeof rawValue === 'string') {
+                            const parsed = extractScenarioParameterNameFromText(rawValue);
+                            if (parsed) {
+                                return parsed;
+                            }
+                        }
+                    }
+                }
+
+                return '';
+            };
+
+            try {
+                let parameterName = '';
+                for (const arg of [rawParameterArg, ...restArgs]) {
+                    parameterName = extractNameFromUnknownArg(arg);
+                    if (parameterName) {
+                        break;
+                    }
+                }
+
+                if (!parameterName) {
+                    const editor = vscode.window.activeTextEditor;
+                    if (editor) {
+                        for (const selection of editor.selections) {
+                            if (!selection.isEmpty) {
+                                const selectedText = editor.document.getText(selection);
+                                parameterName = extractScenarioParameterNameFromText(selectedText);
+                                if (parameterName) {
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (!parameterName) {
+                            const active = editor.selection.active;
+                            const lineText = editor.document.lineAt(active.line).text;
+                            const regex = /\[([A-Za-zА-Яа-яЁё0-9_-]+)\]/g;
+                            let match: RegExpExecArray | null;
+                            while ((match = regex.exec(lineText)) !== null) {
+                                const start = match.index;
+                                const end = match.index + match[0].length;
+                                if (active.character >= start && active.character <= end) {
+                                    parameterName = match[1];
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (!parameterName) {
+                            const wordRange = editor.document.getWordRangeAtPosition(
+                                editor.selection.active,
+                                /[A-Za-zА-Яа-яЁё0-9_-]+/
+                            );
+                            if (wordRange) {
+                                const wordText = editor.document.getText(wordRange);
+                                parameterName = extractScenarioParameterNameFromText(wordText);
+                            }
+                        }
+                    }
+                }
+
+                if (!parameterName) {
+                    const input = await vscode.window.showInputBox({
+                        prompt: t('Enter parameter name to exclude (without brackets).'),
+                        placeHolder: 'ExampleParameter'
+                    });
+                    if (!input) {
+                        return;
+                    }
+                    parameterName = extractScenarioParameterNameFromText(input);
+                }
+
+                if (!parameterName) {
+                    vscode.window.showWarningMessage(t('Parameter name cannot be empty.'));
+                    return;
+                }
+
+                const config = vscode.workspace.getConfiguration('1cDriveHelper');
+                const existing = config.get<string[]>('editor.scenarioParameterExclusions', []) || [];
+                if (existing.includes(parameterName)) {
+                    vscode.window.showInformationMessage(t('Parameter "{0}" is already in exclusions.', parameterName));
+                    return;
+                }
+
+                const target = vscode.workspace.workspaceFolders?.length
+                    ? vscode.ConfigurationTarget.Workspace
+                    : vscode.ConfigurationTarget.Global;
+
+                await config.update(
+                    'editor.scenarioParameterExclusions',
+                    [...existing, parameterName],
+                    target
+                );
+                vscode.window.showInformationMessage(t('Added "{0}" to scenario parameter exclusions.', parameterName));
+            } catch (error) {
+                console.error('[Extension] addScenarioParameterExclusion failed:', error);
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                vscode.window.showErrorMessage(t('Failed to add scenario parameter exclusion: {0}', errorMessage));
+            }
+        }
+    ));
+
     // Регистрируем провайдер настроек
     const settingsProvider = SettingsProvider.getInstance(context);
     settingsProvider.registerSettingsProvider();
@@ -306,21 +692,26 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.workspace.onDidSaveTextDocument(async (document) => {
             // Проверяем, что это YAML файл сценария
             if (document.languageId === 'yaml' || document.fileName.toLowerCase().endsWith('.yaml')) {
-                // Проверяем, что это файл сценария YAML
-                const { isScenarioYamlFile } = await import('./yamlValidator.js');
                 if (!isScenarioYamlFile(document)) {
                     return; // Пропускаем файлы, которые не являются сценариями
                 }
-                
-                // Debounce mechanism: prevent double processing from VS Code auto-save
+
                 const fileKey = document.uri.toString();
+                const currentSnapshot = buildScenarioSaveSnapshot(document);
+                const lastSavedSnapshot = lastSavedScenarioSnapshots.get(fileKey);
+                const dirtyFlags = scenarioDirtyFlagsByUri.get(fileKey)
+                    ?? calculateScenarioDirtyFlags(currentSnapshot, lastSavedSnapshot);
+                scenarioDirtyFlagsByUri.set(fileKey, dirtyFlags);
+
+                // Debounce mechanism: prevent double processing from VS Code auto-save
                 if (processingFiles.has(fileKey)) {
                     console.log(`[Extension] Skipping processing for ${document.fileName} - already in progress`);
+                    setScenarioSnapshotAsSaved(document, currentSnapshot);
                     return;
                 }
-                
+
                 processingFiles.add(fileKey);
-                
+
                 // Auto-cleanup after 5 seconds to prevent memory leaks
                 setTimeout(() => {
                     processingFiles.delete(fileKey);
@@ -331,6 +722,8 @@ export function activate(context: vscode.ExtensionContext) {
                 const enabledOperations: string[] = [];
                 
                 const tabsEnabled = config.get<boolean>('editor.autoReplaceTabsWithSpacesOnSave', true);
+                const alignTablesEnabled = config.get<boolean>('editor.autoAlignGherkinTablesOnSave', true);
+                const alignNestedCallParamsEnabled = config.get<boolean>('editor.autoAlignNestedScenarioParametersOnSave', true);
                 const nestedEnabled = config.get<boolean>('editor.autoFillNestedScenariosOnSave', true);
                 const paramsEnabled = config.get<boolean>('editor.autoFillScenarioParametersOnSave', true);
                 const showRefillMessages = config.get<boolean>('editor.showRefillMessages', true);
@@ -338,11 +731,25 @@ export function activate(context: vscode.ExtensionContext) {
                 if (tabsEnabled && document.getText().includes('\t')) {
                     enabledOperations.push('tabs');
                 }
-                if (nestedEnabled) {
+                if (alignTablesEnabled) {
+                    enabledOperations.push('alignTables');
+                }
+                if (alignNestedCallParamsEnabled) {
+                    enabledOperations.push('alignNested');
+                }
+                if (nestedEnabled && dirtyFlags.calledScenariosChanged) {
                     enabledOperations.push('nested');
                 }
-                if (paramsEnabled) {
+                if (paramsEnabled && dirtyFlags.usedParametersChanged) {
                     enabledOperations.push('params');
+                }
+
+                const shouldUpsertScenarioCache =
+                    dirtyFlags.nameChanged ||
+                    dirtyFlags.calledScenariosChanged ||
+                    dirtyFlags.usedParametersChanged;
+                if (shouldUpsertScenarioCache) {
+                    phaseSwitcherProvider.upsertScenarioCacheEntryFromDocument(document);
                 }
 
                 // Если есть операции для выполнения, показываем единый прогресс
@@ -356,6 +763,7 @@ export function activate(context: vscode.ExtensionContext) {
                     }, async (progress) => {
                         const totalSteps = enabledOperations.length;
                         const completedOperations: string[] = [];
+                        let testCache = phaseSwitcherProvider.getTestCache();
                         
                         try {
                             // 1. Замена табов на пробелы
@@ -379,22 +787,54 @@ export function activate(context: vscode.ExtensionContext) {
                                 }
                             }
 
-                            // 2. Заполнение NestedScenarios
+                            // 2. Выравнивание таблиц Gherkin
+                            if (enabledOperations.includes('alignTables')) {
+                                progress.report({
+                                    increment: (100 / totalSteps),
+                                    message: t('Aligning Gherkin tables...')
+                                });
+
+                                const result = await alignGherkinTables(document);
+                                if (result) {
+                                    completedOperations.push('alignTables');
+                                }
+                            }
+
+                            // 3. Выравнивание параметров вызовов вложенных сценариев
+                            if (enabledOperations.includes('alignNested')) {
+                                progress.report({
+                                    increment: (100 / totalSteps),
+                                    message: t('Aligning nested scenario parameters...')
+                                });
+
+                                const result = await alignNestedScenarioCallParameters(document);
+                                if (result) {
+                                    completedOperations.push('alignNested');
+                                }
+                            }
+
+                            // 4. Заполнение NestedScenarios
                             if (enabledOperations.includes('nested')) {
                                 progress.report({ 
                                     increment: (100 / totalSteps), 
                                     message: t('Filling nested scenarios...') 
                                 });
-                                
-                                // Pass the test cache for fast scenario lookup
-                                const testCache = phaseSwitcherProvider.getTestCache();
+
+                                if (shouldUpsertScenarioCache) {
+                                    phaseSwitcherProvider.upsertScenarioCacheEntryFromDocument(document);
+                                }
+                                testCache = phaseSwitcherProvider.getTestCache();
+                                if (!testCache) {
+                                    await phaseSwitcherProvider.initializeTestCache();
+                                    testCache = phaseSwitcherProvider.getTestCache();
+                                }
                                 const result = await clearAndFillNestedScenarios(document, true, testCache);
                                 if (result) {
                                     completedOperations.push('nested');
                                 }
                             }
 
-                            // 3. Заполнение ScenarioParameters
+                            // 5. Заполнение ScenarioParameters
                             if (enabledOperations.includes('params')) {
                                 progress.report({ 
                                     increment: (100 / totalSteps), 
@@ -406,6 +846,9 @@ export function activate(context: vscode.ExtensionContext) {
                                     completedOperations.push('params');
                                 }
                             }
+
+                            const postProcessSnapshot = buildScenarioSaveSnapshot(document);
+                            setScenarioSnapshotAsSaved(document, postProcessSnapshot);
 
                             // Показываем единое сообщение о завершении
                             if (completedOperations.length > 0) {
@@ -442,8 +885,20 @@ export function activate(context: vscode.ExtensionContext) {
                         }
                         // Note: debounce cleanup is handled either in the setTimeout callback (success) or catch block (error)
                     });
+                } else {
+                    setScenarioSnapshotAsSaved(document, currentSnapshot);
+                    processingFiles.delete(fileKey);
                 }
             }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.workspace.onDidCloseTextDocument(document => {
+            const fileKey = document.uri.toString();
+            lastSavedScenarioSnapshots.delete(fileKey);
+            scenarioDirtyFlagsByUri.delete(fileKey);
+            clearScenarioParameterSessionCache(document);
         })
     );
 
@@ -462,6 +917,12 @@ async function buildCompletionMessage(completedOperations: string[], t: (key: st
     
     if (completedOperations.includes('tabs')) {
         messages.push(t('tabs replaced'));
+    }
+    if (completedOperations.includes('alignTables')) {
+        messages.push(t('Gherkin tables aligned'));
+    }
+    if (completedOperations.includes('alignNested')) {
+        messages.push(t('nested scenario call parameters aligned'));
     }
     if (completedOperations.includes('nested')) {
         messages.push(t('nested scenarios filled'));

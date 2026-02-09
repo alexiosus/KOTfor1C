@@ -14,6 +14,7 @@
         assemblerEnabled: true,
         switcherEnabled: true
     };
+    let isBuildInProgress = false;
     let areAllPhasesCurrentlyExpanded = false; 
 
     // === Получение ссылок на элементы DOM ===
@@ -68,7 +69,7 @@
         }
         // Always respect explicit refresh button state
         if (refreshButtonEnabled !== undefined && refreshBtn instanceof HTMLButtonElement) {
-            refreshBtn.disabled = !refreshButtonEnabled;
+            refreshBtn.disabled = isBuildInProgress ? true : !refreshButtonEnabled;
             log(`Refresh button explicitly set to: ${refreshButtonEnabled ? 'enabled' : 'disabled'}`);
         }
         if (collapseAllBtn instanceof HTMLButtonElement) {
@@ -90,7 +91,7 @@
      */
     function enablePhaseControls(enable, refreshButtonAlso = true) {
         const isPhaseSwitcherVisible = settings.switcherEnabled;
-        const effectiveEnable = enable && isPhaseSwitcherVisible;
+        const effectiveEnable = enable && isPhaseSwitcherVisible && !isBuildInProgress;
         const isDisabled = !effectiveEnable;
 
         if (selectAllBtn instanceof HTMLButtonElement) selectAllBtn.disabled = isDisabled;
@@ -126,7 +127,9 @@
                 }
             });
         }
-        if (refreshButtonAlso === true && refreshBtn instanceof HTMLButtonElement) {
+        if (isBuildInProgress && refreshBtn instanceof HTMLButtonElement) {
+             refreshBtn.disabled = true;
+        } else if (refreshButtonAlso === true && refreshBtn instanceof HTMLButtonElement) {
              refreshBtn.disabled = isDisabled;
              log(`Refresh button set by enablePhaseControls to: ${isDisabled ? 'disabled' : 'enabled'}`);
         } else if (refreshButtonAlso === false && refreshBtn instanceof HTMLButtonElement) {
@@ -143,7 +146,7 @@
      */
      function enableAssembleControls(enable) {
          const isAssemblerVisible = settings.assemblerEnabled;
-         const effectiveEnable = enable && isAssemblerVisible;
+         const effectiveEnable = enable && isAssemblerVisible && !isBuildInProgress;
 
          if (assembleBtn instanceof HTMLButtonElement) assembleBtn.disabled = !effectiveEnable;
          if (recordGLSelect instanceof HTMLSelectElement) recordGLSelect.disabled = !effectiveEnable;
@@ -692,6 +695,7 @@
                     testDataByPhase = message.tabData || {};
                     initialTestStates = message.states || {};
                     settings = message.settings || { assemblerEnabled: true, switcherEnabled: true };
+                    isBuildInProgress = !!settings.buildInProgress;
                     log("Received settings in webview:");
                     console.log(settings);
 
@@ -759,7 +763,16 @@
                     if (openSettingsBtn instanceof HTMLButtonElement) openSettingsBtn.disabled = false;
 
                     const readyMessage = window.__loc?.readyToWork || 'Ready to work.';
-                    updateStatus(readyMessage, 'main', true);
+                    if (isBuildInProgress) {
+                        const buildMessage = window.__loc?.statusBuildingInProgress || 'Building tests in progress...';
+                        updateStatus(buildMessage, 'main', false);
+                        updateStatus(buildMessage, 'assemble', false);
+                        enablePhaseControls(false, false);
+                        enableAssembleControls(false);
+                        if (applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;
+                    } else {
+                        updateStatus(readyMessage, 'main', true);
+                    }
                 }
                 break;
 
@@ -785,10 +798,28 @@
 
             case 'setRefreshButtonState':
                 if (refreshBtn instanceof HTMLButtonElement) {
-                    refreshBtn.disabled = !message.enabled;
+                    refreshBtn.disabled = isBuildInProgress ? true : !message.enabled;
                     log(`External: Refresh button state set to enabled: ${message.enabled}`);
                 }
                 break;
+
+            case 'buildStateChanged': {
+                isBuildInProgress = !!message.inProgress;
+                if (isBuildInProgress) {
+                    const buildMessage = window.__loc?.statusBuildingInProgress || 'Building tests in progress...';
+                    updateStatus(buildMessage, 'main', false);
+                    updateStatus(buildMessage, 'assemble', false);
+                    enablePhaseControls(false, false);
+                    enableAssembleControls(false);
+                    if (applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;
+                } else {
+                    const mainControlsShouldBeActive = settings.switcherEnabled && !!testDataByPhase && Object.keys(testDataByPhase).length > 0;
+                    enablePhaseControls(mainControlsShouldBeActive, true);
+                    enableAssembleControls(settings.assemblerEnabled);
+                    updatePendingStatus();
+                }
+                break;
+            }
 
             default:
                 log(`Received unknown command: ${message?.command}`);

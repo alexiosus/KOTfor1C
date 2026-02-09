@@ -13,7 +13,11 @@
   "config.autoFillNestedScenariosOnSave.description": "Automatically fill 'NestedScenarios' section with missing scenarios when saving YAML files.",
   "config.autoFillScenarioParametersOnSave.description": "Automatically fill 'ScenarioParameters' section with missing parameters when saving YAML files.",
   "config.autoReplaceTabsWithSpacesOnSave.description": "Automatically replace tabs with 4 spaces when saving YAML files.",
+  "config.autoAlignNestedScenarioParametersOnSave.description": "Automatically align nested scenario call parameters by '=' on save.",
+  "config.autoAlignGherkinTablesOnSave.description": "Automatically align Gherkin table columns when saving YAML files.",
+  "config.scenarioParameterExclusions.description": "Exclusions for scenario parameter recognition (values in square brackets that should not be added to ScenarioParameters).",
   "config.showRefillMessages.description": "Show notification messages when sections are automatically refilled on save.",
+  "config.checkRelatedParentScenarios.description": "Automatically validate related parent scenarios when opening/saving a scenario file.",
 
   "config.mailSettings.title": "Test Mail Settings",
   "config.emailAddress.description": "Test email address (EMailTestEmailAddress).",
@@ -67,6 +71,9 @@
   "cmd.openBuildFolder.title": "1C:Drive - Open build folder",
   "cmd.createFirstLaunchZip.title": "1C:Drive - Create FirstLaunch archive",
   "cmd.openYamlParametersManager.title": "1C:Drive - Open Build Scenario Parameters Manager",
+  "cmd.fixScenarioIssues.title": "1C:Drive - Fix scenario issues",
+  "cmd.addScenarioParameterExclusion.title": "1C:Drive - Add scenario parameter exclusion",
+  "cmd.scanWorkspaceDiagnostics.title": "1C:Drive - Scan workspace diagnostics",
 
   "view.phaseSwitcher.name": "1C:Drive Test Helper",
   "view.phaseSwitcher.contextualTitle": "1C:Drive Test Helper"
