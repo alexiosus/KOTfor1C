@@ -50,8 +50,8 @@ This file describes system paths, build parameters, diagnostics, commands, and l
 | `kotTestToolkit.editor.autoReplaceTabsWithSpacesOnSave` | Replace tabs with spaces on save |
 | `kotTestToolkit.editor.autoAlignNestedScenarioParametersOnSave` | Align nested-call parameters by `=` |
 | `kotTestToolkit.editor.autoAlignGherkinTablesOnSave` | Align Gherkin tables |
-| `kotTestToolkit.editor.autoFillNestedScenariosOnSave` | Auto-fill `NestedScenarios` |
-| `kotTestToolkit.editor.autoFillScenarioParametersOnSave` | Auto-fill `ScenarioParameters` |
+| `kotTestToolkit.editor.autoFillNestedScenariosOnSave` | Auto-fill `NestedScenarios` (only when calls changed or section is incomplete) |
+| `kotTestToolkit.editor.autoFillScenarioParametersOnSave` | Auto-fill `ScenarioParameters` (only when parameters changed or section is incomplete) |
 | `kotTestToolkit.editor.scenarioParameterExclusions` | Exclusions for `[]` values, against wrong parameters detection |
 | `kotTestToolkit.editor.showRefillMessages` | Show/hide refill notifications |
 | `kotTestToolkit.editor.checkRelatedParentScenarios` | Validate errors in related parent scenarios |
@@ -115,10 +115,21 @@ Default shortcuts exist, but it is recommended to assign/rebind them in VS Code 
 
 ## 8) Performance
 
-- Use local diagnostics for day-to-day work.
+- Local diagnostics is intended for day-to-day work (active file + related parent scenarios).
 - Run `scanWorkspaceDiagnostics` manually only when needed.
+- During global diagnostics scan, `Maybe you meant` suggestions are not calculated to reduce load.
 
 ## 9) Limitations
 
 - macOS: MXL opening is typically unavailable.
 - Linux: support is partially tested.
+
+## 10) Current Editor Notes
+
+- Bracket parameters without quotes are valid: `Step [Parameter]`.
+- Hover for nested scenario calls shows:
+  - description from `KOTМетаданные.Описание`,
+  - files count in `files` folder,
+  - parameter count and nested-calls count.
+- Text inside `KOTМетаданные -> Описание` is highlighted in the editor.
+- Diagnostics checks duplicate `ДанныеСценария.Код` values and shows warnings for all detected conflicts.

@@ -2,6 +2,8 @@
 import { parse } from 'node-html-parser';
 import { getStepsHtml, forceRefreshSteps as forceRefreshStepsCore } from './stepsFetcher';
 import { getTranslator } from './localization';
+import * as path from 'path';
+import { TestInfo } from './types';
 
 // Интерфейс для хранения определений шагов и их описаний
 interface StepDefinition {
@@ -21,19 +23,59 @@ interface StepDefinition {
 const PLACEHOLDER_REGEX = /"%\d+\s+[^"]*"|'%\d+\s+[^']*'/g;
 const STEP_LITERAL_REGEX = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\[[A-Za-zА-Яа-яЁё0-9_-]+\]/g;
 
+interface ScenarioCacheProvider {
+    getTestCache(): Map<string, TestInfo> | null;
+}
+
+interface ScenarioDescriptionInfo {
+    hasKotMetadata: boolean;
+    description: string;
+}
+
+interface ScenarioHoverCachedData {
+    filesCount: number;
+    descriptionInfo: ScenarioDescriptionInfo;
+    expiresAt: number;
+}
+
 export class DriveHoverProvider implements vscode.HoverProvider {
     private stepDefinitions: StepDefinition[] = [];
     private readonly templateRegexCache = new Map<string, RegExp>();
     private isLoading: boolean = false;
     private loadingPromise: Promise<void> | null = null;
     private context: vscode.ExtensionContext;
+    private readonly scenarioHoverCache = new Map<string, ScenarioHoverCachedData>();
+    private readonly scenarioHoverCacheTtlMs = 8000;
+    private hoverTranslator: ((message: string, ...args: string[]) => string) | null = null;
+    private hoverTranslatorLanguageOverride: string | null = null;
 
-    constructor(context: vscode.ExtensionContext) {
+    constructor(context: vscode.ExtensionContext, private readonly scenarioCacheProvider?: ScenarioCacheProvider) {
         this.context = context;
         // Загружаем определения асинхронно, не блокируя конструктор
         this.loadStepDefinitions().catch(err => {
             console.error("[DriveHoverProvider] Initial load failed on constructor:", err.message);
         });
+
+        this.context.subscriptions.push(
+            vscode.workspace.onDidSaveTextDocument(document => {
+                this.scenarioHoverCache.delete(document.uri.toString());
+            }),
+            vscode.workspace.onDidCreateFiles(() => {
+                this.scenarioHoverCache.clear();
+            }),
+            vscode.workspace.onDidDeleteFiles(() => {
+                this.scenarioHoverCache.clear();
+            }),
+            vscode.workspace.onDidRenameFiles(() => {
+                this.scenarioHoverCache.clear();
+            }),
+            vscode.workspace.onDidChangeConfiguration(event => {
+                if (event.affectsConfiguration('kotTestToolkit.localization.languageOverride')) {
+                    this.hoverTranslator = null;
+                    this.hoverTranslatorLanguageOverride = null;
+                }
+            })
+        );
     }
 
     /**
@@ -378,6 +420,258 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         return false;
     }
 
+    private parseScenarioCallNameFromLine(lineText: string): string | null {
+        const match = lineText.match(/^\s*(And|И|Допустим)\s+(.+)$/i);
+        if (!match || !match[2]) {
+            return null;
+        }
+
+        // Strip inline comment tail (if any), then normalize.
+        const rawName = match[2].replace(/\s+#.*$/, '').trim();
+        if (!rawName || rawName.includes('"') || rawName.includes("'")) {
+            return null;
+        }
+
+        return rawName;
+    }
+
+    private parseScenarioDescription(documentText: string): ScenarioDescriptionInfo {
+        const lines = documentText.split(/\r\n|\r|\n/);
+        let metadataStart = -1;
+
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            const line = lines[lineIndex];
+            if (line.trim() === 'KOTМетаданные:' && this.getIndent(line) === 0) {
+                metadataStart = lineIndex;
+                break;
+            }
+        }
+
+        if (metadataStart === -1) {
+            return { hasKotMetadata: false, description: '' };
+        }
+
+        let metadataEnd = lines.length;
+        for (let lineIndex = metadataStart + 1; lineIndex < lines.length; lineIndex++) {
+            const line = lines[lineIndex];
+            const trimmed = line.trim();
+            if (trimmed.length === 0 || trimmed.startsWith('#')) {
+                continue;
+            }
+            if (this.getIndent(line) === 0 && /^[^:#][^:]*:\s*/.test(trimmed)) {
+                metadataEnd = lineIndex;
+                break;
+            }
+        }
+
+        for (let lineIndex = metadataStart + 1; lineIndex < metadataEnd; lineIndex++) {
+            const line = lines[lineIndex];
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) {
+                continue;
+            }
+
+            const descriptionMatch = trimmed.match(/^Описание:\s*(.*)$/);
+            if (!descriptionMatch) {
+                continue;
+            }
+
+            const rawValue = (descriptionMatch[1] || '').trim();
+            const descriptionIndent = this.getIndent(line);
+
+            if (rawValue.startsWith('|') || rawValue.startsWith('>')) {
+                const contentLines: string[] = [];
+                for (let bodyLineIndex = lineIndex + 1; bodyLineIndex < metadataEnd; bodyLineIndex++) {
+                    const bodyLine = lines[bodyLineIndex];
+                    const bodyIndent = this.getIndent(bodyLine);
+                    const bodyTrimmed = bodyLine.trim();
+
+                    if (bodyTrimmed.length > 0 && bodyIndent <= descriptionIndent) {
+                        break;
+                    }
+
+                    if (bodyLine.length <= descriptionIndent) {
+                        contentLines.push('');
+                        continue;
+                    }
+
+                    const unindented = bodyLine.slice(descriptionIndent + 1);
+                    contentLines.push(unindented);
+                }
+
+                return {
+                    hasKotMetadata: true,
+                    description: contentLines.join('\n').trim()
+                };
+            }
+
+            return {
+                hasKotMetadata: true,
+                description: this.parseInlineYamlScalar(rawValue).trim()
+            };
+        }
+
+        return { hasKotMetadata: true, description: '' };
+    }
+
+    private getIndent(line: string): number {
+        const normalized = line.replace(/^\t+/, tabs => '    '.repeat(tabs.length));
+        return (normalized.match(/^(\s*)/) || [''])[0].length;
+    }
+
+    private parseInlineYamlScalar(rawValue: string): string {
+        const trimmed = rawValue.trim();
+        if (!trimmed) {
+            return '';
+        }
+
+        if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+            return trimmed.slice(1, -1).replace(/\\\\/g, '\\').replace(/\\"/g, '"');
+        }
+
+        if (trimmed.length >= 2 && trimmed.startsWith('\'') && trimmed.endsWith('\'')) {
+            return trimmed.slice(1, -1).replace(/''/g, '\'');
+        }
+
+        return trimmed;
+    }
+
+    private async getScenarioDescriptionInfo(uri: vscode.Uri): Promise<ScenarioDescriptionInfo> {
+        const openDoc = vscode.workspace.textDocuments.find(document => document.uri.toString() === uri.toString());
+        if (openDoc) {
+            return this.parseScenarioDescription(openDoc.getText());
+        }
+
+        try {
+            const bytes = await vscode.workspace.fs.readFile(uri);
+            const text = Buffer.from(bytes).toString('utf-8');
+            return this.parseScenarioDescription(text);
+        } catch {
+            return { hasKotMetadata: false, description: '' };
+        }
+    }
+
+    private async countFilesInScenarioFilesFolder(uri: vscode.Uri): Promise<number> {
+        const scenarioDirUri = vscode.Uri.file(path.dirname(uri.fsPath));
+        const filesDirUri = vscode.Uri.joinPath(scenarioDirUri, 'files');
+
+        try {
+            await vscode.workspace.fs.stat(filesDirUri);
+        } catch {
+            return 0;
+        }
+
+        let count = 0;
+        const stack: vscode.Uri[] = [filesDirUri];
+
+        while (stack.length > 0) {
+            const currentDir = stack.pop()!;
+            let entries: [string, vscode.FileType][];
+            try {
+                entries = await vscode.workspace.fs.readDirectory(currentDir);
+            } catch {
+                continue;
+            }
+
+            for (const [name, type] of entries) {
+                if (type === vscode.FileType.File) {
+                    count++;
+                    continue;
+                }
+                if (type === vscode.FileType.Directory) {
+                    stack.push(vscode.Uri.joinPath(currentDir, name));
+                }
+            }
+        }
+
+        return count;
+    }
+
+    private async getScenarioHoverCachedData(testInfo: TestInfo): Promise<ScenarioHoverCachedData> {
+        const key = testInfo.yamlFileUri.toString();
+        const now = Date.now();
+        const cached = this.scenarioHoverCache.get(key);
+        if (cached && cached.expiresAt > now) {
+            return cached;
+        }
+
+        const [descriptionInfo, filesCount] = await Promise.all([
+            this.getScenarioDescriptionInfo(testInfo.yamlFileUri),
+            this.countFilesInScenarioFilesFolder(testInfo.yamlFileUri)
+        ]);
+
+        const refreshed: ScenarioHoverCachedData = {
+            filesCount,
+            descriptionInfo,
+            expiresAt: now + this.scenarioHoverCacheTtlMs
+        };
+        this.scenarioHoverCache.set(key, refreshed);
+        return refreshed;
+    }
+
+    private async getHoverTranslator(): Promise<(message: string, ...args: string[]) => string> {
+        const languageOverride = vscode.workspace
+            .getConfiguration('kotTestToolkit.localization')
+            .get<string>('languageOverride') || 'System';
+
+        if (!this.hoverTranslator || this.hoverTranslatorLanguageOverride !== languageOverride) {
+            this.hoverTranslator = await getTranslator(this.context.extensionUri);
+            this.hoverTranslatorLanguageOverride = languageOverride;
+        }
+
+        return this.hoverTranslator;
+    }
+
+    private async provideScenarioCallHover(lineText: string): Promise<vscode.Hover | null> {
+        if (!this.scenarioCacheProvider) {
+            return null;
+        }
+
+        const calledScenarioName = this.parseScenarioCallNameFromLine(lineText);
+        if (!calledScenarioName) {
+            return null;
+        }
+
+        const testCache = this.scenarioCacheProvider.getTestCache();
+        const calledScenarioInfo = testCache?.get(calledScenarioName);
+        if (!calledScenarioInfo) {
+            return null;
+        }
+
+        const hoverData = await this.getScenarioHoverCachedData(calledScenarioInfo);
+        const parametersCount = calledScenarioInfo.parameters?.length ?? 0;
+        const nestedScenariosCount = calledScenarioInfo.nestedScenarioNames?.length ?? 0;
+        const filesValue = String(hoverData.filesCount);
+        const paramsValue = String(parametersCount);
+        const nestedValue = String(nestedScenariosCount);
+        const t = await this.getHoverTranslator();
+        const nestedScenarioLabel = t('Nested scenario');
+        const attachedFilesLabel = t('Attached files');
+        const parametersLabel = t('Parameters');
+        const nestedScenariosLabel = t('Nested scenarios');
+        const descriptionLabel = t('Description');
+        const emptyLabel = t('Empty.');
+        const missingKotMetadataLabel = t('KOT metadata block is missing.');
+
+        const content = new vscode.MarkdownString();
+        content.appendMarkdown(`**${nestedScenarioLabel}:** \`${calledScenarioName}\`\n\n`);
+        content.appendMarkdown(
+            `**${attachedFilesLabel}:** \`${filesValue}\`  •  ` +
+            `**${parametersLabel}:** \`${paramsValue}\`  •  ` +
+            `**${nestedScenariosLabel}:** \`${nestedValue}\`\n\n`
+        );
+
+        if (!hoverData.descriptionInfo.hasKotMetadata) {
+            content.appendMarkdown(`**${descriptionLabel}:** _${missingKotMetadataLabel}_\n\n`);
+        } else if (!hoverData.descriptionInfo.description) {
+            content.appendMarkdown(`**${descriptionLabel}:** _${emptyLabel}_\n\n`);
+        } else {
+            content.appendMarkdown(`**${descriptionLabel}:**\n\n${hoverData.descriptionInfo.description}\n\n`);
+        }
+
+        return new vscode.Hover(content);
+    }
+
     public async provideHover(
         document: vscode.TextDocument,
         position: vscode.Position,
@@ -389,16 +683,6 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             return null;
         }
 
-        if (this.isLoading && this.loadingPromise) {
-            await this.loadingPromise;
-        } else if (this.stepDefinitions.length === 0 && !this.isLoading) {
-            await this.loadStepDefinitions();
-        }
-
-        if (token.isCancellationRequested || this.stepDefinitions.length === 0) {
-            return null;
-        }
-        
         // Показываем подсказки только в блоках текста сценария
         if (!this.isInScenarioTextBlock(document, position)) {
             return null;
@@ -407,6 +691,21 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         // Получаем текст строки
         const lineText = document.lineAt(position.line).text.trim();
         if (!lineText || lineText.startsWith('#') || lineText.startsWith('|') || lineText.startsWith('"""')) {
+            return null;
+        }
+
+        const scenarioCallHover = await this.provideScenarioCallHover(lineText);
+        if (scenarioCallHover) {
+            return scenarioCallHover;
+        }
+
+        if (this.isLoading && this.loadingPromise) {
+            await this.loadingPromise;
+        } else if (this.stepDefinitions.length === 0 && !this.isLoading) {
+            await this.loadStepDefinitions();
+        }
+
+        if (token.isCancellationRequested || this.stepDefinitions.length === 0) {
             return null;
         }
         

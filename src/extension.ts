@@ -23,7 +23,9 @@ import {
     alignNestedScenarioCallParameters,
     alignGherkinTables,
     parseCalledScenariosFromScriptBody,
-    parseUsedParametersFromScriptBody
+    parseUsedParametersFromScriptBody,
+    shouldRefillNestedScenariosSection,
+    shouldRefillScenarioParametersSection
 } from './commandHandlers';
 import { getTranslator } from './localization';
 import { setExtensionUri } from './appContext';
@@ -33,6 +35,11 @@ import { SettingsProvider } from './settingsProvider';
 import { ScenarioDiagnosticsProvider } from './scenarioDiagnostics';
 import { extractScenarioParameterNameFromText } from './scenarioParameterUtils';
 import { isScenarioYamlFile } from './yamlValidator';
+import {
+    extractTopLevelKotMetadataBlock,
+    migrateLegacyPhaseSwitcherMetadata,
+    shouldKeepCachedKotMetadataBlock
+} from './phaseSwitcherMetadata';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -51,6 +58,8 @@ interface ScenarioDirtyFlags {
 
 const lastSavedScenarioSnapshots = new Map<string, ScenarioSaveSnapshot>();
 const scenarioDirtyFlagsByUri = new Map<string, ScenarioDirtyFlags>();
+const scenarioMetadataBlockSessionCache = new Map<string, string>();
+const kotDescriptionBlockLineRegex = /^Описание:\s*[|>][-+0-9]*\s*$/;
 
 function parseScenarioNameFromDocumentText(documentText: string): string | null {
     const lines = documentText.split(/\r\n|\r|\n/);
@@ -102,6 +111,21 @@ function setScenarioSnapshotAsSaved(document: vscode.TextDocument, snapshot?: Sc
     });
 }
 
+function updateScenarioMetadataBlockSessionCache(document: vscode.TextDocument): void {
+    const fileKey = document.uri.toString();
+    const metadataBlock = extractTopLevelKotMetadataBlock(document.getText());
+    if (!metadataBlock) {
+        return;
+    }
+
+    const existingCachedBlock = scenarioMetadataBlockSessionCache.get(fileKey);
+    if (shouldKeepCachedKotMetadataBlock(existingCachedBlock, metadataBlock)) {
+        return;
+    }
+
+    scenarioMetadataBlockSessionCache.set(fileKey, metadataBlock);
+}
+
 const EXTERNAL_STEPS_URL_CONFIG_KEY = 'kotTestToolkit.steps.externalUrl'; // Ключ для отслеживания изменений
 
 /**
@@ -130,7 +154,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // --- Регистрация Провайдеров Языковых Функций (Автодополнение и Подсказки) ---
     const completionProvider = new DriveCompletionProvider(context);
-    const hoverProvider = new DriveHoverProvider(context);
+    const hoverProvider = new DriveHoverProvider(context, phaseSwitcherProvider);
     
     context.subscriptions.push(
         vscode.languages.registerCompletionItemProvider(
@@ -181,17 +205,28 @@ export function activate(context: vscode.ExtensionContext) {
         )
     );
 
-    // Initialize incremental save snapshots for currently open scenario documents.
+    const kotDescriptionTextDecorationType = vscode.window.createTextEditorDecorationType({
+        color: new vscode.ThemeColor('editorInfo.foreground')
+    });
+    context.subscriptions.push(kotDescriptionTextDecorationType);
+
+    // Seed per-file session caches for currently open scenario documents.
     vscode.workspace.textDocuments.forEach(document => {
         if (!document.isUntitled && isScenarioYamlFile(document)) {
             setScenarioSnapshotAsSaved(document);
+            updateScenarioMetadataBlockSessionCache(document);
         }
     });
+    updateKotDescriptionDecorationsForVisibleEditors(kotDescriptionTextDecorationType);
 
     context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(document => {
-        if (!document.isUntitled && isScenarioYamlFile(document)) {
-            setScenarioSnapshotAsSaved(document);
+        if (document.isUntitled || !isScenarioYamlFile(document)) {
+            return;
         }
+
+        setScenarioSnapshotAsSaved(document);
+        updateScenarioMetadataBlockSessionCache(document);
+        updateKotDescriptionDecorationsForDocument(document, kotDescriptionTextDecorationType);
     }));
 
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
@@ -200,10 +235,16 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 
+        updateKotDescriptionDecorationsForDocument(document, kotDescriptionTextDecorationType);
+        updateScenarioMetadataBlockSessionCache(document);
         const fileKey = document.uri.toString();
         const currentSnapshot = buildScenarioSaveSnapshot(document);
         const lastSavedSnapshot = lastSavedScenarioSnapshots.get(fileKey);
         scenarioDirtyFlagsByUri.set(fileKey, calculateScenarioDirtyFlags(currentSnapshot, lastSavedSnapshot));
+    }));
+
+    context.subscriptions.push(vscode.window.onDidChangeVisibleTextEditors(() => {
+        updateKotDescriptionDecorationsForVisibleEditors(kotDescriptionTextDecorationType);
     }));
 
 
@@ -297,10 +338,14 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.window.onDidChangeActiveTextEditor(editor => {
             foldSectionsInEditor(editor);
+            if (editor) {
+                updateKotDescriptionDecorationForEditor(editor, kotDescriptionTextDecorationType);
+            }
         })
     );
     if (vscode.window.activeTextEditor) {
         foldSectionsInEditor(vscode.window.activeTextEditor);
+        updateKotDescriptionDecorationForEditor(vscode.window.activeTextEditor, kotDescriptionTextDecorationType);
     }
 
     context.subscriptions.push(vscode.commands.registerCommand(
@@ -629,16 +674,8 @@ export function activate(context: vscode.ExtensionContext) {
                 }
 
                 const fileKey = document.uri.toString();
-                const currentSnapshot = buildScenarioSaveSnapshot(document);
-                const lastSavedSnapshot = lastSavedScenarioSnapshots.get(fileKey);
-                const dirtyFlags = scenarioDirtyFlagsByUri.get(fileKey)
-                    ?? calculateScenarioDirtyFlags(currentSnapshot, lastSavedSnapshot);
-                scenarioDirtyFlagsByUri.set(fileKey, dirtyFlags);
-
-                // Debounce mechanism: prevent double processing from VS Code auto-save
                 if (processingFiles.has(fileKey)) {
-                    console.log(`[Extension] Skipping processing for ${document.fileName} - already in progress`);
-                    setScenarioSnapshotAsSaved(document, currentSnapshot);
+                    setScenarioSnapshotAsSaved(document);
                     return;
                 }
 
@@ -648,6 +685,49 @@ export function activate(context: vscode.ExtensionContext) {
                 setTimeout(() => {
                     processingFiles.delete(fileKey);
                 }, 5000);
+
+                try {
+                    // Migrate KOT metadata only on explicit save flow to avoid heavy work on file open.
+                    const cachedMetadataBlock = scenarioMetadataBlockSessionCache.get(fileKey);
+                    const migrationResult = migrateLegacyPhaseSwitcherMetadata(document.getText(), {
+                        cachedKotMetadataBlock: cachedMetadataBlock
+                    });
+                    if (migrationResult.changed) {
+                        const originalText = document.getText();
+                        const fullRange = new vscode.Range(
+                            document.positionAt(0),
+                            document.positionAt(originalText.length)
+                        );
+                        const edit = new vscode.WorkspaceEdit();
+                        edit.replace(document.uri, fullRange, migrationResult.content);
+
+                        const applied = await vscode.workspace.applyEdit(edit);
+                        if (applied) {
+                            phaseSwitcherProvider.upsertScenarioCacheEntryFromDocument(document);
+                            updateScenarioMetadataBlockSessionCache(document);
+                            setScenarioSnapshotAsSaved(document);
+
+                            const t = await getTranslator(context.extensionUri);
+                            vscode.window.showInformationMessage(
+                                t('KOT metadata block was migrated. The file will be saved again.')
+                            );
+
+                            await document.save();
+                            processingFiles.delete(fileKey);
+                            return;
+                        }
+                    }
+                } catch (migrationError) {
+                    console.error('[Extension] Failed to migrate KOT metadata on save:', migrationError);
+                }
+
+                const documentText = document.getText();
+                const currentSnapshot = buildScenarioSaveSnapshot(document);
+                const lastSavedSnapshot = lastSavedScenarioSnapshots.get(fileKey);
+                const dirtyFlags = scenarioDirtyFlagsByUri.get(fileKey)
+                    ?? calculateScenarioDirtyFlags(currentSnapshot, lastSavedSnapshot);
+                scenarioDirtyFlagsByUri.set(fileKey, dirtyFlags);
+
                 const config = vscode.workspace.getConfiguration('kotTestToolkit');
                 
                 // Проверяем, какие операции нужно выполнить
@@ -669,10 +749,17 @@ export function activate(context: vscode.ExtensionContext) {
                 if (alignNestedCallParamsEnabled) {
                     enabledOperations.push('alignNested');
                 }
-                if (nestedEnabled && dirtyFlags.calledScenariosChanged) {
+                const nestedSectionOutdated = nestedEnabled
+                    ? shouldRefillNestedScenariosSection(documentText)
+                    : false;
+                const paramsSectionOutdated = paramsEnabled
+                    ? shouldRefillScenarioParametersSection(documentText)
+                    : false;
+
+                if (nestedEnabled && (dirtyFlags.calledScenariosChanged || nestedSectionOutdated)) {
                     enabledOperations.push('nested');
                 }
-                if (paramsEnabled && dirtyFlags.usedParametersChanged) {
+                if (paramsEnabled && (dirtyFlags.usedParametersChanged || paramsSectionOutdated)) {
                     enabledOperations.push('params');
                 }
 
@@ -830,6 +917,7 @@ export function activate(context: vscode.ExtensionContext) {
             const fileKey = document.uri.toString();
             lastSavedScenarioSnapshots.delete(fileKey);
             scenarioDirtyFlagsByUri.delete(fileKey);
+            scenarioMetadataBlockSessionCache.delete(fileKey);
             clearScenarioParameterSessionCache(document);
         })
     );
@@ -875,6 +963,126 @@ async function buildCompletionMessage(completedOperations: string[], t: (key: st
     return t('Save completed.');
 }
 
+function normalizeLeadingTabsForDescription(line: string): string {
+    return line.replace(/^\t+/, tabs => '    '.repeat(tabs.length));
+}
+
+function getDescriptionLineIndent(line: string): number {
+    const normalized = normalizeLeadingTabsForDescription(line);
+    const match = normalized.match(/^(\s*)/);
+    return match ? match[1].length : 0;
+}
+
+function stripBomFromLine(line: string): string {
+    return line.replace(/^\uFEFF/, '');
+}
+
+function isIgnorableYamlLine(line: string): boolean {
+    const trimmed = stripBomFromLine(line).trim();
+    return trimmed.length === 0 || trimmed.startsWith('#');
+}
+
+function isYamlKeyLine(trimmedNoBom: string): boolean {
+    return /^[^:#][^:]*:\s*(.*)$/.test(trimmedNoBom);
+}
+
+function collectKotDescriptionContentRanges(document: vscode.TextDocument): vscode.Range[] {
+    const ranges: vscode.Range[] = [];
+    let lineIndex = 0;
+
+    while (lineIndex < document.lineCount) {
+        const lineText = document.lineAt(lineIndex).text;
+        const trimmedNoBom = stripBomFromLine(lineText).trim();
+
+        if (getDescriptionLineIndent(lineText) !== 0 || trimmedNoBom !== 'KOTМетаданные:') {
+            lineIndex++;
+            continue;
+        }
+
+        const metadataIndent = 0;
+        lineIndex++;
+
+        while (lineIndex < document.lineCount) {
+            const metadataLine = document.lineAt(lineIndex).text;
+            const metadataTrimmed = stripBomFromLine(metadataLine).trim();
+            const metadataIndentation = getDescriptionLineIndent(metadataLine);
+
+            if (!isIgnorableYamlLine(metadataLine) && metadataIndentation <= metadataIndent && isYamlKeyLine(metadataTrimmed)) {
+                break;
+            }
+
+            if (metadataIndentation > metadataIndent && kotDescriptionBlockLineRegex.test(metadataTrimmed)) {
+                const descriptionIndent = metadataIndentation;
+                lineIndex++;
+
+                while (lineIndex < document.lineCount) {
+                    const descriptionLine = document.lineAt(lineIndex).text;
+                    const descriptionTrimmed = stripBomFromLine(descriptionLine).trim();
+                    const descriptionLineIndent = getDescriptionLineIndent(descriptionLine);
+
+                    if (descriptionTrimmed.length > 0 && descriptionLineIndent <= descriptionIndent) {
+                        break;
+                    }
+
+                    if (descriptionTrimmed.length > 0 && descriptionLineIndent > descriptionIndent) {
+                        const firstNonWhitespace = descriptionLine.search(/\S/);
+                        if (firstNonWhitespace >= 0) {
+                            ranges.push(
+                                new vscode.Range(
+                                    new vscode.Position(lineIndex, firstNonWhitespace),
+                                    new vscode.Position(lineIndex, descriptionLine.length)
+                                )
+                            );
+                        }
+                    }
+
+                    lineIndex++;
+                }
+
+                continue;
+            }
+
+            lineIndex++;
+        }
+    }
+
+    return ranges;
+}
+
+function updateKotDescriptionDecorationForEditor(
+    editor: vscode.TextEditor,
+    decorationType: vscode.TextEditorDecorationType
+): void {
+    const document = editor.document;
+    if (!isScenarioYamlFile(document)) {
+        editor.setDecorations(decorationType, []);
+        return;
+    }
+
+    const ranges = collectKotDescriptionContentRanges(document);
+    editor.setDecorations(decorationType, ranges);
+}
+
+function updateKotDescriptionDecorationsForDocument(
+    document: vscode.TextDocument,
+    decorationType: vscode.TextEditorDecorationType
+): void {
+    const uriString = document.uri.toString();
+    for (const editor of vscode.window.visibleTextEditors) {
+        if (editor.document.uri.toString() === uriString) {
+            updateKotDescriptionDecorationForEditor(editor, decorationType);
+        }
+    }
+}
+
+function updateKotDescriptionDecorationsForVisibleEditors(
+    decorationType: vscode.TextEditorDecorationType
+): void {
+    for (const editor of vscode.window.visibleTextEditors) {
+        updateKotDescriptionDecorationForEditor(editor, decorationType);
+    }
+}
+
 async function foldSectionsInEditor(editor: vscode.TextEditor | undefined) {
     if (!editor) {
         return;
@@ -891,6 +1099,9 @@ async function foldSectionsInEditor(editor: vscode.TextEditor | undefined) {
     if (!document.fileName.endsWith('.yaml')) {
         return;
     }
+    if (!isScenarioYamlFile(document)) {
+        return;
+    }
 
     await new Promise(resolve => setTimeout(resolve, 100));
 
@@ -899,15 +1110,27 @@ async function foldSectionsInEditor(editor: vscode.TextEditor | undefined) {
     const originalVisibleRanges = editor.visibleRanges;
 
 
-    const text = document.getText();
     const sectionsToFold = ['ВложенныеСценарии', 'ПараметрыСценария'];
 
-    for (const sectionName of sectionsToFold) {
-        const sectionRegex = new RegExp(`${sectionName}:`, 'm');
-        const match = text.match(sectionRegex);
+    const findTopLevelSectionLine = (sectionName: string): number => {
+        const target = `${sectionName}:`;
+        for (let lineIndex = 0; lineIndex < document.lineCount; lineIndex++) {
+            const lineText = document.lineAt(lineIndex).text;
+            if (lineText.trim() !== target) {
+                continue;
+            }
+            if ((lineText.match(/^\s*/) || [''])[0].length !== 0) {
+                continue;
+            }
+            return lineIndex;
+        }
+        return -1;
+    };
 
-        if (match && typeof match.index === 'number') {
-            const startPosition = document.positionAt(match.index);
+    for (const sectionName of sectionsToFold) {
+        const sectionLine = findTopLevelSectionLine(sectionName);
+        if (sectionLine >= 0) {
+            const startPosition = new vscode.Position(sectionLine, 0);
             // Устанавливаем курсор на начало секции и вызываем команду сворачивания
             editor.selections = [new vscode.Selection(startPosition, startPosition)];
             await vscode.commands.executeCommand('editor.fold');
@@ -915,7 +1138,7 @@ async function foldSectionsInEditor(editor: vscode.TextEditor | undefined) {
     }
     // Восстанавливаем исходное положение курсора и выделения
     editor.selections = originalSelections;
-    if (originalSelections.length > 0) {
+    if (originalSelections.length > 0 && originalVisibleRanges.length > 0) {
         editor.revealRange(originalVisibleRanges[0], vscode.TextEditorRevealType.AtTop);
     }
 }

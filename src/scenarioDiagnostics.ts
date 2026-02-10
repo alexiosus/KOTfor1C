@@ -16,6 +16,8 @@ const CODE_EXTRA_SCENARIO_PARAM = 'kotTestToolkit.extraScenarioParameter';
 const CODE_MISSING_SCENARIO_PARAM = 'kotTestToolkit.missingScenarioParameter';
 const CODE_MISSING_QUOTES = 'kotTestToolkit.missingQuotes';
 const CODE_INCOMPLETE_BLOCK = 'kotTestToolkit.incompleteBlock';
+const CODE_DEFAULT_DESCRIPTION = 'kotTestToolkit.defaultDescription';
+const CODE_DUPLICATE_SCENARIO_CODE = 'kotTestToolkit.duplicateScenarioCode';
 const LOCAL_DEPENDENCY_SCAN_MAX_FILES = 120;
 
 interface ValidationOptions {
@@ -98,6 +100,8 @@ interface DiagnosticMessages {
     unmatchedQuote: string;
     missingQuotesLikely: string;
     addParamExclusion: string;
+    defaultDescription: string;
+    duplicateScenarioCode: string;
 }
 
 function buildMessages(): DiagnosticMessages {
@@ -116,7 +120,9 @@ function buildMessages(): DiagnosticMessages {
         extraEndDo: vscode.l10n.t('EndDo without matching Do.'),
         unmatchedQuote: vscode.l10n.t('Unclosed double quote in line.'),
         missingQuotesLikely: vscode.l10n.t('Likely missing quotes in step/call arguments.'),
-        addParamExclusion: vscode.l10n.t('Add to parameter exclusions: [{0}]')
+        addParamExclusion: vscode.l10n.t('Add to parameter exclusions: [{0}]'),
+        defaultDescription: vscode.l10n.t('Scenario description is empty.'),
+        duplicateScenarioCode: vscode.l10n.t('Duplicate scenario code "{0}" found in other scenarios:')
     };
 }
 
@@ -274,6 +280,102 @@ function parseDefinedScenarioParameters(documentText: string): Set<string> {
         names.add(nameMatch[1]);
     }
     return names;
+}
+
+interface KotDescriptionState {
+    line: number;
+    isDefault: boolean;
+}
+
+function parseInlineYamlScalar(rawValue: string): string {
+    const trimmed = rawValue.trim();
+    if (!trimmed) {
+        return '';
+    }
+
+    if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+        return trimmed.slice(1, -1).replace(/\\\\/g, '\\').replace(/\\"/g, '"');
+    }
+
+    if (trimmed.length >= 2 && trimmed.startsWith('\'') && trimmed.endsWith('\'')) {
+        return trimmed.slice(1, -1).replace(/''/g, '\'');
+    }
+
+    return trimmed;
+}
+
+function getKotDescriptionState(document: vscode.TextDocument): KotDescriptionState | null {
+    let metadataStartLine = -1;
+    for (let line = 0; line < document.lineCount; line++) {
+        const lineText = document.lineAt(line).text;
+        if (lineText.trim() === 'KOTМетаданные:' && /^\s*/.exec(lineText)?.[0].length === 0) {
+            metadataStartLine = line;
+            break;
+        }
+    }
+    if (metadataStartLine === -1) {
+        return null;
+    }
+
+    let metadataEndLine = document.lineCount;
+    for (let line = metadataStartLine + 1; line < document.lineCount; line++) {
+        const lineText = document.lineAt(line).text;
+        if (/^(?!\s|#)[А-Яа-яЁёA-Za-z0-9_]+:\s*/.test(lineText)) {
+            metadataEndLine = line;
+            break;
+        }
+    }
+
+    for (let line = metadataStartLine + 1; line < metadataEndLine; line++) {
+        const lineText = document.lineAt(line).text;
+        const trimmed = lineText.trim();
+        if (!trimmed || trimmed.startsWith('#')) {
+            continue;
+        }
+
+        const match = trimmed.match(/^Описание:\s*(.*)$/);
+        if (!match) {
+            continue;
+        }
+
+        const rawValue = (match[1] || '').trim();
+        const descriptionIndent = /^\s*/.exec(lineText)?.[0].length ?? 0;
+
+        if (rawValue.startsWith('|') || rawValue.startsWith('>')) {
+            let hasNonEmptyContent = false;
+            for (let bodyLine = line + 1; bodyLine < metadataEndLine; bodyLine++) {
+                const bodyText = document.lineAt(bodyLine).text;
+                const bodyTrimmed = bodyText.trim();
+                const bodyIndent = /^\s*/.exec(bodyText)?.[0].length ?? 0;
+
+                if (bodyTrimmed.length > 0 && bodyIndent <= descriptionIndent) {
+                    break;
+                }
+                if (bodyTrimmed.length === 0) {
+                    continue;
+                }
+
+                const content = bodyText.slice(Math.min(bodyText.length, descriptionIndent + 1));
+                if (content.trim().length > 0) {
+                    hasNonEmptyContent = true;
+                    break;
+                }
+            }
+
+            return {
+                line,
+                isDefault: !hasNonEmptyContent
+            };
+        }
+
+        const inlineValue = parseInlineYamlScalar(rawValue);
+        return {
+            line,
+            isDefault: inlineValue.trim().length === 0
+        };
+    }
+
+    return null;
 }
 
 function parseScenarioNameFromDocument(document: vscode.TextDocument): string | null {
@@ -605,8 +707,22 @@ function formatMultilineListMessage(header: string, items: string[]): string {
     return `${header}\n- ${items.join('\n- ')}\n`;
 }
 
+function normalizeScenarioCode(value: string | undefined): string {
+    return (value || '').trim();
+}
+
+function shouldIgnoreScenarioCodeForDuplicateCheck(value: string): boolean {
+    if (!value) {
+        return true;
+    }
+
+    // Ignore obvious template placeholders.
+    return /^Code_Placeholder$/i.test(value);
+}
+
 export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, vscode.Disposable {
     private readonly diagnostics = vscode.languages.createDiagnosticCollection('kotTestToolkit');
+    private readonly duplicateCodeDiagnostics = vscode.languages.createDiagnosticCollection('kotTestToolkitDuplicateCodes');
     private readonly subscriptions: vscode.Disposable[] = [];
     private readonly validationTimers = new Map<string, NodeJS.Timeout>();
     private readonly relatedValidationTimers = new Map<string, NodeJS.Timeout>();
@@ -623,29 +739,55 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     ) {
         this.subscriptions.push(
             vscode.workspace.onDidOpenTextDocument(document => {
+                const activeDocument = vscode.window.activeTextEditor?.document;
+                if (!activeDocument || activeDocument.uri.toString() !== document.uri.toString()) {
+                    return;
+                }
                 this.scheduleValidation(document, 120, SAVE_VALIDATION_OPTIONS);
-                this.scheduleRelatedValidation(document);
             }),
             vscode.workspace.onDidChangeTextDocument(event => this.scheduleValidation(event.document, 450, CHANGE_VALIDATION_OPTIONS)),
             vscode.workspace.onDidSaveTextDocument(document => {
                 this.scheduleValidation(document, 50, SAVE_VALIDATION_OPTIONS);
                 this.scheduleRelatedValidation(document);
             }),
+            vscode.window.onDidChangeActiveTextEditor(editor => {
+                const document = editor?.document;
+                if (!document) {
+                    return;
+                }
+                this.scheduleValidation(document, 120, SAVE_VALIDATION_OPTIONS);
+                this.scheduleRelatedValidation(document);
+            }),
             vscode.workspace.onDidDeleteFiles(event => {
                 this.resetDependencyGraph();
-                event.files.forEach(uri => this.diagnostics.delete(uri));
+                event.files.forEach(uri => {
+                    this.diagnostics.delete(uri);
+                    this.duplicateCodeDiagnostics.delete(uri);
+                });
             }),
             vscode.workspace.onDidRenameFiles(event => {
                 this.resetDependencyGraph();
-                event.files.forEach(({ oldUri }) => this.diagnostics.delete(oldUri));
+                event.files.forEach(({ oldUri }) => {
+                    this.diagnostics.delete(oldUri);
+                    this.duplicateCodeDiagnostics.delete(oldUri);
+                });
             }),
             this.phaseSwitcherProvider.onDidUpdateTestCache(() => {
                 this.resetDependencyGraph();
-                vscode.workspace.textDocuments.forEach(document => this.scheduleValidation(document, 150, CHANGE_VALIDATION_OPTIONS));
+                this.rebuildDuplicateScenarioCodeDiagnosticsFromCache();
+                const activeDocument = vscode.window.activeTextEditor?.document;
+                if (activeDocument) {
+                    this.scheduleValidation(activeDocument, 150, CHANGE_VALIDATION_OPTIONS);
+                }
             })
         );
 
-        vscode.workspace.textDocuments.forEach(document => this.scheduleValidation(document, 0, CHANGE_VALIDATION_OPTIONS));
+        this.rebuildDuplicateScenarioCodeDiagnosticsFromCache();
+        const activeDocument = vscode.window.activeTextEditor?.document;
+        if (activeDocument) {
+            this.scheduleValidation(activeDocument, 0, CHANGE_VALIDATION_OPTIONS);
+            this.scheduleRelatedValidation(activeDocument, 350);
+        }
     }
 
     public async scanWorkspaceDiagnostics(options: WorkspaceDiagnosticsScanOptions = {}): Promise<void> {
@@ -673,6 +815,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         this.relatedValidationTimers.clear();
         this.resetDependencyGraph();
         this.diagnostics.dispose();
+        this.duplicateCodeDiagnostics.dispose();
         this.subscriptions.forEach(subscription => subscription.dispose());
     }
 
@@ -898,6 +1041,70 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     private isRelatedParentValidationEnabled(): boolean {
         const config = vscode.workspace.getConfiguration('kotTestToolkit');
         return config.get<boolean>('editor.checkRelatedParentScenarios', true);
+    }
+
+    private rebuildDuplicateScenarioCodeDiagnosticsFromCache(): void {
+        const cache = this.phaseSwitcherProvider.getTestCache();
+        this.duplicateCodeDiagnostics.clear();
+        if (!cache || cache.size === 0) {
+            return;
+        }
+
+        const scenariosByCode = new Map<string, TestInfo[]>();
+        for (const testInfo of cache.values()) {
+            const scenarioCode = normalizeScenarioCode(testInfo.scenarioCode);
+            if (shouldIgnoreScenarioCodeForDuplicateCheck(scenarioCode)) {
+                continue;
+            }
+
+            const bucket = scenariosByCode.get(scenarioCode) || [];
+            bucket.push(testInfo);
+            scenariosByCode.set(scenarioCode, bucket);
+        }
+
+        const diagnosticsByUri = new Map<string, { uri: vscode.Uri; diagnostics: vscode.Diagnostic[] }>();
+        for (const [scenarioCode, scenarios] of scenariosByCode.entries()) {
+            if (scenarios.length < 2) {
+                continue;
+            }
+
+            for (const scenario of scenarios) {
+                const others = scenarios
+                    .filter(item => item.yamlFileUri.toString() !== scenario.yamlFileUri.toString())
+                    .map(item => item.name)
+                    .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
+
+                if (others.length === 0) {
+                    continue;
+                }
+
+                const line = Math.max(0, scenario.scenarioCodeLine ?? 0);
+                const endCharacter = Math.max(
+                    1,
+                    scenario.scenarioCodeLineEndCharacter
+                        ?? ((scenario.scenarioCodeLineStartCharacter ?? 0) + 1)
+                );
+                const duplicateDiagnostic = new vscode.Diagnostic(
+                    new vscode.Range(line, 4, line, endCharacter),
+                    formatMultilineListMessage(
+                        this.messages.duplicateScenarioCode.replace('{0}', scenarioCode),
+                        others
+                    ),
+                    vscode.DiagnosticSeverity.Warning
+                );
+                duplicateDiagnostic.source = DIAGNOSTIC_SOURCE;
+                duplicateDiagnostic.code = CODE_DUPLICATE_SCENARIO_CODE;
+
+                const uriKey = scenario.yamlFileUri.toString();
+                const entry = diagnosticsByUri.get(uriKey) || { uri: scenario.yamlFileUri, diagnostics: [] };
+                entry.diagnostics.push(duplicateDiagnostic);
+                diagnosticsByUri.set(uriKey, entry);
+            }
+        }
+
+        for (const { uri, diagnostics } of diagnosticsByUri.values()) {
+            this.duplicateCodeDiagnostics.set(uri, diagnostics);
+        }
     }
 
     private resetDependencyGraph(): void {
@@ -1400,6 +1607,17 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 `${this.messages.sectionIncomplete} ${vscode.l10n.t('Missing ScenarioParameters entries: {0}', missingDefinedParams.join(', '))}`,
                 vscode.DiagnosticSeverity.Warning,
                 CODE_INCOMPLETE_BLOCK
+            ));
+        }
+
+        const kotDescriptionState = getKotDescriptionState(document);
+        if (kotDescriptionState && kotDescriptionState.isDefault) {
+            diagnostics.push(createDiagnostic(
+                document,
+                kotDescriptionState.line,
+                this.messages.defaultDescription,
+                vscode.DiagnosticSeverity.Warning,
+                CODE_DEFAULT_DESCRIPTION
             ));
         }
 

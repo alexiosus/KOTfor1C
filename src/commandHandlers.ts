@@ -884,6 +884,22 @@ export function parseCalledScenariosFromScriptBody(documentText: string): string
     return result;
 }
 
+export function shouldRefillNestedScenariosSection(documentText: string): boolean {
+    const expected = parseCalledScenariosFromScriptBody(documentText);
+    const existing = parseExistingNestedScenarios(documentText);
+    if (expected.length !== existing.length) {
+        return true;
+    }
+
+    for (let index = 0; index < expected.length; index++) {
+        if (expected[index] !== existing[index]) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 
 /**
  * Обработчик команды проверки и заполнения вложенных сценариев.
@@ -941,6 +957,22 @@ export function parseUsedParametersFromScriptBody(documentText: string): string[
     const result = Array.from(usedParameters);
     console.log(`[parseUsedParametersFromScriptBody] Found: ${result.join(', ')}`);
     return result;
+}
+
+export function shouldRefillScenarioParametersSection(documentText: string): boolean {
+    const expected = parseUsedParametersFromScriptBody(documentText);
+    const existing = parseDefinedScenarioParameters(documentText);
+    if (expected.length !== existing.length) {
+        return true;
+    }
+
+    for (let index = 0; index < expected.length; index++) {
+        if (expected[index] !== existing[index]) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /**
@@ -1023,9 +1055,36 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
         // --- 2. Рекурсивный обход папки и замена версии ---
         const zip = new JSZip();
         const config = vscode.workspace.getConfiguration('kotTestToolkit');
-        const firstLaunchFolderPath = config.get<string>('paths.firstLaunchFolder') || 'first_launch';
-        const buildPath = config.get<string>('assembleScript.buildPath') || '';
-        const firstLaunchFolderUri = vscode.Uri.joinPath(workspaceRoot, firstLaunchFolderPath);
+        const firstLaunchFolderPath = (config.get<string>('paths.firstLaunchFolder') || '').trim();
+        if (!firstLaunchFolderPath) {
+            vscode.window.showErrorMessage(
+                t('FirstLaunch folder path is not specified in settings.'),
+                t('Open Settings')
+            ).then(selection => {
+                if (selection === t('Open Settings')) {
+                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.firstLaunchFolder');
+                }
+            });
+            return;
+        }
+
+        const firstLaunchFolderUri = path.isAbsolute(firstLaunchFolderPath)
+            ? vscode.Uri.file(firstLaunchFolderPath)
+            : vscode.Uri.joinPath(workspaceRoot, firstLaunchFolderPath);
+
+        try {
+            await vscode.workspace.fs.stat(firstLaunchFolderUri);
+        } catch {
+            vscode.window.showErrorMessage(
+                t('FirstLaunch folder not found at path: {0}', firstLaunchFolderUri.fsPath),
+                t('Open Settings')
+            ).then(selection => {
+                if (selection === t('Open Settings')) {
+                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.firstLaunchFolder');
+                }
+            });
+            return;
+        }
 
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
@@ -1757,12 +1816,13 @@ export async function alignGherkinTables(document: vscode.TextDocument): Promise
  * Обработчик команды открытия панели управления YAML параметрами
  */
 export async function handleOpenYamlParametersManager(context: vscode.ExtensionContext): Promise<void> {
+    const t = await getTranslator(getExtensionUri());
     try {
         const { YamlParametersManager } = await import('./yamlParametersManager.js');
         const manager = YamlParametersManager.getInstance(context);
         await manager.openYamlParametersPanel();
     } catch (error) {
         console.error('[Cmd:openYamlParametersManager] Error:', error);
-                    vscode.window.showErrorMessage(`Error opening Build Scenario Parameters Manager: ${error}`);
+        vscode.window.showErrorMessage(t('Error opening Build Scenario Parameters Manager: {0}', String(error)));
     }
 }

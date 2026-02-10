@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import { scanWorkspaceForTests, getScanDirRelativePath } from './workspaceScanner';
 import { TestInfo } from './types';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
+import { parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
 
 // --- Вспомогательная функция для Nonce ---
 function getNonce(): string {
@@ -117,12 +118,24 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return names;
     }
 
-    private extractScenarioNameAndUid(documentText: string): { name: string | null; uid: string | null } {
+    private extractScenarioHeaderFields(documentText: string): {
+        name: string | null;
+        uid: string | null;
+        scenarioCode: string | null;
+        scenarioCodeLine: number | null;
+        scenarioCodeLineStartCharacter: number | null;
+        scenarioCodeLineEndCharacter: number | null;
+    } {
         let name: string | null = null;
         let uid: string | null = null;
+        let scenarioCode: string | null = null;
+        let scenarioCodeLine: number | null = null;
+        let scenarioCodeLineStartCharacter: number | null = null;
+        let scenarioCodeLineEndCharacter: number | null = null;
         const lines = documentText.split(/\r\n|\r|\n/);
 
-        for (const line of lines) {
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            const line = lines[lineIndex];
             if (!name) {
                 const nameMatch = line.match(/^\s*Имя:\s*"(.+?)"\s*$/);
                 if (nameMatch?.[1]) {
@@ -137,12 +150,29 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
             }
 
-            if (name && uid) {
+            if (!scenarioCode) {
+                const codeMatch = line.match(/^\s*Код:\s*"(.+?)"\s*$/);
+                if (codeMatch?.[1]) {
+                    scenarioCode = codeMatch[1].trim();
+                    scenarioCodeLine = lineIndex;
+                    scenarioCodeLineStartCharacter = Math.max(0, line.search(/\S|$/));
+                    scenarioCodeLineEndCharacter = line.length;
+                }
+            }
+
+            if (name && uid && scenarioCode) {
                 break;
             }
         }
 
-        return { name, uid };
+        return {
+            name,
+            uid,
+            scenarioCode,
+            scenarioCodeLine,
+            scenarioCodeLineStartCharacter,
+            scenarioCodeLineEndCharacter
+        };
     }
 
     private computeRelativePathForScenarioFile(fileUri: vscode.Uri): string {
@@ -164,25 +194,45 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private buildTestInfoFromDocument(document: vscode.TextDocument): TestInfo | null {
         const documentText = document.getText();
-        const { name, uid } = this.extractScenarioNameAndUid(documentText);
+        const {
+            name,
+            uid,
+            scenarioCode,
+            scenarioCodeLine,
+            scenarioCodeLineStartCharacter,
+            scenarioCodeLineEndCharacter
+        } = this.extractScenarioHeaderFields(documentText);
         if (!name) {
             return null;
         }
 
         const nestedScenarioNames = this.parseNestedScenarioNamesFromText(documentText);
         const defaultsMap = parseScenarioParameterDefaults(documentText);
+        const phaseSwitcherMetadata = parsePhaseSwitcherMetadata(documentText);
         const parameters = defaultsMap.size > 0 ? Array.from(defaultsMap.keys()) : undefined;
         const parameterDefaults = defaultsMap.size > 0 ? Object.fromEntries(defaultsMap.entries()) : undefined;
 
-        return {
+        const testInfo: TestInfo = {
             name,
             yamlFileUri: document.uri,
             relativePath: this.computeRelativePathForScenarioFile(document.uri),
             parameters,
             parameterDefaults,
             nestedScenarioNames: nestedScenarioNames.length > 0 ? [...new Set(nestedScenarioNames)] : undefined,
-            uid: uid || undefined
+            uid: uid || undefined,
+            scenarioCode: scenarioCode || undefined,
+            scenarioCodeLine: scenarioCodeLine ?? undefined,
+            scenarioCodeLineStartCharacter: scenarioCodeLineStartCharacter ?? undefined,
+            scenarioCodeLineEndCharacter: scenarioCodeLineEndCharacter ?? undefined
         };
+
+        if (phaseSwitcherMetadata.hasTab) {
+            testInfo.tabName = phaseSwitcherMetadata.tabName;
+            testInfo.defaultState = phaseSwitcherMetadata.defaultState !== undefined ? phaseSwitcherMetadata.defaultState : false;
+            testInfo.order = phaseSwitcherMetadata.order !== undefined ? phaseSwitcherMetadata.order : Infinity;
+        }
+
+        return testInfo;
     }
 
     private areStringArraysEqual(left?: string[], right?: string[]): boolean {
@@ -220,6 +270,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             left.yamlFileUri.toString() === right.yamlFileUri.toString() &&
             left.relativePath === right.relativePath &&
             (left.uid || '') === (right.uid || '') &&
+            (left.scenarioCode || '') === (right.scenarioCode || '') &&
+            (left.scenarioCodeLine ?? -1) === (right.scenarioCodeLine ?? -1) &&
+            (left.scenarioCodeLineStartCharacter ?? -1) === (right.scenarioCodeLineStartCharacter ?? -1) &&
+            (left.scenarioCodeLineEndCharacter ?? -1) === (right.scenarioCodeLineEndCharacter ?? -1) &&
             this.areStringArraysEqual(left.parameters, right.parameters) &&
             this.areDefaultsEqual(left.parameterDefaults, right.parameterDefaults) &&
             this.areStringArraysEqual(left.nestedScenarioNames, right.nestedScenarioNames) &&
@@ -709,12 +763,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         // Check if first launch folder exists (independent of test cache)
         const projectPaths = this.getProjectPaths(workspaceRootUri);
         let firstLaunchFolderExists = false;
-        try {
-            await vscode.workspace.fs.stat(projectPaths.firstLaunchFolder);
-            firstLaunchFolderExists = true;
-        } catch {
-            // Folder doesn't exist
-            firstLaunchFolderExists = false;
+        if (projectPaths.firstLaunchFolder) {
+            try {
+                await vscode.workspace.fs.stat(projectPaths.firstLaunchFolder);
+                firstLaunchFolderExists = true;
+            } catch {
+                // Folder doesn't exist
+                firstLaunchFolderExists = false;
+            }
         }
 
         // Use existing cache if available, otherwise scan (or refresh stale cache)
@@ -855,12 +911,18 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
      */
     private getProjectPaths(workspaceRootUri: vscode.Uri) {
         const config = vscode.workspace.getConfiguration('kotTestToolkit');
+        const firstLaunchFolderSetting = (config.get<string>('paths.firstLaunchFolder') || '').trim();
+        const firstLaunchFolder = firstLaunchFolderSetting.length > 0
+            ? (path.isAbsolute(firstLaunchFolderSetting)
+                ? vscode.Uri.file(firstLaunchFolderSetting)
+                : vscode.Uri.joinPath(workspaceRootUri, firstLaunchFolderSetting))
+            : null;
 
         return {
             buildScenarioBddEpf: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.buildScenarioBddEpf') || 'build/BuildScenarioBDD.epf'),
             yamlSourceDirectory: path.join(workspaceRootUri.fsPath, config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml'),
             disabledTestsDirectory: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.disabledTestsDirectory') || 'RegressionTests_Disabled/Yaml/Drive'),
-            firstLaunchFolder: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.firstLaunchFolder') || 'first_launch'),
+            firstLaunchFolder,
             etalonDriveDirectory: 'tests'
         };
     }

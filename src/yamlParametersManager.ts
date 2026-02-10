@@ -353,9 +353,9 @@ export class YamlParametersManager {
 
                             // Предлагаем выбрать место для сохранения
                             const uri = await vscode.window.showSaveDialog({
-                                title: 'Save Build Scenario Parameters File',
+                                title: this.t('Save Build Scenario Parameters File'),
                                 filters: {
-                                    'JSON Files': ['json']
+                                    [this.t('JSON Files')]: ['json']
                                 },
                                 defaultUri: vscode.Uri.file('yaml_parameters.json')
                             });
@@ -387,7 +387,7 @@ export class YamlParametersManager {
                             const uris = await vscode.window.showOpenDialog({
                                 title: this.t('Load Build Scenario Parameters from JSON'),
                                 filters: {
-                                    'JSON Files': ['json']
+                                    [this.t('JSON Files')]: ['json']
                                 },
                                 canSelectMany: false
                             });

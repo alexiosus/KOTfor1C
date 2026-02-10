@@ -1,7 +1,4 @@
-﻿# PhaseSwitcher_Tab: Phase_Placeholder
-# PhaseSwitcher_OrderOnTab: Order_Placeholder
-# PhaseSwitcher_Default: Default_Placeholder
-ТипФайла: "Сценарий"
+﻿ТипФайла: "Сценарий"
 ДанныеСценария:
     UID: "UID_Placeholder"
     Имя: "Name_Placeholder"
@@ -13,6 +10,14 @@
     ПрофильПользователя: "Administrator"
     УровеньОтчета1: "Drive"
     УровеньОтчета2: "Parent"
+
+KOTМетаданные:
+    Описание: |
+        
+    PhaseSwitcher:
+        Tab: "Phase_Placeholder"
+        OrderOnTab: Order_Placeholder
+        Default: Default_Placeholder
 
 ПараметрыСценария:
 
