@@ -128,17 +128,17 @@ async function findFileFromText(
  */
 async function openMxlWithFileWorkshop(filePath: string) {
     console.log(`[Cmd:openMxl] Attempting to open: ${filePath}`);
-    const config = vscode.workspace.getConfiguration('1cDriveHelper.paths');
+    const config = vscode.workspace.getConfiguration('kotTestToolkit.paths');
     const fileWorkshopPath = config.get<string>('fileWorkshopExe');
     const t = await getTranslator(getExtensionUri());
 
     if (!fileWorkshopPath) {
         vscode.window.showErrorMessage(
-            t("Path to '1C:Enterprise — File workshop' is not configured. Set it in `1cDriveHelper.paths.fileWorkshopExe`."),
+            t("Path to '1C:Enterprise — File workshop' is not configured. Set it in `kotTestToolkit.paths.fileWorkshopExe`."),
             t('Open Settings')
         ).then(selection => {
             if (selection === t('Open Settings')) {
-                vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.fileWorkshopExe');
+                vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.fileWorkshopExe');
             }
         });
         return;
@@ -150,7 +150,7 @@ async function openMxlWithFileWorkshop(filePath: string) {
             t('Open Settings')
         ).then(selection => {
             if (selection === t('Open Settings')) {
-                vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.fileWorkshopExe');
+                vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.fileWorkshopExe');
             }
         });
         return;
@@ -913,7 +913,7 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
  */
 export function parseUsedParametersFromScriptBody(documentText: string): string[] {
     const usedParameters = new Set<string>();
-    const config = vscode.workspace.getConfiguration('1cDriveHelper');
+    const config = vscode.workspace.getConfiguration('kotTestToolkit');
     const exclusions = config.get<string[]>('editor.scenarioParameterExclusions', []) || [];
     const exclusionSet = new Set(
         exclusions
@@ -1022,7 +1022,7 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
 
         // --- 2. Рекурсивный обход папки и замена версии ---
         const zip = new JSZip();
-        const config = vscode.workspace.getConfiguration('1cDriveHelper');
+        const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const firstLaunchFolderPath = config.get<string>('paths.firstLaunchFolder') || 'first_launch';
         const buildPath = config.get<string>('assembleScript.buildPath') || '';
         const firstLaunchFolderUri = vscode.Uri.joinPath(workspaceRoot, firstLaunchFolderPath);

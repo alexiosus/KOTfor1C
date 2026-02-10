@@ -5,7 +5,7 @@ import { getTranslator } from './localization';
 import { getExtensionUri } from './appContext';
 
 // Ключ для хранения параметров в SecretStorage
-const YAML_PARAMETERS_KEY = '1cDriveHelper.yamlParameters';
+const YAML_PARAMETERS_KEY = 'kotTestToolkit.yamlParameters';
 
 export interface YamlParameter {
     key: string;
@@ -28,7 +28,7 @@ export class YamlParametersManager {
      * Загружает настройки локализации
      */
     private async loadLocalizationBundleIfNeeded(): Promise<void> {
-        const cfg = vscode.workspace.getConfiguration('1cDriveHelper.localization');
+        const cfg = vscode.workspace.getConfiguration('kotTestToolkit.localization');
         const override = (cfg.get<string>('languageOverride') as 'System' | 'English' | 'Русский') || 'System';
         this._langOverride = override;
         if (override === 'Русский') {
@@ -82,7 +82,7 @@ export class YamlParametersManager {
      */
     public getDefaultParameters(): YamlParameter[] {
         // Получаем BuildPath из настроек
-        const config = vscode.workspace.getConfiguration('1cDriveHelper');
+        const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const buildPath = config.get<string>('assembleScript.buildPath') || 'C:\\EtalonDrive\\';
         
         // Получаем путь к корню проекта

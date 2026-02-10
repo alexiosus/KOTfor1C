@@ -6,9 +6,6 @@ import { scanWorkspaceForTests, getScanDirRelativePath } from './workspaceScanne
 import { TestInfo } from './types';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 
-// Ключ для хранения пароля в SecretStorage
-const EMAIL_PASSWORD_KEY = '1cDriveHelper.emailPassword';
-
 // --- Вспомогательная функция для Nonce ---
 function getNonce(): string {
     let text = '';
@@ -31,7 +28,7 @@ interface CompletionMarker {
  * Провайдер для Webview в боковой панели, управляющий переключением тестов и сборкой.
  */
 export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
-    public static readonly viewType = '1cDriveHelper.phaseSwitcherView';
+    public static readonly viewType = 'kotTestToolkit.phaseSwitcherView';
     private _view?: vscode.WebviewView;
     private _extensionUri: vscode.Uri;
     private _context: vscode.ExtensionContext;
@@ -378,7 +375,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this._extensionUri = extensionUri;
         this._context = context;
         console.log("[PhaseSwitcherProvider] Initialized.");
-        this._outputChannel = vscode.window.createOutputChannel("1cDrive Test Assembly", { log: true });
+        this._outputChannel = vscode.window.createOutputChannel("KOT Test Assembly", { log: true });
 
 
         context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
@@ -439,7 +436,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private async loadLocalizationBundleIfNeeded(): Promise<void> {
-        const cfg = vscode.workspace.getConfiguration('1cDriveHelper.localization');
+        const cfg = vscode.workspace.getConfiguration('kotTestToolkit.localization');
         const override = (cfg.get<string>('languageOverride') as 'System' | 'English' | 'Русский') || 'System';
         this._langOverride = override;
         if (override === 'Русский') {
@@ -477,7 +474,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private getOutputChannel(): vscode.OutputChannel {
         if (!this._outputChannel) {
-            this._outputChannel = vscode.window.createOutputChannel("1cDrive Test Assembly", { log: true });
+            this._outputChannel = vscode.window.createOutputChannel("KOT Test Assembly", { log: true });
         }
         return this._outputChannel;
     }
@@ -545,7 +542,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const langOverride = this._langOverride;
             const effectiveLang = langOverride === 'System' ? (vscode.env.language || 'English') : langOverride;
             const localeHtmlLang = effectiveLang.split('-')[0];
-            const extDisplayName = this.t('1C:Drive Test Helper');
+            const extDisplayName = this.t('KOT for 1C');
             const loc = {
                 phaseSwitcherTitle: this.t('Phase Switcher'),
                 openSettingsTitle: this.t('Open extension settings'),
@@ -619,7 +616,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     await this._sendInitialState(webviewView.webview);
                     return;
                 case 'scanWorkspaceDiagnostics':
-                    await vscode.commands.executeCommand('1cDriveHelper.scanWorkspaceDiagnostics');
+                    await vscode.commands.executeCommand('kotTestToolkit.scanWorkspaceDiagnostics');
                     return;
                 case 'log':
                     console.log(message.text);
@@ -647,23 +644,23 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     return;
                 case 'openSettings':
                     console.log("[PhaseSwitcherProvider] Opening extension settings...");
-                    vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper');
+                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit');
                     return;
                 case 'createMainScenario':
                     console.log("[PhaseSwitcherProvider] Received createMainScenario command from webview.");
-                    vscode.commands.executeCommand('1cDriveHelper.createMainScenario');
+                    vscode.commands.executeCommand('kotTestToolkit.createMainScenario');
                     return;
                 case 'createNestedScenario':
                     console.log("[PhaseSwitcherProvider] Received createNestedScenario command from webview.");
-                    vscode.commands.executeCommand('1cDriveHelper.createNestedScenario');
+                    vscode.commands.executeCommand('kotTestToolkit.createNestedScenario');
                     return;
                 case 'createFirstLaunchZip':
                     console.log("[PhaseSwitcherProvider] Received createFirstLaunchZip command from webview.");
-                    vscode.commands.executeCommand('1cDriveHelper.createFirstLaunchZip');
+                    vscode.commands.executeCommand('kotTestToolkit.createFirstLaunchZip');
                     return;
                 case 'openYamlParametersManager':
                     console.log("[PhaseSwitcherProvider] Received openYamlParametersManager command from webview.");
-                    vscode.commands.executeCommand('1cDriveHelper.openYamlParametersManager');
+                    vscode.commands.executeCommand('kotTestToolkit.openYamlParametersManager');
                     return;
             }
         }, undefined, this._context.subscriptions);
@@ -833,7 +830,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
      * Builds 1C:Enterprise startup parameters based on configuration settings
      */
     private buildStartupParams(emptyIbPath: string): string[] {
-        const config = vscode.workspace.getConfiguration('1cDriveHelper');
+        const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const startupParameters = config.get<string>('startupParams.parameters') || '/L en /DisableStartupMessages /DisableStartupDialogs';
 
         const params = [
@@ -857,14 +854,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
      * Gets project structure paths from configuration
      */
     private getProjectPaths(workspaceRootUri: vscode.Uri) {
-        const config = vscode.workspace.getConfiguration('1cDriveHelper');
-        
-        const repairTestFileEpfPath = config.get<string>('paths.repairTestFileEpf')?.trim();
-        
+        const config = vscode.workspace.getConfiguration('kotTestToolkit');
+
         return {
             buildScenarioBddEpf: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.buildScenarioBddEpf') || 'build/BuildScenarioBDD.epf'),
-            repairTestFileEpf: repairTestFileEpfPath ? vscode.Uri.joinPath(workspaceRootUri, repairTestFileEpfPath) : null,
-
             yamlSourceDirectory: path.join(workspaceRootUri.fsPath, config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml'),
             disabledTestsDirectory: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.disabledTestsDirectory') || 'RegressionTests_Disabled/Yaml/Drive'),
             firstLaunchFolder: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.firstLaunchFolder') || 'first_launch'),
@@ -1099,7 +1092,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const outputChannel = this.getOutputChannel();
         outputChannel.clear();
         
-        const config = vscode.workspace.getConfiguration('1cDriveHelper');
+        const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const showOutputPanel = config.get<boolean>('assembleScript.showOutputPanel');
 
         if (showOutputPanel) {
@@ -1159,7 +1152,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         this.t('Open Settings')
                     ).then(selection => {
                         if (selection === this.t('Open Settings')) {
-                            vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.oneCEnterpriseExe');
+                            vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
                         }
                     });
                     return;
@@ -1171,7 +1164,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         this.t('Open Settings')
                     ).then(selection => {
                         if (selection === this.t('Open Settings')) {
-                            vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.oneCEnterpriseExe');
+                            vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
                         }
                     });
                     return;
@@ -1186,7 +1179,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         this.t('Open Settings')
                     ).then(selection => {
                         if (selection === this.t('Open Settings')) {
-                            vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.emptyInfobase');
+                            vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.emptyInfobase');
                         }
                     });
                     return;
@@ -1198,7 +1191,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         this.t('Open Settings')
                     ).then(selection => {
                         if (selection === this.t('Open Settings')) {
-                            vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.emptyInfobase');
+                            vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.emptyInfobase');
                         }
                     });
                     return;
@@ -1293,105 +1286,44 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
 
                 if (featureFiles.length > 0) {
-                    const emailAddr = config.get<string>('params.emailAddress') || '';
-                    const emailPass = await this._context.secrets.get(EMAIL_PASSWORD_KEY) || '';
-                    const emailIncServer = config.get<string>('params.emailIncomingServer') || '';
-                    const emailIncPort = config.get<string>('params.emailIncomingPort') || '';
-                    const emailOutServer = config.get<string>('params.emailOutgoingServer') || '';
-                    const emailOutPort = config.get<string>('params.emailOutgoingPort') || '';
-                    const emailProto = config.get<string>('params.emailProtocol') || '';
                     const azureProjectName = process.env.SYSTEM_TEAM_PROJECT || ''; 
 
                     for (const fileUri of featureFiles) {
                         let fileContent = Buffer.from(await vscode.workspace.fs.readFile(fileUri)).toString('utf-8');
                         fileContent = fileContent.replace(/RecordGLAccountsParameterFromPipeline/g, recordGLValue);
                         fileContent = fileContent.replace(/AzureProjectNameParameterFromPipeline/g, azureProjectName);
-                        fileContent = fileContent.replace(/EMailTestEmailAddressParameterFromPipeline/g, emailAddr);
-                        fileContent = fileContent.replace(/EMailTestPasswordParameterFromPipeline/g, emailPass);
-                        fileContent = fileContent.replace(/EMailTestIncomingMailServerParameterFromPipeline/g, emailIncServer);
-                        fileContent = fileContent.replace(/EMailTestIncomingMailPortParameterFromPipeline/g, emailIncPort);
-                        fileContent = fileContent.replace(/EMailTestOutgoingMailServerParameterFromPipeline/g, emailOutServer);
-                        fileContent = fileContent.replace(/EMailTestOutgoingMailPortParameterFromPipeline/g, emailOutPort);
-                        fileContent = fileContent.replace(/EMailTestProtocolParameterFromPipeline/g, emailProto);
                         fileContent = fileContent.replace(/DriveTradeParameterFromPipeline/g, 'No');
                         await vscode.workspace.fs.writeFile(fileUri, Buffer.from(fileContent, 'utf-8'));
                     }
                 }
                 
                 progress.report({ increment: 90, message: this.t('Correcting files...') });
-                if (projectPaths.repairTestFileEpf) {
-                    outputChannel.appendLine(this.t('Starting file repair processing...'));
-                    outputChannel.appendLine(this.t('RepairTestFile.epf path: {0}', projectPaths.repairTestFileEpf.fsPath));
-                    
-                    const filesToRepairRelative = [
-                        `${etalonDrivePath}/001_Company_tests.feature`,
-                        `${etalonDrivePath}/I_start_my_first_launch.feature`,
-                        `${etalonDrivePath}/I_start_my_first_launch_templates.feature`
-                    ];
-                    
-                    outputChannel.appendLine(this.t('Files to repair (relative paths):'));
-                    filesToRepairRelative.forEach((filePath, index) => {
-                        outputChannel.appendLine(`  ${index + 1}. ${filePath}`);
-                    });
-                    
-                    const repairScriptEpfPath = projectPaths.repairTestFileEpf.fsPath;
-
-                    for (const relativePathSuffix of filesToRepairRelative) {
-                        const featureFileToRepairUri = vscode.Uri.joinPath(featureFileDirUri, path.basename(relativePathSuffix));
-                        outputChannel.appendLine(this.t('Processing file: {0}', featureFileToRepairUri.fsPath));
-                        
-                        try {
-                            await vscode.workspace.fs.stat(featureFileToRepairUri);
-                            outputChannel.appendLine(this.t('  ✓ File found, executing repair...'));
-                            
-                            const repairParams = [
-                                ...this.buildStartupParams(emptyIbPath_raw),
-                                `/Execute`, `"${repairScriptEpfPath}"`,
-                                `/C"TestFile=${featureFileToRepairUri.fsPath}"`
-                            ];
-                            await this.execute1CProcess(oneCExePath, repairParams, workspaceRootPath, "RepairTestFile.epf");
-                            outputChannel.appendLine(this.t('  ✓ Repair completed successfully'));
-                        } catch (error: any) {
-                            if (error.code === 'FileNotFound') {
-                                outputChannel.appendLine(this.t('  ✗ File not found: {0}', featureFileToRepairUri.fsPath));
-                            } else {
-                                outputChannel.appendLine(`--- WARNING: Error repairing file ${featureFileToRepairUri.fsPath}: ${error.message || error} ---`);
-                            }
-                        }
-                    }
-                } else {
-                    outputChannel.appendLine(this.t('Feature file repair processing skipped - RepairTestFile.epf path not configured'));
-                }
+                // outputChannel.appendLine(this.t('Starting Administrator replacement processing...'));
+                const companyTestFeaturePath = vscode.Uri.joinPath(featureFileDirUri, '001_Company_tests.feature');
+                // outputChannel.appendLine(this.t('Target file path: {0}', companyTestFeaturePath.fsPath));
                 
-                // Only show repair messages if repairTestFileEpf is configured
-                if (projectPaths.repairTestFileEpf) {
-                    outputChannel.appendLine(this.t('Starting Administrator replacement processing...'));
-                    const companyTestFeaturePath = vscode.Uri.joinPath(featureFileDirUri, '001_Company_tests.feature');
-                    outputChannel.appendLine(this.t('Target file path: {0}', companyTestFeaturePath.fsPath));
+                try {
+                    await vscode.workspace.fs.stat(companyTestFeaturePath);
+                    outputChannel.appendLine(this.t('  ✓ File found, removing "Administrator"...'));
                     
-                    try {
-                        await vscode.workspace.fs.stat(companyTestFeaturePath);
-                        outputChannel.appendLine(this.t('  ✓ File found, removing "Administrator"...'));
-                        
-                        const companyTestContentBytes = await vscode.workspace.fs.readFile(companyTestFeaturePath);
-                        let companyTestContent = Buffer.from(companyTestContentBytes).toString('utf-8');
-        
-                        const originalContent = companyTestContent;
-                        companyTestContent = companyTestContent.replace(/using "Administrator"/g, 'using ""');
-                        
-                        if (originalContent !== companyTestContent) {
-                            await vscode.workspace.fs.writeFile(companyTestFeaturePath, Buffer.from(companyTestContent, 'utf-8'));
-                            outputChannel.appendLine(this.t('  ✓ Administrator replacement completed successfully'));
-                        } else {
-                            outputChannel.appendLine(this.t('  - No "Administrator" found in file, no changes needed'));
-                        }
-        
-                    } catch (error: any) {
-                        if (error.code === 'FileNotFound') {
-                            outputChannel.appendLine(this.t('  ✗ File not found: {0}', companyTestFeaturePath.fsPath));
-                        } else {
-                            outputChannel.appendLine(this.t('--- WARNING: Error applying correction to {0}: {1} ---', companyTestFeaturePath.fsPath, error.message || error));
-                        }
+                    const companyTestContentBytes = await vscode.workspace.fs.readFile(companyTestFeaturePath);
+                    let companyTestContent = Buffer.from(companyTestContentBytes).toString('utf-8');
+
+                    const originalContent = companyTestContent;
+                    companyTestContent = companyTestContent.replace(/using "Administrator"/g, 'using ""');
+                    
+                    if (originalContent !== companyTestContent) {
+                        await vscode.workspace.fs.writeFile(companyTestFeaturePath, Buffer.from(companyTestContent, 'utf-8'));
+                        // outputChannel.appendLine(this.t('  ✓ Administrator replacement completed successfully'));
+                    } else {
+                        // outputChannel.appendLine(this.t('  - No "Administrator" found in file, no changes needed'));
+                    }
+
+                } catch (error: any) {
+                    if (error.code === 'FileNotFound') {
+                        // outputChannel.appendLine(this.t('  ✗ File not found: {0}', companyTestFeaturePath.fsPath));
+                    } else {
+                        // outputChannel.appendLine(this.t('--- WARNING: Error applying correction to {0}: {1} ---', companyTestFeaturePath.fsPath, error.message || error));
                     }
                 }
 
@@ -1449,7 +1381,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                                 console.error('[PhaseSwitcherProvider] Failed to open feature files:', error);
                             });
                         } else if (selection === this.t('Open folder')) {
-                            vscode.commands.executeCommand('1cDriveHelper.openBuildFolder', featureFileDirUri.fsPath);
+                            vscode.commands.executeCommand('kotTestToolkit.openBuildFolder', featureFileDirUri.fsPath);
                         } else if (selection === this.t('Show Output')) {
                             outputChannel.show();
                         } else if (selection === this.t('Open Error File') && junitFileUri) {
@@ -1494,7 +1426,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                                 console.error('[PhaseSwitcherProvider] Failed to open feature files:', error);
                             });
                         } else if (selection === this.t('Open folder')) {
-                        vscode.commands.executeCommand('1cDriveHelper.openBuildFolder', featureFileDirUri.fsPath);
+                        vscode.commands.executeCommand('kotTestToolkit.openBuildFolder', featureFileDirUri.fsPath);
                     }
                 });
                 } else {

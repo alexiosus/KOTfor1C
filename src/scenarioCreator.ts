@@ -59,7 +59,7 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
     if (workspaceFolders?.length) { // Проверяем, что воркспейс открыт
         const workspaceRootUri = workspaceFolders[0].uri;
         // Путь по умолчанию из настроек
-        const config = vscode.workspace.getConfiguration('1cDriveHelper');
+        const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const defaultSubPath = config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml';
         try {
             defaultDialogUri = vscode.Uri.joinPath(workspaceRootUri, defaultSubPath);
@@ -120,7 +120,7 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
         await vscode.window.showTextDocument(doc);
 
         // Обновляем Phase Switcher
-        vscode.commands.executeCommand('1cDriveHelper.refreshPhaseSwitcherFromCreate');
+        vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcherFromCreate');
 
     } catch (error: any) {
         console.error("[Cmd:createNestedScenario] Error:", error);
@@ -267,7 +267,7 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
         await vscode.window.showTextDocument(doc);
 
         // Обновляем Phase Switcher
-        vscode.commands.executeCommand('1cDriveHelper.refreshPhaseSwitcherFromCreate');
+        vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcherFromCreate');
 
     } catch (error: any) {
         console.error("[Cmd:createMainScenario] Error:", error);

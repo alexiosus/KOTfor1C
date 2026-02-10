@@ -5,7 +5,7 @@ import * as fs from 'fs'; // Используем для синхронной п
 import { getTranslator } from './localization';
 
 // Ключ конфигурации для URL внешнего файла steps.htm
-const EXTERNAL_STEPS_URL_CONFIG_KEY = '1cDriveHelper.steps.externalUrl';
+const EXTERNAL_STEPS_URL_CONFIG_KEY = 'kotTestToolkit.steps.externalUrl';
 // URL по умолчанию, если в конфигурации не указан другой
 const DEFAULT_EXTERNAL_STEPS_URL = ''; 
 // Имя файла для локального кеша

@@ -4,11 +4,11 @@ export type Translator = (message: string, ...args: string[]) => string;
 
 /**
  * Returns a translator function that respects extension language override
- * (1cDriveHelper.localization.languageOverride). Falls back to vscode.l10n.
+ * (kotTestToolkit.localization.languageOverride). Falls back to vscode.l10n.
  */
 export async function getTranslator(extensionUri: vscode.Uri): Promise<Translator> {
   const override = (vscode.workspace
-    .getConfiguration('1cDriveHelper.localization')
+    .getConfiguration('kotTestToolkit.localization')
     .get<string>('languageOverride') as 'System' | 'English' | 'Русский') || 'System';
 
   if (override === 'System') {

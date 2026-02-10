@@ -1,5 +1,5 @@
 ﻿// Файл: media/phaseSwitcher.js
-// Скрипт для управления интерфейсом Webview панели 1C:Drive Test Helper
+// Скрипт для управления интерфейсом Webview панели KOT for 1C
 
 (function() {
     const vscode = acquireVsCodeApi();

@@ -102,9 +102,7 @@ function setScenarioSnapshotAsSaved(document: vscode.TextDocument, snapshot?: Sc
     });
 }
 
-// Ключ для хранения пароля в SecretStorage (должен совпадать с ключом в phaseSwitcher.ts)
-const EMAIL_PASSWORD_KEY = '1cDriveHelper.emailPassword';
-const EXTERNAL_STEPS_URL_CONFIG_KEY = '1cDriveHelper.steps.externalUrl'; // Ключ для отслеживания изменений
+const EXTERNAL_STEPS_URL_CONFIG_KEY = 'kotTestToolkit.steps.externalUrl'; // Ключ для отслеживания изменений
 
 /**
  * Функция активации расширения. Вызывается VS Code при первом запуске команды расширения
@@ -112,7 +110,7 @@ const EXTERNAL_STEPS_URL_CONFIG_KEY = '1cDriveHelper.steps.externalUrl'; // Кл
  * @param context Контекст расширения, предоставляемый VS Code.
  */
 export function activate(context: vscode.ExtensionContext) {
-    console.log('Extension "1cDriveHelper" activated.');
+    console.log('Extension "kotTestToolkit" activated.');
     setExtensionUri(context.extensionUri);
 
     // --- Регистрация Провайдера для Webview (Phase Switcher) ---
@@ -211,49 +209,49 @@ export function activate(context: vscode.ExtensionContext) {
 
     // --- Регистрация Команд ---
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        '1cDriveHelper.openSubscenario', (editor, edit) => openSubscenarioHandler(editor, edit, phaseSwitcherProvider)
+        'kotTestToolkit.openSubscenario', (editor, edit) => openSubscenarioHandler(editor, edit, phaseSwitcherProvider)
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.createNestedScenario', () => handleCreateNestedScenario(context)
+        'kotTestToolkit.createNestedScenario', () => handleCreateNestedScenario(context)
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.createMainScenario', () => handleCreateMainScenario(context)
+        'kotTestToolkit.createMainScenario', () => handleCreateMainScenario(context)
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        '1cDriveHelper.insertNestedScenarioRef', (editor, edit) => insertNestedScenarioRefHandler(editor, edit, phaseSwitcherProvider)
+        'kotTestToolkit.insertNestedScenarioRef', (editor, edit) => insertNestedScenarioRefHandler(editor, edit, phaseSwitcherProvider)
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        '1cDriveHelper.insertScenarioParam', insertScenarioParamHandler
+        'kotTestToolkit.insertScenarioParam', insertScenarioParamHandler
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        '1cDriveHelper.insertUid', insertUidHandler
+        'kotTestToolkit.insertUid', insertUidHandler
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.findCurrentFileReferences', findCurrentFileReferencesHandler
+        'kotTestToolkit.findCurrentFileReferences', findCurrentFileReferencesHandler
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        '1cDriveHelper.replaceTabsWithSpacesYaml', replaceTabsWithSpacesYamlHandler
+        'kotTestToolkit.replaceTabsWithSpacesYaml', replaceTabsWithSpacesYamlHandler
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        '1cDriveHelper.checkAndFillNestedScenarios', (editor, edit) => checkAndFillNestedScenariosHandler(editor, edit, phaseSwitcherProvider)
+        'kotTestToolkit.checkAndFillNestedScenarios', (editor, edit) => checkAndFillNestedScenariosHandler(editor, edit, phaseSwitcherProvider)
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        '1cDriveHelper.checkAndFillScriptParameters', checkAndFillScenarioParametersHandler
+        'kotTestToolkit.checkAndFillScriptParameters', checkAndFillScenarioParametersHandler
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.openMxlFileFromExplorer', (uri: vscode.Uri) => openMxlFileFromExplorerHandler(uri)
+        'kotTestToolkit.openMxlFileFromExplorer', (uri: vscode.Uri) => openMxlFileFromExplorerHandler(uri)
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        '1cDriveHelper.openMxlFile', (editor, edit) => openMxlFileFromTextHandler(editor, edit, phaseSwitcherProvider)
+        'kotTestToolkit.openMxlFile', (editor, edit) => openMxlFileFromTextHandler(editor, edit, phaseSwitcherProvider)
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        '1cDriveHelper.revealFileInExplorer', (editor, edit) => revealFileInExplorerHandler(editor, edit, phaseSwitcherProvider)
+        'kotTestToolkit.revealFileInExplorer', (editor, edit) => revealFileInExplorerHandler(editor, edit, phaseSwitcherProvider)
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        '1cDriveHelper.revealFileInOS', (editor, edit) => revealFileInOSHandler(editor, edit, phaseSwitcherProvider)
+        'kotTestToolkit.revealFileInOS', (editor, edit) => revealFileInOSHandler(editor, edit, phaseSwitcherProvider)
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.openBuildFolder', (folderPath: string) => {
+        'kotTestToolkit.openBuildFolder', (folderPath: string) => {
             if (folderPath) {
                 vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(folderPath));
             }
@@ -263,75 +261,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Команда для обновления Phase Switcher (вызывается из scenarioCreator)
     context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.refreshPhaseSwitcherFromCreate', () => {
-            console.log('[Extension] Command 1cDriveHelper.refreshPhaseSwitcherFromCreate invoked.');
+        'kotTestToolkit.refreshPhaseSwitcherFromCreate', () => {
+            console.log('[Extension] Command kotTestToolkit.refreshPhaseSwitcherFromCreate invoked.');
             phaseSwitcherProvider.refreshPanelData();
-        }
-    ));
-
-
-    // --- КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ ПАРОЛЕМ ЧЕРЕЗ ПАЛИТРУ КОМАНД (Ctrl+Shift+P) ---
-    // Команда для сохранения пароля тестовой почты
-    context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.saveEmailPassword', async () => {
-            const t = await getTranslator(context.extensionUri);
-            // Запрашиваем пароль у пользователя
-            const password = await vscode.window.showInputBox({
-                prompt: vscode.l10n.t('Enter password for test email'),
-                password: true,
-                ignoreFocusOut: true,
-                placeHolder: vscode.l10n.t('Password will not be saved in settings')
-            });
-
-            // Проверяем, что пользователь ввел значение и не нажал Escape (password !== undefined)
-            if (password !== undefined) {
-                if (password) { 
-                    try {
-                        // Сохраняем пароль в безопасное хранилище VS Code
-                        await context.secrets.store(EMAIL_PASSWORD_KEY, password);
-                        vscode.window.showInformationMessage(t('Test email password saved.'));
-                    } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        console.error("Error saving password via command:", message);
-                        vscode.window.showErrorMessage(t('Error saving password: {0}', message));
-                    }
-                } else {
-                    // Если пользователь ввел пустую строку, считаем это отменой
-                    vscode.window.showWarningMessage(t('Password saving cancelled (empty value).'));
-                }
-            } else {
-                 // Если пользователь нажал Escape (password === undefined)
-                 vscode.window.showInformationMessage(t('Password saving cancelled.'));
-            }
-        }
-    ));
-
-    // Команда для очистки сохраненного пароля
-    context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.clearEmailPassword', async () => {
-            const t = await getTranslator(context.extensionUri);
-            // Запрашиваем подтверждение у пользователя перед удалением
-            const confirmation = await vscode.window.showWarningMessage(
-                t('Are you sure you want to delete the saved test email password?'),
-                { modal: true }, 
-                t('Delete')
-            );
-
-            // Если пользователь нажал кнопку "Удалить"
-            if (confirmation === t('Delete')) {
-                try {
-                    // Удаляем пароль из безопасного хранилища
-                    await context.secrets.delete(EMAIL_PASSWORD_KEY);
-                    vscode.window.showInformationMessage(t('Saved test email password deleted.'));
-                } catch (error) {
-                    const message = error instanceof Error ? error.message : String(error);
-                    console.error("Error clearing password via command:", message);
-                    vscode.window.showErrorMessage(t('Error deleting password: {0}', message));
-                }
-            } else {
-                 // Если пользователь закрыл диалог или нажал отмену
-                 vscode.window.showInformationMessage(t('Password deletion cancelled.'));
-            }
         }
     ));
 
@@ -372,7 +304,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.refreshGherkinSteps', 
+        'kotTestToolkit.refreshGherkinSteps', 
         refreshGherkinStepsCommand
     ));
 
@@ -383,7 +315,7 @@ export function activate(context: vscode.ExtensionContext) {
             await refreshGherkinStepsCommand(); 
         }
 
-        if (event.affectsConfiguration('1cDriveHelper.localization.languageOverride')) {
+        if (event.affectsConfiguration('kotTestToolkit.localization.languageOverride')) {
             console.log('[Extension] Language override setting changed. Prompting for reload.');
             const message = vscode.l10n.t('Language setting changed. Reload window to apply?');
             const reloadNow = vscode.l10n.t('Reload Window');
@@ -396,12 +328,12 @@ export function activate(context: vscode.ExtensionContext) {
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.createFirstLaunchZip', 
+        'kotTestToolkit.createFirstLaunchZip', 
         () => handleCreateFirstLaunchZip(context)
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.openYamlParametersManager', 
+        'kotTestToolkit.openYamlParametersManager', 
         () => handleOpenYamlParametersManager(context)
     ));
 
@@ -429,7 +361,7 @@ export function activate(context: vscode.ExtensionContext) {
     };
 
     context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.scanWorkspaceDiagnostics',
+        'kotTestToolkit.scanWorkspaceDiagnostics',
         async () => {
             try {
                 const t = await getTranslator(context.extensionUri);
@@ -458,7 +390,7 @@ export function activate(context: vscode.ExtensionContext) {
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.fixScenarioIssues',
+        'kotTestToolkit.fixScenarioIssues',
         async (targetUri?: vscode.Uri) => {
             const t = await getTranslator(context.extensionUri);
             let document: vscode.TextDocument | undefined;
@@ -552,7 +484,7 @@ export function activate(context: vscode.ExtensionContext) {
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
-        '1cDriveHelper.addScenarioParameterExclusion',
+        'kotTestToolkit.addScenarioParameterExclusion',
         async (rawParameterArg?: unknown, ...restArgs: unknown[]) => {
             const t = await getTranslator(context.extensionUri);
 
@@ -658,7 +590,7 @@ export function activate(context: vscode.ExtensionContext) {
                     return;
                 }
 
-                const config = vscode.workspace.getConfiguration('1cDriveHelper');
+                const config = vscode.workspace.getConfiguration('kotTestToolkit');
                 const existing = config.get<string[]>('editor.scenarioParameterExclusions', []) || [];
                 if (existing.includes(parameterName)) {
                     vscode.window.showInformationMessage(t('Parameter "{0}" is already in exclusions.', parameterName));
@@ -716,7 +648,7 @@ export function activate(context: vscode.ExtensionContext) {
                 setTimeout(() => {
                     processingFiles.delete(fileKey);
                 }, 5000);
-                const config = vscode.workspace.getConfiguration('1cDriveHelper');
+                const config = vscode.workspace.getConfiguration('kotTestToolkit');
                 
                 // Проверяем, какие операции нужно выполнить
                 const enabledOperations: string[] = [];
@@ -906,7 +838,7 @@ export function activate(context: vscode.ExtensionContext) {
     completionProvider.refreshSteps();
     hoverProvider.refreshSteps();
 
-    console.log('1cDriveHelper commands and providers registered.');
+    console.log('kotTestToolkit commands and providers registered.');
 }
 
 /**
@@ -949,7 +881,7 @@ async function foldSectionsInEditor(editor: vscode.TextEditor | undefined) {
     }
 
     // Проверяем, включена ли настройка
-    const config = vscode.workspace.getConfiguration('1cDriveHelper');
+    const config = vscode.workspace.getConfiguration('kotTestToolkit');
     if (!config.get<boolean>('editor.autoCollapseOnOpen')) {
         return;
     }
@@ -993,5 +925,5 @@ async function foldSectionsInEditor(editor: vscode.TextEditor | undefined) {
  * Используется для освобождения ресурсов.
  */
 export function deactivate() {
-     console.log('1cDriveHelper extension deactivated.');
+     console.log('kotTestToolkit extension deactivated.');
 }

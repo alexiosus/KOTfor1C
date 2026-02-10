@@ -6,16 +6,16 @@ import { TestInfo } from './types';
 import { isScenarioYamlFile } from './yamlValidator';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 
-const DIAGNOSTIC_SOURCE = '1C:Drive Test Helper';
-const CODE_UNCLOSED_IF = '1cDriveHelper.unclosedIf';
-const CODE_UNCLOSED_DO = '1cDriveHelper.unclosedDo';
-const CODE_UNCLOSED_QUOTE = '1cDriveHelper.unclosedQuote';
-const CODE_UNKNOWN_STEP = '1cDriveHelper.unknownStep';
-const CODE_UNKNOWN_SCENARIO = '1cDriveHelper.unknownScenario';
-const CODE_EXTRA_SCENARIO_PARAM = '1cDriveHelper.extraScenarioParameter';
-const CODE_MISSING_SCENARIO_PARAM = '1cDriveHelper.missingScenarioParameter';
-const CODE_MISSING_QUOTES = '1cDriveHelper.missingQuotes';
-const CODE_INCOMPLETE_BLOCK = '1cDriveHelper.incompleteBlock';
+const DIAGNOSTIC_SOURCE = 'KOT for 1C';
+const CODE_UNCLOSED_IF = 'kotTestToolkit.unclosedIf';
+const CODE_UNCLOSED_DO = 'kotTestToolkit.unclosedDo';
+const CODE_UNCLOSED_QUOTE = 'kotTestToolkit.unclosedQuote';
+const CODE_UNKNOWN_STEP = 'kotTestToolkit.unknownStep';
+const CODE_UNKNOWN_SCENARIO = 'kotTestToolkit.unknownScenario';
+const CODE_EXTRA_SCENARIO_PARAM = 'kotTestToolkit.extraScenarioParameter';
+const CODE_MISSING_SCENARIO_PARAM = 'kotTestToolkit.missingScenarioParameter';
+const CODE_MISSING_QUOTES = 'kotTestToolkit.missingQuotes';
+const CODE_INCOMPLETE_BLOCK = 'kotTestToolkit.incompleteBlock';
 const LOCAL_DEPENDENCY_SCAN_MAX_FILES = 120;
 
 interface ValidationOptions {
@@ -102,7 +102,7 @@ interface DiagnosticMessages {
 
 function buildMessages(): DiagnosticMessages {
     return {
-        fixAll: vscode.l10n.t('1C:Drive - Fix scenario issues'),
+        fixAll: vscode.l10n.t('KOT - Fix scenario issues'),
         unknownStep: vscode.l10n.t('Unknown Gherkin step.'),
         unknownScenario: vscode.l10n.t('Unknown nested scenario call.'),
         maybeDidYouMeanHeader: vscode.l10n.t('Maybe you meant:'),
@@ -292,7 +292,7 @@ function parseUsedParametersFromScenarioText(
     bodyRange: ScenarioBodyRange
 ): Set<string> {
     const used = new Set<string>();
-    const config = vscode.workspace.getConfiguration('1cDriveHelper');
+    const config = vscode.workspace.getConfiguration('kotTestToolkit');
     const exclusions = config.get<string[]>('editor.scenarioParameterExclusions', []) || [];
     const exclusionSet = new Set(
         exclusions
@@ -606,7 +606,7 @@ function formatMultilineListMessage(header: string, items: string[]): string {
 }
 
 export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, vscode.Disposable {
-    private readonly diagnostics = vscode.languages.createDiagnosticCollection('1cDriveHelper');
+    private readonly diagnostics = vscode.languages.createDiagnosticCollection('kotTestToolkit');
     private readonly subscriptions: vscode.Disposable[] = [];
     private readonly validationTimers = new Map<string, NodeJS.Timeout>();
     private readonly relatedValidationTimers = new Map<string, NodeJS.Timeout>();
@@ -708,7 +708,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         if (hasFixableDiagnostic) {
             const fixAllAction = new vscode.CodeAction(this.messages.fixAll, vscode.CodeActionKind.QuickFix);
             fixAllAction.command = {
-                command: '1cDriveHelper.fixScenarioIssues',
+                command: 'kotTestToolkit.fixScenarioIssues',
                 title: this.messages.fixAll,
                 arguments: [document.uri]
             };
@@ -840,7 +840,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 vscode.CodeActionKind.QuickFix
             );
             exclusionAction.command = {
-                command: '1cDriveHelper.addScenarioParameterExclusion',
+                command: 'kotTestToolkit.addScenarioParameterExclusion',
                 title: this.messages.addParamExclusion,
                 arguments: [exclusionCandidate]
             };
@@ -896,7 +896,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     }
 
     private isRelatedParentValidationEnabled(): boolean {
-        const config = vscode.workspace.getConfiguration('1cDriveHelper');
+        const config = vscode.workspace.getConfiguration('kotTestToolkit');
         return config.get<boolean>('editor.checkRelatedParentScenarios', true);
     }
 
@@ -1035,7 +1035,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         }
 
         const scopeUriSet = new Set(workspaceScenarioUris.map(uri => uri.toString()));
-        this.diagnostics.forEach((_diagnostics, uri) => {
+        this.diagnostics.forEach((uri, _diagnostics) => {
             if (uri.scheme === 'file' && !scopeUriSet.has(uri.toString())) {
                 this.diagnostics.delete(uri);
             }
@@ -1083,7 +1083,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             return [];
         }
 
-        const config = vscode.workspace.getConfiguration('1cDriveHelper');
+        const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const configuredScanDirectory = (config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml').trim();
         const scanDirectoryPath = path.isAbsolute(configuredScanDirectory)
             ? configuredScanDirectory

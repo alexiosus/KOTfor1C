@@ -7,7 +7,7 @@ import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 
 // Function to get the scan directory path from configuration
 export function getScanDirRelativePath(): string {
-    const config = vscode.workspace.getConfiguration('1cDriveHelper');
+    const config = vscode.workspace.getConfiguration('kotTestToolkit');
     return config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml';
 }
 
