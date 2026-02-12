@@ -424,7 +424,8 @@ function buildPhaseSwitcherLinesFromLegacy(legacy: LegacyPhaseSwitcherMetadata, 
 function buildDescriptionLines(metadataIndent: number): string[] {
     return [
         `${' '.repeat(metadataIndent + 4)}Описание: |`,
-        `${' '.repeat(metadataIndent + 8)}`
+        `${' '.repeat(metadataIndent + 8)}`,
+        `${' '.repeat(metadataIndent + 4)}-`
     ];
 }
 

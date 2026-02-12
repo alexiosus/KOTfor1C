@@ -62,9 +62,22 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             // Метка, которую увидит пользователь в списке автодополнения
             const displayLabel = `And ${scenarioName}`;
             const item = new vscode.CompletionItem(displayLabel, vscode.CompletionItemKind.Function);
+            const scenarioDescription = (scenarioInfo.scenarioDescription || '').trim();
 
-            item.detail = "Nested scenario (1C)";
-            item.documentation = new vscode.MarkdownString(`Call scenario "${scenarioName}".`);
+            item.detail = vscode.l10n.t('Nested scenario (1C)');
+            if (scenarioDescription) {
+                const firstLine = scenarioDescription.split(/\r\n|\r|\n/)[0].trim();
+                if (firstLine) {
+                    item.detail = `${item.detail} - ${firstLine}`;
+                }
+            }
+            const itemDocumentation = new vscode.MarkdownString();
+            itemDocumentation.appendMarkdown(vscode.l10n.t('Call scenario "{0}".', scenarioName));
+            if (scenarioDescription) {
+                itemDocumentation.appendMarkdown(`\n\n**${vscode.l10n.t('Description')}:**\n\n`);
+                this.appendCompactMultilineText(itemDocumentation, scenarioDescription);
+            }
+            item.documentation = itemDocumentation;
             // Текст, по которому будет происходить фильтрация при вводе пользователя
             // (без "And ", чтобы можно было просто начать печатать имя сценария)
             item.filterText = scenarioName;
@@ -134,9 +147,9 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     // Создаем документацию: русское описание + оба варианта шагов
                     const russianDoc = new vscode.MarkdownString();
                     russianDoc.appendMarkdown(`**Описание:**\n\n${russianStepDescription}\n\n`);
-                    russianDoc.appendMarkdown(`\n\n\n\n\`${russianStepText}\``);
+                    russianDoc.appendMarkdown(`\`${russianStepText}\``);
                     if (stepText) {
-                        russianDoc.appendMarkdown(`\n\n\n\n\`${stepText}\``);
+                        russianDoc.appendMarkdown(`\n\n\`${stepText}\``);
                     }
 
                     russianItem.documentation = russianDoc;
@@ -152,9 +165,9 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     // Создаем документацию: английское описание + оба варианта шагов
                     const englishDoc = new vscode.MarkdownString();
                     englishDoc.appendMarkdown(`**Description:**\n\n${stepDescription}\n\n`);
-                    englishDoc.appendMarkdown(`\n\n\n\n\`${stepText}\``);
+                    englishDoc.appendMarkdown(`\`${stepText}\``);
                     if (russianStepText) {
-                        englishDoc.appendMarkdown(`\n\n\n\n\`${russianStepText}\``);
+                        englishDoc.appendMarkdown(`\n\n\`${russianStepText}\``);
                     }
 
                     item.documentation = englishDoc;
@@ -493,6 +506,49 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
      */
     private normalizeLineBreaks(text: string): string {
         return text.replace(/\n\s*\n/g, '\n').trim();
+    }
+
+    private appendCompactMultilineText(markdown: vscode.MarkdownString, text: string): void {
+        const normalized = text.replace(/\r\n|\r/g, '\n').trim();
+        if (!normalized) {
+            return;
+        }
+
+        const collapsedLines: string[] = [];
+        let previousWasBlank = false;
+        for (const rawLine of normalized.split('\n')) {
+            const line = rawLine.replace(/\s+$/g, '');
+            const isBlank = line.trim().length === 0;
+            if (isBlank) {
+                if (!previousWasBlank) {
+                    collapsedLines.push('');
+                }
+                previousWasBlank = true;
+                continue;
+            }
+
+            collapsedLines.push(line);
+            previousWasBlank = false;
+        }
+
+        while (collapsedLines.length > 0 && collapsedLines[0] === '') {
+            collapsedLines.shift();
+        }
+        while (collapsedLines.length > 0 && collapsedLines[collapsedLines.length - 1] === '') {
+            collapsedLines.pop();
+        }
+
+        collapsedLines.forEach((line, index) => {
+            if (line === '') {
+                markdown.appendMarkdown('\n');
+                return;
+            }
+
+            markdown.appendText(line);
+            if (index < collapsedLines.length - 1) {
+                markdown.appendMarkdown('  \n');
+            }
+        });
     }
 
     private getScenarioParameterDefaults(document: vscode.TextDocument): Map<string, string> {

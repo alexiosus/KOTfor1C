@@ -382,6 +382,13 @@ export function activate(context: vscode.ExtensionContext) {
         () => handleOpenYamlParametersManager(context)
     ));
 
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.openScenarioInVanessaManual',
+        async () => {
+            await phaseSwitcherProvider.openScenarioInVanessaManualFromCommandPalette();
+        }
+    ));
+
     const runWorkspaceDiagnosticsScan = async (options: {
         refreshCache?: boolean;
         showCompletionMessage?: boolean;

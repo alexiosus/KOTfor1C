@@ -3,6 +3,9 @@
   "ext.description": "Keep On Testing: набор инструментов для YAML-сценариев тестов 1С",
 
   "config.generalTitle": "Общие настройки",
+  "config.editorSettings.title": "Настройки редактора",
+  "config.diagnosticsSettings.title": "Диагностика и библиотека шагов",
+  "config.vanessaSettings.title": "Запуск Vanessa Automation",
   "config.localization.languageOverride.description": "Выбор языка интерфейса расширения (может потребоваться перезагрузка панели). Не влияет язык страницы настроек и контекстного меню.",
   "config.localization.system.desc": "Следовать языку интерфейса VS Code",
   "config.localization.en.desc": "Английский",
@@ -21,6 +24,13 @@
 
   "config.assemblySettings.title": "Настройки сборки тестов",
   "config.showOutputPanel.description": "Автоматически показывать панель Output при запуске сборки тестов.",
+  "config.assembleScript.showDriveFeatures.description": "Показывать в UI сборки функции 1C:Drive (Build FL и переключатель режима учета).",
+  "config.output.advancedLogging.description": "Показывать дополнительные технические детали в Output (для диагностики).",
+  "config.runVanessa.vanessaEpfPath.description": "Путь к vanessa-automation.epf для встроенного запуска Vanessa из Phase Switcher (абсолютный или относительный от корня workspace).",
+  "config.runVanessa.runtimeDirectory.description": "Папка для runtime-файлов Vanessa (лог/статус сценария). Абсолютный путь или относительный от корня workspace.",
+  "config.runVanessa.commandTemplate.description": "Шаблон shell-команды для запуска Vanessa Automation по выбранному сценарию.",
+  "config.runVanessa.commandTemplate.markdownDescription": "Опциональный шаблон команды для кнопки запуска в Phase Switcher.\n\nДоступные плейсхолдеры:\n- `${scenarioName}` / `${scenarioNameQuoted}`\n- `${featurePath}` / `${featurePathQuoted}`\n- `${jsonPath}` / `${jsonPathQuoted}`\n- `${workspaceRoot}` / `${workspaceRootQuoted}`\n\nЕсли оставить пустым, расширение использует встроенный запуск Vanessa (1C + vanessa-automation.epf + StartFeaturePlayer).",
+  "config.runVanessa.checkUnsafeActionProtection.description": "Перед встроенным запуском Vanessa проверять DisableUnsafeActionProtection в conf.cfg для EmptyInfobase и предлагать исправление при отсутствии значения.",
 
   "config.startupParameters.title": "Параметры запуска 1С:Предприятие",
     "config.startupParams.parameters.description": "Параметры запуска 1С:Предприятие (разделенные пробелами, например, '/L ru /DisableStartupMessages /Debug')",
@@ -60,6 +70,7 @@
   "cmd.fixScenarioIssues.title": "KOT - Исправить проблемы сценария",
   "cmd.addScenarioParameterExclusion.title": "KOT - Добавить исключение параметра сценария",
   "cmd.scanWorkspaceDiagnostics.title": "KOT - Выполнить сканирование диагностики по проекту",
+  "cmd.openScenarioInVanessaManual.title": "KOT - Открыть сценарий в Vanessa (ручная отладка)",
 
   "view.phaseSwitcher.name": "KOT for 1C",
   "view.phaseSwitcher.contextualTitle": "KOT for 1C"

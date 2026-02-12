@@ -10,15 +10,19 @@
     let currentCheckboxStates = {};
     let testDefaultStates = {};
     let phaseExpandedState = {}; 
+    let runArtifacts = {};
     let settings = {
         assemblerEnabled: true,
-        switcherEnabled: true
+        switcherEnabled: true,
+        driveFeaturesEnabled: false
     };
     let isBuildInProgress = false;
     let areAllPhasesCurrentlyExpanded = false; 
+    let activeRunModeMenu = null;
 
     // === Получение ссылок на элементы DOM ===
     const refreshBtn = document.getElementById('refreshBtn');
+    const runVanessaTopBtn = document.getElementById('runVanessaTopBtn');
     const openSettingsBtn = document.getElementById('openSettingsBtn');
     const collapseAllBtn = document.getElementById('collapseAllBtn');
     const createFirstLaunchBtn = document.getElementById('createFirstLaunchBtn');
@@ -38,8 +42,10 @@
     const applyChangesBtn = document.getElementById('applyChangesBtn');
 
     const recordGLSelect = document.getElementById('recordGLSelect');
+    const driveAccountingModeRow = document.getElementById('driveAccountingModeRow');
 
     const assembleBtn = document.getElementById('assembleTestsBtn');
+    const cancelAssembleBtn = document.getElementById('cancelAssembleBtn');
     const assembleStatus = document.getElementById('assembleStatus');
     const assembleSection = document.getElementById('assembleSection');
     const separator = document.getElementById('sectionSeparator');
@@ -81,6 +87,7 @@
         if (addScenarioDropdownBtn instanceof HTMLButtonElement) {
             addScenarioDropdownBtn.disabled = !settings.switcherEnabled;
         }
+        updateTopRunButtonState();
         log(`Status updated [${target}]: ${text}. Refresh button enabled: ${refreshButtonEnabled === undefined ? 'unchanged' : refreshButtonEnabled}`);
     }
 
@@ -137,7 +144,37 @@
              // This allows the refresh button to remain enabled even when other controls are disabled
              log(`Refresh button state preserved by enablePhaseControls (refreshButtonAlso=false)`);
         }
+        updateRunButtonsState();
         log(`Phase controls (excluding Apply, Settings) enabled: ${effectiveEnable} (request ${enable}, feature ${isPhaseSwitcherVisible})`);
+    }
+
+    function updateRunButtonsState() {
+        if (!phaseTreeContainer) return;
+        const runButtons = phaseTreeContainer.querySelectorAll('.run-scenario-btn');
+        runButtons.forEach(button => {
+            if (button instanceof HTMLButtonElement) {
+                const scenarioName = button.getAttribute('data-name') || '';
+                const runInfo = scenarioName && runArtifacts ? runArtifacts[scenarioName] : null;
+                const isRunInProgress = runInfo?.runStatus === 'running';
+                button.disabled = isBuildInProgress || isRunInProgress;
+            }
+        });
+        updateTopRunButtonState();
+    }
+
+    function hasRunnableArtifacts() {
+        if (!runArtifacts || typeof runArtifacts !== 'object') {
+            return false;
+        }
+        return Object.values(runArtifacts).some(info => !!(info && (info.featurePath || info.jsonPath)));
+    }
+
+    function updateTopRunButtonState() {
+        if (!(runVanessaTopBtn instanceof HTMLButtonElement)) {
+            return;
+        }
+        const canRun = settings.switcherEnabled && !isBuildInProgress;
+        runVanessaTopBtn.disabled = !canRun;
     }
 
     /**
@@ -147,8 +184,16 @@
      function enableAssembleControls(enable) {
          const isAssemblerVisible = settings.assemblerEnabled;
          const effectiveEnable = enable && isAssemblerVisible && !isBuildInProgress;
+         const showCancelButton = isAssemblerVisible && isBuildInProgress;
 
-         if (assembleBtn instanceof HTMLButtonElement) assembleBtn.disabled = !effectiveEnable;
+         if (assembleBtn instanceof HTMLButtonElement) {
+             assembleBtn.style.display = showCancelButton ? 'none' : '';
+             assembleBtn.disabled = !effectiveEnable;
+         }
+         if (cancelAssembleBtn instanceof HTMLButtonElement) {
+             cancelAssembleBtn.style.display = showCancelButton ? 'inline-flex' : 'none';
+             cancelAssembleBtn.disabled = !showCancelButton;
+         }
          if (recordGLSelect instanceof HTMLSelectElement) recordGLSelect.disabled = !effectiveEnable;
 
          log(`Assemble controls enabled: ${effectiveEnable} (request ${enable}, feature ${isAssemblerVisible})`);
@@ -188,10 +233,60 @@
         const escapedTitleAttr = escapeHtmlAttr(relativePath);
         const fileUriString = testInfo.yamlFileUriString || '';
         const escapedIconTitle = escapeHtmlAttr((window.__loc?.openScenarioFileTitle || 'Open scenario file {0}').replace('{0}', name));
+        const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
+        const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
+        const runStatus = runInfo?.runStatus || 'idle';
+        const isStale = Boolean(runInfo?.stale);
+        const isRunInProgress = runStatus === 'running';
+        const isRunPassed = runStatus === 'passed';
+        const isRunPassedStale = isRunPassed && isStale;
+        const isRunPassedFresh = isRunPassed && !isStale;
+        const isRunFailed = runStatus === 'failed';
+        const runMessage = typeof runInfo?.runMessage === 'string' ? runInfo.runMessage.trim() : '';
+        const runTitleTemplate = window.__loc?.runScenarioJsonTitle || 'Run scenario in Vanessa Automation by json: {0}';
+        const runTitle = runTitleTemplate.replace('{0}', name);
+        const staleSuffix = isStale ? ` • ${window.__loc?.runScenarioStaleSuffix || 'Build is stale'}` : '';
+        const statusSuffix = isRunInProgress
+            ? ` • ${window.__loc?.runScenarioRunningSuffix || 'Run in progress'}`
+            : (isRunPassed
+                ? ` • ${window.__loc?.runScenarioPassedSuffix || 'Last run passed'}`
+                : (isRunFailed
+                    ? ` • ${window.__loc?.runScenarioFailedSuffix || 'Last run failed'}`
+                    : ''));
+        const runButtonClass = [
+            'run-scenario-btn',
+            isStale ? 'run-scenario-btn-stale' : '',
+            isRunInProgress ? 'run-scenario-btn-running' : '',
+            isRunPassedFresh ? 'run-scenario-btn-passed' : '',
+            isRunPassedStale ? 'run-scenario-btn-stale-passed' : '',
+            isRunFailed ? 'run-scenario-btn-failed' : ''
+        ].filter(Boolean).join(' ');
+        const runButtonIconClass = isRunInProgress
+            ? 'codicon codicon-loading codicon-modifier-spin'
+            : (isRunPassed
+                ? 'codicon codicon-check'
+                : (isRunFailed
+                    ? 'codicon codicon-error'
+                    : 'codicon codicon-play-circle'));
+        const runButtonTitle = `${runTitle}${statusSuffix}${staleSuffix}${runMessage ? `\n${runMessage}` : ''}`;
+        const escapedRunTitle = escapeHtmlAttr(runButtonTitle);
+        const runButtonDisabledAttr = (isBuildInProgress || isRunInProgress) ? ' disabled' : '';
+        const runLogTitle = escapeHtmlAttr((window.__loc?.runScenarioLogTitle || 'Open run log for scenario: {0}').replace('{0}', name));
 
         const openButtonHtml = fileUriString
             ? `<button class="open-scenario-btn" data-name="${escapedNameAttr}" title="${escapedIconTitle}">
                    <span class="codicon codicon-edit"></span>
+               </button>`
+            : '';
+
+        const runButtonHtml = hasRunArtifact
+            ? `<button class="${runButtonClass}" data-name="${escapedNameAttr}" title="${escapedRunTitle}"${runButtonDisabledAttr}>
+                   <span class="${runButtonIconClass}"></span>
+               </button>`
+            : '';
+        const runLogButtonHtml = runInfo?.hasRunLog
+            ? `<button class="run-scenario-log-btn" data-name="${escapedNameAttr}" title="${runLogTitle}">
+                   <span class="codicon codicon-output"></span>
                </button>`
             : '';
 
@@ -204,6 +299,8 @@
                         name="${escapedNameAttr}"
                         data-default="${defaultState}">
                     <span class="checkbox-label-text">${name}</span>
+                    ${runLogButtonHtml}
+                    ${runButtonHtml}
                     ${openButtonHtml}
                 </label>
             </div>
@@ -522,6 +619,211 @@
         });
     }
 
+    function handleRunScenarioClick(event) {
+        if (!(event.target instanceof Element)) return;
+        const button = event.target.closest('.run-scenario-btn');
+        if (!(button instanceof HTMLButtonElement)) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        const name = button.getAttribute('data-name');
+        if (!name) {
+            log('ERROR: Run scenario button clicked without data-name attribute!');
+            return;
+        }
+        const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
+        if (runInfo?.runStatus === 'running') {
+            log(`Run request ignored for "${name}" because run is already in progress.`);
+            return;
+        }
+        log(`Run scenario button clicked: ${name}`);
+        vscode.postMessage({
+            command: 'runScenarioInVanessa',
+            name
+        });
+    }
+
+    function handleRunScenarioContextMenu(event) {
+        if (!(event.target instanceof Element)) return;
+        const button = event.target.closest('.run-scenario-btn');
+        if (!(button instanceof HTMLButtonElement)) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        const name = button.getAttribute('data-name');
+        if (!name) {
+            log('ERROR: Run scenario context menu opened without data-name attribute!');
+            return;
+        }
+        if (button.disabled) {
+            return;
+        }
+        log(`Run scenario context menu opened for: ${name}`);
+        showRunModeMenu(button, name, { includeManual: false });
+    }
+
+    function handleRunLogClick(event) {
+        if (!(event.target instanceof Element)) return;
+        const button = event.target.closest('.run-scenario-log-btn');
+        if (!(button instanceof HTMLButtonElement)) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        const name = button.getAttribute('data-name');
+        if (!name) {
+            log('ERROR: Run log button clicked without data-name attribute!');
+            return;
+        }
+        log(`Run log button clicked for: ${name}`);
+        vscode.postMessage({
+            command: 'openRunScenarioLog',
+            name
+        });
+    }
+
+    function closeRunModeMenu() {
+        if (!activeRunModeMenu) return;
+        activeRunModeMenu.remove();
+        activeRunModeMenu = null;
+    }
+
+    function showRunModeMenu(anchorButton, scenarioName, options = {}) {
+        const includeManual = options?.includeManual !== false;
+        const menuScope = scenarioName || '__top__';
+        if (activeRunModeMenu && activeRunModeMenu.getAttribute('data-scenario') === menuScope) {
+            closeRunModeMenu();
+            return;
+        }
+        closeRunModeMenu();
+
+        const menu = document.createElement('div');
+        menu.className = 'run-mode-menu';
+        menu.setAttribute('data-scenario', menuScope);
+
+        const autoLabel = window.__loc?.runScenarioModeAutomatic || 'Run test (auto close)';
+        const manualLabel = window.__loc?.runScenarioModeManual || 'Open for debugging (keep Vanessa open)';
+        const menuTitle = window.__loc?.runScenarioModeTitle || 'Choose launch mode';
+        const autoHint = window.__loc?.runScenarioModeAutomaticHint || 'Runs scenario with StartFeaturePlayer and waits for completion.';
+        const manualHint = window.__loc?.runScenarioModeManualHint || 'Opens Vanessa for manual debugging without StartFeaturePlayer.';
+        const canRunAuto = scenarioName ? true : hasRunnableArtifacts();
+        const runInfo = scenarioName && runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[scenarioName] : null;
+        const hasFeatureArtifact = !!(scenarioName && runInfo && runInfo.featurePath);
+
+        const autoItem = document.createElement('button');
+        autoItem.type = 'button';
+        autoItem.className = 'run-mode-menu-item';
+        autoItem.innerHTML = `<span class="codicon codicon-play-circle"></span><span>${escapeHtmlAttr(autoLabel)}</span>`;
+        autoItem.title = canRunAuto
+            ? `${menuTitle}\n${autoHint}`
+            : (window.__loc?.runScenarioNoArtifacts || 'No build artifacts found. Build tests first in current session.');
+        if (!canRunAuto) {
+            autoItem.disabled = true;
+            autoItem.classList.add('run-mode-menu-item-disabled');
+        }
+        autoItem.addEventListener('click', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (autoItem.disabled) {
+                return;
+            }
+            closeRunModeMenu();
+            if (scenarioName) {
+                vscode.postMessage({
+                    command: 'runScenarioInVanessa',
+                    name: scenarioName
+                });
+            } else {
+                vscode.postMessage({
+                    command: 'runScenarioViaPicker',
+                    mode: 'auto'
+                });
+            }
+        });
+
+        const manualItem = document.createElement('button');
+        manualItem.type = 'button';
+        manualItem.className = 'run-mode-menu-item';
+        manualItem.innerHTML = `<span class="codicon codicon-debug-alt"></span><span>${escapeHtmlAttr(manualLabel)}</span>`;
+        manualItem.title = `${menuTitle}\n${manualHint}`;
+        manualItem.addEventListener('click', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            closeRunModeMenu();
+            if (scenarioName) {
+                vscode.postMessage({
+                    command: 'openScenarioInVanessaManual',
+                    name: scenarioName
+                });
+            } else {
+                vscode.postMessage({
+                    command: 'runScenarioViaPicker',
+                    mode: 'debug'
+                });
+            }
+        });
+
+        menu.appendChild(autoItem);
+        if (includeManual) {
+            menu.appendChild(manualItem);
+        }
+
+        if (scenarioName) {
+            const openFeatureLabel = window.__loc?.runScenarioModeOpenFeature || 'Open feature in editor';
+            const openFeatureHint = window.__loc?.runScenarioModeOpenFeatureHint || 'Opens built feature file for this scenario in editor.';
+            const openFeatureUnavailable = window.__loc?.runScenarioNoFeatureArtifact || 'Feature artifact is not available for this scenario.';
+            const openFeatureItem = document.createElement('button');
+            openFeatureItem.type = 'button';
+            openFeatureItem.className = 'run-mode-menu-item';
+            openFeatureItem.innerHTML = `<span class="codicon codicon-go-to-file"></span><span>${escapeHtmlAttr(openFeatureLabel)}</span>`;
+            openFeatureItem.title = hasFeatureArtifact
+                ? `${menuTitle}\n${openFeatureHint}`
+                : openFeatureUnavailable;
+            if (!hasFeatureArtifact) {
+                openFeatureItem.disabled = true;
+                openFeatureItem.classList.add('run-mode-menu-item-disabled');
+            }
+            openFeatureItem.addEventListener('click', e => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (openFeatureItem.disabled) {
+                    return;
+                }
+                closeRunModeMenu();
+                vscode.postMessage({
+                    command: 'openScenarioFeatureInEditor',
+                    name: scenarioName
+                });
+            });
+            menu.appendChild(openFeatureItem);
+        }
+        document.body.appendChild(menu);
+
+        const rect = anchorButton.getBoundingClientRect();
+        const menuRect = menu.getBoundingClientRect();
+        const topSpace = rect.top;
+        const bottomSpace = window.innerHeight - rect.bottom;
+        const placeAbove = bottomSpace < menuRect.height + 8 && topSpace > menuRect.height + 8;
+        const top = placeAbove ? rect.top - menuRect.height - 4 : rect.bottom + 4;
+        const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuRect.width - 8));
+
+        menu.style.top = `${Math.max(8, top)}px`;
+        menu.style.left = `${left}px`;
+
+        activeRunModeMenu = menu;
+    }
+
+    function handleTopRunVanessaClick(event) {
+        if (!(runVanessaTopBtn instanceof HTMLButtonElement)) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        if (runVanessaTopBtn.disabled) {
+            return;
+        }
+        showRunModeMenu(runVanessaTopBtn, '');
+    }
+
     /**
      * Применяет текущие состояния чекбоксов к видимым элементам.
      */
@@ -560,6 +862,25 @@
         openButtons.forEach(btn => {
             btn.removeEventListener('click', handleOpenScenarioClick);
             btn.addEventListener('click', handleOpenScenarioClick);
+        });
+
+        const runButtons = phaseTreeContainer.querySelectorAll('.run-scenario-btn');
+        runButtons.forEach(btn => {
+            if (!(btn instanceof HTMLButtonElement)) return;
+            const scenarioName = btn.getAttribute('data-name') || '';
+            const runInfo = scenarioName && runArtifacts ? runArtifacts[scenarioName] : null;
+            const isRunInProgress = runInfo?.runStatus === 'running';
+            btn.disabled = isBuildInProgress || isRunInProgress;
+            btn.removeEventListener('click', handleRunScenarioClick);
+            btn.addEventListener('click', handleRunScenarioClick);
+            btn.removeEventListener('contextmenu', handleRunScenarioContextMenu);
+            btn.addEventListener('contextmenu', handleRunScenarioContextMenu);
+        });
+
+        const runLogButtons = phaseTreeContainer.querySelectorAll('.run-scenario-log-btn');
+        runLogButtons.forEach(btn => {
+            btn.removeEventListener('click', handleRunLogClick);
+            btn.addEventListener('click', handleRunLogClick);
         });
 
         log(`Applied states to ${count} visible checkboxes.`);
@@ -685,16 +1006,21 @@
                 if (assembleStatus instanceof HTMLElement) assembleStatus.textContent = '';
 
                 if (message.error) {
-                     updateStatus(`Ошибка: ${message.error}`, 'main', true);
+                     closeRunModeMenu();
+                     runArtifacts = {};
+                     const errorTemplate = window.__loc?.errorWithDetails || 'Error: {0}';
+                     updateStatus(errorTemplate.replace('{0}', message.error), 'main', true);
                       phaseSwitcherSectionElements.forEach(el => { if (el instanceof HTMLElement) el.style.display = 'none'; });
                      if (assembleSection instanceof HTMLElement) assembleSection.style.display = 'none';
                      if (separator instanceof HTMLElement) separator.style.display = 'none';
                      enablePhaseControls(false, true); enableAssembleControls(false);
                      if (openSettingsBtn instanceof HTMLButtonElement) openSettingsBtn.disabled = false;
                 } else {
+                    closeRunModeMenu();
                     testDataByPhase = message.tabData || {};
                     initialTestStates = message.states || {};
-                    settings = message.settings || { assemblerEnabled: true, switcherEnabled: true };
+                    runArtifacts = message.runArtifacts || {};
+                    settings = message.settings || { assemblerEnabled: true, switcherEnabled: true, driveFeaturesEnabled: false };
                     isBuildInProgress = !!settings.buildInProgress;
                     log("Received settings in webview:");
                     console.log(settings);
@@ -724,8 +1050,9 @@
 
                     const phaseSwitcherVisible = settings.switcherEnabled;
                     const assemblerVisible = settings.assemblerEnabled;
-                    const firstLaunchVisible = settings.firstLaunchFolderExists;
-                    log(`Applying visibility based on settings: Switcher=${phaseSwitcherVisible}, Assembler=${assemblerVisible}, FirstLaunch=${firstLaunchVisible}`);
+                    const driveFeaturesVisible = settings.driveFeaturesEnabled !== false;
+                    const firstLaunchVisible = driveFeaturesVisible && !!settings.firstLaunchFolderExists;
+                    log(`Applying visibility based on settings: Switcher=${phaseSwitcherVisible}, Assembler=${assemblerVisible}, DriveFeatures=${driveFeaturesVisible}, FirstLaunch=${firstLaunchVisible}`);
 
                     const switcherDisplay = phaseSwitcherVisible ? '' : 'none';
                     phaseSwitcherSectionElements.forEach(el => { if (el instanceof HTMLElement) el.style.display = switcherDisplay; });
@@ -737,6 +1064,11 @@
                     if (createFirstLaunchBtn instanceof HTMLButtonElement) { // Управление видимостью кнопки первого запуска
                         createFirstLaunchBtn.style.display = firstLaunchVisible ? 'inline-flex' : 'none';
                         log(`  First Launch button display set to: ${createFirstLaunchBtn.style.display}`);
+                    }
+
+                    if (driveAccountingModeRow instanceof HTMLElement) {
+                        driveAccountingModeRow.style.display = driveFeaturesVisible ? 'flex' : 'none';
+                        log(`  Drive accounting mode display set to: ${driveAccountingModeRow.style.display}`);
                     }
 
 
@@ -753,7 +1085,9 @@
                     if (phaseSwitcherVisible) {
                         renderPhaseTree(testDataByPhase);
                     } else {
-                        if(phaseTreeContainer instanceof HTMLElement) phaseTreeContainer.innerHTML = '<p>Phase Switcher отключен в настройках.</p>';
+                        if (phaseTreeContainer instanceof HTMLElement) {
+                            phaseTreeContainer.innerHTML = `<p>${window.__loc?.phaseSwitcherDisabled || 'Phase Switcher is disabled in settings.'}</p>`;
+                        }
                          if (collapseAllBtn instanceof HTMLButtonElement) collapseAllBtn.disabled = true;
                     }
 
@@ -773,6 +1107,19 @@
                     } else {
                         updateStatus(readyMessage, 'main', true);
                     }
+                    updateTopRunButtonState();
+                }
+                break;
+
+            case 'updateRunArtifactsState':
+                closeRunModeMenu();
+                runArtifacts = message.runArtifacts || {};
+                updateTopRunButtonState();
+                if (settings.switcherEnabled && testDataByPhase && Object.keys(testDataByPhase).length > 0) {
+                    renderPhaseTree(testDataByPhase);
+                    updatePendingStatus();
+                } else {
+                    updateRunButtonsState();
                 }
                 break;
 
@@ -806,6 +1153,7 @@
             case 'buildStateChanged': {
                 isBuildInProgress = !!message.inProgress;
                 if (isBuildInProgress) {
+                    closeRunModeMenu();
                     const buildMessage = window.__loc?.statusBuildingInProgress || 'Building tests in progress...';
                     updateStatus(buildMessage, 'main', false);
                     updateStatus(buildMessage, 'assemble', false);
@@ -818,6 +1166,7 @@
                     enableAssembleControls(settings.assemblerEnabled);
                     updatePendingStatus();
                 }
+                updateTopRunButtonState();
                 break;
             }
 
@@ -867,6 +1216,10 @@
         vscode.postMessage({ command: 'refreshData' });
     });
 
+    if (runVanessaTopBtn instanceof HTMLButtonElement) {
+        runVanessaTopBtn.addEventListener('click', handleTopRunVanessaClick);
+    }
+
     if (openSettingsBtn instanceof HTMLButtonElement) openSettingsBtn.addEventListener('click', () => {
         log('Open Settings button clicked.');
         vscode.postMessage({ command: 'openSettings' });
@@ -911,6 +1264,9 @@
                 container.classList.remove('show');
             }
         }
+        if (activeRunModeMenu && event.target instanceof Node && !activeRunModeMenu.contains(event.target)) {
+            closeRunModeMenu();
+        }
     });
 
 
@@ -918,6 +1274,7 @@
         assembleBtn.addEventListener('click', () => {
             log('Assemble tests button clicked.');
             const recordGLValue = (recordGLSelect instanceof HTMLSelectElement) ? recordGLSelect.value : '0';
+            isBuildInProgress = true;
             updateStatus(window.__loc?.statusStartingAssembly || 'Starting assembly...', 'assemble', false);
             enablePhaseControls(false, false);
             enableAssembleControls(false);
@@ -928,9 +1285,20 @@
         });
     }
 
+    if (cancelAssembleBtn instanceof HTMLButtonElement) {
+        cancelAssembleBtn.addEventListener('click', () => {
+            if (cancelAssembleBtn.disabled) {
+                return;
+            }
+            log('Cancel build button clicked.');
+            updateStatus(window.__loc?.statusCancellingBuild || 'Cancelling build...', 'assemble', false);
+            vscode.postMessage({ command: 'cancelAssembleScript' });
+        });
+    }
+
     function requestInitialState() {
         log('Requesting initial state...');
-        updateStatus('Запрос данных...', 'main', false);
+        updateStatus(window.__loc?.statusRequestingData || 'Requesting data...', 'main', false);
         enablePhaseControls(false, false);
         enableAssembleControls(false);
         if (applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;
@@ -938,7 +1306,7 @@
     }
 
     log('Webview script initialized.');
-    updateStatus('Загрузка...', 'main', false);
+    updateStatus(window.__loc?.statusLoadingShort || 'Loading...', 'main', false);
     enablePhaseControls(false, false);
     enableAssembleControls(false);
     if (applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;

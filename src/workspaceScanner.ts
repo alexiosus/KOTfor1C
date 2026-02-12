@@ -5,6 +5,7 @@ import { TestInfo } from './types';
 import { getTranslator } from './localization';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
+import { parseKotScenarioDescription } from './kotMetadataDescription';
 
 // Function to get the scan directory path from configuration
 export function getScanDirRelativePath(): string {
@@ -69,6 +70,7 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                 const nestedScenarioNames = parseNestedScenarioNamesFromText(fileContent);
                 const parsedParameterDefaults = parseScenarioParameterDefaults(fileContent);
                 const phaseSwitcherMetadata = parsePhaseSwitcherMetadata(fileContent);
+                const scenarioDescription = parseKotScenarioDescription(fileContent);
 
                 let name: string | null = null;
                 let uid: string | null = null;
@@ -231,6 +233,7 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                         parameterDefaults,
                         nestedScenarioNames: uniqueNestedScenarioNames,
                         uid: uid || undefined,
+                        scenarioDescription: scenarioDescription || undefined,
                         scenarioCode: scenarioCode || undefined,
                         scenarioCodeLine: scenarioCodeLine ?? undefined,
                         scenarioCodeLineStartCharacter: scenarioCodeLineStartCharacter ?? undefined,

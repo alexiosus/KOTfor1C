@@ -501,13 +501,13 @@ export class DriveHoverProvider implements vscode.HoverProvider {
 
                 return {
                     hasKotMetadata: true,
-                    description: contentLines.join('\n').trim()
+                    description: this.normalizeKotDescriptionContent(contentLines.join('\n'))
                 };
             }
 
             return {
                 hasKotMetadata: true,
-                description: this.parseInlineYamlScalar(rawValue).trim()
+                description: this.normalizeKotDescriptionContent(this.parseInlineYamlScalar(rawValue))
             };
         }
 
@@ -531,6 +531,24 @@ export class DriveHoverProvider implements vscode.HoverProvider {
 
         if (trimmed.length >= 2 && trimmed.startsWith('\'') && trimmed.endsWith('\'')) {
             return trimmed.slice(1, -1).replace(/''/g, '\'');
+        }
+
+        return trimmed;
+    }
+
+    private normalizeKotDescriptionContent(rawValue: string): string {
+        const trimmed = rawValue.trim();
+        if (!trimmed) {
+            return '';
+        }
+
+        const nonEmptyLines = trimmed
+            .split(/\r\n|\r|\n/)
+            .map(line => line.trim())
+            .filter(line => line.length > 0);
+
+        if (nonEmptyLines.length > 0 && nonEmptyLines.every(line => line === '-')) {
+            return '';
         }
 
         return trimmed;
@@ -666,7 +684,9 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         } else if (!hoverData.descriptionInfo.description) {
             content.appendMarkdown(`**${descriptionLabel}:** _${emptyLabel}_\n\n`);
         } else {
-            content.appendMarkdown(`**${descriptionLabel}:**\n\n${hoverData.descriptionInfo.description}\n\n`);
+            content.appendMarkdown(`**${descriptionLabel}:**\n\n`);
+            this.appendCompactMultilineText(content, hoverData.descriptionInfo.description);
+            content.appendMarkdown('\n\n');
         }
 
         return new vscode.Hover(content);
@@ -729,7 +749,9 @@ export class DriveHoverProvider implements vscode.HoverProvider {
                         ? this.applyLineLiteralsToTemplate(secondaryTemplate, lineLiterals)
                         : null;
 
-                    content.appendMarkdown(`**${descriptionHeader}:**\n\n${descriptionText}\n\n`);
+                    content.appendMarkdown(`**${descriptionHeader}:**\n\n`);
+                    this.appendCompactMultilineText(content, descriptionText);
+                    content.appendMarkdown('\n\n');
                     content.appendMarkdown(`---\n\n\`${primaryExample}\``);
                     if (secondaryExample && secondaryExample !== primaryExample) {
                         content.appendMarkdown(`\n\n\`${secondaryExample}\``);
@@ -744,7 +766,50 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         
         return null;
     }
-    
+
+    private appendCompactMultilineText(markdown: vscode.MarkdownString, text: string): void {
+        const normalized = text.replace(/\r\n|\r/g, '\n').trim();
+        if (!normalized) {
+            return;
+        }
+
+        const collapsedLines: string[] = [];
+        let previousWasBlank = false;
+        for (const rawLine of normalized.split('\n')) {
+            const line = rawLine.replace(/\s+$/g, '');
+            const isBlank = line.trim().length === 0;
+            if (isBlank) {
+                if (!previousWasBlank) {
+                    collapsedLines.push('');
+                }
+                previousWasBlank = true;
+                continue;
+            }
+
+            collapsedLines.push(line);
+            previousWasBlank = false;
+        }
+
+        while (collapsedLines.length > 0 && collapsedLines[0] === '') {
+            collapsedLines.shift();
+        }
+        while (collapsedLines.length > 0 && collapsedLines[collapsedLines.length - 1] === '') {
+            collapsedLines.pop();
+        }
+
+        collapsedLines.forEach((line, index) => {
+            if (line === '') {
+                markdown.appendMarkdown('\n');
+                return;
+            }
+
+            markdown.appendText(line);
+            if (index < collapsedLines.length - 1) {
+                markdown.appendMarkdown('  \n');
+            }
+        });
+    }
+
     private isInScenarioTextBlock(document: vscode.TextDocument, position: vscode.Position): boolean {
         if (!document.fileName.toLowerCase().endsWith('.yaml')) return false;
         const textUpToPosition = document.getText(new vscode.Range(new vscode.Position(0, 0), position));

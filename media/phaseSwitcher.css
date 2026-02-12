@@ -77,12 +77,24 @@ h1 {
 
 .global-list-actions {
     display: flex;
-    justify-content: flex-end; 
+    justify-content: space-between;
     align-items: center;
     padding: 4px 0;
     margin-bottom: 6px;
     flex-shrink: 0;
-    gap: 6px; 
+    gap: 10px;
+}
+
+.global-list-actions-left,
+.global-list-actions-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.global-list-actions-right {
+    justify-content: flex-end;
 }
 .compact-action-btn {
     background-color: transparent;
@@ -375,6 +387,137 @@ label.checkbox-item.changed span.checkbox-label-text {
     color: var(--vscode-textLink-activeForeground); 
 }
 
+.run-scenario-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0 4px;
+    margin: 0;
+    flex-shrink: 0;
+    color: var(--vscode-icon-foreground);
+    opacity: 0.85;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+}
+.run-scenario-btn .codicon {
+    vertical-align: middle;
+}
+.run-scenario-btn:hover {
+    opacity: 1;
+    color: var(--vscode-testing-iconPassed);
+}
+.run-scenario-btn:disabled {
+    cursor: not-allowed;
+    color: var(--vscode-disabledForeground);
+    opacity: 0.5;
+}
+.run-scenario-btn-stale {
+    color: var(--vscode-testing-iconQueued, var(--vscode-editorWarning-foreground));
+    opacity: 1;
+}
+.run-scenario-btn-stale:hover {
+    color: var(--vscode-editorWarning-foreground);
+}
+.run-scenario-btn-running {
+    color: var(--vscode-testing-iconQueued, var(--vscode-progressBar-background));
+    opacity: 1;
+}
+.run-scenario-btn-running:hover {
+    color: var(--vscode-testing-iconQueued, var(--vscode-progressBar-background));
+}
+.run-scenario-btn-passed {
+    color: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen));
+    opacity: 1;
+}
+.run-scenario-btn-passed:hover {
+    color: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen));
+}
+.run-scenario-btn-stale-passed {
+    color: var(--vscode-testing-iconQueued, var(--vscode-editorWarning-foreground));
+    opacity: 1;
+}
+.run-scenario-btn-stale-passed:hover {
+    color: var(--vscode-editorWarning-foreground);
+}
+.run-scenario-btn-failed {
+    color: var(--vscode-testing-iconFailed, var(--vscode-editorError-foreground));
+    opacity: 1;
+}
+.run-scenario-btn-failed:hover {
+    color: var(--vscode-testing-iconFailed, var(--vscode-editorError-foreground));
+}
+
+.run-scenario-log-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0 4px;
+    margin: 0;
+    flex-shrink: 0;
+    color: var(--vscode-testing-iconFailed, var(--vscode-editorError-foreground));
+    opacity: 0.85;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+}
+.run-scenario-log-btn:hover {
+    opacity: 1;
+    color: var(--vscode-editorError-foreground);
+}
+.run-scenario-log-btn:disabled {
+    cursor: not-allowed;
+    color: var(--vscode-disabledForeground);
+    opacity: 0.5;
+}
+
+.run-mode-menu {
+    position: fixed;
+    z-index: 1000;
+    min-width: 180px;
+    background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+    border: 1px solid var(--vscode-menu-border, var(--vscode-contrastBorder));
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25);
+    border-radius: 4px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.run-mode-menu-item {
+    background: transparent;
+    border: none;
+    color: var(--vscode-menu-foreground, var(--vscode-editor-foreground));
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    padding: 6px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: var(--vscode-font-size);
+}
+.run-mode-menu-item:hover {
+    background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+    color: var(--vscode-menu-selectionForeground, var(--vscode-list-hoverForeground));
+}
+.run-mode-menu-item:disabled,
+.run-mode-menu-item-disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+.run-mode-menu-item:disabled:hover,
+.run-mode-menu-item-disabled:hover {
+    background: transparent;
+    color: var(--vscode-menu-foreground, var(--vscode-editor-foreground));
+}
+.run-mode-menu-item .codicon {
+    font-size: 14px;
+}
+
 #sectionSeparator {
     border: none; 
     border-top: 1px dashed var(--vscode-panel-border);
@@ -486,6 +629,23 @@ label.checkbox-item.changed span.checkbox-label-text {
     cursor: not-allowed; 
     border-color: var(--vscode-button-border, var(--vscode-disabledForeground));
     opacity: 0.7;
+}
+
+#cancelAssembleBtn {
+    display: none;
+    background-color: #ff7f50;
+    border-color: #ff7f50;
+    color: #ffffff;
+}
+#cancelAssembleBtn:hover {
+    background-color: #ff6f3a;
+    border-color: #ff6f3a;
+}
+#cancelAssembleBtn:disabled {
+    background-color: #c55e3a;
+    border-color: #c55e3a;
+    color: #ffffff;
+    opacity: 0.85;
 }
 
 .button-with-icon {

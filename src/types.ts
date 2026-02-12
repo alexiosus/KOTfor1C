@@ -32,6 +32,8 @@ export interface TestInfo {
     uid?: string;
     /** Код сценария (из блока ДанныеСценария.Код) */
     scenarioCode?: string;
+    /** Описание сценария (из блока KOTМетаданные.Описание) */
+    scenarioDescription?: string;
     /** Номер строки поля Код в YAML (0-based) */
     scenarioCodeLine?: number;
     /** Начальная позиция (character) строки поля Код в YAML (0-based) */

@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/KOTfor1C",
-  "version": "1.13.0",
+  "version": "2.0.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -39,47 +39,52 @@
             "description": "%config.localization.languageOverride.description%",
             "order": 1
           },
-          "kotTestToolkit.steps.externalUrl": {
-            "type": "string",
-            "default": "https://raw.githubusercontent.com/kakoytochelik/KOTfor1C/main/res/steps.htm",
-            "description": "%config.stepsExternalUrl.description%",
-            "order": 10
-          },
+          "kotTestToolkit.assembleScript.showDriveFeatures": {
+            "type": "boolean",
+            "default": false,
+            "description": "%config.assembleScript.showDriveFeatures.description%",
+            "order": 2
+          }
+        }
+      },
+      {
+        "title": "%config.editorSettings.title%",
+        "properties": {
           "kotTestToolkit.editor.autoCollapseOnOpen": {
             "type": "boolean",
             "default": true,
             "description": "%config.autoCollapseOnOpen.description%",
-            "order": 11
-          },
-          "kotTestToolkit.editor.autoFillNestedScenariosOnSave": {
-            "type": "boolean",
-            "default": true,
-            "description": "%config.autoFillNestedScenariosOnSave.description%",
-            "order": 12
-          },
-          "kotTestToolkit.editor.autoFillScenarioParametersOnSave": {
-            "type": "boolean",
-            "default": true,
-            "description": "%config.autoFillScenarioParametersOnSave.description%",
-            "order": 13
+            "order": 1
           },
           "kotTestToolkit.editor.autoReplaceTabsWithSpacesOnSave": {
             "type": "boolean",
             "default": true,
             "description": "%config.autoReplaceTabsWithSpacesOnSave.description%",
-            "order": 14
+            "order": 2
           },
           "kotTestToolkit.editor.autoAlignNestedScenarioParametersOnSave": {
             "type": "boolean",
             "default": true,
             "description": "%config.autoAlignNestedScenarioParametersOnSave.description%",
-            "order": 15
+            "order": 3
           },
           "kotTestToolkit.editor.autoAlignGherkinTablesOnSave": {
             "type": "boolean",
             "default": true,
             "description": "%config.autoAlignGherkinTablesOnSave.description%",
-            "order": 16
+            "order": 4
+          },
+          "kotTestToolkit.editor.autoFillNestedScenariosOnSave": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.autoFillNestedScenariosOnSave.description%",
+            "order": 5
+          },
+          "kotTestToolkit.editor.autoFillScenarioParametersOnSave": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.autoFillScenarioParametersOnSave.description%",
+            "order": 6
           },
           "kotTestToolkit.editor.scenarioParameterExclusions": {
             "type": "array",
@@ -88,19 +93,30 @@
             },
             "default": [],
             "description": "%config.scenarioParameterExclusions.description%",
-            "order": 17
+            "order": 7
           },
           "kotTestToolkit.editor.showRefillMessages": {
             "type": "boolean",
             "default": true,
             "description": "%config.showRefillMessages.description%",
-            "order": 18
+            "order": 8
+          }
+        }
+      },
+      {
+        "title": "%config.diagnosticsSettings.title%",
+        "properties": {
+          "kotTestToolkit.steps.externalUrl": {
+            "type": "string",
+            "default": "https://raw.githubusercontent.com/kakoytochelik/KOTfor1C/main/res/steps.htm",
+            "description": "%config.stepsExternalUrl.description%",
+            "order": 1
           },
           "kotTestToolkit.editor.checkRelatedParentScenarios": {
             "type": "boolean",
             "default": true,
             "description": "%config.checkRelatedParentScenarios.description%",
-            "order": 19
+            "order": 2
           }
         }
       },
@@ -111,14 +127,50 @@
             "type": "boolean",
             "default": false,
             "description": "%config.showOutputPanel.description%",
-            "order": 22
+            "order": 1
+          },
+          "kotTestToolkit.output.advancedLogging": {
+            "type": "boolean",
+            "default": false,
+            "description": "%config.output.advancedLogging.description%",
+            "order": 2
           },
           "kotTestToolkit.paths.openBuildScenarioParametersManager": {
             "type": "null",
             "default": null,
             "description": "%config.paths.openBuildScenarioParametersManager.description%",
             "markdownDescription": "%config.paths.openBuildScenarioParametersManager.markdownDescription%",
-            "order": 23
+            "order": 3
+          }
+        }
+      },
+      {
+        "title": "%config.vanessaSettings.title%",
+        "properties": {
+          "kotTestToolkit.runVanessa.vanessaEpfPath": {
+            "type": "string",
+            "default": "tools/vanessa/vanessa-automation.epf",
+            "description": "%config.runVanessa.vanessaEpfPath.description%",
+            "order": 1
+          },
+          "kotTestToolkit.runVanessa.runtimeDirectory": {
+            "type": "string",
+            "default": ".vscode/kot-runtime/vanessa",
+            "description": "%config.runVanessa.runtimeDirectory.description%",
+            "order": 2
+          },
+          "kotTestToolkit.runVanessa.commandTemplate": {
+            "type": "string",
+            "default": "",
+            "description": "%config.runVanessa.commandTemplate.description%",
+            "markdownDescription": "%config.runVanessa.commandTemplate.markdownDescription%",
+            "order": 3
+          },
+          "kotTestToolkit.runVanessa.checkUnsafeActionProtection": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.runVanessa.checkUnsafeActionProtection.description%",
+            "order": 4
           }
         }
       },
@@ -129,60 +181,60 @@
             "type": "string",
             "default": "/L ru /DisableStartupMessages /DisableStartupDialogs",
             "description": "%config.startupParams.parameters.description%",
-            "order": 24
+            "order": 1
           }
         }
       },
       {
         "title": "%config.pathsSettings.title%",
         "properties": {
-          "kotTestToolkit.paths.emptyInfobase": {
-            "type": "string",
-            "default": "",
-            "description": "%config.emptyInfobase.description%",
-            "order": 26
-          },
-          "kotTestToolkit.assembleScript.buildPath": {
-            "type": "string",
-            "default": "C:\\EtalonDrive\\",
-            "description": "%config.buildPath.description%",
-            "order": 27
-          },
-          "kotTestToolkit.paths.oneCEnterpriseExe": {
-            "type": "string",
-            "default": "C:\\Program Files (x86)\\1cv8\\8.3.24.1738\\bin\\1cv8.exe",
-            "description": "%config.oneCEnterpriseExe.description%",
-            "order": 28
-          },
-          "kotTestToolkit.paths.fileWorkshopExe": {
-            "type": "string",
-            "default": "C:\\Program Files (x86)\\1cv8fv\\bin\\1cv8fv.exe",
-            "description": "%config.fileWorkshopExe.description%",
-            "order": 29
-          },
-          "kotTestToolkit.paths.buildScenarioBddEpf": {
-            "type": "string",
-            "default": "build/BuildScenarioBDD.epf",
-            "description": "%config.paths.buildScenarioBddEpf.description%",
-            "order": 30
-          },
           "kotTestToolkit.paths.yamlSourceDirectory": {
             "type": "string",
             "default": "tests/RegressionTests/yaml",
             "description": "%config.paths.yamlSourceDirectory.description%",
-            "order": 32
+            "order": 1
           },
           "kotTestToolkit.paths.disabledTestsDirectory": {
             "type": "string",
             "default": "RegressionTests_Disabled/Yaml",
             "description": "%config.paths.disabledTestsDirectory.description%",
-            "order": 33
+            "order": 2
+          },
+          "kotTestToolkit.paths.buildScenarioBddEpf": {
+            "type": "string",
+            "default": "build/BuildScenarioBDD.epf",
+            "description": "%config.paths.buildScenarioBddEpf.description%",
+            "order": 3
+          },
+          "kotTestToolkit.assembleScript.buildPath": {
+            "type": "string",
+            "default": "C:\\EtalonDrive\\",
+            "description": "%config.buildPath.description%",
+            "order": 4
+          },
+          "kotTestToolkit.paths.emptyInfobase": {
+            "type": "string",
+            "default": "",
+            "description": "%config.emptyInfobase.description%",
+            "order": 5
+          },
+          "kotTestToolkit.paths.oneCEnterpriseExe": {
+            "type": "string",
+            "default": "C:\\Program Files (x86)\\1cv8\\8.3.24.1738\\bin\\1cv8.exe",
+            "description": "%config.oneCEnterpriseExe.description%",
+            "order": 6
+          },
+          "kotTestToolkit.paths.fileWorkshopExe": {
+            "type": "string",
+            "default": "C:\\Program Files (x86)\\1cv8fv\\bin\\1cv8fv.exe",
+            "description": "%config.fileWorkshopExe.description%",
+            "order": 7
           },
           "kotTestToolkit.paths.firstLaunchFolder": {
             "type": "string",
             "default": "",
             "description": "%config.paths.firstLaunchFolder.description%",
-            "order": 34
+            "order": 8
           }
         }
       }
@@ -291,6 +343,11 @@
       {
         "command": "kotTestToolkit.scanWorkspaceDiagnostics",
         "title": "%cmd.scanWorkspaceDiagnostics.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.openScenarioInVanessaManual",
+        "title": "%cmd.openScenarioInVanessaManual.title%",
         "category": "%cmd.category%"
       }
     ],
@@ -436,6 +493,10 @@
         },
         {
           "command": "kotTestToolkit.scanWorkspaceDiagnostics",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.openScenarioInVanessaManual",
           "when": "true"
         }
       ]

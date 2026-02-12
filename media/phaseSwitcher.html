@@ -21,28 +21,35 @@
             </div>
 
             <div class="global-list-actions">
-                <div class="dropdown-container">
-                    <button id="addScenarioDropdownBtn" class="button-with-icon compact-action-btn" title="${loc.createScenarioTitle}">
-                        <span class="codicon codicon-add"></span>
+                <div class="global-list-actions-left">
+                    <button id="runVanessaTopBtn" class="button-with-icon compact-action-btn" title="${loc.runVanessaTopTitle}">
+                        <span class="codicon codicon-play-circle"></span>
                     </button>
-                    <div id="addScenarioDropdownContent" class="dropdown-content">
-                        <a href="#" id="createMainScenarioFromDropdownBtn" class="dropdown-item">
-                            <span class="codicon codicon-code-oss"></span> ${loc.createMainScenario}
-                        </a>
-                        <a href="#" id="createNestedScenarioFromDropdownBtn" class="dropdown-item">
-                            <span class="codicon codicon-references"></span> ${loc.createNestedScenario}
-                        </a>
-                    </div>
                 </div>
-                <button id="refreshBtn" class="button-with-icon compact-action-btn" title="${loc.refreshTitle}">
-                    <span class="codicon codicon-refresh"></span>
-                </button>
-                <button id="collapseAllBtn" class="button-with-icon compact-action-btn" title="${loc.collapseExpandAllTitle}">
-                    <span class="codicon codicon-list-tree"></span>
-                </button>
-                <button id="selectAllBtn" class="button-with-icon compact-action-btn" title="${loc.toggleAllCheckboxesTitle}">
-                    <span class="codicon codicon-checklist"></span>
-                </button>
+                <div class="global-list-actions-right">
+                    <div class="dropdown-container">
+                        <button id="addScenarioDropdownBtn" class="button-with-icon compact-action-btn" title="${loc.createScenarioTitle}">
+                            <span class="codicon codicon-add"></span>
+                        </button>
+                        <div id="addScenarioDropdownContent" class="dropdown-content">
+                            <a href="#" id="createMainScenarioFromDropdownBtn" class="dropdown-item">
+                                <span class="codicon codicon-code-oss"></span> ${loc.createMainScenario}
+                            </a>
+                            <a href="#" id="createNestedScenarioFromDropdownBtn" class="dropdown-item">
+                                <span class="codicon codicon-references"></span> ${loc.createNestedScenario}
+                            </a>
+                        </div>
+                    </div>
+                    <button id="refreshBtn" class="button-with-icon compact-action-btn" title="${loc.refreshTitle}">
+                        <span class="codicon codicon-refresh"></span>
+                    </button>
+                    <button id="collapseAllBtn" class="button-with-icon compact-action-btn" title="${loc.collapseExpandAllTitle}">
+                        <span class="codicon codicon-list-tree"></span>
+                    </button>
+                    <button id="selectAllBtn" class="button-with-icon compact-action-btn" title="${loc.toggleAllCheckboxesTitle}">
+                        <span class="codicon codicon-checklist"></span>
+                    </button>
+                </div>
             </div>
 
             <div id="phaseTreeContainer" class="phase-tree-container">
@@ -75,9 +82,9 @@
                     </button>
                 </div>
             </div>
-            <div class="assemble-options assemble-options-inline">
+            <div id="driveAccountingModeRow" class="assemble-options assemble-options-inline">
                 ${loc.accountingMode}:
-                <select id="recordGLSelect" name="recordGLAccounts" title="Record GL Accounts (0=No, 1=Yes, 2=Templates)">
+                <select id="recordGLSelect" name="recordGLAccounts" title="${loc.recordGLSelectTitle}">
                     <option value="0">GL-</option>
                     <option value="1">GL+</option>
                     <option value="2" selected>Templates</option>
@@ -91,13 +98,16 @@
                     <button id="assembleTestsBtn" class="button-with-icon">
                         <span class="codicon codicon-beaker"></span> ${loc.buildTests}
                     </button>
+                    <button id="cancelAssembleBtn" class="button-with-icon" title="${loc.cancelBuildTitle}">
+                        <span class="codicon codicon-debug-stop"></span> ${loc.cancelBuild}
+                    </button>
                 </div>
             </div>
             <div id="assembleStatus" class="status-area">
             </div>
         </div>
     </div>
-    <script type="application/javascript" nonce="${nonce}">window.__loc = "${webviewLoc}";</script>
+    <script type="application/javascript" nonce="${nonce}">window.__loc = ${webviewLoc};</script>
     <script type="application/javascript" nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>

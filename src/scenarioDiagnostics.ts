@@ -355,8 +355,10 @@ function getKotDescriptionState(document: vscode.TextDocument): KotDescriptionSt
                     continue;
                 }
 
-                const content = bodyText.slice(Math.min(bodyText.length, descriptionIndent + 1));
-                if (content.trim().length > 0) {
+                const content = bodyText
+                    .slice(Math.min(bodyText.length, descriptionIndent + 1))
+                    .trim();
+                if (content.length > 0 && content !== '-') {
                     hasNonEmptyContent = true;
                     break;
                 }

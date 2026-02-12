@@ -100,7 +100,7 @@ export function parseScenarioParameterDefaults(documentText: string): Map<string
         }
 
         const rawValue = extractRawFieldValue(blockContent, 'Значение');
-        defaults.set(parameterName, normalizeScenarioCallParameterValue(rawValue, parameterName));
+        defaults.set(parameterName, normalizeScenarioCallParameterValue(rawValue ?? undefined, parameterName));
         PARAM_BLOCK_REGEX.lastIndex = blockStartOffset;
     }
 

@@ -3,6 +3,9 @@
   "ext.description": "Keep On Testing: YAML scenario toolkit for 1C projects",
 
   "config.generalTitle": "General settings",
+  "config.editorSettings.title": "Editor Settings",
+  "config.diagnosticsSettings.title": "Diagnostics and Steps Library",
+  "config.vanessaSettings.title": "Vanessa Automation Launch",
   "config.localization.languageOverride.description": "Language override for the extension UI (requires reloading the view). This does not apply to the settings page and context menu.",
   "config.localization.system.desc": "Follow VS Code UI language",
   "config.localization.en.desc": "English",
@@ -21,6 +24,13 @@
 
   "config.assemblySettings.title": "Test Assembly Settings",
   "config.showOutputPanel.description": "Automatically show the Output panel when starting test assembly.",
+  "config.assembleScript.showDriveFeatures.description": "Show 1C:Drive-specific controls in assembly UI (Build FL and accounting mode selector).",
+  "config.output.advancedLogging.description": "Show additional technical details in Output (for troubleshooting).",
+  "config.runVanessa.vanessaEpfPath.description": "Path to vanessa-automation.epf for built-in Vanessa launch from Phase Switcher (absolute or relative to workspace root).",
+  "config.runVanessa.runtimeDirectory.description": "Directory for Vanessa runtime files (scenario log/status). Absolute or relative to workspace root.",
+  "config.runVanessa.commandTemplate.description": "Shell command template for launching Vanessa Automation for a selected scenario.",
+  "config.runVanessa.commandTemplate.markdownDescription": "Optional command template used by the run icon in Phase Switcher.\n\nAvailable placeholders:\n- `${scenarioName}` / `${scenarioNameQuoted}`\n- `${featurePath}` / `${featurePathQuoted}`\n- `${jsonPath}` / `${jsonPathQuoted}`\n- `${workspaceRoot}` / `${workspaceRootQuoted}`\n\nIf empty, the extension uses built-in Vanessa launch logic (1C + vanessa-automation.epf + StartFeaturePlayer).",
+  "config.runVanessa.checkUnsafeActionProtection.description": "Before built-in Vanessa launch, verify DisableUnsafeActionProtection in conf.cfg for EmptyInfobase and offer to patch conf.cfg if missing.",
 
   "config.startupParameters.title": "1C:Enterprise Startup Parameters",
     "config.startupParams.parameters.description": "1C:Enterprise startup parameters (space-separated, e.g., '/L en /DisableStartupMessages /Debug')",
@@ -30,7 +40,7 @@
   "config.oneCEnterpriseExe.description": "Full path to 1cv8.exe (Windows) or 1cestart (macOS).",
   "config.fileWorkshopExe.description": "Full path to '1C:Enterprise — File Workshop' (1cv8fv.exe).",
 
-  "config.paths.buildScenarioBddEpf.description": "Relative path to BuildScenarioBDD.epf data processor for YAML to Feature conversion",
+  "config.paths.buildScenarioBddEpf.description": "Relative path to СборкаТекстовСценариев.epf data processor for YAML to Feature conversion",
   "config.paths.yamlSourceDirectory.description": "Relative path to YAML source directory",
   "config.paths.disabledTestsDirectory.description": "Relative path to disabled tests directory (Mirrored to Yaml Source Directory)",
   "config.paths.firstLaunchFolder.description": "Relative path to first launch data folder (Build FL archive button shown only if this folder exists)",
@@ -60,6 +70,7 @@
   "cmd.fixScenarioIssues.title": "KOT - Fix scenario issues",
   "cmd.addScenarioParameterExclusion.title": "KOT - Add scenario parameter exclusion",
   "cmd.scanWorkspaceDiagnostics.title": "KOT - Scan workspace diagnostics",
+  "cmd.openScenarioInVanessaManual.title": "KOT - Open scenario in Vanessa (manual debug)",
 
   "view.phaseSwitcher.name": "KOT for 1C",
   "view.phaseSwitcher.contextualTitle": "KOT for 1C"
