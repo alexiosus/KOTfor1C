@@ -506,8 +506,7 @@
         {
           "id": "kotTestToolkitContainer",
           "title": "%ext.displayName%",
-          "icon": "res/icons/KOTfor1CTransparent.png",
-          "when": "config.kotTestToolkit.features.enablePhaseSwitcher == true || config.kotTestToolkit.features.enableAssembleTests == true"
+          "icon": "res/icons/KOTfor1CTransparent.png"
         }
       ]
     },
