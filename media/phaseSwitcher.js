@@ -11,14 +11,21 @@
     let testDefaultStates = {};
     let phaseExpandedState = {}; 
     let runArtifacts = {};
+    let affectedMainScenarioNames = new Set();
+    let favoriteScenarios = [];
+    let favoriteSortMode = 'code';
+    let activeManagerTab = 'tests';
     let settings = {
         assemblerEnabled: true,
         switcherEnabled: true,
-        driveFeaturesEnabled: false
+        driveFeaturesEnabled: false,
+        highlightAffectedMainScenarios: true
     };
     let isBuildInProgress = false;
     let areAllPhasesCurrentlyExpanded = false; 
     let activeRunModeMenu = null;
+    let activeContextMenu = null;
+    const FAVORITE_SCENARIO_DROP_MIME = 'application/x-kot-favorite-scenario-uri';
 
     // === Получение ссылок на элементы DOM ===
     const refreshBtn = document.getElementById('refreshBtn');
@@ -32,9 +39,14 @@
     const addScenarioDropdownContent = document.getElementById('addScenarioDropdownContent');
     const createMainScenarioFromDropdownBtn = document.getElementById('createMainScenarioFromDropdownBtn');
     const createNestedScenarioFromDropdownBtn = document.getElementById('createNestedScenarioFromDropdownBtn');
+    const testsTabBtn = document.getElementById('testsTabBtn');
+    const favoritesTabBtn = document.getElementById('favoritesTabBtn');
+    const favoritesSortControls = document.getElementById('favoritesSortControls');
+    const favoritesSortSelect = document.getElementById('favoritesSortSelect');
 
     const phaseSwitcherSectionElements = document.querySelectorAll('.phase-switcher-section');
     const phaseTreeContainer = document.getElementById('phaseTreeContainer');
+    const favoritesContainer = document.getElementById('favoritesContainer');
 
     const statusBar = document.getElementById('statusBar');
     const selectAllBtn = document.getElementById('selectAllBtn');
@@ -92,7 +104,7 @@
     }
 
     /**
-     * Включает или отключает основные элементы управления Phase Switcher.
+     * Включает или отключает основные элементы управления Test Manager.
      * @param {boolean} enable - True для включения, false для отключения.
      * @param {boolean} [refreshButtonAlso=true] - Управляет ли также кнопкой обновления.
      */
@@ -170,11 +182,78 @@
     }
 
     function updateTopRunButtonState() {
-        if (!(runVanessaTopBtn instanceof HTMLButtonElement)) {
+        const canRun = settings.switcherEnabled && !isBuildInProgress;
+        if (runVanessaTopBtn instanceof HTMLButtonElement) {
+            runVanessaTopBtn.disabled = !canRun;
+        }
+    }
+
+    function normalizeAffectedMainScenarioNames(names) {
+        if (!Array.isArray(names)) {
+            return new Set();
+        }
+        const result = new Set();
+        names.forEach(name => {
+            if (typeof name === 'string') {
+                const trimmed = name.trim();
+                if (trimmed) {
+                    result.add(trimmed);
+                }
+            }
+        });
+        return result;
+    }
+
+    function applyAffectedMainScenarioHighlighting() {
+        if (!phaseTreeContainer) return;
+        const checkboxes = phaseTreeContainer.querySelectorAll('input[type="checkbox"]');
+        if (settings.highlightAffectedMainScenarios === false) {
+            checkboxes.forEach(cb => {
+                if (!(cb instanceof HTMLInputElement)) return;
+                const label = cb.closest('.checkbox-item');
+                label?.classList.remove('affected-main-scenario');
+            });
+            const phaseGroups = phaseTreeContainer.querySelectorAll('.phase-group');
+            phaseGroups.forEach(group => {
+                if (!(group instanceof HTMLElement)) return;
+                group.classList.remove('phase-group-affected');
+                const header = group.querySelector('.phase-header');
+                if (header instanceof HTMLElement) {
+                    header.classList.remove('phase-header-affected');
+                }
+            });
             return;
         }
-        const canRun = settings.switcherEnabled && !isBuildInProgress;
-        runVanessaTopBtn.disabled = !canRun;
+
+        checkboxes.forEach(cb => {
+            if (!(cb instanceof HTMLInputElement)) return;
+            const name = cb.name || cb.getAttribute('name') || '';
+            const label = cb.closest('.checkbox-item');
+            if (!label) return;
+            label.classList.toggle('affected-main-scenario', !!name && affectedMainScenarioNames.has(name));
+        });
+
+        const phaseGroups = phaseTreeContainer.querySelectorAll('.phase-group');
+        phaseGroups.forEach(group => {
+            if (!(group instanceof HTMLElement)) return;
+            const groupCheckboxes = group.querySelectorAll('input[type="checkbox"]');
+            let hasAffectedScenarioInGroup = false;
+            groupCheckboxes.forEach(cb => {
+                if (hasAffectedScenarioInGroup || !(cb instanceof HTMLInputElement)) {
+                    return;
+                }
+                const name = cb.name || cb.getAttribute('name') || '';
+                if (name && affectedMainScenarioNames.has(name)) {
+                    hasAffectedScenarioInGroup = true;
+                }
+            });
+
+            group.classList.toggle('phase-group-affected', hasAffectedScenarioInGroup);
+            const header = group.querySelector('.phase-header');
+            if (header instanceof HTMLElement) {
+                header.classList.toggle('phase-header-affected', hasAffectedScenarioInGroup);
+            }
+        });
     }
 
     /**
@@ -214,6 +293,121 @@
              .replace(/'/g, "&#039;");
      }
 
+    function escapeHtmlText(value) {
+        if (typeof value !== 'string') {
+            try {
+                value = String(value);
+            } catch {
+                return '';
+            }
+        }
+        return value
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function normalizeFavoriteSortMode(value) {
+        return value === 'name' ? 'name' : 'code';
+    }
+
+    function sortFavoriteScenarios(entries, sortMode) {
+        const mode = normalizeFavoriteSortMode(sortMode);
+        const sorted = [...entries];
+        if (mode === 'name') {
+            sorted.sort((left, right) => {
+                const leftName = (left?.name || '').toString();
+                const rightName = (right?.name || '').toString();
+                return leftName.localeCompare(rightName, undefined, { sensitivity: 'base' });
+            });
+            return sorted;
+        }
+
+        sorted.sort((left, right) => {
+            const leftName = (left?.name || '').toString();
+            const rightName = (right?.name || '').toString();
+            const leftCode = (left?.scenarioCode || '').toString().trim();
+            const rightCode = (right?.scenarioCode || '').toString().trim();
+            const leftHasCode = leftCode.length > 0;
+            const rightHasCode = rightCode.length > 0;
+            if (leftHasCode && rightHasCode) {
+                const byCode = leftCode.localeCompare(rightCode, undefined, { sensitivity: 'base' });
+                if (byCode !== 0) {
+                    return byCode;
+                }
+                return leftName.localeCompare(rightName, undefined, { sensitivity: 'base' });
+            }
+            if (leftHasCode) {
+                return -1;
+            }
+            if (rightHasCode) {
+                return 1;
+            }
+            return leftName.localeCompare(rightName, undefined, { sensitivity: 'base' });
+        });
+        return sorted;
+    }
+
+    function renderFavoritesList() {
+        if (!(favoritesContainer instanceof HTMLElement)) {
+            return;
+        }
+
+        const emptyText = window.__loc?.favoritesEmpty || 'No favorite scenarios yet.';
+        const sortedFavorites = sortFavoriteScenarios(Array.isArray(favoriteScenarios) ? favoriteScenarios : [], favoriteSortMode);
+        if (sortedFavorites.length === 0) {
+            favoritesContainer.innerHTML = `<p>${escapeHtmlText(emptyText)}</p>`;
+            return;
+        }
+
+        const openTitle = window.__loc?.favoritesOpenTitle || 'Open scenario';
+        const removeTitle = window.__loc?.favoritesRemoveTitle || 'Remove from favorites';
+        const noCode = window.__loc?.noCode || 'No code';
+
+        const itemsHtml = sortedFavorites.map(entry => {
+            const uri = typeof entry?.uri === 'string' ? entry.uri : '';
+            const name = typeof entry?.name === 'string' ? entry.name : '';
+            const scenarioCode = typeof entry?.scenarioCode === 'string' ? entry.scenarioCode : '';
+            return `
+                <div class="favorite-item" data-uri="${escapeHtmlAttr(uri)}" data-name="${escapeHtmlAttr(name)}" draggable="true" tabindex="0" role="button" title="${escapeHtmlAttr(openTitle)}">
+                    <div class="favorite-main" title="${escapeHtmlAttr(uri)}">
+                        <span class="favorite-label">${escapeHtmlText(name)}</span>
+                        <span class="favorite-meta">${escapeHtmlText(scenarioCode || noCode)}</span>
+                    </div>
+                    <div class="favorite-actions">
+                        <button type="button" class="favorite-action-btn remove" data-action="remove" data-uri="${escapeHtmlAttr(uri)}" title="${escapeHtmlAttr(removeTitle)}">
+                            <span class="codicon codicon-close"></span>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        favoritesContainer.innerHTML = `<div class="favorites-list">${itemsHtml}</div>`;
+    }
+
+    function setActiveManagerTab(tabName) {
+        const nextTab = tabName === 'favorites' ? 'favorites' : 'tests';
+        activeManagerTab = nextTab;
+        const isFavoritesTab = nextTab === 'favorites';
+
+        if (phaseTreeContainer instanceof HTMLElement) {
+            phaseTreeContainer.classList.toggle('hidden', isFavoritesTab);
+        }
+        if (favoritesContainer instanceof HTMLElement) {
+            favoritesContainer.classList.toggle('hidden', !isFavoritesTab);
+        }
+        if (testsTabBtn instanceof HTMLButtonElement) {
+            testsTabBtn.classList.toggle('is-active', !isFavoritesTab);
+        }
+        if (favoritesTabBtn instanceof HTMLButtonElement) {
+            favoritesTabBtn.classList.toggle('is-active', isFavoritesTab);
+        }
+        if (favoritesSortControls instanceof HTMLElement) {
+            favoritesSortControls.classList.toggle('hidden', !isFavoritesTab);
+        }
+    }
+
     /**
      * Создает HTML-разметку для чекбокса теста.
      * @param {object} testInfo - Информация о тесте.
@@ -232,6 +426,7 @@
         const escapedNameAttr = escapeHtmlAttr(name);
         const escapedTitleAttr = escapeHtmlAttr(relativePath);
         const fileUriString = testInfo.yamlFileUriString || '';
+        const isAffectedMainScenario = affectedMainScenarioNames.has(name);
         const escapedIconTitle = escapeHtmlAttr((window.__loc?.openScenarioFileTitle || 'Open scenario file {0}').replace('{0}', name));
         const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
         const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
@@ -271,11 +466,16 @@
         const runButtonTitle = `${runTitle}${statusSuffix}${staleSuffix}${runMessage ? `\n${runMessage}` : ''}`;
         const escapedRunTitle = escapeHtmlAttr(runButtonTitle);
         const runButtonDisabledAttr = (isBuildInProgress || isRunInProgress) ? ' disabled' : '';
-        const runLogTitle = escapeHtmlAttr((window.__loc?.runScenarioLogTitle || 'Open run log for scenario: {0}').replace('{0}', name));
+        const canWatchLiveLog = !!runInfo?.canWatchLiveLog;
+        const runLogTitleTemplate = canWatchLiveLog
+            ? (window.__loc?.runScenarioWatchLogTitle || 'Watch live run log for scenario: {0}')
+            : (window.__loc?.runScenarioLogTitle || 'Open run log for scenario: {0}');
+        const runLogTitle = escapeHtmlAttr(runLogTitleTemplate.replace('{0}', name));
 
         const openButtonHtml = fileUriString
             ? `<button class="open-scenario-btn" data-name="${escapedNameAttr}" title="${escapedIconTitle}">
-                   <span class="codicon codicon-edit"></span>
+                   <span class="codicon codicon-circle-small-filled open-scenario-icon-idle"></span>
+                   <span class="codicon codicon-edit open-scenario-icon-edit"></span>
                </button>`
             : '';
 
@@ -284,15 +484,15 @@
                    <span class="${runButtonIconClass}"></span>
                </button>`
             : '';
-        const runLogButtonHtml = runInfo?.hasRunLog
-            ? `<button class="run-scenario-log-btn" data-name="${escapedNameAttr}" title="${runLogTitle}">
-                   <span class="codicon codicon-output"></span>
+        const runLogButtonHtml = (runInfo?.hasRunLog || canWatchLiveLog)
+            ? `<button class="run-scenario-log-btn${canWatchLiveLog ? ' run-scenario-log-btn-live' : ''}" data-name="${escapedNameAttr}" title="${runLogTitle}">
+                   <span class="codicon ${canWatchLiveLog ? 'codicon-list-flat' : 'codicon-output'}"></span>
                </button>`
             : '';
 
         return `
             <div class="item-container">
-                <label class="checkbox-item" id="label-${safeName}" title="${escapedTitleAttr}">
+                <label class="checkbox-item${isAffectedMainScenario ? ' affected-main-scenario' : ''}" id="label-${safeName}" data-name="${escapedNameAttr}" title="${escapedTitleAttr}">
                     <input
                         type="checkbox"
                         id="chk-${safeName}"
@@ -319,7 +519,7 @@
         const sortedPhaseNames = Object.keys(allPhaseData).sort();
 
         if (sortedPhaseNames.length === 0) {
-            const noPhasesMessage = window.__loc?.noPhasesToDisplay || 'No phases to display.';
+            const noPhasesMessage = window.__loc?.noPhasesToDisplay || 'No groups to display.';
             phaseTreeContainer.innerHTML = `<p>${noPhasesMessage}</p>`;
             if (collapseAllBtn instanceof HTMLButtonElement) collapseAllBtn.disabled = true;
             return;
@@ -378,8 +578,8 @@
             expandCollapseButton.setAttribute('aria-expanded', phaseExpandedState[phaseName] ? 'true' : 'false');
             expandCollapseButton.setAttribute('aria-controls', testsListId);
             expandCollapseButton.title = phaseExpandedState[phaseName]
-                ? (window.__loc?.collapsePhaseTitle || 'Collapse phase')
-                : (window.__loc?.expandPhaseTitle || 'Expand phase');
+                ? (window.__loc?.collapsePhaseTitle || 'Collapse group')
+                : (window.__loc?.expandPhaseTitle || 'Expand group');
 
             const iconSpan = document.createElement('span');
             iconSpan.className = `codicon phase-toggle-icon ${phaseExpandedState[phaseName] ? 'codicon-chevron-down' : 'codicon-chevron-right'}`;
@@ -397,7 +597,7 @@
 
             const toggleCheckboxesBtn = document.createElement('button');
             toggleCheckboxesBtn.className = 'phase-toggle-checkboxes-btn button-with-icon';
-            toggleCheckboxesBtn.title = window.__loc?.toggleAllInPhaseTitle || 'Toggle all tests in this phase';
+            toggleCheckboxesBtn.title = window.__loc?.toggleAllInPhaseTitle || 'Toggle all tests in this group';
             toggleCheckboxesBtn.dataset.phaseName = phaseName;
             const toggleIcon = document.createElement('span');
             toggleIcon.className = 'codicon codicon-check-all';
@@ -416,7 +616,7 @@
 
             if (Array.isArray(testsInPhase)) {
                 if (testsInPhase.length === 0) {
-                    const txt = window.__loc?.noTestsInPhase || 'No tests in this phase.';
+                    const txt = window.__loc?.noTestsInPhase || 'No tests in this group.';
                     testsListDiv.innerHTML = `<p class="no-tests-in-phase">${txt}</p>`;
                 } else {
                     testsInPhase.forEach(info => { if (info?.name) testsListDiv.innerHTML += createCheckboxHtml(info); });
@@ -438,6 +638,7 @@
                 }
             });
             toggleCheckboxesBtn.addEventListener('click', handleTogglePhaseCheckboxesClick);
+            phaseHeaderDiv.addEventListener('contextmenu', handlePhaseContextMenu);
         });
         applyCheckboxStatesToVisible();
         log('Phase tree rendered.');
@@ -469,8 +670,8 @@
         icon.classList.toggle('codicon-chevron-down', phaseExpandedState[phaseName]);
         button.setAttribute('aria-expanded', phaseExpandedState[phaseName] ? 'true' : 'false');
         button.title = phaseExpandedState[phaseName]
-            ? (window.__loc?.collapsePhaseTitle || 'Collapse phase')
-            : (window.__loc?.expandPhaseTitle || 'Expand phase');
+            ? (window.__loc?.collapsePhaseTitle || 'Collapse group')
+            : (window.__loc?.expandPhaseTitle || 'Expand group');
         log(`Phase '${phaseName}' expanded state: ${phaseExpandedState[phaseName]}`);
         updateAreAllPhasesExpandedState();
     }
@@ -527,7 +728,7 @@
         if (phaseHeaders.length === 0) {
             areAllPhasesCurrentlyExpanded = false;
             if (collapseAllBtn.firstElementChild) collapseAllBtn.firstElementChild.className = 'codicon codicon-expand-all';
-            collapseAllBtn.title = window.__loc?.expandAllPhasesTitle || 'Expand all phases';
+            collapseAllBtn.title = window.__loc?.expandAllPhasesTitle || 'Expand all groups';
             return;
         }
 
@@ -546,8 +747,8 @@
              collapseAllBtn.firstElementChild.className = areAllPhasesCurrentlyExpanded ? 'codicon codicon-collapse-all' : 'codicon codicon-expand-all';
         }
         collapseAllBtn.title = areAllPhasesCurrentlyExpanded
-            ? (window.__loc?.collapseAllPhasesTitle || 'Collapse all phases')
-            : (window.__loc?.expandAllPhasesTitle || 'Expand all phases');
+            ? (window.__loc?.collapseAllPhasesTitle || 'Collapse all groups')
+            : (window.__loc?.expandAllPhasesTitle || 'Expand all groups');
     }
 
     /**
@@ -674,9 +875,10 @@
             log('ERROR: Run log button clicked without data-name attribute!');
             return;
         }
+        const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
         log(`Run log button clicked for: ${name}`);
         vscode.postMessage({
-            command: 'openRunScenarioLog',
+            command: runInfo?.canWatchLiveLog ? 'watchRunScenarioLog' : 'openRunScenarioLog',
             name
         });
     }
@@ -687,6 +889,91 @@
         activeRunModeMenu = null;
     }
 
+    function closeContextMenu() {
+        if (!activeContextMenu) return;
+        activeContextMenu.remove();
+        activeContextMenu = null;
+    }
+
+    function showContextMenuAt(positionX, positionY, actions, scopeKey = '') {
+        if (!Array.isArray(actions) || actions.length === 0) {
+            return;
+        }
+        closeRunModeMenu();
+
+        if (activeContextMenu && activeContextMenu.getAttribute('data-scope') === scopeKey) {
+            closeContextMenu();
+            return;
+        }
+
+        closeContextMenu();
+
+        const menu = document.createElement('div');
+        menu.className = 'run-mode-menu phase-context-menu';
+        menu.setAttribute('data-scope', scopeKey);
+
+        actions.forEach(action => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'run-mode-menu-item';
+            item.innerHTML = `<span class="codicon ${escapeHtmlAttr(action.icon || 'codicon-edit')}"></span><span>${escapeHtmlAttr(action.label || '')}</span>`;
+            item.addEventListener('click', event => {
+                event.preventDefault();
+                event.stopPropagation();
+                closeContextMenu();
+                action.onClick?.();
+            });
+            menu.appendChild(item);
+        });
+
+        document.body.appendChild(menu);
+
+        const menuRect = menu.getBoundingClientRect();
+        const clampedLeft = Math.max(8, Math.min(positionX, window.innerWidth - menuRect.width - 8));
+        const clampedTop = Math.max(8, Math.min(positionY, window.innerHeight - menuRect.height - 8));
+        menu.style.left = `${clampedLeft}px`;
+        menu.style.top = `${clampedTop}px`;
+
+        activeContextMenu = menu;
+    }
+
+    function handlePhaseContextMenu(event) {
+        if (!(event.currentTarget instanceof HTMLElement)) return;
+        const phaseName = event.currentTarget.dataset.phaseName;
+        if (!phaseName) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        showContextMenuAt(event.clientX, event.clientY, [
+            {
+                icon: 'codicon-rename',
+                label: window.__loc?.renameGroupTitle || 'Rename group',
+                onClick: () => vscode.postMessage({ command: 'renameGroup', groupName: phaseName })
+            }
+        ], `phase:${phaseName}`);
+    }
+
+    function handleScenarioContextMenu(event) {
+        if (!(event.currentTarget instanceof HTMLElement)) return;
+        const name = event.currentTarget.getAttribute('data-name');
+        if (!name) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        showContextMenuAt(event.clientX, event.clientY, [
+            {
+                icon: 'codicon-edit',
+                label: window.__loc?.openScenarioTitle || 'Open scenario',
+                onClick: () => vscode.postMessage({ command: 'openScenario', name })
+            },
+            {
+                icon: 'codicon-rename',
+                label: window.__loc?.renameScenarioTitle || 'Rename scenario',
+                onClick: () => vscode.postMessage({ command: 'renameScenario', name })
+            }
+        ], `scenario:${name}`);
+    }
+
     function showRunModeMenu(anchorButton, scenarioName, options = {}) {
         const includeManual = options?.includeManual !== false;
         const menuScope = scenarioName || '__top__';
@@ -695,6 +982,7 @@
             return;
         }
         closeRunModeMenu();
+        closeContextMenu();
 
         const menu = document.createElement('div');
         menu.className = 'run-mode-menu';
@@ -858,6 +1146,13 @@
             }
         });
 
+        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-name]');
+        scenarioLabels.forEach(label => {
+            if (!(label instanceof HTMLElement)) return;
+            label.removeEventListener('contextmenu', handleScenarioContextMenu);
+            label.addEventListener('contextmenu', handleScenarioContextMenu);
+        });
+
         const openButtons = phaseTreeContainer.querySelectorAll('.open-scenario-btn');
         openButtons.forEach(btn => {
             btn.removeEventListener('click', handleOpenScenarioClick);
@@ -885,6 +1180,7 @@
 
         log(`Applied states to ${count} visible checkboxes.`);
         updateHighlighting();
+        applyAffectedMainScenarioHighlighting();
         updateAreAllPhasesExpandedState();
     }
 
@@ -985,7 +1281,7 @@
             updateStatus(`${parts.join(' \n')}\n\n${tail}`, 'main', mainControlsActive);
             applyChangesBtn.disabled = false;
         } else {
-            if (!statusBar || !statusBar.textContent?.includes((window.__loc?.statusLoadingShort || 'Loading...')) && !statusBar.textContent?.includes((window.__loc?.statusApplyingPhaseChanges || 'Applying phase changes...'))) {
+            if (!statusBar || !statusBar.textContent?.includes((window.__loc?.statusLoadingShort || 'Loading...')) && !statusBar.textContent?.includes((window.__loc?.statusApplyingPhaseChanges || 'Applying group changes...'))) {
                 updateStatus((window.__loc?.pendingNoChanges || 'No pending changes.'), 'main', mainControlsActive);
             }
             applyChangesBtn.disabled = true;
@@ -1007,6 +1303,7 @@
 
                 if (message.error) {
                      closeRunModeMenu();
+                     closeContextMenu();
                      runArtifacts = {};
                      const errorTemplate = window.__loc?.errorWithDetails || 'Error: {0}';
                      updateStatus(errorTemplate.replace('{0}', message.error), 'main', true);
@@ -1017,10 +1314,22 @@
                      if (openSettingsBtn instanceof HTMLButtonElement) openSettingsBtn.disabled = false;
                 } else {
                     closeRunModeMenu();
+                    closeContextMenu();
                     testDataByPhase = message.tabData || {};
                     initialTestStates = message.states || {};
                     runArtifacts = message.runArtifacts || {};
-                    settings = message.settings || { assemblerEnabled: true, switcherEnabled: true, driveFeaturesEnabled: false };
+                    favoriteScenarios = Array.isArray(message.favorites) ? message.favorites : [];
+                    favoriteSortMode = normalizeFavoriteSortMode(message.favoriteSortMode || favoriteSortMode);
+                    affectedMainScenarioNames = normalizeAffectedMainScenarioNames(message.affectedMainScenarioNames);
+                    settings = message.settings || {
+                        assemblerEnabled: true,
+                        switcherEnabled: true,
+                        driveFeaturesEnabled: false,
+                        highlightAffectedMainScenarios: true
+                    };
+                    if (typeof settings.highlightAffectedMainScenarios !== 'boolean') {
+                        settings.highlightAffectedMainScenarios = true;
+                    }
                     isBuildInProgress = !!settings.buildInProgress;
                     log("Received settings in webview:");
                     console.log(settings);
@@ -1086,10 +1395,15 @@
                         renderPhaseTree(testDataByPhase);
                     } else {
                         if (phaseTreeContainer instanceof HTMLElement) {
-                            phaseTreeContainer.innerHTML = `<p>${window.__loc?.phaseSwitcherDisabled || 'Phase Switcher is disabled in settings.'}</p>`;
+                            phaseTreeContainer.innerHTML = `<p>${window.__loc?.phaseSwitcherDisabled || 'Test Manager is disabled in settings.'}</p>`;
                         }
                          if (collapseAllBtn instanceof HTMLButtonElement) collapseAllBtn.disabled = true;
                     }
+                    if (favoritesSortSelect instanceof HTMLSelectElement) {
+                        favoritesSortSelect.value = favoriteSortMode;
+                    }
+                    renderFavoritesList();
+                    setActiveManagerTab(activeManagerTab);
 
                     updatePendingStatus();
                     enablePhaseControls(phaseSwitcherVisible && !!testDataByPhase && Object.keys(testDataByPhase).length > 0, true);
@@ -1113,6 +1427,7 @@
 
             case 'updateRunArtifactsState':
                 closeRunModeMenu();
+                closeContextMenu();
                 runArtifacts = message.runArtifacts || {};
                 updateTopRunButtonState();
                 if (settings.switcherEnabled && testDataByPhase && Object.keys(testDataByPhase).length > 0) {
@@ -1121,6 +1436,22 @@
                 } else {
                     updateRunButtonsState();
                 }
+                applyAffectedMainScenarioHighlighting();
+                break;
+
+            case 'updateFavoritesState':
+                favoriteScenarios = Array.isArray(message.favorites) ? message.favorites : [];
+                favoriteSortMode = normalizeFavoriteSortMode(message.favoriteSortMode || favoriteSortMode);
+                if (favoritesSortSelect instanceof HTMLSelectElement) {
+                    favoritesSortSelect.value = favoriteSortMode;
+                }
+                renderFavoritesList();
+                setActiveManagerTab(activeManagerTab);
+                break;
+
+            case 'updateAffectedMainScenarios':
+                affectedMainScenarioNames = normalizeAffectedMainScenarioNames(message.names);
+                applyAffectedMainScenarioHighlighting();
                 break;
 
              case 'updateStatus':
@@ -1154,6 +1485,7 @@
                 isBuildInProgress = !!message.inProgress;
                 if (isBuildInProgress) {
                     closeRunModeMenu();
+                    closeContextMenu();
                     const buildMessage = window.__loc?.statusBuildingInProgress || 'Building tests in progress...';
                     updateStatus(buildMessage, 'main', false);
                     updateStatus(buildMessage, 'assemble', false);
@@ -1179,7 +1511,7 @@
     if(applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.addEventListener('click', () => {
         log('Apply Phase Changes button clicked.');
         const statesToSend = { ...currentCheckboxStates };
-        updateStatus(window.__loc?.statusApplyingPhaseChanges || 'Applying phase changes...', 'main', false);
+        updateStatus(window.__loc?.statusApplyingPhaseChanges || 'Applying group changes...', 'main', false);
         enablePhaseControls(false, false); enableAssembleControls(false);
         if(applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;
         vscode.postMessage({ command: 'applyChanges', data: statesToSend });
@@ -1218,6 +1550,106 @@
 
     if (runVanessaTopBtn instanceof HTMLButtonElement) {
         runVanessaTopBtn.addEventListener('click', handleTopRunVanessaClick);
+    }
+
+    if (testsTabBtn instanceof HTMLButtonElement) {
+        testsTabBtn.addEventListener('click', event => {
+            event.preventDefault();
+            setActiveManagerTab('tests');
+        });
+    }
+
+    if (favoritesTabBtn instanceof HTMLButtonElement) {
+        favoritesTabBtn.addEventListener('click', event => {
+            event.preventDefault();
+            setActiveManagerTab('favorites');
+        });
+    }
+
+    if (favoritesSortSelect instanceof HTMLSelectElement) {
+        favoritesSortSelect.addEventListener('change', () => {
+            favoriteSortMode = normalizeFavoriteSortMode(favoritesSortSelect.value);
+            renderFavoritesList();
+            vscode.postMessage({
+                command: 'setFavoriteSortMode',
+                mode: favoriteSortMode
+            });
+        });
+    }
+
+    if (favoritesContainer instanceof HTMLElement) {
+        favoritesContainer.addEventListener('dragstart', event => {
+            if (!(event.target instanceof Element)) {
+                return;
+            }
+            const favoriteItem = event.target.closest('.favorite-item');
+            if (!(favoriteItem instanceof HTMLElement) || !event.dataTransfer) {
+                return;
+            }
+            const uri = favoriteItem.getAttribute('data-uri');
+            const name = favoriteItem.getAttribute('data-name') || '';
+            if (!uri) {
+                return;
+            }
+
+            event.dataTransfer.effectAllowed = 'copy';
+            event.dataTransfer.setData(FAVORITE_SCENARIO_DROP_MIME, uri);
+            event.dataTransfer.setData('text/plain', `And ${name}`.trim());
+        });
+
+        favoritesContainer.addEventListener('click', event => {
+            if (!(event.target instanceof Element)) {
+                return;
+            }
+            const actionButton = event.target.closest('.favorite-action-btn.remove');
+            if (actionButton instanceof HTMLButtonElement) {
+                const uri = actionButton.getAttribute('data-uri');
+                if (!uri) {
+                    return;
+                }
+                event.preventDefault();
+                event.stopPropagation();
+                favoriteScenarios = favoriteScenarios.filter(entry => (entry?.uri || '') !== uri);
+                renderFavoritesList();
+                vscode.postMessage({ command: 'removeFavoriteScenario', uri });
+                return;
+            }
+
+            const favoriteItem = event.target.closest('.favorite-item');
+            if (!(favoriteItem instanceof HTMLElement)) {
+                return;
+            }
+            const uri = favoriteItem.getAttribute('data-uri');
+            if (!uri) {
+                return;
+            }
+            event.preventDefault();
+            vscode.postMessage({ command: 'openFavoriteScenario', uri });
+        });
+
+        favoritesContainer.addEventListener('keydown', event => {
+            if (!(event.target instanceof HTMLElement)) {
+                return;
+            }
+            if (event.key !== 'Enter' && event.key !== ' ') {
+                return;
+            }
+            const favoriteItem = event.target.closest('.favorite-item');
+            if (!(favoriteItem instanceof HTMLElement)) {
+                return;
+            }
+            if (event.target.closest('.favorite-action-btn.remove')) {
+                return;
+            }
+            const uri = favoriteItem.getAttribute('data-uri');
+            if (!uri) {
+                return;
+            }
+            event.preventDefault();
+            if (event.key === 'Enter' || event.key === ' ') {
+                vscode.postMessage({ command: 'openFavoriteScenario', uri });
+            }
+        });
     }
 
     if (openSettingsBtn instanceof HTMLButtonElement) openSettingsBtn.addEventListener('click', () => {
@@ -1267,6 +1699,9 @@
         if (activeRunModeMenu && event.target instanceof Node && !activeRunModeMenu.contains(event.target)) {
             closeRunModeMenu();
         }
+        if (activeContextMenu && event.target instanceof Node && !activeContextMenu.contains(event.target)) {
+            closeContextMenu();
+        }
     });
 
 
@@ -1306,6 +1741,8 @@
     }
 
     log('Webview script initialized.');
+    setActiveManagerTab('tests');
+    renderFavoritesList();
     updateStatus(window.__loc?.statusLoadingShort || 'Loading...', 'main', false);
     enablePhaseControls(false, false);
     enableAssembleControls(false);

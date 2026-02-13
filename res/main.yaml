@@ -28,16 +28,4 @@ KOTМетаданные:
 
     #language: en
     
-    And I set "Administrator" synonym to the current TestClient
-
-    And I initialize TestClient connections
-
-    And I save key parameters from pipeline and initialize main variables
-
-    And I click Infobase was transferred button
-
-    And I get main constant values
-    
-    # Include scenarios here
-
-    And I close TestClient main window
+    DriveMainScenarioBlock_Placeholder

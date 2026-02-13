@@ -30,7 +30,11 @@
           "kotTestToolkit.localization.languageOverride": {
             "type": "string",
             "default": "System",
-            "enum": ["System", "English", "Русский"],
+            "enum": [
+              "System",
+              "English",
+              "Русский"
+            ],
             "enumDescriptions": [
               "%config.localization.system.desc%",
               "%config.localization.en.desc%",
@@ -38,12 +42,29 @@
             ],
             "description": "%config.localization.languageOverride.description%",
             "order": 1
-          },
+          }
+        }
+      },
+      {
+        "title": "%config.phaseSwitcherSettings.title%",
+        "properties": {
           "kotTestToolkit.assembleScript.showDriveFeatures": {
             "type": "boolean",
             "default": false,
             "description": "%config.assembleScript.showDriveFeatures.description%",
+            "order": 1
+          },
+          "kotTestToolkit.phaseSwitcher.highlightAffectedMainScenarios": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.phaseSwitcher.highlightAffectedMainScenarios.description%",
             "order": 2
+          },
+          "kotTestToolkit.phaseSwitcher.autoAddNewScenariosToFavorites": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.phaseSwitcher.autoAddNewScenariosToFavorites.description%",
+            "order": 3
           }
         }
       },
@@ -86,19 +107,24 @@
             "description": "%config.autoFillScenarioParametersOnSave.description%",
             "order": 6
           },
-          "kotTestToolkit.editor.scenarioParameterExclusions": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "default": [],
-            "description": "%config.scenarioParameterExclusions.description%",
-            "order": 7
-          },
           "kotTestToolkit.editor.showRefillMessages": {
             "type": "boolean",
             "default": true,
             "description": "%config.showRefillMessages.description%",
+            "order": 7
+          },
+          "kotTestToolkit.editor.newScenarioLanguage": {
+            "type": "string",
+            "default": "en",
+            "enum": [
+              "en",
+              "ru"
+            ],
+            "enumDescriptions": [
+              "%config.editor.newScenarioLanguage.en.desc%",
+              "%config.editor.newScenarioLanguage.ru.desc%"
+            ],
+            "description": "%config.editor.newScenarioLanguage.description%",
             "order": 8
           }
         }
@@ -171,6 +197,14 @@
             "default": true,
             "description": "%config.runVanessa.checkUnsafeActionProtection.description%",
             "order": 4
+          },
+          "kotTestToolkit.runVanessa.liveLogRefreshSeconds": {
+            "type": "number",
+            "default": 2,
+            "minimum": 1,
+            "maximum": 60,
+            "description": "%config.runVanessa.liveLogRefreshSeconds.description%",
+            "order": 5
           }
         }
       },
@@ -336,11 +370,6 @@
         "category": "%cmd.category%"
       },
       {
-        "command": "kotTestToolkit.addScenarioParameterExclusion",
-        "title": "%cmd.addScenarioParameterExclusion.title%",
-        "category": "%cmd.category%"
-      },
-      {
         "command": "kotTestToolkit.scanWorkspaceDiagnostics",
         "title": "%cmd.scanWorkspaceDiagnostics.title%",
         "category": "%cmd.category%"
@@ -349,6 +378,40 @@
         "command": "kotTestToolkit.openScenarioInVanessaManual",
         "title": "%cmd.openScenarioInVanessaManual.title%",
         "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.addActiveScenarioToFavorites",
+        "title": "%cmd.addActiveScenarioToFavorites.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.removeActiveScenarioFromFavorites",
+        "title": "%cmd.removeActiveScenarioFromFavorites.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.toggleActiveScenarioFavorite",
+        "title": "%cmd.toggleActiveScenarioFavorite.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.showFavoriteScenarios",
+        "title": "%cmd.showFavoriteScenarios.title%",
+        "category": "%cmd.category%"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "kotTestToolkit.editorContext.workWithFiles",
+        "label": "%submenu.editorContext.workWithFiles%"
+      },
+      {
+        "id": "kotTestToolkit.editorContext.create",
+        "label": "%submenu.editorContext.create%"
+      },
+      {
+        "id": "kotTestToolkit.editorContext.editing",
+        "label": "%submenu.editorContext.editing%"
       }
     ],
     "keybindings": [
@@ -413,49 +476,75 @@
           "group": "00_navigation@1"
         },
         {
+          "command": "kotTestToolkit.addActiveScenarioToFavorites",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && !kotTestToolkit.activeScenarioInFavorites",
+          "group": "00_navigation@2"
+        },
+        {
+          "command": "kotTestToolkit.removeActiveScenarioFromFavorites",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && kotTestToolkit.activeScenarioInFavorites",
+          "group": "00_navigation@2"
+        },
+        {
+          "submenu": "kotTestToolkit.editorContext.workWithFiles",
+          "when": "editorTextFocus && resourceExtname == .yaml",
+          "group": "01_submenu@0"
+        },
+        {
+          "submenu": "kotTestToolkit.editorContext.create",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
+          "group": "01_submenu@1"
+        },
+        {
+          "submenu": "kotTestToolkit.editorContext.editing",
+          "when": "editorTextFocus && resourceExtname == .yaml",
+          "group": "01_submenu@2"
+        }
+      ],
+      "kotTestToolkit.editorContext.workWithFiles": [
+        {
           "command": "kotTestToolkit.openMxlFile",
           "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
-          "group": "01_search@0"
+          "group": "00_workWithFiles@0"
         },
         {
           "command": "kotTestToolkit.revealFileInExplorer",
           "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
-          "group": "01_search@1"
+          "group": "00_workWithFiles@1"
         },
         {
           "command": "kotTestToolkit.revealFileInOS",
           "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
-          "group": "01_search@2"
-        },
+          "group": "00_workWithFiles@2"
+        }
+      ],
+      "kotTestToolkit.editorContext.create": [
         {
           "command": "kotTestToolkit.createNestedScenario",
           "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
-          "group": "02_creation@0"
+          "group": "00_create@0"
         },
         {
           "command": "kotTestToolkit.createMainScenario",
           "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
-          "group": "02_creation@1"
-        },
+          "group": "00_create@1"
+        }
+      ],
+      "kotTestToolkit.editorContext.editing": [
         {
           "command": "kotTestToolkit.checkAndFillNestedScenarios",
           "when": "editorTextFocus && resourceExtname == .yaml",
-          "group": "03_modification@0"
+          "group": "00_editing@0"
         },
         {
           "command": "kotTestToolkit.checkAndFillScriptParameters",
           "when": "editorTextFocus && resourceExtname == .yaml",
-          "group": "03_modification@1"
-        },
-        {
-          "command": "kotTestToolkit.addScenarioParameterExclusion",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
-          "group": "03_modification@2"
+          "group": "00_editing@1"
         },
         {
           "command": "kotTestToolkit.insertUid",
           "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
-          "group": "03_modification@3"
+          "group": "00_editing@2"
         }
       ],
       "commandPalette": [
@@ -488,15 +577,27 @@
           "when": "true"
         },
         {
-          "command": "kotTestToolkit.addScenarioParameterExclusion",
-          "when": "true"
-        },
-        {
           "command": "kotTestToolkit.scanWorkspaceDiagnostics",
           "when": "true"
         },
         {
           "command": "kotTestToolkit.openScenarioInVanessaManual",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.toggleActiveScenarioFavorite",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.addActiveScenarioToFavorites",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.removeActiveScenarioFromFavorites",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.showFavoriteScenarios",
           "when": "true"
         }
       ]
@@ -536,6 +637,7 @@
     "@types/vscode": "^1.98.0",
     "@typescript-eslint/eslint-plugin": "^8.28.0",
     "@typescript-eslint/parser": "^8.28.0",
+    "@vscode/codicons": "^0.0.44",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
     "cpy-cli": "^5.0.0",
@@ -543,7 +645,6 @@
     "typescript": "^5.8.2"
   },
   "dependencies": {
-    "@vscode/codicons": "^0.0.36",
     "node-html-parser": "^7.0.1",
     "uuid": "^11.1.0"
   }

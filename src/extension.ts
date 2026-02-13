@@ -33,7 +33,6 @@ import { handleCreateNestedScenario, handleCreateMainScenario } from './scenario
 import { TestInfo } from './types'; // Импортируем TestInfo
 import { SettingsProvider } from './settingsProvider';
 import { ScenarioDiagnosticsProvider } from './scenarioDiagnostics';
-import { extractScenarioParameterNameFromText } from './scenarioParameterUtils';
 import { isScenarioYamlFile } from './yamlValidator';
 import {
     extractTopLevelKotMetadataBlock,
@@ -60,6 +59,7 @@ const lastSavedScenarioSnapshots = new Map<string, ScenarioSaveSnapshot>();
 const scenarioDirtyFlagsByUri = new Map<string, ScenarioDirtyFlags>();
 const scenarioMetadataBlockSessionCache = new Map<string, string>();
 const kotDescriptionBlockLineRegex = /^Описание:\s*[|>][-+0-9]*\s*$/;
+const FAVORITE_SCENARIO_DROP_MIME = 'application/x-kot-favorite-scenario-uri';
 
 function parseScenarioNameFromDocumentText(documentText: string): string | null {
     const lines = documentText.split(/\r\n|\r|\n/);
@@ -137,8 +137,17 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('Extension "kotTestToolkit" activated.');
     setExtensionUri(context.extensionUri);
 
-    // --- Регистрация Провайдера для Webview (Phase Switcher) ---
+    // --- Регистрация Провайдера для Webview (Test Manager) ---
     const phaseSwitcherProvider = new PhaseSwitcherProvider(context.extensionUri, context);
+    const updateActiveScenarioFavoriteContext = async (editor?: vscode.TextEditor) => {
+        const isInFavorites = !!(
+            editor &&
+            isScenarioYamlFile(editor.document) &&
+            phaseSwitcherProvider.isScenarioUriInFavorites(editor.document.uri)
+        );
+        await vscode.commands.executeCommand('setContext', 'kotTestToolkit.activeScenarioInFavorites', isInFavorites);
+    };
+    void updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
             PhaseSwitcherProvider.viewType,
@@ -178,6 +187,47 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.languages.registerHoverProvider(
             { pattern: '**/*.yaml', scheme: 'file' },
             hoverProvider
+        )
+    );
+    context.subscriptions.push(
+        vscode.languages.registerDocumentDropEditProvider(
+            { pattern: '**/*.yaml', scheme: 'file' },
+            {
+                async provideDocumentDropEdits(document, position, dataTransfer) {
+                    if (!isScenarioYamlFile(document)) {
+                        return undefined;
+                    }
+
+                    const uriItem = dataTransfer.get(FAVORITE_SCENARIO_DROP_MIME);
+                    if (!uriItem) {
+                        return undefined;
+                    }
+
+                    const scenarioUriRaw = (await uriItem.asString()).trim();
+                    if (!scenarioUriRaw) {
+                        return undefined;
+                    }
+
+                    const insertText = await phaseSwitcherProvider.buildNestedScenarioCallInsertTextForUri(
+                        scenarioUriRaw,
+                        document,
+                        position
+                    );
+                    if (!insertText) {
+                        return undefined;
+                    }
+
+                    return new vscode.DocumentDropEdit(
+                        insertText,
+                        vscode.l10n.t('Insert nested scenario call with parameters'),
+                        vscode.DocumentDropOrPasteEditKind.Text.append('kotFavoriteScenario')
+                    );
+                }
+            },
+            {
+                dropMimeTypes: [FAVORITE_SCENARIO_DROP_MIME],
+                providedDropEditKinds: [vscode.DocumentDropOrPasteEditKind.Text.append('kotFavoriteScenario')]
+            }
         )
     );
 
@@ -300,11 +350,12 @@ export function activate(context: vscode.ExtensionContext) {
     ));
 
 
-    // Команда для обновления Phase Switcher (вызывается из scenarioCreator)
+    // Команда для обновления Test Manager (вызывается из scenarioCreator)
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.refreshPhaseSwitcherFromCreate', () => {
+        'kotTestToolkit.refreshPhaseSwitcherFromCreate', async () => {
             console.log('[Extension] Command kotTestToolkit.refreshPhaseSwitcherFromCreate invoked.');
-            phaseSwitcherProvider.refreshPanelData();
+            await phaseSwitcherProvider.refreshPanelData();
+            await updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
         }
     ));
 
@@ -323,11 +374,11 @@ export function activate(context: vscode.ExtensionContext) {
                 progress.report({ increment: 100, message: t('Gherkin hints update completed.') });
                 
                 // Для обновления автодополнения сценариев, мы полагаемся на событие от PhaseSwitcherProvider,
-                // которое должно сработать, если пользователь нажмет "Обновить" в панели Phase Switcher.
+                // которое должно сработать, если пользователь нажмет "Обновить" в панели Test Manager.
                 // Если нужно принудительное обновление сценариев здесь, то нужно будет вызвать
                 // логику сканирования сценариев и затем completionProvider.updateScenarioCompletions().
                 // Пока что команда `refreshGherkinSteps` обновляет только Gherkin.
-                // Обновление сценариев происходит через Phase Switcher UI.
+                // Обновление сценариев происходит через Test Manager UI.
 
             } catch (error: any) {
                 console.error("[refreshGherkinSteps Command] Error during refresh:", error.message);
@@ -338,6 +389,8 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.window.onDidChangeActiveTextEditor(editor => {
             foldSectionsInEditor(editor);
+            phaseSwitcherProvider.handleActiveEditorChanged(editor);
+            void updateActiveScenarioFavoriteContext(editor);
             if (editor) {
                 updateKotDescriptionDecorationForEditor(editor, kotDescriptionTextDecorationType);
             }
@@ -345,7 +398,12 @@ export function activate(context: vscode.ExtensionContext) {
     );
     if (vscode.window.activeTextEditor) {
         foldSectionsInEditor(vscode.window.activeTextEditor);
+        phaseSwitcherProvider.handleActiveEditorChanged(vscode.window.activeTextEditor);
+        void updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
         updateKotDescriptionDecorationForEditor(vscode.window.activeTextEditor, kotDescriptionTextDecorationType);
+    } else {
+        phaseSwitcherProvider.handleActiveEditorChanged(undefined);
+        void updateActiveScenarioFavoriteContext(undefined);
     }
 
     context.subscriptions.push(vscode.commands.registerCommand(
@@ -386,6 +444,49 @@ export function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.openScenarioInVanessaManual',
         async () => {
             await phaseSwitcherProvider.openScenarioInVanessaManualFromCommandPalette();
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.toggleActiveScenarioFavorite',
+        async () => {
+            await phaseSwitcherProvider.toggleFavoriteForActiveScenario();
+            await updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.addActiveScenarioToFavorites',
+        async () => {
+            await phaseSwitcherProvider.addActiveScenarioToFavorites();
+            await updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.removeActiveScenarioFromFavorites',
+        async () => {
+            await phaseSwitcherProvider.removeActiveScenarioFromFavorites();
+            await updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.showFavoriteScenarios',
+        async () => {
+            await phaseSwitcherProvider.showFavoriteScenariosPicker();
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit._addScenarioFavoriteByUri',
+        async (target?: vscode.Uri | string) => {
+            if (!target) {
+                return false;
+            }
+            const result = await phaseSwitcherProvider.addScenarioToFavoritesByUri(target, { silent: true });
+            await updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
+            return result;
         }
     ));
 
@@ -531,138 +632,6 @@ export function activate(context: vscode.ExtensionContext) {
                 vscode.window.showErrorMessage(t('Failed to fix scenario issues: {0}', errorMessage));
             } finally {
                 processingFiles.delete(fileKey);
-            }
-        }
-    ));
-
-    context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.addScenarioParameterExclusion',
-        async (rawParameterArg?: unknown, ...restArgs: unknown[]) => {
-            const t = await getTranslator(context.extensionUri);
-
-            const extractNameFromUnknownArg = (arg: unknown): string => {
-                if (!arg) {
-                    return '';
-                }
-
-                if (typeof arg === 'string') {
-                    return extractScenarioParameterNameFromText(arg);
-                }
-
-                if (Array.isArray(arg)) {
-                    for (const item of arg) {
-                        const value = extractNameFromUnknownArg(item);
-                        if (value) {
-                            return value;
-                        }
-                    }
-                    return '';
-                }
-
-                if (typeof arg === 'object') {
-                    const record = arg as Record<string, unknown>;
-                    const candidateKeys = ['parameterName', 'text', 'value', 'label', 'word'];
-                    for (const key of candidateKeys) {
-                        const rawValue = record[key];
-                        if (typeof rawValue === 'string') {
-                            const parsed = extractScenarioParameterNameFromText(rawValue);
-                            if (parsed) {
-                                return parsed;
-                            }
-                        }
-                    }
-                }
-
-                return '';
-            };
-
-            try {
-                let parameterName = '';
-                for (const arg of [rawParameterArg, ...restArgs]) {
-                    parameterName = extractNameFromUnknownArg(arg);
-                    if (parameterName) {
-                        break;
-                    }
-                }
-
-                if (!parameterName) {
-                    const editor = vscode.window.activeTextEditor;
-                    if (editor) {
-                        for (const selection of editor.selections) {
-                            if (!selection.isEmpty) {
-                                const selectedText = editor.document.getText(selection);
-                                parameterName = extractScenarioParameterNameFromText(selectedText);
-                                if (parameterName) {
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (!parameterName) {
-                            const active = editor.selection.active;
-                            const lineText = editor.document.lineAt(active.line).text;
-                            const regex = /\[([A-Za-zА-Яа-яЁё0-9_-]+)\]/g;
-                            let match: RegExpExecArray | null;
-                            while ((match = regex.exec(lineText)) !== null) {
-                                const start = match.index;
-                                const end = match.index + match[0].length;
-                                if (active.character >= start && active.character <= end) {
-                                    parameterName = match[1];
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (!parameterName) {
-                            const wordRange = editor.document.getWordRangeAtPosition(
-                                editor.selection.active,
-                                /[A-Za-zА-Яа-яЁё0-9_-]+/
-                            );
-                            if (wordRange) {
-                                const wordText = editor.document.getText(wordRange);
-                                parameterName = extractScenarioParameterNameFromText(wordText);
-                            }
-                        }
-                    }
-                }
-
-                if (!parameterName) {
-                    const input = await vscode.window.showInputBox({
-                        prompt: t('Enter parameter name to exclude (without brackets).'),
-                        placeHolder: 'ExampleParameter'
-                    });
-                    if (!input) {
-                        return;
-                    }
-                    parameterName = extractScenarioParameterNameFromText(input);
-                }
-
-                if (!parameterName) {
-                    vscode.window.showWarningMessage(t('Parameter name cannot be empty.'));
-                    return;
-                }
-
-                const config = vscode.workspace.getConfiguration('kotTestToolkit');
-                const existing = config.get<string[]>('editor.scenarioParameterExclusions', []) || [];
-                if (existing.includes(parameterName)) {
-                    vscode.window.showInformationMessage(t('Parameter "{0}" is already in exclusions.', parameterName));
-                    return;
-                }
-
-                const target = vscode.workspace.workspaceFolders?.length
-                    ? vscode.ConfigurationTarget.Workspace
-                    : vscode.ConfigurationTarget.Global;
-
-                await config.update(
-                    'editor.scenarioParameterExclusions',
-                    [...existing, parameterName],
-                    target
-                );
-                vscode.window.showInformationMessage(t('Added "{0}" to scenario parameter exclusions.', parameterName));
-            } catch (error) {
-                console.error('[Extension] addScenarioParameterExclusion failed:', error);
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                vscode.window.showErrorMessage(t('Failed to add scenario parameter exclusion: {0}', errorMessage));
             }
         }
     ));

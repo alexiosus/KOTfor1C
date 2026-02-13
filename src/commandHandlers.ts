@@ -929,13 +929,6 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
  */
 export function parseUsedParametersFromScriptBody(documentText: string): string[] {
     const usedParameters = new Set<string>();
-    const config = vscode.workspace.getConfiguration('kotTestToolkit');
-    const exclusions = config.get<string[]>('editor.scenarioParameterExclusions', []) || [];
-    const exclusionSet = new Set(
-        exclusions
-            .map(item => item.trim().replace(/^\[/, '').replace(/\]$/, ''))
-            .filter(item => item.length > 0)
-    );
     const scriptBodyRegex = /ТекстСценария:\s*\|?\s*([\s\S]*?)(?=\n[А-Яа-яЁёA-Za-z]+:|\n*$)/;
     const scriptBodyMatch = documentText.match(scriptBodyRegex);
 
@@ -944,12 +937,12 @@ export function parseUsedParametersFromScriptBody(documentText: string): string[
         // Регулярное выражение для поиска параметров вида [ИмяПараметра]
         // Параметры могут содержать только: буквы (A-Z, a-z, А-Я, а-я), цифры (0-9), подчеркивания (_) и дефисы (-)
         // Исключаются строки с точками, запятыми и другими специальными символами
-        const paramRegex = /\[([A-Za-zА-Яа-яЁё0-9_-]+)\]/g;
+        const paramRegex = /(?<!\\)\[([A-Za-zА-Яа-яЁё0-9_-]+)(?<!\\)\]/g;
         let match;
         while ((match = paramRegex.exec(scriptContent)) !== null) {
             const paramName = match[1].trim();
             // Дополнительная проверка: параметр не должен быть пустым
-            if (paramName.length > 0 && !exclusionSet.has(paramName)) {
+            if (paramName.length > 0) {
                 usedParameters.add(paramName);
             }
         }

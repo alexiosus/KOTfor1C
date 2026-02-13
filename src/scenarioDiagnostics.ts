@@ -99,7 +99,6 @@ interface DiagnosticMessages {
     extraEndDo: string;
     unmatchedQuote: string;
     missingQuotesLikely: string;
-    addParamExclusion: string;
     defaultDescription: string;
     duplicateScenarioCode: string;
 }
@@ -120,7 +119,6 @@ function buildMessages(): DiagnosticMessages {
         extraEndDo: vscode.l10n.t('EndDo without matching Do.'),
         unmatchedQuote: vscode.l10n.t('Unclosed double quote in line.'),
         missingQuotesLikely: vscode.l10n.t('Likely missing quotes in step/call arguments.'),
-        addParamExclusion: vscode.l10n.t('Add to parameter exclusions: [{0}]'),
         defaultDescription: vscode.l10n.t('Scenario description is empty.'),
         duplicateScenarioCode: vscode.l10n.t('Duplicate scenario code "{0}" found in other scenarios:')
     };
@@ -396,21 +394,14 @@ function parseUsedParametersFromScenarioText(
     bodyRange: ScenarioBodyRange
 ): Set<string> {
     const used = new Set<string>();
-    const config = vscode.workspace.getConfiguration('kotTestToolkit');
-    const exclusions = config.get<string[]>('editor.scenarioParameterExclusions', []) || [];
-    const exclusionSet = new Set(
-        exclusions
-            .map(item => item.trim().replace(/^\[/, '').replace(/\]$/, ''))
-            .filter(Boolean)
-    );
 
-    const regex = /\[([A-Za-zА-Яа-яЁё0-9_-]+)\]/g;
+    const regex = /(?<!\\)\[([A-Za-zА-Яа-яЁё0-9_-]+)(?<!\\)\]/g;
     for (let i = bodyRange.startLine; i <= bodyRange.endLine; i++) {
         const text = document.lineAt(i).text;
         let match: RegExpExecArray | null;
         while ((match = regex.exec(text)) !== null) {
             const name = match[1].trim();
-            if (name && !exclusionSet.has(name)) {
+            if (name) {
                 used.add(name);
             }
         }
@@ -487,20 +478,6 @@ function buildMissingParameterInsertion(
         position: insertionPosition,
         text: `\n${lines.join('\n')}`
     };
-}
-
-function extractBracketParameterAtPosition(document: vscode.TextDocument, position: vscode.Position): string | null {
-    const text = document.lineAt(position.line).text;
-    const regex = /\[([A-Za-zА-Яа-яЁё0-9_-]+)\]/g;
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(text)) !== null) {
-        const start = match.index;
-        const end = match.index + match[0].length;
-        if (position.character >= start && position.character <= end) {
-            return match[1];
-        }
-    }
-    return null;
 }
 
 function levenshteinDistance(a: string, b: string): number {
@@ -976,20 +953,6 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     actions.push(addSingleAction);
                 }
             }
-        }
-
-        const exclusionCandidate = extractBracketParameterAtPosition(document, range.start);
-        if (exclusionCandidate) {
-            const exclusionAction = new vscode.CodeAction(
-                this.messages.addParamExclusion.replace('{0}', exclusionCandidate),
-                vscode.CodeActionKind.QuickFix
-            );
-            exclusionAction.command = {
-                command: 'kotTestToolkit.addScenarioParameterExclusion',
-                title: this.messages.addParamExclusion,
-                arguments: [exclusionCandidate]
-            };
-            actions.push(exclusionAction);
         }
 
         return actions;

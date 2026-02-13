@@ -52,8 +52,30 @@
                 </div>
             </div>
 
-            <div id="phaseTreeContainer" class="phase-tree-container">
+            <div class="manager-tabs-row">
+                <div class="manager-tabs">
+                    <button id="testsTabBtn" class="manager-tab-btn is-active" title="${loc.testsTabTitle}">
+                        ${loc.testsTabTitle}
+                    </button>
+                    <button id="favoritesTabBtn" class="manager-tab-btn" title="${loc.favoritesTabTitle}">
+                        ${loc.favoritesTabTitle}
+                    </button>
+                </div>
+                <div id="favoritesSortControls" class="favorites-sort-controls">
+                    <label for="favoritesSortSelect">${loc.favoritesSortLabel}:</label>
+                    <select id="favoritesSortSelect" title="${loc.favoritesSortLabel}">
+                        <option value="code">${loc.favoritesSortByCode}</option>
+                        <option value="name">${loc.favoritesSortByName}</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="phaseTreeContainer" class="phase-tree-container manager-view-panel">
                 <p>${loc.loadingPhasesAndTests}</p>
+            </div>
+
+            <div id="favoritesContainer" class="phase-tree-container manager-view-panel hidden">
+                <p>${loc.favoritesEmpty}</p>
             </div>
 
             <div class="phase-switcher-controls-fixed-bottom">
@@ -99,7 +121,7 @@
                         <span class="codicon codicon-beaker"></span> ${loc.buildTests}
                     </button>
                     <button id="cancelAssembleBtn" class="button-with-icon" title="${loc.cancelBuildTitle}">
-                        <span class="codicon codicon-debug-stop"></span> ${loc.cancelBuild}
+                        <span class="codicon codicon-stop-circle"></span> ${loc.cancelBuild}
                     </button>
                 </div>
             </div>

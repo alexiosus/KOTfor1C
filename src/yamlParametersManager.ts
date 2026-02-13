@@ -992,7 +992,9 @@ export class YamlParametersManager {
                 removeParameter: this.t('Remove parameter'),
                 buildMoreActionsLabel: this.t('Build actions'),
                 additionalMoreActionsLabel: this.t('Additional actions'),
-                globalVarsMoreActionsLabel: this.t('GlobalVars actions')
+                globalVarsMoreActionsLabel: this.t('GlobalVars actions'),
+                searchByParameterName: this.t('Search by parameter name'),
+                clearSearch: this.t('Clear search')
             };
 
             // Загружаем HTML шаблон
