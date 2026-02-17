@@ -548,5 +548,9 @@
   "Failed to rename scenario \"{0}\": {1}": "Не удалось переименовать сценарий \"{0}\": {1}",
   "No files were updated for scenario \"{0}\".": "Для сценария \"{0}\" не было обновлено ни одного файла.",
   "Scenario \"{0}\" was renamed to \"{1}\". Updated files: {2}.": "Сценарий \"{0}\" переименован в \"{1}\". Обновлено файлов: {2}.",
-  "Rename target already exists: {0}": "Целевой путь для переименования уже существует: {0}"
+  "Rename target already exists: {0}": "Целевой путь для переименования уже существует: {0}",
+  "Selected: {0}/{1}": "Выбрано: {0}/{1}",
+  "Test Manager selection: enabled {0} of {1}.": "Выбор в Менеджере тестов: включено {0} из {1}.",
+  "Build filter applied: {0} = {1}": "Применен фильтр сборки: {0} = {1}",
+  "Build filter applied: none (all scenarios enabled).": "Фильтр сборки не применялся (все сценарии включены)."
 }

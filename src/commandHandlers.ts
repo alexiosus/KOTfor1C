@@ -1637,7 +1637,11 @@ async function replaceDocumentRange(
     return await vscode.workspace.applyEdit(edit);
 }
 
-function alignNestedScenarioCallParametersInText(scriptText: string, eol: string): string {
+function alignNestedScenarioCallParametersInText(
+    scriptText: string,
+    eol: string,
+    knownNestedScenarioNames: Set<string>
+): string {
     const lines = scriptText.split(/\r\n|\r|\n/);
     let changed = false;
 
@@ -1652,8 +1656,14 @@ function alignNestedScenarioCallParametersInText(scriptText: string, eol: string
         if (!scenarioNameCandidate || scenarioNameCandidate.includes('"')) {
             continue;
         }
+        if (
+            knownNestedScenarioNames.size > 0 &&
+            !knownNestedScenarioNames.has(scenarioNameCandidate.toLocaleLowerCase())
+        ) {
+            continue;
+        }
 
-        const callIndentLength = callMatch[1].length;
+        const expectedParamIndent = `${callMatch[1]}    `;
         const params: { lineIndex: number; indent: string; name: string; value: string }[] = [];
         let j = i + 1;
 
@@ -1665,12 +1675,8 @@ function alignNestedScenarioCallParametersInText(scriptText: string, eol: string
                 break;
             }
 
-            const assignmentMatch = currentLine.match(/^(\s+)([A-Za-zА-Яа-яЁё0-9_-]+)\s*=\s*(.*)$/);
+            const assignmentMatch = currentLine.match(/^(\s*)([A-Za-zА-Яа-яЁё0-9_-]+)\s*=\s*(.*)$/);
             if (!assignmentMatch) {
-                break;
-            }
-
-            if (assignmentMatch[1].length <= callIndentLength) {
                 break;
             }
 
@@ -1683,10 +1689,10 @@ function alignNestedScenarioCallParametersInText(scriptText: string, eol: string
             j++;
         }
 
-        if (params.length > 1) {
+        if (params.length > 0) {
             const maxNameLength = Math.max(...params.map(param => param.name.length));
             for (const param of params) {
-                const alignedLine = `${param.indent}${param.name.padEnd(maxNameLength, ' ')} = ${param.value}`;
+                const alignedLine = `${expectedParamIndent}${param.name.padEnd(maxNameLength, ' ')} = ${param.value}`;
                 if (lines[param.lineIndex] !== alignedLine) {
                     lines[param.lineIndex] = alignedLine;
                     changed = true;
@@ -1785,7 +1791,16 @@ export async function alignNestedScenarioCallParameters(document: vscode.TextDoc
         return false;
     }
 
-    const aligned = alignNestedScenarioCallParametersInText(scenarioTextRange.content, scenarioTextRange.eol);
+    const knownNestedScenarioNames = new Set(
+        parseExistingNestedScenarios(fullText)
+            .map(name => name.trim().toLocaleLowerCase())
+            .filter(Boolean)
+    );
+    const aligned = alignNestedScenarioCallParametersInText(
+        scenarioTextRange.content,
+        scenarioTextRange.eol,
+        knownNestedScenarioNames
+    );
     return await replaceDocumentRange(document, scenarioTextRange.startOffset, scenarioTextRange.endOffset, aligned);
 }
 

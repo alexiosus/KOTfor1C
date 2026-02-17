@@ -228,47 +228,41 @@
             "description": "%config.paths.yamlSourceDirectory.description%",
             "order": 1
           },
-          "kotTestToolkit.paths.disabledTestsDirectory": {
-            "type": "string",
-            "default": "RegressionTests_Disabled/Yaml",
-            "description": "%config.paths.disabledTestsDirectory.description%",
-            "order": 2
-          },
           "kotTestToolkit.paths.buildScenarioBddEpf": {
             "type": "string",
             "default": "build/BuildScenarioBDD.epf",
             "description": "%config.paths.buildScenarioBddEpf.description%",
-            "order": 3
+            "order": 2
           },
           "kotTestToolkit.assembleScript.buildPath": {
             "type": "string",
             "default": "C:\\EtalonDrive\\",
             "description": "%config.buildPath.description%",
-            "order": 4
+            "order": 3
           },
           "kotTestToolkit.paths.emptyInfobase": {
             "type": "string",
             "default": "",
             "description": "%config.emptyInfobase.description%",
-            "order": 5
+            "order": 4
           },
           "kotTestToolkit.paths.oneCEnterpriseExe": {
             "type": "string",
             "default": "C:\\Program Files (x86)\\1cv8\\8.3.24.1738\\bin\\1cv8.exe",
             "description": "%config.oneCEnterpriseExe.description%",
-            "order": 6
+            "order": 5
           },
           "kotTestToolkit.paths.fileWorkshopExe": {
             "type": "string",
             "default": "C:\\Program Files (x86)\\1cv8fv\\bin\\1cv8fv.exe",
             "description": "%config.fileWorkshopExe.description%",
-            "order": 7
+            "order": 6
           },
           "kotTestToolkit.paths.firstLaunchFolder": {
             "type": "string",
             "default": "",
             "description": "%config.paths.firstLaunchFolder.description%",
-            "order": 8
+            "order": 7
           }
         }
       }

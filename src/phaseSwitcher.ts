@@ -8,6 +8,8 @@ import { TestInfo } from './types';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { migrateLegacyPhaseSwitcherMetadata, parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
 import { parseKotScenarioDescription } from './kotMetadataDescription';
+import type { YamlParameter } from './yamlParametersManager';
+import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
 import { isScenarioYamlFile } from './yamlValidator';
 
 // --- Вспомогательная функция для Nonce ---
@@ -71,6 +73,17 @@ interface ScenarioLaunchContext {
     targetPath: string;
     launchMode: 'builtIn' | 'template';
     updatedAt: number;
+}
+
+interface MainScenarioSelectionSnapshot {
+    total: number;
+    enabledNames: string[];
+    disabledNames: string[];
+}
+
+interface BuildScenarioFilterDecision {
+    key: 'Scenariofilter' | 'Exceptscenario' | null;
+    names: string[];
 }
 
 interface FavoriteScenarioEntry {
@@ -241,6 +254,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private static readonly runVanessaCustomInfobaseCacheKey = 'runVanessa.customInfobaseByScenario';
     private static readonly favoritesCacheKey = 'phaseSwitcher.favoriteScenarios';
     private static readonly favoritesSortModeCacheKey = 'phaseSwitcher.favoriteSortMode';
+    private static readonly mainScenarioSelectionStatesCacheKey = 'phaseSwitcher.mainScenarioSelectionStates';
     private _view?: vscode.WebviewView;
     private _extensionUri: vscode.Uri;
     private _context: vscode.ExtensionContext;
@@ -265,6 +279,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _runOutputChannel: vscode.OutputChannel | undefined;
     private _langOverride: 'System' | 'English' | 'Русский' = 'System';
     private _ruBundle: Record<string, string> | null = null;
+    private _mainScenarioSelectionStates: Record<string, boolean> | null = null;
     
     // Этот промис будет хранить состояние первоначального сканирования.
     // Он создается один раз при вызове initializeTestCache.
@@ -346,6 +361,216 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private isMainScenario(testInfo: TestInfo | undefined): boolean {
         return !!(testInfo?.tabName && testInfo.tabName.trim().length > 0);
+    }
+
+    private getMainScenariosFromCache(): TestInfo[] {
+        if (!this._testCache || this._testCache.size === 0) {
+            return [];
+        }
+        return Array.from(this._testCache.values()).filter(info => this.isMainScenario(info));
+    }
+
+    private getStoredMainScenarioSelectionStates(): Record<string, boolean> {
+        if (this._mainScenarioSelectionStates) {
+            return { ...this._mainScenarioSelectionStates };
+        }
+
+        const raw = this._context.workspaceState.get<Record<string, unknown>>(
+            PhaseSwitcherProvider.mainScenarioSelectionStatesCacheKey,
+            {}
+        ) || {};
+
+        const normalized: Record<string, boolean> = {};
+        for (const [scenarioName, state] of Object.entries(raw)) {
+            const trimmedName = scenarioName.trim();
+            if (!trimmedName || typeof state !== 'boolean') {
+                continue;
+            }
+            normalized[trimmedName] = state;
+        }
+
+        this._mainScenarioSelectionStates = normalized;
+        return { ...normalized };
+    }
+
+    private async saveMainScenarioSelectionStates(states: Record<string, boolean>): Promise<void> {
+        const normalized: Record<string, boolean> = {};
+        for (const [scenarioName, state] of Object.entries(states)) {
+            const trimmedName = scenarioName.trim();
+            if (!trimmedName) {
+                continue;
+            }
+            normalized[trimmedName] = !!state;
+        }
+
+        this._mainScenarioSelectionStates = normalized;
+        await this._context.workspaceState.update(
+            PhaseSwitcherProvider.mainScenarioSelectionStatesCacheKey,
+            normalized
+        );
+    }
+
+    private async getMainScenarioSelectionStates(mainScenarios?: TestInfo[]): Promise<Record<string, boolean>> {
+        const scenarios = mainScenarios ?? this.getMainScenariosFromCache();
+        const persisted = this.getStoredMainScenarioSelectionStates();
+        const next: Record<string, boolean> = {};
+
+        for (const scenarioInfo of scenarios) {
+            const scenarioName = scenarioInfo.name.trim();
+            if (!scenarioName) {
+                continue;
+            }
+            if (Object.prototype.hasOwnProperty.call(persisted, scenarioName)) {
+                next[scenarioName] = !!persisted[scenarioName];
+                continue;
+            }
+            next[scenarioName] = scenarioInfo.defaultState === true;
+        }
+
+        const persistedKeys = Object.keys(persisted);
+        const nextKeys = Object.keys(next);
+        const shouldPersist = persistedKeys.length !== nextKeys.length
+            || nextKeys.some(key => persisted[key] !== next[key]);
+
+        if (shouldPersist) {
+            await this.saveMainScenarioSelectionStates(next);
+        }
+
+        return next;
+    }
+
+    private async updateMainScenarioSelectionStates(states: Record<string, boolean>): Promise<void> {
+        if (!states || typeof states !== 'object') {
+            return;
+        }
+
+        const scenarios = this.getMainScenariosFromCache();
+        if (scenarios.length === 0) {
+            return;
+        }
+
+        const next = await this.getMainScenarioSelectionStates(scenarios);
+        let changed = false;
+        for (const scenarioInfo of scenarios) {
+            const scenarioName = scenarioInfo.name.trim();
+            if (!scenarioName || !Object.prototype.hasOwnProperty.call(states, scenarioName)) {
+                continue;
+            }
+
+            const nextState = !!states[scenarioName];
+            if (next[scenarioName] === nextState) {
+                continue;
+            }
+            next[scenarioName] = nextState;
+            changed = true;
+        }
+
+        if (!changed) {
+            return;
+        }
+
+        await this.saveMainScenarioSelectionStates(next);
+    }
+
+    private async renameMainScenarioSelectionState(oldScenarioName: string, newScenarioName: string): Promise<void> {
+        const trimmedOldName = oldScenarioName.trim();
+        const trimmedNewName = newScenarioName.trim();
+        if (!trimmedOldName || !trimmedNewName || trimmedOldName === trimmedNewName) {
+            return;
+        }
+
+        const states = this.getStoredMainScenarioSelectionStates();
+        if (!Object.prototype.hasOwnProperty.call(states, trimmedOldName)) {
+            return;
+        }
+
+        const oldValue = !!states[trimmedOldName];
+        delete states[trimmedOldName];
+        states[trimmedNewName] = oldValue;
+        await this.saveMainScenarioSelectionStates(states);
+    }
+
+    private async getMainScenarioSelectionSnapshotForBuild(): Promise<MainScenarioSelectionSnapshot> {
+        const mainScenarios = this.getMainScenariosFromCache();
+        if (mainScenarios.length === 0) {
+            return {
+                total: 0,
+                enabledNames: [],
+                disabledNames: []
+            };
+        }
+
+        const selectionStates = await this.getMainScenarioSelectionStates(mainScenarios);
+        const enabledNames: string[] = [];
+        const disabledNames: string[] = [];
+        for (const scenarioInfo of mainScenarios) {
+            const scenarioName = scenarioInfo.name.trim();
+            if (!scenarioName) {
+                continue;
+            }
+            if (selectionStates[scenarioName] === true) {
+                enabledNames.push(scenarioName);
+            } else {
+                disabledNames.push(scenarioName);
+            }
+        }
+
+        enabledNames.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
+        disabledNames.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
+
+        return {
+            total: mainScenarios.length,
+            enabledNames,
+            disabledNames
+        };
+    }
+
+    private buildScenarioFilterDecision(snapshot: MainScenarioSelectionSnapshot): BuildScenarioFilterDecision {
+        if (snapshot.total === 0 || snapshot.disabledNames.length === 0) {
+            return { key: null, names: [] };
+        }
+
+        if (snapshot.enabledNames.length === 0) {
+            return {
+                key: 'Exceptscenario',
+                names: snapshot.disabledNames
+            };
+        }
+
+        if (snapshot.disabledNames.length > snapshot.enabledNames.length) {
+            return {
+                key: 'Scenariofilter',
+                names: snapshot.enabledNames
+            };
+        }
+
+        return {
+            key: 'Exceptscenario',
+            names: snapshot.disabledNames
+        };
+    }
+
+    private applyScenarioFilterToBuildParameters(
+        parameters: YamlParameter[],
+        decision: BuildScenarioFilterDecision
+    ): YamlParameter[] {
+        const filteredParameters = parameters.filter(parameter => {
+            const key = (parameter.key || '').trim().toLowerCase();
+            return key !== 'exceptscenario' && key !== 'scenariofilter';
+        });
+
+        if (!decision.key || decision.names.length === 0) {
+            return filteredParameters;
+        }
+
+        const value = decision.names.join(';');
+        return [
+            ...filteredParameters,
+            {
+                key: decision.key,
+                value
+            }
+        ];
     }
 
     private areStringSetsEqual(left: Set<string>, right: Set<string>): boolean {
@@ -1605,6 +1830,50 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             .replace(/\}/g, '\\}');
     }
 
+    private resolveDropInsertIndent(
+        document: vscode.TextDocument,
+        position: vscode.Position
+    ): { baseIndent: string; firstLinePrefix: string } {
+        const defaultIndent = '    ';
+        const currentLineText = document.lineAt(position.line).text;
+        const currentLineLeadingIndent = currentLineText.match(/^\s*/)?.[0] ?? '';
+        const cursorCharacter = Math.max(0, Math.min(position.character, currentLineText.length));
+        const beforeCursorText = currentLineText.slice(0, cursorCharacter);
+        const lineHasContent = currentLineText.trim().length > 0;
+
+        if (lineHasContent) {
+            return {
+                baseIndent: currentLineLeadingIndent,
+                firstLinePrefix: ''
+            };
+        }
+
+        if (/^\s+$/.test(beforeCursorText)) {
+            return {
+                baseIndent: beforeCursorText,
+                firstLinePrefix: ''
+            };
+        }
+
+        for (let line = position.line - 1; line >= 0; line--) {
+            const text = document.lineAt(line).text;
+            if (text.trim().length === 0) {
+                continue;
+            }
+
+            const indent = text.match(/^\s*/)?.[0] ?? '';
+            return {
+                baseIndent: indent,
+                firstLinePrefix: indent
+            };
+        }
+
+        return {
+            baseIndent: defaultIndent,
+            firstLinePrefix: defaultIndent
+        };
+    }
+
     public async buildNestedScenarioCallInsertTextForUri(
         target: vscode.Uri | string,
         document: vscode.TextDocument,
@@ -1637,19 +1906,21 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return null;
         }
 
-        const lineIndent = document.lineAt(position.line).text.match(/^\s*/)?.[0] ?? '';
+        const { baseIndent, firstLinePrefix } = this.resolveDropInsertIndent(document, position);
+        const language = getScenarioLanguageForDocument(document);
+        const scenarioCallKeyword = getScenarioCallKeyword(language);
         const params = (scenarioInfo.parameters || [])
             .map(param => param.trim())
             .filter(Boolean);
 
         if (params.length === 0) {
-            return `And ${scenarioInfo.name}`;
+            return `${firstLinePrefix}${scenarioCallKeyword} ${scenarioInfo.name}`;
         }
 
         const maxParamLength = params.reduce((max, param) => Math.max(max, param.length), 0);
-        const paramIndent = `${lineIndent}    `;
+        const paramIndent = firstLinePrefix.length > 0 ? `${baseIndent}    ` : '    ';
         const defaults = scenarioInfo.parameterDefaults || {};
-        let snippetText = `And ${scenarioInfo.name}`;
+        let snippetText = `${firstLinePrefix}${scenarioCallKeyword} ${scenarioInfo.name}`;
 
         params.forEach((paramName, index) => {
             const alignedName = paramName.padEnd(maxParamLength, ' ');
@@ -2394,6 +2665,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (favoritesChanged) {
             await this.saveFavoriteEntries(favorites);
         }
+        if (isMainScenario) {
+            await this.renameMainScenarioSelectionState(trimmedScenarioName, newScenarioName);
+        }
 
         this.markBuiltArtifactsAsStale([trimmedScenarioName, newScenarioName]);
         this.sendRunArtifactsStateToWebview();
@@ -2879,7 +3153,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 toggleAllCheckboxesTitle: this.t('Toggle all checkboxes'),
                 loadingPhasesAndTests: this.t('Loading groups and tests...'),
                 defaults: this.t('Defaults'),
-                apply: this.t('Apply'),
                 statusInit: this.t('Status: Initializing...'),
                 assemblyTitle: this.t('Assembly'),
                 accountingMode: this.t('Accounting mode'),
@@ -2923,15 +3196,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 runScenarioNoFeatureArtifact: this.t('Feature artifact is not available for this scenario.'),
                 statusLoadingShort: this.t('Loading...'),
                 statusRequestingData: this.t('Requesting data...'),
-                statusApplyingPhaseChanges: this.t('Applying group changes...'),
                 statusStartingAssembly: this.t('Starting assembly...'),
                 statusBuildingInProgress: this.t('Building tests in progress...'),
                 statusCancellingBuild: this.t('Cancelling build...'),
-                pendingNoChanges: this.t('No pending changes.'),
-                pendingTotalChanged: this.t('Total changed: {0}'),
-                pendingEnabled: this.t('Enabled: {0}'),
-                pendingDisabled: this.t('Disabled: {0}'),
-                pendingPressApply: this.t('Press "Apply"'),
+                selectionStateSummary: this.t('Selected: {0}/{1}'),
                 openScenarioTitle: this.t('Open scenario'),
                 renameGroupTitle: this.t('Rename group'),
                 renameScenarioTitle: this.t('Rename scenario'),
@@ -2954,13 +3222,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.onDidReceiveMessage(async message => {
             switch (message.command) {
-                case 'applyChanges':
+                case 'updateScenarioSelectionStates':
                     if (!message.data || typeof message.data !== 'object') {
-                        vscode.window.showErrorMessage(this.t('Error: Invalid data received for application.'));
-                        this._view?.webview.postMessage({ command: 'updateStatus', text: this.t('Error: invalid data.'), enableControls: true });
                         return;
                     }
-                    await this._handleApplyChanges(message.data);
+                    await this.updateMainScenarioSelectionStates(message.data as Record<string, boolean>);
                     return;
                 case 'getInitialState': 
                     await this._sendInitialState(webviewView.webview);
@@ -3171,32 +3437,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             status = this.t('Checking test state...');
             webview.postMessage({ command: 'updateStatus', text: status, refreshButtonEnabled: false });
 
-            const baseOnDirUri = vscode.Uri.joinPath(workspaceRootUri, getScanDirRelativePath());
-            const baseOffDirUri = projectPaths.disabledTestsDirectory;
-
-            const testsForPhaseSwitcherProcessing: TestInfo[] = [];
-            this._testCache.forEach(info => {
-                // Для Test Manager UI используем только тесты, у которых есть tabName
-                if (info.tabName && typeof info.tabName === 'string' && info.tabName.trim() !== "") {
-                    testsForPhaseSwitcherProcessing.push(info);
-                }
-            });
+            const testsForPhaseSwitcherProcessing = this.getMainScenariosFromCache();
             testsForPhaseSwitcherCount = testsForPhaseSwitcherProcessing.length;
+            const savedSelectionStates = await this.getMainScenarioSelectionStates(testsForPhaseSwitcherProcessing);
 
-
-            await Promise.all(testsForPhaseSwitcherProcessing.map(async (info) => {
-                const onPathTestDir = vscode.Uri.joinPath(baseOnDirUri, info.relativePath, 'test');
-                const offPathTestDir = vscode.Uri.joinPath(baseOffDirUri, info.relativePath, 'test');
-                let stateResult: 'checked' | 'unchecked' | 'disabled' = 'disabled';
-
-                try { await vscode.workspace.fs.stat(onPathTestDir); stateResult = 'checked'; }
-                catch { try { await vscode.workspace.fs.stat(offPathTestDir); stateResult = 'unchecked'; } catch { /* stateResult remains 'disabled' */ } }
-
-                states[info.name] = stateResult;
-                if (stateResult === 'checked') {
+            for (const info of testsForPhaseSwitcherProcessing) {
+                const isChecked = savedSelectionStates[info.name] === true;
+                states[info.name] = isChecked ? 'checked' : 'unchecked';
+                if (isChecked) {
                     checkedCount++;
                 }
-            }));
+            }
             
             // Группируем и сортируем данные только для тех тестов, что идут в UI
             tabDataForUI = this._groupAndSortTestData(new Map(testsForPhaseSwitcherProcessing.map(info => [info.name, info])));
@@ -3302,7 +3553,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return {
             buildScenarioBddEpf: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.buildScenarioBddEpf') || 'build/BuildScenarioBDD.epf'),
             yamlSourceDirectory: path.join(workspaceRootUri.fsPath, config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml'),
-            disabledTestsDirectory: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.disabledTestsDirectory') || 'RegressionTests_Disabled/Yaml/Drive'),
             firstLaunchFolder,
             etalonDriveDirectory: 'tests'
         };
@@ -3711,7 +3961,32 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 // Генерируем yaml_parameters.json из сохранённых параметров через Build Scenario Parameters Manager
                 const { YamlParametersManager } = await import('./yamlParametersManager.js');
                 const yamlParametersManager = YamlParametersManager.getInstance(this._context);
-                await yamlParametersManager.createYamlParametersFile(localSettingsPath.fsPath);
+                await this.ensureFreshTestCache();
+                const baseBuildParameters = await yamlParametersManager.loadParameters();
+                const selectionSnapshot = await this.getMainScenarioSelectionSnapshotForBuild();
+                const filterDecision = this.buildScenarioFilterDecision(selectionSnapshot);
+                const effectiveBuildParameters = this.applyScenarioFilterToBuildParameters(baseBuildParameters, filterDecision);
+                await yamlParametersManager.createYamlParametersFile(localSettingsPath.fsPath, effectiveBuildParameters);
+                this.outputInfo(
+                    outputChannel,
+                    this.t(
+                        'Test Manager selection: enabled {0} of {1}.',
+                        String(selectionSnapshot.enabledNames.length),
+                        String(selectionSnapshot.total)
+                    )
+                );
+                if (filterDecision.key && filterDecision.names.length > 0) {
+                    this.outputInfo(
+                        outputChannel,
+                        this.t(
+                            'Build filter applied: {0} = {1}',
+                            filterDecision.key,
+                            filterDecision.names.join(';')
+                        )
+                    );
+                } else {
+                    this.outputInfo(outputChannel, this.t('Build filter applied: none (all scenarios enabled).'));
+                }
                 
                 this.outputAdvanced(outputChannel, this.t('yaml_parameters.json generated at {0}', localSettingsPath.fsPath));
 
@@ -6835,95 +7110,4 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async _handleApplyChanges(states: { [testName: string]: boolean }) {
-        console.log("[PhaseSwitcherProvider:_handleApplyChanges] Starting...");
-        if (!this._view || !this._testCache) { 
-            console.warn("[PhaseSwitcherProvider:_handleApplyChanges] View or testCache is not available.");
-            return; 
-        }
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders?.length) { 
-            console.warn("[PhaseSwitcherProvider:_handleApplyChanges] No workspace folder open.");
-            return; 
-        }
-        const workspaceRootUri = workspaceFolders[0].uri;
-
-        const baseOnDirUri = vscode.Uri.joinPath(workspaceRootUri, getScanDirRelativePath());
-        const projectPaths = this.getProjectPaths(workspaceRootUri);
-        const baseOffDirUri = projectPaths.disabledTestsDirectory;
-        
-
-
-        if (this._view.webview) {
-            this._view.webview.postMessage({ command: 'updateStatus', text: this.t('Applying changes...'), enableControls: false, refreshButtonEnabled: false });
-        } else {
-            console.warn("[PhaseSwitcherProvider:_handleApplyChanges] Cannot send status, webview is not available.");
-        }
-
-        await vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: this.t('Applying group changes...'),
-            cancellable: false
-        }, async (progress) => {
-            let stats = { enabled: 0, disabled: 0, skipped: 0, error: 0 };
-            const total = Object.keys(states).length;
-            const increment = total > 0 ? 100 / total : 0;
-
-            for (const [name, shouldBeEnabled] of Object.entries(states)) {
-                progress.report({ increment: increment , message: this.t('Processing {0}...', name) });
-
-                const info = this._testCache!.get(name);
-                // Применяем изменения только для тестов, которые имеют tabName (т.е. управляются через Test Manager)
-                if (!info || !info.tabName) { 
-                    // console.log(`[PhaseSwitcherProvider-v6:_handleApplyChanges] Skipping "${name}" as it's not part of Test Manager UI (no tabName).`);
-                    stats.skipped++; 
-                    continue; 
-                }
-
-                const onPathTestDir = vscode.Uri.joinPath(baseOnDirUri, info.relativePath, 'test');
-                const offPathTestDir = vscode.Uri.joinPath(baseOffDirUri, info.relativePath, 'test');
-                const targetOffDirParent = vscode.Uri.joinPath(baseOffDirUri, info.relativePath);
-
-                let currentState: 'enabled' | 'disabled' | 'missing' = 'missing';
-                try { await vscode.workspace.fs.stat(onPathTestDir); currentState = 'enabled'; }
-                catch { try { await vscode.workspace.fs.stat(offPathTestDir); currentState = 'disabled'; } catch { /* missing */ } }
-
-                try {
-                    if (shouldBeEnabled && currentState === 'disabled') {
-                        await vscode.workspace.fs.rename(offPathTestDir, onPathTestDir, { overwrite: true });
-                        stats.enabled++;
-                    } else if (!shouldBeEnabled && currentState === 'enabled') {
-                        try { await vscode.workspace.fs.createDirectory(targetOffDirParent); }
-                        catch (dirErr: any) {
-                            if (dirErr.code !== 'EEXIST' && dirErr.code !== 'FileExists') {
-                                throw dirErr;
-                            }
-                        }
-                        await vscode.workspace.fs.rename(onPathTestDir, offPathTestDir, { overwrite: true });
-                        stats.disabled++;
-                    } else {
-                        stats.skipped++;
-                    }
-                } catch (moveError: any) {
-                    console.error(`[PhaseSwitcherProvider] Error moving test "${name}":`, moveError);
-                    vscode.window.showErrorMessage(this.t('Error moving "{0}": {1}', name, moveError.message || moveError));
-                    stats.error++;
-                }
-            }
-
-            const resultMessage = this.t('Enabled: {0}, Disabled: {1}, Skipped: {2}, Errors: {3}', 
-                String(stats.enabled), String(stats.disabled), String(stats.skipped), String(stats.error));
-            if (stats.error > 0) { vscode.window.showWarningMessage(this.t('Changes applied with errors! {0}', resultMessage)); }
-            else if (stats.enabled > 0 || stats.disabled > 0) { vscode.window.showInformationMessage(this.t('Group changes successfully applied! {0}', resultMessage)); }
-            else { vscode.window.showInformationMessage(this.t('Group changes: nothing to apply. {0}', resultMessage)); }
-
-            if (this._view?.webview) {
-                console.log("[PhaseSwitcherProvider] Refreshing state after apply...");
-                // _sendInitialState вызовет _onDidUpdateTestCache с полным списком
-                await this._sendInitialState(this._view.webview); 
-            } else {
-                console.warn("[PhaseSwitcherProvider] Cannot refresh state after apply, view is not available.");
-            }
-        });
-    }
 }

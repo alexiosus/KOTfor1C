@@ -4,8 +4,8 @@ import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { YamlParametersManager } from './yamlParametersManager';
 import { scanWorkspaceForTests } from './workspaceScanner';
+import { applyPreferredStepKeyword, getConfiguredScenarioLanguage, ScenarioLanguage } from './gherkinLanguage';
 
-type ScenarioLanguage = 'en' | 'ru';
 type ScenarioIndex = {
     names: Set<string>;
     codes: Set<string>;
@@ -126,17 +126,23 @@ function rememberScenarioInIndex(scenarioName: string, scenarioCode?: string): v
     scenarioIndexCache.loadedAt = Date.now();
 }
 
-function getNewScenarioLanguage(config: vscode.WorkspaceConfiguration): ScenarioLanguage {
-    const configured = config.get<string>('editor.newScenarioLanguage', 'en');
-    return configured === 'ru' ? 'ru' : 'en';
-}
-
 function applyScenarioLanguage(templateContent: string, language: ScenarioLanguage): string {
     return templateContent.replace(/#language:\s*(en|ru)\b/g, `#language: ${language}`);
 }
 
-function applyMainScenarioDriveBlock(templateContent: string, includeDriveBlock: boolean): string {
-    const block = includeDriveBlock ? DRIVE_MAIN_SCENARIO_BLOCK : '';
+function buildDriveMainScenarioBlock(language: ScenarioLanguage): string {
+    return DRIVE_MAIN_SCENARIO_BLOCK
+        .split('\n')
+        .map(line => applyPreferredStepKeyword(line, language))
+        .join('\n');
+}
+
+function applyMainScenarioDriveBlock(
+    templateContent: string,
+    includeDriveBlock: boolean,
+    language: ScenarioLanguage
+): string {
+    const block = includeDriveBlock ? buildDriveMainScenarioBlock(language) : '';
     return templateContent.replace('    DriveMainScenarioBlock_Placeholder', block);
 }
 
@@ -165,7 +171,7 @@ async function maybeAutoAddScenarioToFavorites(
 export async function handleCreateNestedScenario(context: vscode.ExtensionContext): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     const config = vscode.workspace.getConfiguration('kotTestToolkit');
-    const newScenarioLanguage = getNewScenarioLanguage(config);
+    const newScenarioLanguage = getConfiguredScenarioLanguage(config);
     const knownScenarioIndex = await getKnownScenarioIndex();
     const knownScenarioNames = knownScenarioIndex.names;
     const knownScenarioCodes = knownScenarioIndex.codes;
@@ -177,7 +183,7 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
         try {
             const position = editor.selection.active;
             const line = editor.document.lineAt(position.line);
-            const lineMatch = line.text.match(/^\s*And\s+(.*)/);
+            const lineMatch = line.text.match(/^\s*(?:And|И|Допустим)\s+(.*)/i);
             if (lineMatch && lineMatch[1]) {
                 prefilledName = lineMatch[1].trim();
             }
@@ -316,7 +322,7 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
 export async function handleCreateMainScenario(context: vscode.ExtensionContext): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     const config = vscode.workspace.getConfiguration('kotTestToolkit');
-    const newScenarioLanguage = getNewScenarioLanguage(config);
+    const newScenarioLanguage = getConfiguredScenarioLanguage(config);
     const includeDriveBlock = config.get<boolean>('assembleScript.showDriveFeatures', false);
     const knownScenarioIndex = await getKnownScenarioIndex();
     const knownScenarioNames = knownScenarioIndex.names;
@@ -456,7 +462,7 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
             .replace(/UID_Placeholder/g, mainUid)
             .replace(/Phase_Placeholder/g, trimmedTabName)
             .replace(/Default_Placeholder/g, defaultStateStr)
-            .replace(/Order_Placeholder/g, orderForTemplate), newScenarioLanguage), includeDriveBlock);
+            .replace(/Order_Placeholder/g, orderForTemplate), newScenarioLanguage), includeDriveBlock, newScenarioLanguage);
         await vscode.workspace.fs.writeFile(mainTargetFileUri, Buffer.from(mainFinalContent, 'utf-8'));
         rememberScenarioInIndex(trimmedName, trimmedName);
         console.log(`[Cmd:createMainScenario] Created main scenario file: ${mainTargetFileUri.fsPath}`);

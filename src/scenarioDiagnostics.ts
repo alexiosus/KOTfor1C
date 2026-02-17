@@ -5,6 +5,7 @@ import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { TestInfo } from './types';
 import { isScenarioYamlFile } from './yamlValidator';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
+import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
 
 const DIAGNOSTIC_SOURCE = 'KOT for 1C';
 const CODE_UNCLOSED_IF = 'kotTestToolkit.unclosedIf';
@@ -178,7 +179,7 @@ function getScenarioBodyRange(document: vscode.TextDocument): ScenarioBodyRange 
 function parseScenarioCallBlocks(document: vscode.TextDocument, bodyRange: ScenarioBodyRange): ScenarioCallBlock[] {
     const blocks: ScenarioCallBlock[] = [];
     const callRegex = /^(\s*)(And|И|Допустим)\s+(.+)$/i;
-    const assignmentRegex = /^(\s+)([A-Za-zА-Яа-яЁё0-9_-]+)\s*=\s*(.*)$/;
+    const assignmentRegex = /^(\s*)([A-Za-zА-Яа-яЁё0-9_-]+)\s*=\s*(.*)$/;
 
     for (let i = bodyRange.startLine; i <= bodyRange.endLine; i++) {
         const text = document.lineAt(i).text;
@@ -187,7 +188,6 @@ function parseScenarioCallBlocks(document: vscode.TextDocument, bodyRange: Scena
             continue;
         }
 
-        const callIndentLength = callMatch[1].length;
         const name = callMatch[3].trim();
         if (!name || name.includes('"')) {
             continue;
@@ -210,11 +210,6 @@ function parseScenarioCallBlocks(document: vscode.TextDocument, bodyRange: Scena
 
             const assignmentMatch = nextLine.match(assignmentRegex);
             if (!assignmentMatch) {
-                break;
-            }
-
-            const assignmentIndent = assignmentMatch[1].length;
-            if (assignmentIndent <= callIndentLength) {
                 break;
             }
 
@@ -452,10 +447,14 @@ function buildMissingParameterInsertion(
 
     const callLineText = document.lineAt(callBlock.line).text;
     const callIndent = callLineText.match(/^(\s*)/)?.[1] || '';
+    const defaultParamIndent = `${callIndent}    `;
 
-    const existingParamIndent = callBlock.parameters.length > 0
-        ? (document.lineAt(callBlock.parameters[0].line).text.match(/^(\s*)/)?.[1] || `${callIndent}    `)
-        : `${callIndent}    `;
+    const firstParamIndent = callBlock.parameters.length > 0
+        ? (document.lineAt(callBlock.parameters[0].line).text.match(/^(\s*)/)?.[1] || '')
+        : '';
+    const existingParamIndent = firstParamIndent.length > callIndent.length
+        ? firstParamIndent
+        : defaultParamIndent;
 
     const allNames = [...callBlock.parameters.map(param => param.name), ...missingParameters];
     const maxNameLength = allNames.reduce((max, name) => Math.max(max, name.length), 0);
@@ -521,6 +520,17 @@ function findClosestStrings(input: string, candidates: string[], max: number): s
         .sort((a, b) => b.score - a.score)
         .slice(0, Math.max(1, max))
         .map(item => item.candidate);
+}
+
+function getStringSimilarity(input: string, candidate: string): number {
+    const normalizedInput = input.trim().toLowerCase();
+    const normalizedCandidate = candidate.trim().toLowerCase();
+    if (!normalizedInput || !normalizedCandidate) {
+        return 0;
+    }
+    const distance = levenshteinDistance(normalizedInput, normalizedCandidate);
+    const maxLen = Math.max(normalizedInput.length, normalizedCandidate.length);
+    return maxLen === 0 ? 0 : 1 - distance / maxLen;
 }
 
 function containsQuotedPlaceholderTemplate(text: string): boolean {
@@ -811,6 +821,8 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
 
         const actions: vscode.CodeAction[] = [];
         const localScenarioParameterDefaults = parseScenarioParameterDefaults(document.getText());
+        const scenarioLanguage = getScenarioLanguageForDocument(document);
+        const scenarioCallKeyword = getScenarioCallKeyword(scenarioLanguage);
         const hasFixableDiagnostic = context.diagnostics.some(diagnostic =>
             diagnostic.source === DIAGNOSTIC_SOURCE &&
             typeof diagnostic.code === 'string' &&
@@ -848,7 +860,9 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 const indent = document.lineAt(diagnostic.range.start.line).text.match(/^\s*/)?.[0] || '';
                 const replacementVariants = new Set<string>();
                 for (const suggestion of suggestions) {
-                    replacementVariants.add(applyStepSuggestionWithOriginalValues(lineText, suggestion));
+                    replacementVariants.add(
+                        applyStepSuggestionWithOriginalValues(lineText, suggestion)
+                    );
                 }
                 for (const replacementLine of replacementVariants) {
                     const action = new vscode.CodeAction(
@@ -873,7 +887,6 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     continue;
                 }
                 const indent = match[1];
-                const keyword = match[2];
                 const unknownName = match[3].trim();
                 const cache = this.phaseSwitcherProvider.getTestCache();
                 const suggestions = findClosestStrings(unknownName, Array.from((cache || new Map<string, TestInfo>()).keys()), 3);
@@ -886,7 +899,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     action.edit.replace(
                         document.uri,
                         document.lineAt(diagnostic.range.start.line).range,
-                        `${indent}${keyword} ${suggestion}`
+                        `${indent}${scenarioCallKeyword} ${suggestion}`
                     );
                     action.diagnostics = [diagnostic];
                     actions.push(action);
@@ -1327,6 +1340,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
 
         const diagnostics: vscode.Diagnostic[] = [];
         const documentText = document.getText();
+        const configuredLanguage = getScenarioLanguageForDocument(document);
         const testCache = this.phaseSwitcherProvider.getTestCache() || new Map<string, TestInfo>();
         const hasScenarioCache = testCache.size > 0;
         const scenarioCallBlocks = parseScenarioCallBlocks(document, bodyRange);
@@ -1384,9 +1398,15 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         for (const block of scenarioCallBlocks) {
             const scenarioInfo = testCache.get(block.name);
             const lineText = document.lineAt(block.line).text.trim();
+            const includeScenarioSuggestions = options.includeScenarioSuggestions ?? options.includeSuggestions;
+            const scenarioSuggestions = (!scenarioInfo && hasScenarioCache && includeScenarioSuggestions)
+                ? findClosestStrings(block.name, Array.from(testCache.keys()), 3)
+                : [];
+            const hasStrongScenarioNameMatch = scenarioSuggestions.length > 0
+                && getStringSimilarity(block.name, scenarioSuggestions[0]) >= 0.85;
 
             // Disambiguate step-like "And ..." lines to avoid false "unknown nested scenario" diagnostics.
-            if (!scenarioInfo && block.parameters.length === 0) {
+            if (!scenarioInfo && block.parameters.length === 0 && !hasStrongScenarioNameMatch) {
                 const stepLikeSyntax = looksLikePotentialGherkinStep(block.name);
 
                 if (options.includeStepChecks || stepLikeSyntax) {
@@ -1423,7 +1443,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             }
 
             const likelyStepPrefix = /^(Я|I|When|Then|Given|Если|Когда|Тогда|Но)\b/i.test(block.name);
-            const isScenarioCall = !!scenarioInfo || block.parameters.length > 0 || !likelyStepPrefix;
+            const isScenarioCall = !!scenarioInfo || block.parameters.length > 0 || !likelyStepPrefix || hasStrongScenarioNameMatch;
             if (!isScenarioCall) {
                 continue;
             }
@@ -1449,11 +1469,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     continue;
                 }
 
-                const includeScenarioSuggestions = options.includeScenarioSuggestions ?? options.includeSuggestions;
-                const suggestions = includeScenarioSuggestions
-                    ? findClosestStrings(block.name, Array.from(testCache.keys()), 3)
-                    : [];
-                const suffix = formatSuggestionListSuffix(this.messages, suggestions);
+                const suffix = formatSuggestionListSuffix(this.messages, scenarioSuggestions);
                 diagnostics.push(createDiagnostic(
                     document,
                     block.line,

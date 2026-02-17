@@ -548,5 +548,9 @@
   "Failed to rename scenario \"{0}\": {1}": "Failed to rename scenario \"{0}\": {1}",
   "No files were updated for scenario \"{0}\".": "No files were updated for scenario \"{0}\".",
   "Scenario \"{0}\" was renamed to \"{1}\". Updated files: {2}.": "Scenario \"{0}\" was renamed to \"{1}\". Updated files: {2}.",
-  "Rename target already exists: {0}": "Rename target already exists: {0}"
+  "Rename target already exists: {0}": "Rename target already exists: {0}",
+  "Selected: {0}/{1}": "Selected: {0}/{1}",
+  "Test Manager selection: enabled {0} of {1}.": "Test Manager selection: enabled {0} of {1}.",
+  "Build filter applied: {0} = {1}": "Build filter applied: {0} = {1}",
+  "Build filter applied: none (all scenarios enabled).": "Build filter applied: none (all scenarios enabled)."
 }

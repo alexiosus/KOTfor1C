@@ -169,7 +169,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.languages.registerCompletionItemProvider(
             { pattern: '**/*.yaml', scheme: 'file' }, 
             completionProvider,
-            ' ', '.', ',', ':', ';', '(', ')', '"', "'",
+            ' ', '.', ',', ':', ';', '(', ')', '"', "'", '$',
             // Добавляем буквы для триггера автодополнения
             'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
             'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',

@@ -22,6 +22,7 @@
         highlightAffectedMainScenarios: true
     };
     let isBuildInProgress = false;
+    let phaseControlsActive = false;
     let areAllPhasesCurrentlyExpanded = false; 
     let activeRunModeMenu = null;
     let activeContextMenu = null;
@@ -51,7 +52,6 @@
     const statusBar = document.getElementById('statusBar');
     const selectAllBtn = document.getElementById('selectAllBtn');
     const selectDefaultsBtn = document.getElementById('selectDefaultsBtn');
-    const applyChangesBtn = document.getElementById('applyChangesBtn');
 
     const recordGLSelect = document.getElementById('recordGLSelect');
     const driveAccountingModeRow = document.getElementById('driveAccountingModeRow');
@@ -111,10 +111,10 @@
     function enablePhaseControls(enable, refreshButtonAlso = true) {
         const isPhaseSwitcherVisible = settings.switcherEnabled;
         const effectiveEnable = enable && isPhaseSwitcherVisible && !isBuildInProgress;
+        phaseControlsActive = effectiveEnable;
         const isDisabled = !effectiveEnable;
 
         if (selectAllBtn instanceof HTMLButtonElement) selectAllBtn.disabled = isDisabled;
-        if (selectDefaultsBtn instanceof HTMLButtonElement) selectDefaultsBtn.disabled = isDisabled;
 
         if (collapseAllBtn instanceof HTMLButtonElement) {
             const hasPhases = Object.keys(testDataByPhase).length > 0;
@@ -157,7 +157,36 @@
              log(`Refresh button state preserved by enablePhaseControls (refreshButtonAlso=false)`);
         }
         updateRunButtonsState();
-        log(`Phase controls (excluding Apply, Settings) enabled: ${effectiveEnable} (request ${enable}, feature ${isPhaseSwitcherVisible})`);
+        updateSelectDefaultsButtonState();
+        log(`Phase controls enabled: ${effectiveEnable} (request ${enable}, feature ${isPhaseSwitcherVisible})`);
+    }
+
+    function areCurrentStatesMatchingDefaults() {
+        let hasComparableScenario = false;
+        for (const name in initialTestStates) {
+            if (!Object.prototype.hasOwnProperty.call(initialTestStates, name)) {
+                continue;
+            }
+            if (initialTestStates[name] === 'disabled') {
+                continue;
+            }
+            hasComparableScenario = true;
+            const currentState = !!currentCheckboxStates[name];
+            const defaultState = !!testDefaultStates[name];
+            if (currentState !== defaultState) {
+                return false;
+            }
+        }
+        return hasComparableScenario;
+    }
+
+    function updateSelectDefaultsButtonState() {
+        if (!(selectDefaultsBtn instanceof HTMLButtonElement)) {
+            return;
+        }
+        const noScenarios = !testDataByPhase || Object.keys(testDataByPhase).length === 0;
+        const defaultsAlreadyApplied = areCurrentStatesMatchingDefaults();
+        selectDefaultsBtn.disabled = !phaseControlsActive || noScenarios || defaultsAlreadyApplied;
     }
 
     function updateRunButtonsState() {
@@ -544,7 +573,6 @@
 
             let enabledCount = 0;
             let totalInPhase = 0;
-            let hasUnappliedChangesInGroup = false;
 
             if (Array.isArray(testsInPhase)) {
                 testsInPhase.forEach(testInfo => {
@@ -552,11 +580,6 @@
                         totalInPhase++;
                         if (currentCheckboxStates[testInfo.name]) {
                             enabledCount++;
-                        }
-                        const initialChecked = initialTestStates[testInfo.name] === 'checked';
-                        const currentChecked = !!currentCheckboxStates[testInfo.name];
-                        if (initialChecked !== currentChecked) {
-                            hasUnappliedChangesInGroup = true;
                         }
                     }
                 });
@@ -593,7 +616,6 @@
             const countSpan = document.createElement('span');
             countSpan.className = 'phase-test-count';
             countSpan.textContent = `${enabledCount}/${totalInPhase}`;
-            countSpan.classList.toggle('group-changed', hasUnappliedChangesInGroup);
 
             const toggleCheckboxesBtn = document.createElement('button');
             toggleCheckboxesBtn.className = 'phase-toggle-checkboxes-btn button-with-icon';
@@ -717,6 +739,7 @@
 
         updatePendingStatus();
         updateHighlighting();
+        sendScenarioSelectionStates();
     }
 
     /**
@@ -785,15 +808,9 @@
         const checkboxes = phaseTreeContainer.querySelectorAll('input[type=checkbox]');
         checkboxes.forEach(cb => {
             if (!(cb instanceof HTMLInputElement)) return;
-            const name = cb.getAttribute('name');
             const label = cb.closest('.checkbox-item');
-            if (!label || !name || !initialTestStates.hasOwnProperty(name) || initialTestStates[name] === 'disabled') {
-                label?.classList.remove('changed');
-                return;
-            }
-            const initialChecked = initialTestStates[name] === 'checked';
-            const currentChecked = !!currentCheckboxStates[name];
-            label.classList.toggle('changed', initialChecked !== currentChecked);
+            if (!label) return;
+            label.classList.remove('changed');
         });
     }
 
@@ -842,25 +859,6 @@
             command: 'runScenarioInVanessa',
             name
         });
-    }
-
-    function handleRunScenarioContextMenu(event) {
-        if (!(event.target instanceof Element)) return;
-        const button = event.target.closest('.run-scenario-btn');
-        if (!(button instanceof HTMLButtonElement)) return;
-
-        event.preventDefault();
-        event.stopPropagation();
-        const name = button.getAttribute('data-name');
-        if (!name) {
-            log('ERROR: Run scenario context menu opened without data-name attribute!');
-            return;
-        }
-        if (button.disabled) {
-            return;
-        }
-        log(`Run scenario context menu opened for: ${name}`);
-        showRunModeMenu(button, name, { includeManual: false });
     }
 
     function handleRunLogClick(event) {
@@ -917,9 +915,19 @@
             item.type = 'button';
             item.className = 'run-mode-menu-item';
             item.innerHTML = `<span class="codicon ${escapeHtmlAttr(action.icon || 'codicon-edit')}"></span><span>${escapeHtmlAttr(action.label || '')}</span>`;
+            if (typeof action.title === 'string' && action.title.trim()) {
+                item.title = action.title;
+            }
+            if (action.disabled === true) {
+                item.disabled = true;
+                item.classList.add('run-mode-menu-item-disabled');
+            }
             item.addEventListener('click', event => {
                 event.preventDefault();
                 event.stopPropagation();
+                if (item.disabled) {
+                    return;
+                }
                 closeContextMenu();
                 action.onClick?.();
             });
@@ -960,6 +968,19 @@
 
         event.preventDefault();
         event.stopPropagation();
+        const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
+        const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
+        const hasFeatureArtifact = !!(runInfo && runInfo.featurePath);
+        const isRunInProgress = runInfo?.runStatus === 'running';
+        const runDisabled = isBuildInProgress || isRunInProgress || !hasRunArtifact;
+        const runModeAutomaticLabel = window.__loc?.runScenarioModeAutomatic || 'Run test (auto close)';
+        const runLabel = runModeAutomaticLabel.replace(/\s*\([^)]*\)\s*$/, '') || 'Run test';
+        const runHint = window.__loc?.runScenarioModeAutomaticHint || 'Runs scenario with StartFeaturePlayer and waits for completion.';
+        const runUnavailable = window.__loc?.runScenarioNoArtifacts || 'No build artifacts found. Build tests first in current session.';
+        const openFeatureLabel = window.__loc?.runScenarioModeOpenFeature || 'Open feature in editor';
+        const openFeatureHint = window.__loc?.runScenarioModeOpenFeatureHint || 'Opens built feature file for this scenario in editor.';
+        const openFeatureUnavailable = window.__loc?.runScenarioNoFeatureArtifact || 'Feature artifact is not available for this scenario.';
+
         showContextMenuAt(event.clientX, event.clientY, [
             {
                 icon: 'codicon-edit',
@@ -970,6 +991,20 @@
                 icon: 'codicon-rename',
                 label: window.__loc?.renameScenarioTitle || 'Rename scenario',
                 onClick: () => vscode.postMessage({ command: 'renameScenario', name })
+            },
+            {
+                icon: 'codicon-go-to-file',
+                label: openFeatureLabel,
+                title: hasFeatureArtifact ? openFeatureHint : openFeatureUnavailable,
+                disabled: !hasFeatureArtifact,
+                onClick: () => vscode.postMessage({ command: 'openScenarioFeatureInEditor', name })
+            },
+            {
+                icon: 'codicon-play-circle',
+                label: runLabel,
+                title: runDisabled ? runUnavailable : runHint,
+                disabled: runDisabled,
+                onClick: () => vscode.postMessage({ command: 'runScenarioInVanessa', name })
             }
         ], `scenario:${name}`);
     }
@@ -1168,8 +1203,6 @@
             btn.disabled = isBuildInProgress || isRunInProgress;
             btn.removeEventListener('click', handleRunScenarioClick);
             btn.addEventListener('click', handleRunScenarioClick);
-            btn.removeEventListener('contextmenu', handleRunScenarioContextMenu);
-            btn.addEventListener('contextmenu', handleRunScenarioContextMenu);
         });
 
         const runLogButtons = phaseTreeContainer.querySelectorAll('.run-scenario-log-btn');
@@ -1207,6 +1240,7 @@
         updateCurrentState(name, isChecked);
         updatePendingStatus();
         updateHighlighting();
+        sendScenarioSelectionStates();
     }
 
     /**
@@ -1223,7 +1257,6 @@
             const testsInPhase = testDataByPhase[phaseName];
             let enabledCount = 0;
             let totalInPhase = 0;
-            let hasUnappliedChangesInGroup = false;
 
             if (Array.isArray(testsInPhase)) {
                 testsInPhase.forEach(testInfo => {
@@ -1232,64 +1265,63 @@
                         if (currentCheckboxStates[testInfo.name]) {
                             enabledCount++;
                         }
-                        const initialChecked = initialTestStates[testInfo.name] === 'checked';
-                        const currentChecked = !!currentCheckboxStates[testInfo.name];
-                        if (initialChecked !== currentChecked) {
-                            hasUnappliedChangesInGroup = true;
-                        }
                     }
                 });
             }
             const countElement = header.querySelector('.phase-test-count');
             if (countElement) {
                 countElement.textContent = `${enabledCount}/${totalInPhase}`;
-                countElement.classList.toggle('group-changed', hasUnappliedChangesInGroup);
+                countElement.classList.remove('group-changed');
             }
         });
     }
 
+    function sendScenarioSelectionStates() {
+        const statesToSend = {};
+        for (const [name, stateValue] of Object.entries(currentCheckboxStates)) {
+            if (!initialTestStates.hasOwnProperty(name) || initialTestStates[name] === 'disabled') {
+                continue;
+            }
+            statesToSend[name] = !!stateValue;
+        }
+        vscode.postMessage({ command: 'updateScenarioSelectionStates', data: statesToSend });
+    }
+
 
     /**
-     * Обновляет статус-бар информацией о несохраненных изменениях.
+     * Обновляет статус-бар краткой информацией о текущем выборе сценариев.
      */
     function updatePendingStatus() {
-        log('Updating pending status...');
-        if (!(applyChangesBtn instanceof HTMLButtonElement)) return;
-
-        let changed=0, enabled=0, disabled=0;
+        let enabled = 0;
+        let total = 0;
         for (const name in initialTestStates) {
             if (initialTestStates.hasOwnProperty(name) && initialTestStates[name] !== 'disabled') {
-                const initial = initialTestStates[name] === 'checked';
-                const current = !!currentCheckboxStates[name];
-                if (initial !== current) {
-                    changed++;
-                    if (current) { enabled++; } else { disabled++; }
+                total++;
+                if (currentCheckboxStates[name]) {
+                    enabled++;
                 }
             }
         }
 
         const mainControlsActive = settings.switcherEnabled && !!testDataByPhase && Object.keys(testDataByPhase).length > 0;
-
-        if (changed > 0) {
-            const t = window.__loc || {};
-            const parts = [
-                (t.pendingTotalChanged || 'Total changed: {0}').replace('{0}', String(changed)),
-                (t.pendingEnabled || 'Enabled: {0}').replace('{0}', String(enabled)),
-                (t.pendingDisabled || 'Disabled: {0}').replace('{0}', String(disabled))
-            ];
-            const tail = t.pendingPressApply || 'Press "Apply"';
-            updateStatus(`${parts.join(' \n')}\n\n${tail}`, 'main', mainControlsActive);
-            applyChangesBtn.disabled = false;
-        } else {
-            if (!statusBar || !statusBar.textContent?.includes((window.__loc?.statusLoadingShort || 'Loading...')) && !statusBar.textContent?.includes((window.__loc?.statusApplyingPhaseChanges || 'Applying group changes...'))) {
-                updateStatus((window.__loc?.pendingNoChanges || 'No pending changes.'), 'main', mainControlsActive);
-            }
-            applyChangesBtn.disabled = true;
+        if (
+            statusBar &&
+            !statusBar.textContent?.includes((window.__loc?.statusLoadingShort || 'Loading...')) &&
+            !isBuildInProgress
+        ) {
+            const statusTemplate = window.__loc?.selectionStateSummary || 'Selected: {0}/{1}';
+            updateStatus(
+                statusTemplate
+                    .replace('{0}', String(enabled))
+                    .replace('{1}', String(total)),
+                'main',
+                mainControlsActive
+            );
         }
-        log(`Pending status: ${changed} changes. Apply btn disabled: ${applyChangesBtn.disabled}`);
         updateHighlighting();
         updatePhaseCounts();
         updateAreAllPhasesExpandedState();
+        updateSelectDefaultsButtonState();
     }
 
     // Обработчик сообщений от расширения
@@ -1417,7 +1449,6 @@
                         updateStatus(buildMessage, 'assemble', false);
                         enablePhaseControls(false, false);
                         enableAssembleControls(false);
-                        if (applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;
                     } else {
                         updateStatus(readyMessage, 'main', true);
                     }
@@ -1491,7 +1522,6 @@
                     updateStatus(buildMessage, 'assemble', false);
                     enablePhaseControls(false, false);
                     enableAssembleControls(false);
-                    if (applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;
                 } else {
                     const mainControlsShouldBeActive = settings.switcherEnabled && !!testDataByPhase && Object.keys(testDataByPhase).length > 0;
                     enablePhaseControls(mainControlsShouldBeActive, true);
@@ -1508,15 +1538,6 @@
          }
     });
 
-    if(applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.addEventListener('click', () => {
-        log('Apply Phase Changes button clicked.');
-        const statesToSend = { ...currentCheckboxStates };
-        updateStatus(window.__loc?.statusApplyingPhaseChanges || 'Applying group changes...', 'main', false);
-        enablePhaseControls(false, false); enableAssembleControls(false);
-        if(applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;
-        vscode.postMessage({ command: 'applyChanges', data: statesToSend });
-    });
-
     if(selectAllBtn instanceof HTMLButtonElement) selectAllBtn.addEventListener('click', () => {
         log('Toggle ALL clicked.');
         const keys = Object.keys(initialTestStates).filter(n => initialTestStates[n] !== 'disabled');
@@ -1527,6 +1548,7 @@
         keys.forEach(name => { currentCheckboxStates[name] = check; });
         applyCheckboxStatesToVisible();
         updatePendingStatus();
+        sendScenarioSelectionStates();
     });
 
     if(selectDefaultsBtn instanceof HTMLButtonElement) selectDefaultsBtn.addEventListener('click', () => {
@@ -1541,6 +1563,7 @@
         updatePendingStatus();
         const mainControlsShouldBeActive = settings.switcherEnabled && !!testDataByPhase && Object.keys(testDataByPhase).length > 0;
         enablePhaseControls(mainControlsShouldBeActive, true);
+        sendScenarioSelectionStates();
     });
 
     if(refreshBtn instanceof HTMLButtonElement) refreshBtn.addEventListener('click', () => {
@@ -1736,7 +1759,6 @@
         updateStatus(window.__loc?.statusRequestingData || 'Requesting data...', 'main', false);
         enablePhaseControls(false, false);
         enableAssembleControls(false);
-        if (applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;
         vscode.postMessage({ command: 'getInitialState' });
     }
 
@@ -1746,7 +1768,6 @@
     updateStatus(window.__loc?.statusLoadingShort || 'Loading...', 'main', false);
     enablePhaseControls(false, false);
     enableAssembleControls(false);
-    if (applyChangesBtn instanceof HTMLButtonElement) applyChangesBtn.disabled = true;
     requestInitialState();
 
     if(createFirstLaunchBtn instanceof HTMLButtonElement) {
