@@ -3140,7 +3140,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 createMainScenario: this.t('Main scenario'),
                 createNestedScenario: this.t('Nested scenario'),
                 favoritesTitle: this.t('Favorite scenarios'),
-                testsTabTitle: this.t('Groups and tests'),
+                testsTabTitle: this.t('Main'),
                 favoritesTabTitle: this.t('Favorites'),
                 favoritesSortLabel: this.t('Sort'),
                 favoritesSortByCode: this.t('By code'),
@@ -3148,6 +3148,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 favoritesEmpty: this.t('No favorite scenarios yet.'),
                 favoritesOpenTitle: this.t('Open scenario'),
                 favoritesRemoveTitle: this.t('Remove from favorites'),
+                toggleScenarioSearchTitle: this.t('Toggle scenario search'),
+                scenarioSearchPlaceholder: this.t('Find main scenario by name...'),
+                scenarioSearchTitle: this.t('Search main scenarios and focus match in list'),
+                scenarioSearchClearTitle: this.t('Clear scenario search'),
                 refreshTitle: this.t('Refresh from disk'),
                 collapseExpandAllTitle: this.t('Collapse/Expand all groups'),
                 toggleAllCheckboxesTitle: this.t('Toggle all checkboxes'),
@@ -3159,6 +3163,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 createFirstLaunchZipTitle: this.t('Create FirstLaunch archive'),
                 buildFL: this.t('Build FL'),
                 buildTests: this.t('Build tests'),
+                buildOptionsTitle: this.t('Build options'),
                 cancelBuild: this.t('Cancel build'),
                 cancelBuildTitle: this.t('Cancel running build'),
                 recordGLSelectTitle: this.t('Record GL Accounts (0=No, 1=Yes, 2=Templates)'),
@@ -3502,7 +3507,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 target: 'assemble'
             });
         } else {
-            webview.postMessage({ command: 'updateStatus', text: status, enableControls: hasTests });
+            webview.postMessage({
+                command: 'updateStatus',
+                text: hasTests ? '' : status,
+                enableControls: hasTests
+            });
         }
         
         // Explicitly enable refresh button if there are no tests

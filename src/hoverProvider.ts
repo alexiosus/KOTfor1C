@@ -269,7 +269,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             const firstLineOriginal = lines[0].trim();
             let cleanedPattern = pattern.replace(/\r?\n\s*/g, ' ').trim();
             
-            const gherkinKeywords = /^(?:And|Then|When|Given|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+            const gherkinKeywords = /^(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
             const firstLineWithoutKeywords = firstLineOriginal.replace(gherkinKeywords, '');
 
             const placeholderRegex = PLACEHOLDER_REGEX;
@@ -316,7 +316,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             const firstLineOriginal = lines[0].trim();
             let cleanedPattern = pattern.replace(/\r?\n\s*/g, ' ').trim();
 
-            const gherkinKeywords = /^(?:And|Then|When|Given|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+            const gherkinKeywords = /^(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
             const firstLineWithoutKeywords = firstLineOriginal.replace(gherkinKeywords, '');
 
             const placeholderRegex = PLACEHOLDER_REGEX;
@@ -351,7 +351,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
     }
 
     private stripGherkinKeyword(text: string): string {
-        const gherkinKeywords = /^(?:And|Then|When|Given|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+        const gherkinKeywords = /^(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
         return text.trim().replace(gherkinKeywords, '').trim();
     }
 
@@ -831,7 +831,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
     }
 
     private normalizeForSuggestion(text: string): string {
-        const gherkinKeywords = /^(?:And|Then|When|Given|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+        const gherkinKeywords = /^(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
         return text
             .trim()
             .replace(gherkinKeywords, '')

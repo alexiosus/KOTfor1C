@@ -5,14 +5,18 @@ import { TestInfo } from './types';
 import { getTranslator } from './localization';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
+import { YamlParametersManager } from './yamlParametersManager';
 
 const VARIABLE_REFERENCE_PREFIX_REGEX = /^[A-Za-zА-Яа-яЁё0-9_]*$/;
 const SAVE_VARIABLE_STEP_REGEX_EN = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+in\s+(?:"([^"]+)"|'([^']+)')\s+variable\s*$/i;
+const SAVE_VARIABLE_STEP_REGEX_EN_VALUE_TO = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+value\s+to\s+(?:"([^"]+)"|'([^']+)')\s+variable\s*$/i;
 const SAVE_VARIABLE_STEP_REGEX_RU = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?Я\s+запоминаю\s+значение\s+выражения\s+(.+?)\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s*$/i;
+const SAVE_VARIABLE_STEP_REGEX_RU_VALUE_TO = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?Я\s+запоминаю\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s+значение\s+(.+?)\s*$/i;
 
 interface SavedVariableDefinition {
     name: string;
     value: string;
+    source: 'saved' | 'global';
 }
 
 export class DriveCompletionProvider implements vscode.CompletionItemProvider {
@@ -255,7 +259,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
         const variableReferenceContext = this.getVariableReferenceContext(linePrefix);
         if (variableReferenceContext) {
-            return this.buildSavedVariableCompletionList(document, position, variableReferenceContext);
+            return await this.buildSavedVariableCompletionList(document, position, variableReferenceContext);
         }
 
         // Если элементы Gherkin еще не загружены или идет загрузка, дождемся ее завершения
@@ -469,19 +473,22 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         };
     }
 
-    private buildSavedVariableCompletionList(
+    private async buildSavedVariableCompletionList(
         document: vscode.TextDocument,
         position: vscode.Position,
         context: { startCharacter: number; typedPrefix: string }
-    ): vscode.CompletionList {
+    ): Promise<vscode.CompletionList> {
         const completionList = new vscode.CompletionList([], false);
         const savedVariables = this.collectSavedVariableDefinitionsBeforeLine(document, position.line);
-        if (savedVariables.length === 0) {
+        const globalVariables = await this.collectGlobalVariableDefinitions();
+        const allVariables = this.mergeVariableDefinitions(savedVariables, globalVariables);
+
+        if (allVariables.length === 0) {
             return completionList;
         }
 
         const typedPrefixLower = context.typedPrefix.toLocaleLowerCase();
-        const filteredVariables = savedVariables.filter(variable => {
+        const filteredVariables = allVariables.filter(variable => {
             if (!typedPrefixLower) {
                 return true;
             }
@@ -498,10 +505,10 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             const variableName = variable.name;
             const variableReference = `$${variableName}$`;
             const completionItem = new vscode.CompletionItem(variableName, vscode.CompletionItemKind.Variable);
-            completionItem.detail = vscode.l10n.t(
-                'Saved variable: {0}',
-                this.buildSavedVariableValuePreview(variable.value)
-            );
+            const preview = this.buildSavedVariableValuePreview(variable.value);
+            completionItem.detail = variable.source === 'global'
+                ? vscode.l10n.t('Global variable: {0}', preview)
+                : vscode.l10n.t('Saved variable: {0}', preview);
             completionItem.insertText = variableReference;
             completionItem.filterText = variableReference;
             completionItem.label = {
@@ -543,20 +550,105 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         return variables;
     }
 
+    private async collectGlobalVariableDefinitions(): Promise<SavedVariableDefinition[]> {
+        try {
+            const manager = YamlParametersManager.getInstance(this.context);
+            const globalVariables = await manager.loadGlobalVanessaVariables();
+            return globalVariables
+                .map(variable => ({
+                    name: (variable.key || '').trim(),
+                    value: typeof variable.value === 'string' ? variable.value : String(variable.value ?? ''),
+                    source: 'global' as const
+                }))
+                .filter(variable => variable.name.length > 0);
+        } catch (error) {
+            console.warn('[DriveCompletionProvider] Failed to load GlobalVars for variable completion:', error);
+            return [];
+        }
+    }
+
+    private mergeVariableDefinitions(
+        savedVariables: SavedVariableDefinition[],
+        globalVariables: SavedVariableDefinition[]
+    ): SavedVariableDefinition[] {
+        const merged: SavedVariableDefinition[] = [];
+        const seen = new Set<string>();
+
+        savedVariables.forEach(variable => {
+            const normalized = variable.name.toLocaleLowerCase();
+            if (seen.has(normalized)) {
+                return;
+            }
+            seen.add(normalized);
+            merged.push(variable);
+        });
+
+        globalVariables.forEach(variable => {
+            const normalized = variable.name.toLocaleLowerCase();
+            if (seen.has(normalized)) {
+                return;
+            }
+            seen.add(normalized);
+            merged.push(variable);
+        });
+
+        return merged;
+    }
+
     private extractSavedVariableFromStepLine(lineText: string): SavedVariableDefinition | null {
-        const englishMatch = lineText.match(SAVE_VARIABLE_STEP_REGEX_EN);
-        const russianMatch = lineText.match(SAVE_VARIABLE_STEP_REGEX_RU);
-        const rawName = englishMatch?.[2] || englishMatch?.[3] || russianMatch?.[2] || russianMatch?.[3];
-        const variableName = (rawName || '').trim();
-        if (!variableName) {
-            return null;
+        const englishExpressionMatch = lineText.match(SAVE_VARIABLE_STEP_REGEX_EN);
+        if (englishExpressionMatch) {
+            const variableName = (englishExpressionMatch[2] || englishExpressionMatch[3] || '').trim();
+            if (!variableName) {
+                return null;
+            }
+            return {
+                name: variableName,
+                value: (englishExpressionMatch[1] || '').trim(),
+                source: 'saved'
+            };
         }
 
-        const rawValue = englishMatch?.[1] || russianMatch?.[1] || '';
-        return {
-            name: variableName,
-            value: rawValue.trim()
-        };
+        const englishValueToMatch = lineText.match(SAVE_VARIABLE_STEP_REGEX_EN_VALUE_TO);
+        if (englishValueToMatch) {
+            const variableName = (englishValueToMatch[2] || englishValueToMatch[3] || '').trim();
+            if (!variableName) {
+                return null;
+            }
+            return {
+                name: variableName,
+                value: (englishValueToMatch[1] || '').trim(),
+                source: 'saved'
+            };
+        }
+
+        const russianExpressionMatch = lineText.match(SAVE_VARIABLE_STEP_REGEX_RU);
+        if (russianExpressionMatch) {
+            const variableName = (russianExpressionMatch[2] || russianExpressionMatch[3] || '').trim();
+            if (!variableName) {
+                return null;
+            }
+            return {
+                name: variableName,
+                value: (russianExpressionMatch[1] || '').trim(),
+                source: 'saved'
+            };
+        }
+
+        const russianValueToMatch = lineText.match(SAVE_VARIABLE_STEP_REGEX_RU_VALUE_TO);
+        if (russianValueToMatch) {
+            const variableName = (russianValueToMatch[1] || russianValueToMatch[2] || '').trim();
+            if (!variableName) {
+                return null;
+            }
+            return {
+                name: variableName,
+                value: (russianValueToMatch[3] || '').trim(),
+                source: 'saved'
+            };
+        }
+
+        return null;
     }
 
     private buildSavedVariableValuePreview(value: string): string {

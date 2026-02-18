@@ -1,6 +1,6 @@
 # Change Log
 
-# Release Notes 2.0.0
+# 2.0.0
 
 ## Breaking changes
 
@@ -28,6 +28,9 @@ _Attention: the previous plugin version (`1C:Drive Test Helper 1.11.2`) does not
   - Tests can be added to and removed from `Favorites` through the editor context menu.
   - Auto-add newly created scenarios to `Favorites` (toggle in settings).
   - Favorites list supports sorting by scenario name and scenario code.
+- Activity bar panel UI was improved (Test Manager / build area):
+  - Added compact search for main scenarios (match highlighting, clear button, toggleable search visibility).
+  - Updated bottom build area layout (`Build tests`, `Build FL`, `Accounting mode`) and dropdown behavior.
 - Added highlighting of main scenarios affected by the currently open file.
 - Added ability to rename groups and scenarios through the context menu.
 
@@ -35,6 +38,7 @@ _Attention: the previous plugin version (`1C:Drive Test Helper 1.11.2`) does not
 
 - Improved scenario build process:
   - Added ability to cancel the current test build.
+  - Test checkbox selection in Test Manager now automatically forms `Exceptscenario` / `Scenariofilter` for build processing (without physical file moves).
   - After build: quick access to feature files and results directory ([#9](https://github.com/kakoytochelik/KOTfor1C/issues/9)).
 - New Parameters Manager UI with tabs:
   - SPPR build parameters (existing);
@@ -60,10 +64,12 @@ _Attention: the previous plugin version (`1C:Drive Test Helper 1.11.2`) does not
   - for steps: with actual arguments from the line;
   - for calls: with scenario description and compact summary (number of files, parameters, and nested calls) ([#12](https://github.com/kakoytochelik/KOTfor1C/issues/12)).
 - Improved nested scenario call completion and insertion of default parameter values.
+- Added variable completion on `$`: suggests variables saved by `I save ... in "..." variable` / `Я запоминаю значение выражения ... в переменную "..."`, and user `GlobalVars` from Parameters Manager, with insertion as `$VariableName$`.
 - Added automatic alignment of Gherkin tables and scenario call parameters on file save ([#7](https://github.com/kakoytochelik/KOTfor1C/issues/7), [#15](https://github.com/kakoytochelik/KOTfor1C/issues/15)).
 - Auto-fill of `NestedScenarios` and `ScenarioParameters` blocks now runs only when there are real changes.
 - Added unique name and code validation when creating scenarios.
 - Added extension setting that defines language for newly created scenarios (`#language: ru/en`).
+- For editor features, language is now determined first by the `#language:` tag in the current file (with fallback to extension setting).
 - Added extension setting that toggles visibility of functionality specific to 1C:Drive.
 
 ### Scenario metadata

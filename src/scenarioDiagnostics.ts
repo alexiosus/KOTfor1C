@@ -657,7 +657,7 @@ function extractQuotedLiterals(line: string): string[] {
 
 function extractNumericCandidates(line: string): string[] {
     const sanitized = line
-        .replace(/^\s*(And|Then|When|Given|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i, '')
+        .replace(/^\s*(And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i, '')
         .replace(/"[^"]*"|'[^']*'|\[[^\]]+\]/g, ' ');
     const candidates = sanitized.match(/\b\d+(?:[.,]\d+)?\b/g);
     return candidates ? [...candidates] : [];
@@ -1522,7 +1522,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
 
         // Unknown steps checks
         if (options.includeStepChecks) {
-            const gherkinStepRegex = /^\s*(And|Then|When|Given|Но|Тогда|Когда|Если|И|К тому же|Допустим)\b/i;
+            const gherkinStepRegex = /^\s*(And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\b/i;
             for (let line = bodyRange.startLine; line <= bodyRange.endLine; line++) {
                 if (scenarioCallLineSet.has(line) || scenarioParamLineSet.has(line)) {
                     continue;
