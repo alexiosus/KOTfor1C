@@ -3,16 +3,39 @@ import { parse } from 'node-html-parser';
 import { getStepsHtml, forceRefreshSteps as forceRefreshStepsCore } from './stepsFetcher';
 import { TestInfo } from './types';
 import { getTranslator } from './localization';
+import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
+import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
+import { YamlParametersManager } from './yamlParametersManager';
+
+const VARIABLE_REFERENCE_PREFIX_REGEX = /^[A-Za-zА-Яа-яЁё0-9_]*$/;
+const SAVE_VARIABLE_STEP_REGEX_EN = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+in\s+(?:"([^"]+)"|'([^']+)')\s+variable\s*$/i;
+const SAVE_VARIABLE_STEP_REGEX_EN_VALUE_TO = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+value\s+to\s+(?:"([^"]+)"|'([^']+)')\s+variable\s*$/i;
+const SAVE_VARIABLE_STEP_REGEX_RU = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?Я\s+запоминаю\s+значение\s+выражения\s+(.+?)\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s*$/i;
+const SAVE_VARIABLE_STEP_REGEX_RU_VALUE_TO = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?Я\s+запоминаю\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s+значение\s+(.+?)\s*$/i;
+
+interface SavedVariableDefinition {
+    name: string;
+    value: string;
+    source: 'saved' | 'global';
+}
 
 export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     private gherkinCompletionItems: vscode.CompletionItem[] = [];
     private scenarioCompletionItems: vscode.CompletionItem[] = [];
+    private scenarioParametersByName: Map<string, string[]> = new Map();
+    private calledScenarioDefaultsByName: Map<string, Map<string, string>> = new Map();
+    private scenarioDefaultsByDocument = new Map<string, { version: number; defaults: Map<string, string> }>();
     private isLoadingGherkin: boolean = false;
     private loadingGherkinPromise: Promise<void> | null = null;
     private context: vscode.ExtensionContext;
 
     constructor(context: vscode.ExtensionContext) {
         this.context = context;
+        this.context.subscriptions.push(
+            vscode.workspace.onDidCloseTextDocument(document => {
+                this.scenarioDefaultsByDocument.delete(document.uri.toString());
+            })
+        );
         this.loadGherkinCompletionItems().catch(async err => {
             const t = await getTranslator(context.extensionUri);
             vscode.window.showErrorMessage(t('Error initializing Gherkin autocompletion: {0}', err.message));
@@ -42,6 +65,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     // Метод для обновления списка автодополнений сценариев
     public updateScenarioCompletions(scenarios: Map<string, TestInfo> | null): void {
         this.scenarioCompletionItems = []; // Очищаем перед заполнением
+        this.scenarioParametersByName.clear();
+        this.calledScenarioDefaultsByName.clear();
         if (!scenarios || scenarios.size === 0) {
             console.log("[DriveCompletionProvider] No scenarios provided for completion items.");
             return;
@@ -49,28 +74,48 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
         scenarios.forEach((scenarioInfo, scenarioName) => {
             // Метка, которую увидит пользователь в списке автодополнения
-            const displayLabel = `And ${scenarioName}`;
-            const item = new vscode.CompletionItem(displayLabel, vscode.CompletionItemKind.Function);
+            const item = new vscode.CompletionItem(scenarioName, vscode.CompletionItemKind.Function);
+            const scenarioDescription = (scenarioInfo.scenarioDescription || '').trim();
 
-            item.detail = "Nested scenario (1C)";
-            item.documentation = new vscode.MarkdownString(`Call scenario "${scenarioName}".`);
+            item.detail = vscode.l10n.t('Nested scenario (1C)');
+            if (scenarioDescription) {
+                const firstLine = scenarioDescription.split(/\r\n|\r|\n/)[0].trim();
+                if (firstLine) {
+                    item.detail = `${item.detail} - ${firstLine}`;
+                }
+            }
+            const itemDocumentation = new vscode.MarkdownString();
+            itemDocumentation.appendMarkdown(vscode.l10n.t('Call scenario "{0}".', scenarioName));
+            if (scenarioDescription) {
+                itemDocumentation.appendMarkdown(`\n\n**${vscode.l10n.t('Description')}:**\n\n`);
+                this.appendCompactMultilineText(itemDocumentation, scenarioDescription);
+            }
+            item.documentation = itemDocumentation;
             // Текст, по которому будет происходить фильтрация при вводе пользователя
             // (без "And ", чтобы можно было просто начать печатать имя сценария)
             item.filterText = scenarioName;
 
-            // Формируем SnippetString для вставки
-            // Сниппет теперь ВСЕГДА начинается с "And "
-            let snippetText = `And ${scenarioName}`;
-            if (scenarioInfo.parameters && scenarioInfo.parameters.length > 0) {
-                const paramIndent = "    "; // Стандартный отступ для параметров
-                let paramIndex = 1;
-                // Параметры добавляются с новой строки с отступом
-                scenarioInfo.parameters.forEach(paramName => {
-                    // Формат вызова параметра: ИмяПараметра = "Значение"
-                    snippetText += `\n${paramIndent}${paramName} = "\${${paramIndex++}:${paramName}Value}"`;
-                });
+            item.insertText = scenarioName;
+
+            const scenarioParameters = (scenarioInfo.parameters || [])
+                .map(param => param.trim())
+                .filter(Boolean);
+            if (scenarioParameters.length > 0) {
+                this.scenarioParametersByName.set(scenarioName, scenarioParameters);
             }
-            item.insertText = new vscode.SnippetString(snippetText);
+
+            if (scenarioInfo.parameterDefaults) {
+                const defaultsMap = new Map<string, string>();
+                Object.entries(scenarioInfo.parameterDefaults).forEach(([paramName, defaultValue]) => {
+                    const normalizedParamName = paramName.trim();
+                    if (normalizedParamName && typeof defaultValue === 'string') {
+                        defaultsMap.set(normalizedParamName, defaultValue);
+                    }
+                });
+                if (defaultsMap.size > 0) {
+                    this.calledScenarioDefaultsByName.set(scenarioName, defaultsMap);
+                }
+            }
             // Приоритет ниже, чем у шагов Gherkin (начинающихся с "0"), сортировка по имени сценария
             // sortText будет формироваться в provideCompletionItems на основе оценки совпадения
             // item.sortText = "1" + scenarioName;
@@ -115,9 +160,9 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     // Создаем документацию: русское описание + оба варианта шагов
                     const russianDoc = new vscode.MarkdownString();
                     russianDoc.appendMarkdown(`**Описание:**\n\n${russianStepDescription}\n\n`);
-                    russianDoc.appendMarkdown(`\n\n\n\n\`${russianStepText}\``);
+                    russianDoc.appendMarkdown(`\`${russianStepText}\``);
                     if (stepText) {
-                        russianDoc.appendMarkdown(`\n\n\n\n\`${stepText}\``);
+                        russianDoc.appendMarkdown(`\n\n\`${stepText}\``);
                     }
 
                     russianItem.documentation = russianDoc;
@@ -133,9 +178,9 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     // Создаем документацию: английское описание + оба варианта шагов
                     const englishDoc = new vscode.MarkdownString();
                     englishDoc.appendMarkdown(`**Description:**\n\n${stepDescription}\n\n`);
-                    englishDoc.appendMarkdown(`\n\n\n\n\`${stepText}\``);
+                    englishDoc.appendMarkdown(`\`${stepText}\``);
                     if (russianStepText) {
-                        englishDoc.appendMarkdown(`\n\n\n\n\`${russianStepText}\``);
+                        englishDoc.appendMarkdown(`\n\n\`${russianStepText}\``);
                     }
 
                     item.documentation = englishDoc;
@@ -202,16 +247,6 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             return [];
         }
 
-        // Если элементы Gherkin еще не загружены или идет загрузка, дождемся ее завершения
-        if (this.isLoadingGherkin && this.loadingGherkinPromise) {
-            console.log("[DriveCompletionProvider:provideCompletionItems] Waiting for Gherkin load to complete...");
-            await this.loadingGherkinPromise;
-        } else if (this.gherkinCompletionItems.length === 0 && !this.isLoadingGherkin) {
-            // Если загрузка Gherkin не идет, но элементов нет, попробуем загрузить
-            console.log("[DriveCompletionProvider:provideCompletionItems] Gherkin items not loaded, attempting to load now...");
-            await this.loadGherkinCompletionItems();
-        }
-
         // Предоставляем автодополнение только в блоках текста сценария
         if (!this.isInScenarioTextBlock(document, position)) {
             console.log("[DriveCompletionProvider:provideCompletionItems] Not in scenario text block. Returning empty.");
@@ -221,6 +256,21 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         // Получаем текст текущей строки до позиции курсора
         const lineText = document.lineAt(position.line).text;
         const linePrefix = lineText.substring(0, position.character); // Текст строки до курсора
+
+        const variableReferenceContext = this.getVariableReferenceContext(linePrefix);
+        if (variableReferenceContext) {
+            return await this.buildSavedVariableCompletionList(document, position, variableReferenceContext);
+        }
+
+        // Если элементы Gherkin еще не загружены или идет загрузка, дождемся ее завершения
+        if (this.isLoadingGherkin && this.loadingGherkinPromise) {
+            console.log("[DriveCompletionProvider:provideCompletionItems] Waiting for Gherkin load to complete...");
+            await this.loadingGherkinPromise;
+        } else if (this.gherkinCompletionItems.length === 0 && !this.isLoadingGherkin) {
+            // Если загрузка Gherkin не идет, но элементов нет, попробуем загрузить
+            console.log("[DriveCompletionProvider:provideCompletionItems] Gherkin items not loaded, attempting to load now...");
+            await this.loadGherkinCompletionItems();
+        }
 
         // Создаем список автодополнения
         const completionList = new vscode.CompletionList();
@@ -248,6 +298,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         console.log(`[DriveCompletionProvider:provideCompletionItems] Indent: '${indentation}', KeywordInLine: '${keywordInLine}', UserTextAfterKeyword: '${userTextAfterKeyword}', UserTextAfterIndentation: '${userTextAfterIndentation}'`);
 
         // Добавляем Gherkin шаги
+        const scenarioLanguage = getScenarioLanguageForDocument(document);
+        const scenarioCallKeyword = getScenarioCallKeyword(scenarioLanguage);
         this.gherkinCompletionItems.forEach(baseItem => {
             const itemFullText = typeof baseItem.label === 'string' ? baseItem.label : baseItem.label.label; // Полный текст элемента автодополнения
 
@@ -273,7 +325,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
             const matchResult = this.fuzzyMatch(itemTextForMatching, textToMatchAgainst);
             if (matchResult.matched) {
-                const completionItem = new vscode.CompletionItem(baseItem.label, baseItem.kind);
+                const completionItem = new vscode.CompletionItem(itemFullText, baseItem.kind);
                 completionItem.documentation = baseItem.documentation;
                 completionItem.detail = baseItem.detail;
 
@@ -285,8 +337,10 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     position.character // Заменяем только то, что пользователь ввел после отступа
                 );
                 completionItem.range = replacementRange;
-                // insertText уже содержит полное определение шага, включая его Gherkin-слово
-                completionItem.insertText = baseItem.insertText;
+                const baseInsertText = typeof baseItem.insertText === 'string'
+                    ? baseItem.insertText
+                    : itemFullText;
+                completionItem.insertText = baseInsertText;
                 // Сортировка по релевантности
                 completionItem.sortText = "0" + (1 - matchResult.score).toFixed(3) + itemFullText; // Используем toFixed(3) для большей гранулярности
                 completionList.items.push(completionItem);
@@ -296,39 +350,317 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         // Добавляем вызовы сценариев
         // Текст, который пользователь ввел после отступа, очищенный от возможного "And " в начале
         const textForScenarioFuzzyMatch = userTextAfterIndentation.replace(/^(And|И|Допустим)\s+/i, '');
+        const scenarioParameterDefaults = this.getScenarioParameterDefaults(document);
         console.log(`[DriveCompletionProvider:provideCompletionItems] Text for scenario fuzzy match: '${textForScenarioFuzzyMatch}' (based on userTextAfterIndentation: '${userTextAfterIndentation}')`);
 
         this.scenarioCompletionItems.forEach(baseScenarioItem => {
+            const scenarioName = baseScenarioItem.filterText || (typeof baseScenarioItem.label === 'string'
+                ? baseScenarioItem.label
+                : baseScenarioItem.label.label);
+            if (!scenarioName) {
+                return;
+            }
+
             // baseScenarioItem.filterText это "ИмяСценария"
-            const matchResult = this.fuzzyMatch(baseScenarioItem.filterText || "", textForScenarioFuzzyMatch);
+            const matchResult = this.fuzzyMatch(scenarioName, textForScenarioFuzzyMatch);
 
             if (matchResult.matched) {
-                const completionItem = new vscode.CompletionItem(baseScenarioItem.label, baseScenarioItem.kind); // label = "And ИмяСценария"
-                completionItem.filterText = baseScenarioItem.filterText; // filterText = "ИмяСценария"
+                const completionItem = new vscode.CompletionItem(`${scenarioCallKeyword} ${scenarioName}`, baseScenarioItem.kind);
+                completionItem.filterText = scenarioName; // filterText = "ИмяСценария"
                 completionItem.documentation = baseScenarioItem.documentation;
                 completionItem.detail = baseScenarioItem.detail;
+                const {
+                    baseIndent: scenarioCallBaseIndent,
+                    firstLinePrefix: scenarioCallFirstLinePrefix,
+                    replacementStartCharacter: scenarioCallReplacementStart
+                } = this.resolveScenarioCallInsertIndent(document, position);
 
                 // Диапазон для замены: от начала пользовательского ввода (после отступа) до текущей позиции курсора.
                 const replacementRange = new vscode.Range(
                     position.line,
-                    indentation.length, // Начало текста после отступа
+                    scenarioCallReplacementStart,
                     position.line,
                     position.character
                 );
                 completionItem.range = replacementRange;
 
-                // baseScenarioItem.insertText это SnippetString вида "And ИмяСценария\n    Парам = ..."
-                // Оно будет вставлено вместо всего, что пользователь напечатал после отступа.
-                completionItem.insertText = baseScenarioItem.insertText;
+                completionItem.insertText = this.buildScenarioCallInsertText(
+                    scenarioName,
+                    scenarioCallBaseIndent,
+                    scenarioCallFirstLinePrefix,
+                    scenarioParameterDefaults,
+                    scenarioCallKeyword
+                );
 
-                completionItem.sortText = "1" + (1 - matchResult.score).toFixed(3) + (baseScenarioItem.filterText || ""); // Используем toFixed(3)
-                console.log(`[Scenario Autocomplete] Label: "${completionItem.label}", Scenario Name: ${baseScenarioItem.filterText}, Input: "${textForScenarioFuzzyMatch}", Score: ${matchResult.score.toFixed(3)}, SortText: ${completionItem.sortText}`);
+                completionItem.sortText = "1" + (1 - matchResult.score).toFixed(3) + scenarioName; // Используем toFixed(3)
+                console.log(`[Scenario Autocomplete] Label: "${completionItem.label}", Scenario Name: ${scenarioName}, Input: "${textForScenarioFuzzyMatch}", Score: ${matchResult.score.toFixed(3)}, SortText: ${completionItem.sortText}`);
                 completionList.items.push(completionItem);
             }
         });
 
         console.log(`[DriveCompletionProvider:provideCompletionItems] Total Gherkin items: ${this.gherkinCompletionItems.length}, Total Scenario items: ${this.scenarioCompletionItems.length}, Proposed items: ${completionList.items.length}`);
         return completionList;
+    }
+
+    private resolveScenarioCallInsertIndent(
+        document: vscode.TextDocument,
+        position: vscode.Position
+    ): { baseIndent: string; firstLinePrefix: string; replacementStartCharacter: number } {
+        const defaultIndent = '    ';
+        const currentLineText = document.lineAt(position.line).text;
+        const cursorCharacter = Math.max(0, Math.min(position.character, currentLineText.length));
+        const beforeCursorText = currentLineText.slice(0, cursorCharacter);
+        const currentLineLeadingIndent = currentLineText.match(/^\s*/)?.[0] ?? '';
+        const lineHasContent = currentLineText.trim().length > 0;
+
+        if (lineHasContent) {
+            return {
+                baseIndent: currentLineLeadingIndent,
+                firstLinePrefix: '',
+                replacementStartCharacter: currentLineLeadingIndent.length
+            };
+        }
+
+        if (/^\s+$/.test(beforeCursorText)) {
+            return {
+                baseIndent: beforeCursorText,
+                firstLinePrefix: '',
+                replacementStartCharacter: beforeCursorText.length
+            };
+        }
+
+        for (let line = position.line - 1; line >= 0; line--) {
+            const text = document.lineAt(line).text;
+            if (text.trim().length === 0) {
+                continue;
+            }
+
+            const indent = text.match(/^\s*/)?.[0] ?? '';
+            return {
+                baseIndent: indent,
+                firstLinePrefix: indent,
+                replacementStartCharacter: 0
+            };
+        }
+
+        return {
+            baseIndent: defaultIndent,
+            firstLinePrefix: defaultIndent,
+            replacementStartCharacter: 0
+        };
+    }
+
+    private getVariableReferenceContext(
+        linePrefix: string
+    ): { startCharacter: number; typedPrefix: string } | null {
+        const lastDollarIndex = linePrefix.lastIndexOf('$');
+        if (lastDollarIndex < 0) {
+            return null;
+        }
+
+        const typedPrefix = linePrefix.substring(lastDollarIndex + 1);
+        if (typedPrefix.includes('$') || /\s/.test(typedPrefix)) {
+            return null;
+        }
+
+        if (!VARIABLE_REFERENCE_PREFIX_REGEX.test(typedPrefix)) {
+            return null;
+        }
+
+        return {
+            startCharacter: lastDollarIndex,
+            typedPrefix
+        };
+    }
+
+    private async buildSavedVariableCompletionList(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        context: { startCharacter: number; typedPrefix: string }
+    ): Promise<vscode.CompletionList> {
+        const completionList = new vscode.CompletionList([], false);
+        const savedVariables = this.collectSavedVariableDefinitionsBeforeLine(document, position.line);
+        const globalVariables = await this.collectGlobalVariableDefinitions();
+        const allVariables = this.mergeVariableDefinitions(savedVariables, globalVariables);
+
+        if (allVariables.length === 0) {
+            return completionList;
+        }
+
+        const typedPrefixLower = context.typedPrefix.toLocaleLowerCase();
+        const filteredVariables = allVariables.filter(variable => {
+            if (!typedPrefixLower) {
+                return true;
+            }
+
+            const normalizedName = variable.name.toLocaleLowerCase();
+            return normalizedName.startsWith(typedPrefixLower) || normalizedName.includes(typedPrefixLower);
+        });
+
+        if (filteredVariables.length === 0) {
+            return completionList;
+        }
+
+        filteredVariables.forEach((variable, index) => {
+            const variableName = variable.name;
+            const variableReference = `$${variableName}$`;
+            const completionItem = new vscode.CompletionItem(variableName, vscode.CompletionItemKind.Variable);
+            const preview = this.buildSavedVariableValuePreview(variable.value);
+            completionItem.detail = variable.source === 'global'
+                ? vscode.l10n.t('Global variable: {0}', preview)
+                : vscode.l10n.t('Saved variable: {0}', preview);
+            completionItem.insertText = variableReference;
+            completionItem.filterText = variableReference;
+            completionItem.label = {
+                label: variableName,
+                detail: `  ${variableReference}`
+            };
+            completionItem.sortText = `${index.toString().padStart(3, '0')}_${variableName.toLocaleLowerCase()}`;
+            completionItem.range = new vscode.Range(
+                position.line,
+                context.startCharacter,
+                position.line,
+                position.character
+            );
+            completionList.items.push(completionItem);
+        });
+
+        return completionList;
+    }
+
+    private collectSavedVariableDefinitionsBeforeLine(document: vscode.TextDocument, lineExclusive: number): SavedVariableDefinition[] {
+        const variables: SavedVariableDefinition[] = [];
+        const seen = new Set<string>();
+
+        for (let line = lineExclusive - 1; line >= 0; line--) {
+            const lineText = document.lineAt(line).text;
+            const variable = this.extractSavedVariableFromStepLine(lineText);
+            if (!variable) {
+                continue;
+            }
+
+            const normalized = variable.name.toLocaleLowerCase();
+            if (seen.has(normalized)) {
+                continue;
+            }
+            seen.add(normalized);
+            variables.push(variable);
+        }
+
+        return variables;
+    }
+
+    private async collectGlobalVariableDefinitions(): Promise<SavedVariableDefinition[]> {
+        try {
+            const manager = YamlParametersManager.getInstance(this.context);
+            const globalVariables = await manager.loadGlobalVanessaVariables();
+            return globalVariables
+                .map(variable => ({
+                    name: (variable.key || '').trim(),
+                    value: typeof variable.value === 'string' ? variable.value : String(variable.value ?? ''),
+                    source: 'global' as const
+                }))
+                .filter(variable => variable.name.length > 0);
+        } catch (error) {
+            console.warn('[DriveCompletionProvider] Failed to load GlobalVars for variable completion:', error);
+            return [];
+        }
+    }
+
+    private mergeVariableDefinitions(
+        savedVariables: SavedVariableDefinition[],
+        globalVariables: SavedVariableDefinition[]
+    ): SavedVariableDefinition[] {
+        const merged: SavedVariableDefinition[] = [];
+        const seen = new Set<string>();
+
+        savedVariables.forEach(variable => {
+            const normalized = variable.name.toLocaleLowerCase();
+            if (seen.has(normalized)) {
+                return;
+            }
+            seen.add(normalized);
+            merged.push(variable);
+        });
+
+        globalVariables.forEach(variable => {
+            const normalized = variable.name.toLocaleLowerCase();
+            if (seen.has(normalized)) {
+                return;
+            }
+            seen.add(normalized);
+            merged.push(variable);
+        });
+
+        return merged;
+    }
+
+    private extractSavedVariableFromStepLine(lineText: string): SavedVariableDefinition | null {
+        const englishExpressionMatch = lineText.match(SAVE_VARIABLE_STEP_REGEX_EN);
+        if (englishExpressionMatch) {
+            const variableName = (englishExpressionMatch[2] || englishExpressionMatch[3] || '').trim();
+            if (!variableName) {
+                return null;
+            }
+            return {
+                name: variableName,
+                value: (englishExpressionMatch[1] || '').trim(),
+                source: 'saved'
+            };
+        }
+
+        const englishValueToMatch = lineText.match(SAVE_VARIABLE_STEP_REGEX_EN_VALUE_TO);
+        if (englishValueToMatch) {
+            const variableName = (englishValueToMatch[2] || englishValueToMatch[3] || '').trim();
+            if (!variableName) {
+                return null;
+            }
+            return {
+                name: variableName,
+                value: (englishValueToMatch[1] || '').trim(),
+                source: 'saved'
+            };
+        }
+
+        const russianExpressionMatch = lineText.match(SAVE_VARIABLE_STEP_REGEX_RU);
+        if (russianExpressionMatch) {
+            const variableName = (russianExpressionMatch[2] || russianExpressionMatch[3] || '').trim();
+            if (!variableName) {
+                return null;
+            }
+            return {
+                name: variableName,
+                value: (russianExpressionMatch[1] || '').trim(),
+                source: 'saved'
+            };
+        }
+
+        const russianValueToMatch = lineText.match(SAVE_VARIABLE_STEP_REGEX_RU_VALUE_TO);
+        if (russianValueToMatch) {
+            const variableName = (russianValueToMatch[1] || russianValueToMatch[2] || '').trim();
+            if (!variableName) {
+                return null;
+            }
+            return {
+                name: variableName,
+                value: (russianValueToMatch[3] || '').trim(),
+                source: 'saved'
+            };
+        }
+
+        return null;
+    }
+
+    private buildSavedVariableValuePreview(value: string): string {
+        if (!value) {
+            return '…';
+        }
+        const singleLine = value.replace(/\s+/g, ' ').trim();
+        const maxLength = 60;
+        if (singleLine.length <= maxLength) {
+            return singleLine;
+        }
+        return `${singleLine.slice(0, maxLength - 1)}…`;
     }
 
     /**
@@ -471,5 +803,102 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
      */
     private normalizeLineBreaks(text: string): string {
         return text.replace(/\n\s*\n/g, '\n').trim();
+    }
+
+    private appendCompactMultilineText(markdown: vscode.MarkdownString, text: string): void {
+        const normalized = text.replace(/\r\n|\r/g, '\n').trim();
+        if (!normalized) {
+            return;
+        }
+
+        const collapsedLines: string[] = [];
+        let previousWasBlank = false;
+        for (const rawLine of normalized.split('\n')) {
+            const line = rawLine.replace(/\s+$/g, '');
+            const isBlank = line.trim().length === 0;
+            if (isBlank) {
+                if (!previousWasBlank) {
+                    collapsedLines.push('');
+                }
+                previousWasBlank = true;
+                continue;
+            }
+
+            collapsedLines.push(line);
+            previousWasBlank = false;
+        }
+
+        while (collapsedLines.length > 0 && collapsedLines[0] === '') {
+            collapsedLines.shift();
+        }
+        while (collapsedLines.length > 0 && collapsedLines[collapsedLines.length - 1] === '') {
+            collapsedLines.pop();
+        }
+
+        collapsedLines.forEach((line, index) => {
+            if (line === '') {
+                markdown.appendMarkdown('\n');
+                return;
+            }
+
+            markdown.appendText(line);
+            if (index < collapsedLines.length - 1) {
+                markdown.appendMarkdown('  \n');
+            }
+        });
+    }
+
+    private getScenarioParameterDefaults(document: vscode.TextDocument): Map<string, string> {
+        const key = document.uri.toString();
+        const cached = this.scenarioDefaultsByDocument.get(key);
+        if (cached && cached.version === document.version) {
+            return cached.defaults;
+        }
+
+        const defaults = parseScenarioParameterDefaults(document.getText());
+        this.scenarioDefaultsByDocument.set(key, {
+            version: document.version,
+            defaults
+        });
+        return defaults;
+    }
+
+    private buildScenarioCallInsertText(
+        scenarioName: string,
+        lineIndent: string,
+        firstLinePrefix: string,
+        defaults: Map<string, string>,
+        scenarioCallKeyword: string
+    ): string | vscode.SnippetString {
+        if (!scenarioName) {
+            return `${firstLinePrefix}${scenarioCallKeyword} `;
+        }
+
+        const params = this.scenarioParametersByName.get(scenarioName) || [];
+        if (params.length === 0) {
+            return `${firstLinePrefix}${scenarioCallKeyword} ${scenarioName}`;
+        }
+
+        const maxParamLength = params.reduce((max, param) => Math.max(max, param.length), 0);
+        const paramIndent = firstLinePrefix.length > 0 ? `${lineIndent}    ` : '    ';
+        let snippetText = `${firstLinePrefix}${scenarioCallKeyword} ${scenarioName}`;
+        let paramIndex = 1;
+
+        params.forEach(paramName => {
+            const alignedName = paramName.padEnd(maxParamLength, ' ');
+            const calledScenarioDefaults = this.calledScenarioDefaultsByName.get(scenarioName);
+            const defaultValue = calledScenarioDefaults?.get(paramName) ?? defaults.get(paramName) ?? `"${paramName}"`;
+            const escapedDefault = this.escapeSnippetDefaultValue(defaultValue);
+            snippetText += `\n${paramIndent}${alignedName} = \${${paramIndex++}:${escapedDefault}}`;
+        });
+
+        return new vscode.SnippetString(snippetText);
+    }
+
+    private escapeSnippetDefaultValue(value: string): string {
+        return value
+            .replace(/\\/g, '\\\\')
+            .replace(/\$/g, '\\$')
+            .replace(/\}/g, '\\}');
     }
 }

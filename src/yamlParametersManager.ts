@@ -1,15 +1,39 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { getTranslator } from './localization';
 import { getExtensionUri } from './appContext';
 
 // Ключ для хранения параметров в SecretStorage
-const YAML_PARAMETERS_KEY = '1cDriveHelper.yamlParameters';
+const YAML_PARAMETERS_KEY = 'kotTestToolkit.yamlParameters';
 
 export interface YamlParameter {
     key: string;
     value: string;
+}
+
+export interface AdditionalVanessaParameter {
+    key: string;
+    value: string;
+    overrideExisting: boolean;
+}
+
+export interface GlobalVanessaVariable {
+    key: string;
+    value: string;
+    overrideExisting: boolean;
+}
+
+interface YamlParametersState {
+    buildParameters: YamlParameter[];
+    additionalVanessaParameters: AdditionalVanessaParameter[];
+    globalVanessaVariables: GlobalVanessaVariable[];
+}
+
+interface YamlParametersStorageV3 {
+    version: 3;
+    buildParameters: YamlParameter[];
+    additionalVanessaParameters: AdditionalVanessaParameter[];
+    globalVanessaVariables: GlobalVanessaVariable[];
 }
 
 export class YamlParametersManager {
@@ -28,7 +52,7 @@ export class YamlParametersManager {
      * Загружает настройки локализации
      */
     private async loadLocalizationBundleIfNeeded(): Promise<void> {
-        const cfg = vscode.workspace.getConfiguration('1cDriveHelper.localization');
+        const cfg = vscode.workspace.getConfiguration('kotTestToolkit.localization');
         const override = (cfg.get<string>('languageOverride') as 'System' | 'English' | 'Русский') || 'System';
         this._langOverride = override;
         if (override === 'Русский') {
@@ -82,61 +106,350 @@ export class YamlParametersManager {
      */
     public getDefaultParameters(): YamlParameter[] {
         // Получаем BuildPath из настроек
-        const config = vscode.workspace.getConfiguration('1cDriveHelper');
+        const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const buildPath = config.get<string>('assembleScript.buildPath') || 'C:\\EtalonDrive\\';
-        
+
         // Получаем путь к корню проекта
         const workspaceFolders = vscode.workspace.workspaceFolders;
-        const projectPath = workspaceFolders && workspaceFolders.length > 0 
-            ? workspaceFolders[0].uri.fsPath + path.sep 
+        const projectPath = workspaceFolders && workspaceFolders.length > 0
+            ? workspaceFolders[0].uri.fsPath + path.sep
             : 'C:\\EtalonDrive\\';
-        
+
         // Получаем yamlSourcePath из настроек или используем путь по умолчанию
         const yamlSourcePath = config.get<string>('paths.yamlSourceDirectory') || path.join(projectPath, 'tests', 'RegressionTests', 'yaml');
-        
+
         return [
-            { key: "ScenarioFolder", value: yamlSourcePath },
-            { key: "ExternalMode", value: "TRUE" },
-            { key: "ModelDBSettings", value: path.join(projectPath, 'tests', 'RegressionTests', 'bases', 'bases.yaml') },
-            { key: "ModelDBid", value: "EtalonDrive" },
-            { key: "FeatureFolder", value: path.join(buildPath, 'tests') },
-            { key: "LaunchDBFolder", value: "Srvr=\"ServerName\";Ref=\"InfobaseName\"" },
-            { key: "VanessaFolder", value: "tools/vanessa" },
-            { key: "jUnitFolder", value: path.join(buildPath, 'junit') },
-            { key: "ScenarioLogFile", value: path.join(buildPath, 'vanessa_progress.log') },
-            { key: "ScenarioOutFile", value: path.join(buildPath, 'vanessa_test_status.log') },
-            { key: "Useaddinforscreencapture", value: "True" },
-            { key: "ScreenshotsFolder", value: path.join(buildPath, 'screenshots') },
-            { key: "BDDLogFolder", value: path.join(buildPath, 'vanessa_error_logs') },
-            { key: "Libraries", value: "tools/vanessa/features/Libraries" },
-            { key: "UC", value: "GodMode" },
-            { key: "SplitFeatureFiles", value: "False" },
-            { key: "onerrorscreenshoteverywindow", value: "False" },
-            { key: "runtestclientwithmaximizedwindow", value: "True" }
+            { key: 'ScenarioFolder', value: yamlSourcePath },
+            { key: 'ExternalMode', value: 'TRUE' },
+            { key: 'ModelDBSettings', value: path.join(projectPath, 'tests', 'RegressionTests', 'bases', 'bases.yaml') },
+            { key: 'ModelDBid', value: 'EtalonDrive' },
+            { key: 'FeatureFolder', value: path.join(buildPath, 'tests') },
+            { key: 'LaunchDBFolder', value: 'Srvr="ServerName";Ref="InfobaseName"' },
+            { key: 'VanessaFolder', value: 'tools/vanessa' },
+            { key: 'jUnitFolder', value: path.join(buildPath, 'junit') },
+            { key: 'ScenarioLogFile', value: path.join(buildPath, 'vanessa_progress.log') },
+            { key: 'ScenarioOutFile', value: path.join(buildPath, 'vanessa_test_status.log') },
+            { key: 'Useaddinforscreencapture', value: 'True' },
+            { key: 'ScreenshotsFolder', value: path.join(buildPath, 'screenshots') },
+            { key: 'BDDLogFolder', value: path.join(buildPath, 'vanessa_error_logs') },
+            { key: 'Libraries', value: 'tools/vanessa/features/Libraries' },
+            { key: 'UC', value: 'GodMode' },
+            { key: 'SplitFeatureFiles', value: 'False' },
+            { key: 'onerrorscreenshoteverywindow', value: 'False' },
+            { key: 'runtestclientwithmaximizedwindow', value: 'True' }
         ];
     }
 
     /**
-     * Загружает сохраненные параметры или возвращает параметры по умолчанию
+     * Нормализует список параметров
      */
-    public async loadParameters(): Promise<YamlParameter[]> {
+    private normalizeParameters(raw: unknown): YamlParameter[] {
+        if (!Array.isArray(raw)) {
+            return [];
+        }
+
+        const result: YamlParameter[] = [];
+        for (const item of raw) {
+            if (!item || typeof item !== 'object') {
+                continue;
+            }
+            const key = String((item as { key?: unknown }).key || '').trim();
+            const value = String((item as { value?: unknown }).value || '');
+            if (!key) {
+                continue;
+            }
+            result.push({ key, value });
+        }
+
+        return result;
+    }
+
+    /**
+     * Нормализует список дополнительных параметров Vanessa
+     */
+    private normalizeAdditionalVanessaParameters(raw: unknown): AdditionalVanessaParameter[] {
+        if (!Array.isArray(raw)) {
+            return [];
+        }
+
+        const result: AdditionalVanessaParameter[] = [];
+        for (const item of raw) {
+            if (!item || typeof item !== 'object') {
+                continue;
+            }
+            const key = String((item as { key?: unknown }).key || '').trim();
+            const value = String((item as { value?: unknown }).value || '');
+            if (!key) {
+                continue;
+            }
+            const overrideExisting = Boolean(
+                (item as { overrideExisting?: unknown }).overrideExisting
+                ?? (item as { priority?: unknown }).priority
+            );
+            result.push({ key, value, overrideExisting });
+        }
+
+        return result;
+    }
+
+    /**
+     * Нормализует список пользовательских GlobalVars
+     */
+    private normalizeGlobalVanessaVariables(raw: unknown): GlobalVanessaVariable[] {
+        if (!Array.isArray(raw)) {
+            return [];
+        }
+
+        const result: GlobalVanessaVariable[] = [];
+        for (const item of raw) {
+            if (!item || typeof item !== 'object') {
+                continue;
+            }
+            const key = String((item as { key?: unknown }).key || '').trim();
+            const value = String((item as { value?: unknown }).value || '');
+            if (!key) {
+                continue;
+            }
+            const overrideExisting = Boolean(
+                (item as { overrideExisting?: unknown }).overrideExisting
+                ?? (item as { priority?: unknown }).priority
+            );
+            result.push({ key, value, overrideExisting });
+        }
+
+        return result;
+    }
+
+    private stringifyAnyJsonValue(value: unknown): string {
+        if (value === undefined || value === null) {
+            return '';
+        }
+        if (typeof value === 'string') {
+            return value;
+        }
+        if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+            return String(value);
+        }
         try {
-            const savedParams = await this._context.secrets.get(YAML_PARAMETERS_KEY);
-            if (savedParams) {
-                return JSON.parse(savedParams);
+            return JSON.stringify(value);
+        } catch {
+            return String(value);
+        }
+    }
+
+    private flattenAdditionalParametersFromJson(
+        value: unknown,
+        currentPath: string,
+        result: AdditionalVanessaParameter[]
+    ): void {
+        if (Array.isArray(value)) {
+            if (value.length === 0) {
+                if (currentPath) {
+                    result.push({
+                        key: currentPath,
+                        value: '[]',
+                        overrideExisting: false
+                    });
+                }
+                return;
+            }
+
+            value.forEach((item, index) => {
+                const nextPath = currentPath ? `${currentPath}[${index}]` : `[${index}]`;
+                this.flattenAdditionalParametersFromJson(item, nextPath, result);
+            });
+            return;
+        }
+
+        if (value && typeof value === 'object') {
+            const entries = Object.entries(value as Record<string, unknown>);
+            if (entries.length === 0) {
+                if (currentPath) {
+                    result.push({
+                        key: currentPath,
+                        value: '{}',
+                        overrideExisting: false
+                    });
+                }
+                return;
+            }
+
+            entries.forEach(([rawKey, item]) => {
+                const key = rawKey.trim();
+                if (!key) {
+                    return;
+                }
+                const nextPath = currentPath ? `${currentPath}.${key}` : key;
+                this.flattenAdditionalParametersFromJson(item, nextPath, result);
+            });
+            return;
+        }
+
+        if (!currentPath) {
+            return;
+        }
+
+        result.push({
+            key: currentPath,
+            value: this.stringifyAnyJsonValue(value),
+            overrideExisting: false
+        });
+    }
+
+    private parseJsonText(jsonText: string): unknown {
+        const normalized = jsonText.replace(/^\uFEFF/, '');
+        return JSON.parse(normalized);
+    }
+
+    private parseAdditionalParametersFromJsonData(jsonData: unknown): AdditionalVanessaParameter[] | null {
+        if (Array.isArray(jsonData)) {
+            return this.normalizeAdditionalVanessaParameters(jsonData);
+        }
+
+        if (!jsonData || typeof jsonData !== 'object') {
+            return null;
+        }
+
+        const maybeContainer = jsonData as { additionalVanessaParameters?: unknown };
+        if (Array.isArray(maybeContainer.additionalVanessaParameters)) {
+            return this.normalizeAdditionalVanessaParameters(maybeContainer.additionalVanessaParameters);
+        }
+
+        const additional: AdditionalVanessaParameter[] = [];
+        this.flattenAdditionalParametersFromJson(jsonData, '', additional);
+        return this.normalizeAdditionalVanessaParameters(additional);
+    }
+
+    private parseGlobalVarsFromJsonData(jsonData: unknown): GlobalVanessaVariable[] | null {
+        if (Array.isArray(jsonData)) {
+            return this.normalizeGlobalVanessaVariables(jsonData);
+        }
+
+        if (!jsonData || typeof jsonData !== 'object') {
+            return null;
+        }
+
+        const asObject = jsonData as Record<string, unknown>;
+        const directContainer = Object.keys(asObject).find(
+            key => key.trim().toLowerCase() === 'globalvars' || key.trim().toLowerCase() === 'глобальныепеременные'
+        );
+        if (directContainer) {
+            const varsNode = asObject[directContainer];
+            if (!varsNode || typeof varsNode !== 'object' || Array.isArray(varsNode)) {
+                return [];
+            }
+            return this.normalizeGlobalVanessaVariables(
+                Object.entries(varsNode as Record<string, unknown>).map(([key, value]) => ({
+                    key,
+                    value: this.stringifyAnyJsonValue(value),
+                    overrideExisting: false
+                }))
+            );
+        }
+
+        const maybeContainer = jsonData as { globalVanessaVariables?: unknown };
+        if (Array.isArray(maybeContainer.globalVanessaVariables)) {
+            return this.normalizeGlobalVanessaVariables(maybeContainer.globalVanessaVariables);
+        }
+
+        return this.normalizeGlobalVanessaVariables(
+            Object.entries(asObject).map(([key, value]) => ({
+                key,
+                value: this.stringifyAnyJsonValue(value),
+                overrideExisting: false
+            }))
+        );
+    }
+
+    private getDefaultState(): YamlParametersState {
+        return {
+            buildParameters: this.getDefaultParameters(),
+            additionalVanessaParameters: [],
+            globalVanessaVariables: []
+        };
+    }
+
+    private async loadParametersState(): Promise<YamlParametersState> {
+        try {
+            const saved = await this._context.secrets.get(YAML_PARAMETERS_KEY);
+            if (!saved) {
+                return this.getDefaultState();
+            }
+
+            const parsed = JSON.parse(saved) as unknown;
+            // Legacy format: plain array of build parameters.
+            if (Array.isArray(parsed)) {
+                const legacyBuild = this.normalizeParameters(parsed);
+                return {
+                    buildParameters: legacyBuild.length > 0 ? legacyBuild : this.getDefaultParameters(),
+                    additionalVanessaParameters: [],
+                    globalVanessaVariables: []
+                };
+            }
+
+            if (parsed && typeof parsed === 'object') {
+                const payload = parsed as Partial<YamlParametersStorageV3> & { globalVanessaVariables?: unknown };
+                const buildParameters = this.normalizeParameters(payload.buildParameters);
+                const additionalVanessaParameters = this.normalizeAdditionalVanessaParameters(payload.additionalVanessaParameters);
+                const globalVanessaVariables = this.normalizeGlobalVanessaVariables(payload.globalVanessaVariables);
+                return {
+                    buildParameters: buildParameters.length > 0 ? buildParameters : this.getDefaultParameters(),
+                    additionalVanessaParameters,
+                    globalVanessaVariables
+                };
             }
         } catch (error) {
             console.error('Error loading build scenario parameters:', error);
         }
-        return this.getDefaultParameters();
+
+        return this.getDefaultState();
+    }
+
+    private async saveParametersState(state: YamlParametersState): Promise<void> {
+        const payload: YamlParametersStorageV3 = {
+            version: 3,
+            buildParameters: state.buildParameters,
+            additionalVanessaParameters: state.additionalVanessaParameters,
+            globalVanessaVariables: state.globalVanessaVariables
+        };
+        await this._context.secrets.store(YAML_PARAMETERS_KEY, JSON.stringify(payload));
     }
 
     /**
-     * Сохраняет параметры в SecretStorage
+     * Загружает сохраненные build-параметры или возвращает параметры по умолчанию
+     */
+    public async loadParameters(): Promise<YamlParameter[]> {
+        const state = await this.loadParametersState();
+        return state.buildParameters;
+    }
+
+    /**
+     * Загружает дополнительные Vanessa-параметры
+     */
+    public async loadAdditionalVanessaParameters(): Promise<AdditionalVanessaParameter[]> {
+        const state = await this.loadParametersState();
+        return state.additionalVanessaParameters;
+    }
+
+    /**
+     * Загружает пользовательские GlobalVars
+     */
+    public async loadGlobalVanessaVariables(): Promise<GlobalVanessaVariable[]> {
+        const state = await this.loadParametersState();
+        return state.globalVanessaVariables;
+    }
+
+    /**
+     * Сохраняет build-параметры в SecretStorage (совместимость со старым API)
      */
     public async saveParameters(parameters: YamlParameter[]): Promise<void> {
         try {
-            await this._context.secrets.store(YAML_PARAMETERS_KEY, JSON.stringify(parameters));
+            const state = await this.loadParametersState();
+            await this.saveParametersState({
+                buildParameters: this.normalizeParameters(parameters),
+                additionalVanessaParameters: state.additionalVanessaParameters,
+                globalVanessaVariables: state.globalVanessaVariables
+            });
         } catch (error) {
             console.error('Error saving build scenario parameters:', error);
             throw error;
@@ -144,7 +457,63 @@ export class YamlParametersManager {
     }
 
     /**
-     * Создает файл yaml_parameters.json из сохранённых параметров
+     * Сохраняет обе секции параметров
+     */
+    public async saveAllParameters(
+        buildParameters: YamlParameter[],
+        additionalVanessaParameters: AdditionalVanessaParameter[],
+        globalVanessaVariables: GlobalVanessaVariable[]
+    ): Promise<void> {
+        try {
+            await this.saveParametersState({
+                buildParameters: this.normalizeParameters(buildParameters),
+                additionalVanessaParameters: this.normalizeAdditionalVanessaParameters(additionalVanessaParameters),
+                globalVanessaVariables: this.normalizeGlobalVanessaVariables(globalVanessaVariables)
+            });
+        } catch (error) {
+            console.error('Error saving build scenario parameters:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Создает JSON файл для дополнительных параметров Vanessa
+     */
+    public async createAdditionalVanessaParametersFile(targetPath: string, parameters: AdditionalVanessaParameter[]): Promise<void> {
+        const payload: Record<string, string> = {};
+        parameters.forEach(param => {
+            if (!param.key.trim()) {
+                return;
+            }
+            payload[param.key.trim()] = param.value;
+        });
+
+        const targetDir = path.dirname(targetPath);
+        await fs.promises.mkdir(targetDir, { recursive: true });
+        const jsonContent = JSON.stringify(payload, null, 2);
+        await fs.promises.writeFile(targetPath, jsonContent, 'utf8');
+    }
+
+    /**
+     * Создает JSON файл для пользовательских GlobalVars
+     */
+    public async createGlobalVanessaVariablesFile(targetPath: string, parameters: GlobalVanessaVariable[]): Promise<void> {
+        const payload: Record<string, string> = {};
+        parameters.forEach(param => {
+            if (!param.key.trim()) {
+                return;
+            }
+            payload[param.key.trim()] = param.value;
+        });
+
+        const targetDir = path.dirname(targetPath);
+        await fs.promises.mkdir(targetDir, { recursive: true });
+        const jsonContent = JSON.stringify(payload, null, 2);
+        await fs.promises.writeFile(targetPath, jsonContent, 'utf8');
+    }
+
+    /**
+     * Создает файл yaml_parameters.json из сохранённых build-параметров
      */
     public async createYamlParametersFile(targetPath: string): Promise<void>;
     public async createYamlParametersFile(targetPath: string, parameters: YamlParameter[]): Promise<void>;
@@ -165,7 +534,7 @@ export class YamlParametersManager {
             const yamlParams: Record<string, string> = {};
             parameters.forEach(param => {
                 let value = param.value;
-                
+
                 // Проверяем, является ли значение путем
                 if (this.isPath(param.value)) {
                     // Это путь - обрабатываем соответственно
@@ -186,7 +555,7 @@ export class YamlParametersManager {
                     // Это не путь (например, TRUE, FALSE, GodMode), оставляем как есть
                     value = param.value;
                 }
-                
+
                 yamlParams[param.key] = value;
             });
 
@@ -209,10 +578,10 @@ export class YamlParametersManager {
     private formatYamlParametersJson(yamlParams: Record<string, string>): string {
         // Используем стандартный JSON.stringify, но заменяем двойные слеши на одинарные
         let jsonContent = JSON.stringify(yamlParams, null, 2);
-        
+
         // Заменяем двойные обратные слеши на прямые слеши (только в путях, не в кавычках)
         jsonContent = jsonContent.replace(/\\\\/g, '/');
-        
+
         return jsonContent;
     }
 
@@ -313,7 +682,7 @@ export class YamlParametersManager {
      */
     public async openYamlParametersPanel(): Promise<void> {
         await this.loadLocalizationBundleIfNeeded();
-        
+
         const panel = vscode.window.createWebviewPanel(
             'yamlParametersPanel',
             'Build Scenario Parameters Manager',
@@ -327,8 +696,13 @@ export class YamlParametersManager {
             }
         );
 
-        const parameters = await this.loadParameters();
-        const html = await this.getWebviewContent(panel.webview, parameters);
+        const state = await this.loadParametersState();
+        const html = await this.getWebviewContent(
+            panel.webview,
+            state.buildParameters,
+            state.additionalVanessaParameters,
+            state.globalVanessaVariables
+        );
         panel.webview.html = html;
 
         // Обработка сообщений от webview
@@ -337,7 +711,10 @@ export class YamlParametersManager {
                 switch (message.command) {
                     case 'saveParameters':
                         try {
-                            await this.saveParameters(message.parameters);
+                            const buildParameters = this.normalizeParameters(message.buildParameters ?? message.parameters);
+                            const additionalVanessaParameters = this.normalizeAdditionalVanessaParameters(message.additionalVanessaParameters);
+                            const globalVanessaVariables = this.normalizeGlobalVanessaVariables(message.globalVanessaVariables);
+                            await this.saveAllParameters(buildParameters, additionalVanessaParameters, globalVanessaVariables);
                             vscode.window.showInformationMessage(this.t('Build scenario parameters saved successfully'));
                         } catch (error) {
                             vscode.window.showErrorMessage(this.t('Error saving parameters: {0}', String(error)));
@@ -353,16 +730,17 @@ export class YamlParametersManager {
 
                             // Предлагаем выбрать место для сохранения
                             const uri = await vscode.window.showSaveDialog({
-                                title: 'Save Build Scenario Parameters File',
+                                title: this.t('Save Build Scenario Parameters File'),
                                 filters: {
-                                    'JSON Files': ['json']
+                                    [this.t('JSON Files')]: ['json']
                                 },
                                 defaultUri: vscode.Uri.file('yaml_parameters.json')
                             });
 
                             if (uri) {
-                                await this.createYamlParametersFile(uri.fsPath, message.parameters);
-                                
+                                const buildParameters = this.normalizeParameters(message.buildParameters ?? message.parameters);
+                                await this.createYamlParametersFile(uri.fsPath, buildParameters);
+
                                 // Показываем уведомление с кнопками
                                 const action = await vscode.window.showInformationMessage(
                                     this.t('Build scenario parameters file created at: {0}', uri.fsPath),
@@ -382,12 +760,12 @@ export class YamlParametersManager {
                             vscode.window.showErrorMessage(this.t('Error creating JSON file: {0}', String(error)));
                         }
                         break;
-                    case 'loadFromJson':
+                    case 'loadBuildFromJson':
                         try {
                             const uris = await vscode.window.showOpenDialog({
                                 title: this.t('Load Build Scenario Parameters from JSON'),
                                 filters: {
-                                    'JSON Files': ['json']
+                                    [this.t('JSON Files')]: ['json']
                                 },
                                 canSelectMany: false
                             });
@@ -395,25 +773,153 @@ export class YamlParametersManager {
                             if (uris && uris.length > 0) {
                                 const filePath = uris[0].fsPath;
                                 const fileContent = await fs.promises.readFile(filePath, 'utf8');
-                                const jsonData = JSON.parse(fileContent);
+                                const jsonData = this.parseJsonText(fileContent);
 
                                 // Проверяем, что это объект с ключ-значение
                                 if (typeof jsonData === 'object' && jsonData !== null && !Array.isArray(jsonData)) {
-                                    const parameters: YamlParameter[] = Object.entries(jsonData).map(([key, value]) => ({
+                                    const buildParameters: YamlParameter[] = Object.entries(jsonData).map(([key, value]) => ({
                                         key: String(key),
                                         value: String(value)
                                     }));
 
                                     // Отправляем новые параметры в webview
                                     panel.webview.postMessage({
-                                        command: 'loadParameters',
-                                        parameters: parameters
+                                        command: 'loadBuildParameters',
+                                        buildParameters
                                     });
 
-                                    vscode.window.showInformationMessage(this.t('Loaded {0} parameters from {1}', parameters.length.toString(), path.basename(filePath)));
+                                    vscode.window.showInformationMessage(this.t('Loaded {0} parameters from {1}', buildParameters.length.toString(), path.basename(filePath)));
                                 } else {
                                     vscode.window.showErrorMessage(this.t('Invalid JSON format. Expected key-value object.'));
                                 }
+                            }
+                        } catch (error) {
+                            vscode.window.showErrorMessage(this.t('Error loading JSON file: {0}', String(error)));
+                        }
+                        break;
+                    case 'createAdditionalJsonFile':
+                        try {
+                            const uri = await vscode.window.showSaveDialog({
+                                title: this.t('Save Additional Vanessa Parameters File'),
+                                filters: {
+                                    [this.t('JSON Files')]: ['json']
+                                },
+                                defaultUri: vscode.Uri.file('vanessa_additional_parameters.json')
+                            });
+
+                            if (uri) {
+                                const additionalParameters = this.normalizeAdditionalVanessaParameters(message.additionalVanessaParameters);
+                                await this.createAdditionalVanessaParametersFile(uri.fsPath, additionalParameters);
+
+                                const action = await vscode.window.showInformationMessage(
+                                    this.t('Additional Vanessa parameters file created at: {0}', uri.fsPath),
+                                    this.t('Open File'),
+                                    this.t('Open Folder')
+                                );
+
+                                if (action === this.t('Open File')) {
+                                    const doc = await vscode.workspace.openTextDocument(uri);
+                                    await vscode.window.showTextDocument(doc);
+                                } else if (action === this.t('Open Folder')) {
+                                    vscode.commands.executeCommand('revealFileInOS', uri);
+                                }
+                            }
+                        } catch (error) {
+                            vscode.window.showErrorMessage(this.t('Error creating JSON file: {0}', String(error)));
+                        }
+                        break;
+                    case 'loadAdditionalFromJson':
+                        try {
+                            const uris = await vscode.window.showOpenDialog({
+                                title: this.t('Load Additional Vanessa Parameters from JSON'),
+                                filters: {
+                                    [this.t('JSON Files')]: ['json']
+                                },
+                                canSelectMany: false
+                            });
+
+                            if (uris && uris.length > 0) {
+                                const filePath = uris[0].fsPath;
+                                const fileContent = await fs.promises.readFile(filePath, 'utf8');
+                                const jsonData = this.parseJsonText(fileContent);
+                                const additionalParameters = this.parseAdditionalParametersFromJsonData(jsonData);
+                                if (!additionalParameters) {
+                                    vscode.window.showErrorMessage(this.t('Invalid JSON format. Expected key-value object.'));
+                                    return;
+                                }
+
+                                panel.webview.postMessage({
+                                    command: 'loadAdditionalParameters',
+                                    additionalParameters
+                                });
+
+                                vscode.window.showInformationMessage(
+                                    this.t('Loaded {0} parameters from {1}', additionalParameters.length.toString(), path.basename(filePath))
+                                );
+                            }
+                        } catch (error) {
+                            vscode.window.showErrorMessage(this.t('Error loading JSON file: {0}', String(error)));
+                        }
+                        break;
+                    case 'createGlobalVarsJsonFile':
+                        try {
+                            const uri = await vscode.window.showSaveDialog({
+                                title: this.t('Save Global Variables File'),
+                                filters: {
+                                    [this.t('JSON Files')]: ['json']
+                                },
+                                defaultUri: vscode.Uri.file('vanessa_global_vars.json')
+                            });
+
+                            if (uri) {
+                                const globalVariables = this.normalizeGlobalVanessaVariables(message.globalVanessaVariables);
+                                await this.createGlobalVanessaVariablesFile(uri.fsPath, globalVariables);
+
+                                const action = await vscode.window.showInformationMessage(
+                                    this.t('Global variables file created at: {0}', uri.fsPath),
+                                    this.t('Open File'),
+                                    this.t('Open Folder')
+                                );
+
+                                if (action === this.t('Open File')) {
+                                    const doc = await vscode.workspace.openTextDocument(uri);
+                                    await vscode.window.showTextDocument(doc);
+                                } else if (action === this.t('Open Folder')) {
+                                    vscode.commands.executeCommand('revealFileInOS', uri);
+                                }
+                            }
+                        } catch (error) {
+                            vscode.window.showErrorMessage(this.t('Error creating JSON file: {0}', String(error)));
+                        }
+                        break;
+                    case 'loadGlobalVarsFromJson':
+                        try {
+                            const uris = await vscode.window.showOpenDialog({
+                                title: this.t('Load Global Variables from JSON'),
+                                filters: {
+                                    [this.t('JSON Files')]: ['json']
+                                },
+                                canSelectMany: false
+                            });
+
+                            if (uris && uris.length > 0) {
+                                const filePath = uris[0].fsPath;
+                                const fileContent = await fs.promises.readFile(filePath, 'utf8');
+                                const jsonData = this.parseJsonText(fileContent);
+                                const globalVariables = this.parseGlobalVarsFromJsonData(jsonData);
+                                if (!globalVariables) {
+                                    vscode.window.showErrorMessage(this.t('Invalid JSON format. Expected key-value object.'));
+                                    return;
+                                }
+
+                                panel.webview.postMessage({
+                                    command: 'loadGlobalVanessaVariables',
+                                    globalVanessaVariables: globalVariables
+                                });
+
+                                vscode.window.showInformationMessage(
+                                    this.t('Loaded {0} parameters from {1}', globalVariables.length.toString(), path.basename(filePath))
+                                );
                             }
                         } catch (error) {
                             vscode.window.showErrorMessage(this.t('Error loading JSON file: {0}', String(error)));
@@ -427,59 +933,89 @@ export class YamlParametersManager {
     /**
      * Генерирует HTML содержимое для webview из шаблона
      */
-    private async getWebviewContent(webview: vscode.Webview, parameters: YamlParameter[]): Promise<string> {
+    private async getWebviewContent(
+        webview: vscode.Webview,
+        buildParameters: YamlParameter[],
+        additionalVanessaParameters: AdditionalVanessaParameter[],
+        globalVanessaVariables: GlobalVanessaVariable[]
+    ): Promise<string> {
         try {
             // URIs для ресурсов
             const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'codicon.css'));
             const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'yamlParameters.css'));
             const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'yamlParameters.js'));
-            
+
             // Nonce для CSP
             const nonce = this.getNonce();
-            
+
             // Определяем язык интерфейса
             const langOverride = this._langOverride;
             const effectiveLang = langOverride === 'System' ? (vscode.env.language || 'English') : langOverride;
             const localeHtmlLang = effectiveLang.split('-')[0];
-            
+
             // Создаем объект переводов
             const loc = {
                 title: this.t('Build Scenario Parameters Manager'),
                 description: this.t('Manage build scenario parameters for test configuration'),
+                buildSectionTitle: this.t('SPPR build parameters'),
+                buildSectionDescription: this.t('Parameters saved into yaml_parameters.json for СборкаТекстовСценариев processing.'),
+                additionalSectionTitle: this.t('Additional Vanessa Automation parameters'),
+                additionalSectionDescription: this.t('Use this section for VAParams keys not supported by SPPR processing (for example, gherkinlanguage).'),
+                globalVarsSectionTitle: this.t('Global variables'),
+                globalVarsSectionDescription: this.t('Scenario-level custom GlobalVars merged into VAParams JSON.'),
                 pathHint: this.t('You can use relative paths from project root or full paths.'),
-                addParameter: this.t('Add Parameter'),
-                resetDefaults: this.t('Reset to Defaults'),
+                sectionsHint: this.t('• SPPR tab: parameters for СборкаТекстовСценариев. Processing uses them to build yaml_parameters.json and Vanessa settings JSON, but not all VAParams keys are supported.\n• Additional tab: use for unsupported VAParams keys. You can import your own Vanessa settings JSON here.\n• Global variables tab: user GlobalVars that are merged into VAParams at launch time.\n• VAParams: runtime JSON settings for Vanessa Automation scenario launch.\n• Priority: if the same key exists in SPPR and Additional tabs, SPPR value wins by default. To override it, enable \"Override existing value\" in Additional tab.'),
+                addBuildParameter: this.t('Add build parameter'),
+                addAdditionalParameter: this.t('Add additional parameter'),
+                addGlobalVariable: this.t('Add global variable'),
+                resetDefaults: this.t('Reset build defaults'),
+                clearAdditionalParameters: this.t('Clear additional parameters'),
+                clearGlobalVariables: this.t('Clear global variables'),
                 parameter: this.t('Parameter'),
                 value: this.t('Value'),
+                priority: this.t('Priority'),
+                overrideExistingValue: this.t('Override existing value'),
                 actions: this.t('Actions'),
                 save: this.t('Apply'),
                 createFile: this.t('Save file'),
+                saveAdditionalFile: this.t('Save additional file'),
                 loadFromJson: this.t('Load from JSON'),
+                loadAdditionalFromJson: this.t('Import VAParams/JSON'),
+                saveGlobalVarsFile: this.t('Save global variables file'),
+                loadGlobalVarsFromJson: this.t('Import GlobalVars/JSON'),
                 moreActions: this.t('More actions'),
                 help: this.t('Help'),
-                moreInfoOnITS: this.t('More information about parameters on ITS')
+                moreInfoOnITS: this.t('More information about SPPR СборкаТекстовСценариев parameters on ITS'),
+                moreInfoOnVanessa: this.t('More information about Vanessa Automation JSON parameters'),
+                parameterNamePlaceholder: this.t('Parameter name'),
+                parameterValuePlaceholder: this.t('Parameter value'),
+                removeParameter: this.t('Remove parameter'),
+                buildMoreActionsLabel: this.t('Build actions'),
+                additionalMoreActionsLabel: this.t('Additional actions'),
+                globalVarsMoreActionsLabel: this.t('GlobalVars actions'),
+                searchByParameterName: this.t('Search by parameter name'),
+                clearSearch: this.t('Clear search')
             };
 
             // Загружаем HTML шаблон
             const htmlPath = vscode.Uri.joinPath(this._extensionUri, 'media', 'yamlParameters.html');
             let htmlContent = Buffer.from(await vscode.workspace.fs.readFile(htmlPath)).toString('utf-8');
 
-            // Генерируем строки таблицы
-            const parametersRows = parameters.map((param, index) => `
-                <tr data-index="${index}">
-                    <td>
-                        <input type="text" class="param-key" value="${this.escapeHtml(param.key)}" placeholder="Parameter name">
-                    </td>
-                    <td>
-                        <input type="text" class="param-value" value="${this.escapeHtml(param.value)}" placeholder="Parameter value">
-                    </td>
-                    <td>
-                        <button class="button-with-icon remove-row-btn" title="Remove parameter">
-                            <span class="codicon codicon-trash"></span>
-                        </button>
-                    </td>
-                </tr>
-            `).join('');
+            const buildParametersRows = this.renderParametersRows(buildParameters, loc.parameterNamePlaceholder, loc.parameterValuePlaceholder, loc.removeParameter);
+            const additionalParametersRows = this.renderAdditionalParametersRows(
+                additionalVanessaParameters,
+                loc.parameterNamePlaceholder,
+                loc.parameterValuePlaceholder,
+                loc.removeParameter,
+                loc.overrideExistingValue
+            );
+            const globalVariablesRows = this.renderAdditionalParametersRows(
+                globalVanessaVariables,
+                loc.parameterNamePlaceholder,
+                loc.parameterValuePlaceholder,
+                loc.removeParameter,
+                loc.overrideExistingValue
+            );
 
             // Заменяем технические плейсхолдеры как в PhaseSwitcher
             htmlContent = htmlContent.replace(/\$\{nonce\}/g, nonce);
@@ -487,10 +1023,14 @@ export class YamlParametersManager {
             htmlContent = htmlContent.replace('${scriptUri}', scriptUri.toString());
             htmlContent = htmlContent.replace('${codiconsUri}', codiconsUri.toString());
             htmlContent = htmlContent.replace(/\$\{webview.cspSource\}/g, webview.cspSource);
-            htmlContent = htmlContent.replace('${parametersRows}', parametersRows);
-            htmlContent = htmlContent.replace('${parametersJson}', JSON.stringify(parameters));
-            htmlContent = htmlContent.replace('${defaultParametersJson}', JSON.stringify(this.getDefaultParameters()));
-            
+            htmlContent = htmlContent.replace('${buildParametersRows}', buildParametersRows);
+            htmlContent = htmlContent.replace('${additionalParametersRows}', additionalParametersRows);
+            htmlContent = htmlContent.replace('${globalVariablesRows}', globalVariablesRows);
+            htmlContent = htmlContent.replace('${buildParametersJson}', JSON.stringify(buildParameters));
+            htmlContent = htmlContent.replace('${additionalParametersJson}', JSON.stringify(additionalVanessaParameters));
+            htmlContent = htmlContent.replace('${globalVanessaVariablesJson}', JSON.stringify(globalVanessaVariables));
+            htmlContent = htmlContent.replace('${defaultBuildParametersJson}', JSON.stringify(this.getDefaultParameters()));
+
             // Заменяем переводы
             htmlContent = htmlContent.replace('${localeHtmlLang}', localeHtmlLang);
             for (const [k, v] of Object.entries(loc)) {
@@ -502,6 +1042,51 @@ export class YamlParametersManager {
             console.error('[YamlParametersManager] Error loading HTML template:', error);
             return `<body><h1>Error loading Build Scenario Parameters Manager</h1><p>${error}</p></body>`;
         }
+    }
+
+    private renderParametersRows(parameters: YamlParameter[], keyPlaceholder: string, valuePlaceholder: string, removeTitle: string): string {
+        return parameters.map((param, index) => `
+                <tr data-index="${index}">
+                    <td>
+                        <input type="text" class="param-key" value="${this.escapeHtml(param.key)}" placeholder="${this.escapeHtml(keyPlaceholder)}">
+                    </td>
+                    <td>
+                        <input type="text" class="param-value" value="${this.escapeHtml(param.value)}" placeholder="${this.escapeHtml(valuePlaceholder)}">
+                    </td>
+                    <td>
+                        <button class="button-with-icon remove-row-btn" title="${this.escapeHtml(removeTitle)}">
+                            <span class="codicon codicon-trash"></span>
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+    }
+
+    private renderAdditionalParametersRows(
+        parameters: AdditionalVanessaParameter[],
+        keyPlaceholder: string,
+        valuePlaceholder: string,
+        removeTitle: string,
+        overrideTitle: string
+    ): string {
+        return parameters.map((param, index) => `
+                <tr data-index="${index}">
+                    <td>
+                        <input type="text" class="param-key" value="${this.escapeHtml(param.key)}" placeholder="${this.escapeHtml(keyPlaceholder)}">
+                    </td>
+                    <td>
+                        <input type="text" class="param-value" value="${this.escapeHtml(param.value)}" placeholder="${this.escapeHtml(valuePlaceholder)}">
+                    </td>
+                    <td class="param-priority-cell">
+                        <input type="checkbox" class="param-override" ${param.overrideExisting ? 'checked' : ''} title="${this.escapeHtml(overrideTitle)}">
+                    </td>
+                    <td>
+                        <button class="button-with-icon remove-row-btn" title="${this.escapeHtml(removeTitle)}">
+                            <span class="codicon codicon-trash"></span>
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
     }
 
     /**

@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { findFileByName, findScenarioReferences } from './navigationUtils';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { TestInfo } from './types';
+import { normalizeScenarioParameterName } from './scenarioParameterUtils';
 import JSZip = require('jszip');
 
 /**
@@ -127,17 +128,17 @@ async function findFileFromText(
  */
 async function openMxlWithFileWorkshop(filePath: string) {
     console.log(`[Cmd:openMxl] Attempting to open: ${filePath}`);
-    const config = vscode.workspace.getConfiguration('1cDriveHelper.paths');
+    const config = vscode.workspace.getConfiguration('kotTestToolkit.paths');
     const fileWorkshopPath = config.get<string>('fileWorkshopExe');
     const t = await getTranslator(getExtensionUri());
 
     if (!fileWorkshopPath) {
         vscode.window.showErrorMessage(
-            t("Path to '1C:Enterprise — File workshop' is not configured. Set it in `1cDriveHelper.paths.fileWorkshopExe`."),
+            t("Path to '1C:Enterprise — File workshop' is not configured. Set it in `kotTestToolkit.paths.fileWorkshopExe`."),
             t('Open Settings')
         ).then(selection => {
             if (selection === t('Open Settings')) {
-                vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.fileWorkshopExe');
+                vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.fileWorkshopExe');
             }
         });
         return;
@@ -149,7 +150,7 @@ async function openMxlWithFileWorkshop(filePath: string) {
             t('Open Settings')
         ).then(selection => {
             if (selection === t('Open Settings')) {
-                vscode.commands.executeCommand('workbench.action.openSettings', '1cDriveHelper.paths.fileWorkshopExe');
+                vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.fileWorkshopExe');
             }
         });
         return;
@@ -839,7 +840,7 @@ function parseExistingNestedScenarios(documentText: string): string[] {
  * @param documentText Полный текст документа.
  * @returns Массив имен вызываемых сценариев.
  */
-function parseCalledScenariosFromScriptBody(documentText: string): string[] {
+export function parseCalledScenariosFromScriptBody(documentText: string): string[] {
     const calledScenarios = new Set<string>(); // Используем Set для автоматического удаления дубликатов
     const scriptBodyRegex = /ТекстСценария:\s*\|?\s*([\s\S]*?)(?=\n[А-Яа-яЁёA-Za-z]+:|\n*$)/;
     const scriptBodyMatch = documentText.match(scriptBodyRegex);
@@ -883,6 +884,22 @@ function parseCalledScenariosFromScriptBody(documentText: string): string[] {
     return result;
 }
 
+export function shouldRefillNestedScenariosSection(documentText: string): boolean {
+    const expected = parseCalledScenariosFromScriptBody(documentText);
+    const existing = parseExistingNestedScenarios(documentText);
+    if (expected.length !== existing.length) {
+        return true;
+    }
+
+    for (let index = 0; index < expected.length; index++) {
+        if (expected[index] !== existing[index]) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 
 /**
  * Обработчик команды проверки и заполнения вложенных сценариев.
@@ -899,6 +916,7 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
     }
     
     // Use the new clear-and-refill logic with cached data for performance
+    await phaseSwitcherProvider.ensureFreshTestCache();
     const testCache = phaseSwitcherProvider.getTestCache();
     await clearAndFillNestedScenarios(textEditor.document, false, testCache);
 }
@@ -909,7 +927,7 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
  * @param documentText Полный текст документа.
  * @returns Массив уникальных имен используемых параметров.
  */
-function parseUsedParametersFromScriptBody(documentText: string): string[] {
+export function parseUsedParametersFromScriptBody(documentText: string): string[] {
     const usedParameters = new Set<string>();
     const scriptBodyRegex = /ТекстСценария:\s*\|?\s*([\s\S]*?)(?=\n[А-Яа-яЁёA-Za-z]+:|\n*$)/;
     const scriptBodyMatch = documentText.match(scriptBodyRegex);
@@ -919,7 +937,7 @@ function parseUsedParametersFromScriptBody(documentText: string): string[] {
         // Регулярное выражение для поиска параметров вида [ИмяПараметра]
         // Параметры могут содержать только: буквы (A-Z, a-z, А-Я, а-я), цифры (0-9), подчеркивания (_) и дефисы (-)
         // Исключаются строки с точками, запятыми и другими специальными символами
-        const paramRegex = /\[([A-Za-zА-Яа-яЁё0-9_-]+)\]/g;
+        const paramRegex = /(?<!\\)\[([A-Za-zА-Яа-яЁё0-9_-]+)(?<!\\)\]/g;
         let match;
         while ((match = paramRegex.exec(scriptContent)) !== null) {
             const paramName = match[1].trim();
@@ -932,6 +950,22 @@ function parseUsedParametersFromScriptBody(documentText: string): string[] {
     const result = Array.from(usedParameters);
     console.log(`[parseUsedParametersFromScriptBody] Found: ${result.join(', ')}`);
     return result;
+}
+
+export function shouldRefillScenarioParametersSection(documentText: string): boolean {
+    const expected = parseUsedParametersFromScriptBody(documentText);
+    const existing = parseDefinedScenarioParameters(documentText);
+    if (expected.length !== existing.length) {
+        return true;
+    }
+
+    for (let index = 0; index < expected.length; index++) {
+        if (expected[index] !== existing[index]) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /**
@@ -1013,10 +1047,37 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
 
         // --- 2. Рекурсивный обход папки и замена версии ---
         const zip = new JSZip();
-        const config = vscode.workspace.getConfiguration('1cDriveHelper');
-        const firstLaunchFolderPath = config.get<string>('paths.firstLaunchFolder') || 'first_launch';
-        const buildPath = config.get<string>('assembleScript.buildPath') || '';
-        const firstLaunchFolderUri = vscode.Uri.joinPath(workspaceRoot, firstLaunchFolderPath);
+        const config = vscode.workspace.getConfiguration('kotTestToolkit');
+        const firstLaunchFolderPath = (config.get<string>('paths.firstLaunchFolder') || '').trim();
+        if (!firstLaunchFolderPath) {
+            vscode.window.showErrorMessage(
+                t('FirstLaunch folder path is not specified in settings.'),
+                t('Open Settings')
+            ).then(selection => {
+                if (selection === t('Open Settings')) {
+                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.firstLaunchFolder');
+                }
+            });
+            return;
+        }
+
+        const firstLaunchFolderUri = path.isAbsolute(firstLaunchFolderPath)
+            ? vscode.Uri.file(firstLaunchFolderPath)
+            : vscode.Uri.joinPath(workspaceRoot, firstLaunchFolderPath);
+
+        try {
+            await vscode.workspace.fs.stat(firstLaunchFolderUri);
+        } catch {
+            vscode.window.showErrorMessage(
+                t('FirstLaunch folder not found at path: {0}', firstLaunchFolderUri.fsPath),
+                t('Open Settings')
+            ).then(selection => {
+                if (selection === t('Open Settings')) {
+                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.firstLaunchFolder');
+                }
+            });
+            return;
+        }
 
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
@@ -1241,6 +1302,12 @@ export async function clearAndFillNestedScenarios(document: vscode.TextDocument,
             finalTextToInsert = "\n" + itemsToInsertString;
         }
 
+        const currentSectionContent = fullText.substring(afterHeaderOffset, sectionContentEndOffset);
+        if (currentSectionContent === finalTextToInsert) {
+            console.log("[clearAndFillNestedScenarios] Section already up-to-date. No changes made.");
+            return false;
+        }
+
         // Apply the edit
         const edit = new vscode.WorkspaceEdit();
         const rangeToReplace = new vscode.Range(
@@ -1266,12 +1333,62 @@ export async function clearAndFillNestedScenarios(document: vscode.TextDocument,
 }
 
 /**
- * Parses existing parameter values from the ScenarioParameters section.
- * @param documentText The full document text
- * @returns Map of parameter names to their custom values
+ * Represents a parameter block from ScenarioParameters section.
  */
-function parseExistingParameterValues(documentText: string): Map<string, string> {
-    const existingValues = new Map<string, string>();
+interface ExistingScenarioParameterData {
+    value: string;
+    type: string;
+    outgoing: string;
+}
+
+const scenarioParameterSessionCache = new Map<string, Map<string, ExistingScenarioParameterData>>();
+
+function cloneScenarioParameterDataMap(
+    source: Map<string, ExistingScenarioParameterData>
+): Map<string, ExistingScenarioParameterData> {
+    const cloned = new Map<string, ExistingScenarioParameterData>();
+    source.forEach((value, key) => {
+        cloned.set(key, { ...value });
+    });
+    return cloned;
+}
+
+function mergeScenarioParameterDataMaps(
+    base: Map<string, ExistingScenarioParameterData>,
+    override: Map<string, ExistingScenarioParameterData>
+): Map<string, ExistingScenarioParameterData> {
+    const result = cloneScenarioParameterDataMap(base);
+    override.forEach((value, key) => {
+        result.set(key, { ...value });
+    });
+    return result;
+}
+
+function updateScenarioParameterSessionCache(
+    document: vscode.TextDocument,
+    data: Map<string, ExistingScenarioParameterData>
+): Map<string, ExistingScenarioParameterData> {
+    const key = document.uri.toString();
+    const cached = scenarioParameterSessionCache.get(key) ?? new Map<string, ExistingScenarioParameterData>();
+    const merged = mergeScenarioParameterDataMaps(cached, data);
+    scenarioParameterSessionCache.set(key, merged);
+    return merged;
+}
+
+export function clearScenarioParameterSessionCache(documentOrUri: vscode.TextDocument | vscode.Uri): void {
+    const key = documentOrUri instanceof vscode.Uri
+        ? documentOrUri.toString()
+        : documentOrUri.uri.toString();
+    scenarioParameterSessionCache.delete(key);
+}
+
+/**
+ * Parses existing parameter values and attributes from the ScenarioParameters section.
+ * @param documentText The full document text
+ * @returns Map of parameter names to their data
+ */
+function parseExistingParameterData(documentText: string): Map<string, ExistingScenarioParameterData> {
+    const existingData = new Map<string, ExistingScenarioParameterData>();
     
     const PARAM_SECTION_KEY = "ПараметрыСценария";
     const PARAM_SECTION_HEADER = `${PARAM_SECTION_KEY}:`;
@@ -1281,7 +1398,7 @@ function parseExistingParameterValues(documentText: string): Map<string, string>
     const sectionMatch = documentText.match(sectionHeaderRegex);
     
     if (!sectionMatch || sectionMatch.index === undefined) {
-        return existingValues;
+        return existingData;
     }
     
     const afterHeaderOffset = sectionMatch.index + sectionMatch[0].length;
@@ -1294,6 +1411,21 @@ function parseExistingParameterValues(documentText: string): Map<string, string>
     
     const sectionContent = documentText.substring(afterHeaderOffset, sectionContentEndOffset);
     
+    const parseFieldValue = (blockContent: string, fieldName: string): string | null => {
+        const escapedFieldName = fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const fieldRegex = new RegExp(`^\\s*${escapedFieldName}:\\s*(.+?)\\s*$`, 'm');
+        const fieldMatch = blockContent.match(fieldRegex);
+        if (!fieldMatch?.[1]) {
+            return null;
+        }
+
+        const raw = fieldMatch[1].trim();
+        if (raw.length >= 2 && ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith('\'') && raw.endsWith('\'')))) {
+            return raw.slice(1, -1);
+        }
+        return raw;
+    };
+
     // Parse each parameter block
     const paramBlockRegex = new RegExp(`^\\s*-\\s*${PARAM_SECTION_KEY}\\d*:\\s*$`, "gm");
     let match;
@@ -1308,26 +1440,28 @@ function parseExistingParameterValues(documentText: string): Map<string, string>
         
         const blockContent = sectionContent.substring(blockStartOffset, blockEndOffset);
         
-        // Extract parameter name and value
-        const nameMatch = blockContent.match(/^\s*Имя:\s*"([^"]+)"/m);
-        const valueMatch = blockContent.match(/^\s*Значение:\s*"([^"]*)"/m);
-        
-        if (nameMatch && valueMatch) {
-            const paramName = nameMatch[1];
-            const paramValue = valueMatch[1];
-            
-            // Only store if the value is different from the parameter name (i.e., user customized it)
-            if (paramValue !== paramName) {
-                existingValues.set(paramName, paramValue);
-                console.log(`[parseExistingParameterValues] Found custom value for "${paramName}": "${paramValue}"`);
-            }
+        // Extract parameter fields
+        const parsedName = parseFieldValue(blockContent, 'Имя');
+        const parsedValue = parseFieldValue(blockContent, 'Значение');
+        const parsedType = parseFieldValue(blockContent, 'ТипПараметра');
+        const parsedOutgoing = parseFieldValue(blockContent, 'ИсходящийПараметр');
+
+        const paramName = parsedName ? normalizeScenarioParameterName(parsedName) : '';
+
+        if (paramName && parsedValue !== null && !existingData.has(paramName)) {
+            existingData.set(paramName, {
+                value: parsedValue,
+                type: parsedType || "Строка",
+                outgoing: parsedOutgoing || "No"
+            });
+            console.log(`[parseExistingParameterData] Found existing data for "${paramName}"`);
         }
         
         // Reset regex position to continue searching
         paramBlockRegex.lastIndex = blockStartOffset;
     }
     
-    return existingValues;
+    return existingData;
 }
 
 /**
@@ -1352,8 +1486,10 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
         console.log(`[clearAndFillScenarioParameters] Found ${usedParametersInOrder.length} parameters in script body.`);
 
         // Parse existing parameter values to preserve user customizations
-        const existingValues = parseExistingParameterValues(fullText);
-        console.log(`[clearAndFillScenarioParameters] Found ${existingValues.size} existing custom parameter values.`);
+        const existingData = parseExistingParameterData(fullText);
+        const mergedData = updateScenarioParameterSessionCache(document, existingData);
+        console.log(`[clearAndFillScenarioParameters] Found ${existingData.size} existing parameter blocks with attributes.`);
+        console.log(`[clearAndFillScenarioParameters] Session cache has ${mergedData.size} parameter blocks.`);
 
         if (!silent) progress.report({ increment: 60, message: t('Clearing and refilling section...') });
 
@@ -1391,12 +1527,14 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
             itemsToInsertString += `${baseIndentForNewItems}    НомерСтроки: "${index + 1}"\n`;
             itemsToInsertString += `${baseIndentForNewItems}    Имя: "${paramName.replace(/"/g, '\\"')}"\n`;
             
-            // Use existing custom value if available, otherwise use parameter name as default
-            const paramValue = existingValues.has(paramName) ? existingValues.get(paramName)! : paramName;
+            const existingParamData = mergedData.get(paramName);
+            const paramValue = existingParamData?.value ?? paramName;
+            const paramType = existingParamData?.type ?? "Строка";
+            const paramOutgoing = existingParamData?.outgoing ?? "No";
             itemsToInsertString += `${baseIndentForNewItems}    Значение: "${paramValue.replace(/"/g, '\\"')}"\n`;
             
-            itemsToInsertString += `${baseIndentForNewItems}    ТипПараметра: "Строка"\n`;
-            itemsToInsertString += `${baseIndentForNewItems}    ИсходящийПараметр: "No"`;
+            itemsToInsertString += `${baseIndentForNewItems}    ТипПараметра: "${paramType.replace(/"/g, '\\"')}"\n`;
+            itemsToInsertString += `${baseIndentForNewItems}    ИсходящийПараметр: "${paramOutgoing.replace(/"/g, '\\"')}"`;
         });
 
         // Handle empty vs non-empty sections differently
@@ -1412,6 +1550,12 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
             finalTextToInsert = "\n" + itemsToInsertString;
         }
 
+        const currentSectionContent = fullText.substring(afterHeaderOffset, sectionContentEndOffset);
+        if (currentSectionContent === finalTextToInsert) {
+            console.log("[clearAndFillScenarioParameters] Section already up-to-date. No changes made.");
+            return false;
+        }
+
         // Apply the edit
         const edit = new vscode.WorkspaceEdit();
         const rangeToReplace = new vscode.Range(
@@ -1421,7 +1565,19 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
         edit.replace(document.uri, rangeToReplace, finalTextToInsert);
         await vscode.workspace.applyEdit(edit);
 
-        console.log(`[clearAndFillScenarioParameters] Cleared and refilled with ${usedParametersInOrder.length} parameters, preserved ${existingValues.size} custom values.`);
+        const refreshedSessionData = cloneScenarioParameterDataMap(mergedData);
+        usedParametersInOrder.forEach(paramName => {
+            if (!refreshedSessionData.has(paramName)) {
+                refreshedSessionData.set(paramName, {
+                    value: paramName,
+                    type: "Строка",
+                    outgoing: "No"
+                });
+            }
+        });
+        scenarioParameterSessionCache.set(document.uri.toString(), refreshedSessionData);
+
+        console.log(`[clearAndFillScenarioParameters] Cleared and refilled with ${usedParametersInOrder.length} parameters, preserved ${mergedData.size} cached blocks.`);
         return true;
     };
 
@@ -1436,16 +1592,245 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
     }
 }
 
+interface ScenarioTextRange {
+    startOffset: number;
+    endOffset: number;
+    content: string;
+    eol: string;
+}
+
+function getScenarioTextRange(fullText: string): ScenarioTextRange | null {
+    const scenarioBlockStartRegex = /ТекстСценария:\s*\|?\s*(\r\n|\r|\n)/m;
+    const startMatch = scenarioBlockStartRegex.exec(fullText);
+    if (!startMatch || startMatch.index === undefined) {
+        return null;
+    }
+
+    const startOffset = startMatch.index + startMatch[0].length;
+    const nextMajorKeyRegex = /\n(?![ \t])([А-Яа-яЁёA-Za-z]+:)/g;
+    nextMajorKeyRegex.lastIndex = startOffset;
+    const nextMajorKeyMatchResult = nextMajorKeyRegex.exec(fullText);
+    const endOffset = nextMajorKeyMatchResult ? nextMajorKeyMatchResult.index : fullText.length;
+    const content = fullText.substring(startOffset, endOffset);
+
+    const eol = fullText.includes('\r\n') ? '\r\n' : '\n';
+    return { startOffset, endOffset, content, eol };
+}
+
+async function replaceDocumentRange(
+    document: vscode.TextDocument,
+    startOffset: number,
+    endOffset: number,
+    replacement: string
+): Promise<boolean> {
+    const current = document.getText(new vscode.Range(document.positionAt(startOffset), document.positionAt(endOffset)));
+    if (current === replacement) {
+        return false;
+    }
+
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(
+        document.uri,
+        new vscode.Range(document.positionAt(startOffset), document.positionAt(endOffset)),
+        replacement
+    );
+    return await vscode.workspace.applyEdit(edit);
+}
+
+function alignNestedScenarioCallParametersInText(
+    scriptText: string,
+    eol: string,
+    knownNestedScenarioNames: Set<string>
+): string {
+    const lines = scriptText.split(/\r\n|\r|\n/);
+    let changed = false;
+
+    for (let i = 0; i < lines.length; i++) {
+        const callLine = lines[i];
+        const callMatch = callLine.match(/^(\s*)(?:And|И|Допустим)\s+(.+)$/i);
+        if (!callMatch) {
+            continue;
+        }
+
+        const scenarioNameCandidate = callMatch[2].trim();
+        if (!scenarioNameCandidate || scenarioNameCandidate.includes('"')) {
+            continue;
+        }
+        if (
+            knownNestedScenarioNames.size > 0 &&
+            !knownNestedScenarioNames.has(scenarioNameCandidate.toLocaleLowerCase())
+        ) {
+            continue;
+        }
+
+        const expectedParamIndent = `${callMatch[1]}    `;
+        const params: { lineIndex: number; indent: string; name: string; value: string }[] = [];
+        let j = i + 1;
+
+        while (j < lines.length) {
+            const currentLine = lines[j];
+            const trimmed = currentLine.trim();
+
+            if (trimmed === '' || trimmed.startsWith('#')) {
+                break;
+            }
+
+            const assignmentMatch = currentLine.match(/^(\s*)([A-Za-zА-Яа-яЁё0-9_-]+)\s*=\s*(.*)$/);
+            if (!assignmentMatch) {
+                break;
+            }
+
+            params.push({
+                lineIndex: j,
+                indent: assignmentMatch[1],
+                name: assignmentMatch[2],
+                value: assignmentMatch[3].replace(/^\s+/, '')
+            });
+            j++;
+        }
+
+        if (params.length > 0) {
+            const maxNameLength = Math.max(...params.map(param => param.name.length));
+            for (const param of params) {
+                const alignedLine = `${expectedParamIndent}${param.name.padEnd(maxNameLength, ' ')} = ${param.value}`;
+                if (lines[param.lineIndex] !== alignedLine) {
+                    lines[param.lineIndex] = alignedLine;
+                    changed = true;
+                }
+            }
+        }
+
+        if (j > i + 1) {
+            i = j - 1;
+        }
+    }
+
+    if (!changed) {
+        return scriptText;
+    }
+
+    return lines.join(eol);
+}
+
+function alignGherkinTablesInText(scriptText: string, eol: string): string {
+    const lines = scriptText.split(/\r\n|\r|\n/);
+    let changed = false;
+
+    const tableRowRegex = /^(\s*)\|(.*)\|\s*$/;
+
+    let i = 0;
+    while (i < lines.length) {
+        const firstMatch = lines[i].match(tableRowRegex);
+        if (!firstMatch) {
+            i++;
+            continue;
+        }
+
+        const tableRows: { lineIndex: number; indent: string; cells: string[] }[] = [];
+        let j = i;
+
+        while (j < lines.length) {
+            const rowMatch = lines[j].match(tableRowRegex);
+            if (!rowMatch) {
+                break;
+            }
+
+            const cells = rowMatch[2].split('|').map(cell => cell.trim());
+            tableRows.push({
+                lineIndex: j,
+                indent: rowMatch[1],
+                cells
+            });
+            j++;
+        }
+
+        if (tableRows.length > 0) {
+            const maxColumns = Math.max(...tableRows.map(row => row.cells.length));
+            const columnWidths = Array.from({ length: maxColumns }, () => 0);
+
+            for (const row of tableRows) {
+                for (let col = 0; col < maxColumns; col++) {
+                    const cellValue = row.cells[col] || '';
+                    columnWidths[col] = Math.max(columnWidths[col], cellValue.length);
+                }
+            }
+
+            for (const row of tableRows) {
+                const paddedCells: string[] = [];
+                for (let col = 0; col < maxColumns; col++) {
+                    const value = row.cells[col] || '';
+                    paddedCells.push(value.padEnd(columnWidths[col], ' '));
+                }
+                const alignedRow = `${row.indent}| ${paddedCells.join(' | ')} |`;
+                if (lines[row.lineIndex] !== alignedRow) {
+                    lines[row.lineIndex] = alignedRow;
+                    changed = true;
+                }
+            }
+        }
+
+        i = j;
+    }
+
+    if (!changed) {
+        return scriptText;
+    }
+
+    return lines.join(eol);
+}
+
+/**
+ * Aligns nested scenario parameter assignments in ТекстСценария block.
+ * @param document The text document to modify
+ * @returns Promise<boolean> true if changes were made
+ */
+export async function alignNestedScenarioCallParameters(document: vscode.TextDocument): Promise<boolean> {
+    const fullText = document.getText();
+    const scenarioTextRange = getScenarioTextRange(fullText);
+    if (!scenarioTextRange) {
+        return false;
+    }
+
+    const knownNestedScenarioNames = new Set(
+        parseExistingNestedScenarios(fullText)
+            .map(name => name.trim().toLocaleLowerCase())
+            .filter(Boolean)
+    );
+    const aligned = alignNestedScenarioCallParametersInText(
+        scenarioTextRange.content,
+        scenarioTextRange.eol,
+        knownNestedScenarioNames
+    );
+    return await replaceDocumentRange(document, scenarioTextRange.startOffset, scenarioTextRange.endOffset, aligned);
+}
+
+/**
+ * Aligns Gherkin table columns in ТекстСценария block.
+ * @param document The text document to modify
+ * @returns Promise<boolean> true if changes were made
+ */
+export async function alignGherkinTables(document: vscode.TextDocument): Promise<boolean> {
+    const fullText = document.getText();
+    const scenarioTextRange = getScenarioTextRange(fullText);
+    if (!scenarioTextRange) {
+        return false;
+    }
+
+    const aligned = alignGherkinTablesInText(scenarioTextRange.content, scenarioTextRange.eol);
+    return await replaceDocumentRange(document, scenarioTextRange.startOffset, scenarioTextRange.endOffset, aligned);
+}
+
 /**
  * Обработчик команды открытия панели управления YAML параметрами
  */
 export async function handleOpenYamlParametersManager(context: vscode.ExtensionContext): Promise<void> {
+    const t = await getTranslator(getExtensionUri());
     try {
         const { YamlParametersManager } = await import('./yamlParametersManager.js');
         const manager = YamlParametersManager.getInstance(context);
         await manager.openYamlParametersPanel();
     } catch (error) {
         console.error('[Cmd:openYamlParametersManager] Error:', error);
-                    vscode.window.showErrorMessage(`Error opening Build Scenario Parameters Manager: ${error}`);
+        vscode.window.showErrorMessage(t('Error opening Build Scenario Parameters Manager: {0}', String(error)));
     }
 }

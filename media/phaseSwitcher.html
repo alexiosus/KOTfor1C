@@ -14,90 +14,149 @@
             <div class="controls-top-bar">
                  <h1>${loc.phaseSwitcherTitle}</h1>
                  <div class="controls-top-buttons">
+                    <button id="runVanessaTopBtn" class="button-with-icon compact-top-btn" title="${loc.runVanessaTopTitle}">
+                        <span class="codicon codicon-play-circle"></span>
+                    </button>
+                    <button class="button-with-icon compact-top-btn" id="openYamlParamsBtn" title="${loc.openYamlParametersManagerTitle}">
+                        <span class="codicon codicon-json"></span>
+                    </button>
                     <button class="button-with-icon compact-top-btn" id="openSettingsBtn" title="${loc.openSettingsTitle}">
                         <span class="codicon codicon-settings-gear"></span>
                     </button>
                 </div>
             </div>
 
-            <div class="global-list-actions">
-                <div class="dropdown-container">
-                    <button id="addScenarioDropdownBtn" class="button-with-icon compact-action-btn" title="${loc.createScenarioTitle}">
-                        <span class="codicon codicon-add"></span>
+            <div class="manager-tabs-row">
+                <div class="manager-tabs">
+                    <button id="testsTabBtn" class="manager-tab-btn is-active" title="${loc.testsTabTitle}">
+                        ${loc.testsTabTitle}
                     </button>
-                    <div id="addScenarioDropdownContent" class="dropdown-content">
-                        <a href="#" id="createMainScenarioFromDropdownBtn" class="dropdown-item">
-                            <span class="codicon codicon-code-oss"></span> ${loc.createMainScenario}
-                        </a>
-                        <a href="#" id="createNestedScenarioFromDropdownBtn" class="dropdown-item">
-                            <span class="codicon codicon-references"></span> ${loc.createNestedScenario}
-                        </a>
+                    <button id="favoritesTabBtn" class="manager-tab-btn" title="${loc.favoritesTabTitle}">
+                        ${loc.favoritesTabTitle}
+                    </button>
+                </div>
+                <div class="manager-tabs-side">
+                    <div id="favoritesSortControls" class="favorites-sort-controls">
+                        <label for="favoritesSortSelect">${loc.favoritesSortLabel}:</label>
+                        <select id="favoritesSortSelect" title="${loc.favoritesSortLabel}">
+                            <option value="code">${loc.favoritesSortByCode}</option>
+                            <option value="name">${loc.favoritesSortByName}</option>
+                        </select>
                     </div>
                 </div>
-                <button id="refreshBtn" class="button-with-icon compact-action-btn" title="${loc.refreshTitle}">
-                    <span class="codicon codicon-refresh"></span>
-                </button>
-                <button id="collapseAllBtn" class="button-with-icon compact-action-btn" title="${loc.collapseExpandAllTitle}">
-                    <span class="codicon codicon-list-tree"></span>
-                </button>
-                <button id="selectAllBtn" class="button-with-icon compact-action-btn" title="${loc.toggleAllCheckboxesTitle}">
-                    <span class="codicon codicon-checklist"></span>
-                </button>
             </div>
 
-            <div id="phaseTreeContainer" class="phase-tree-container">
+            <div id="globalListActions" class="global-list-actions">
+                <div class="global-list-actions-right">
+                    <div class="dropdown-container">
+                        <button id="addScenarioDropdownBtn" class="button-with-icon compact-action-btn" title="${loc.createScenarioTitle}">
+                            <span class="codicon codicon-add"></span>
+                        </button>
+                        <div id="addScenarioDropdownContent" class="dropdown-content">
+                            <a href="#" id="createMainScenarioFromDropdownBtn" class="dropdown-item">
+                                <span class="codicon codicon-code-oss"></span> ${loc.createMainScenario}
+                            </a>
+                            <a href="#" id="createNestedScenarioFromDropdownBtn" class="dropdown-item">
+                                <span class="codicon codicon-references"></span> ${loc.createNestedScenario}
+                            </a>
+                        </div>
+                    </div>
+                    <button
+                        id="toggleScenarioSearchBtn"
+                        class="button-with-icon compact-action-btn manager-search-toggle-btn"
+                        title="${loc.toggleScenarioSearchTitle}"
+                        aria-pressed="false">
+                        <span class="codicon codicon-search"></span>
+                    </button>
+                    <button id="refreshBtn" class="button-with-icon compact-action-btn" title="${loc.refreshTitle}">
+                        <span class="codicon codicon-refresh"></span>
+                    </button>
+                    <button id="collapseAllBtn" class="button-with-icon compact-action-btn" title="${loc.collapseExpandAllTitle}">
+                        <span class="codicon codicon-list-tree"></span>
+                    </button>
+                    <button id="selectAllBtn" class="button-with-icon compact-action-btn" title="${loc.toggleAllCheckboxesTitle}">
+                        <span class="codicon codicon-checklist"></span>
+                    </button>
+                    <div id="selectionSummaryBar" class="selection-summary-compact"></div>
+                </div>
+            </div>
+
+            <div id="scenarioSearchRow" class="scenario-search-row hidden">
+                <div class="scenario-search-input-wrap">
+                    <input
+                        id="scenarioSearchInput"
+                        class="scenario-search-input"
+                        type="text"
+                        placeholder="${loc.scenarioSearchPlaceholder}"
+                        title="${loc.scenarioSearchTitle}">
+                    <button
+                        id="scenarioSearchClearBtn"
+                        class="scenario-search-clear-btn hidden"
+                        type="button"
+                        title="${loc.scenarioSearchClearTitle}">
+                        <span class="codicon codicon-close"></span>
+                    </button>
+                </div>
+            </div>
+
+            <div id="phaseTreeContainer" class="phase-tree-container manager-view-panel">
                 <p>${loc.loadingPhasesAndTests}</p>
             </div>
 
+            <div id="favoritesContainer" class="phase-tree-container manager-view-panel hidden">
+                <p>${loc.favoritesEmpty}</p>
+            </div>
+
             <div class="phase-switcher-controls-fixed-bottom">
+                <div id="statusBar" class="status-bar">${loc.statusInit}</div>
+
                 <div class="phase-switcher-controls">
-                    <div class="controls-row">
+                    <div class="controls-row controls-row-primary">
                         <button id="selectDefaultsBtn" class="button-with-icon">
                             <span class="codicon codicon-discard"></span>${loc.defaults}
                         </button>
-                        <button id="applyChangesBtn" class="button-with-icon">
-                            <span class="codicon codicon-rocket"></span>${loc.apply}
+                        <div id="assembleSplitContainer" class="dropdown-container split-button">
+                            <button id="assembleTestsBtn" class="button-with-icon split-main-btn">
+                                <span class="codicon codicon-beaker"></span> ${loc.buildTests}
+                            </button>
+                            <button id="assembleMenuBtn" class="button-with-icon split-menu-btn" title="${loc.buildOptionsTitle}">
+                                <span class="codicon codicon-chevron-down"></span>
+                            </button>
+                            <div id="assembleDropdownContent" class="dropdown-content split-dropdown-content">
+                                <div id="driveAccountingModeRow" class="dropdown-control-row" title="${loc.recordGLSelectTitle}">
+                                    <span class="drive-accounting-label">${loc.accountingMode}:</span>
+                                    <div id="recordGLModeList" class="record-gl-options-list" role="radiogroup" aria-label="${loc.accountingMode}">
+                                        <button type="button" class="record-gl-option-btn" data-value="0" role="radio" aria-checked="false">
+                                            <span class="record-gl-option-label">GL-</span>
+                                            <span class="codicon codicon-check record-gl-option-check"></span>
+                                        </button>
+                                        <button type="button" class="record-gl-option-btn" data-value="1" role="radio" aria-checked="false">
+                                            <span class="record-gl-option-label">GL+</span>
+                                            <span class="codicon codicon-check record-gl-option-check"></span>
+                                        </button>
+                                        <button type="button" class="record-gl-option-btn is-selected" data-value="2" role="radio" aria-checked="true">
+                                            <span class="record-gl-option-label">Templates</span>
+                                            <span class="codicon codicon-check record-gl-option-check"></span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <button id="cancelAssembleBtn" class="button-with-icon" title="${loc.cancelBuildTitle}">
+                            <span class="codicon codicon-stop-circle"></span> ${loc.cancelBuild}
+                        </button>
+                    </div>
+
+                    <div id="driveActionsRow" class="controls-row controls-row-drive" style="display:none;">
+                        <button id="createFirstLaunchBtn" class="button-with-icon" title="${loc.createFirstLaunchZipTitle}">
+                            <span class="codicon codicon-file-zip"></span> ${loc.buildFL}
                         </button>
                     </div>
                 </div>
-                <div id="statusBar" class="status-bar">${loc.statusInit}</div>
-            </div>
-        </div>
-
-        <hr id="sectionSeparator" class="section-separator">
-        
-        <div id="assembleSection" class="assemble-tests-section">
-            <div class="controls-top-bar">
-                <h1>${loc.assemblyTitle}</h1>
-                <div class="controls-top-buttons">
-                    <button class="button-with-icon compact-top-btn" id="openYamlParamsBtn" title="${loc.openYamlParametersManagerTitle}">
-                        <span class="codicon codicon-settings-gear"></span>
-                    </button>
-                </div>
-            </div>
-            <div class="assemble-options assemble-options-inline">
-                ${loc.accountingMode}:
-                <select id="recordGLSelect" name="recordGLAccounts" title="Record GL Accounts (0=No, 1=Yes, 2=Templates)">
-                    <option value="0">GL-</option>
-                    <option value="1">GL+</option>
-                    <option value="2" selected>Templates</option>
-                </select>
-            </div>
-            <div class="assemble-controls">
-                <div class="controls-row">
-                    <button id="createFirstLaunchBtn" class="button-with-icon" title="${loc.createFirstLaunchZipTitle}">
-                        <span class="codicon codicon-file-zip"></span> ${loc.buildFL}
-                    </button>
-                    <button id="assembleTestsBtn" class="button-with-icon">
-                        <span class="codicon codicon-beaker"></span> ${loc.buildTests}
-                    </button>
-                </div>
-            </div>
-            <div id="assembleStatus" class="status-area">
             </div>
         </div>
     </div>
-    <script type="application/javascript" nonce="${nonce}">window.__loc = "${webviewLoc}";</script>
+    <script type="application/javascript" nonce="${nonce}">window.__loc = ${webviewLoc};</script>
     <script type="application/javascript" nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>

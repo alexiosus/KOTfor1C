@@ -1,15 +1,15 @@
 {
-  "name": "1c-drive-test-helper",
+  "name": "kot-test-toolkit",
   "displayName": "%ext.displayName%",
   "description": "%ext.description%",
-  "icon": "res/icons/1CDriveTestHelper.png",
+  "icon": "res/icons/KOTfor1C.png",
   "publisher": "AlexeyEremeev",
   "author": {
     "name": "Alexey Eremeev"
   },
   "license": "MIT",
-  "repository": "https://github.com/kakoytochelik/1cDriveTestHelper",
-  "version": "1.11.2",
+  "repository": "https://github.com/kakoytochelik/KOTfor1C",
+  "version": "2.0.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -27,10 +27,14 @@
       {
         "title": "%config.generalTitle%",
         "properties": {
-          "1cDriveHelper.localization.languageOverride": {
+          "kotTestToolkit.localization.languageOverride": {
             "type": "string",
             "default": "System",
-            "enum": ["System", "English", "Русский"],
+            "enum": [
+              "System",
+              "English",
+              "Русский"
+            ],
             "enumDescriptions": [
               "%config.localization.system.desc%",
               "%config.localization.en.desc%",
@@ -38,292 +42,375 @@
             ],
             "description": "%config.localization.languageOverride.description%",
             "order": 1
-          },
-          "1cDriveHelper.steps.externalUrl": {
-            "type": "string",
-            "default": "https://raw.githubusercontent.com/kakoytochelik/1cDriveTestHelper/main/res/steps.htm",
-            "description": "%config.stepsExternalUrl.description%",
-            "order": 10
-          },
-          "1cDriveHelper.editor.autoCollapseOnOpen": {
-            "type": "boolean",
-            "default": true,
-            "description": "%config.autoCollapseOnOpen.description%",
-            "order": 11
-          },
-          "1cDriveHelper.editor.autoFillNestedScenariosOnSave": {
-            "type": "boolean",
-            "default": true,
-            "description": "%config.autoFillNestedScenariosOnSave.description%",
-            "order": 12
-          },
-          "1cDriveHelper.editor.autoFillScenarioParametersOnSave": {
-            "type": "boolean",
-            "default": true,
-            "description": "%config.autoFillScenarioParametersOnSave.description%",
-            "order": 13
-          },
-          "1cDriveHelper.editor.autoReplaceTabsWithSpacesOnSave": {
-            "type": "boolean",
-            "default": true,
-            "description": "%config.autoReplaceTabsWithSpacesOnSave.description%",
-            "order": 14
-          },
-          "1cDriveHelper.editor.showRefillMessages": {
-            "type": "boolean",
-            "default": true,
-            "description": "%config.showRefillMessages.description%",
-            "order": 15
           }
         }
       },
       {
-        "title": "%config.mailSettings.title%",
+        "title": "%config.phaseSwitcherSettings.title%",
         "properties": {
-          "1cDriveHelper.params.emailAddress": {
-            "type": "string",
-            "default": "user@example.com",
-            "description": "%config.emailAddress.description%",
-            "order": 14
+          "kotTestToolkit.assembleScript.showDriveFeatures": {
+            "type": "boolean",
+            "default": false,
+            "description": "%config.assembleScript.showDriveFeatures.description%",
+            "order": 1
           },
-          "1cDriveHelper.params.emailPasswordInfo": {
-            "type": "null",
-            "default": null,
-            "description": "%config.emailPasswordInfo.description%",
-            "markdownDescription": "%config.emailPasswordInfo.markdownDescription%",
-            "order": 15
+          "kotTestToolkit.phaseSwitcher.highlightAffectedMainScenarios": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.phaseSwitcher.highlightAffectedMainScenarios.description%",
+            "order": 2
           },
-          "1cDriveHelper.params.emailIncomingServer": {
-            "type": "string",
-            "default": "imap.example.com",
-            "description": "%config.emailIncomingServer.description%",
-            "order": 16
+          "kotTestToolkit.phaseSwitcher.autoAddNewScenariosToFavorites": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.phaseSwitcher.autoAddNewScenariosToFavorites.description%",
+            "order": 3
+          }
+        }
+      },
+      {
+        "title": "%config.editorSettings.title%",
+        "properties": {
+          "kotTestToolkit.editor.autoCollapseOnOpen": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.autoCollapseOnOpen.description%",
+            "order": 1
           },
-          "1cDriveHelper.params.emailIncomingPort": {
-            "type": "string",
-            "default": "993",
-            "description": "%config.emailIncomingPort.description%",
-            "order": 17
+          "kotTestToolkit.editor.autoReplaceTabsWithSpacesOnSave": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.autoReplaceTabsWithSpacesOnSave.description%",
+            "order": 2
           },
-          "1cDriveHelper.params.emailOutgoingServer": {
-            "type": "string",
-            "default": "imap.example.com",
-            "description": "%config.emailOutgoingServer.description%",
-            "order": 18
+          "kotTestToolkit.editor.autoAlignNestedScenarioParametersOnSave": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.autoAlignNestedScenarioParametersOnSave.description%",
+            "order": 3
           },
-          "1cDriveHelper.params.emailOutgoingPort": {
-            "type": "string",
-            "default": "587",
-            "description": "%config.emailOutgoingPort.description%",
-            "order": 19
+          "kotTestToolkit.editor.autoAlignGherkinTablesOnSave": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.autoAlignGherkinTablesOnSave.description%",
+            "order": 4
           },
-          "1cDriveHelper.params.emailProtocol": {
+          "kotTestToolkit.editor.autoFillNestedScenariosOnSave": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.autoFillNestedScenariosOnSave.description%",
+            "order": 5
+          },
+          "kotTestToolkit.editor.autoFillScenarioParametersOnSave": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.autoFillScenarioParametersOnSave.description%",
+            "order": 6
+          },
+          "kotTestToolkit.editor.showRefillMessages": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.showRefillMessages.description%",
+            "order": 7
+          },
+          "kotTestToolkit.editor.newScenarioLanguage": {
             "type": "string",
-            "default": "IMAP",
+            "default": "en",
             "enum": [
-              "IMAP",
-              "POP3"
+              "en",
+              "ru"
             ],
-            "description": "%config.emailProtocol.description%",
-            "order": 20
+            "enumDescriptions": [
+              "%config.editor.newScenarioLanguage.en.desc%",
+              "%config.editor.newScenarioLanguage.ru.desc%"
+            ],
+            "description": "%config.editor.newScenarioLanguage.description%",
+            "order": 8
+          }
+        }
+      },
+      {
+        "title": "%config.diagnosticsSettings.title%",
+        "properties": {
+          "kotTestToolkit.steps.externalUrl": {
+            "type": "string",
+            "default": "https://raw.githubusercontent.com/kakoytochelik/KOTfor1C/main/res/steps.htm",
+            "description": "%config.stepsExternalUrl.description%",
+            "order": 1
+          },
+          "kotTestToolkit.editor.checkRelatedParentScenarios": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.checkRelatedParentScenarios.description%",
+            "order": 2
           }
         }
       },
       {
         "title": "%config.assemblySettings.title%",
         "properties": {
-          "1cDriveHelper.assembleScript.showOutputPanel": {
+          "kotTestToolkit.assembleScript.showOutputPanel": {
             "type": "boolean",
             "default": false,
             "description": "%config.showOutputPanel.description%",
-            "order": 22
+            "order": 1
           },
-          "1cDriveHelper.paths.openBuildScenarioParametersManager": {
+          "kotTestToolkit.output.advancedLogging": {
+            "type": "boolean",
+            "default": false,
+            "description": "%config.output.advancedLogging.description%",
+            "order": 2
+          },
+          "kotTestToolkit.paths.openBuildScenarioParametersManager": {
             "type": "null",
             "default": null,
             "description": "%config.paths.openBuildScenarioParametersManager.description%",
             "markdownDescription": "%config.paths.openBuildScenarioParametersManager.markdownDescription%",
-            "order": 23
+            "order": 3
+          }
+        }
+      },
+      {
+        "title": "%config.vanessaSettings.title%",
+        "properties": {
+          "kotTestToolkit.runVanessa.vanessaEpfPath": {
+            "type": "string",
+            "default": "tools/vanessa/vanessa-automation.epf",
+            "description": "%config.runVanessa.vanessaEpfPath.description%",
+            "order": 1
+          },
+          "kotTestToolkit.runVanessa.runtimeDirectory": {
+            "type": "string",
+            "default": ".vscode/kot-runtime/vanessa",
+            "description": "%config.runVanessa.runtimeDirectory.description%",
+            "order": 2
+          },
+          "kotTestToolkit.runVanessa.commandTemplate": {
+            "type": "string",
+            "default": "",
+            "description": "%config.runVanessa.commandTemplate.description%",
+            "markdownDescription": "%config.runVanessa.commandTemplate.markdownDescription%",
+            "order": 3
+          },
+          "kotTestToolkit.runVanessa.checkUnsafeActionProtection": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.runVanessa.checkUnsafeActionProtection.description%",
+            "order": 4
+          },
+          "kotTestToolkit.runVanessa.liveLogRefreshSeconds": {
+            "type": "number",
+            "default": 2,
+            "minimum": 1,
+            "maximum": 60,
+            "description": "%config.runVanessa.liveLogRefreshSeconds.description%",
+            "order": 5
           }
         }
       },
       {
         "title": "%config.startupParameters.title%",
         "properties": {
-          "1cDriveHelper.startupParams.parameters": {
+          "kotTestToolkit.startupParams.parameters": {
             "type": "string",
             "default": "/L ru /DisableStartupMessages /DisableStartupDialogs",
             "description": "%config.startupParams.parameters.description%",
-            "order": 24
+            "order": 1
           }
         }
       },
       {
         "title": "%config.pathsSettings.title%",
         "properties": {
-          "1cDriveHelper.paths.emptyInfobase": {
-            "type": "string",
-            "default": "",
-            "description": "%config.emptyInfobase.description%",
-            "order": 26
-          },
-          "1cDriveHelper.assembleScript.buildPath": {
-            "type": "string",
-            "default": "C:\\EtalonDrive\\",
-            "description": "%config.buildPath.description%",
-            "order": 27
-          },
-          "1cDriveHelper.paths.oneCEnterpriseExe": {
-            "type": "string",
-            "default": "C:\\Program Files (x86)\\1cv8\\8.3.24.1738\\bin\\1cv8.exe",
-            "description": "%config.oneCEnterpriseExe.description%",
-            "order": 28
-          },
-          "1cDriveHelper.paths.fileWorkshopExe": {
-            "type": "string",
-            "default": "C:\\Program Files (x86)\\1cv8fv\\bin\\1cv8fv.exe",
-            "description": "%config.fileWorkshopExe.description%",
-            "order": 29
-          },
-          "1cDriveHelper.paths.buildScenarioBddEpf": {
-            "type": "string",
-            "default": "build/BuildScenarioBDD.epf",
-            "description": "%config.paths.buildScenarioBddEpf.description%",
-            "order": 30
-          },
-          "1cDriveHelper.paths.repairTestFileEpf": {
-            "type": "string",
-            "default": "build/RepairTestFile.epf",
-            "description": "%config.paths.repairTestFileEpf.description%",
-            "order": 31
-          },
-
-          "1cDriveHelper.paths.yamlSourceDirectory": {
+          "kotTestToolkit.paths.yamlSourceDirectory": {
             "type": "string",
             "default": "tests/RegressionTests/yaml",
             "description": "%config.paths.yamlSourceDirectory.description%",
-            "order": 32
+            "order": 1
           },
-          "1cDriveHelper.paths.disabledTestsDirectory": {
+          "kotTestToolkit.paths.buildScenarioBddEpf": {
             "type": "string",
-            "default": "RegressionTests_Disabled/Yaml",
-            "description": "%config.paths.disabledTestsDirectory.description%",
-            "order": 33
+            "default": "build/BuildScenarioBDD.epf",
+            "description": "%config.paths.buildScenarioBddEpf.description%",
+            "order": 2
           },
-          "1cDriveHelper.paths.firstLaunchFolder": {
+          "kotTestToolkit.assembleScript.buildPath": {
             "type": "string",
-            "default": "first_launch",
+            "default": "C:\\EtalonDrive\\",
+            "description": "%config.buildPath.description%",
+            "order": 3
+          },
+          "kotTestToolkit.paths.emptyInfobase": {
+            "type": "string",
+            "default": "",
+            "description": "%config.emptyInfobase.description%",
+            "order": 4
+          },
+          "kotTestToolkit.paths.oneCEnterpriseExe": {
+            "type": "string",
+            "default": "C:\\Program Files (x86)\\1cv8\\8.3.24.1738\\bin\\1cv8.exe",
+            "description": "%config.oneCEnterpriseExe.description%",
+            "order": 5
+          },
+          "kotTestToolkit.paths.fileWorkshopExe": {
+            "type": "string",
+            "default": "C:\\Program Files (x86)\\1cv8fv\\bin\\1cv8fv.exe",
+            "description": "%config.fileWorkshopExe.description%",
+            "order": 6
+          },
+          "kotTestToolkit.paths.firstLaunchFolder": {
+            "type": "string",
+            "default": "",
             "description": "%config.paths.firstLaunchFolder.description%",
-            "order": 34
+            "order": 7
           }
         }
       }
     ],
     "commands": [
       {
-        "command": "1cDriveHelper.saveEmailPassword",
-        "title": "%cmd.saveEmailPassword.title%",
-        "category": "%cmd.category%"
-      },
-      {
-        "command": "1cDriveHelper.clearEmailPassword",
-        "title": "%cmd.clearEmailPassword.title%",
-        "category": "%cmd.category%"
-      },
-      {
-        "command": "1cDriveHelper.openSubscenario",
+        "command": "kotTestToolkit.openSubscenario",
         "title": "%cmd.openSubscenario.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.findCurrentFileReferences",
+        "command": "kotTestToolkit.findCurrentFileReferences",
         "title": "%cmd.findCurrentFileReferences.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.createNestedScenario",
+        "command": "kotTestToolkit.createNestedScenario",
         "title": "%cmd.createNestedScenario.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.createMainScenario",
+        "command": "kotTestToolkit.createMainScenario",
         "title": "%cmd.createMainScenario.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.insertNestedScenarioRef",
+        "command": "kotTestToolkit.insertNestedScenarioRef",
         "title": "%cmd.insertNestedScenarioRef.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.insertScenarioParam",
+        "command": "kotTestToolkit.insertScenarioParam",
         "title": "%cmd.insertScenarioParam.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.insertUid",
+        "command": "kotTestToolkit.insertUid",
         "title": "%cmd.insertUid.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.refreshGherkinSteps",
+        "command": "kotTestToolkit.refreshGherkinSteps",
         "title": "%cmd.refreshGherkinSteps.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.replaceTabsWithSpacesYaml",
+        "command": "kotTestToolkit.replaceTabsWithSpacesYaml",
         "title": "%cmd.replaceTabsWithSpacesYaml.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.checkAndFillNestedScenarios",
+        "command": "kotTestToolkit.checkAndFillNestedScenarios",
         "title": "%cmd.checkAndFillNestedScenarios.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.checkAndFillScriptParameters",
+        "command": "kotTestToolkit.checkAndFillScriptParameters",
         "title": "%cmd.checkAndFillScriptParameters.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.openMxlFileFromExplorer",
+        "command": "kotTestToolkit.openMxlFileFromExplorer",
         "title": "%cmd.openMxlFileFromExplorer.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.openMxlFile",
+        "command": "kotTestToolkit.openMxlFile",
         "title": "%cmd.openMxlFile.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.revealFileInExplorer",
+        "command": "kotTestToolkit.revealFileInExplorer",
         "title": "%cmd.revealFileInExplorer.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.revealFileInOS",
+        "command": "kotTestToolkit.revealFileInOS",
         "title": "%cmd.revealFileInOS.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.openBuildFolder",
+        "command": "kotTestToolkit.openBuildFolder",
         "title": "%cmd.openBuildFolder.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.createFirstLaunchZip",
+        "command": "kotTestToolkit.createFirstLaunchZip",
         "title": "%cmd.createFirstLaunchZip.title%",
         "category": "%cmd.category%"
       },
       {
-        "command": "1cDriveHelper.openYamlParametersManager",
+        "command": "kotTestToolkit.openYamlParametersManager",
         "title": "%cmd.openYamlParametersManager.title%",
         "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.fixScenarioIssues",
+        "title": "%cmd.fixScenarioIssues.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.scanWorkspaceDiagnostics",
+        "title": "%cmd.scanWorkspaceDiagnostics.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.openScenarioInVanessaManual",
+        "title": "%cmd.openScenarioInVanessaManual.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.addActiveScenarioToFavorites",
+        "title": "%cmd.addActiveScenarioToFavorites.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.removeActiveScenarioFromFavorites",
+        "title": "%cmd.removeActiveScenarioFromFavorites.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.toggleActiveScenarioFavorite",
+        "title": "%cmd.toggleActiveScenarioFavorite.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.showFavoriteScenarios",
+        "title": "%cmd.showFavoriteScenarios.title%",
+        "category": "%cmd.category%"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "kotTestToolkit.editorContext.workWithFiles",
+        "label": "%submenu.editorContext.workWithFiles%"
+      },
+      {
+        "id": "kotTestToolkit.editorContext.create",
+        "label": "%submenu.editorContext.create%"
+      },
+      {
+        "id": "kotTestToolkit.editorContext.editing",
+        "label": "%submenu.editorContext.editing%"
       }
     ],
     "keybindings": [
       {
-        "command": "1cDriveHelper.openSubscenario",
+        "command": "kotTestToolkit.openSubscenario",
         "key": "ctrl+alt+=",
         "win": "ctrl+alt+=",
         "mac": "cmd+alt+=",
@@ -331,7 +418,7 @@
         "when": "editorTextFocus && !editorReadonly"
       },
       {
-        "command": "1cDriveHelper.findCurrentFileReferences",
+        "command": "kotTestToolkit.findCurrentFileReferences",
         "key": "ctrl+alt+J",
         "win": "ctrl+alt+J",
         "mac": "cmd+alt+J",
@@ -339,7 +426,7 @@
         "when": "editorTextFocus && !editorReadonly"
       },
       {
-        "command": "1cDriveHelper.insertNestedScenarioRef",
+        "command": "kotTestToolkit.insertNestedScenarioRef",
         "key": "ctrl+alt+N",
         "win": "ctrl+alt+N",
         "mac": "cmd+alt+N",
@@ -347,7 +434,7 @@
         "when": "editorTextFocus && !editorReadonly"
       },
       {
-        "command": "1cDriveHelper.insertScenarioParam",
+        "command": "kotTestToolkit.insertScenarioParam",
         "key": "ctrl+alt+M",
         "win": "ctrl+alt+M",
         "mac": "cmd+alt+M",
@@ -355,7 +442,7 @@
         "when": "editorTextFocus && !editorReadonly"
       },
       {
-        "command": "1cDriveHelper.insertUid",
+        "command": "kotTestToolkit.insertUid",
         "key": "ctrl+alt+U",
         "win": "ctrl+alt+U",
         "mac": "cmd+alt+U",
@@ -366,94 +453,145 @@
     "menus": {
       "explorer/context": [
         {
-          "command": "1cDriveHelper.openMxlFileFromExplorer",
+          "command": "kotTestToolkit.openMxlFileFromExplorer",
           "when": "resourceExtname == .mxl",
           "group": "00_mxl@0"
         }
       ],
       "editor/context": [
         {
-          "command": "1cDriveHelper.openSubscenario",
+          "command": "kotTestToolkit.openSubscenario",
           "when": "editorTextFocus && resourceExtname == .yaml",
           "group": "00_navigation@0"
         },
         {
-          "command": "1cDriveHelper.findCurrentFileReferences",
+          "command": "kotTestToolkit.findCurrentFileReferences",
           "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
           "group": "00_navigation@1"
         },
         {
-          "command": "1cDriveHelper.openMxlFile",
-          "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
-          "group": "01_search@0"
+          "command": "kotTestToolkit.addActiveScenarioToFavorites",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && !kotTestToolkit.activeScenarioInFavorites",
+          "group": "00_navigation@2"
         },
         {
-          "command": "1cDriveHelper.revealFileInExplorer",
-          "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
-          "group": "01_search@1"
+          "command": "kotTestToolkit.removeActiveScenarioFromFavorites",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && kotTestToolkit.activeScenarioInFavorites",
+          "group": "00_navigation@2"
         },
         {
-          "command": "1cDriveHelper.revealFileInOS",
-          "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
-          "group": "01_search@2"
-        },
-        {
-          "command": "1cDriveHelper.createNestedScenario",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
-          "group": "02_creation@0"
-        },
-        {
-          "command": "1cDriveHelper.createMainScenario",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
-          "group": "02_creation@1"
-        },
-        {
-          "command": "1cDriveHelper.checkAndFillNestedScenarios",
+          "submenu": "kotTestToolkit.editorContext.workWithFiles",
           "when": "editorTextFocus && resourceExtname == .yaml",
-          "group": "03_modification@0"
+          "group": "01_submenu@0"
         },
         {
-          "command": "1cDriveHelper.checkAndFillScriptParameters",
-          "when": "editorTextFocus && resourceExtname == .yaml",
-          "group": "03_modification@1"
-        },
-        {
-          "command": "1cDriveHelper.insertUid",
+          "submenu": "kotTestToolkit.editorContext.create",
           "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
-          "group": "03_modification@3"
+          "group": "01_submenu@1"
+        },
+        {
+          "submenu": "kotTestToolkit.editorContext.editing",
+          "when": "editorTextFocus && resourceExtname == .yaml",
+          "group": "01_submenu@2"
+        }
+      ],
+      "kotTestToolkit.editorContext.workWithFiles": [
+        {
+          "command": "kotTestToolkit.openMxlFile",
+          "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
+          "group": "00_workWithFiles@0"
+        },
+        {
+          "command": "kotTestToolkit.revealFileInExplorer",
+          "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
+          "group": "00_workWithFiles@1"
+        },
+        {
+          "command": "kotTestToolkit.revealFileInOS",
+          "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
+          "group": "00_workWithFiles@2"
+        }
+      ],
+      "kotTestToolkit.editorContext.create": [
+        {
+          "command": "kotTestToolkit.createNestedScenario",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
+          "group": "00_create@0"
+        },
+        {
+          "command": "kotTestToolkit.createMainScenario",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
+          "group": "00_create@1"
+        }
+      ],
+      "kotTestToolkit.editorContext.editing": [
+        {
+          "command": "kotTestToolkit.checkAndFillNestedScenarios",
+          "when": "editorTextFocus && resourceExtname == .yaml",
+          "group": "00_editing@0"
+        },
+        {
+          "command": "kotTestToolkit.checkAndFillScriptParameters",
+          "when": "editorTextFocus && resourceExtname == .yaml",
+          "group": "00_editing@1"
+        },
+        {
+          "command": "kotTestToolkit.insertUid",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
+          "group": "00_editing@2"
         }
       ],
       "commandPalette": [
         {
-          "command": "1cDriveHelper.saveEmailPassword",
+          "command": "kotTestToolkit.refreshGherkinSteps",
           "when": "true"
         },
         {
-          "command": "1cDriveHelper.clearEmailPassword",
+          "command": "kotTestToolkit.replaceTabsWithSpacesYaml",
           "when": "true"
         },
         {
-          "command": "1cDriveHelper.refreshGherkinSteps",
+          "command": "kotTestToolkit.checkAndFillNestedScenarios",
           "when": "true"
         },
         {
-          "command": "1cDriveHelper.replaceTabsWithSpacesYaml",
+          "command": "kotTestToolkit.checkAndFillScriptParameters",
           "when": "true"
         },
         {
-          "command": "1cDriveHelper.checkAndFillNestedScenarios",
+          "command": "kotTestToolkit.createFirstLaunchZip",
           "when": "true"
         },
         {
-          "command": "1cDriveHelper.checkAndFillScriptParameters",
+          "command": "kotTestToolkit.openYamlParametersManager",
           "when": "true"
         },
         {
-          "command": "1cDriveHelper.createFirstLaunchZip",
+          "command": "kotTestToolkit.fixScenarioIssues",
           "when": "true"
         },
         {
-          "command": "1cDriveHelper.openYamlParametersManager",
+          "command": "kotTestToolkit.scanWorkspaceDiagnostics",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.openScenarioInVanessaManual",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.toggleActiveScenarioFavorite",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.addActiveScenarioToFavorites",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.removeActiveScenarioFromFavorites",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.showFavoriteScenarios",
           "when": "true"
         }
       ]
@@ -461,17 +599,16 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "1cDriveHelperContainer",
+          "id": "kotTestToolkitContainer",
           "title": "%ext.displayName%",
-          "icon": "res/icons/1CDriveTestHelperTransparent.png",
-          "when": "config.1cDriveHelper.features.enablePhaseSwitcher == true || config.1cDriveHelper.features.enableAssembleTests == true"
+          "icon": "res/icons/KOTfor1CTransparent.png"
         }
       ]
     },
     "views": {
-      "1cDriveHelperContainer": [
+      "kotTestToolkitContainer": [
         {
-          "id": "1cDriveHelper.phaseSwitcherView",
+          "id": "kotTestToolkit.phaseSwitcherView",
           "name": "%view.phaseSwitcher.name%",
           "type": "webview",
           "contextualTitle": "%view.phaseSwitcher.contextualTitle%"
@@ -494,6 +631,7 @@
     "@types/vscode": "^1.98.0",
     "@typescript-eslint/eslint-plugin": "^8.28.0",
     "@typescript-eslint/parser": "^8.28.0",
+    "@vscode/codicons": "^0.0.44",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
     "cpy-cli": "^5.0.0",
@@ -501,7 +639,6 @@
     "typescript": "^5.8.2"
   },
   "dependencies": {
-    "@vscode/codicons": "^0.0.36",
     "node-html-parser": "^7.0.1",
     "uuid": "^11.1.0"
   }

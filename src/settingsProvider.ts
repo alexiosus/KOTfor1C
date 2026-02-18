@@ -21,14 +21,16 @@ export class SettingsProvider {
     public registerSettingsProvider(): void {
         // Регистрируем команду для открытия YAML параметров из настроек
         this._context.subscriptions.push(
-            vscode.commands.registerCommand('1cDriveHelper.openYamlParametersFromSettings', async () => {
+            vscode.commands.registerCommand('kotTestToolkit.openYamlParametersFromSettings', async () => {
                 try {
                     const { YamlParametersManager } = await import('./yamlParametersManager.js');
                     const manager = YamlParametersManager.getInstance(this._context);
                     await manager.openYamlParametersPanel();
                 } catch (error) {
-                                console.error('[SettingsProvider] Error opening Build Scenario Parameters Manager:', error);
-            vscode.window.showErrorMessage(`Error opening Build Scenario Parameters Manager: ${error}`);
+                    console.error('[SettingsProvider] Error opening Build Scenario Parameters Manager:', error);
+                    vscode.window.showErrorMessage(
+                        vscode.l10n.t('Error opening Build Scenario Parameters Manager: {0}', String(error))
+                    );
                 }
             })
         );

@@ -9,7 +9,12 @@
     <link href="${codiconsUri}" rel="stylesheet">
     <link href="${stylesUri}" rel="stylesheet">
 </head>
-<body>
+<body
+    data-param-name-placeholder="${loc.parameterNamePlaceholder}"
+    data-param-value-placeholder="${loc.parameterValuePlaceholder}"
+    data-remove-parameter="${loc.removeParameter}"
+    data-override-title="${loc.overrideExistingValue}"
+>
     <div class="container">
         <div class="header">
             <h1>${loc.title}</h1>
@@ -21,9 +26,6 @@
                 <button id="saveBtn" class="button-with-icon">
                     <span class="codicon codicon-save"></span> ${loc.save}
                 </button>
-                <button id="addRowBtn" class="button-with-icon">
-                    <span class="codicon codicon-add"></span> ${loc.addParameter}
-                </button>
             </div>
             <div class="controls-right">
                 <div class="help-container">
@@ -32,10 +34,16 @@
                     </button>
                     <div id="helpTooltip" class="help-tooltip">
                         <div class="help-content">
+                            <p class="path-hint">${loc.sectionsHint}</p>
                             <p class="path-hint">${loc.pathHint}</p>
                             <p class="help-link">
                                 <a href="https://its.1c.ru/db/sppr2doc#content:124:hdoc" target="_blank">
                                     ${loc.moreInfoOnITS}
+                                </a>
+                            </p>
+                            <p class="help-link">
+                                <a href="https://pr-mex.github.io/vanessa-automation/dev/JsonParams/JsonParamsRU/" target="_blank">
+                                    ${loc.moreInfoOnVanessa}
                                 </a>
                             </p>
                         </div>
@@ -46,41 +54,227 @@
                         <span class="codicon codicon-ellipsis"></span> ${loc.moreActions}
                     </button>
                     <div id="moreActionsDropdown" class="dropdown-content">
-                        <a href="#" id="createFileFromDropdownBtn" class="dropdown-item">
+                        <div class="dropdown-section-title">${loc.buildMoreActionsLabel}</div>
+                        <a href="#" id="createBuildFileBtn" class="dropdown-item">
                             <span class="codicon codicon-file-code"></span> ${loc.createFile}
                         </a>
-                        <a href="#" id="loadFromJsonFromDropdownBtn" class="dropdown-item">
+                        <a href="#" id="loadBuildFromJsonBtn" class="dropdown-item">
                             <span class="codicon codicon-folder-opened"></span> ${loc.loadFromJson}
                         </a>
-                        <a href="#" id="resetDefaultsFromDropdownBtn" class="dropdown-item">
+                        <a href="#" id="resetBuildDefaultsBtn" class="dropdown-item">
                             <span class="codicon codicon-discard"></span> ${loc.resetDefaults}
+                        </a>
+                        <div class="dropdown-divider"></div>
+                        <div class="dropdown-section-title">${loc.additionalMoreActionsLabel}</div>
+                        <a href="#" id="createAdditionalFileBtn" class="dropdown-item">
+                            <span class="codicon codicon-file-code"></span> ${loc.saveAdditionalFile}
+                        </a>
+                        <a href="#" id="loadAdditionalFromJsonBtn" class="dropdown-item">
+                            <span class="codicon codicon-folder-opened"></span> ${loc.loadAdditionalFromJson}
+                        </a>
+                        <a href="#" id="clearAdditionalBtn" class="dropdown-item">
+                            <span class="codicon codicon-clear-all"></span> ${loc.clearAdditionalParameters}
+                        </a>
+                        <div class="dropdown-divider"></div>
+                        <div class="dropdown-section-title">${loc.globalVarsMoreActionsLabel}</div>
+                        <a href="#" id="createGlobalVarsFileBtn" class="dropdown-item">
+                            <span class="codicon codicon-file-code"></span> ${loc.saveGlobalVarsFile}
+                        </a>
+                        <a href="#" id="loadGlobalVarsFromJsonBtn" class="dropdown-item">
+                            <span class="codicon codicon-folder-opened"></span> ${loc.loadGlobalVarsFromJson}
+                        </a>
+                        <a href="#" id="clearGlobalVarsBtn" class="dropdown-item">
+                            <span class="codicon codicon-clear-all"></span> ${loc.clearGlobalVariables}
                         </a>
                     </div>
                 </div>
             </div>
         </div>
 
-        <div class="table-container">
-            <table id="parametersTable">
-                <thead>
-                    <tr>
-                        <th>${loc.parameter}</th>
-                        <th>${loc.value}</th>
-                        <th class="actions-header">${loc.actions}</th>
-                    </tr>
-                </thead>
-                <tbody id="parametersTableBody">
-                    ${parametersRows}
-                </tbody>
-            </table>
+        <div class="tabs" role="tablist" aria-label="${loc.title}">
+            <button
+                id="buildTabBtn"
+                class="tab-btn active"
+                role="tab"
+                aria-selected="true"
+                aria-controls="buildTabPanel"
+                data-tab="build"
+            >
+                ${loc.buildSectionTitle}
+            </button>
+            <button
+                id="additionalTabBtn"
+                class="tab-btn"
+                role="tab"
+                aria-selected="false"
+                aria-controls="additionalTabPanel"
+                data-tab="additional"
+            >
+                ${loc.additionalSectionTitle}
+            </button>
+            <button
+                id="globalVarsTabBtn"
+                class="tab-btn"
+                role="tab"
+                aria-selected="false"
+                aria-controls="globalVarsTabPanel"
+                data-tab="globalVars"
+            >
+                ${loc.globalVarsSectionTitle}
+            </button>
         </div>
 
+        <div class="tab-panels">
+            <section id="buildTabPanel" class="tab-panel active" role="tabpanel" aria-labelledby="buildTabBtn">
+                <div class="section-summary-text">
+                    <span class="section-description">${loc.buildSectionDescription}</span>
+                </div>
+                <div class="section-content">
+                    <div class="section-toolbar">
+                        <button id="addBuildRowBtn" class="button-with-icon">
+                            <span class="codicon codicon-add"></span> ${loc.addBuildParameter}
+                        </button>
+                        <div class="search-box">
+                            <span class="codicon codicon-search search-icon" aria-hidden="true"></span>
+                            <input
+                                id="buildSearchInput"
+                                class="search-input"
+                                type="text"
+                                placeholder="${loc.searchByParameterName}"
+                                title="${loc.searchByParameterName}"
+                                aria-label="${loc.searchByParameterName}"
+                            >
+                            <button
+                                id="buildSearchClearBtn"
+                                class="search-clear-btn"
+                                type="button"
+                                title="${loc.clearSearch}"
+                                aria-label="${loc.clearSearch}"
+                            >
+                                <span class="codicon codicon-close"></span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table id="buildParametersTable">
+                            <thead>
+                                <tr>
+                                    <th>${loc.parameter}</th>
+                                    <th>${loc.value}</th>
+                                    <th class="actions-header">${loc.actions}</th>
+                                </tr>
+                            </thead>
+                            <tbody id="buildParametersTableBody">
+                                ${buildParametersRows}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
 
+            <section id="additionalTabPanel" class="tab-panel" role="tabpanel" aria-labelledby="additionalTabBtn" hidden>
+                <div class="section-summary-text">
+                    <span class="section-description">${loc.additionalSectionDescription}</span>
+                </div>
+                <div class="section-content">
+                    <div class="section-toolbar">
+                        <button id="addAdditionalRowBtn" class="button-with-icon">
+                            <span class="codicon codicon-add"></span> ${loc.addAdditionalParameter}
+                        </button>
+                        <div class="search-box">
+                            <span class="codicon codicon-search search-icon" aria-hidden="true"></span>
+                            <input
+                                id="additionalSearchInput"
+                                class="search-input"
+                                type="text"
+                                placeholder="${loc.searchByParameterName}"
+                                title="${loc.searchByParameterName}"
+                                aria-label="${loc.searchByParameterName}"
+                            >
+                            <button
+                                id="additionalSearchClearBtn"
+                                class="search-clear-btn"
+                                type="button"
+                                title="${loc.clearSearch}"
+                                aria-label="${loc.clearSearch}"
+                            >
+                                <span class="codicon codicon-close"></span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table id="additionalParametersTable">
+                            <thead>
+                                <tr>
+                                    <th>${loc.parameter}</th>
+                                    <th>${loc.value}</th>
+                                    <th class="priority-header">${loc.priority}</th>
+                                    <th class="actions-header">${loc.actions}</th>
+                                </tr>
+                            </thead>
+                            <tbody id="additionalParametersTableBody">
+                                ${additionalParametersRows}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <section id="globalVarsTabPanel" class="tab-panel" role="tabpanel" aria-labelledby="globalVarsTabBtn" hidden>
+                <div class="section-summary-text">
+                    <span class="section-description">${loc.globalVarsSectionDescription}</span>
+                </div>
+                <div class="section-content">
+                    <div class="section-toolbar">
+                        <button id="addGlobalVarRowBtn" class="button-with-icon">
+                            <span class="codicon codicon-add"></span> ${loc.addGlobalVariable}
+                        </button>
+                        <div class="search-box">
+                            <span class="codicon codicon-search search-icon" aria-hidden="true"></span>
+                            <input
+                                id="globalVarsSearchInput"
+                                class="search-input"
+                                type="text"
+                                placeholder="${loc.searchByParameterName}"
+                                title="${loc.searchByParameterName}"
+                                aria-label="${loc.searchByParameterName}"
+                            >
+                            <button
+                                id="globalVarsSearchClearBtn"
+                                class="search-clear-btn"
+                                type="button"
+                                title="${loc.clearSearch}"
+                                aria-label="${loc.clearSearch}"
+                            >
+                                <span class="codicon codicon-close"></span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table id="globalVarsTable">
+                            <thead>
+                                <tr>
+                                    <th>${loc.parameter}</th>
+                                    <th>${loc.value}</th>
+                                    <th class="priority-header">${loc.priority}</th>
+                                    <th class="actions-header">${loc.actions}</th>
+                                </tr>
+                            </thead>
+                            <tbody id="globalVarsTableBody">
+                                ${globalVariablesRows}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </div>
     </div>
 
     <script type="application/javascript" nonce="${nonce}">
-        window.__parameters = ${parametersJson};
-        window.__defaultParameters = ${defaultParametersJson};
+        window.__buildParameters = ${buildParametersJson};
+        window.__additionalParameters = ${additionalParametersJson};
+        window.__globalVanessaVariables = ${globalVanessaVariablesJson};
+        window.__defaultBuildParameters = ${defaultBuildParametersJson};
     </script>
     <script type="application/javascript" nonce="${nonce}" src="${scriptUri}"></script>
 </body>

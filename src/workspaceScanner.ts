@@ -3,10 +3,13 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { TestInfo } from './types';
 import { getTranslator } from './localization';
+import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
+import { parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
+import { parseKotScenarioDescription } from './kotMetadataDescription';
 
 // Function to get the scan directory path from configuration
 export function getScanDirRelativePath(): string {
-    const config = vscode.workspace.getConfiguration('1cDriveHelper');
+    const config = vscode.workspace.getConfiguration('kotTestToolkit');
     return config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml';
 }
 
@@ -14,10 +17,30 @@ export function getScanDirRelativePath(): string {
 // Используем scen.yaml, т.к. он содержит метаданные
 export const SCAN_GLOB_PATTERN = '**/scen.yaml';
 
+function parseNestedScenarioNamesFromText(documentText: string): string[] {
+    const names: string[] = [];
+    const sectionRegex = /ВложенныеСценарии:\s*([\s\S]*?)(?=\n(?![ \t])[А-Яа-яЁёA-Za-z]+:|\n*$)/;
+    const match = sectionRegex.exec(documentText);
+    if (!match || !match[1]) {
+        return names;
+    }
+
+    const nameRegex = /^\s*ИмяСценария:\s*"([^"]+)"/gm;
+    let nameMatch: RegExpExecArray | null;
+    while ((nameMatch = nameRegex.exec(match[1])) !== null) {
+        const name = nameMatch[1].trim();
+        if (name.length > 0) {
+            names.push(name);
+        }
+    }
+
+    return names;
+}
+
 /**
  * Сканирует директорию воркспейса на наличие файлов сценариев,
  * парсит их для извлечения метаданных и возвращает Map.
- * Теперь собирает все сценарии, у которых есть Имя, а не только те, что с PhaseSwitcher маркерами.
+ * Теперь собирает все сценарии, у которых есть Имя, а не только те, что с PhaseSwitcher metadata.
  * @param workspaceRootUri URI корневой папки воркспейса.
  * @param token Токен отмены.
  * @returns Promise с Map<string, TestInfo> или null в случае ошибки.
@@ -44,13 +67,21 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                 const fileContentBytes = await vscode.workspace.fs.readFile(fileUri);
                 const fileContent = Buffer.from(fileContentBytes).toString('utf-8');
                 const lines = fileContent.split('\n');
+                const nestedScenarioNames = parseNestedScenarioNamesFromText(fileContent);
+                const parsedParameterDefaults = parseScenarioParameterDefaults(fileContent);
+                const phaseSwitcherMetadata = parsePhaseSwitcherMetadata(fileContent);
+                const scenarioDescription = parseKotScenarioDescription(fileContent);
 
                 let name: string | null = null;
                 let uid: string | null = null;
-                let parsedTabName: string | undefined = undefined;
-                let parsedDefaultState: boolean | undefined = undefined;
-                let parsedOrder: number | undefined = undefined;
-                let tabMarkerFound = false; // Флаг, что маркер # PhaseSwitcher_Tab был найден (даже если значение пустое)
+                let scenarioCode: string | null = null;
+                let scenarioCodeLine: number | null = null;
+                let scenarioCodeLineStartCharacter: number | null = null;
+                let scenarioCodeLineEndCharacter: number | null = null;
+                let parsedTabName: string | undefined = phaseSwitcherMetadata.tabName;
+                let parsedDefaultState: boolean | undefined = phaseSwitcherMetadata.defaultState;
+                let parsedOrder: number | undefined = phaseSwitcherMetadata.order;
+                let tabMarkerFound = phaseSwitcherMetadata.hasTab; // Флаг, что ключ Tab был найден (даже если значение пустое)
                 
                 let parametersList: string[] = []; 
                 let inParametersMainSection = false; 
@@ -59,7 +90,8 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                 let inParameterListItem = false; // Находимся ли мы внутри элемента списка параметров (начинающегося с "-")
                 let parameterListItemIndent = -1; // Отступ строки, начинающей элемент списка ("- ")
 
-                for (const line of lines) {
+                for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+                    const line = lines[lineIndex];
                     const trimmedLine = line.trim();
                     // Нормализуем отступы в начале строки для консистентного анализа
                     const normalizedLineStart = line.replace(/^\t+/, tabs => '    '.repeat(tabs.length)); 
@@ -81,23 +113,14 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                         }
                     }
 
-                    // Извлечение метаданных для PhaseSwitcher
-                    const markerMatch = line.match(/^\s*#\s*PhaseSwitcher_(\w+):\s*(.*)/);
-                    if (markerMatch) {
-                        const key = markerMatch[1];
-                        const value = markerMatch[2].trim();
-                        switch (key) {
-                            case 'Tab': 
-                                parsedTabName = value || undefined; // Сохраняем undefined, если значение пустое
-                                tabMarkerFound = true; // Отмечаем, что маркер был найден
-                                break;
-                            case 'Default': 
-                                parsedDefaultState = value.toLowerCase() === 'true'; 
-                                break;
-                            case 'OrderOnTab': 
-                                const pOrder = parseInt(value, 10); 
-                                if (!isNaN(pOrder)) parsedOrder = pOrder; 
-                                break;
+                    // Извлечение кода сценария
+                    if (scenarioCode === null) {
+                        const codeMatch = line.match(/^\s*Код:\s*\"(.+?)\"\s*$/);
+                        if (codeMatch && codeMatch[1]) {
+                            scenarioCode = codeMatch[1];
+                            scenarioCodeLine = lineIndex;
+                            scenarioCodeLineStartCharacter = Math.max(0, line.search(/\S|$/));
+                            scenarioCodeLineEndCharacter = line.length;
                         }
                     }
 
@@ -176,7 +199,8 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                 } // end for (const line of lines)
 
                 // Добавляем сценарий, если у него есть имя.
-                // Информация для PhaseSwitcher (tabName, defaultState, order) добавляется, только если был найден маркер # PhaseSwitcher_Tab
+                // Информация для PhaseSwitcher (tabName, defaultState, order) добавляется, только если найден ключ Tab
+                // в KOT metadata или в legacy-маркере.
                 if (name) {
                     if (discoveredTests.has(name)) {
                         //  console.warn(`[scanWorkspaceForTests] Duplicate test name "${name}". Overwriting with ${fileUri.fsPath}`);
@@ -191,14 +215,29 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                         //  console.warn(`[scanWorkspaceForTests] File path ${relativePathValue} for scenario "${name}" might be incorrect relative to scan dir ${scanDirFsPath}`);
                     }
                     
-                    const uniqueParameters = parametersList.length > 0 ? [...new Set(parametersList)] : undefined;
+                    const uniqueParameters = parsedParameterDefaults.size > 0
+                        ? Array.from(parsedParameterDefaults.keys())
+                        : (parametersList.length > 0 ? [...new Set(parametersList)] : undefined);
+                    const uniqueNestedScenarioNames = nestedScenarioNames.length > 0
+                        ? [...new Set(nestedScenarioNames)]
+                        : undefined;
+                    const parameterDefaults = parsedParameterDefaults.size > 0
+                        ? Object.fromEntries(parsedParameterDefaults.entries())
+                        : undefined;
 
                     const testInfo: TestInfo = { 
                         name, 
                         yamlFileUri: fileUri, 
                         relativePath: relativePathValue,
                         parameters: uniqueParameters,
-                        uid: uid || undefined
+                        parameterDefaults,
+                        nestedScenarioNames: uniqueNestedScenarioNames,
+                        uid: uid || undefined,
+                        scenarioDescription: scenarioDescription || undefined,
+                        scenarioCode: scenarioCode || undefined,
+                        scenarioCodeLine: scenarioCodeLine ?? undefined,
+                        scenarioCodeLineStartCharacter: scenarioCodeLineStartCharacter ?? undefined,
+                        scenarioCodeLineEndCharacter: scenarioCodeLineEndCharacter ?? undefined
                     };
 
                     if (tabMarkerFound) { // Добавляем данные для PhaseSwitcher только если маркер был

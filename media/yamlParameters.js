@@ -3,25 +3,25 @@
 
 (function() {
     const vscode = acquireVsCodeApi();
-    let parameters = window.__parameters || [];
-    const defaultParameters = window.__defaultParameters || [];
+    let buildParameters = window.__buildParameters || [];
+    let additionalVanessaParameters = window.__additionalParameters || [];
+    let globalVanessaVariables = window.__globalVanessaVariables || [];
+    const defaultBuildParameters = window.__defaultBuildParameters || [];
+    const uiLoc = {
+        paramNamePlaceholder: document.body.dataset.paramNamePlaceholder || 'Parameter name',
+        paramValuePlaceholder: document.body.dataset.paramValuePlaceholder || 'Parameter value',
+        removeParameter: document.body.dataset.removeParameter || 'Remove parameter',
+        overrideTitle: document.body.dataset.overrideTitle || 'Override existing value'
+    };
+    let activeTab = 'build';
 
-    /**
-     * Логирует сообщение в консоль webview и отправляет его в расширение.
-     * @param {string} message - Сообщение для логирования.
-     */
     function log(message) {
-        console.log("[Build Scenario Parameters]", message);
-        vscode.postMessage({ command: 'log', text: "[Build Scenario Parameters] " + message });
+        console.log('[Build Scenario Parameters]', message);
+        vscode.postMessage({ command: 'log', text: '[Build Scenario Parameters] ' + message });
     }
 
-    /**
-     * Экранирует HTML символы
-     * @param {string} text - Текст для экранирования
-     * @returns {string} Экранированный текст
-     */
     function escapeHtml(text) {
-        return text
+        return String(text)
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
@@ -29,14 +29,122 @@
             .replace(/'/g, '&#39;');
     }
 
-    /**
-     * Получает текущие параметры из таблицы
-     * @returns {Array} Массив параметров
-     */
-    function getCurrentParameters() {
+    function buildRowHtml(param, index) {
+        return `
+            <tr data-index="${index}">
+                <td>
+                    <input type="text" class="param-key" value="${escapeHtml(param.key || '')}" placeholder="${escapeHtml(uiLoc.paramNamePlaceholder)}">
+                </td>
+                <td>
+                    <input type="text" class="param-value" value="${escapeHtml(param.value || '')}" placeholder="${escapeHtml(uiLoc.paramValuePlaceholder)}">
+                </td>
+                <td>
+                    <button class="button-with-icon remove-row-btn" title="${escapeHtml(uiLoc.removeParameter)}">
+                        <span class="codicon codicon-trash"></span>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }
+
+    function additionalRowHtml(param, index) {
+        const isOverride = Boolean(param.overrideExisting);
+        return `
+            <tr data-index="${index}">
+                <td>
+                    <input type="text" class="param-key" value="${escapeHtml(param.key || '')}" placeholder="${escapeHtml(uiLoc.paramNamePlaceholder)}">
+                </td>
+                <td>
+                    <input type="text" class="param-value" value="${escapeHtml(param.value || '')}" placeholder="${escapeHtml(uiLoc.paramValuePlaceholder)}">
+                </td>
+                <td class="param-priority-cell">
+                    <input type="checkbox" class="param-override" ${isOverride ? 'checked' : ''} title="${escapeHtml(uiLoc.overrideTitle)}">
+                </td>
+                <td>
+                    <button class="button-with-icon remove-row-btn" title="${escapeHtml(uiLoc.removeParameter)}">
+                        <span class="codicon codicon-trash"></span>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }
+
+    function getTableBody(id) {
+        return document.getElementById(id);
+    }
+
+    function getSearchInput(tabName) {
+        if (tabName === 'additional') {
+            return document.getElementById('additionalSearchInput');
+        }
+        if (tabName === 'globalVars') {
+            return document.getElementById('globalVarsSearchInput');
+        }
+        return document.getElementById('buildSearchInput');
+    }
+
+    function getSearchClearButton(tabName) {
+        if (tabName === 'additional') {
+            return document.getElementById('additionalSearchClearBtn');
+        }
+        if (tabName === 'globalVars') {
+            return document.getElementById('globalVarsSearchClearBtn');
+        }
+        return document.getElementById('buildSearchClearBtn');
+    }
+
+    function getTableBodyByTab(tabName) {
+        if (tabName === 'additional') {
+            return getTableBody('additionalParametersTableBody');
+        }
+        if (tabName === 'globalVars') {
+            return getTableBody('globalVarsTableBody');
+        }
+        return getTableBody('buildParametersTableBody');
+    }
+
+    function applySearchFilter(tabName) {
+        const body = getTableBodyByTab(tabName);
+        if (!body) {
+            return;
+        }
+
+        const searchInput = getSearchInput(tabName);
+        const query = (searchInput && 'value' in searchInput)
+            ? String(searchInput.value || '').trim().toLocaleLowerCase()
+            : '';
+
+        body.querySelectorAll('tr').forEach(row => {
+            const keyInput = row.querySelector('.param-key');
+            const keyText = (keyInput && 'value' in keyInput)
+                ? String(keyInput.value || '').toLocaleLowerCase()
+                : '';
+            row.hidden = query.length > 0 && !keyText.includes(query);
+        });
+
+        const clearButton = getSearchClearButton(tabName);
+        if (clearButton) {
+            clearButton.classList.toggle('visible', query.length > 0);
+        }
+    }
+
+    function clearSearch(tabName) {
+        const input = getSearchInput(tabName);
+        if (!(input instanceof HTMLInputElement)) {
+            return;
+        }
+        input.value = '';
+        applySearchFilter(tabName);
+        input.focus();
+    }
+
+    function getBuildParametersFromTable() {
+        const body = getTableBody('buildParametersTableBody');
+        if (!body) {
+            return [];
+        }
         const params = [];
-        const rows = document.querySelectorAll('#parametersTableBody tr');
-        rows.forEach(row => {
+        body.querySelectorAll('tr').forEach(row => {
             const keyInput = row.querySelector('.param-key');
             const valueInput = row.querySelector('.param-value');
             if (keyInput && valueInput && keyInput.value.trim()) {
@@ -49,173 +157,476 @@
         return params;
     }
 
-    /**
-     * Обновляет таблицу параметров
-     */
-    function updateTable() {
-        const tbody = document.getElementById('parametersTableBody');
-        tbody.innerHTML = parameters.map((param, index) => `
-            <tr data-index="${index}">
-                <td>
-                    <input type="text" class="param-key" value="${escapeHtml(param.key)}" placeholder="Parameter name">
-                </td>
-                <td>
-                    <input type="text" class="param-value" value="${escapeHtml(param.value)}" placeholder="Parameter value">
-                </td>
-                <td>
-                    <button class="button-with-icon remove-row-btn" title="Remove parameter">
-                        <span class="codicon codicon-trash"></span>
-                    </button>
-                </td>
-            </tr>
-        `).join('');
-        updateRemoveButtons();
+    function getAdditionalParametersFromTable() {
+        const body = getTableBody('additionalParametersTableBody');
+        if (!body) {
+            return [];
+        }
+        const params = [];
+        body.querySelectorAll('tr').forEach(row => {
+            const keyInput = row.querySelector('.param-key');
+            const valueInput = row.querySelector('.param-value');
+            const overrideInput = row.querySelector('.param-override');
+            if (keyInput && valueInput && keyInput.value.trim()) {
+                params.push({
+                    key: keyInput.value.trim(),
+                    value: valueInput.value.trim(),
+                    overrideExisting: Boolean(overrideInput && overrideInput.checked)
+                });
+            }
+        });
+        return params;
     }
 
-    /**
-     * Обновляет обработчики кнопок удаления строк
-     */
-    function updateRemoveButtons() {
-        document.querySelectorAll('.remove-row-btn').forEach(btn => {
-            btn.onclick = function() {
-                const row = this.closest('tr');
-                row.remove();
-                updateRowIndices();
-            };
+    function getGlobalVarsFromTable() {
+        const body = getTableBody('globalVarsTableBody');
+        if (!body) {
+            return [];
+        }
+        const params = [];
+        body.querySelectorAll('tr').forEach(row => {
+            const keyInput = row.querySelector('.param-key');
+            const valueInput = row.querySelector('.param-value');
+            const overrideInput = row.querySelector('.param-override');
+            if (keyInput && valueInput && keyInput.value.trim()) {
+                params.push({
+                    key: keyInput.value.trim(),
+                    value: valueInput.value.trim(),
+                    overrideExisting: Boolean(overrideInput && overrideInput.checked)
+                });
+            }
+        });
+        return params;
+    }
+
+    function updateRowIndices(bodyId) {
+        const body = getTableBody(bodyId);
+        if (!body) {
+            return;
+        }
+        body.querySelectorAll('tr').forEach((row, index) => {
+            row.setAttribute('data-index', String(index));
         });
     }
 
-    /**
-     * Обновляет индексы строк после удаления
-     */
-    function updateRowIndices() {
-        const rows = document.querySelectorAll('#parametersTableBody tr');
-        rows.forEach((row, index) => {
-            row.setAttribute('data-index', index);
-        });
+    function updateBuildTable() {
+        const body = getTableBody('buildParametersTableBody');
+        if (!body) {
+            return;
+        }
+        body.innerHTML = buildParameters.map((param, index) => buildRowHtml(param, index)).join('');
+        applySearchFilter('build');
     }
 
-    // === Обработчики событий ===
+    function updateAdditionalTable() {
+        const body = getTableBody('additionalParametersTableBody');
+        if (!body) {
+            return;
+        }
+        body.innerHTML = additionalVanessaParameters.map((param, index) => additionalRowHtml(param, index)).join('');
+        applySearchFilter('additional');
+    }
 
-    // Добавить новую строку
-    document.getElementById('addRowBtn').addEventListener('click', () => {
-        log('Add parameter button clicked.');
-        const tbody = document.getElementById('parametersTableBody');
-        const newIndex = tbody.children.length;
-        const newRow = document.createElement('tr');
-        newRow.setAttribute('data-index', newIndex);
-        newRow.innerHTML = `
+    function updateGlobalVarsTable() {
+        const body = getTableBody('globalVarsTableBody');
+        if (!body) {
+            return;
+        }
+        body.innerHTML = globalVanessaVariables.map((param, index) => additionalRowHtml(param, index)).join('');
+        applySearchFilter('globalVars');
+    }
+
+    function appendBuildRow() {
+        const body = getTableBody('buildParametersTableBody');
+        if (!body) {
+            return;
+        }
+        const row = document.createElement('tr');
+        row.setAttribute('data-index', String(body.children.length));
+        row.innerHTML = `
             <td>
-                <input type="text" class="param-key" value="" placeholder="Parameter name">
+                <input type="text" class="param-key" value="" placeholder="${escapeHtml(uiLoc.paramNamePlaceholder)}">
             </td>
             <td>
-                <input type="text" class="param-value" value="" placeholder="Parameter value">
+                <input type="text" class="param-value" value="" placeholder="${escapeHtml(uiLoc.paramValuePlaceholder)}">
             </td>
             <td>
-                <button class="button-with-icon remove-row-btn" title="Remove parameter">
+                <button class="button-with-icon remove-row-btn" title="${escapeHtml(uiLoc.removeParameter)}">
                     <span class="codicon codicon-trash"></span>
                 </button>
             </td>
         `;
-        tbody.appendChild(newRow);
-        updateRemoveButtons();
-        
-        // Фокус на новом поле
-        const newKeyInput = newRow.querySelector('.param-key');
-        if (newKeyInput) {
-            newKeyInput.focus();
+        body.appendChild(row);
+        row.querySelector('.param-key')?.focus();
+        applySearchFilter('build');
+    }
+
+    function appendAdditionalRow() {
+        const body = getTableBody('additionalParametersTableBody');
+        if (!body) {
+            return;
+        }
+        const row = document.createElement('tr');
+        row.setAttribute('data-index', String(body.children.length));
+        row.innerHTML = `
+            <td>
+                <input type="text" class="param-key" value="" placeholder="${escapeHtml(uiLoc.paramNamePlaceholder)}">
+            </td>
+            <td>
+                <input type="text" class="param-value" value="" placeholder="${escapeHtml(uiLoc.paramValuePlaceholder)}">
+            </td>
+            <td class="param-priority-cell">
+                <input type="checkbox" class="param-override" title="${escapeHtml(uiLoc.overrideTitle)}">
+            </td>
+            <td>
+                <button class="button-with-icon remove-row-btn" title="${escapeHtml(uiLoc.removeParameter)}">
+                    <span class="codicon codicon-trash"></span>
+                </button>
+            </td>
+        `;
+        body.appendChild(row);
+        row.querySelector('.param-key')?.focus();
+        applySearchFilter('additional');
+    }
+
+    function appendGlobalVarRow() {
+        const body = getTableBody('globalVarsTableBody');
+        if (!body) {
+            return;
+        }
+        const row = document.createElement('tr');
+        row.setAttribute('data-index', String(body.children.length));
+        row.innerHTML = `
+            <td>
+                <input type="text" class="param-key" value="" placeholder="${escapeHtml(uiLoc.paramNamePlaceholder)}">
+            </td>
+            <td>
+                <input type="text" class="param-value" value="" placeholder="${escapeHtml(uiLoc.paramValuePlaceholder)}">
+            </td>
+            <td class="param-priority-cell">
+                <input type="checkbox" class="param-override" title="${escapeHtml(uiLoc.overrideTitle)}">
+            </td>
+            <td>
+                <button class="button-with-icon remove-row-btn" title="${escapeHtml(uiLoc.removeParameter)}">
+                    <span class="codicon codicon-trash"></span>
+                </button>
+            </td>
+        `;
+        body.appendChild(row);
+        row.querySelector('.param-key')?.focus();
+        applySearchFilter('globalVars');
+    }
+
+    function getCurrentState() {
+        return {
+            buildParameters: getBuildParametersFromTable(),
+            additionalVanessaParameters: getAdditionalParametersFromTable(),
+            globalVanessaVariables: getGlobalVarsFromTable()
+        };
+    }
+
+    function setActiveTab(tabName) {
+        const buildTabBtn = document.getElementById('buildTabBtn');
+        const additionalTabBtn = document.getElementById('additionalTabBtn');
+        const globalVarsTabBtn = document.getElementById('globalVarsTabBtn');
+        const buildTabPanel = document.getElementById('buildTabPanel');
+        const additionalTabPanel = document.getElementById('additionalTabPanel');
+        const globalVarsTabPanel = document.getElementById('globalVarsTabPanel');
+        if (!buildTabBtn || !additionalTabBtn || !globalVarsTabBtn || !buildTabPanel || !additionalTabPanel || !globalVarsTabPanel) {
+            return;
+        }
+
+        const nextTab = tabName === 'additional' || tabName === 'globalVars' ? tabName : 'build';
+        activeTab = nextTab;
+
+        const showBuild = nextTab === 'build';
+        const showAdditional = nextTab === 'additional';
+        const showGlobalVars = nextTab === 'globalVars';
+
+        buildTabBtn.classList.toggle('active', showBuild);
+        buildTabBtn.setAttribute('aria-selected', showBuild ? 'true' : 'false');
+        additionalTabBtn.classList.toggle('active', showAdditional);
+        additionalTabBtn.setAttribute('aria-selected', showAdditional ? 'true' : 'false');
+        globalVarsTabBtn.classList.toggle('active', showGlobalVars);
+        globalVarsTabBtn.setAttribute('aria-selected', showGlobalVars ? 'true' : 'false');
+
+        buildTabPanel.classList.toggle('active', showBuild);
+        buildTabPanel.hidden = !showBuild;
+        additionalTabPanel.classList.toggle('active', showAdditional);
+        additionalTabPanel.hidden = !showAdditional;
+        globalVarsTabPanel.classList.toggle('active', showGlobalVars);
+        globalVarsTabPanel.hidden = !showGlobalVars;
+    }
+
+    function setupDropdown(buttonId) {
+        const button = document.getElementById(buttonId);
+        const container = button?.closest('.dropdown-container');
+        if (!button || !container) {
+            return;
+        }
+
+        button.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            document.querySelectorAll('.dropdown-container.show').forEach(item => {
+                if (item !== container) {
+                    item.classList.remove('show');
+                }
+            });
+            container.classList.toggle('show');
+        });
+    }
+
+    document.addEventListener('click', (event) => {
+        const clearSearchBtn = event.target.closest('.search-clear-btn');
+        if (clearSearchBtn) {
+            if (clearSearchBtn.id === 'buildSearchClearBtn') {
+                clearSearch('build');
+                return;
+            }
+            if (clearSearchBtn.id === 'additionalSearchClearBtn') {
+                clearSearch('additional');
+                return;
+            }
+            if (clearSearchBtn.id === 'globalVarsSearchClearBtn') {
+                clearSearch('globalVars');
+                return;
+            }
+        }
+
+        const removeBtn = event.target.closest('.remove-row-btn');
+        if (removeBtn) {
+            const row = removeBtn.closest('tr');
+            const body = row?.parentElement;
+            if (row && body) {
+                row.remove();
+                if (body.id) {
+                    updateRowIndices(body.id);
+                }
+            }
+            return;
+        }
+
+        document.querySelectorAll('.dropdown-container.show').forEach(container => {
+            if (!container.contains(event.target)) {
+                container.classList.remove('show');
+            }
+        });
+    });
+
+    document.addEventListener('input', (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement)) {
+            return;
+        }
+
+        if (target.id === 'buildSearchInput') {
+            applySearchFilter('build');
+            return;
+        }
+        if (target.id === 'additionalSearchInput') {
+            applySearchFilter('additional');
+            return;
+        }
+        if (target.id === 'globalVarsSearchInput') {
+            applySearchFilter('globalVars');
+            return;
+        }
+
+        if (!target.classList.contains('param-key')) {
+            return;
+        }
+        const body = target.closest('tbody');
+        if (!body) {
+            return;
+        }
+        if (body.id === 'buildParametersTableBody') {
+            applySearchFilter('build');
+            return;
+        }
+        if (body.id === 'additionalParametersTableBody') {
+            applySearchFilter('additional');
+            return;
+        }
+        if (body.id === 'globalVarsTableBody') {
+            applySearchFilter('globalVars');
         }
     });
 
-    // Сохранить параметры (Apply)
+    document.getElementById('addBuildRowBtn').addEventListener('click', () => {
+        log('Add build parameter button clicked.');
+        appendBuildRow();
+    });
+
+    document.getElementById('addAdditionalRowBtn').addEventListener('click', () => {
+        log('Add additional Vanessa parameter button clicked.');
+        appendAdditionalRow();
+    });
+
+    document.getElementById('addGlobalVarRowBtn').addEventListener('click', () => {
+        log('Add GlobalVar parameter button clicked.');
+        appendGlobalVarRow();
+    });
+
     document.getElementById('saveBtn').addEventListener('click', () => {
         log('Save parameters button clicked.');
-        const currentParams = getCurrentParameters();
+        const state = getCurrentState();
         vscode.postMessage({
             command: 'saveParameters',
-            parameters: currentParams
+            buildParameters: state.buildParameters,
+            additionalVanessaParameters: state.additionalVanessaParameters,
+            globalVanessaVariables: state.globalVanessaVariables
         });
     });
 
-    // Выпадающее меню More Actions
-    const moreActionsBtn = document.getElementById('moreActionsBtn');
-    const moreActionsDropdown = document.getElementById('moreActionsDropdown');
-    const dropdownContainer = moreActionsBtn.parentElement;
+    setupDropdown('moreActionsBtn');
 
-    moreActionsBtn.addEventListener('click', (e) => {
+    document.getElementById('createBuildFileBtn').addEventListener('click', (e) => {
         e.preventDefault();
-        e.stopPropagation();
-        dropdownContainer.classList.toggle('show');
-    });
-
-    // Закрытие выпадающего меню при клике вне его
-    document.addEventListener('click', (e) => {
-        if (!dropdownContainer.contains(e.target)) {
-            dropdownContainer.classList.remove('show');
-        }
-    });
-
-    // Обработчики для элементов выпадающего меню
-    document.getElementById('createFileFromDropdownBtn').addEventListener('click', (e) => {
-        e.preventDefault();
-        log('Create file from dropdown clicked.');
-        dropdownContainer.classList.remove('show');
-        const currentParams = getCurrentParameters();
+        const state = getCurrentState();
         vscode.postMessage({
             command: 'createYamlFile',
-            parameters: currentParams
+            buildParameters: state.buildParameters
         });
+        document.getElementById('moreActionsBtn')?.closest('.dropdown-container')?.classList.remove('show');
     });
 
-    document.getElementById('loadFromJsonFromDropdownBtn').addEventListener('click', (e) => {
+    document.getElementById('loadBuildFromJsonBtn').addEventListener('click', (e) => {
         e.preventDefault();
-        log('Load from JSON from dropdown clicked.');
-        dropdownContainer.classList.remove('show');
+        vscode.postMessage({ command: 'loadBuildFromJson' });
+        document.getElementById('moreActionsBtn')?.closest('.dropdown-container')?.classList.remove('show');
+    });
+
+    document.getElementById('resetBuildDefaultsBtn').addEventListener('click', (e) => {
+        e.preventDefault();
+        buildParameters = [...defaultBuildParameters];
+        updateBuildTable();
+        document.getElementById('moreActionsBtn')?.closest('.dropdown-container')?.classList.remove('show');
+    });
+
+    document.getElementById('createAdditionalFileBtn').addEventListener('click', (e) => {
+        e.preventDefault();
+        const state = getCurrentState();
         vscode.postMessage({
-            command: 'loadFromJson'
+            command: 'createAdditionalJsonFile',
+            additionalVanessaParameters: state.additionalVanessaParameters
         });
+        document.getElementById('moreActionsBtn')?.closest('.dropdown-container')?.classList.remove('show');
     });
 
-    document.getElementById('resetDefaultsFromDropdownBtn').addEventListener('click', (e) => {
+    document.getElementById('loadAdditionalFromJsonBtn').addEventListener('click', (e) => {
         e.preventDefault();
-        log('Reset defaults from dropdown clicked.');
-        dropdownContainer.classList.remove('show');
-        parameters = [...defaultParameters];
-        updateTable();
+        vscode.postMessage({ command: 'loadAdditionalFromJson' });
+        document.getElementById('moreActionsBtn')?.closest('.dropdown-container')?.classList.remove('show');
     });
 
-    // Обработка сообщений от расширения
+    document.getElementById('clearAdditionalBtn').addEventListener('click', (e) => {
+        e.preventDefault();
+        additionalVanessaParameters = [];
+        updateAdditionalTable();
+        document.getElementById('moreActionsBtn')?.closest('.dropdown-container')?.classList.remove('show');
+    });
+
+    document.getElementById('createGlobalVarsFileBtn').addEventListener('click', (e) => {
+        e.preventDefault();
+        const state = getCurrentState();
+        vscode.postMessage({
+            command: 'createGlobalVarsJsonFile',
+            globalVanessaVariables: state.globalVanessaVariables
+        });
+        document.getElementById('moreActionsBtn')?.closest('.dropdown-container')?.classList.remove('show');
+    });
+
+    document.getElementById('loadGlobalVarsFromJsonBtn').addEventListener('click', (e) => {
+        e.preventDefault();
+        vscode.postMessage({ command: 'loadGlobalVarsFromJson' });
+        document.getElementById('moreActionsBtn')?.closest('.dropdown-container')?.classList.remove('show');
+    });
+
+    document.getElementById('clearGlobalVarsBtn').addEventListener('click', (e) => {
+        e.preventDefault();
+        globalVanessaVariables = [];
+        updateGlobalVarsTable();
+        document.getElementById('moreActionsBtn')?.closest('.dropdown-container')?.classList.remove('show');
+    });
+
+    const buildTabBtn = document.getElementById('buildTabBtn');
+    const additionalTabBtn = document.getElementById('additionalTabBtn');
+    const globalVarsTabBtn = document.getElementById('globalVarsTabBtn');
+    if (buildTabBtn && additionalTabBtn && globalVarsTabBtn) {
+        buildTabBtn.addEventListener('click', () => setActiveTab('build'));
+        additionalTabBtn.addEventListener('click', () => setActiveTab('additional'));
+        globalVarsTabBtn.addEventListener('click', () => setActiveTab('globalVars'));
+        buildTabBtn.addEventListener('keydown', (event) => {
+            if (event.key === 'ArrowRight') {
+                event.preventDefault();
+                setActiveTab('additional');
+                additionalTabBtn.focus();
+            }
+        });
+        additionalTabBtn.addEventListener('keydown', (event) => {
+            if (event.key === 'ArrowRight') {
+                event.preventDefault();
+                setActiveTab('globalVars');
+                globalVarsTabBtn.focus();
+            }
+            if (event.key === 'ArrowLeft') {
+                event.preventDefault();
+                setActiveTab('build');
+                buildTabBtn.focus();
+            }
+        });
+        globalVarsTabBtn.addEventListener('keydown', (event) => {
+            if (event.key === 'ArrowLeft') {
+                event.preventDefault();
+                setActiveTab('additional');
+                additionalTabBtn.focus();
+            }
+        });
+    }
+
     window.addEventListener('message', event => {
         const message = event.data;
         switch (message.command) {
+            case 'loadBuildParameters':
+                log('Loading build parameters from extension.');
+                buildParameters = message.buildParameters || [];
+                updateBuildTable();
+                break;
+            case 'loadAdditionalParameters':
+                log('Loading additional Vanessa parameters from extension.');
+                additionalVanessaParameters = message.additionalParameters || [];
+                updateAdditionalTable();
+                break;
+            case 'loadGlobalVanessaVariables':
+                log('Loading GlobalVars from extension.');
+                globalVanessaVariables = message.globalVanessaVariables || [];
+                updateGlobalVarsTable();
+                break;
             case 'loadParameters':
-                log('Loading parameters from extension.');
-                parameters = message.parameters || [];
-                updateTable();
+                // Legacy fallback message support.
+                log('Loading legacy parameter payload from extension.');
+                buildParameters = message.parameters || [];
+                updateBuildTable();
                 break;
         }
     });
 
-    // Кнопка справки с ховером
     const helpBtn = document.getElementById('helpBtn');
     const helpTooltip = document.getElementById('helpTooltip');
-    const helpContainer = helpBtn.parentElement;
 
     let isHoveringHelp = false;
 
-    // Показать тултип при наведении на кнопку
     helpBtn.addEventListener('mouseenter', () => {
         isHoveringHelp = true;
         helpTooltip.classList.add('show');
     });
 
-    // Показать тултип при наведении на сам тултип
     helpTooltip.addEventListener('mouseenter', () => {
         isHoveringHelp = true;
         helpTooltip.classList.add('show');
     });
 
-    // Скрыть тултип при уходе с кнопки
     helpBtn.addEventListener('mouseleave', () => {
         isHoveringHelp = false;
         setTimeout(() => {
@@ -225,7 +636,6 @@
         }, 100);
     });
 
-    // Скрыть тултип при уходе с тултипа
     helpTooltip.addEventListener('mouseleave', () => {
         isHoveringHelp = false;
         setTimeout(() => {
@@ -235,7 +645,12 @@
         }, 100);
     });
 
-    // === Инициализация ===
     log('Build Scenario Parameters Manager script initialized.');
-    updateRemoveButtons();
+    setActiveTab(activeTab);
+    updateBuildTable();
+    updateAdditionalTable();
+    updateGlobalVarsTable();
+    applySearchFilter('build');
+    applySearchFilter('additional');
+    applySearchFilter('globalVars');
 }());

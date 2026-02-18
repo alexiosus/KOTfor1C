@@ -3,6 +3,165 @@ import { getTranslator } from './localization';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { YamlParametersManager } from './yamlParametersManager';
+import { scanWorkspaceForTests } from './workspaceScanner';
+import { applyPreferredStepKeyword, getConfiguredScenarioLanguage, ScenarioLanguage } from './gherkinLanguage';
+
+type ScenarioIndex = {
+    names: Set<string>;
+    codes: Set<string>;
+};
+
+type ScenarioIndexCacheEntry = {
+    workspaceRoot: string;
+    loadedAt: number;
+    index: ScenarioIndex;
+};
+
+const SCENARIO_INDEX_CACHE_TTL_MS = 60_000;
+let scenarioIndexCache: ScenarioIndexCacheEntry | null = null;
+
+const DRIVE_MAIN_SCENARIO_BLOCK = [
+    '    And I set "Administrator" synonym to the current TestClient',
+    '',
+    '    And I initialize TestClient connections',
+    '',
+    '    And I save key parameters from pipeline and initialize main variables',
+    '',
+    '    And I click Infobase was transferred button',
+    '',
+    '    And I get main constant values',
+    '',
+    '    # Include scenarios here',
+    '',
+    '    And I close TestClient main window'
+].join('\n');
+
+function normalizeScenarioName(name: string): string {
+    return name.trim().toLocaleLowerCase();
+}
+
+function normalizeScenarioCode(code: string): string {
+    return code.trim().toLocaleLowerCase();
+}
+
+function createEmptyScenarioIndex(): ScenarioIndex {
+    return {
+        names: new Set<string>(),
+        codes: new Set<string>()
+    };
+}
+
+function getWorkspaceRootUri(): vscode.Uri | undefined {
+    return vscode.workspace.workspaceFolders?.[0]?.uri;
+}
+
+async function getKnownScenarioIndex(): Promise<ScenarioIndex> {
+    const workspaceRootUri = getWorkspaceRootUri();
+    if (!workspaceRootUri) {
+        return createEmptyScenarioIndex();
+    }
+
+    const workspaceRoot = workspaceRootUri.toString();
+    const now = Date.now();
+    if (
+        scenarioIndexCache &&
+        scenarioIndexCache.workspaceRoot === workspaceRoot &&
+        now - scenarioIndexCache.loadedAt < SCENARIO_INDEX_CACHE_TTL_MS
+    ) {
+        return scenarioIndexCache.index;
+    }
+
+    const discoveredTests = await scanWorkspaceForTests(workspaceRootUri);
+    const index = createEmptyScenarioIndex();
+    if (discoveredTests) {
+        for (const [scenarioName, testInfo] of discoveredTests.entries()) {
+            index.names.add(normalizeScenarioName(scenarioName));
+            if (typeof testInfo?.name === 'string' && testInfo.name.trim().length > 0) {
+                index.names.add(normalizeScenarioName(testInfo.name));
+            }
+            if (typeof testInfo?.scenarioCode === 'string' && testInfo.scenarioCode.trim().length > 0) {
+                index.codes.add(normalizeScenarioCode(testInfo.scenarioCode));
+            }
+        }
+    }
+
+    scenarioIndexCache = {
+        workspaceRoot,
+        loadedAt: now,
+        index
+    };
+    return index;
+}
+
+function rememberScenarioInIndex(scenarioName: string, scenarioCode?: string): void {
+    const workspaceRootUri = getWorkspaceRootUri();
+    if (!workspaceRootUri) {
+        return;
+    }
+
+    const workspaceRoot = workspaceRootUri.toString();
+    const normalizedName = normalizeScenarioName(scenarioName);
+    const normalizedCode = (scenarioCode || '').trim()
+        ? normalizeScenarioCode(scenarioCode || '')
+        : undefined;
+
+    if (!scenarioIndexCache || scenarioIndexCache.workspaceRoot !== workspaceRoot) {
+        const nextIndex = createEmptyScenarioIndex();
+        nextIndex.names.add(normalizedName);
+        if (normalizedCode) {
+            nextIndex.codes.add(normalizedCode);
+        }
+        scenarioIndexCache = {
+            workspaceRoot,
+            loadedAt: Date.now(),
+            index: nextIndex
+        };
+        return;
+    }
+
+    scenarioIndexCache.index.names.add(normalizedName);
+    if (normalizedCode) {
+        scenarioIndexCache.index.codes.add(normalizedCode);
+    }
+    scenarioIndexCache.loadedAt = Date.now();
+}
+
+function applyScenarioLanguage(templateContent: string, language: ScenarioLanguage): string {
+    return templateContent.replace(/#language:\s*(en|ru)\b/g, `#language: ${language}`);
+}
+
+function buildDriveMainScenarioBlock(language: ScenarioLanguage): string {
+    return DRIVE_MAIN_SCENARIO_BLOCK
+        .split('\n')
+        .map(line => applyPreferredStepKeyword(line, language))
+        .join('\n');
+}
+
+function applyMainScenarioDriveBlock(
+    templateContent: string,
+    includeDriveBlock: boolean,
+    language: ScenarioLanguage
+): string {
+    const block = includeDriveBlock ? buildDriveMainScenarioBlock(language) : '';
+    return templateContent.replace('    DriveMainScenarioBlock_Placeholder', block);
+}
+
+async function maybeAutoAddScenarioToFavorites(
+    config: vscode.WorkspaceConfiguration,
+    scenarioUri: vscode.Uri
+): Promise<void> {
+    const shouldAutoAdd = config.get<boolean>('phaseSwitcher.autoAddNewScenariosToFavorites', true);
+    if (!shouldAutoAdd) {
+        return;
+    }
+    const added = await vscode.commands.executeCommand<boolean>('kotTestToolkit._addScenarioFavoriteByUri', scenarioUri);
+    if (added) {
+        return;
+    }
+
+    await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcherFromCreate');
+    await vscode.commands.executeCommand<boolean>('kotTestToolkit._addScenarioFavoriteByUri', scenarioUri);
+}
 
 /**
  * Обработчик команды создания вложенного сценария.
@@ -11,6 +170,11 @@ import { YamlParametersManager } from './yamlParametersManager';
  */
 export async function handleCreateNestedScenario(context: vscode.ExtensionContext): Promise<void> {
     const t = await getTranslator(context.extensionUri);
+    const config = vscode.workspace.getConfiguration('kotTestToolkit');
+    const newScenarioLanguage = getConfiguredScenarioLanguage(config);
+    const knownScenarioIndex = await getKnownScenarioIndex();
+    const knownScenarioNames = knownScenarioIndex.names;
+    const knownScenarioCodes = knownScenarioIndex.codes;
     console.log("[Cmd:createNestedScenario] Starting...");
     let prefilledName = '';
     const editor = vscode.window.activeTextEditor;
@@ -19,7 +183,7 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
         try {
             const position = editor.selection.active;
             const line = editor.document.lineAt(position.line);
-            const lineMatch = line.text.match(/^\s*And\s+(.*)/);
+            const lineMatch = line.text.match(/^\s*(?:And|И|Допустим)\s+(.*)/i);
             if (lineMatch && lineMatch[1]) {
                 prefilledName = lineMatch[1].trim();
             }
@@ -33,11 +197,24 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
         prompt: t('Enter nested scenario name'),
         value: prefilledName,
         ignoreFocusOut: true,
-        validateInput: value => value?.trim() ? null : t('Name cannot be empty')
+        validateInput: value => {
+            const trimmedValue = value?.trim();
+            if (!trimmedValue) {
+                return t('Name cannot be empty');
+            }
+            if (knownScenarioNames.has(normalizeScenarioName(trimmedValue))) {
+                return t('Scenario name "{0}" already exists.', trimmedValue);
+            }
+            return null;
+        }
     });
     // Если пользователь нажал Escape или не ввел имя
     if (name === undefined) { console.log("[Cmd:createNestedScenario] Cancelled at name input."); return; }
     const trimmedName = name.trim();
+    if (knownScenarioNames.has(normalizeScenarioName(trimmedName))) {
+        vscode.window.showErrorMessage(t('Scenario name "{0}" already exists.', trimmedName));
+        return;
+    }
 
     // 2. Запрос кода
     const code = await vscode.window.showInputBox({
@@ -47,11 +224,18 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
             const trimmedValue = value?.trim();
             if (!trimmedValue) return t('Code cannot be empty');
             if (!/^\d+$/.test(trimmedValue)) return t('Code must contain digits only');
+            if (knownScenarioCodes.has(normalizeScenarioCode(trimmedValue))) {
+                return t('Scenario code "{0}" already exists.', trimmedValue);
+            }
             return null;
         }
     });
     if (code === undefined) { console.log("[Cmd:createNestedScenario] Cancelled at code input."); return; }
     const trimmedCode = code.trim();
+    if (knownScenarioCodes.has(normalizeScenarioCode(trimmedCode))) {
+        vscode.window.showErrorMessage(t('Scenario code "{0}" already exists.', trimmedCode));
+        return;
+    }
 
     // 3. Определение пути по умолчанию для диалога выбора папки
     let defaultDialogUri: vscode.Uri | undefined;
@@ -59,7 +243,6 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
     if (workspaceFolders?.length) { // Проверяем, что воркспейс открыт
         const workspaceRootUri = workspaceFolders[0].uri;
         // Путь по умолчанию из настроек
-        const config = vscode.workspace.getConfiguration('1cDriveHelper');
         const defaultSubPath = config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml';
         try {
             defaultDialogUri = vscode.Uri.joinPath(workspaceRootUri, defaultSubPath);
@@ -104,13 +287,14 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
         const templateContent = Buffer.from(templateBytes).toString('utf-8');
 
         // Заменяем плейсхолдеры
-        const finalContent = templateContent
+        const finalContent = applyScenarioLanguage(templateContent
             .replace(/Name_Placeholder/g, trimmedName)
             .replace(/Code_Placeholder/g, trimmedCode)
-            .replace(/UID_Placeholder/g, newUid);
+            .replace(/UID_Placeholder/g, newUid), newScenarioLanguage);
 
         // Записываем новый файл
         await vscode.workspace.fs.writeFile(targetFileUri, Buffer.from(finalContent, 'utf-8'));
+        rememberScenarioInIndex(trimmedName, trimmedCode);
 
         console.log(`[Cmd:createNestedScenario] Success! Created: ${targetFileUri.fsPath}`);
         vscode.window.showInformationMessage(t('Nested scenario "{0}" ({1}) has been created successfully!', trimmedName, trimmedCode));
@@ -119,8 +303,9 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
         const doc = await vscode.workspace.openTextDocument(targetFileUri);
         await vscode.window.showTextDocument(doc);
 
-        // Обновляем Phase Switcher
-        vscode.commands.executeCommand('1cDriveHelper.refreshPhaseSwitcherFromCreate');
+        // Обновляем Test Manager
+        await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcherFromCreate');
+        await maybeAutoAddScenarioToFavorites(config, targetFileUri);
 
     } catch (error: any) {
         console.error("[Cmd:createNestedScenario] Error:", error);
@@ -136,6 +321,12 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
  */
 export async function handleCreateMainScenario(context: vscode.ExtensionContext): Promise<void> {
     const t = await getTranslator(context.extensionUri);
+    const config = vscode.workspace.getConfiguration('kotTestToolkit');
+    const newScenarioLanguage = getConfiguredScenarioLanguage(config);
+    const includeDriveBlock = config.get<boolean>('assembleScript.showDriveFeatures', false);
+    const knownScenarioIndex = await getKnownScenarioIndex();
+    const knownScenarioNames = knownScenarioIndex.names;
+    const knownScenarioCodes = knownScenarioIndex.codes;
     console.log("[Cmd:createMainScenario] Starting...");
     // 1. Запрос имени
     const name = await vscode.window.showInputBox({
@@ -145,25 +336,39 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
             const trimmedValue = value?.trim();
             if (!trimmedValue) return t('Name cannot be empty');
             if (/[/\\:*\?"<>|]/.test(trimmedValue)) return t('Name contains invalid characters');
+            if (knownScenarioNames.has(normalizeScenarioName(trimmedValue))) {
+                return t('Scenario name "{0}" already exists.', trimmedValue);
+            }
+            if (knownScenarioCodes.has(normalizeScenarioCode(trimmedValue))) {
+                return t('Scenario code "{0}" already exists.', trimmedValue);
+            }
             return null;
         }
     });
     if (name === undefined) { console.log("[Cmd:createMainScenario] Cancelled at name input."); return; }
     const trimmedName = name.trim();
+    if (knownScenarioNames.has(normalizeScenarioName(trimmedName))) {
+        vscode.window.showErrorMessage(t('Scenario name "{0}" already exists.', trimmedName));
+        return;
+    }
+    if (knownScenarioCodes.has(normalizeScenarioCode(trimmedName))) {
+        vscode.window.showErrorMessage(t('Scenario code "{0}" already exists.', trimmedName));
+        return;
+    }
 
     // 2. Запрос имени вкладки/фазы
     const tabName = await vscode.window.showInputBox({
-        prompt: t('Enter phase name'),
-        placeHolder: t('For example, "Sales tests 1" or "New Phase"'),
+        prompt: t('Enter group name'),
+        placeHolder: t('For example, "Sales tests 1" or "New Group"'),
         ignoreFocusOut: true,
-        validateInput: value => value?.trim() ? null : t('Phase name cannot be empty (required for display)')
+        validateInput: value => value?.trim() ? null : t('Group name cannot be empty (required for display)')
     });
     if (tabName === undefined) { console.log("[Cmd:createMainScenario] Cancelled at tab name input."); return; }
     const trimmedTabName = tabName.trim();
 
     // 3. Запрос порядка сортировки (необязательно)
     const orderStr = await vscode.window.showInputBox({
-        prompt: t('Enter order within the phase'),
+        prompt: t('Enter order within the group'),
         placeHolder: t('Optional'),
         ignoreFocusOut: true,
         validateInput: value => (!value || /^\d+$/.test(value.trim())) ? null : t('Must be an integer or empty')
@@ -175,7 +380,7 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
 
     // 4. Запрос состояния по умолчанию (QuickPick)
     const defaultStatePick = await vscode.window.showQuickPick(['true', 'false'], {
-        placeHolder: t('Default state in Phase Switcher (optional)'),
+        placeHolder: t('Default state in Test Manager (optional)'),
         canPickMany: false,
         ignoreFocusOut: true,
         title: t('Checkbox enabled by default?')
@@ -251,14 +456,15 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
         const mainTemplateBytes = await vscode.workspace.fs.readFile(mainTemplateUri);
         const mainTemplateContent = Buffer.from(mainTemplateBytes).toString('utf-8');
         // В главном шаблоне Code_Placeholder заменяется на имя сценария
-        const mainFinalContent = mainTemplateContent
+        const mainFinalContent = applyMainScenarioDriveBlock(applyScenarioLanguage(mainTemplateContent
             .replace(/Name_Placeholder/g, trimmedName)
             .replace(/Code_Placeholder/g, trimmedName) 
             .replace(/UID_Placeholder/g, mainUid)
             .replace(/Phase_Placeholder/g, trimmedTabName)
             .replace(/Default_Placeholder/g, defaultStateStr)
-            .replace(/Order_Placeholder/g, orderForTemplate);
+            .replace(/Order_Placeholder/g, orderForTemplate), newScenarioLanguage), includeDriveBlock, newScenarioLanguage);
         await vscode.workspace.fs.writeFile(mainTargetFileUri, Buffer.from(mainFinalContent, 'utf-8'));
+        rememberScenarioInIndex(trimmedName, trimmedName);
         console.log(`[Cmd:createMainScenario] Created main scenario file: ${mainTargetFileUri.fsPath}`);
 
         vscode.window.showInformationMessage(t('Main scenario "{0}" has been created successfully!', trimmedName));
@@ -266,8 +472,9 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
         const doc = await vscode.workspace.openTextDocument(mainTargetFileUri);
         await vscode.window.showTextDocument(doc);
 
-        // Обновляем Phase Switcher
-        vscode.commands.executeCommand('1cDriveHelper.refreshPhaseSwitcherFromCreate');
+        // Обновляем Test Manager
+        await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcherFromCreate');
+        await maybeAutoAddScenarioToFavorites(config, mainTargetFileUri);
 
     } catch (error: any) {
         console.error("[Cmd:createMainScenario] Error:", error);

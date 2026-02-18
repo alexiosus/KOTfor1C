@@ -1,167 +1,300 @@
 # Change Log
 
+# 2.0.0
+
+## Breaking changes
+
+- Extension renamed to `KOT for 1C` (_**K**eep **O**n **T**esting_).
+- Panel **Phase Switcher** renamed to **Test Manager**.
+- Context menu items and commands now use the `KOT -` prefix ([#10](https://github.com/kakoytochelik/KOTfor1C/issues/10)).
+- Commands and settings moved to the `kotTestToolkit.*` namespace.
+- Removed obsolete 1C:Drive-specific features: test mail settings and `RepairTestFile`.
+- New Marketplace ID: `AlexeyEremeev.kot-test-toolkit`.
+
+_Attention: the previous plugin version (`1C:Drive Test Helper 1.11.2`) does not support direct upgrade to this version. Install the new plugin (`KOT for 1C`) and remove the old extension._
+
+## New features
+
+### Test Manager and **Vanessa Automation support**
+
+- Added **Vanessa Automation** launch directly from the **Test Manager** panel (formerly Phase Switcher) ([#13](https://github.com/kakoytochelik/KOTfor1C/issues/13)):
+  - Two launch modes: regular automatic run of selected tests and launch for manual work.
+  - Scenario status display: running, passed, failed, stale result (for example, if a related nested scenario was changed).
+  - Quick access to run log file for failed test completion.
+  - Live log view while scenario execution is in progress (with configurable refresh interval).
+- Added `Favorites` tab:
+  - Quick open of a favorite scenario or remove it from the list.
+  - Drag-and-drop favorite scenarios into the editor: inserts a nested scenario call with parameters.
+  - Tests can be added to and removed from `Favorites` through the editor context menu.
+  - Auto-add newly created scenarios to `Favorites` (toggle in settings).
+  - Favorites list supports sorting by scenario name and scenario code.
+- Activity bar panel UI was improved (Test Manager / build area):
+  - Added compact search for main scenarios (match highlighting, clear button, toggleable search visibility).
+  - Updated bottom build area layout (`Build tests`, `Build FL`, `Accounting mode`) and dropdown behavior.
+- Added highlighting of main scenarios affected by the currently open file.
+- Added ability to rename groups and scenarios through the context menu.
+
+### Test build and Parameters Manager
+
+- Improved scenario build process:
+  - Added ability to cancel the current test build.
+  - Test checkbox selection in Test Manager now automatically forms `Exceptscenario` / `Scenariofilter` for build processing (without physical file moves).
+  - After build: quick access to feature files and results directory ([#9](https://github.com/kakoytochelik/KOTfor1C/issues/9)).
+- New Parameters Manager UI with tabs:
+  - SPPR build parameters (existing);
+  - additional Vanessa Automation parameters (new);
+  - global variables `GlobalVars` (new).
+  - JSON import/export for each tab.
+  - Search by parameter name on each tab.
+
+### Editor and scenario quality
+
+- Added scenario diagnostics with error and warning highlighting ([#14](https://github.com/kakoytochelik/KOTfor1C/issues/14)):
+  - unknown steps and calls;
+  - extra and missing parameters;
+  - quote issues;
+  - unclosed `If/Do` blocks;
+  - incomplete service sections;
+  - duplicate scenario codes.
+- `Quick Fix` for diagnostics:
+  - Replace with nearest similar step or call while preserving line arguments.
+  - `Maybe you meant` block with similar step suggestions in the diagnostic description.
+  - Automatic insertion of missing parameters.
+- Improved hover hints and IntelliSense:
+  - for steps: with actual arguments from the line;
+  - for calls: with scenario description and compact summary (number of files, parameters, and nested calls) ([#12](https://github.com/kakoytochelik/KOTfor1C/issues/12)).
+- Improved nested scenario call completion and insertion of default parameter values.
+- Added variable completion on `$`: suggests variables saved by `I save ... in "..." variable` / `Я запоминаю значение выражения ... в переменную "..."`, and user `GlobalVars` from Parameters Manager, with insertion as `$VariableName$`.
+- Added automatic alignment of Gherkin tables and scenario call parameters on file save ([#7](https://github.com/kakoytochelik/KOTfor1C/issues/7), [#15](https://github.com/kakoytochelik/KOTfor1C/issues/15)).
+- Auto-fill of `NestedScenarios` and `ScenarioParameters` blocks now runs only when there are real changes.
+- Added unique name and code validation when creating scenarios.
+- Added extension setting that defines language for newly created scenarios (`#language: ru/en`).
+- For editor features, language is now determined first by the `#language:` tag in the current file (with fallback to extension setting).
+- Added extension setting that toggles visibility of functionality specific to 1C:Drive.
+
+### Scenario metadata
+
+- Added and supported `KOTМетаданные` block for storing service data.
+- Automatic migration of legacy tags to the new format on save.
+- Support for user scenario description in `KOTМетаданные.Описание` ([#12](https://github.com/kakoytochelik/KOTfor1C/issues/12)).
+
+## Fixes and improvements
+
+- Improved autosave stability and section refill operations ([#6](https://github.com/kakoytochelik/KOTfor1C/issues/6)).
+- Improved cache update performance ([#11](https://github.com/kakoytochelik/KOTfor1C/issues/11)).
+- Switching Activity Bar panels no longer removes build lock during scenario assembly ([#17](https://github.com/kakoytochelik/KOTfor1C/issues/17)).
+- Improved localization, context menus, and overall UI structure.
+- `.vsix` package size significantly reduced.
+- Updated `codicons`.
+- Settings reorganized.
+
+---
+---
+---
+
+
 # 1.11.2
-- **New Features**:
-    - **Build Scenario Parameters Manager:**
-        - New interface for managing `yaml_parameters.json` parameters through a convenient key-value table.
-        - Default parameters generated based on extension settings (BuildPath, yamlSourceDirectory).
-        - Secure storage of settings in VS Code SecretStorage.
+- **New features**:
+    - **Scenario Build Parameters Manager:**
+        - New interface for managing `yaml_parameters.json` through a convenient key-value table.
+        - Default parameters are generated based on extension settings (BuildPath, yamlSourceDirectory).
+        - Secure settings storage in VS Code SecretStorage.
         - Support for loading/saving parameters from/to JSON files.
-        - The list of supported parameters is available [on ITS](https://its.1c.ru/db/sppr2doc#content:124:hdoc:issogl1_11.8.3).
+        - List of supported parameters is available [on ITS](https://its.1c.ru/db/sppr2doc#content:124:hdoc:issogl1_11.8.3).
 - **Fixes**:
-    - **Fixed refresh button unavailability:** The "Refresh" button is now always available, even when no tests are found for the Phase Switcher.
-    - **Fixed hardcoded paths:** Replaced hardcoded `SCAN_DIR_RELATIVE_PATH` constant with the `YamlSourceDirectory` setting.
+    - **Refresh button availability fixed:** the "Refresh" button is now always available, even when no tests are found for Phase Switcher.
+    - **Hardcoded paths fixed:** replaced hardcoded `SCAN_DIR_RELATIVE_PATH` constant with `YamlSourceDirectory` setting.
     - Fixed untranslated messages and tooltips.
-    - Fixed wrongly added empty string in the NestedScenario section.
+    - Fixed insertion of an extra line into `NestedScenarios` block.
     - Tabs are now replaced only at the beginning of a line.
-    - The FirstLaunch file assembly now processes only the necessary XML files.
-    - Creating new main scenarios now takes into account the ModelBDid setting (specified in the Build Scenario Parameters Manager).
-    - Auto-replacement of tabs and refilling of blocks in the header of scenarios, as well as auto-completion suggestions for steps, now only work in YAML files that have the string `ТипФайла: "Сценарий"` (`FileType: “Scenario”`) (it is a protection of YAML files that are not related to tests).
+    - FirstLaunch build now processes only required XML files.
+    - New main scenario creation now respects `ModelBDid` setting (configured in Scenario Build Parameters Manager).
+    - Tab auto-replacement and scenario header block refill, as well as step autocompletion suggestions, now work only in YAML files containing `ТипФайла: "Сценарий"` (protection for non-test YAML files).
 - **Removed**:
-    - **YAML Parameters Template setting:** Removed in favor of the new Build Scenario Parameters Manager.
-    - **Split Feature Files setting:** Removed as it's now configured through the Build Scenario Parameters Manager.
-    - **BuildScenarioBDD Parameters setting:** Removed as all parameters are now managed through the Build Scenario Parameters Manager.
+    - **YAML Parameters Template setting:** removed in favor of Scenario Build Parameters Manager.
+    - **Split Feature Files setting:** removed because it is now configured via Scenario Build Parameters Manager.
+    - **СборкаТекстовСценариев parameters setting:** removed because all parameters are now managed via Scenario Build Parameters Manager.
 
 # 1.10.6
-- Fixed saving parameter values when the value is an empty string.
+- Fixed preserving parameter values when the value is an empty string.
 
 # 1.10.5
-- **New Features**:
-    - **Auto-fill on Save:**
-        - Added automatic filling of NestedScenarios and ScenarioParameters sections when saving YAML files.
-        - New "clear and refill" logic ensures correct element order according to scenario text.
-        - Preservation of custom parameter values (`Значение: "Value"` field) during auto-fill.
-        - Separate settings for each function: tab replacement, nested scenarios filling, parameters filling.
-        - Unified progress bar and consolidated notifications about completed operations.
-        - Automatic file saving after processing to prevent displaying unsaved changes.
-    - **Performance Optimization:**
-        - **Startup Cache Initialization:** Workspace scanning and scenario cache building happens immediately on extension activation, not on first panel opening.
-        - **Scenario UID Caching:** Added extraction and caching of UIDs from ДанныеСценария blocks for fast access.
-        - **Optimized Nested Scenarios Filling:** Using cache instead of file system search speeds up operation 25-50x.
-        - **Optimized Scenario Opening:** Instant scenario opening through cache instead of slow file search (50-100x speedup).
+- **New features**:
+    - **Autofill on save:**
+        - Added automatic filling of `NestedScenarios` and `ScenarioParameters` sections on YAML file save.
+        - New "clear and refill" logic ensures correct item order according to scenario text.
+        - Preserves user parameter values (`Значение: "Value"`) during autofill.
+        - Separate settings for each function: tab replacement, nested scenarios fill, scenario parameters fill.
+        - Unified progress bar and consolidated completion notifications.
+        - Automatic save after processing to avoid unsaved-change state.
+    - **Performance optimization:**
+        - **Cache initialization on startup:** workspace scan and scenario cache build now run on extension activation, not on first panel open.
+        - **Scenario UID caching:** extraction and caching of UID from `ДанныеСценария` blocks for faster access.
+        - **Optimized nested scenarios fill:** cache-based lookup instead of file system search speeds up operation by 25-50x.
+        - **Optimized scenario open:** instant scenario opening via cache instead of slow file search (50-100x speedup).
 - **Fixes**:
-    - **Unified Logic:** Manual commands and auto-save use the same "clear and refill" logic.
-    - **Improved Parameter Handling:** Correct scenario parameter detection (only `_`, `-`, letters and digits).
+    - **Unified logic:** manual commands and auto-save now use the same "clear and refill" logic.
+    - **Improved parameter detection:** scenario parameters are now detected correctly (only `_`, `-`, letters and digits).
 
 # 1.9.9
-- **New Features**:
-    - **Configurable 1C Startup Parameters:**
-        - Added ability to configure all 1C:Enterprise startup parameters through a single settings string.
-        - Separate setting for additional `/C` parameters for BuildScenarioBDD (СборкаТекстовСценариев) processing. Read more about parameters [here](https://its.1c.ru/db/sppr2doc#content:124:hdoc) (Russian).
-    - **Configurable Project Paths:**
-        - All previously hardcoded paths can now be configured through extension settings.
-        - Optional EPF files (`RepairTestFile.epf`) - processing is skipped if path is not set.
-        - FirstLaunch folder path setting with automatic button hiding if folder doesn't exist.
-    - **Enhanced Build Feedback:**
+- **New features**:
+    - **Configurable 1C startup parameters:**
+        - Added ability to configure all 1C:Enterprise launch parameters via a single setting string.
+        - Separate setting for additional `/C` parameters for `СборкаТекстовСценариев` processing. More details [here](https://its.1c.ru/db/sppr2doc#content:124:hdoc).
+    - **Configurable project paths:**
+        - All previously hardcoded paths can now be configured via extension settings.
+        - FirstLaunch folder path setting with automatic hiding of the button when the folder does not exist.
+    - **Improved build feedback:**
         - Improved build result notifications.
         - Improved Output log display.
-        - "Open Error File" button for quick access to JUnit XML file with details.
-        - Accurate error detection through JUnit XML file content analysis.
-- **Fixes and Improvements**:
-    - **Optimized Localization Files:** Removed unused translation strings.
-    - **Fixed Settings Numbering:** All settings now have sequential order numbers for correct display.
-    - **Removed Legacy Functionality:** Completely removed DriveTrade processing.
+        - "Open Error File" button for quick access to JUnit XML details.
+        - Accurate error detection via JUnit XML content analysis.
+- **Fixes and improvements**:
+    - **Localization files optimized:** removed unused translation strings.
+    - **Settings order fixed:** all settings now have consistent ordering for proper display.
+    - **Obsolete functionality removed:** DriveTrade processing removed completely.
 
 # 1.9.1
-- **New Features**:
-    - **Multilingual Support:**
-        - Complete localization of the extension interface in Russian and English.
-        - `Language override` setting to choose extension language independently of VS Code language.
-        - Multilingual Gherkin steps with support for 4-column structure in `steps.htm` (Russian step, Russian description, English step, English description).
-        - Smart display: When entering a Russian step, shows Russian description and both step variants; when entering English, shows English description and both variants.
-    - **Automatic Tab Conversion:**
-        - When saving YAML files, tabs are automatically replaced with spaces.
+- **New features**:
+    - **Multilingual support:**
+        - Full extension UI localization in Russian and English.
+        - `Language override` setting to choose extension language independently from VS Code language.
+        - Multilingual Gherkin steps with 4-column `steps.htm` support (Russian step, Russian description, English step, English description).
+        - Smart display: typing a Russian step shows Russian description and both step variants; typing an English step shows English description and both step variants.
+    - **Automatic tab conversion:**
+        - Tabs in YAML files are automatically replaced with spaces on save.
         - Removed manual "Replace tabs with spaces" command from context menu.
-- **Fixes and Improvements:**
-    - Improved parsing of multi-line steps from `steps.htm`.
-    - Improved error handling with localized messages.
-    - All file search operations, parameter filling, and step updates now show execution progress.
+- **Fixes and improvements**:
+    - Improved parsing of multiline steps from `steps.htm`.
+    - Improved localized error handling.
+    - All file search, parameter fill, and step refresh operations now show progress.
 
 # 1.8.0
-- **New Features**:
-    - **Automatic FirstLaunch Archive Creation:**
-        - Added FirstLaunch archive creation button `Build FL` to command palette and `Build` panel.
-        - Automatically sets configuration version from current branch in all required places.
-        - Ability to save the final archive to a user directory and open that directory.
-- **Fixes and Improvements:**
-    - `Test Build` panel renamed to simply `Build`, as it now builds not only tests but also FirstLaunch archive.
+- **New features**:
+    - **Automatic FirstLaunch archive creation:**
+        - Added `Build FL` button in command palette and `Build` panel.
+        - Configuration version from current branch is now set automatically in all required places.
+        - Ability to save resulting archive to a custom directory and open it.
+- **Fixes and improvements**:
+    - `Test Build` panel renamed to `Build`, because it now builds not only tests but also FirstLaunch archive.
     - `Accounting` list renamed to `Accounting mode`.
-    - Removed DriveTrade toggle as it's legacy mechanics.
-    - `Split Feature Files` parameter is now disabled by default.
+    - Removed DriveTrade toggle as a legacy mechanism.
+    - `Split Feature Files` is now disabled by default.
 
 # 1.7.1
-- **Fixes and Improvements:**
-    - **Settings Reorganization:**
-        - More accurate placement of settings by categories.
+- **Fixes and improvements**:
+    - **Settings reorganization:**
+        - More accurate grouping of settings by category.
         - Removed unused settings (`DbUser`, `DbPassword`).
-        - Instead of dropdown, `Split Feature Files` is now a checkbox. Default value `True`. Added more accurate setting description.
-    - **Parameter Completeness Check:**
-        - When trying to run test build without paths set in settings, there will be a clear error and suggestion to fill settings.
-        - When trying to open MXL file without paths set in settings, there will be a clear error and suggestion to fill settings.
+        - `Split Feature Files` changed from dropdown to checkbox. Default value is `True`. Added clearer setting description.
+    - **Required parameters checks:**
+        - Attempting to run test build without configured paths now shows a clear error and a prompt to fill settings.
+        - Attempting to open MXL file without configured paths now shows a clear error and a prompt to fill settings.
 
 # 1.7.0
-- **New Features**:
+- **New features**:
     - **Working with files from editor:**
-        - **Open MXL file in editor:** Added command to context menu for finding and opening `.mxl` file by selected name in "1C:Enterprise — work with files" program (requires separate installation).
-        - **Show file in VS Code explorer:** New command for finding file by selected name and displaying it in VS Code sidebar.
-        - **Open in system explorer:** New command for opening found file location in Windows Explorer or Finder.
+        - **Open MXL file from editor:** added context menu command to find and open `.mxl` by selected name in "1C:Enterprise — file workshop" (requires separate installation).
+        - **Reveal file in VS Code Explorer:** new command to find file by selected name and reveal it in sidebar.
+        - **Open in system file explorer:** new command to open found file location in Windows Explorer or Finder.
     - **Build process improvements:**
-        - **Progress bar:** During test build, a notification with progress bar is now displayed.
-        - **Error notifications:** In case of unsuccessful build, a notification appears with a button for quick navigation to log file.
-        - **Optional Output:** Added setting to enable/disable automatic opening of Output panel when starting build.
-        - **Opening build results**: After successful test build, you can open directory with collected `.feature` files.
+        - **Progress bar:** build now shows a progress notification.
+        - **Error notifications:** on failed build, shows notification with quick link to log file.
+        - **Optional Output:** added setting to enable/disable automatic Output panel opening on build start.
+        - **Open build results:** after successful build, you can open folder with generated `.feature` files.
     - **Scenario creation:**
-        - When creating main or nested scenario, an empty files folder is now automatically created for accompanying files (unification).
+        - Creating main or nested scenario now automatically creates an empty `files` folder for related files (unification).
 
 # 1.6.2
-- **New Features**:
-    - Since `NestedScenarios` and `ScenarioParameters` sections can contain many blocks, for improved navigation convenience and readability, automatic collapsing of these sections when opening test file has been added. Toggleable in settings.
+- **New features**:
+    - Since `NestedScenarios` and `ScenarioParameters` can contain many blocks, automatic collapsing of these sections on test-file open was added for better readability and navigation. Configurable in settings.
 
 # 1.6.1
-- **Fixes and Improvements:**
-    - Added auto-numbering for auto-filled blocks in `NestedScenarios` and `ScenarioParameters` sections.
-    - Improved indentation and line break logic for auto-filled blocks in `NestedScenarios` and `ScenarioParameters` sections.
-    - Fixed and accelerated parsing of scenarios with special characters for auto-filling blocks in `NestedScenarios` and `ScenarioParameters` sections.
+- **Fixes and improvements**:
+    - Added auto-numbering for autofilled blocks in `NestedScenarios` and `ScenarioParameters` sections.
+    - Improved indentation and line-break logic for autofilled blocks in `NestedScenarios` and `ScenarioParameters` sections.
+    - Fixed and sped up parsing of scenarios with special characters for autofill in `NestedScenarios` and `ScenarioParameters` sections.
 
 ## 1.6.0
-- **Auto-fill "NestedScenarios" section:**
+- **Autofill for "NestedScenarios" section:**
     - By context menu command `1C:Drive - Fill NestedScenarios section`, the section is automatically filled with missing blocks for called scenarios.
-- **Auto-fill "ScenarioParameters" section:**
+- **Autofill for "ScenarioParameters" section:**
     - By context menu command `1C:Drive - Fill ScenarioParameters section`, the section is automatically filled with missing blocks for parameters used in the scenario.
 - **Replace tabs with spaces:**
-    - By context menu command `1C:Drive - Replace tabs with spaces`, all tab indentation is replaced with 4 spaces.
-- **Removed old commands from context menu:** (_they are still available from palette_)
+    - By context menu command `1C:Drive - Replace tabs with spaces`, all tab-based indentation is replaced with 4 spaces.
+- **Removed old context menu commands:** (_still available from Command Palette_)
     - `1C:Drive - Insert NestedScenarios block`
     - `1C:Drive - Insert ScenarioParameters block`
 
 ## 1.5.2
 - **Improved "NestedScenarios" block insertion:**
-    - Auto-fill from selection: If a line corresponding to scenario call is selected when calling the command, the extension will now try to find the file of this scenario.
-    - In case of success, `UIDNestedScenario` and `ScenarioName` fields in the inserted block will be automatically filled with `UID` and `Name` values from the found scenario file.
-    - If the scenario file is not found, or UID/Name could not be extracted from it, the block will be inserted with empty values, as before.
+    - Autofill from selection: if a selected line matches a scenario call, the extension now tries to find that scenario file.
+    - If found, `UIDNestedScenario` and `ScenarioName` in the inserted block are automatically filled from that scenario file.
+    - If file is not found or UID/Name cannot be extracted, the block is inserted with empty values as before.
 - **Context menu sections**:
-    - Context menu items are divided into 3 categories:
+    - Context menu items were split into 3 categories:
         - Navigation
         - Creation
         - Editing
 
 ## 1.5.0
 - **Autocompletion for nested scenario calls:**
-    - When entering text in `ScenarioText:` block, autocompletion options are suggested not only for standard Gherkin steps, **but also for calls to all found scenarios**.
-    - If the selected scenario for insertion contains parameters, it is inserted as a multi-line snippet, including scenario name and lines for each parameter with placeholders for their values. 
-    - The list of scenarios and their parameters for autocompletion is updated when pressing the "Refresh" button on the "1C:Drive Test Helper" panel (together with updating data for Phase Switcher).
+    - While typing in `ScenarioText:`, autocompletion now suggests not only standard Gherkin steps, **but also calls to all discovered scenarios**.
+    - If selected scenario has parameters, it is inserted as a multiline snippet with scenario name and parameter lines with placeholders.
+    - Scenario and parameter completion data is refreshed when clicking "Refresh" in "KOT for 1C" panel (together with Phase Switcher data refresh).
 
 - **External loading of Gherkin step definitions:**
-    - Added ability to load `steps.htm` file (used for autocompletion and hints) from external URL. This allows updating step definitions without updating the entire extension.
-    - In extension settings, user can specify URL for `steps.htm` file (default link to file in repository is set). If left empty, only local copy from extension will be used.
-    - Caching mechanism implemented: loaded file is saved locally and used for 24 hours or until next URL change.
-    - Added new command to command palette: `1C:Drive - Refresh step library`. This command forcibly loads `steps.htm` from specified URL and updates cache.
-    - In case of external resource unavailability or loading error, extension will use data from cache (if valid) or, as last resort, local copy of `steps.htm` included in extension, to ensure continuous operation.
+    - Added ability to load `steps.htm` (used for autocomplete and hovers) from external URL, allowing step updates without extension update.
+    - Settings now allow specifying external `steps.htm` URL (default points to repository file). If empty, only bundled local copy is used.
+    - Implemented caching: downloaded file is stored locally and reused for 24 hours or until URL changes.
+    - Added command palette command `1C:Drive - Refresh step library` to force download and cache update.
+    - If external source is unavailable, extension falls back to valid cache or bundled local `steps.htm` to keep functionality available.
 
 - **Scenario creation buttons:**
-    - Added buttons for creating Main or Nested scenarios to Phase Switcher panel.
+    - Added buttons to create Main and Nested scenarios in Phase Switcher panel.
 
 - **Fixed:**
-    - When creating new Main scenario, test list in Phase Switcher now automatically updates.
+    - When creating a new Main scenario, Phase Switcher test list now refreshes automatically.
+
+
 
 ## 1.4.1
+- Added Collapse/Expand all phases button.
+- Added indicator for unapplied changes inside a phase.
+- Updated button styles.
+
+## 1.4.0
+
+- **TypeScript integration of test build**:
+    - Completely migrated `BuildYAML.bat` logic into extension code (`phaseSwitcher.ts`).
+    - Test build process is now managed directly by the extension using VS Code API and Node.js for file operations and 1C process launch.
+    - [BETA] Test build is now available on macOS.
+- **"Phase Switcher" UI improvements**:
+    - Replaced phase dropdown with expandable Tree View groups.
+    - Added enabled-tests counter to phase group headers.
+    - Added per-phase toggle buttons in each group header for switching tests inside that phase. _(Removed global "Switch phase" button.)_
+- **Fixes**:
+    - [Refresh button remains active during test build](https://github.com/kakoytochelik/KOTfor1C/issues/2)
+    - [Test build does not start when empty infobase path contains spaces](https://github.com/kakoytochelik/KOTfor1C/issues/1)
+
+## 1.3.3
+
+- Integrated test build functionality into extension panel with variable replacement in tests.
+- Added extension settings.
+- Added button icons.
+- Fixed styles and rendering of several UI elements.
+
+## 1.2.0
+
+- Implemented Gherkin step autocompletion based on Vanessa Automation step library.
+- Added hover hints for Gherkin steps that show step descriptions from Vanessa Automation step library when hovering a step line in YAML files.
+
+## 1.1.1
+
+- Added ability to navigate to parent scenarios from Phase Switcher.
+- Insertion of `NestedScenarios` and `ScenarioParameters` blocks now automatically targets corresponding sections instead of current cursor position.
+- Improved display of long scenario names in Phase Switcher.
+
+## 1.0.0
+
+- Initial release.

@@ -58,13 +58,14 @@ export async function findFileByName(searchText: string, testCache?: Map<string,
 }
 
 /**
- * Асинхронно ищет все строки вида 'And targetName' во всех YAML файлах в папке tests.
+ * Асинхронно ищет все вызовы вложенного сценария во всех YAML файлах в папке tests.
+ * Поддерживаются ключевые слова: And, И, Допустим.
  * @param targetName Имя сценария для поиска ссылок (значение из поля "Имя:").
  * @param token Токен отмены операции (опционально).
  * @returns Promise с массивом найденных местоположений (vscode.Location).
  */
 export async function findScenarioReferences(targetName: string, token?: vscode.CancellationToken): Promise<vscode.Location[]> {
-    console.log(`[findScenarioReferences] Searching for references: "And ${targetName}"...`);
+    console.log(`[findScenarioReferences] Searching for nested scenario references: "${targetName}"...`);
     const locations: vscode.Location[] = [];
     const searchPattern = 'tests/**/*.yaml';
     const excludePattern = '**/node_modules/**';
@@ -81,9 +82,9 @@ export async function findScenarioReferences(targetName: string, token?: vscode.
 
         // Экранируем специальные символы Regex в targetName на всякий случай
         const escapedTargetName = targetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        // Создаем регулярное выражение для поиска строки, начинающейся с 'And ' и затем ТОЧНО targetName
-        // \s*$ позволяет наличие пробелов в конце строки, но ничего другого
-        const usageRegex = new RegExp(`^(\\s*)And\\s+(${escapedTargetName})\\s*$`);
+        // Ищем строку вида "<отступ><ключевое слово><пробелы><имя сценария>".
+        // \s*$ позволяет наличие пробелов в конце строки, но ничего другого.
+        const usageRegex = new RegExp(`^(\\s*)(And|И|Допустим)(\\s+)(${escapedTargetName})\\s*$`, 'i');
 
         for (const fileUri of potentialFiles) {
             if (token?.isCancellationRequested) {
@@ -100,10 +101,12 @@ export async function findScenarioReferences(targetName: string, token?: vscode.
                     const usageMatch = currentLineText.match(usageRegex);
 
                     if (usageMatch) {
-                        const leadingSpaces = usageMatch[1].length; // Длина отступа
-                        const nameInLine = usageMatch[2]; // Найденное имя (должно совпадать с targetName)
-                        const startChar = leadingSpaces + 4; // Позиция начала имени ('A'nd ' ' = 4 символа)
-                        const endChar = startChar + nameInLine.length; // Конец имени
+                        const leadingSpaces = usageMatch[1].length;
+                        const keyword = usageMatch[2];
+                        const spacesAfterKeyword = usageMatch[3];
+                        const nameInLine = usageMatch[4];
+                        const startChar = leadingSpaces + keyword.length + spacesAfterKeyword.length;
+                        const endChar = startChar + nameInLine.length;
 
                         const usageRange = new vscode.Range(i, startChar, i, endChar);
                         locations.push(new vscode.Location(fileUri, usageRange));
