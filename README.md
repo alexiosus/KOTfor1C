@@ -141,7 +141,7 @@ _На скриншотах продемонстрирован интерфейс
 
 ---
 
-- Описание шагов и сценариев в подсказках IntelliSense:
+- Описание шагов, сценариев и переменных в подсказках IntelliSense:
 <p align="center"><img src="./docs/IntelliSense.png" alt="Команды контекстного меню" style="max-width: 100%; height: auto; border-radius: 8px;"/></p>
 
 ---
