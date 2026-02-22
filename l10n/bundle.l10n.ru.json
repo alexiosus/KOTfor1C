@@ -558,5 +558,6 @@
   "Selected: {0}/{1}": "Выбрано: {0}/{1}",
   "Test Manager selection: enabled {0} of {1}.": "Выбор в Менеджере тестов: включено {0} из {1}.",
   "Build filter applied: {0} = {1}": "Применен фильтр сборки: {0} = {1}",
-  "Build filter applied: none (all scenarios enabled).": "Фильтр сборки не применялся (все сценарии включены)."
+  "Build filter applied: none (all scenarios enabled).": "Фильтр сборки не применялся (все сценарии включены).",
+  "semantic match": "семантическое совпадение"
 }

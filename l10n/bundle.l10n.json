@@ -558,5 +558,6 @@
   "Selected: {0}/{1}": "Selected: {0}/{1}",
   "Test Manager selection: enabled {0} of {1}.": "Test Manager selection: enabled {0} of {1}.",
   "Build filter applied: {0} = {1}": "Build filter applied: {0} = {1}",
-  "Build filter applied: none (all scenarios enabled).": "Build filter applied: none (all scenarios enabled)."
+  "Build filter applied: none (all scenarios enabled).": "Build filter applied: none (all scenarios enabled).",
+  "semantic match": "semantic match"
 }

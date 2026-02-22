@@ -4,14 +4,67 @@ import { getStepsHtml, forceRefreshSteps as forceRefreshStepsCore } from './step
 import { TestInfo } from './types';
 import { getTranslator } from './localization';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
-import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
+import { ScenarioLanguage, getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
 import { YamlParametersManager } from './yamlParametersManager';
 
 const VARIABLE_REFERENCE_PREFIX_REGEX = /^[A-Za-zА-Яа-яЁё0-9_]*$/;
+const SEMANTIC_STEP_PREFIX = '!';
+const GHERKIN_KEYWORD_PREFIX_REGEX = /^(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\s+/i;
+const SEMANTIC_SYNONYM_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
+    ['нажать', 'нажатие', 'нажатия', 'нажат', 'кликнуть', 'клик', 'щелкнуть', 'щелчок', 'click', 'clicking', 'press', 'pressing', 'tap'],
+    ['кнопка', 'button'],
+    ['окно', 'форма', 'window', 'form'],
+    ['поле', 'реквизит', 'атрибут', 'field', 'attribute'],
+    ['ввести', 'ввод', 'input', 'enter', 'type'],
+    ['проверить', 'проверка', 'check', 'verify', 'assert'],
+    ['открыть', 'открывается', 'open', 'opened'],
+    ['закрыть', 'закрывается', 'close', 'closed'],
+    ['выбрать', 'выбор', 'select', 'choose', 'pick'],
+    ['таблица', 'список', 'table', 'list', 'grid'],
+    ['команда', 'действие', 'command', 'action'],
+    ['перейти', 'открыть', 'go', 'move', 'navigate'],
+    ['сохранить', 'запомнить', 'save', 'store', 'remember'],
+    ['значение', 'параметр', 'value', 'parameter', 'argument']
+];
 const SAVE_VARIABLE_STEP_REGEX_EN = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+in\s+(?:"([^"]+)"|'([^']+)')\s+variable\s*$/i;
 const SAVE_VARIABLE_STEP_REGEX_EN_VALUE_TO = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+value\s+to\s+(?:"([^"]+)"|'([^']+)')\s+variable\s*$/i;
 const SAVE_VARIABLE_STEP_REGEX_RU = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?Я\s+запоминаю\s+значение\s+выражения\s+(.+?)\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s*$/i;
 const SAVE_VARIABLE_STEP_REGEX_RU_VALUE_TO = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?Я\s+запоминаю\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s+значение\s+(.+?)\s*$/i;
+
+function normalizeSemanticSynonymToken(value: string): string {
+    return value.trim().toLocaleLowerCase().replace(/ё/g, 'е');
+}
+
+function buildSemanticSynonymIndex(
+    groups: ReadonlyArray<ReadonlyArray<string>>
+): Map<string, string[]> {
+    const index = new Map<string, Set<string>>();
+
+    groups.forEach(group => {
+        const normalizedGroup = Array.from(new Set(
+            group
+                .map(token => normalizeSemanticSynonymToken(token))
+                .filter(token => token.length >= 2)
+        ));
+        if (normalizedGroup.length < 2) {
+            return;
+        }
+
+        normalizedGroup.forEach(token => {
+            const bucket = index.get(token) || new Set<string>();
+            normalizedGroup.forEach(value => bucket.add(value));
+            index.set(token, bucket);
+        });
+    });
+
+    const result = new Map<string, string[]>();
+    index.forEach((values, key) => {
+        result.set(key, Array.from(values.values()));
+    });
+    return result;
+}
+
+const SEMANTIC_SYNONYM_INDEX = buildSemanticSynonymIndex(SEMANTIC_SYNONYM_GROUPS);
 
 interface SavedVariableDefinition {
     name: string;
@@ -19,8 +72,25 @@ interface SavedVariableDefinition {
     source: 'saved' | 'global';
 }
 
+interface SemanticStepEntry {
+    item: vscode.CompletionItem;
+    itemText: string;
+    stepSearchText: string;
+    descriptionSearchText: string;
+    tokens: string[];
+    tokenSet: Set<string>;
+    semanticNorm: number;
+    language: ScenarioLanguage;
+}
+
 export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     private gherkinCompletionItems: vscode.CompletionItem[] = [];
+    private semanticStepEntries: SemanticStepEntry[] = [];
+    private semanticIdfByTerm = new Map<string, number>();
+    private semanticPostingsByTerm = new Map<string, number[]>();
+    private semanticTermsByPrefix = new Map<string, string[]>();
+    private semanticVectorScoreCache = new Map<string, Map<number, number>>();
+    private gherkinItemLanguageByItem = new WeakMap<vscode.CompletionItem, ScenarioLanguage>();
     private scenarioCompletionItems: vscode.CompletionItem[] = [];
     private scenarioParametersByName: Map<string, string[]> = new Map();
     private calledScenarioDefaultsByName: Map<string, Map<string, string>> = new Map();
@@ -47,6 +117,12 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     public async refreshSteps(): Promise<void> {
         console.log("[DriveCompletionProvider] Refreshing Gherkin steps triggered...");
         this.gherkinCompletionItems = [];
+        this.semanticStepEntries = [];
+        this.semanticIdfByTerm.clear();
+        this.semanticPostingsByTerm.clear();
+        this.semanticTermsByPrefix.clear();
+        this.semanticVectorScoreCache.clear();
+        this.gherkinItemLanguageByItem = new WeakMap<vscode.CompletionItem, ScenarioLanguage>();
         this.loadingGherkinPromise = null;
         this.isLoadingGherkin = false;
         try {
@@ -128,6 +204,12 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
     private parseAndStoreGherkinCompletions(htmlContent: string): void {
         this.gherkinCompletionItems = []; // Очищаем перед заполнением
+        this.semanticStepEntries = [];
+        this.semanticIdfByTerm.clear();
+        this.semanticPostingsByTerm.clear();
+        this.semanticTermsByPrefix.clear();
+        this.semanticVectorScoreCache.clear();
+        this.gherkinItemLanguageByItem = new WeakMap<vscode.CompletionItem, ScenarioLanguage>();
         if (!htmlContent) {
             console.warn("[DriveCompletionProvider] HTML content is null or empty for Gherkin steps.");
             return;
@@ -168,7 +250,15 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     russianItem.documentation = russianDoc;
                     russianItem.detail = "Gherkin Step (1C) - Russian";
                     russianItem.insertText = russianStepText;
+                    this.gherkinItemLanguageByItem.set(russianItem, 'ru');
                     this.gherkinCompletionItems.push(russianItem);
+                    this.semanticStepEntries.push(this.createSemanticStepEntry(
+                        russianItem,
+                        russianStepText,
+                        russianStepDescription,
+                        [stepText, stepDescription],
+                        'ru'
+                    ));
                 }
 
                 // Создаем элемент автодополнения для английского шага (если он есть)
@@ -186,11 +276,20 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     item.documentation = englishDoc;
                     item.detail = "Gherkin Step (1C) - English";
                     item.insertText = stepText;
+                    this.gherkinItemLanguageByItem.set(item, 'en');
                     this.gherkinCompletionItems.push(item);
+                    this.semanticStepEntries.push(this.createSemanticStepEntry(
+                        item,
+                        stepText,
+                        stepDescription,
+                        [russianStepText, russianStepDescription],
+                        'en'
+                    ));
                 }
             }
         });
-        console.log(`[DriveCompletionProvider] Parsed and stored ${this.gherkinCompletionItems.length} Gherkin completion items.`);
+        this.rebuildSemanticVectorIndex();
+        console.log(`[DriveCompletionProvider] Parsed and stored ${this.gherkinCompletionItems.length} Gherkin completion items and ${this.semanticStepEntries.length} semantic entries.`);
     }
 
     private loadGherkinCompletionItems(): Promise<void> {
@@ -216,6 +315,12 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 const t = await getTranslator(this.context.extensionUri);
                 vscode.window.showErrorMessage(t('Failed to load Gherkin steps for autocompletion: {0}', error.message));
                 this.gherkinCompletionItems = []; // Убедимся, что список пуст в случае ошибки
+                this.semanticStepEntries = [];
+                this.semanticIdfByTerm.clear();
+                this.semanticPostingsByTerm.clear();
+                this.semanticTermsByPrefix.clear();
+                this.semanticVectorScoreCache.clear();
+                this.gherkinItemLanguageByItem = new WeakMap<vscode.CompletionItem, ScenarioLanguage>();
             })
             .finally(() => {
                 this.isLoadingGherkin = false;
@@ -276,7 +381,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         const completionList = new vscode.CompletionList();
 
         // Ищем отступы и ключевые слова в начале строки (регистронезависимо)
-        const lineStartPattern = /^(\s*)(and|then|when|given|и|тогда|когда|если|допустим|к тому же|но)?\s*/i;
+        const lineStartPattern = /^(\s*)(and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)?\s*/i;
         const lineStartMatch = linePrefix.match(lineStartPattern);
 
         if (!lineStartMatch) {
@@ -294,17 +399,28 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         const userTextAfterIndentation = linePrefix.substring(indentation.length);
         // Текст, который пользователь ввел ПОСЛЕ ключевого слова (если оно было)
         const userTextAfterKeyword = linePrefix.substring(gherkinPrefixInLine.length);
+        const textToMatchAgainst = keywordInLine ? userTextAfterKeyword : userTextAfterIndentation;
+        const scenarioLanguage = getScenarioLanguageForDocument(document);
+        const scenarioCallKeyword = getScenarioCallKeyword(scenarioLanguage);
+        const semanticQuery = this.extractSemanticStepQuery(textToMatchAgainst);
+        if (semanticQuery !== null) {
+            return this.buildSemanticStepCompletionList(
+                position,
+                indentation,
+                semanticQuery,
+                textToMatchAgainst,
+                scenarioLanguage
+            );
+        }
 
         console.log(`[DriveCompletionProvider:provideCompletionItems] Indent: '${indentation}', KeywordInLine: '${keywordInLine}', UserTextAfterKeyword: '${userTextAfterKeyword}', UserTextAfterIndentation: '${userTextAfterIndentation}'`);
 
         // Добавляем Gherkin шаги
-        const scenarioLanguage = getScenarioLanguageForDocument(document);
-        const scenarioCallKeyword = getScenarioCallKeyword(scenarioLanguage);
         this.gherkinCompletionItems.forEach(baseItem => {
             const itemFullText = typeof baseItem.label === 'string' ? baseItem.label : baseItem.label.label; // Полный текст элемента автодополнения
 
             // Извлекаем ключевое слово из самого шага Gherkin, если оно там есть
-            const itemStartPatternGherkin = /^(And|Then|When|Given|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+            const itemStartPatternGherkin = /^(And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
             const itemKeywordMatch = itemFullText.match(itemStartPatternGherkin);
             const itemKeywordFromStep = itemKeywordMatch ? itemKeywordMatch[0].trim().toLowerCase() : ''; // Ключевое слово из элемента
             const itemTextAfterKeywordInItem = itemKeywordMatch ? itemFullText.substring(itemKeywordMatch[0].length) : itemFullText; // Текст элемента после ключевого слова
@@ -320,7 +436,6 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             // Текст для нечеткого сопоставления:
             // Если пользователь ввел ключевое слово, сопоставляем то, что после него.
             // Если не ввел, сопоставляем весь введенный текст после отступа с текстом шага после его ключевого слова.
-            const textToMatchAgainst = keywordInLine ? userTextAfterKeyword : userTextAfterIndentation;
             const itemTextForMatching = itemTextAfterKeywordInItem;
 
             const matchResult = this.fuzzyMatch(itemTextForMatching, textToMatchAgainst);
@@ -342,7 +457,9 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     : itemFullText;
                 completionItem.insertText = baseInsertText;
                 // Сортировка по релевантности
-                completionItem.sortText = "0" + (1 - matchResult.score).toFixed(3) + itemFullText; // Используем toFixed(3) для большей гранулярности
+                const itemLanguage = this.getStepLanguageForItem(baseItem);
+                const languageBucket = itemLanguage && itemLanguage !== scenarioLanguage ? '1' : '0';
+                completionItem.sortText = `0${languageBucket}${(1 - matchResult.score).toFixed(3)}${itemFullText}`;
                 completionList.items.push(completionItem);
             }
         });
@@ -661,6 +778,454 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             return singleLine;
         }
         return `${singleLine.slice(0, maxLength - 1)}…`;
+    }
+
+    private createSemanticStepEntry(
+        item: vscode.CompletionItem,
+        stepText: string,
+        primaryDescription: string,
+        relatedTexts: string[] = [],
+        language: ScenarioLanguage = 'en'
+    ): SemanticStepEntry {
+        const normalizedStepText = this.normalizeSemanticSearchText(stepText);
+        const normalizedDescriptionText = this.normalizeSemanticSearchText(
+            [primaryDescription, ...relatedTexts].filter(Boolean).join(' ')
+        );
+        const tokens = Array.from(new Set(
+            this.extractSemanticSearchTokens(`${normalizedStepText} ${normalizedDescriptionText}`)
+        ));
+
+        return {
+            item,
+            itemText: stepText,
+            stepSearchText: normalizedStepText,
+            descriptionSearchText: normalizedDescriptionText,
+            tokens,
+            tokenSet: new Set(tokens),
+            semanticNorm: 0,
+            language
+        };
+    }
+
+    private getStepLanguageForItem(item: vscode.CompletionItem): ScenarioLanguage | null {
+        return this.gherkinItemLanguageByItem.get(item) || null;
+    }
+
+    private rebuildSemanticVectorIndex(): void {
+        this.semanticIdfByTerm.clear();
+        this.semanticPostingsByTerm.clear();
+        this.semanticTermsByPrefix.clear();
+        this.semanticVectorScoreCache.clear();
+
+        const totalDocuments = this.semanticStepEntries.length;
+        if (totalDocuments === 0) {
+            return;
+        }
+
+        const documentFrequencyByTerm = new Map<string, number>();
+        this.semanticStepEntries.forEach(entry => {
+            const uniqueTerms = new Set(entry.tokens);
+            uniqueTerms.forEach(term => {
+                documentFrequencyByTerm.set(term, (documentFrequencyByTerm.get(term) || 0) + 1);
+            });
+        });
+
+        documentFrequencyByTerm.forEach((documentFrequency, term) => {
+            const idf = Math.log((1 + totalDocuments) / (1 + documentFrequency)) + 1;
+            this.semanticIdfByTerm.set(term, idf);
+        });
+
+        const prefixBuckets = new Map<string, Set<string>>();
+        this.semanticIdfByTerm.forEach((_idf, term) => {
+            const maxPrefixLength = Math.min(6, term.length);
+            for (let prefixLength = 2; prefixLength <= maxPrefixLength; prefixLength++) {
+                const prefix = term.slice(0, prefixLength);
+                const bucket = prefixBuckets.get(prefix) || new Set<string>();
+                bucket.add(term);
+                prefixBuckets.set(prefix, bucket);
+            }
+        });
+        prefixBuckets.forEach((bucket, prefix) => {
+            this.semanticTermsByPrefix.set(prefix, Array.from(bucket.values()));
+        });
+
+        this.semanticStepEntries.forEach((entry, entryIndex) => {
+            const uniqueTerms = new Set(entry.tokens);
+            let normSquared = 0;
+
+            uniqueTerms.forEach(term => {
+                const idf = this.semanticIdfByTerm.get(term);
+                if (!idf) {
+                    return;
+                }
+
+                normSquared += idf * idf;
+
+                const postings = this.semanticPostingsByTerm.get(term) || [];
+                postings.push(entryIndex);
+                this.semanticPostingsByTerm.set(term, postings);
+            });
+
+            entry.semanticNorm = normSquared > 0 ? Math.sqrt(normSquared) : 0;
+        });
+    }
+
+    private normalizeSemanticSearchText(text: string): string {
+        return text
+            .replace(/\r\n|\r/g, '\n')
+            .replace(/"%\d+\s+[^"]*"|'%\d+\s+[^']*'/g, ' ')
+            .replace(/\[[^\]]+\]/g, ' ')
+            .replace(/[_:;,.!?(){}[\]"'`~@#$%^&*+=\\/|-]/g, ' ')
+            .replace(GHERKIN_KEYWORD_PREFIX_REGEX, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .replace(/ё/g, 'е')
+            .toLocaleLowerCase();
+    }
+
+    private stemSemanticToken(token: string): string {
+        let stem = token.toLocaleLowerCase().replace(/ё/g, 'е');
+        if (stem.length < 4) {
+            return stem;
+        }
+
+        // Lightweight EN stemming.
+        const englishSuffixes = ['ings', 'ing', 'edly', 'ed', 'ies', 'es', 's'];
+        for (const suffix of englishSuffixes) {
+            if (stem.length > suffix.length + 2 && stem.endsWith(suffix)) {
+                stem = stem.slice(0, -suffix.length);
+                break;
+            }
+        }
+
+        // Lightweight RU stemming for frequent inflection endings.
+        const russianLongSuffixes = [
+            'иями', 'ями', 'ами', 'ого', 'ему', 'ому', 'ыми', 'ими', 'ого', 'его',
+            'аться', 'яться', 'иться', 'ться', 'ется', 'ится', 'лась', 'лись', 'лся'
+        ];
+        for (const suffix of russianLongSuffixes) {
+            if (stem.length > suffix.length + 2 && stem.endsWith(suffix)) {
+                stem = stem.slice(0, -suffix.length);
+                return stem;
+            }
+        }
+
+        const russianShortSuffixes = [
+            'ов', 'ев', 'ом', 'ем', 'ам', 'ям', 'ах', 'ях',
+            'ый', 'ий', 'ой', 'ая', 'яя', 'ое', 'ее', 'ые', 'ие',
+            'ых', 'их', 'ую', 'юю', 'а', 'я', 'ы', 'и', 'о', 'е', 'у', 'ю'
+        ];
+        for (const suffix of russianShortSuffixes) {
+            if (stem.length > suffix.length + 2 && stem.endsWith(suffix)) {
+                stem = stem.slice(0, -suffix.length);
+                break;
+            }
+        }
+
+        return stem;
+    }
+
+    private extractSemanticSearchTokens(text: string): string[] {
+        const tokens = this.normalizeSemanticSearchText(text)
+            .split(/\s+/)
+            .map(token => token.trim())
+            .filter(token => token.length >= 2);
+
+        const result = new Set<string>();
+        for (const token of tokens) {
+            result.add(token);
+            const stem = this.stemSemanticToken(token);
+            if (stem && stem.length >= 2) {
+                result.add(stem);
+            }
+            this.appendSemanticSynonyms(result, token);
+            if (stem && stem.length >= 2) {
+                this.appendSemanticSynonyms(result, stem);
+            }
+        }
+
+        return Array.from(result.values());
+    }
+
+    private appendSemanticSynonyms(target: Set<string>, token: string): void {
+        const normalizedToken = normalizeSemanticSynonymToken(token);
+        if (!normalizedToken || normalizedToken.length < 2) {
+            return;
+        }
+
+        const synonyms = SEMANTIC_SYNONYM_INDEX.get(normalizedToken);
+        if (!synonyms || synonyms.length === 0) {
+            return;
+        }
+
+        synonyms.forEach(value => {
+            if (!value || value.length < 2) {
+                return;
+            }
+            target.add(value);
+            const stem = this.stemSemanticToken(value);
+            if (stem && stem.length >= 2) {
+                target.add(stem);
+            }
+        });
+    }
+
+    private extractSemanticStepQuery(input: string): string | null {
+        const trimmed = input.trimStart();
+        if (!trimmed.startsWith(SEMANTIC_STEP_PREFIX)) {
+            return null;
+        }
+        return trimmed.substring(SEMANTIC_STEP_PREFIX.length).trim();
+    }
+
+    private calculateSemanticVectorScores(queryTokens: string[]): Map<number, number> {
+        const cacheKey = queryTokens.join(' ');
+        const cached = this.semanticVectorScoreCache.get(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
+        const scoresByEntry = new Map<number, number>();
+        if (queryTokens.length === 0 || this.semanticStepEntries.length === 0 || this.semanticIdfByTerm.size === 0) {
+            return scoresByEntry;
+        }
+
+        const weightedQueryTerms = new Map<string, number>();
+        const uniqueQueryTerms = Array.from(new Set(queryTokens));
+
+        uniqueQueryTerms.forEach(term => {
+            if (!term || term.length < 2) {
+                return;
+            }
+
+            const hasExactTerm = this.semanticIdfByTerm.has(term);
+            if (this.semanticIdfByTerm.has(term)) {
+                weightedQueryTerms.set(term, Math.max(weightedQueryTerms.get(term) || 0, 1));
+            }
+
+            if (term.length >= 3) {
+                const prefixKey = term.slice(0, Math.min(6, term.length));
+                const prefixCandidates = this.semanticTermsByPrefix.get(prefixKey) || [];
+                let added = 0;
+                for (const candidate of prefixCandidates) {
+                    if (!candidate.startsWith(term) || candidate === term) {
+                        continue;
+                    }
+                    const expansionWeight = hasExactTerm ? 0.35 : 0.6;
+                    weightedQueryTerms.set(candidate, Math.max(weightedQueryTerms.get(candidate) || 0, expansionWeight));
+                    added++;
+                    if (added >= 24) {
+                        break;
+                    }
+                }
+            }
+        });
+
+        if (weightedQueryTerms.size === 0) {
+            return scoresByEntry;
+        }
+
+        let queryNormSquared = 0;
+        weightedQueryTerms.forEach((queryWeight, term) => {
+            const idf = this.semanticIdfByTerm.get(term) || 0;
+            if (idf <= 0 || queryWeight <= 0) {
+                return;
+            }
+
+            const queryTermWeight = queryWeight * idf;
+            queryNormSquared += queryTermWeight * queryTermWeight;
+
+            const dotContribution = queryTermWeight * idf;
+            const postings = this.semanticPostingsByTerm.get(term) || [];
+            for (const entryIndex of postings) {
+                scoresByEntry.set(entryIndex, (scoresByEntry.get(entryIndex) || 0) + dotContribution);
+            }
+        });
+
+        if (queryNormSquared <= 0) {
+            return new Map<number, number>();
+        }
+
+        const queryNorm = Math.sqrt(queryNormSquared);
+        const cosineScores = new Map<number, number>();
+
+        scoresByEntry.forEach((dotProduct, entryIndex) => {
+            const entryNorm = this.semanticStepEntries[entryIndex]?.semanticNorm || 0;
+            if (entryNorm <= 0) {
+                return;
+            }
+            const cosineScore = dotProduct / (queryNorm * entryNorm);
+            if (cosineScore > 0) {
+                cosineScores.set(entryIndex, Math.min(1, cosineScore));
+            }
+        });
+
+        this.semanticVectorScoreCache.set(cacheKey, cosineScores);
+        if (this.semanticVectorScoreCache.size > 300) {
+            const firstKey = this.semanticVectorScoreCache.keys().next().value;
+            if (typeof firstKey === 'string') {
+                this.semanticVectorScoreCache.delete(firstKey);
+            }
+        }
+
+        return cosineScores;
+    }
+
+    private getSemanticStepScore(
+        entry: SemanticStepEntry,
+        normalizedQuery: string,
+        queryTokens: string[],
+        vectorScore: number
+    ): number {
+        if (!normalizedQuery) {
+            return 0.2;
+        }
+
+        const stepMatch = this.fuzzyMatch(entry.stepSearchText, normalizedQuery);
+        const descriptionMatch = this.fuzzyMatch(entry.descriptionSearchText, normalizedQuery);
+        const bestFuzzy = Math.max(stepMatch.score, descriptionMatch.score * 1.15);
+
+        let tokenScore = 0;
+        if (queryTokens.length > 0 && entry.tokenSet.size > 0) {
+            const uniqueQueryTerms = new Set(queryTokens.filter(term => term.length >= 2));
+            const matchableQueryTerms = new Set<string>();
+            uniqueQueryTerms.forEach(term => {
+                if (entry.tokenSet.has(term) || this.semanticIdfByTerm.has(term)) {
+                    matchableQueryTerms.add(term);
+                    return;
+                }
+
+                if (term.length < 3) {
+                    return;
+                }
+                const prefixKey = term.slice(0, Math.min(6, term.length));
+                const prefixCandidates = this.semanticTermsByPrefix.get(prefixKey) || [];
+                if (prefixCandidates.some(candidate => candidate.startsWith(term) && candidate !== term)) {
+                    matchableQueryTerms.add(term);
+                }
+            });
+
+            const denominator = matchableQueryTerms.size > 0 ? matchableQueryTerms.size : uniqueQueryTerms.size;
+            let matchedTokens = 0;
+            uniqueQueryTerms.forEach(term => {
+                if (entry.tokenSet.has(term)) {
+                    matchedTokens++;
+                }
+            });
+            tokenScore = denominator > 0 ? matchedTokens / denominator : 0;
+        }
+
+        const containsPhrase =
+            entry.stepSearchText.includes(normalizedQuery) ||
+            entry.descriptionSearchText.includes(normalizedQuery);
+
+        let score = bestFuzzy * 0.4 + tokenScore * 0.35 + vectorScore * 0.75;
+        if (containsPhrase) {
+            score += 0.1;
+        }
+
+        return Math.min(1, score);
+    }
+
+    private buildSemanticStepCompletionList(
+        position: vscode.Position,
+        indentation: string,
+        semanticQuery: string,
+        typedSemanticInput: string,
+        preferredLanguage: ScenarioLanguage
+    ): vscode.CompletionList {
+        const completionList = new vscode.CompletionList([], false);
+        if (this.semanticStepEntries.length === 0) {
+            return completionList;
+        }
+
+        const normalizedQuery = this.normalizeSemanticSearchText(semanticQuery);
+        const queryTokens = this.extractSemanticSearchTokens(normalizedQuery);
+        const vectorScores = this.calculateSemanticVectorScores(queryTokens);
+        const rawFilterKey = (typedSemanticInput || '').trim();
+        const normalizedFilterKey = this.normalizeSemanticSearchText(rawFilterKey);
+
+        const candidateIndices = new Set<number>();
+        if (!normalizedQuery) {
+            for (let index = 0; index < Math.min(60, this.semanticStepEntries.length); index++) {
+                candidateIndices.add(index);
+            }
+        } else {
+            vectorScores.forEach((_score, entryIndex) => {
+                candidateIndices.add(entryIndex);
+            });
+
+            if (candidateIndices.size === 0) {
+                this.semanticStepEntries.forEach((entry, entryIndex) => {
+                    if (entry.stepSearchText.includes(normalizedQuery) || entry.descriptionSearchText.includes(normalizedQuery)) {
+                        candidateIndices.add(entryIndex);
+                    }
+                });
+            }
+
+            if (candidateIndices.size === 0) {
+                for (let index = 0; index < Math.min(120, this.semanticStepEntries.length); index++) {
+                    candidateIndices.add(index);
+                }
+            }
+        }
+
+        const ranked = Array.from(candidateIndices.values())
+            .map(entryIndex => {
+                const entry = this.semanticStepEntries[entryIndex];
+                return {
+                    entryIndex,
+                    entry,
+                    languageBucket: entry.language === preferredLanguage ? 0 : 1,
+                    score: this.getSemanticStepScore(
+                        entry,
+                        normalizedQuery,
+                        queryTokens,
+                        vectorScores.get(entryIndex) || 0
+                    )
+                };
+            })
+            .filter(item => normalizedQuery.length === 0 || item.score >= 0.2)
+            .sort((left, right) => {
+                if (left.languageBucket !== right.languageBucket) {
+                    return left.languageBucket - right.languageBucket;
+                }
+                return right.score - left.score;
+            })
+            .slice(0, 20);
+
+        ranked.forEach((result, index) => {
+            const baseItem = result.entry.item;
+            const itemFullText = result.entry.itemText;
+            const completionItem = new vscode.CompletionItem(itemFullText, baseItem.kind);
+            completionItem.documentation = baseItem.documentation;
+            completionItem.detail = baseItem.detail
+                ? `${baseItem.detail} · ${vscode.l10n.t('semantic match')}`
+                : vscode.l10n.t('semantic match');
+
+            const replacementRange = new vscode.Range(
+                position.line,
+                indentation.length,
+                position.line,
+                position.character
+            );
+            completionItem.range = replacementRange;
+            completionItem.insertText = typeof baseItem.insertText === 'string'
+                ? baseItem.insertText
+                : itemFullText;
+            completionItem.filterText = [
+                rawFilterKey,
+                normalizedFilterKey,
+                normalizedQuery,
+                result.entry.stepSearchText,
+                result.entry.descriptionSearchText,
+                itemFullText
+            ].filter(Boolean).join(' ');
+            completionItem.sortText = `0${result.languageBucket}${(1 - result.score).toFixed(4)}_${index.toString().padStart(2, '0')}`;
+            completionList.items.push(completionItem);
+        });
+
+        return completionList;
     }
 
     /**
