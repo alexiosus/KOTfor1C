@@ -670,9 +670,13 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         const descriptionLabel = t('Description');
         const emptyLabel = t('Empty.');
         const missingKotMetadataLabel = t('KOT metadata block is missing.');
+        const openScenarioLabel = t('Open scenario');
+        const openScenarioCommandUri = `command:kotTestToolkit.openScenarioByName?${encodeURIComponent(JSON.stringify([calledScenarioName]))}`;
 
         const content = new vscode.MarkdownString();
+        content.isTrusted = true;
         content.appendMarkdown(`**${nestedScenarioLabel}:** \`${calledScenarioName}\`\n\n`);
+        content.appendMarkdown(`[${openScenarioLabel}](${openScenarioCommandUri})\n\n`);
         content.appendMarkdown(
             `**${attachedFilesLabel}:** \`${filesValue}\`  •  ` +
             `**${parametersLabel}:** \`${paramsValue}\`  •  ` +

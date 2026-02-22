@@ -153,6 +153,7 @@
 - `KOT - Fill NestedScenarios section` (`KOT - Заполнить секцию ВложенныеСценарии`)
 - `KOT - Fill ScenarioParameters section` (`KOT - Заполнить секцию ПараметрыСценария`)
 - `KOT - Fix scenario issues` (`KOT - Исправить проблемы сценария`)
+- `KOT - Change nested scenario code` (`KOT - Изменить код вложенного сценария`)
 
 ## 10) Частые вопросы
 

@@ -8,6 +8,7 @@ import {
     revealFileInExplorerHandler, 
     revealFileInOSHandler,
     openSubscenarioHandler,
+    openScenarioByNameHandler,
     findCurrentFileReferencesHandler,
     insertNestedScenarioRefHandler,
     insertScenarioParamHandler,
@@ -303,6 +304,15 @@ export function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.openSubscenario', (editor, edit) => openSubscenarioHandler(editor, edit, phaseSwitcherProvider)
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.openScenarioByName',
+        async (scenarioName: unknown) => {
+            if (typeof scenarioName !== 'string') {
+                return;
+            }
+            await openScenarioByNameHandler(scenarioName, phaseSwitcherProvider);
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.createNestedScenario', () => handleCreateNestedScenario(context)
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
@@ -475,6 +485,14 @@ export function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.showFavoriteScenarios',
         async () => {
             await phaseSwitcherProvider.showFavoriteScenariosPicker();
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.changeNestedScenarioCode',
+        async () => {
+            await phaseSwitcherProvider.changeNestedScenarioCodeForActiveEditor();
+            await updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
         }
     ));
 

@@ -327,6 +327,43 @@ export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit
 }
 
 /**
+ * Opens scenario file by exact scenario name using cache-aware lookup.
+ * Returns true if the scenario file was found and opened (or it is already the active file).
+ */
+export async function openScenarioByNameHandler(
+    scenarioName: string,
+    phaseSwitcherProvider: PhaseSwitcherProvider
+): Promise<boolean> {
+    const normalizedName = scenarioName.trim();
+    if (!normalizedName) {
+        return false;
+    }
+
+    const t = await getTranslator(getExtensionUri());
+    const activeDocument = vscode.window.activeTextEditor?.document;
+    const testCache = phaseSwitcherProvider.getTestCache();
+    const targetUri = await findFileByName(normalizedName, testCache);
+
+    if (!targetUri) {
+        vscode.window.showInformationMessage(t('File for "{0}" not found.', normalizedName));
+        return false;
+    }
+
+    if (activeDocument && targetUri.fsPath === activeDocument.uri.fsPath) {
+        return true;
+    }
+
+    try {
+        const docToOpen = await vscode.workspace.openTextDocument(targetUri);
+        await vscode.window.showTextDocument(docToOpen, { preview: false, preserveFocus: false });
+        return true;
+    } catch (error: any) {
+        vscode.window.showErrorMessage(t('Failed to open file: {0}', error.message || error));
+        return false;
+    }
+}
+
+/**
  * Обработчик команды поиска ссылок на текущий сценарий.
  */
 export async function findCurrentFileReferencesHandler() {

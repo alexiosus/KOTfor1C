@@ -392,6 +392,11 @@
         "command": "kotTestToolkit.showFavoriteScenarios",
         "title": "%cmd.showFavoriteScenarios.title%",
         "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.changeNestedScenarioCode",
+        "title": "%cmd.changeNestedScenarioCode.title%",
+        "category": "%cmd.category%"
       }
     ],
     "submenus": [
@@ -539,6 +544,11 @@
           "command": "kotTestToolkit.insertUid",
           "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
           "group": "00_editing@2"
+        },
+        {
+          "command": "kotTestToolkit.changeNestedScenarioCode",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
+          "group": "00_editing@3"
         }
       ],
       "commandPalette": [
@@ -592,6 +602,10 @@
         },
         {
           "command": "kotTestToolkit.showFavoriteScenarios",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.changeNestedScenarioCode",
           "when": "true"
         }
       ]

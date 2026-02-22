@@ -152,6 +152,7 @@
 - `KOT - Scan workspace diagnostics` (`KOT - Выполнить сканирование диагностики по проекту`)
 - `KOT - Refresh steps library` (`KOT - Обновить библиотеку шагов`)
 - `KOT - Insert new UID` (`KOT - Вставить новый UID`)
+- `KOT - Change nested scenario code` (`KOT - Изменить код вложенного сценария`)
 
 ### 5.3 Работа с файлами
 

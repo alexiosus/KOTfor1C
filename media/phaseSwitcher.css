@@ -925,6 +925,13 @@ label.checkbox-item:hover .open-scenario-btn .codicon.open-scenario-icon-edit,
     background-color: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
 }
 
+#selectDefaultsBtn:disabled {
+    background-color: var(--vscode-input-background, var(--vscode-editorWidget-background));
+    color: var(--vscode-disabledForeground);
+    border-color: var(--vscode-widget-border, var(--vscode-button-border, var(--vscode-disabledForeground)));
+    opacity: 0.5;
+}
+
 .controls-row.controls-row-drive {
     display: flex;
     align-items: center;

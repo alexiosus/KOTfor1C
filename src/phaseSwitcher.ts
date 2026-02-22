@@ -2337,6 +2337,192 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         quickPick.show();
     }
 
+    public async changeNestedScenarioCodeForActiveEditor(): Promise<void> {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showWarningMessage(this.t('No active editor.'));
+            return;
+        }
+
+        const document = editor.document;
+        if (!isScenarioYamlFile(document)) {
+            vscode.window.showWarningMessage(this.t('Open a scenario YAML file to change nested scenario code.'));
+            return;
+        }
+
+        await this.ensureFreshTestCache();
+        if (!this._testCache || this._testCache.size === 0) {
+            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
+            return;
+        }
+
+        const scenarioInfo = this.findScenarioByUriInCache(document.uri);
+        if (!scenarioInfo) {
+            vscode.window.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
+            return;
+        }
+
+        if (this.isMainScenario(scenarioInfo)) {
+            vscode.window.showWarningMessage(this.t('Changing code from editor is available for nested scenarios only.'));
+            return;
+        }
+
+        if (document.isDirty) {
+            vscode.window.showWarningMessage(
+                this.t('Save modified scenario file before changing nested scenario code for "{0}".', scenarioInfo.name)
+            );
+            return;
+        }
+
+        const currentCode = (scenarioInfo.scenarioCode || '').trim();
+        if (!currentCode) {
+            vscode.window.showWarningMessage(this.t('Scenario "{0}" has no code in ДанныеСценария.', scenarioInfo.name));
+            return;
+        }
+
+        const currentCodeLower = currentCode.toLowerCase();
+        const knownLowerCodes = new Set<string>(
+            Array.from(this._testCache.values())
+                .map(item => (item.scenarioCode || '').trim().toLowerCase())
+                .filter(code => code.length > 0 && code !== currentCodeLower)
+        );
+
+        const newCodeRaw = await vscode.window.showInputBox({
+            title: this.t('Change nested scenario code'),
+            prompt: this.t('Enter scenario numeric code (digits only)'),
+            value: currentCode,
+            ignoreFocusOut: true,
+            validateInput: value => {
+                const candidate = value.trim();
+                if (!candidate) {
+                    return this.t('Code cannot be empty');
+                }
+                if (!/^\d+$/.test(candidate)) {
+                    return this.t('Code must contain digits only');
+                }
+                if (candidate.toLowerCase() !== currentCodeLower && knownLowerCodes.has(candidate.toLowerCase())) {
+                    return this.t('Scenario code "{0}" already exists.', candidate);
+                }
+                return null;
+            }
+        });
+        if (!newCodeRaw) {
+            return;
+        }
+
+        const newCode = newCodeRaw.trim();
+        if (newCode === currentCode) {
+            return;
+        }
+
+        const scenarioYamlUriBeforeRename = scenarioInfo.yamlFileUri;
+        const scenarioDirectoryPath = path.dirname(scenarioYamlUriBeforeRename.fsPath);
+        const parentDirectoryPath = path.dirname(scenarioDirectoryPath);
+        const targetScenarioDirectoryPath = path.join(parentDirectoryPath, newCode);
+
+        const scenarioDirectoryUri = vscode.Uri.file(scenarioDirectoryPath);
+        const targetScenarioDirectoryUri = vscode.Uri.file(targetScenarioDirectoryPath);
+
+        if (
+            !this.areUrisEqual(scenarioDirectoryUri, targetScenarioDirectoryUri) &&
+            fs.existsSync(targetScenarioDirectoryPath)
+        ) {
+            vscode.window.showWarningMessage(
+                this.t('Rename target already exists: {0}', targetScenarioDirectoryPath)
+            );
+            return;
+        }
+
+        const rawScenarioContent = Buffer.from(
+            await vscode.workspace.fs.readFile(scenarioYamlUriBeforeRename)
+        ).toString('utf8');
+        const updatedScenarioContent = this.updateScenarioDisplayNameInScenarioContent(
+            rawScenarioContent,
+            scenarioInfo.name,
+            newCode
+        );
+        if (!updatedScenarioContent.changed) {
+            vscode.window.showWarningMessage(this.t('No files were updated for scenario "{0}".', scenarioInfo.name));
+            return;
+        }
+
+        let scenarioYamlUriAfterRename = scenarioYamlUriBeforeRename;
+        let scenarioDirectoryRenamed = false;
+        let changedFiles = 0;
+
+        try {
+            if (!this.areUrisEqual(scenarioDirectoryUri, targetScenarioDirectoryUri)) {
+                await vscode.workspace.fs.rename(scenarioDirectoryUri, targetScenarioDirectoryUri, { overwrite: false });
+                scenarioDirectoryRenamed = true;
+                changedFiles++;
+                scenarioYamlUriAfterRename = vscode.Uri.file(
+                    path.join(targetScenarioDirectoryPath, path.basename(scenarioYamlUriBeforeRename.fsPath))
+                );
+            }
+
+            await vscode.workspace.fs.writeFile(
+                scenarioYamlUriAfterRename,
+                Buffer.from(updatedScenarioContent.content, 'utf8')
+            );
+            changedFiles++;
+        } catch (error: any) {
+            if (scenarioDirectoryRenamed) {
+                try {
+                    await vscode.workspace.fs.rename(targetScenarioDirectoryUri, scenarioDirectoryUri, { overwrite: false });
+                    scenarioYamlUriAfterRename = scenarioYamlUriBeforeRename;
+                    changedFiles = Math.max(0, changedFiles - 1);
+                } catch (rollbackError) {
+                    console.error('[PhaseSwitcherProvider] Failed to rollback nested scenario directory rename:', rollbackError);
+                }
+            }
+            vscode.window.showErrorMessage(
+                this.t('Failed to change nested scenario code for "{0}": {1}', scenarioInfo.name, error?.message || String(error))
+            );
+            return;
+        }
+
+        const favorites = this.getFavoriteEntries();
+        let favoritesChanged = false;
+        for (let index = 0; index < favorites.length; index++) {
+            if (!this.doesFavoriteEntryMatchUri(favorites[index], scenarioYamlUriBeforeRename)) {
+                continue;
+            }
+            favorites[index] = {
+                ...favorites[index],
+                uri: scenarioYamlUriAfterRename.toString(),
+                scenarioCode: newCode
+            };
+            favoritesChanged = true;
+        }
+        if (favoritesChanged) {
+            await this.saveFavoriteEntries(favorites);
+        }
+
+        this.markBuiltArtifactsAsStale([scenarioInfo.name]);
+        this.sendRunArtifactsStateToWebview();
+        await this.refreshTestCacheFromDisk('changeNestedScenarioCode');
+        if (this._view?.visible) {
+            await this._sendInitialState(this._view.webview);
+        }
+
+        try {
+            const updatedDocument = await vscode.workspace.openTextDocument(scenarioYamlUriAfterRename);
+            await vscode.window.showTextDocument(updatedDocument, { preview: false });
+        } catch (openError) {
+            console.warn('[PhaseSwitcherProvider] Failed to open nested scenario after code change:', openError);
+        }
+
+        vscode.window.showInformationMessage(
+            this.t(
+                'Nested scenario "{0}" code was changed from "{1}" to "{2}". Updated files: {3}.',
+                scenarioInfo.name,
+                currentCode,
+                newCode,
+                String(changedFiles)
+            )
+        );
+    }
+
     private async renameGroup(groupName: string): Promise<void> {
         const trimmedGroupName = groupName.trim();
         if (!trimmedGroupName) {
