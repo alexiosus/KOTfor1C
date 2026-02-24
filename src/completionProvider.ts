@@ -1134,7 +1134,9 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         typedSemanticInput: string,
         preferredLanguage: ScenarioLanguage
     ): vscode.CompletionList {
-        const completionList = new vscode.CompletionList([], false);
+        // Re-query semantic results as user types so relevance does not depend on
+        // whether a trailing space/trigger character was entered.
+        const completionList = new vscode.CompletionList([], true);
         if (this.semanticStepEntries.length === 0) {
             return completionList;
         }
@@ -1185,11 +1187,9 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     )
                 };
             })
+            .filter(item => item.languageBucket === 0)
             .filter(item => normalizedQuery.length === 0 || item.score >= 0.2)
             .sort((left, right) => {
-                if (left.languageBucket !== right.languageBucket) {
-                    return left.languageBucket - right.languageBucket;
-                }
                 return right.score - left.score;
             })
             .slice(0, 20);

@@ -497,6 +497,14 @@ export function activate(context: vscode.ExtensionContext) {
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.changeNestedScenarioName',
+        async () => {
+            await phaseSwitcherProvider.changeNestedScenarioNameForActiveEditor();
+            await updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit._addScenarioFavoriteByUri',
         async (target?: vscode.Uri | string) => {
             if (!target) {

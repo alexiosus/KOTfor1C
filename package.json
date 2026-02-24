@@ -397,6 +397,11 @@
         "command": "kotTestToolkit.changeNestedScenarioCode",
         "title": "%cmd.changeNestedScenarioCode.title%",
         "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.changeNestedScenarioName",
+        "title": "%cmd.changeNestedScenarioName.title%",
+        "category": "%cmd.category%"
       }
     ],
     "submenus": [
@@ -531,24 +536,24 @@
       ],
       "kotTestToolkit.editorContext.editing": [
         {
-          "command": "kotTestToolkit.checkAndFillNestedScenarios",
-          "when": "editorTextFocus && resourceExtname == .yaml",
-          "group": "00_editing@0"
-        },
-        {
-          "command": "kotTestToolkit.checkAndFillScriptParameters",
-          "when": "editorTextFocus && resourceExtname == .yaml",
-          "group": "00_editing@1"
-        },
-        {
-          "command": "kotTestToolkit.insertUid",
+          "command": "kotTestToolkit.changeNestedScenarioName",
           "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
-          "group": "00_editing@2"
+          "group": "00_editing@0"
         },
         {
           "command": "kotTestToolkit.changeNestedScenarioCode",
           "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
-          "group": "00_editing@3"
+          "group": "00_editing@1"
+        },
+        {
+          "command": "kotTestToolkit.checkAndFillNestedScenarios",
+          "when": "editorTextFocus && resourceExtname == .yaml",
+          "group": "01_fill@0"
+        },
+        {
+          "command": "kotTestToolkit.checkAndFillScriptParameters",
+          "when": "editorTextFocus && resourceExtname == .yaml",
+          "group": "01_fill@1"
         }
       ],
       "commandPalette": [
@@ -606,6 +611,10 @@
         },
         {
           "command": "kotTestToolkit.changeNestedScenarioCode",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.changeNestedScenarioName",
           "when": "true"
         }
       ]

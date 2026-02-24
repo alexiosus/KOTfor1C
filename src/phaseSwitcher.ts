@@ -353,6 +353,38 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return this.areUrisEqual(left, right);
     }
 
+    private remapUriAfterRename(
+        trackedUri: vscode.Uri,
+        oldUri: vscode.Uri,
+        newUri: vscode.Uri
+    ): vscode.Uri | null {
+        if (trackedUri.scheme !== 'file' || oldUri.scheme !== 'file' || newUri.scheme !== 'file') {
+            return null;
+        }
+
+        const trackedPath = path.resolve(trackedUri.fsPath);
+        const oldPath = path.resolve(oldUri.fsPath);
+        const newPath = path.resolve(newUri.fsPath);
+
+        const normalizeForCompare = (value: string): string =>
+            process.platform === 'win32' ? value.toLowerCase() : value;
+
+        const trackedForCompare = normalizeForCompare(trackedPath);
+        const oldForCompare = normalizeForCompare(oldPath);
+
+        if (trackedForCompare === oldForCompare) {
+            return vscode.Uri.file(newPath);
+        }
+
+        if (!this.isPathInside(oldPath, trackedPath)) {
+            return null;
+        }
+
+        const relativePath = path.relative(oldPath, trackedPath);
+        const remappedPath = path.join(newPath, relativePath);
+        return vscode.Uri.file(remappedPath);
+    }
+
     private isAffectedMainScenarioHighlightEnabled(): boolean {
         return vscode.workspace
             .getConfiguration('kotTestToolkit')
@@ -1147,6 +1179,31 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             if (affectsCache) {
                 this.markCacheDirtyAndScheduleRefresh('renameFiles');
             }
+
+            if (this._activeScenarioUriForHighlight) {
+                let remappedUri: vscode.Uri | null = this._activeScenarioUriForHighlight;
+                let changed = false;
+                for (const { oldUri, newUri } of event.files) {
+                    if (!remappedUri) {
+                        break;
+                    }
+
+                    const nextUri = this.remapUriAfterRename(remappedUri, oldUri, newUri);
+                    if (!nextUri || this.areUrisEqual(remappedUri, nextUri)) {
+                        continue;
+                    }
+
+                    remappedUri = nextUri;
+                    changed = true;
+                }
+
+                if (changed) {
+                    this._activeScenarioUriForHighlight = remappedUri && this.shouldTrackUriForCache(remappedUri)
+                        ? remappedUri
+                        : null;
+                    this.sendAffectedMainScenariosToWebview(true);
+                }
+            }
         }));
 
         context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => {
@@ -1539,6 +1596,161 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return {
             changed,
             content: changed ? lines.join(lineEnding) : content
+        };
+    }
+
+    private updateNestedScenarioNameReferencesInScenarioContent(
+        content: string,
+        oldScenarioName: string,
+        newScenarioName: string
+    ): {
+        changed: boolean;
+        content: string;
+        updatedCallCount: number;
+        updatedNestedSectionCount: number;
+    } {
+        const previousName = oldScenarioName.trim();
+        const nextName = newScenarioName.trim();
+        if (!previousName || !nextName || previousName === nextName) {
+            return {
+                changed: false,
+                content,
+                updatedCallCount: 0,
+                updatedNestedSectionCount: 0
+            };
+        }
+
+        const lineEnding = content.includes('\r\n') ? '\r\n' : '\n';
+        const lines = content.split(/\r\n|\r|\n/);
+        let changed = false;
+        let updatedCallCount = 0;
+        let updatedNestedSectionCount = 0;
+
+        let textSectionStart = -1;
+        let nestedSectionStart = -1;
+        const textSectionHeaderRegex = /^ТекстСценария:\s*(\|[-+]?)?\s*$/;
+        const nestedSectionHeaderRegex = /^ВложенныеСценарии:\s*$/;
+        for (let index = 0; index < lines.length; index++) {
+            const line = lines[index];
+            const trimmedNoBom = line.replace(/^\uFEFF/, '').trim();
+            if (this.getYamlIndent(line) !== 0) {
+                continue;
+            }
+            if (textSectionStart === -1 && textSectionHeaderRegex.test(trimmedNoBom)) {
+                textSectionStart = index;
+                continue;
+            }
+            if (nestedSectionStart === -1 && nestedSectionHeaderRegex.test(trimmedNoBom)) {
+                nestedSectionStart = index;
+            }
+            if (textSectionStart !== -1 && nestedSectionStart !== -1) {
+                break;
+            }
+        }
+
+        if (textSectionStart !== -1) {
+            const textIndent = this.getYamlIndent(lines[textSectionStart]);
+            const textEnd = this.findYamlSectionEnd(lines, textSectionStart, textIndent);
+            const callLineRegex = /^(\s*)(And|Then|When|Given|But|Но|Тогда|Когда|Если|И|К тому же|Допустим|Дано)(\s+)(.*)$/i;
+
+            for (let index = textSectionStart + 1; index < textEnd; index++) {
+                const line = lines[index];
+                if (this.isIgnorableYamlLine(line)) {
+                    continue;
+                }
+                if (this.getYamlIndent(line) <= textIndent) {
+                    continue;
+                }
+
+                const match = line.match(callLineRegex);
+                if (!match) {
+                    continue;
+                }
+
+                const body = match[4] || '';
+                const bodyMatch = body.match(/^(.*?)(\s+#.*)?$/);
+                const rawMainPart = bodyMatch?.[1] ?? body;
+                const commentPart = bodyMatch?.[2] ?? '';
+                if (rawMainPart.trim() !== previousName) {
+                    continue;
+                }
+
+                const leadingWhitespace = rawMainPart.match(/^\s*/)?.[0] ?? '';
+                const trailingWhitespace = rawMainPart.match(/\s*$/)?.[0] ?? '';
+                const nextBody = `${leadingWhitespace}${nextName}${trailingWhitespace}${commentPart}`;
+                const replacement = `${match[1]}${match[2]}${match[3]}${nextBody}`;
+                if (replacement !== line) {
+                    lines[index] = replacement;
+                    changed = true;
+                    updatedCallCount++;
+                }
+            }
+        }
+
+        if (nestedSectionStart !== -1) {
+            const nestedIndent = this.getYamlIndent(lines[nestedSectionStart]);
+            const nestedEnd = this.findYamlSectionEnd(lines, nestedSectionStart, nestedIndent);
+            const escapedNewName = this.escapeYamlDoubleQuotedScalar(nextName);
+            const escapedNewNameSingleQuoted = nextName.replace(/'/g, "''");
+
+            for (let index = nestedSectionStart + 1; index < nestedEnd; index++) {
+                const line = lines[index];
+                if (this.isIgnorableYamlLine(line)) {
+                    continue;
+                }
+                if (this.getYamlIndent(line) <= nestedIndent) {
+                    continue;
+                }
+
+                const doubleQuotedMatch = line.match(/^(\s*ИмяСценария:\s*)"([^"]*)"\s*$/);
+                if (doubleQuotedMatch) {
+                    if ((doubleQuotedMatch[2] || '').trim() !== previousName) {
+                        continue;
+                    }
+                    const replacement = `${doubleQuotedMatch[1]}"${escapedNewName}"`;
+                    if (replacement !== line) {
+                        lines[index] = replacement;
+                        changed = true;
+                        updatedNestedSectionCount++;
+                    }
+                    continue;
+                }
+
+                const singleQuotedMatch = line.match(/^(\s*ИмяСценария:\s*)'([^']*)'\s*$/);
+                if (singleQuotedMatch) {
+                    if ((singleQuotedMatch[2] || '').trim() !== previousName) {
+                        continue;
+                    }
+                    const replacement = `${singleQuotedMatch[1]}'${escapedNewNameSingleQuoted}'`;
+                    if (replacement !== line) {
+                        lines[index] = replacement;
+                        changed = true;
+                        updatedNestedSectionCount++;
+                    }
+                    continue;
+                }
+
+                const plainMatch = line.match(/^(\s*ИмяСценария:\s*)([^#\n]+?)\s*$/);
+                if (!plainMatch) {
+                    continue;
+                }
+                if ((plainMatch[2] || '').trim() !== previousName) {
+                    continue;
+                }
+                const replacement = `${plainMatch[1]}"${escapedNewName}"`;
+                if (replacement !== line) {
+                    lines[index] = replacement;
+                    changed = true;
+                    updatedNestedSectionCount++;
+                }
+            }
+        }
+
+        return {
+            changed,
+            content: changed ? lines.join(lineEnding) : content,
+            updatedCallCount,
+            updatedNestedSectionCount
         };
     }
 
@@ -2511,6 +2723,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         } catch (openError) {
             console.warn('[PhaseSwitcherProvider] Failed to open nested scenario after code change:', openError);
         }
+        this.handleActiveEditorChanged(vscode.window.activeTextEditor);
+        this.sendAffectedMainScenariosToWebview(true);
 
         vscode.window.showInformationMessage(
             this.t(
@@ -2519,6 +2733,194 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 currentCode,
                 newCode,
                 String(changedFiles)
+            )
+        );
+    }
+
+    public async changeNestedScenarioNameForActiveEditor(): Promise<void> {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showWarningMessage(this.t('No active editor.'));
+            return;
+        }
+
+        const document = editor.document;
+        if (!isScenarioYamlFile(document)) {
+            vscode.window.showWarningMessage(this.t('Open a scenario YAML file to change nested scenario name.'));
+            return;
+        }
+
+        await this.ensureFreshTestCache();
+        if (!this._testCache || this._testCache.size === 0) {
+            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
+            return;
+        }
+
+        const scenarioInfo = this.findScenarioByUriInCache(document.uri);
+        if (!scenarioInfo) {
+            vscode.window.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
+            return;
+        }
+
+        if (this.isMainScenario(scenarioInfo)) {
+            vscode.window.showWarningMessage(this.t('Changing name from editor is available for nested scenarios only.'));
+            return;
+        }
+
+        if (document.isDirty) {
+            vscode.window.showWarningMessage(
+                this.t('Save modified scenario file before changing nested scenario name for "{0}".', scenarioInfo.name)
+            );
+            return;
+        }
+
+        const currentName = (scenarioInfo.name || '').trim();
+        if (!currentName) {
+            vscode.window.showWarningMessage(this.t('Scenario "{0}" has no name in ДанныеСценария.', scenarioInfo.name));
+            return;
+        }
+
+        const currentLowerName = currentName.toLowerCase();
+        const knownLowerNames = new Set<string>(
+            Array.from(this._testCache.keys())
+                .map(name => name.trim().toLowerCase())
+                .filter(name => name.length > 0 && name !== currentLowerName)
+        );
+
+        const newNameRaw = await vscode.window.showInputBox({
+            title: this.t('Change nested scenario name'),
+            prompt: this.t('Enter new nested scenario name'),
+            value: currentName,
+            ignoreFocusOut: true,
+            validateInput: value => {
+                const candidate = value.trim();
+                if (!candidate) {
+                    return this.t('Scenario name cannot be empty.');
+                }
+                if (candidate.toLowerCase() !== currentLowerName && knownLowerNames.has(candidate.toLowerCase())) {
+                    return this.t('Scenario name "{0}" already exists.', candidate);
+                }
+                return null;
+            }
+        });
+        if (!newNameRaw) {
+            return;
+        }
+
+        const newName = newNameRaw.trim();
+        if (newName === currentName) {
+            return;
+        }
+
+        const uniqueScenarioUris = new Map<string, vscode.Uri>();
+        for (const item of this._testCache.values()) {
+            uniqueScenarioUris.set(item.yamlFileUri.toString(), item.yamlFileUri);
+        }
+        const scenarioUris = Array.from(uniqueScenarioUris.values());
+        if (scenarioUris.length === 0) {
+            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
+            return;
+        }
+
+        const trackedScenarioUriKeys = new Set<string>(scenarioUris.map(uri => uri.toString()));
+        const dirtyTrackedDocuments = vscode.workspace.textDocuments.filter(openDoc =>
+            openDoc.isDirty && trackedScenarioUriKeys.has(openDoc.uri.toString())
+        );
+        if (dirtyTrackedDocuments.length > 0) {
+            vscode.window.showWarningMessage(
+                this.t('Save all modified scenario YAML files before changing nested scenario name "{0}".', currentName)
+            );
+            return;
+        }
+
+        let changedFiles = 0;
+        let updatedCalls = 0;
+        let updatedNestedSectionEntries = 0;
+        const affectedScenarioNames = new Set<string>([currentName, newName]);
+
+        try {
+            for (const scenarioUri of scenarioUris) {
+                const originalContent = Buffer.from(await vscode.workspace.fs.readFile(scenarioUri)).toString('utf8');
+                let nextContent = originalContent;
+                let fileChanged = false;
+
+                if (this.areUrisEqual(scenarioUri, scenarioInfo.yamlFileUri)) {
+                    const renamedSelf = this.updateScenarioDisplayNameInScenarioContent(nextContent, newName);
+                    if (renamedSelf.changed) {
+                        nextContent = renamedSelf.content;
+                        fileChanged = true;
+                    }
+                }
+
+                const renamedReferences = this.updateNestedScenarioNameReferencesInScenarioContent(
+                    nextContent,
+                    currentName,
+                    newName
+                );
+                if (renamedReferences.changed) {
+                    nextContent = renamedReferences.content;
+                    fileChanged = true;
+                }
+
+                updatedCalls += renamedReferences.updatedCallCount;
+                updatedNestedSectionEntries += renamedReferences.updatedNestedSectionCount;
+
+                if (!fileChanged || nextContent === originalContent) {
+                    continue;
+                }
+
+                await vscode.workspace.fs.writeFile(scenarioUri, Buffer.from(nextContent, 'utf8'));
+                changedFiles++;
+
+                for (const affectedName of this.getScenarioNamesRelatedToUri(scenarioUri)) {
+                    affectedScenarioNames.add(affectedName);
+                }
+            }
+        } catch (error: any) {
+            vscode.window.showErrorMessage(
+                this.t('Failed to change nested scenario name for "{0}": {1}', currentName, error?.message || String(error))
+            );
+            return;
+        }
+
+        if (changedFiles === 0) {
+            vscode.window.showWarningMessage(this.t('No files were updated for scenario "{0}".', currentName));
+            return;
+        }
+
+        const favorites = this.getFavoriteEntries();
+        let favoritesChanged = false;
+        for (let index = 0; index < favorites.length; index++) {
+            if (!this.doesFavoriteEntryMatchUri(favorites[index], scenarioInfo.yamlFileUri)) {
+                continue;
+            }
+            favorites[index] = {
+                ...favorites[index],
+                name: newName
+            };
+            favoritesChanged = true;
+        }
+        if (favoritesChanged) {
+            await this.saveFavoriteEntries(favorites);
+        }
+
+        this.markBuiltArtifactsAsStale(Array.from(affectedScenarioNames));
+        this.sendRunArtifactsStateToWebview();
+        await this.refreshTestCacheFromDisk('changeNestedScenarioName');
+        if (this._view?.visible) {
+            await this._sendInitialState(this._view.webview);
+        }
+        this.handleActiveEditorChanged(vscode.window.activeTextEditor);
+        this.sendAffectedMainScenariosToWebview(true);
+
+        vscode.window.showInformationMessage(
+            this.t(
+                'Nested scenario "{0}" was renamed to "{1}". Updated files: {2}. Calls updated: {3}. Nested sections updated: {4}.',
+                currentName,
+                newName,
+                String(changedFiles),
+                String(updatedCalls),
+                String(updatedNestedSectionEntries)
             )
         );
     }
@@ -2861,6 +3263,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (this._view?.visible) {
             await this._sendInitialState(this._view.webview);
         }
+        this.handleActiveEditorChanged(vscode.window.activeTextEditor);
+        this.sendAffectedMainScenariosToWebview(true);
 
         vscode.window.showInformationMessage(
             this.t('Scenario "{0}" was renamed to "{1}". Updated files: {2}.', trimmedScenarioName, newScenarioName, String(changedFiles))
