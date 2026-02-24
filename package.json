@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/KOTfor1C",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "engines": {
     "vscode": "^1.98.0"
   },

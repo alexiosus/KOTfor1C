@@ -11,6 +11,7 @@
 | `src/workspaceScanner.ts` | Полный скан `yamlSourceDirectory`, построение `TestInfo` |
 | `src/completionProvider.ts` | IntelliSense шагов и вызовов вложенных сценариев |
 | `src/hoverProvider.ts` | Hover по шагам и вызовам |
+| `src/scenarioHeaderInlayHintsProvider.ts` | Inlay-иконки (карандаш) у полей `ДанныеСценария.Имя` / `ДанныеСценария.Код` для быстрых команд переименования/смены кода |
 | `src/scenarioDiagnostics.ts` | Диагностика и code actions |
 | `src/commandHandlers.ts` | Редактирование/навигация/авто-операции по YAML |
 | `src/scenarioCreator.ts` | Создание главных и вложенных сценариев по шаблонам |
