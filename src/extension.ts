@@ -1142,11 +1142,6 @@ async function foldSectionsInEditor(editor: vscode.TextEditor | undefined) {
 
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    // Сохраняем исходное положение курсора и выделения
-    const originalSelections = editor.selections;
-    const originalVisibleRanges = editor.visibleRanges;
-
-
     const sectionsToFold = ['ВложенныеСценарии', 'ПараметрыСценария'];
 
     const findTopLevelSectionLine = (sectionName: string): number => {
@@ -1164,20 +1159,27 @@ async function foldSectionsInEditor(editor: vscode.TextEditor | undefined) {
         return -1;
     };
 
+    const sectionLines: number[] = [];
     for (const sectionName of sectionsToFold) {
         const sectionLine = findTopLevelSectionLine(sectionName);
         if (sectionLine >= 0) {
-            const startPosition = new vscode.Position(sectionLine, 0);
-            // Устанавливаем курсор на начало секции и вызываем команду сворачивания
-            editor.selections = [new vscode.Selection(startPosition, startPosition)];
-            await vscode.commands.executeCommand('editor.fold');
+            sectionLines.push(sectionLine);
         }
     }
-    // Восстанавливаем исходное положение курсора и выделения
-    editor.selections = originalSelections;
-    if (originalSelections.length > 0 && originalVisibleRanges.length > 0) {
-        editor.revealRange(originalVisibleRanges[0], vscode.TextEditorRevealType.AtTop);
+
+    if (sectionLines.length === 0) {
+        return;
     }
+
+    if (vscode.window.activeTextEditor?.document.uri.toString() !== document.uri.toString()) {
+        return;
+    }
+
+    await vscode.commands.executeCommand('editor.fold', {
+        levels: 1,
+        direction: 'down',
+        selectionLines: sectionLines
+    });
 }
 
 /**
