@@ -394,6 +394,11 @@
         "category": "%cmd.category%"
       },
       {
+        "command": "kotTestToolkit.renameScenarioFromEditor",
+        "title": "%cmd.renameScenarioFromEditor.title%",
+        "category": "%cmd.category%"
+      },
+      {
         "command": "kotTestToolkit.changeNestedScenarioCode",
         "title": "%cmd.changeNestedScenarioCode.title%",
         "category": "%cmd.category%"
@@ -536,14 +541,19 @@
       ],
       "kotTestToolkit.editorContext.editing": [
         {
-          "command": "kotTestToolkit.changeNestedScenarioName",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
+          "command": "kotTestToolkit.renameScenarioFromEditor",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && kotTestToolkit.activeScenarioIsMain",
           "group": "00_editing@0"
         },
         {
-          "command": "kotTestToolkit.changeNestedScenarioCode",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
+          "command": "kotTestToolkit.changeNestedScenarioName",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && !kotTestToolkit.activeScenarioIsMain",
           "group": "00_editing@1"
+        },
+        {
+          "command": "kotTestToolkit.changeNestedScenarioCode",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && !kotTestToolkit.activeScenarioIsMain",
+          "group": "00_editing@2"
         },
         {
           "command": "kotTestToolkit.checkAndFillNestedScenarios",
@@ -607,6 +617,10 @@
         },
         {
           "command": "kotTestToolkit.showFavoriteScenarios",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.renameScenarioFromEditor",
           "when": "true"
         },
         {

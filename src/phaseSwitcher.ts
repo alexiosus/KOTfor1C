@@ -2925,6 +2925,34 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         );
     }
 
+    public async renameScenarioForActiveEditor(): Promise<void> {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showWarningMessage(this.t('No active editor.'));
+            return;
+        }
+
+        const document = editor.document;
+        if (!isScenarioYamlFile(document)) {
+            vscode.window.showWarningMessage(this.t('Open a scenario YAML file to rename scenario.'));
+            return;
+        }
+
+        await this.ensureFreshTestCache();
+        if (!this._testCache || this._testCache.size === 0) {
+            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
+            return;
+        }
+
+        const scenarioInfo = this.findScenarioByUriInCache(document.uri);
+        if (!scenarioInfo) {
+            vscode.window.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
+            return;
+        }
+
+        await this.renameScenario(scenarioInfo.name);
+    }
+
     private async renameGroup(groupName: string): Promise<void> {
         const trimmedGroupName = groupName.trim();
         if (!trimmedGroupName) {

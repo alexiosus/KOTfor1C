@@ -146,13 +146,15 @@
 ### 5.2 Диагностика и редактирование
 
 - `KOT - Fix scenario issues` (`KOT - Исправить проблемы сценария`)
+- `KOT - Change main scenario name` (`KOT - Изменить имя главного сценария`)
+- `KOT - Change nested scenario name` (`KOT - Изменить имя вложенного сценария`)
+- `KOT - Change nested scenario code` (`KOT - Изменить код вложенного сценария`)
 - `KOT - Fill NestedScenarios section` (`KOT - Заполнить секцию ВложенныеСценарии`)
 - `KOT - Fill ScenarioParameters section` (`KOT - Заполнить секцию ПараметрыСценария`)
 - `KOT - Replace tabs with spaces` (`KOT - Заменить табы на пробелы`)
 - `KOT - Scan workspace diagnostics` (`KOT - Выполнить сканирование диагностики по проекту`)
 - `KOT - Refresh steps library` (`KOT - Обновить библиотеку шагов`)
 - `KOT - Insert new UID` (`KOT - Вставить новый UID`)
-- `KOT - Change nested scenario code` (`KOT - Изменить код вложенного сценария`)
 
 ### 5.3 Работа с файлами
 

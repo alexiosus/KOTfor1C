@@ -150,10 +150,12 @@
 
 Подменю `KOT - Editing` (`KOT - Редактирование`):
 
+- `KOT - Change main scenario name` (`KOT - Изменить имя главного сценария`) — для главных сценариев
+- `KOT - Change nested scenario name` (`KOT - Изменить имя вложенного сценария`) — для вложенных сценариев
+- `KOT - Change nested scenario code` (`KOT - Изменить код вложенного сценария`) — для вложенных сценариев
 - `KOT - Fill NestedScenarios section` (`KOT - Заполнить секцию ВложенныеСценарии`)
 - `KOT - Fill ScenarioParameters section` (`KOT - Заполнить секцию ПараметрыСценария`)
 - `KOT - Fix scenario issues` (`KOT - Исправить проблемы сценария`)
-- `KOT - Change nested scenario code` (`KOT - Изменить код вложенного сценария`)
 
 ## 10) Частые вопросы
 

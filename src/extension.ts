@@ -35,9 +35,11 @@ import { TestInfo } from './types'; // Импортируем TestInfo
 import { SettingsProvider } from './settingsProvider';
 import { ScenarioDiagnosticsProvider } from './scenarioDiagnostics';
 import { isScenarioYamlFile } from './yamlValidator';
+import { ScenarioHeaderInlayHintsProvider } from './scenarioHeaderInlayHintsProvider';
 import {
     extractTopLevelKotMetadataBlock,
     migrateLegacyPhaseSwitcherMetadata,
+    parsePhaseSwitcherMetadata,
     shouldKeepCachedKotMetadataBlock
 } from './phaseSwitcherMetadata';
 
@@ -61,6 +63,13 @@ const scenarioDirtyFlagsByUri = new Map<string, ScenarioDirtyFlags>();
 const scenarioMetadataBlockSessionCache = new Map<string, string>();
 const kotDescriptionBlockLineRegex = /^Описание:\s*[|>][-+0-9]*\s*$/;
 const FAVORITE_SCENARIO_DROP_MIME = 'application/x-kot-favorite-scenario-uri';
+
+function isMainScenarioDocument(document: vscode.TextDocument | undefined): boolean {
+    if (!document || !isScenarioYamlFile(document)) {
+        return false;
+    }
+    return parsePhaseSwitcherMetadata(document.getText()).hasTab;
+}
 
 function parseScenarioNameFromDocumentText(documentText: string): string | null {
     const lines = documentText.split(/\r\n|\r|\n/);
@@ -140,15 +149,21 @@ export function activate(context: vscode.ExtensionContext) {
 
     // --- Регистрация Провайдера для Webview (Test Manager) ---
     const phaseSwitcherProvider = new PhaseSwitcherProvider(context.extensionUri, context);
-    const updateActiveScenarioFavoriteContext = async (editor?: vscode.TextEditor) => {
+    const updateActiveScenarioContext = async (editor?: vscode.TextEditor) => {
+        const isScenario = !!(editor && isScenarioYamlFile(editor.document));
         const isInFavorites = !!(
+            isScenario &&
             editor &&
-            isScenarioYamlFile(editor.document) &&
             phaseSwitcherProvider.isScenarioUriInFavorites(editor.document.uri)
         );
-        await vscode.commands.executeCommand('setContext', 'kotTestToolkit.activeScenarioInFavorites', isInFavorites);
+        const isMainScenario = !!(isScenario && editor && isMainScenarioDocument(editor.document));
+
+        await Promise.all([
+            vscode.commands.executeCommand('setContext', 'kotTestToolkit.activeScenarioInFavorites', isInFavorites),
+            vscode.commands.executeCommand('setContext', 'kotTestToolkit.activeScenarioIsMain', isMainScenario)
+        ]);
     };
-    void updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
+    void updateActiveScenarioContext(vscode.window.activeTextEditor);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
             PhaseSwitcherProvider.viewType,
@@ -255,6 +270,12 @@ export function activate(context: vscode.ExtensionContext) {
             { providedCodeActionKinds: ScenarioDiagnosticsProvider.providedCodeActionKinds }
         )
     );
+    context.subscriptions.push(
+        vscode.languages.registerInlayHintsProvider(
+            { pattern: '**/*.yaml', scheme: 'file' },
+            new ScenarioHeaderInlayHintsProvider()
+        )
+    );
 
     const kotDescriptionTextDecorationType = vscode.window.createTextEditorDecorationType({
         color: new vscode.ThemeColor('editorInfo.foreground')
@@ -278,6 +299,9 @@ export function activate(context: vscode.ExtensionContext) {
         setScenarioSnapshotAsSaved(document);
         updateScenarioMetadataBlockSessionCache(document);
         updateKotDescriptionDecorationsForDocument(document, kotDescriptionTextDecorationType);
+        if (vscode.window.activeTextEditor?.document.uri.toString() === document.uri.toString()) {
+            void updateActiveScenarioContext(vscode.window.activeTextEditor);
+        }
     }));
 
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
@@ -292,6 +316,9 @@ export function activate(context: vscode.ExtensionContext) {
         const currentSnapshot = buildScenarioSaveSnapshot(document);
         const lastSavedSnapshot = lastSavedScenarioSnapshots.get(fileKey);
         scenarioDirtyFlagsByUri.set(fileKey, calculateScenarioDirtyFlags(currentSnapshot, lastSavedSnapshot));
+        if (vscode.window.activeTextEditor?.document.uri.toString() === document.uri.toString()) {
+            void updateActiveScenarioContext(vscode.window.activeTextEditor);
+        }
     }));
 
     context.subscriptions.push(vscode.window.onDidChangeVisibleTextEditors(() => {
@@ -365,7 +392,7 @@ export function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.refreshPhaseSwitcherFromCreate', async () => {
             console.log('[Extension] Command kotTestToolkit.refreshPhaseSwitcherFromCreate invoked.');
             await phaseSwitcherProvider.refreshPanelData();
-            await updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
+            await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
     ));
 
@@ -400,7 +427,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.onDidChangeActiveTextEditor(editor => {
             foldSectionsInEditor(editor);
             phaseSwitcherProvider.handleActiveEditorChanged(editor);
-            void updateActiveScenarioFavoriteContext(editor);
+            void updateActiveScenarioContext(editor);
             if (editor) {
                 updateKotDescriptionDecorationForEditor(editor, kotDescriptionTextDecorationType);
             }
@@ -409,11 +436,11 @@ export function activate(context: vscode.ExtensionContext) {
     if (vscode.window.activeTextEditor) {
         foldSectionsInEditor(vscode.window.activeTextEditor);
         phaseSwitcherProvider.handleActiveEditorChanged(vscode.window.activeTextEditor);
-        void updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
+        void updateActiveScenarioContext(vscode.window.activeTextEditor);
         updateKotDescriptionDecorationForEditor(vscode.window.activeTextEditor, kotDescriptionTextDecorationType);
     } else {
         phaseSwitcherProvider.handleActiveEditorChanged(undefined);
-        void updateActiveScenarioFavoriteContext(undefined);
+        void updateActiveScenarioContext(undefined);
     }
 
     context.subscriptions.push(vscode.commands.registerCommand(
@@ -461,7 +488,7 @@ export function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.toggleActiveScenarioFavorite',
         async () => {
             await phaseSwitcherProvider.toggleFavoriteForActiveScenario();
-            await updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
+            await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
     ));
 
@@ -469,7 +496,7 @@ export function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.addActiveScenarioToFavorites',
         async () => {
             await phaseSwitcherProvider.addActiveScenarioToFavorites();
-            await updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
+            await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
     ));
 
@@ -477,7 +504,7 @@ export function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.removeActiveScenarioFromFavorites',
         async () => {
             await phaseSwitcherProvider.removeActiveScenarioFromFavorites();
-            await updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
+            await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
     ));
 
@@ -492,7 +519,7 @@ export function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.changeNestedScenarioCode',
         async () => {
             await phaseSwitcherProvider.changeNestedScenarioCodeForActiveEditor();
-            await updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
+            await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
     ));
 
@@ -500,7 +527,15 @@ export function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.changeNestedScenarioName',
         async () => {
             await phaseSwitcherProvider.changeNestedScenarioNameForActiveEditor();
-            await updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
+            await updateActiveScenarioContext(vscode.window.activeTextEditor);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.renameScenarioFromEditor',
+        async () => {
+            await phaseSwitcherProvider.renameScenarioForActiveEditor();
+            await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
     ));
 
@@ -511,7 +546,7 @@ export function activate(context: vscode.ExtensionContext) {
                 return false;
             }
             const result = await phaseSwitcherProvider.addScenarioToFavoritesByUri(target, { silent: true });
-            await updateActiveScenarioFavoriteContext(vscode.window.activeTextEditor);
+            await updateActiveScenarioContext(vscode.window.activeTextEditor);
             return result;
         }
     ));

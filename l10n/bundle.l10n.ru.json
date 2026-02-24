@@ -562,6 +562,7 @@
   "Failed to change nested scenario code for \"{0}\": {1}": "Не удалось изменить код вложенного сценария \"{0}\": {1}",
   "Nested scenario \"{0}\" code was changed from \"{1}\" to \"{2}\". Updated files: {3}.": "Код вложенного сценария \"{0}\" изменен с \"{1}\" на \"{2}\". Обновлено файлов: {3}.",
   "Open a scenario YAML file to change nested scenario name.": "Откройте YAML-файл сценария, чтобы изменить имя вложенного сценария.",
+  "Open a scenario YAML file to rename scenario.": "Откройте YAML-файл сценария, чтобы переименовать сценарий.",
   "Changing name from editor is available for nested scenarios only.": "Изменение имени из редактора доступно только для вложенных сценариев.",
   "Save modified scenario file before changing nested scenario name for \"{0}\".": "Сохраните измененный файл сценария перед изменением имени вложенного сценария \"{0}\".",
   "Scenario \"{0}\" has no name in ДанныеСценария.": "У сценария \"{0}\" нет имени в блоке ДанныеСценария.",
