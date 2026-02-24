@@ -1,6 +1,6 @@
 <p align="center">
   <img src="./docs/KOTfor1C_poster.png" alt="Иконка KOT for 1C" width="600"/><br>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.0.0-yellow"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.1.0-yellow"></a>
 </p>
 
 **KOT** (_**K**eep **O**n **T**esting_) **for 1C** — расширение VS Code для разработки и поддержки автотестов 1С в YAML-формате (экосистема СППР / Vanessa Automation).
@@ -30,6 +30,9 @@
 ### 1) Редактор сценариев
 
 - IntelliSense шагов Gherkin (библиотека шагов Vanessa Automation, выгруженная в отдельный файл).
+- Интеллектуальные семантические подсказки шагов в IntelliSense по префиксу `!`:
+  - можно вводить формулировку желаемого шага своими словами, например: `!условие, что открылось окно`, `!проверка фоновых заданий`, и плагин предложит соответствующие шаги из библиотеки шагов Vanessa Automation;
+  - приоритет языка подсказок шагов по тегу `#language:` текущего сценария.
 - IntelliSense вызовов вложенных сценариев с параметрами по умолчанию.
 - IntelliSense переменных по `$`:
   - переменные, сохраненные выше в сценарии;
@@ -141,12 +144,12 @@ _На скриншотах продемонстрирован интерфейс
 
 - Описание вызываемого сценария:
 
-<p align="center"><img src="./docs/ScenHover.png" alt="Команды контекстного меню" width=500 style="max-width: 100%; height: auto; border-radius: 8px;"/></p>
+<p align="center"><img src="./docs/ScenHover.png" alt="Описание вызываемого сценария" width=500 style="max-width: 100%; height: auto; border-radius: 8px;"/></p>
 
 ---
 
-- Описание шагов, сценариев и переменных в подсказках IntelliSense:
-<p align="center"><img src="./docs/IntelliSense.png" alt="Команды контекстного меню" style="max-width: 100%; height: auto; border-radius: 8px;"/></p>
+- Описание шагов, сценариев, переменных и семантический поиск шагов в подсказках IntelliSense:
+<p align="center"><img src="./docs/IntelliSense.png" alt="Предложения IntelliSence" style="max-width: 100%; height: auto; border-radius: 8px;"/></p>
 
 ---
 

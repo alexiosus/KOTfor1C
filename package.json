@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/KOTfor1C",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -392,6 +392,21 @@
         "command": "kotTestToolkit.showFavoriteScenarios",
         "title": "%cmd.showFavoriteScenarios.title%",
         "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.renameScenarioFromEditor",
+        "title": "%cmd.renameScenarioFromEditor.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.changeNestedScenarioCode",
+        "title": "%cmd.changeNestedScenarioCode.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.changeNestedScenarioName",
+        "title": "%cmd.changeNestedScenarioName.title%",
+        "category": "%cmd.category%"
       }
     ],
     "submenus": [
@@ -526,19 +541,29 @@
       ],
       "kotTestToolkit.editorContext.editing": [
         {
+          "command": "kotTestToolkit.renameScenarioFromEditor",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && kotTestToolkit.activeScenarioIsMain",
+          "group": "00_editing@0"
+        },
+        {
+          "command": "kotTestToolkit.changeNestedScenarioName",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && !kotTestToolkit.activeScenarioIsMain",
+          "group": "00_editing@1"
+        },
+        {
+          "command": "kotTestToolkit.changeNestedScenarioCode",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && !kotTestToolkit.activeScenarioIsMain",
+          "group": "00_editing@2"
+        },
+        {
           "command": "kotTestToolkit.checkAndFillNestedScenarios",
           "when": "editorTextFocus && resourceExtname == .yaml",
-          "group": "00_editing@0"
+          "group": "01_fill@0"
         },
         {
           "command": "kotTestToolkit.checkAndFillScriptParameters",
           "when": "editorTextFocus && resourceExtname == .yaml",
-          "group": "00_editing@1"
-        },
-        {
-          "command": "kotTestToolkit.insertUid",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
-          "group": "00_editing@2"
+          "group": "01_fill@1"
         }
       ],
       "commandPalette": [
@@ -592,6 +617,18 @@
         },
         {
           "command": "kotTestToolkit.showFavoriteScenarios",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.renameScenarioFromEditor",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.changeNestedScenarioCode",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.changeNestedScenarioName",
           "when": "true"
         }
       ]

@@ -146,6 +146,9 @@
 ### 5.2 Диагностика и редактирование
 
 - `KOT - Fix scenario issues` (`KOT - Исправить проблемы сценария`)
+- `KOT - Change main scenario name` (`KOT - Изменить имя главного сценария`)
+- `KOT - Change nested scenario name` (`KOT - Изменить имя вложенного сценария`)
+- `KOT - Change nested scenario code` (`KOT - Изменить код вложенного сценария`)
 - `KOT - Fill NestedScenarios section` (`KOT - Заполнить секцию ВложенныеСценарии`)
 - `KOT - Fill ScenarioParameters section` (`KOT - Заполнить секцию ПараметрыСценария`)
 - `KOT - Replace tabs with spaces` (`KOT - Заменить табы на пробелы`)
