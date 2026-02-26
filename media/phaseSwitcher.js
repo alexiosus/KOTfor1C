@@ -24,6 +24,8 @@
         highlightAffectedMainScenarios: true
     };
     let isBuildInProgress = false;
+    let isScenarioRepairInProgress = false;
+    let isScenarioRepairCancelling = false;
     let phaseControlsActive = false;
     let areAllPhasesCurrentlyExpanded = false; 
     let activeRunModeMenu = null;
@@ -31,9 +33,6 @@
     const FAVORITE_SCENARIO_DROP_MIME = 'application/x-kot-favorite-scenario-uri';
 
     // === Получение ссылок на элементы DOM ===
-    const refreshBtn = document.getElementById('refreshBtn');
-    const runVanessaTopBtn = document.getElementById('runVanessaTopBtn');
-    const openSettingsBtn = document.getElementById('openSettingsBtn');
     const collapseAllBtn = document.getElementById('collapseAllBtn');
     const assembleSplitContainer = document.getElementById('assembleSplitContainer');
     const assembleMenuBtn = document.getElementById('assembleMenuBtn');
@@ -45,6 +44,15 @@
     const addScenarioDropdownContent = document.getElementById('addScenarioDropdownContent');
     const createMainScenarioFromDropdownBtn = document.getElementById('createMainScenarioFromDropdownBtn');
     const createNestedScenarioFromDropdownBtn = document.getElementById('createNestedScenarioFromDropdownBtn');
+    const scenarioRepairDropdownBtn = document.getElementById('scenarioRepairDropdownBtn');
+    const scenarioRepairDropdownContent = document.getElementById('scenarioRepairDropdownContent');
+    const reloadTestsFromDiskFromDropdownBtn = document.getElementById('reloadTestsFromDiskFromDropdownBtn');
+    const openScenarioRepairMenuFromDropdownBtn = document.getElementById('openScenarioRepairMenuFromDropdownBtn');
+    const cancelScenarioRepairFromDropdownBtn = document.getElementById('cancelScenarioRepairFromDropdownBtn');
+    const refreshVanessaStepsFromDropdownBtn = document.getElementById('refreshVanessaStepsFromDropdownBtn');
+    const runVanessaFromDropdownBtn = document.getElementById('runVanessaFromDropdownBtn');
+    const openYamlParamsFromDropdownBtn = document.getElementById('openYamlParamsFromDropdownBtn');
+    const openSettingsFromDropdownBtn = document.getElementById('openSettingsFromDropdownBtn');
     const testsTabBtn = document.getElementById('testsTabBtn');
     const favoritesTabBtn = document.getElementById('favoritesTabBtn');
     const globalListActions = document.getElementById('globalListActions');
@@ -59,7 +67,6 @@
     const phaseTreeContainer = document.getElementById('phaseTreeContainer');
     const favoritesContainer = document.getElementById('favoritesContainer');
 
-    const selectionSummaryBar = document.getElementById('selectionSummaryBar');
     const statusBar = document.getElementById('statusBar');
     const selectAllBtn = document.getElementById('selectAllBtn');
     const selectDefaultsBtn = document.getElementById('selectDefaultsBtn');
@@ -71,8 +78,9 @@
 
     const assembleBtn = document.getElementById('assembleTestsBtn');
     const cancelAssembleBtn = document.getElementById('cancelAssembleBtn');
-    const assembleStatus = document.getElementById('assembleStatus');
     let currentRecordGLValue = '2';
+    let mainStatusText = '';
+    let selectionSummaryText = '';
 
     /**
      * Логирует сообщение в консоль webview и отправляет его в расширение.
@@ -83,45 +91,45 @@
         vscode.postMessage({ command: 'log', text: "[Webview] " + message });
     }
 
+    function renderMainStatusBar() {
+        if (!(statusBar instanceof HTMLElement)) {
+            return;
+        }
+        const primary = (typeof mainStatusText === 'string' ? mainStatusText : '').trim();
+        const fallback = (typeof selectionSummaryText === 'string' ? selectionSummaryText : '').trim();
+        const visibleText = primary || fallback;
+        statusBar.textContent = visibleText;
+        statusBar.classList.toggle('is-summary', primary.length === 0 && fallback.length > 0);
+        statusBar.classList.toggle('is-empty', visibleText.length === 0);
+    }
+
     /**
      * Обновляет текстовое содержимое статус-бара.
      * @param {string} text - Текст для отображения.
-     * @param {'main' | 'assemble'} target - Целевая область статуса ('main' или 'assemble').
-     * @param {boolean} [refreshButtonEnabled] - Состояние активности кнопки обновления.
+     * @param {'main' | 'assemble'} target - Целевая область статуса.
      */
-    function updateStatus(text, target = 'main', refreshButtonEnabled) {
-        let area = statusBar;
-        if (target === 'assemble' && assembleStatus) {
-            area = assembleStatus;
-        }
-        if (area instanceof HTMLElement) {
-            area.textContent = text;
-            area.classList.toggle('is-empty', !(typeof text === 'string' && text.trim().length > 0));
-        }
-        // Always respect explicit refresh button state
-        if (refreshButtonEnabled !== undefined && refreshBtn instanceof HTMLButtonElement) {
-            refreshBtn.disabled = isBuildInProgress ? true : !refreshButtonEnabled;
-            log(`Refresh button explicitly set to: ${refreshButtonEnabled ? 'enabled' : 'disabled'}`);
+    function updateStatus(text, target = 'main') {
+        if (target === 'main' || target === 'assemble') {
+            mainStatusText = typeof text === 'string' ? text : '';
+            renderMainStatusBar();
         }
         if (collapseAllBtn instanceof HTMLButtonElement) {
             const hasPhases = Object.keys(testDataByPhase).length > 0;
-            const refreshEnabled = refreshBtn instanceof HTMLButtonElement ? !refreshBtn.disabled : true;
-            collapseAllBtn.disabled = !(refreshEnabled && hasPhases && settings.switcherEnabled);
+            setSoftDisabled(collapseAllBtn, !(hasPhases && settings.switcherEnabled && !isBuildInProgress));
         }
-        // Кнопка создания сценариев (плюс)
         if (addScenarioDropdownBtn instanceof HTMLButtonElement) {
-            addScenarioDropdownBtn.disabled = !settings.switcherEnabled;
+            setSoftDisabled(addScenarioDropdownBtn, !settings.switcherEnabled);
         }
         updateTopRunButtonState();
-        log(`Status updated [${target}]: ${text}. Refresh button enabled: ${refreshButtonEnabled === undefined ? 'unchanged' : refreshButtonEnabled}`);
+        updateScenarioRepairControls();
+        log(`Status updated [${target}]: ${text}`);
     }
 
     /**
      * Включает или отключает основные элементы управления Test Manager.
      * @param {boolean} enable - True для включения, false для отключения.
-     * @param {boolean} [refreshButtonAlso=true] - Управляет ли также кнопкой обновления.
      */
-    function enablePhaseControls(enable, refreshButtonAlso = true) {
+    function enablePhaseControls(enable) {
         const isPhaseSwitcherVisible = settings.switcherEnabled;
         const effectiveEnable = enable && isPhaseSwitcherVisible && !isBuildInProgress;
         phaseControlsActive = effectiveEnable;
@@ -131,11 +139,11 @@
 
         if (collapseAllBtn instanceof HTMLButtonElement) {
             const hasPhases = Object.keys(testDataByPhase).length > 0;
-            collapseAllBtn.disabled = isDisabled || !hasPhases;
+            setSoftDisabled(collapseAllBtn, isDisabled || !hasPhases);
         }
         
         if (addScenarioDropdownBtn instanceof HTMLButtonElement) {
-            addScenarioDropdownBtn.disabled = !isPhaseSwitcherVisible;
+            setSoftDisabled(addScenarioDropdownBtn, !isPhaseSwitcherVisible);
         }
 
 
@@ -159,17 +167,8 @@
                 }
             });
         }
-        if (isBuildInProgress && refreshBtn instanceof HTMLButtonElement) {
-             refreshBtn.disabled = true;
-        } else if (refreshButtonAlso === true && refreshBtn instanceof HTMLButtonElement) {
-             refreshBtn.disabled = isDisabled;
-             log(`Refresh button set by enablePhaseControls to: ${isDisabled ? 'disabled' : 'enabled'}`);
-        } else if (refreshButtonAlso === false && refreshBtn instanceof HTMLButtonElement) {
-             // If refreshButtonAlso is explicitly false, don't change the refresh button state
-             // This allows the refresh button to remain enabled even when other controls are disabled
-             log(`Refresh button state preserved by enablePhaseControls (refreshButtonAlso=false)`);
-        }
         updateRunButtonsState();
+        updateScenarioRepairControls();
         updateSelectDefaultsButtonState();
         log(`Phase controls enabled: ${effectiveEnable} (request ${enable}, feature ${isPhaseSwitcherVisible})`);
     }
@@ -202,6 +201,145 @@
         selectDefaultsBtn.disabled = !phaseControlsActive || noScenarios || defaultsAlreadyApplied;
     }
 
+    function setTooltipValue(element, title) {
+        if (!(element instanceof HTMLElement)) {
+            return;
+        }
+        const normalized = typeof title === 'string' ? title.trim() : '';
+        if (normalized.length > 0) {
+            element.title = normalized;
+            return true;
+        }
+        return false;
+    }
+
+    function setSoftDisabled(button, disabled) {
+        if (!(button instanceof HTMLButtonElement)) {
+            return;
+        }
+        button.disabled = false;
+        button.classList.toggle('is-disabled', !!disabled);
+        button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    }
+
+    function isSoftDisabled(button) {
+        return button instanceof HTMLElement && button.classList.contains('is-disabled');
+    }
+
+    function syncTooltipDataAttributes(root = document) {
+        if (!root || typeof root.querySelectorAll !== 'function') {
+            return;
+        }
+        root.querySelectorAll('[title]').forEach(node => {
+            if (!(node instanceof HTMLElement)) {
+                return;
+            }
+            setTooltipValue(node, node.getAttribute('title') || '');
+        });
+    }
+
+    function setDropdownItemDisabledState(item, disabled, disabledTitle, enabledTitle) {
+        if (!(item instanceof HTMLElement)) {
+            return;
+        }
+        item.classList.toggle('is-disabled', !!disabled);
+        item.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+        item.setAttribute('tabindex', disabled ? '-1' : '0');
+        const title = disabled ? disabledTitle : enabledTitle;
+        if (typeof title === 'string' && title.trim().length > 0) {
+            setTooltipValue(item, title.trim());
+            return;
+        }
+        const fallbackTitle = (item.textContent || '').replace(/\s+/g, ' ').trim();
+        if (fallbackTitle.length > 0) {
+            setTooltipValue(item, fallbackTitle);
+        }
+    }
+
+    function updateScenarioRepairControls() {
+        const canOpenRepairMenu = settings.switcherEnabled || settings.assemblerEnabled;
+        const repairBlocksGeneralActions = isScenarioRepairInProgress && !isScenarioRepairCancelling;
+        const canCreateScenario = settings.switcherEnabled && !isBuildInProgress && !isScenarioRepairInProgress;
+        const canStartRepair = settings.switcherEnabled && !isBuildInProgress && !isScenarioRepairInProgress;
+        const canReloadTests = settings.switcherEnabled && !isBuildInProgress && !repairBlocksGeneralActions;
+        const canRefreshSteps = !isBuildInProgress;
+        const canCancelRepair = isScenarioRepairInProgress && !isScenarioRepairCancelling;
+        const canRunVanessa = settings.switcherEnabled && !isBuildInProgress;
+        const canOpenYamlParameters = !isBuildInProgress;
+        const canOpenSettings = true;
+
+        if (scenarioRepairDropdownBtn instanceof HTMLButtonElement) {
+            setSoftDisabled(scenarioRepairDropdownBtn, !canOpenRepairMenu);
+            scenarioRepairDropdownBtn.classList.toggle('is-active', canCancelRepair);
+        }
+        if (addScenarioDropdownBtn instanceof HTMLButtonElement) {
+            setSoftDisabled(addScenarioDropdownBtn, !canCreateScenario);
+            if (!canCreateScenario) {
+                addScenarioDropdownBtn.closest('.dropdown-container')?.classList.remove('show');
+                resetAddScenarioDropdownPosition();
+            }
+        }
+
+        const disabledByBuildTitle = window.__loc?.statusBuildingInProgress || 'Building tests in progress...';
+        const disabledByRepairTitle = isScenarioRepairCancelling
+            ? (window.__loc?.scenarioRepairCancellingSuffix || 'Cancelling scenario repair...')
+            : (window.__loc?.scenarioRepairRunningSuffix || 'Scenario repair in progress');
+        const disabledByStateTitle = isBuildInProgress ? disabledByBuildTitle : disabledByRepairTitle;
+
+        setDropdownItemDisabledState(
+            runVanessaFromDropdownBtn,
+            !canRunVanessa,
+            disabledByStateTitle,
+            window.__loc?.runVanessaTopTitle || 'Open Vanessa'
+        );
+        setDropdownItemDisabledState(
+            openYamlParamsFromDropdownBtn,
+            !canOpenYamlParameters,
+            disabledByStateTitle,
+            window.__loc?.openYamlParametersManagerTitle || 'Open Build Scenario Parameters Manager'
+        );
+        setDropdownItemDisabledState(
+            openSettingsFromDropdownBtn,
+            !canOpenSettings,
+            '',
+            window.__loc?.openSettingsTitle || 'Open extension settings'
+        );
+
+        setDropdownItemDisabledState(
+            reloadTestsFromDiskFromDropdownBtn,
+            !canReloadTests,
+            disabledByStateTitle,
+            window.__loc?.reloadTestsFromDiskHint || 'Reloads main scenarios from disk and refreshes Test Manager list.'
+        );
+
+        setDropdownItemDisabledState(
+            openScenarioRepairMenuFromDropdownBtn,
+            !canStartRepair,
+            disabledByStateTitle,
+            window.__loc?.repairScenariosTitle || 'Repair scenario files'
+        );
+        setDropdownItemDisabledState(
+            cancelScenarioRepairFromDropdownBtn,
+            !isScenarioRepairInProgress || isScenarioRepairCancelling,
+            isScenarioRepairCancelling
+                ? (window.__loc?.scenarioRepairCancellingSuffix || 'Cancelling scenario repair...')
+                : (window.__loc?.scenarioRepairNotRunningSuffix || 'Scenario repair is not running'),
+            window.__loc?.cancelScenarioRepairHint || 'Stops currently running scenario repair process.'
+        );
+        if (cancelScenarioRepairFromDropdownBtn instanceof HTMLElement) {
+            cancelScenarioRepairFromDropdownBtn.style.display = isScenarioRepairInProgress ? 'flex' : 'none';
+        }
+        if (openScenarioRepairMenuFromDropdownBtn instanceof HTMLElement) {
+            openScenarioRepairMenuFromDropdownBtn.style.display = isScenarioRepairInProgress ? 'none' : 'flex';
+        }
+        setDropdownItemDisabledState(
+            refreshVanessaStepsFromDropdownBtn,
+            !canRefreshSteps,
+            disabledByStateTitle,
+            window.__loc?.refreshVanessaStepsHint || 'Reloads Vanessa steps library used by completion and diagnostics.'
+        );
+    }
+
     function updateRunButtonsState() {
         if (!phaseTreeContainer) return;
         const runButtons = phaseTreeContainer.querySelectorAll('.run-scenario-btn');
@@ -225,9 +363,12 @@
 
     function updateTopRunButtonState() {
         const canRun = settings.switcherEnabled && !isBuildInProgress;
-        if (runVanessaTopBtn instanceof HTMLButtonElement) {
-            runVanessaTopBtn.disabled = !canRun;
-        }
+        setDropdownItemDisabledState(
+            runVanessaFromDropdownBtn,
+            !canRun,
+            window.__loc?.statusBuildingInProgress || 'Building tests in progress...',
+            window.__loc?.runVanessaTopTitle || 'Open Vanessa'
+        );
     }
 
     function normalizeAffectedMainScenarioNames(names) {
@@ -359,6 +500,8 @@
          }
 
          syncBuildFlButtonWidth();
+         updateAssembleMainButtonLayout();
+         updateScenarioRepairControls();
 
          log(`Assemble controls enabled: ${effectiveEnable} (request ${enable}, feature ${isAssemblerVisible})`);
      }
@@ -398,6 +541,37 @@
         createFirstLaunchBtn.style.width = widthPx;
         createFirstLaunchBtn.style.flexBasis = widthPx;
         createFirstLaunchBtn.style.maxWidth = widthPx;
+    }
+
+    function updateAssembleMainButtonLayout() {
+        if (!(assembleBtn instanceof HTMLButtonElement)) {
+            return;
+        }
+        const content = assembleBtn.querySelector('.split-main-content');
+        if (content instanceof HTMLElement) {
+            content.style.transform = '';
+        }
+
+        if (!(assembleMenuBtn instanceof HTMLButtonElement)) {
+            return;
+        }
+        const menuVisible = assembleMenuBtn.style.display !== 'none' && assembleMenuBtn.offsetParent !== null;
+        if (!menuVisible) {
+            return;
+        }
+
+        if (!(content instanceof HTMLElement)) {
+            return;
+        }
+        const buttonRect = assembleBtn.getBoundingClientRect();
+        const contentRect = content.getBoundingClientRect();
+        const menuRect = assembleMenuBtn.getBoundingClientRect();
+        const overlapRight = contentRect.right - (menuRect.left - 4);
+        if (overlapRight > 0) {
+            const maxShiftLeft = Math.max(0, contentRect.left - (buttonRect.left + 4));
+            const shiftLeft = Math.min(overlapRight, maxShiftLeft);
+            content.style.transform = `translateX(${-shiftLeft}px)`;
+        }
     }
 
     function normalizeRecordGLValue(value) {
@@ -814,11 +988,11 @@
         if (sortedPhaseNames.length === 0) {
             const noPhasesMessage = window.__loc?.noPhasesToDisplay || 'No groups to display.';
             phaseTreeContainer.innerHTML = `<p>${noPhasesMessage}</p>`;
-            if (collapseAllBtn instanceof HTMLButtonElement) collapseAllBtn.disabled = true;
+            if (collapseAllBtn instanceof HTMLButtonElement) setSoftDisabled(collapseAllBtn, true);
             return;
         } else {
              if (collapseAllBtn instanceof HTMLButtonElement) {
-                collapseAllBtn.disabled = !settings.switcherEnabled;
+                setSoftDisabled(collapseAllBtn, !settings.switcherEnabled);
             }
         }
 
@@ -1104,6 +1278,9 @@
      */
     function handleCollapseAllClick() {
         log('Collapse/Expand All button clicked.');
+        if (isSoftDisabled(collapseAllBtn)) {
+            return;
+        }
         if (!phaseTreeContainer) return;
 
         const shouldExpandAll = !areAllPhasesCurrentlyExpanded;
@@ -1220,6 +1397,18 @@
         resetAssembleDropdownPosition();
     }
 
+    function closeScenarioRepairDropdownMenu() {
+        if (!(scenarioRepairDropdownBtn instanceof HTMLElement)) {
+            return;
+        }
+        const container = scenarioRepairDropdownBtn.closest('.dropdown-container');
+        if (!(container instanceof HTMLElement)) {
+            return;
+        }
+        container.classList.remove('show');
+        resetScenarioRepairDropdownPosition();
+    }
+
     function closeContextMenu() {
         if (!activeContextMenu) return;
         activeContextMenu.remove();
@@ -1232,6 +1421,7 @@
         }
         closeRunModeMenu();
         closeAssembleOptionsMenu();
+        closeScenarioRepairDropdownMenu();
 
         if (activeContextMenu && activeContextMenu.getAttribute('data-scope') === scopeKey) {
             closeContextMenu();
@@ -1352,6 +1542,7 @@
         }
         closeRunModeMenu();
         closeContextMenu();
+        closeScenarioRepairDropdownMenu();
 
         const menu = document.createElement('div');
         menu.className = 'run-mode-menu';
@@ -1470,15 +1661,82 @@
     }
 
     function handleTopRunVanessaClick(event) {
-        if (!(runVanessaTopBtn instanceof HTMLButtonElement)) {
+        if (!(scenarioRepairDropdownBtn instanceof HTMLButtonElement)) {
             return;
         }
         event.preventDefault();
         event.stopPropagation();
-        if (runVanessaTopBtn.disabled) {
+        if (!(runVanessaFromDropdownBtn instanceof HTMLElement) || runVanessaFromDropdownBtn.classList.contains('is-disabled')) {
             return;
         }
-        showRunModeMenu(runVanessaTopBtn, '');
+        closeScenarioRepairDropdownMenu();
+        showRunModeMenu(scenarioRepairDropdownBtn, '');
+    }
+
+    function showRepairModeMenu(anchorButton) {
+        if (!(anchorButton instanceof HTMLElement)) {
+            return;
+        }
+        const menuScope = '__repair__';
+        if (activeRunModeMenu && activeRunModeMenu.getAttribute('data-scenario') === menuScope) {
+            closeRunModeMenu();
+            return;
+        }
+        closeRunModeMenu();
+        closeContextMenu();
+        closeScenarioRepairDropdownMenu();
+
+        const menu = document.createElement('div');
+        menu.className = 'run-mode-menu';
+        menu.setAttribute('data-scenario', menuScope);
+
+        const changedLabel = window.__loc?.repairChangedScenarios || 'Repair changed scenarios';
+        const changedHint = window.__loc?.repairChangedScenariosHint
+            || 'Repairs and validates changed scenarios: tabs, table alignment, nested/parameter blocks, KOT metadata migration, and test list refresh.';
+        const allLabel = window.__loc?.repairAllScenarios || 'Repair all scenarios';
+        const allHint = window.__loc?.repairAllScenariosHint
+            || 'Repairs and validates all scenarios in configured yamlSourceDirectory (high load), then refreshes test list.';
+
+        const changedItem = document.createElement('button');
+        changedItem.type = 'button';
+        changedItem.className = 'run-mode-menu-item';
+        changedItem.innerHTML = `<span class="codicon codicon-wrench"></span><span>${escapeHtmlAttr(changedLabel)}</span>`;
+        changedItem.title = changedHint;
+        changedItem.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            closeRunModeMenu();
+            vscode.postMessage({ command: 'runScenarioRepairChanged' });
+        });
+
+        const allItem = document.createElement('button');
+        allItem.type = 'button';
+        allItem.className = 'run-mode-menu-item';
+        allItem.innerHTML = `<span class="codicon codicon-warning"></span><span>${escapeHtmlAttr(allLabel)}</span>`;
+        allItem.title = allHint;
+        allItem.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            closeRunModeMenu();
+            vscode.postMessage({ command: 'runScenarioRepairAll' });
+        });
+
+        menu.appendChild(changedItem);
+        menu.appendChild(allItem);
+        document.body.appendChild(menu);
+
+        const rect = anchorButton.getBoundingClientRect();
+        const menuRect = menu.getBoundingClientRect();
+        const topSpace = rect.top;
+        const bottomSpace = window.innerHeight - rect.bottom;
+        const placeAbove = bottomSpace < menuRect.height + 8 && topSpace > menuRect.height + 8;
+        const top = placeAbove ? rect.top - menuRect.height - 4 : rect.bottom + 4;
+        const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuRect.width - 8));
+
+        menu.style.top = `${Math.max(8, top)}px`;
+        menu.style.left = `${left}px`;
+
+        activeRunModeMenu = menu;
     }
 
     /**
@@ -1638,12 +1896,11 @@
             }
         }
 
-        if (selectionSummaryBar instanceof HTMLElement) {
-            const statusTemplate = window.__loc?.selectionStateSummary || 'Selected: {0}/{1}';
-            selectionSummaryBar.textContent = statusTemplate
-                .replace('{0}', String(enabled))
-                .replace('{1}', String(total));
-        }
+        const statusTemplate = window.__loc?.selectionStateSummary || 'Will be built: {0}/{1}';
+        selectionSummaryText = statusTemplate
+            .replace('{0}', String(enabled))
+            .replace('{1}', String(total));
+        renderMainStatusBar();
 
         updateHighlighting();
         updatePhaseCounts();
@@ -1658,18 +1915,15 @@
 
         switch (message?.command) {
             case 'loadInitialState':
-                if (assembleStatus instanceof HTMLElement) assembleStatus.textContent = '';
-
                 if (message.error) {
                      closeRunModeMenu();
                      closeAssembleOptionsMenu();
                      closeContextMenu();
                      runArtifacts = {};
                      const errorTemplate = window.__loc?.errorWithDetails || 'Error: {0}';
-                     updateStatus(errorTemplate.replace('{0}', message.error), 'main', true);
+                     updateStatus(errorTemplate.replace('{0}', message.error), 'main');
                       phaseSwitcherSectionElements.forEach(el => { if (el instanceof HTMLElement) el.style.display = 'none'; });
-                     enablePhaseControls(false, true); enableAssembleControls(false);
-                     if (openSettingsBtn instanceof HTMLButtonElement) openSettingsBtn.disabled = false;
+                     enablePhaseControls(false); enableAssembleControls(false);
                 } else {
                     closeRunModeMenu();
                     closeAssembleOptionsMenu();
@@ -1686,6 +1940,8 @@
                         driveFeaturesEnabled: false,
                         highlightAffectedMainScenarios: true
                     };
+                    isScenarioRepairInProgress = !!settings.scenarioRepairInProgress;
+                    isScenarioRepairCancelling = !!settings.scenarioRepairCancelling;
                     if (typeof settings.highlightAffectedMainScenarios !== 'boolean') {
                         settings.highlightAffectedMainScenarios = true;
                     }
@@ -1754,7 +2010,7 @@
                         if (phaseTreeContainer instanceof HTMLElement) {
                             phaseTreeContainer.innerHTML = `<p>${window.__loc?.phaseSwitcherDisabled || 'Test Manager is disabled in settings.'}</p>`;
                         }
-                         if (collapseAllBtn instanceof HTMLButtonElement) collapseAllBtn.disabled = true;
+                         if (collapseAllBtn instanceof HTMLButtonElement) setSoftDisabled(collapseAllBtn, true);
                     }
                     if (favoritesSortSelect instanceof HTMLSelectElement) {
                         favoritesSortSelect.value = favoriteSortMode;
@@ -1763,20 +2019,19 @@
                     setActiveManagerTab(activeManagerTab);
 
                     updatePendingStatus();
-                    enablePhaseControls(phaseSwitcherVisible && !!testDataByPhase && Object.keys(testDataByPhase).length > 0, true);
+                    enablePhaseControls(phaseSwitcherVisible && !!testDataByPhase && Object.keys(testDataByPhase).length > 0);
                     enableAssembleControls(assemblerVisible);
-                    if (openSettingsBtn instanceof HTMLButtonElement) openSettingsBtn.disabled = false;
 
                     if (isBuildInProgress) {
                         const buildMessage = window.__loc?.statusBuildingInProgress || 'Building tests in progress...';
-                        updateStatus(buildMessage, 'main', false);
-                        updateStatus(buildMessage, 'assemble', false);
-                        enablePhaseControls(false, false);
+                        updateStatus(buildMessage, 'main');
+                        enablePhaseControls(false);
                         enableAssembleControls(false);
                     } else {
-                        updateStatus('', 'main', true);
+                        updateStatus('', 'main');
                     }
                     updateTopRunButtonState();
+                    updateScenarioRepairControls();
                 }
                 break;
 
@@ -1813,48 +2068,66 @@
              case 'updateStatus':
                  const target = message.target || 'main';
                  const controlsEnabled = message.enableControls === undefined ? undefined : message.enableControls;
-                 let refreshEnabled = message.refreshButtonEnabled;
-                 const refreshButtonAlso = message.refreshButtonAlso;
-
-                 if (refreshEnabled === undefined) {
-                     refreshEnabled = controlsEnabled === undefined ? (refreshBtn ? !refreshBtn.disabled : true) : controlsEnabled;
-                 }
-
-                 updateStatus(message.text, target, refreshEnabled);
+                 updateStatus(message.text, target);
 
                  if (controlsEnabled !== undefined) {
-                     // Enable phase controls only if there are tests, but respect refresh button state
                      const shouldEnablePhaseControls = controlsEnabled && settings.switcherEnabled;
-                     enablePhaseControls(shouldEnablePhaseControls, refreshButtonAlso !== undefined ? refreshButtonAlso : refreshEnabled);
+                     enablePhaseControls(shouldEnablePhaseControls);
                      enableAssembleControls(controlsEnabled && settings.assemblerEnabled);
                  }
                  break;
-
-            case 'setRefreshButtonState':
-                if (refreshBtn instanceof HTMLButtonElement) {
-                    refreshBtn.disabled = isBuildInProgress ? true : !message.enabled;
-                    log(`External: Refresh button state set to enabled: ${message.enabled}`);
-                }
-                break;
 
             case 'buildStateChanged': {
                 isBuildInProgress = !!message.inProgress;
                 if (isBuildInProgress) {
                     closeRunModeMenu();
                     closeAssembleOptionsMenu();
+                    closeScenarioRepairDropdownMenu();
                     closeContextMenu();
                     const buildMessage = window.__loc?.statusBuildingInProgress || 'Building tests in progress...';
-                    updateStatus(buildMessage, 'main', false);
-                    updateStatus(buildMessage, 'assemble', false);
-                    enablePhaseControls(false, false);
+                    updateStatus(buildMessage, 'main');
+                    enablePhaseControls(false);
                     enableAssembleControls(false);
                 } else {
+                    // Clear transient build status so selection summary can be shown again.
+                    mainStatusText = '';
                     const mainControlsShouldBeActive = settings.switcherEnabled && !!testDataByPhase && Object.keys(testDataByPhase).length > 0;
-                    enablePhaseControls(mainControlsShouldBeActive, true);
+                    enablePhaseControls(mainControlsShouldBeActive);
                     enableAssembleControls(settings.assemblerEnabled);
                     updatePendingStatus();
                 }
                 updateTopRunButtonState();
+                updateScenarioRepairControls();
+                break;
+            }
+
+            case 'scenarioRepairStateChanged': {
+                isScenarioRepairInProgress = !!message.inProgress;
+                if (typeof message.cancelling === 'boolean') {
+                    isScenarioRepairCancelling = message.cancelling;
+                } else if (!isScenarioRepairInProgress) {
+                    isScenarioRepairCancelling = false;
+                }
+
+                if (isScenarioRepairInProgress && isScenarioRepairCancelling) {
+                    updateStatus(
+                        window.__loc?.statusCancellingScenarioRepair || 'Cancelling scenario repair...',
+                        'main'
+                    );
+                }
+
+                if (!isScenarioRepairInProgress) {
+                    closeScenarioRepairDropdownMenu();
+                    if (!isBuildInProgress) {
+                        mainStatusText = '';
+                        const mainControlsShouldBeActive = settings.switcherEnabled
+                            && !!testDataByPhase
+                            && Object.keys(testDataByPhase).length > 0;
+                        enablePhaseControls(mainControlsShouldBeActive);
+                        updatePendingStatus();
+                    }
+                }
+                updateScenarioRepairControls();
                 break;
             }
 
@@ -1888,18 +2161,9 @@
         applyCheckboxStatesToVisible();
         updatePendingStatus();
         const mainControlsShouldBeActive = settings.switcherEnabled && !!testDataByPhase && Object.keys(testDataByPhase).length > 0;
-        enablePhaseControls(mainControlsShouldBeActive, true);
+        enablePhaseControls(mainControlsShouldBeActive);
         sendScenarioSelectionStates();
     });
-
-    if(refreshBtn instanceof HTMLButtonElement) refreshBtn.addEventListener('click', () => {
-        log('Refresh button clicked.');
-        vscode.postMessage({ command: 'refreshData' });
-    });
-
-    if (runVanessaTopBtn instanceof HTMLButtonElement) {
-        runVanessaTopBtn.addEventListener('click', handleTopRunVanessaClick);
-    }
 
     if (testsTabBtn instanceof HTMLButtonElement) {
         testsTabBtn.addEventListener('click', event => {
@@ -2051,11 +2315,6 @@
         });
     }
 
-    if (openSettingsBtn instanceof HTMLButtonElement) openSettingsBtn.addEventListener('click', () => {
-        log('Open Settings button clicked.');
-        vscode.postMessage({ command: 'openSettings' });
-    });
-
     if (collapseAllBtn instanceof HTMLButtonElement) {
         collapseAllBtn.addEventListener('click', handleCollapseAllClick);
     }
@@ -2066,6 +2325,20 @@
         }
         addScenarioDropdownContent.style.left = '';
         addScenarioDropdownContent.style.right = '';
+    }
+
+    function getDropdownHorizontalBounds(viewportPadding = 8) {
+        let minLeft = viewportPadding;
+        let maxRight = window.innerWidth - viewportPadding;
+        if (phaseSwitcherSectionElements && phaseSwitcherSectionElements.length > 0) {
+            const sectionElement = phaseSwitcherSectionElements[0];
+            if (sectionElement instanceof HTMLElement) {
+                const sectionRect = sectionElement.getBoundingClientRect();
+                minLeft = Math.max(minLeft, sectionRect.left + viewportPadding);
+                maxRight = Math.min(maxRight, sectionRect.right - viewportPadding);
+            }
+        }
+        return { minLeft, maxRight };
     }
 
     function positionAddScenarioDropdownWithinViewport() {
@@ -2082,17 +2355,54 @@
         addScenarioDropdownContent.style.right = 'auto';
 
         const viewportPadding = 8;
+        const { minLeft, maxRight } = getDropdownHorizontalBounds(viewportPadding);
         const rect = addScenarioDropdownContent.getBoundingClientRect();
         let shiftX = 0;
 
-        if (rect.right > window.innerWidth - viewportPadding) {
-            shiftX += (window.innerWidth - viewportPadding) - rect.right;
+        if (rect.right > maxRight) {
+            shiftX += maxRight - rect.right;
         }
-        if (rect.left + shiftX < viewportPadding) {
-            shiftX += viewportPadding - (rect.left + shiftX);
+        if (rect.left + shiftX < minLeft) {
+            shiftX += minLeft - (rect.left + shiftX);
         }
 
         addScenarioDropdownContent.style.left = `${shiftX}px`;
+    }
+
+    function resetScenarioRepairDropdownPosition() {
+        if (!(scenarioRepairDropdownContent instanceof HTMLElement)) {
+            return;
+        }
+        scenarioRepairDropdownContent.style.left = '';
+        scenarioRepairDropdownContent.style.right = '';
+    }
+
+    function positionScenarioRepairDropdownWithinViewport() {
+        if (!(scenarioRepairDropdownBtn instanceof HTMLElement) || !(scenarioRepairDropdownContent instanceof HTMLElement)) {
+            return;
+        }
+
+        const container = scenarioRepairDropdownBtn.closest('.dropdown-container');
+        if (!(container instanceof HTMLElement) || !container.classList.contains('show')) {
+            return;
+        }
+
+        scenarioRepairDropdownContent.style.left = '0px';
+        scenarioRepairDropdownContent.style.right = 'auto';
+
+        const viewportPadding = 8;
+        const { minLeft, maxRight } = getDropdownHorizontalBounds(viewportPadding);
+        const rect = scenarioRepairDropdownContent.getBoundingClientRect();
+        let shiftX = 0;
+
+        if (rect.right > maxRight) {
+            shiftX += maxRight - rect.right;
+        }
+        if (rect.left + shiftX < minLeft) {
+            shiftX += minLeft - (rect.left + shiftX);
+        }
+
+        scenarioRepairDropdownContent.style.left = `${shiftX}px`;
     }
 
     function resetAssembleDropdownPosition() {
@@ -2159,7 +2469,14 @@
     // Обработчики для новой кнопки и выпадающего меню
     if (addScenarioDropdownBtn && addScenarioDropdownContent) {
         addScenarioDropdownBtn.addEventListener('click', (event) => {
+            if (isSoftDisabled(addScenarioDropdownBtn)) {
+                return;
+            }
             event.stopPropagation(); // Предотвращаем закрытие при клике на кнопку
+            closeAssembleOptionsMenu();
+            closeRunModeMenu();
+            closeContextMenu();
+            closeScenarioRepairDropdownMenu();
             const container = addScenarioDropdownBtn.closest('.dropdown-container');
             const isShown = !!container?.classList.toggle('show');
             if (isShown) {
@@ -2187,6 +2504,118 @@
                 vscode.postMessage({ command: 'createNestedScenario' });
                 addScenarioDropdownBtn.closest('.dropdown-container')?.classList.remove('show');
                 resetAddScenarioDropdownPosition();
+            });
+        }
+    }
+
+    if (scenarioRepairDropdownBtn && scenarioRepairDropdownContent) {
+        scenarioRepairDropdownBtn.addEventListener('click', event => {
+            event.stopPropagation();
+            if (isSoftDisabled(scenarioRepairDropdownBtn)) {
+                return;
+            }
+            if (addScenarioDropdownBtn && addScenarioDropdownContent) {
+                addScenarioDropdownBtn.closest('.dropdown-container')?.classList.remove('show');
+                resetAddScenarioDropdownPosition();
+            }
+            closeAssembleOptionsMenu();
+            closeRunModeMenu();
+            closeContextMenu();
+            const container = scenarioRepairDropdownBtn.closest('.dropdown-container');
+            const isShown = !!container?.classList.toggle('show');
+            if (isShown) {
+                requestAnimationFrame(() => positionScenarioRepairDropdownWithinViewport());
+            } else {
+                resetScenarioRepairDropdownPosition();
+            }
+            log('Scenario repair dropdown toggled.');
+        });
+
+        if (runVanessaFromDropdownBtn) {
+            runVanessaFromDropdownBtn.addEventListener('click', event => {
+                event.preventDefault();
+                if (runVanessaFromDropdownBtn.classList.contains('is-disabled')) {
+                    return;
+                }
+                handleTopRunVanessaClick(event);
+            });
+        }
+
+        if (openYamlParamsFromDropdownBtn) {
+            openYamlParamsFromDropdownBtn.addEventListener('click', event => {
+                event.preventDefault();
+                if (openYamlParamsFromDropdownBtn.classList.contains('is-disabled')) {
+                    return;
+                }
+                closeScenarioRepairDropdownMenu();
+                log('Open Build Scenario Parameters Manager from actions menu clicked.');
+                vscode.postMessage({ command: 'openYamlParametersManager' });
+            });
+        }
+
+        if (openSettingsFromDropdownBtn) {
+            openSettingsFromDropdownBtn.addEventListener('click', event => {
+                event.preventDefault();
+                if (openSettingsFromDropdownBtn.classList.contains('is-disabled')) {
+                    return;
+                }
+                closeScenarioRepairDropdownMenu();
+                log('Open Settings from actions menu clicked.');
+                vscode.postMessage({ command: 'openSettings' });
+            });
+        }
+
+        if (reloadTestsFromDiskFromDropdownBtn) {
+            reloadTestsFromDiskFromDropdownBtn.addEventListener('click', event => {
+                event.preventDefault();
+                if (reloadTestsFromDiskFromDropdownBtn.classList.contains('is-disabled')) {
+                    return;
+                }
+                closeScenarioRepairDropdownMenu();
+                vscode.postMessage({ command: 'refreshData' });
+            });
+        }
+
+        if (openScenarioRepairMenuFromDropdownBtn) {
+            openScenarioRepairMenuFromDropdownBtn.addEventListener('click', event => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (openScenarioRepairMenuFromDropdownBtn.classList.contains('is-disabled')) {
+                    return;
+                }
+                closeScenarioRepairDropdownMenu();
+                const anchorElement = scenarioRepairDropdownBtn instanceof HTMLElement
+                    ? scenarioRepairDropdownBtn
+                    : openScenarioRepairMenuFromDropdownBtn;
+                showRepairModeMenu(anchorElement);
+            });
+        }
+
+        if (cancelScenarioRepairFromDropdownBtn) {
+            cancelScenarioRepairFromDropdownBtn.addEventListener('click', event => {
+                event.preventDefault();
+                if (cancelScenarioRepairFromDropdownBtn.classList.contains('is-disabled')) {
+                    return;
+                }
+                isScenarioRepairCancelling = true;
+                updateScenarioRepairControls();
+                updateStatus(
+                    window.__loc?.statusCancellingScenarioRepair || 'Cancelling scenario repair...',
+                    'main'
+                );
+                closeScenarioRepairDropdownMenu();
+                vscode.postMessage({ command: 'cancelScenarioRepair' });
+            });
+        }
+
+        if (refreshVanessaStepsFromDropdownBtn) {
+            refreshVanessaStepsFromDropdownBtn.addEventListener('click', event => {
+                event.preventDefault();
+                if (refreshVanessaStepsFromDropdownBtn.classList.contains('is-disabled')) {
+                    return;
+                }
+                closeScenarioRepairDropdownMenu();
+                vscode.postMessage({ command: 'refreshVanessaSteps' });
             });
         }
     }
@@ -2258,6 +2687,13 @@
                 resetAddScenarioDropdownPosition();
             }
         }
+        if (scenarioRepairDropdownBtn && scenarioRepairDropdownContent) {
+            const container = scenarioRepairDropdownBtn.closest('.dropdown-container');
+            if (container && !container.contains(event.target)) {
+                container.classList.remove('show');
+                resetScenarioRepairDropdownPosition();
+            }
+        }
         if (assembleSplitContainer && !assembleSplitContainer.contains(event.target)) {
             closeAssembleOptionsMenu();
         }
@@ -2271,8 +2707,10 @@
 
     window.addEventListener('resize', () => {
         positionAddScenarioDropdownWithinViewport();
+        positionScenarioRepairDropdownWithinViewport();
         positionAssembleDropdownWithinViewport();
         syncBuildFlButtonWidth();
+        updateAssembleMainButtonLayout();
     });
 
 
@@ -2282,8 +2720,8 @@
             closeAssembleOptionsMenu();
             const recordGLValue = normalizeRecordGLValue(currentRecordGLValue);
             isBuildInProgress = true;
-            updateStatus(window.__loc?.statusStartingAssembly || 'Starting assembly...', 'assemble', false);
-            enablePhaseControls(false, false);
+            updateStatus(window.__loc?.statusStartingAssembly || 'Starting assembly...', 'main');
+            enablePhaseControls(false);
             enableAssembleControls(false);
             vscode.postMessage({
                 command: 'runAssembleScript',
@@ -2298,34 +2736,28 @@
                 return;
             }
             log('Cancel build button clicked.');
-            updateStatus(window.__loc?.statusCancellingBuild || 'Cancelling build...', 'assemble', false);
+            updateStatus(window.__loc?.statusCancellingBuild || 'Cancelling build...', 'main');
             vscode.postMessage({ command: 'cancelAssembleScript' });
         });
     }
 
     function requestInitialState() {
         log('Requesting initial state...');
-        updateStatus(window.__loc?.statusRequestingData || 'Requesting data...', 'main', false);
-        enablePhaseControls(false, false);
+        updateStatus(window.__loc?.statusRequestingData || 'Requesting data...', 'main');
+        enablePhaseControls(false);
         enableAssembleControls(false);
         vscode.postMessage({ command: 'getInitialState' });
     }
 
     log('Webview script initialized.');
     setActiveManagerTab('tests');
+    syncTooltipDataAttributes(document);
     updateScenarioSearchClearButtonState();
     renderFavoritesList();
-    updateStatus(window.__loc?.statusLoadingShort || 'Loading...', 'main', false);
-    enablePhaseControls(false, false);
+    updateStatus(window.__loc?.statusLoadingShort || 'Loading...', 'main');
+    enablePhaseControls(false);
     enableAssembleControls(false);
+    updateScenarioRepairControls();
     requestInitialState();
 
-    // Обработчик для кнопки YAML параметров
-    const openYamlParamsBtn = document.getElementById('openYamlParamsBtn');
-    if(openYamlParamsBtn instanceof HTMLButtonElement) {
-        openYamlParamsBtn.addEventListener('click', () => {
-            log('Open Build Scenario Parameters Manager button clicked.');
-            vscode.postMessage({ command: 'openYamlParametersManager' });
-        });
-    }
 }());

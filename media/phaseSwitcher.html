@@ -14,15 +14,41 @@
             <div class="controls-top-bar">
                  <h1>${loc.phaseSwitcherTitle}</h1>
                  <div class="controls-top-buttons">
-                    <button id="runVanessaTopBtn" class="button-with-icon compact-top-btn" title="${loc.runVanessaTopTitle}">
-                        <span class="codicon codicon-play-circle"></span>
-                    </button>
-                    <button class="button-with-icon compact-top-btn" id="openYamlParamsBtn" title="${loc.openYamlParametersManagerTitle}">
-                        <span class="codicon codicon-json"></span>
-                    </button>
-                    <button class="button-with-icon compact-top-btn" id="openSettingsBtn" title="${loc.openSettingsTitle}">
-                        <span class="codicon codicon-settings-gear"></span>
-                    </button>
+                    <div class="dropdown-container">
+                        <button id="scenarioRepairDropdownBtn" class="button-with-icon compact-top-btn" title="${loc.maintenanceMenuTitle}">
+                            <span class="codicon codicon-ellipsis"></span>
+                        </button>
+                        <div id="scenarioRepairDropdownContent" class="dropdown-content">
+                            <a href="#" id="runVanessaFromDropdownBtn" class="dropdown-item dropdown-item-with-chevron" title="${loc.runVanessaTopTitle}">
+                                <span class="codicon codicon-play-circle"></span>
+                                <span>${loc.runVanessaTopTitle}</span>
+                                <span class="codicon codicon-chevron-right dropdown-item-chevron"></span>
+                            </a>
+                            <div class="dropdown-separator" role="separator"></div>
+                            <a href="#" id="reloadTestsFromDiskFromDropdownBtn" class="dropdown-item" title="${loc.reloadTestsFromDiskHint}">
+                                <span class="codicon codicon-refresh"></span> ${loc.reloadTestsFromDisk}
+                            </a>
+                            <a href="#" id="refreshVanessaStepsFromDropdownBtn" class="dropdown-item" title="${loc.refreshVanessaStepsHint}">
+                                <span class="codicon codicon-sync"></span> ${loc.refreshVanessaSteps}
+                            </a>
+                            <div class="dropdown-separator" role="separator"></div>
+                            <a href="#" id="openScenarioRepairMenuFromDropdownBtn" class="dropdown-item dropdown-item-with-chevron" title="${loc.repairScenariosTitle}">
+                                <span class="codicon codicon-wrench"></span>
+                                <span>${loc.repairScenariosTitle}</span>
+                                <span class="codicon codicon-chevron-right dropdown-item-chevron"></span>
+                            </a>
+                            <a href="#" id="cancelScenarioRepairFromDropdownBtn" class="dropdown-item" title="${loc.cancelScenarioRepairHint}">
+                                <span class="codicon codicon-stop-circle"></span> ${loc.cancelScenarioRepair}
+                            </a>
+                            <div class="dropdown-separator" role="separator"></div>
+                            <a href="#" id="openYamlParamsFromDropdownBtn" class="dropdown-item" title="${loc.openYamlParametersManagerTitle}">
+                                <span class="codicon codicon-json"></span> ${loc.openYamlParametersManagerTitle}
+                            </a>
+                            <a href="#" id="openSettingsFromDropdownBtn" class="dropdown-item" title="${loc.openSettingsTitle}">
+                                <span class="codicon codicon-settings-gear"></span> ${loc.openSettingsTitle}
+                            </a>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -36,6 +62,36 @@
                     </button>
                 </div>
                 <div class="manager-tabs-side">
+                    <div id="globalListActions" class="global-list-actions">
+                        <div class="global-list-actions-right">
+                            <div class="dropdown-container">
+                                <button id="addScenarioDropdownBtn" class="button-with-icon compact-action-btn" title="${loc.createScenarioTitle}">
+                                    <span class="codicon codicon-add"></span>
+                                </button>
+                                <div id="addScenarioDropdownContent" class="dropdown-content">
+                                    <a href="#" id="createMainScenarioFromDropdownBtn" class="dropdown-item">
+                                        <span class="codicon codicon-code-oss"></span> ${loc.createMainScenario}
+                                    </a>
+                                    <a href="#" id="createNestedScenarioFromDropdownBtn" class="dropdown-item">
+                                        <span class="codicon codicon-references"></span> ${loc.createNestedScenario}
+                                    </a>
+                                </div>
+                            </div>
+                            <button
+                                id="toggleScenarioSearchBtn"
+                                class="button-with-icon compact-action-btn manager-search-toggle-btn"
+                                title="${loc.toggleScenarioSearchTitle}"
+                                aria-pressed="false">
+                                <span class="codicon codicon-search"></span>
+                            </button>
+                            <button id="collapseAllBtn" class="button-with-icon compact-action-btn" title="${loc.collapseExpandAllTitle}">
+                                <span class="codicon codicon-list-tree"></span>
+                            </button>
+                            <button id="selectAllBtn" class="button-with-icon compact-action-btn" title="${loc.toggleAllCheckboxesTitle}">
+                                <span class="codicon codicon-checklist"></span>
+                            </button>
+                        </div>
+                    </div>
                     <div id="favoritesSortControls" class="favorites-sort-controls">
                         <label for="favoritesSortSelect">${loc.favoritesSortLabel}:</label>
                         <select id="favoritesSortSelect" title="${loc.favoritesSortLabel}">
@@ -43,41 +99,6 @@
                             <option value="name">${loc.favoritesSortByName}</option>
                         </select>
                     </div>
-                </div>
-            </div>
-
-            <div id="globalListActions" class="global-list-actions">
-                <div class="global-list-actions-right">
-                    <div class="dropdown-container">
-                        <button id="addScenarioDropdownBtn" class="button-with-icon compact-action-btn" title="${loc.createScenarioTitle}">
-                            <span class="codicon codicon-add"></span>
-                        </button>
-                        <div id="addScenarioDropdownContent" class="dropdown-content">
-                            <a href="#" id="createMainScenarioFromDropdownBtn" class="dropdown-item">
-                                <span class="codicon codicon-code-oss"></span> ${loc.createMainScenario}
-                            </a>
-                            <a href="#" id="createNestedScenarioFromDropdownBtn" class="dropdown-item">
-                                <span class="codicon codicon-references"></span> ${loc.createNestedScenario}
-                            </a>
-                        </div>
-                    </div>
-                    <button
-                        id="toggleScenarioSearchBtn"
-                        class="button-with-icon compact-action-btn manager-search-toggle-btn"
-                        title="${loc.toggleScenarioSearchTitle}"
-                        aria-pressed="false">
-                        <span class="codicon codicon-search"></span>
-                    </button>
-                    <button id="refreshBtn" class="button-with-icon compact-action-btn" title="${loc.refreshTitle}">
-                        <span class="codicon codicon-refresh"></span>
-                    </button>
-                    <button id="collapseAllBtn" class="button-with-icon compact-action-btn" title="${loc.collapseExpandAllTitle}">
-                        <span class="codicon codicon-list-tree"></span>
-                    </button>
-                    <button id="selectAllBtn" class="button-with-icon compact-action-btn" title="${loc.toggleAllCheckboxesTitle}">
-                        <span class="codicon codicon-checklist"></span>
-                    </button>
-                    <div id="selectionSummaryBar" class="selection-summary-compact"></div>
                 </div>
             </div>
 
@@ -117,7 +138,10 @@
                         </button>
                         <div id="assembleSplitContainer" class="dropdown-container split-button">
                             <button id="assembleTestsBtn" class="button-with-icon split-main-btn">
-                                <span class="codicon codicon-beaker"></span> ${loc.buildTests}
+                                <span class="split-main-content">
+                                    <span class="codicon codicon-beaker"></span>
+                                    <span class="split-main-label">${loc.buildTests}</span>
+                                </span>
                             </button>
                             <button id="assembleMenuBtn" class="button-with-icon split-menu-btn" title="${loc.buildOptionsTitle}">
                                 <span class="codicon codicon-chevron-down"></span>

@@ -42,30 +42,6 @@ function normalizeDescriptionContent(rawValue: string): string {
     return trimmed;
 }
 
-function dedentBlockLines(lines: string[]): string[] {
-    let minIndent: number | null = null;
-    for (const line of lines) {
-        if (!line.trim()) {
-            continue;
-        }
-        const indent = getIndent(line);
-        if (minIndent === null || indent < minIndent) {
-            minIndent = indent;
-        }
-    }
-
-    if (minIndent === null || minIndent <= 0) {
-        return lines;
-    }
-
-    return lines.map(line => {
-        if (!line.trim()) {
-            return '';
-        }
-        return line.length > minIndent ? line.slice(minIndent) : '';
-    });
-}
-
 export function parseKotScenarioDescription(documentText: string): string {
     const lines = documentText.split(/\r\n|\r|\n/);
     let metadataStart = -1;
@@ -109,6 +85,7 @@ export function parseKotScenarioDescription(documentText: string): string {
 
         const rawValue = (descriptionMatch[1] || '').trim();
         const descriptionIndent = getIndent(line);
+        const descriptionContentIndent = descriptionIndent + 4;
 
         if (rawValue.startsWith('|') || rawValue.startsWith('>')) {
             const contentLines: string[] = [];
@@ -121,16 +98,20 @@ export function parseKotScenarioDescription(documentText: string): string {
                     break;
                 }
 
-                if (bodyLine.length <= descriptionIndent) {
+                if (bodyTrimmed.length > 0 && bodyIndent < descriptionContentIndent) {
+                    break;
+                }
+
+                const normalizedBodyLine = normalizeLeadingTabs(bodyLine);
+                if (normalizedBodyLine.length <= descriptionContentIndent) {
                     contentLines.push('');
                     continue;
                 }
 
-                contentLines.push(normalizeLeadingTabs(bodyLine));
+                contentLines.push(normalizedBodyLine.slice(descriptionContentIndent));
             }
 
-            const dedented = dedentBlockLines(contentLines);
-            return normalizeDescriptionContent(dedented.join('\n'));
+            return normalizeDescriptionContent(contentLines.join('\n'));
         }
 
         return normalizeDescriptionContent(parseInlineYamlScalar(rawValue));

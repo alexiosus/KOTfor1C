@@ -1223,6 +1223,32 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
     }
 }
 
+function escapeRegExp(raw: string): string {
+    return raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function findTopLevelSectionOffset(documentText: string, sectionKey: string): number {
+    const sectionRegex = new RegExp(`^(?:\\uFEFF)?${escapeRegExp(sectionKey)}:\\s*.*$`, 'm');
+    const match = sectionRegex.exec(documentText);
+    return match?.index ?? -1;
+}
+
+function resolveSafeSectionEndOffset(
+    documentText: string,
+    afterHeaderOffset: number,
+    fallbackEndOffset: number,
+    preferredNextSections: string[]
+): number {
+    let safeEnd = fallbackEndOffset;
+    for (const sectionKey of preferredNextSections) {
+        const sectionOffset = findTopLevelSectionOffset(documentText, sectionKey);
+        if (sectionOffset > afterHeaderOffset && sectionOffset < safeEnd) {
+            safeEnd = sectionOffset;
+        }
+    }
+    return safeEnd;
+}
+
 /**
  * Clears and refills the NestedScenarios section with scenarios in order of their appearance in the script body.
  * @param document The text document to modify
@@ -1313,7 +1339,17 @@ export async function clearAndFillNestedScenarios(document: vscode.TextDocument,
         const nextMajorKeyRegex = /\n(?![ \t])([А-Яа-яЁёA-Za-z]+:)/g;
         nextMajorKeyRegex.lastIndex = afterHeaderOffset;
         const nextMajorKeyMatchResult = nextMajorKeyRegex.exec(fullText);
-        const sectionContentEndOffset = nextMajorKeyMatchResult ? nextMajorKeyMatchResult.index : fullText.length;
+        let sectionContentEndOffset = nextMajorKeyMatchResult ? nextMajorKeyMatchResult.index : fullText.length;
+        sectionContentEndOffset = resolveSafeSectionEndOffset(
+            fullText,
+            afterHeaderOffset,
+            sectionContentEndOffset,
+            ['ТекстСценария']
+        );
+        if (sectionContentEndOffset < afterHeaderOffset) {
+            console.warn('[clearAndFillNestedScenarios] Invalid section range. Skipping update to avoid destructive edit.');
+            return false;
+        }
 
         // Clear the entire section content and rebuild it
         const baseIndentForNewItems = '    ';
@@ -1550,7 +1586,17 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
         const nextMajorKeyRegex = /\n(?![ \t])([А-Яа-яЁёA-Za-z]+:)/g;
         nextMajorKeyRegex.lastIndex = afterHeaderOffset;
         const nextMajorKeyMatchResult = nextMajorKeyRegex.exec(fullText);
-        const sectionContentEndOffset = nextMajorKeyMatchResult ? nextMajorKeyMatchResult.index : fullText.length;
+        let sectionContentEndOffset = nextMajorKeyMatchResult ? nextMajorKeyMatchResult.index : fullText.length;
+        sectionContentEndOffset = resolveSafeSectionEndOffset(
+            fullText,
+            afterHeaderOffset,
+            sectionContentEndOffset,
+            ['ВложенныеСценарии', 'ТекстСценария']
+        );
+        if (sectionContentEndOffset < afterHeaderOffset) {
+            console.warn('[clearAndFillScenarioParameters] Invalid section range. Skipping update to avoid destructive edit.');
+            return false;
+        }
 
         // Clear the entire section content and rebuild it
         const baseIndentForNewItems = '    ';

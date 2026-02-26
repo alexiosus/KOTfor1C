@@ -297,6 +297,11 @@ function parseInlineYamlScalar(rawValue: string): string {
     return trimmed;
 }
 
+function getNormalizedIndent(lineText: string): number {
+    const normalized = lineText.replace(/^\t+/, tabs => '    '.repeat(tabs.length));
+    return /^\s*/.exec(normalized)?.[0].length ?? 0;
+}
+
 function getKotDescriptionState(document: vscode.TextDocument): KotDescriptionState | null {
     let metadataStartLine = -1;
     for (let line = 0; line < document.lineCount; line++) {
@@ -332,24 +337,29 @@ function getKotDescriptionState(document: vscode.TextDocument): KotDescriptionSt
         }
 
         const rawValue = (match[1] || '').trim();
-        const descriptionIndent = /^\s*/.exec(lineText)?.[0].length ?? 0;
+        const descriptionIndent = getNormalizedIndent(lineText);
+        const descriptionContentIndent = descriptionIndent + 4;
 
         if (rawValue.startsWith('|') || rawValue.startsWith('>')) {
             let hasNonEmptyContent = false;
             for (let bodyLine = line + 1; bodyLine < metadataEndLine; bodyLine++) {
                 const bodyText = document.lineAt(bodyLine).text;
                 const bodyTrimmed = bodyText.trim();
-                const bodyIndent = /^\s*/.exec(bodyText)?.[0].length ?? 0;
+                const bodyIndent = getNormalizedIndent(bodyText);
 
                 if (bodyTrimmed.length > 0 && bodyIndent <= descriptionIndent) {
+                    break;
+                }
+                if (bodyTrimmed.length > 0 && bodyIndent < descriptionContentIndent) {
                     break;
                 }
                 if (bodyTrimmed.length === 0) {
                     continue;
                 }
 
-                const content = bodyText
-                    .slice(Math.min(bodyText.length, descriptionIndent + 1))
+                const normalizedBodyText = bodyText.replace(/^\t+/, tabs => '    '.repeat(tabs.length));
+                const content = normalizedBodyText
+                    .slice(Math.min(normalizedBodyText.length, descriptionContentIndent))
                     .trim();
                 if (content.length > 0 && content !== '-') {
                     hasNonEmptyContent = true;
@@ -1278,12 +1288,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         let candidateUris: vscode.Uri[] = [];
         try {
             const yamlPattern = new vscode.RelativePattern(scanDirectoryUri, '**/*.yaml');
-            const ymlPattern = new vscode.RelativePattern(scanDirectoryUri, '**/*.yml');
-            const [yamlFiles, ymlFiles] = await Promise.all([
-                vscode.workspace.findFiles(yamlPattern, '**/node_modules/**'),
-                vscode.workspace.findFiles(ymlPattern, '**/node_modules/**')
-            ]);
-            candidateUris = [...yamlFiles, ...ymlFiles];
+            candidateUris = await vscode.workspace.findFiles(yamlPattern, '**/node_modules/**');
         } catch (error) {
             console.error('[ScenarioDiagnostics] Failed to enumerate YAML files for workspace diagnostics scan:', error);
             return [];

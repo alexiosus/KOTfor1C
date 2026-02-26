@@ -42,6 +42,7 @@ export interface PhaseSwitcherMetadataMigrationResult {
 
 export interface PhaseSwitcherMetadataMigrationOptions {
     cachedKotMetadataBlock?: string;
+    migrateLegacyPhaseSwitcherTags?: boolean;
 }
 
 interface KotMetadataPresence {
@@ -490,6 +491,65 @@ function trimOuterEmptyLines(lines: string[]): string[] {
     return lines.slice(start, end);
 }
 
+function isLikelyValidKotMetadataBlockLines(lines: string[]): boolean {
+    if (lines.length === 0) {
+        return false;
+    }
+    if (stripBom(lines[0]).trim() !== 'KOTМетаданные:' || getIndent(lines[0]) !== 0) {
+        return false;
+    }
+
+    let mode: 'none' | 'description' | 'phaseSwitcher' = 'none';
+
+    for (let index = 1; index < lines.length; index++) {
+        const line = lines[index];
+        if (isIgnorableLine(line)) {
+            continue;
+        }
+
+        const indent = getIndent(line);
+        const trimmed = stripBom(line).trim();
+        if (indent <= 0) {
+            return false;
+        }
+
+        if (mode === 'description') {
+            if (indent > 4) {
+                continue;
+            }
+            mode = 'none';
+        } else if (mode === 'phaseSwitcher') {
+            if (indent > 4) {
+                if (indent === 8 && /^(Tab|Default|OrderOnTab):\s*(.*)$/.test(trimmed)) {
+                    continue;
+                }
+                return false;
+            }
+            mode = 'none';
+        }
+
+        if (indent !== 4) {
+            return false;
+        }
+        if (/^Описание:\s*[|>][-+0-9]*\s*$/.test(trimmed)) {
+            mode = 'description';
+            continue;
+        }
+        if (trimmed === 'PhaseSwitcher:') {
+            mode = 'phaseSwitcher';
+            continue;
+        }
+        // Keep compatibility with existing default template marker line.
+        if (trimmed === '-') {
+            continue;
+        }
+
+        return false;
+    }
+
+    return true;
+}
+
 function normalizeCachedKotMetadataBlockLines(rawBlock: string | undefined): string[] {
     if (!rawBlock) {
         return [];
@@ -502,6 +562,9 @@ function normalizeCachedKotMetadataBlockLines(rawBlock: string | undefined): str
 
     const firstLine = stripBom(lines[0]).trim();
     if (firstLine !== 'KOTМетаданные:' || getIndent(lines[0]) !== 0) {
+        return [];
+    }
+    if (!isLikelyValidKotMetadataBlockLines(lines)) {
         return [];
     }
 
@@ -616,11 +679,14 @@ export function migrateLegacyPhaseSwitcherMetadata(
     const lineEnding = documentText.includes('\r\n') ? '\r\n' : '\n';
     const originalLines = documentText.split(/\r\n|\r|\n/);
     const legacy = parseLegacyPhaseSwitcherMetadata(originalLines);
-    const hasLegacyMetadata = legacy.hasTab || legacy.hasDefault || legacy.hasOrder;
+    const migrateLegacyPhaseSwitcherTags = options.migrateLegacyPhaseSwitcherTags ?? true;
+    const hasLegacyMetadata = migrateLegacyPhaseSwitcherTags && (legacy.hasTab || legacy.hasDefault || legacy.hasOrder);
     const cachedKotMetadataBlockLines = normalizeCachedKotMetadataBlockLines(options.cachedKotMetadataBlock);
     const cachedKotMetadataPresence = getKotMetadataPresenceFromBlockLines(cachedKotMetadataBlockLines);
 
-    const lines = originalLines.filter((_, index) => !legacy.lineIndexes.has(index));
+    const lines = migrateLegacyPhaseSwitcherTags
+        ? originalLines.filter((_, index) => !legacy.lineIndexes.has(index))
+        : [...originalLines];
 
     // Keep the first top-level KOT metadata block and remove duplicates.
     // This prevents accidental block multiplication after repeated migrations.

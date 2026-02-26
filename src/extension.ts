@@ -1,4 +1,8 @@
 import * as vscode from 'vscode';
+import { execFile } from 'node:child_process';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import { promisify } from 'node:util';
 import { DriveCompletionProvider } from './completionProvider';
 import { DriveHoverProvider } from './hoverProvider';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
@@ -58,11 +62,173 @@ interface ScenarioDirtyFlags {
     usedParametersChanged: boolean;
 }
 
+interface ScenarioRepairFailure {
+    uri: vscode.Uri;
+    reason: string;
+}
+
+interface CriticalScenarioSectionPresence {
+    hasScenarioText: boolean;
+    hasScenarioParameters: boolean;
+    hasNestedScenarios: boolean;
+}
+
 const lastSavedScenarioSnapshots = new Map<string, ScenarioSaveSnapshot>();
 const scenarioDirtyFlagsByUri = new Map<string, ScenarioDirtyFlags>();
 const scenarioMetadataBlockSessionCache = new Map<string, string>();
+const internallyTriggeredSaves = new Set<string>();
+const pendingBackgroundScenarioFiles = new Set<string>();
 const kotDescriptionBlockLineRegex = /^Описание:\s*[|>][-+0-9]*\s*$/;
 const FAVORITE_SCENARIO_DROP_MIME = 'application/x-kot-favorite-scenario-uri';
+const execFileAsync = promisify(execFile);
+
+function escapeRegexLiteral(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function hasTopLevelScenarioSection(documentText: string, sectionName: string): boolean {
+    const lines = documentText.split(/\r\n|\r|\n/);
+    const sectionRegex = new RegExp(`^${escapeRegexLiteral(sectionName)}:\\s*(?:\\|[>+-0-9]*)?\\s*$`);
+
+    for (const line of lines) {
+        const normalizedLine = normalizeLeadingTabsForDescription(line);
+        if (getDescriptionLineIndent(normalizedLine) !== 0) {
+            continue;
+        }
+
+        const trimmedNoBom = stripBomFromLine(normalizedLine).trim();
+        if (sectionRegex.test(trimmedNoBom)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function collectCriticalScenarioSectionPresence(documentText: string): CriticalScenarioSectionPresence {
+    return {
+        hasScenarioText: hasTopLevelScenarioSection(documentText, 'ТекстСценария'),
+        hasScenarioParameters: hasTopLevelScenarioSection(documentText, 'ПараметрыСценария'),
+        hasNestedScenarios: hasTopLevelScenarioSection(documentText, 'ВложенныеСценарии')
+    };
+}
+
+function getMissingCriticalScenarioSections(beforeText: string, afterText: string): string[] {
+    const beforePresence = collectCriticalScenarioSectionPresence(beforeText);
+    const afterPresence = collectCriticalScenarioSectionPresence(afterText);
+    const missingSections: string[] = [];
+
+    if (beforePresence.hasScenarioText && !afterPresence.hasScenarioText) {
+        missingSections.push('ТекстСценария');
+    }
+    if (beforePresence.hasScenarioParameters && !afterPresence.hasScenarioParameters) {
+        missingSections.push('ПараметрыСценария');
+    }
+    if (beforePresence.hasNestedScenarios && !afterPresence.hasNestedScenarios) {
+        missingSections.push('ВложенныеСценарии');
+    }
+
+    return missingSections;
+}
+
+async function collectGitModifiedYamlUris(workspaceRootFsPath: string): Promise<vscode.Uri[]> {
+    try {
+        const { stdout } = await execFileAsync(
+            'git',
+            [
+                '-c',
+                'core.quotepath=false',
+                'status',
+                '--porcelain',
+                '-z',
+                '--untracked-files=no',
+                '--',
+                ':(glob)**/*.yaml'
+            ],
+            {
+                cwd: workspaceRootFsPath,
+                windowsHide: true,
+                maxBuffer: 10 * 1024 * 1024
+            }
+        );
+
+        const uris: vscode.Uri[] = [];
+        const entries = stdout.split('\0');
+        for (let index = 0; index < entries.length; index++) {
+            const entry = entries[index];
+            if (!entry || entry.length < 3) {
+                continue;
+            }
+
+            // format with -z:
+            // normal: XY<space>path
+            // rename/copy: XY<space>oldPath\0newPath
+            const status = entry.slice(0, 2);
+            // Skip deleted files
+            const indexStatus = status[0];
+            const worktreeStatus = status[1];
+            if (indexStatus === 'D' || worktreeStatus === 'D') {
+                continue;
+            }
+
+            let relativePath = entry.slice(3);
+            const isRenameOrCopy =
+                indexStatus === 'R' ||
+                indexStatus === 'C' ||
+                worktreeStatus === 'R' ||
+                worktreeStatus === 'C';
+            if (isRenameOrCopy) {
+                const renamedPath = entries[index + 1];
+                if (!renamedPath) {
+                    continue;
+                }
+                relativePath = renamedPath;
+                index++;
+            }
+
+            if (!relativePath) {
+                continue;
+            }
+
+            const normalizedRelativePath = relativePath.replace(/\//g, path.sep);
+            const absolutePath = path.resolve(workspaceRootFsPath, normalizedRelativePath);
+            uris.push(vscode.Uri.file(absolutePath));
+        }
+
+        return uris;
+    } catch {
+        return [];
+    }
+}
+
+async function collectAllYamlSourceDirectoryScenarioUris(): Promise<vscode.Uri[]> {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+        return [];
+    }
+
+    const excludePattern = '**/{node_modules,.git,out,dist,.vscode/kot-runtime}/**';
+    const uriByKey = new Map<string, vscode.Uri>();
+    const config = vscode.workspace.getConfiguration('kotTestToolkit');
+    const configuredYamlSourceDirectory = (config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml').trim();
+
+    for (const workspaceFolder of workspaceFolders) {
+        const yamlSourceDirectoryPath = path.isAbsolute(configuredYamlSourceDirectory)
+            ? configuredYamlSourceDirectory
+            : path.resolve(workspaceFolder.uri.fsPath, configuredYamlSourceDirectory);
+
+        const yamlFiles = await vscode.workspace.findFiles(
+            new vscode.RelativePattern(yamlSourceDirectoryPath, '**/*.yaml'),
+            excludePattern
+        );
+
+        for (const fileUri of yamlFiles) {
+            uriByKey.set(fileUri.toString(), fileUri);
+        }
+    }
+
+    return Array.from(uriByKey.values());
+}
 
 function isMainScenarioDocument(document: vscode.TextDocument | undefined): boolean {
     if (!document || !isScenarioYamlFile(document)) {
@@ -149,6 +315,8 @@ export function activate(context: vscode.ExtensionContext) {
 
     // --- Регистрация Провайдера для Webview (Test Manager) ---
     const phaseSwitcherProvider = new PhaseSwitcherProvider(context.extensionUri, context);
+    let batchProcessingInProgress = false;
+    let scenarioRepairCancellationSource: vscode.CancellationTokenSource | null = null;
     const updateActiveScenarioContext = async (editor?: vscode.TextEditor) => {
         const isScenario = !!(editor && isScenarioYamlFile(editor.document));
         const isInFavorites = !!(
@@ -311,7 +479,6 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         updateKotDescriptionDecorationsForDocument(document, kotDescriptionTextDecorationType);
-        updateScenarioMetadataBlockSessionCache(document);
         const fileKey = document.uri.toString();
         const currentSnapshot = buildScenarioSaveSnapshot(document);
         const lastSavedSnapshot = lastSavedScenarioSnapshots.get(fileKey);
@@ -485,6 +652,36 @@ export function activate(context: vscode.ExtensionContext) {
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.processQueuedScenarioFiles',
+        async () => {
+            await runScenarioRepairBatch('changed');
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.processAllScenarioFiles',
+        async () => {
+            await runScenarioRepairBatch('all');
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.cancelScenarioRepair',
+        async () => {
+            const t = await getTranslator(context.extensionUri);
+            if (!batchProcessingInProgress || !scenarioRepairCancellationSource) {
+                vscode.window.showInformationMessage(t('No scenario repair is currently running.'));
+                return;
+            }
+
+            if (!scenarioRepairCancellationSource.token.isCancellationRequested) {
+                scenarioRepairCancellationSource.cancel();
+                phaseSwitcherProvider.setScenarioRepairCancelling(true);
+            }
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.toggleActiveScenarioFavorite',
         async () => {
             await phaseSwitcherProvider.toggleFavoriteForActiveScenario();
@@ -571,6 +768,432 @@ export function activate(context: vscode.ExtensionContext) {
 
         if (showCompletionMessage) {
             vscode.window.showInformationMessage(t('Workspace scenario diagnostics scan completed.'));
+        }
+    };
+
+    const writeScenarioRepairFailureReport = async (
+        mode: 'changed' | 'all',
+        cancelled: boolean,
+        changedCount: number,
+        unchangedCount: number,
+        failedCount: number,
+        failures: ScenarioRepairFailure[],
+        t: (key: string, ...args: string[]) => string
+    ): Promise<vscode.Uri | null> => {
+        if (failedCount <= 0 || failures.length === 0) {
+            return null;
+        }
+
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        const reportBaseUri = workspaceRoot?.scheme === 'file'
+            ? vscode.Uri.joinPath(workspaceRoot, '.vscode', 'kot-runtime', 'scenario-repair')
+            : vscode.Uri.joinPath(vscode.Uri.file(os.tmpdir()), 'kot-test-toolkit', 'scenario-repair');
+
+        await vscode.workspace.fs.createDirectory(reportBaseUri);
+
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const reportUri = vscode.Uri.joinPath(reportBaseUri, `scenario-repair-${mode}-${timestamp}.md`);
+
+        const modeText = mode === 'all'
+            ? t('All scenarios in yamlSourceDirectory')
+            : t('Changed scenarios');
+        const statusText = cancelled ? t('Cancelled') : t('Completed');
+        const lines: string[] = [
+            `# ${t('Scenario repair failed files report')}`,
+            '',
+            `- ${t('Mode')}: ${modeText}`,
+            `- ${t('Status')}: ${statusText}`,
+            `- ${t('Updated')}: ${changedCount}`,
+            `- ${t('Unchanged')}: ${unchangedCount}`,
+            `- ${t('Failed')}: ${failedCount}`,
+            '',
+            `## ${t('Failed files')}`,
+            ''
+        ];
+
+        failures.forEach((failure, index) => {
+            const displayPath = failure.uri.scheme === 'file' ? failure.uri.fsPath : failure.uri.toString();
+            lines.push(`${index + 1}. \`${displayPath}\``);
+            lines.push(`   - ${t('Reason')}: ${failure.reason}`);
+            lines.push(`   - [${t('Open file')}](${failure.uri.toString()})`);
+            lines.push('');
+        });
+
+        const reportContent = lines.join('\n');
+        await vscode.workspace.fs.writeFile(reportUri, Buffer.from(reportContent, 'utf8'));
+        return reportUri;
+    };
+
+    const runScenarioRepairBatch = async (mode: 'changed' | 'all') => {
+        const t = await getTranslator(context.extensionUri);
+        if (batchProcessingInProgress) {
+            vscode.window.showInformationMessage(t('Scenario repair is already running.'));
+            return;
+        }
+
+        const runRepairAction = mode === 'all' ? t('Run full repair') : t('Run repair');
+        const confirmationMessageLines: string[] = [
+            mode === 'all'
+                ? t('Run full scenario repair?')
+                : t('Run repair for changed scenarios?'),
+            '',
+            mode === 'all'
+                ? t('Scope: all scenario files in configured YAML source directory.')
+                : t('Scope: changed scenario files from pending queue and git modified files.'),
+            mode === 'all'
+                ? t('Warning: this operation may create high load on large projects.')
+                : t('Load: optimized for changed files only.'),
+            '',
+            t('The command will:'),
+            t('- replace tabs with spaces (if enabled);'),
+            t('- align Gherkin tables (if enabled);'),
+            t('- align nested scenario call parameters (if enabled);'),
+            t('- refill NestedScenarios and ScenarioParameters sections (if enabled);'),
+            t('- ensure KOT metadata Description block for scenarios;'),
+            t('- migrate legacy # PhaseSwitcher_* tags into KOT metadata for main scenarios (if enabled);'),
+            t('- validate critical sections and rollback file on unsafe result;'),
+            t('- save updated files and refresh Test Manager data.')
+        ];
+        const confirmation = await vscode.window.showWarningMessage(
+            confirmationMessageLines.join('\n'),
+            { modal: true },
+            runRepairAction
+        );
+        if (confirmation !== runRepairAction) {
+            return;
+        }
+
+        const candidateUrisByKey = new Map<string, vscode.Uri>();
+        if (mode === 'changed') {
+            for (const rawUri of pendingBackgroundScenarioFiles) {
+                try {
+                    const parsedUri = vscode.Uri.parse(rawUri);
+                    candidateUrisByKey.set(parsedUri.toString(), parsedUri);
+                } catch {
+                    // skip invalid cached URI
+                }
+            }
+
+            const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+            for (const workspaceFolder of workspaceFolders) {
+                if (workspaceFolder.uri.scheme !== 'file') {
+                    continue;
+                }
+                const gitModifiedUris = await collectGitModifiedYamlUris(workspaceFolder.uri.fsPath);
+                for (const gitUri of gitModifiedUris) {
+                    candidateUrisByKey.set(gitUri.toString(), gitUri);
+                }
+            }
+        } else {
+            const allYamlUris = await collectAllYamlSourceDirectoryScenarioUris();
+            for (const yamlUri of allYamlUris) {
+                candidateUrisByKey.set(yamlUri.toString(), yamlUri);
+            }
+        }
+
+        const candidateUris = Array.from(candidateUrisByKey.values());
+        if (candidateUris.length === 0) {
+            vscode.window.showInformationMessage(
+                mode === 'all'
+                    ? t('No scenario YAML files found in configured YAML source directory.')
+                    : t('No changed scenario files to repair.')
+            );
+            return;
+        }
+
+        const cancellationSource = new vscode.CancellationTokenSource();
+        scenarioRepairCancellationSource = cancellationSource;
+        batchProcessingInProgress = true;
+        phaseSwitcherProvider.setScenarioRepairInProgress(true, false);
+
+        const config = vscode.workspace.getConfiguration('kotTestToolkit');
+        const tabsEnabled = config.get<boolean>('editor.autoReplaceTabsWithSpacesOnSave', true);
+        const alignTablesEnabled = config.get<boolean>('editor.autoAlignGherkinTablesOnSave', true);
+        const alignNestedCallParamsEnabled = config.get<boolean>('editor.autoAlignNestedScenarioParametersOnSave', true);
+        const nestedEnabled = config.get<boolean>('editor.autoFillNestedScenariosOnSave', true);
+        const paramsEnabled = config.get<boolean>('editor.autoFillScenarioParametersOnSave', true);
+        const legacyMetadataMigrationForMainScenariosEnabled = config.get<boolean>(
+            'editor.enableLegacyMetadataMigrationForMainScenarios',
+            false
+        );
+
+        let changedCount = 0;
+        let unchangedCount = 0;
+        let failedCount = 0;
+        let cancelled = false;
+        const failedFiles: ScenarioRepairFailure[] = [];
+
+        try {
+            let testCache = phaseSwitcherProvider.getTestCache();
+            if (!testCache && nestedEnabled) {
+                await phaseSwitcherProvider.initializeTestCache();
+                testCache = phaseSwitcherProvider.getTestCache();
+            }
+
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: mode === 'all'
+                    ? t('Repairing all scenario files in configured YAML source directory...')
+                    : t('Repairing changed scenario files...'),
+                cancellable: true
+            }, async (progress, progressToken) => {
+                const cancelOnProgress = progressToken.onCancellationRequested(() => {
+                    cancellationSource.cancel();
+                    phaseSwitcherProvider.setScenarioRepairCancelling(true);
+                });
+
+                try {
+                    for (let index = 0; index < candidateUris.length; index++) {
+                        if (cancellationSource.token.isCancellationRequested) {
+                            cancelled = true;
+                            break;
+                        }
+
+                        const fileUri = candidateUris[index];
+                        const fileKey = fileUri.toString();
+                        pendingBackgroundScenarioFiles.delete(fileKey);
+
+                        progress.report({
+                            increment: 100 / candidateUris.length,
+                            message: t('Repairing {0} of {1}', String(index + 1), String(candidateUris.length))
+                        });
+
+                        try {
+                            const document = await vscode.workspace.openTextDocument(fileUri);
+                            if (!isScenarioYamlFile(document)) {
+                                unchangedCount++;
+                                continue;
+                            }
+
+                            if (processingFiles.has(fileKey)) {
+                                unchangedCount++;
+                                continue;
+                            }
+
+                            processingFiles.add(fileKey);
+                            try {
+                                const originalText = document.getText();
+
+                                if (tabsEnabled && document.getText().includes('\t')) {
+                                    const fullText = document.getText();
+                                    const newText = fullText.replace(/^\t+/gm, match => '    '.repeat(match.length));
+                                    if (newText !== fullText) {
+                                        const edit = new vscode.WorkspaceEdit();
+                                        edit.replace(
+                                            document.uri,
+                                            new vscode.Range(document.positionAt(0), document.positionAt(fullText.length)),
+                                            newText
+                                        );
+                                        await vscode.workspace.applyEdit(edit);
+                                    }
+                                }
+
+                                if (alignTablesEnabled) {
+                                    await alignGherkinTables(document);
+                                }
+
+                                if (alignNestedCallParamsEnabled) {
+                                    await alignNestedScenarioCallParameters(document);
+                                }
+
+                                const currentText = document.getText();
+                                if (nestedEnabled && shouldRefillNestedScenariosSection(currentText)) {
+                                    await clearAndFillNestedScenarios(document, true, testCache);
+                                }
+
+                                if (paramsEnabled && shouldRefillScenarioParametersSection(document.getText())) {
+                                    await clearAndFillScenarioParameters(document, true);
+                                }
+
+                                if (isScenarioYamlFile(document)) {
+                                    const migrationSourceText = document.getText();
+                                    const cachedMetadataBlock = scenarioMetadataBlockSessionCache.get(fileKey);
+                                    const migrationResult = migrateLegacyPhaseSwitcherMetadata(migrationSourceText, {
+                                        cachedKotMetadataBlock: cachedMetadataBlock,
+                                        migrateLegacyPhaseSwitcherTags:
+                                            legacyMetadataMigrationForMainScenariosEnabled && isMainScenarioDocument(document)
+                                    });
+                                    if (migrationResult.changed) {
+                                        const migrationEdit = new vscode.WorkspaceEdit();
+                                        migrationEdit.replace(
+                                            document.uri,
+                                            new vscode.Range(document.positionAt(0), document.positionAt(migrationSourceText.length)),
+                                            migrationResult.content
+                                        );
+                                        await vscode.workspace.applyEdit(migrationEdit);
+                                    }
+                                }
+
+                                const missingCriticalSections = getMissingCriticalScenarioSections(originalText, document.getText());
+                                if (missingCriticalSections.length > 0) {
+                                    const rollbackEdit = new vscode.WorkspaceEdit();
+                                    const rollbackText = document.getText();
+                                    rollbackEdit.replace(
+                                        document.uri,
+                                        new vscode.Range(document.positionAt(0), document.positionAt(rollbackText.length)),
+                                        originalText
+                                    );
+                                    const rollbackApplied = await vscode.workspace.applyEdit(rollbackEdit);
+                                    failedCount++;
+                                    failedFiles.push({
+                                        uri: document.uri,
+                                        reason: rollbackApplied
+                                            ? t('Missing critical sections after repair: {0}', missingCriticalSections.join(', '))
+                                            : t(
+                                                'Missing critical sections after repair and rollback failed: {0}',
+                                                missingCriticalSections.join(', ')
+                                            )
+                                    });
+                                    console.error(
+                                        `[Extension] Scenario repair aborted for ${document.fileName}: missing critical sections ${missingCriticalSections.join(', ')}.${rollbackApplied ? '' : ' Rollback applyEdit failed.'}`
+                                    );
+                                    continue;
+                                }
+
+                                phaseSwitcherProvider.upsertScenarioCacheEntryFromDocument(document);
+                                updateScenarioMetadataBlockSessionCache(document);
+                                setScenarioSnapshotAsSaved(document, buildScenarioSaveSnapshot(document));
+
+                                const finalText = document.getText();
+                                const netChanged = finalText !== originalText;
+
+                                if (netChanged) {
+                                    const expectedTextForSave = finalText;
+                                    internallyTriggeredSaves.add(fileKey);
+                                    try {
+                                        const saved = await document.save();
+                                        if (!saved) {
+                                            internallyTriggeredSaves.delete(fileKey);
+                                            throw new Error('Unable to save scenario file after repair.');
+                                        }
+                                    } catch (saveError) {
+                                        internallyTriggeredSaves.delete(fileKey);
+                                        const saveErrorMessage = saveError instanceof Error ? saveError.message : String(saveError);
+                                        if (!/Document has been closed/i.test(saveErrorMessage)) {
+                                            throw saveError;
+                                        }
+
+                                        const reopenedDocument = await vscode.workspace.openTextDocument(fileUri);
+                                        if (reopenedDocument.getText() !== expectedTextForSave) {
+                                            const reopenedFullText = reopenedDocument.getText();
+                                            const reopenEdit = new vscode.WorkspaceEdit();
+                                            reopenEdit.replace(
+                                                reopenedDocument.uri,
+                                                new vscode.Range(
+                                                    reopenedDocument.positionAt(0),
+                                                    reopenedDocument.positionAt(reopenedFullText.length)
+                                                ),
+                                                expectedTextForSave
+                                            );
+                                            const reopenedApplied = await vscode.workspace.applyEdit(reopenEdit);
+                                            if (!reopenedApplied) {
+                                                throw new Error('Unable to restore pending scenario changes after document close.');
+                                            }
+                                        }
+
+                                        const documentForRetrySave = await vscode.workspace.openTextDocument(fileUri);
+                                        const retrySaveKey = documentForRetrySave.uri.toString();
+                                        internallyTriggeredSaves.add(retrySaveKey);
+                                        const retrySaved = await documentForRetrySave.save();
+                                        if (!retrySaved) {
+                                            internallyTriggeredSaves.delete(retrySaveKey);
+                                            throw new Error('Unable to save scenario file after reopening.');
+                                        }
+                                    }
+                                    changedCount++;
+                                } else {
+                                    unchangedCount++;
+                                }
+                            } finally {
+                                processingFiles.delete(fileKey);
+                            }
+                        } catch (error) {
+                            failedCount++;
+                            const reason = error instanceof Error ? error.message : String(error);
+                            failedFiles.push({
+                                uri: fileUri,
+                                reason: t('Processing error: {0}', reason)
+                            });
+                            console.error('[Extension] Failed to repair scenario file:', error);
+                        }
+                    }
+                } finally {
+                    cancelOnProgress.dispose();
+                }
+            });
+
+            let failureReportUri: vscode.Uri | null = null;
+            if (failedCount > 0 && failedFiles.length > 0) {
+                try {
+                    failureReportUri = await writeScenarioRepairFailureReport(
+                        mode,
+                        cancelled || cancellationSource.token.isCancellationRequested,
+                        changedCount,
+                        unchangedCount,
+                        failedCount,
+                        failedFiles,
+                        t
+                    );
+                } catch (error) {
+                    const reportError = error instanceof Error ? error.message : String(error);
+                    console.error('[Extension] Failed to write scenario repair report:', error);
+                    vscode.window.showErrorMessage(t('Unable to generate scenario repair report: {0}', reportError));
+                }
+            }
+
+            if (cancelled || cancellationSource.token.isCancellationRequested) {
+                const cancelledSummary = t(
+                    'Scenario repair cancelled. Updated: {0}, unchanged: {1}, failed: {2}.',
+                    String(changedCount),
+                    String(unchangedCount),
+                    String(failedCount)
+                );
+                if (failureReportUri) {
+                    const openReportAction = t('Open report');
+                    const choice = await vscode.window.showWarningMessage(
+                        `${cancelledSummary} ${t('Failure report generated.')}`,
+                        openReportAction
+                    );
+                    if (choice === openReportAction) {
+                        const reportDoc = await vscode.workspace.openTextDocument(failureReportUri);
+                        await vscode.window.showTextDocument(reportDoc, { preview: false });
+                    }
+                } else {
+                    vscode.window.showWarningMessage(cancelledSummary);
+                }
+                return;
+            }
+
+            const summary = t(
+                'Scenario repair completed. Updated: {0}, unchanged: {1}, failed: {2}.',
+                String(changedCount),
+                String(unchangedCount),
+                String(failedCount)
+            );
+            if (failedCount > 0) {
+                if (failureReportUri) {
+                    const openReportAction = t('Open report');
+                    const choice = await vscode.window.showWarningMessage(
+                        `${summary} ${t('Failure report generated.')}`,
+                        openReportAction
+                    );
+                    if (choice === openReportAction) {
+                        const reportDoc = await vscode.workspace.openTextDocument(failureReportUri);
+                        await vscode.window.showTextDocument(reportDoc, { preview: false });
+                    }
+                } else {
+                    vscode.window.showWarningMessage(summary);
+                }
+            } else {
+                vscode.window.showInformationMessage(summary);
+            }
+        } finally {
+            batchProcessingInProgress = false;
+            if (scenarioRepairCancellationSource) {
+                scenarioRepairCancellationSource.dispose();
+            }
+            scenarioRepairCancellationSource = null;
+            phaseSwitcherProvider.setScenarioRepairInProgress(false, false);
         }
     };
 
@@ -711,47 +1334,82 @@ export function activate(context: vscode.ExtensionContext) {
                 }
 
                 const fileKey = document.uri.toString();
+                if (internallyTriggeredSaves.delete(fileKey)) {
+                    phaseSwitcherProvider.upsertScenarioCacheEntryFromDocument(document);
+                    updateScenarioMetadataBlockSessionCache(document);
+                    setScenarioSnapshotAsSaved(document);
+                    return;
+                }
+
                 if (processingFiles.has(fileKey)) {
                     setScenarioSnapshotAsSaved(document);
                     return;
                 }
 
+                const activeScenarioDocumentUri = vscode.window.activeTextEditor?.document.uri.toString();
+                if (activeScenarioDocumentUri !== fileKey) {
+                    pendingBackgroundScenarioFiles.add(fileKey);
+                    phaseSwitcherProvider.upsertScenarioCacheEntryFromDocument(document);
+                    setScenarioSnapshotAsSaved(document);
+                    return;
+                }
+
+                const config = vscode.workspace.getConfiguration('kotTestToolkit');
+                const legacyMetadataMigrationForMainScenariosEnabled = config.get<boolean>(
+                    'editor.enableLegacyMetadataMigrationForMainScenarios',
+                    false
+                );
                 processingFiles.add(fileKey);
 
-                // Auto-cleanup after 5 seconds to prevent memory leaks
-                setTimeout(() => {
-                    processingFiles.delete(fileKey);
-                }, 5000);
-
                 try {
-                    // Migrate KOT metadata only on explicit save flow to avoid heavy work on file open.
-                    const cachedMetadataBlock = scenarioMetadataBlockSessionCache.get(fileKey);
-                    const migrationResult = migrateLegacyPhaseSwitcherMetadata(document.getText(), {
-                        cachedKotMetadataBlock: cachedMetadataBlock
-                    });
-                    if (migrationResult.changed) {
-                        const originalText = document.getText();
-                        const fullRange = new vscode.Range(
-                            document.positionAt(0),
-                            document.positionAt(originalText.length)
-                        );
-                        const edit = new vscode.WorkspaceEdit();
-                        edit.replace(document.uri, fullRange, migrationResult.content);
-
-                        const applied = await vscode.workspace.applyEdit(edit);
-                        if (applied) {
-                            phaseSwitcherProvider.upsertScenarioCacheEntryFromDocument(document);
-                            updateScenarioMetadataBlockSessionCache(document);
-                            setScenarioSnapshotAsSaved(document);
-
-                            const t = await getTranslator(context.extensionUri);
-                            vscode.window.showInformationMessage(
-                                t('KOT metadata block was migrated. The file will be saved again.')
+                    if (isScenarioYamlFile(document)) {
+                        // Migrate KOT metadata only on explicit save flow to avoid heavy work on file open.
+                        const cachedMetadataBlock = scenarioMetadataBlockSessionCache.get(fileKey);
+                        const migrationResult = migrateLegacyPhaseSwitcherMetadata(document.getText(), {
+                            cachedKotMetadataBlock: cachedMetadataBlock,
+                            migrateLegacyPhaseSwitcherTags:
+                                legacyMetadataMigrationForMainScenariosEnabled && isMainScenarioDocument(document)
+                        });
+                        if (migrationResult.changed) {
+                            const originalText = document.getText();
+                            const missingCriticalSectionsAfterMigration = getMissingCriticalScenarioSections(
+                                originalText,
+                                migrationResult.content
                             );
+                            if (missingCriticalSectionsAfterMigration.length > 0) {
+                                console.error(
+                                    `[Extension] Skipping KOT metadata migration because it would remove critical sections: ${missingCriticalSectionsAfterMigration.join(', ')}.`
+                                );
+                                processingFiles.delete(fileKey);
+                                return;
+                            }
+                            const fullRange = new vscode.Range(
+                                document.positionAt(0),
+                                document.positionAt(originalText.length)
+                            );
+                            const edit = new vscode.WorkspaceEdit();
+                            edit.replace(document.uri, fullRange, migrationResult.content);
 
-                            await document.save();
-                            processingFiles.delete(fileKey);
-                            return;
+                            const applied = await vscode.workspace.applyEdit(edit);
+                            if (applied) {
+                                phaseSwitcherProvider.upsertScenarioCacheEntryFromDocument(document);
+                                updateScenarioMetadataBlockSessionCache(document);
+                                setScenarioSnapshotAsSaved(document);
+
+                                const t = await getTranslator(context.extensionUri);
+                                vscode.window.showInformationMessage(
+                                    t('KOT metadata block was migrated. The file will be saved again.')
+                                );
+
+                                internallyTriggeredSaves.add(fileKey);
+                                const migratedSaved = await document.save();
+                                if (!migratedSaved) {
+                                    internallyTriggeredSaves.delete(fileKey);
+                                    throw new Error('Unable to save scenario file after KOT metadata migration.');
+                                }
+                                processingFiles.delete(fileKey);
+                                return;
+                            }
                         }
                     }
                 } catch (migrationError) {
@@ -765,8 +1423,6 @@ export function activate(context: vscode.ExtensionContext) {
                     ?? calculateScenarioDirtyFlags(currentSnapshot, lastSavedSnapshot);
                 scenarioDirtyFlagsByUri.set(fileKey, dirtyFlags);
 
-                const config = vscode.workspace.getConfiguration('kotTestToolkit');
-                
                 // Проверяем, какие операции нужно выполнить
                 const enabledOperations: string[] = [];
                 
@@ -903,6 +1559,7 @@ export function activate(context: vscode.ExtensionContext) {
                                 }
                             }
 
+                            updateScenarioMetadataBlockSessionCache(document);
                             const postProcessSnapshot = buildScenarioSaveSnapshot(document);
                             setScenarioSnapshotAsSaved(document, postProcessSnapshot);
 
@@ -917,10 +1574,17 @@ export function activate(context: vscode.ExtensionContext) {
                                 // Extend debounce protection to cover the auto-save
                                 setTimeout(async () => {
                                     try {
-                                        await document.save();
-                                        console.log(`[Extension] Saved ${document.fileName} after processing`);
+                                        internallyTriggeredSaves.add(fileKey);
+                                        const saved = await document.save();
+                                        if (!saved) {
+                                            internallyTriggeredSaves.delete(fileKey);
+                                            console.warn(`[Extension] Save returned false for ${document.fileName} after processing`);
+                                        } else {
+                                            console.log(`[Extension] Saved ${document.fileName} after processing`);
+                                        }
                                     } catch (saveError) {
                                         console.warn(`[Extension] Failed to save ${document.fileName}:`, saveError);
+                                        internallyTriggeredSaves.delete(fileKey);
                                         // Don't show error to user - they can save manually if needed
                                     } finally {
                                         // Remove debounce protection after auto-save is complete
@@ -942,6 +1606,7 @@ export function activate(context: vscode.ExtensionContext) {
                         // Note: debounce cleanup is handled either in the setTimeout callback (success) or catch block (error)
                     });
                 } else {
+                    updateScenarioMetadataBlockSessionCache(document);
                     setScenarioSnapshotAsSaved(document, currentSnapshot);
                     processingFiles.delete(fileKey);
                 }
@@ -955,6 +1620,7 @@ export function activate(context: vscode.ExtensionContext) {
             lastSavedScenarioSnapshots.delete(fileKey);
             scenarioDirtyFlagsByUri.delete(fileKey);
             scenarioMetadataBlockSessionCache.delete(fileKey);
+            internallyTriggeredSaves.delete(fileKey);
             clearScenarioParameterSessionCache(document);
         })
     );
@@ -1050,6 +1716,7 @@ function collectKotDescriptionContentRanges(document: vscode.TextDocument): vsco
 
             if (metadataIndentation > metadataIndent && kotDescriptionBlockLineRegex.test(metadataTrimmed)) {
                 const descriptionIndent = metadataIndentation;
+                const descriptionContentIndent = descriptionIndent + 4;
                 lineIndex++;
 
                 while (lineIndex < document.lineCount) {
@@ -1061,7 +1728,11 @@ function collectKotDescriptionContentRanges(document: vscode.TextDocument): vsco
                         break;
                     }
 
-                    if (descriptionTrimmed.length > 0 && descriptionLineIndent > descriptionIndent) {
+                    if (descriptionTrimmed.length > 0 && descriptionLineIndent < descriptionContentIndent) {
+                        break;
+                    }
+
+                    if (descriptionTrimmed.length > 0 && descriptionLineIndent >= descriptionContentIndent) {
                         const firstNonWhitespace = descriptionLine.search(/\S/);
                         if (firstNonWhitespace >= 0) {
                             ranges.push(

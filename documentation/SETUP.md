@@ -59,6 +59,7 @@
 | `kotTestToolkit.editor.autoFillNestedScenariosOnSave` | `true` | Автоподдержка секции `ВложенныеСценарии` |
 | `kotTestToolkit.editor.autoFillScenarioParametersOnSave` | `true` | Автоподдержка секции `ПараметрыСценария` |
 | `kotTestToolkit.editor.showRefillMessages` | `true` | Показывать уведомления о перезаполнении секций |
+| `kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios` | `false` | Опциональная миграция legacy-тегов `# PhaseSwitcher_*` в `KOTМетаданные` для главных сценариев |
 | `kotTestToolkit.editor.newScenarioLanguage` | `en` | Язык новых сценариев (`#language: en/ru`) |
 
 ### 3.4 Diagnostics and Steps Library
@@ -146,6 +147,9 @@
 ### 5.2 Диагностика и редактирование
 
 - `KOT - Fix scenario issues` (`KOT - Исправить проблемы сценария`)
+- `KOT - Repair and validate changed scenarios (safe batch)` (`KOT - Исправить и проверить измененные сценарии (безопасный пакетный режим)`)
+- `KOT - Repair and validate all scenarios in YAML source directory (high load)` (`KOT - Исправить и проверить все сценарии в yamlSourceDirectory (высокая нагрузка)`)
+- `KOT - Cancel scenario repair` (`KOT - Отменить пакетное исправление сценариев`)
 - `KOT - Change main scenario name` (`KOT - Изменить имя главного сценария`)
 - `KOT - Change nested scenario name` (`KOT - Изменить имя вложенного сценария`)
 - `KOT - Change nested scenario code` (`KOT - Изменить код вложенного сценария`)

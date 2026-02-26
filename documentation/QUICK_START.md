@@ -128,6 +128,7 @@
 4. Собираете тесты `.feature`.
 5. Запускаете нужный сценарий в Vanessa.
 6. Изучаете результаты прохождения тестов.
+7. После массовых изменений (например, Replace in Files) используете `...` -> `Repair scenario files` -> `Repair changed scenarios`.
 
 ## 9) Полезные команды контекстного меню
 
@@ -155,7 +156,6 @@
 - `KOT - Change nested scenario code` (`KOT - Изменить код вложенного сценария`) — для вложенных сценариев
 - `KOT - Fill NestedScenarios section` (`KOT - Заполнить секцию ВложенныеСценарии`)
 - `KOT - Fill ScenarioParameters section` (`KOT - Заполнить секцию ПараметрыСценария`)
-- `KOT - Fix scenario issues` (`KOT - Исправить проблемы сценария`)
 
 ## 10) Частые вопросы
 

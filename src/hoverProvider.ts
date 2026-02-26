@@ -478,6 +478,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
 
             const rawValue = (descriptionMatch[1] || '').trim();
             const descriptionIndent = this.getIndent(line);
+            const descriptionContentIndent = descriptionIndent + 4;
 
             if (rawValue.startsWith('|') || rawValue.startsWith('>')) {
                 const contentLines: string[] = [];
@@ -490,12 +491,17 @@ export class DriveHoverProvider implements vscode.HoverProvider {
                         break;
                     }
 
-                    if (bodyLine.length <= descriptionIndent) {
+                    if (bodyTrimmed.length > 0 && bodyIndent < descriptionContentIndent) {
+                        break;
+                    }
+
+                    const normalizedBodyLine = bodyLine.replace(/^\t+/, tabs => '    '.repeat(tabs.length));
+                    if (normalizedBodyLine.length <= descriptionContentIndent) {
                         contentLines.push('');
                         continue;
                     }
 
-                    const unindented = bodyLine.slice(descriptionIndent + 1);
+                    const unindented = normalizedBodyLine.slice(descriptionContentIndent);
                     contentLines.push(unindented);
                 }
 

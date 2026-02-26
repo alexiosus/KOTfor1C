@@ -265,6 +265,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _cacheRefreshPromise: Promise<void> | null = null;
     private _cacheRefreshTimer: NodeJS.Timeout | null = null;
     private _isBuildInProgress: boolean = false;
+    private _isScenarioRepairInProgress: boolean = false;
+    private _isScenarioRepairCancelling: boolean = false;
     private _buildCancellationRequested: boolean = false;
     private _activeBuildProcesses: Set<cp.ChildProcess> = new Set();
     private _scenarioBuildArtifacts: Map<string, ScenarioBuildArtifact> = new Map();
@@ -294,6 +296,40 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
      */
     public getTestCache(): Map<string, TestInfo> | null {
         return this._testCache;
+    }
+
+    public setScenarioRepairInProgress(inProgress: boolean, cancelling: boolean = false): void {
+        const nextCancelling = inProgress ? cancelling : false;
+        if (this._isScenarioRepairInProgress === inProgress && this._isScenarioRepairCancelling === nextCancelling) {
+            return;
+        }
+
+        this._isScenarioRepairInProgress = inProgress;
+        this._isScenarioRepairCancelling = nextCancelling;
+        if (this._view?.webview) {
+            this._view.webview.postMessage({
+                command: 'scenarioRepairStateChanged',
+                inProgress,
+                cancelling: this._isScenarioRepairCancelling
+            });
+        }
+    }
+
+    public setScenarioRepairCancelling(cancelling: boolean): void {
+        if (!this._isScenarioRepairInProgress) {
+            return;
+        }
+        if (this._isScenarioRepairCancelling === cancelling) {
+            return;
+        }
+        this._isScenarioRepairCancelling = cancelling;
+        if (this._view?.webview) {
+            this._view.webview.postMessage({
+                command: 'scenarioRepairStateChanged',
+                inProgress: true,
+                cancelling: this._isScenarioRepairCancelling
+            });
+        }
     }
 
     /**
@@ -713,7 +749,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const lowerPath = normalizedUriPath.toLowerCase();
         const baseName = path.basename(lowerPath);
-        if (baseName === 'scen.yaml' || baseName === 'scen.yml') {
+        if (baseName === 'scen.yaml') {
             return true;
         }
 
@@ -737,7 +773,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const baseName = path.basename(normalizedUriPath).toLowerCase();
         return baseName === 'scen.yaml'
-            || baseName === 'scen.yml'
             || baseName === 'test'
             || baseName === 'test.feature';
     }
@@ -3005,11 +3040,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         let changedFiles = 0;
+        const legacyMetadataMigrationForMainScenariosEnabled = vscode.workspace
+            .getConfiguration('kotTestToolkit')
+            .get<boolean>('editor.enableLegacyMetadataMigrationForMainScenarios', false);
         for (const scenarioInfo of groupScenarios) {
             try {
                 const rawContent = Buffer.from(await vscode.workspace.fs.readFile(scenarioInfo.yamlFileUri)).toString('utf8');
-                const migrated = migrateLegacyPhaseSwitcherMetadata(rawContent);
-                const updated = this.updateScenarioGroupInMetadataContent(migrated.content, newGroupName);
+                const contentForUpdate = legacyMetadataMigrationForMainScenariosEnabled
+                    ? migrateLegacyPhaseSwitcherMetadata(rawContent).content
+                    : rawContent;
+                const updated = this.updateScenarioGroupInMetadataContent(contentForUpdate, newGroupName);
                 if (!updated.changed) {
                     continue;
                 }
@@ -3110,7 +3150,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 if (!entry.isFile()) {
                     continue;
                 }
-                if (!/\.(yaml|yml)$/i.test(entry.name)) {
+                if (!/\.yaml$/i.test(entry.name)) {
                     continue;
                 }
                 testConfigUris.push(vscode.Uri.file(path.join(testDirectory, entry.name)));
@@ -3127,7 +3167,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const lowerScenarioName = trimmedScenarioName.toLowerCase();
             const exactMatch = testConfigUris.find(uri => {
                 const base = path.basename(uri.fsPath).toLowerCase();
-                return base === `${lowerScenarioName}.yaml` || base === `${lowerScenarioName}.yml`;
+                return base === `${lowerScenarioName}.yaml`;
             });
             const fallback = exactMatch || (testConfigUris.length === 1 ? testConfigUris[0] : undefined);
             if (fallback) {
@@ -3221,7 +3261,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     if (!entry.isFile()) {
                         continue;
                     }
-                    if (!/\.(yaml|yml)$/i.test(entry.name)) {
+                    if (!/\.yaml$/i.test(entry.name)) {
                         continue;
                     }
                     currentTestConfigUris.push(vscode.Uri.file(path.join(currentTestDirectory, entry.name)));
@@ -3392,8 +3432,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 command: 'updateStatus',
                 text: this.t('Cancelling build...'),
                 enableControls: false,
-                target: 'assemble',
-                refreshButtonEnabled: false
+                target: 'assemble'
             });
         }
 
@@ -3538,7 +3577,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         });
 
         const picked = await vscode.window.showQuickPick(quickPickItems, {
-            title: this.t('Run scenario in Vanessa'),
+            title: this.t('Open Vanessa'),
             placeHolder: this.t('Select scenario for Vanessa run session.'),
             matchOnDescription: true,
             matchOnDetail: true,
@@ -3757,6 +3796,21 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 createScenarioTitle: this.t('Create scenario'),
                 createMainScenario: this.t('Main scenario'),
                 createNestedScenario: this.t('Nested scenario'),
+                maintenanceMenuTitle: this.t('More actions'),
+                repairScenariosTitle: this.t('Repair scenario files'),
+                reloadTestsFromDisk: this.t('Reload tests from disk'),
+                reloadTestsFromDiskHint: this.t('Reloads main scenarios from disk and refreshes Test Manager list.'),
+                refreshVanessaSteps: this.t('Refresh Vanessa steps library'),
+                refreshVanessaStepsHint: this.t('Reloads Vanessa steps library used by completion and diagnostics.'),
+                repairChangedScenarios: this.t('Repair changed scenarios'),
+                repairAllScenarios: this.t('Repair all scenarios'),
+                cancelScenarioRepair: this.t('Cancel scenario repair'),
+                repairChangedScenariosHint: this.t('Repairs and validates changed scenarios: tabs, table alignment, nested/parameter blocks, KOT metadata Description for scenarios, optional legacy-tag migration for main scenarios, and test list refresh.'),
+                repairAllScenariosHint: this.t('Repairs and validates all scenarios in configured yamlSourceDirectory (high load), then refreshes test list.'),
+                cancelScenarioRepairHint: this.t('Stops currently running scenario repair process.'),
+                scenarioRepairRunningSuffix: this.t('Scenario repair in progress'),
+                scenarioRepairCancellingSuffix: this.t('Cancelling scenario repair...'),
+                scenarioRepairNotRunningSuffix: this.t('Scenario repair is not running'),
                 favoritesTitle: this.t('Favorite scenarios'),
                 testsTabTitle: this.t('Main'),
                 favoritesTabTitle: this.t('Favorites'),
@@ -3770,7 +3824,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 scenarioSearchPlaceholder: this.t('Find main scenario by name...'),
                 scenarioSearchTitle: this.t('Search main scenarios and focus match in list'),
                 scenarioSearchClearTitle: this.t('Clear scenario search'),
-                refreshTitle: this.t('Refresh from disk'),
+                refreshTitle: this.t('Reload tests from disk'),
                 collapseExpandAllTitle: this.t('Collapse/Expand all groups'),
                 toggleAllCheckboxesTitle: this.t('Toggle all checkboxes'),
                 loadingPhasesAndTests: this.t('Loading groups and tests...'),
@@ -3798,7 +3852,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 phaseSwitcherDisabled: this.t('Test Manager is disabled in settings.'),
                 errorWithDetails: this.t('Error: {0}', '{0}'),
                 openScenarioFileTitle: this.t('Open scenario file {0}', '{0}'),
-                runVanessaTopTitle: this.t('Run scenario in Vanessa'),
+                runVanessaTopTitle: this.t('Open Vanessa'),
                 runScenarioFeatureTitle: this.t('Run scenario in Vanessa Automation by feature: {0}', '{0}'),
                 runScenarioJsonTitle: this.t('Run scenario in Vanessa Automation by json: {0}', '{0}'),
                 runScenarioStaleSuffix: this.t('Build is stale'),
@@ -3821,8 +3875,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 statusRequestingData: this.t('Requesting data...'),
                 statusStartingAssembly: this.t('Starting assembly...'),
                 statusBuildingInProgress: this.t('Building tests in progress...'),
+                statusCancellingScenarioRepair: this.t('Cancelling scenario repair...'),
                 statusCancellingBuild: this.t('Cancelling build...'),
-                selectionStateSummary: this.t('Selected: {0}/{1}'),
+                selectionStateSummary: this.t('Will be built: {0}/{1}'),
                 openScenarioTitle: this.t('Open scenario'),
                 renameGroupTitle: this.t('Rename group'),
                 renameScenarioTitle: this.t('Rename scenario'),
@@ -3859,8 +3914,20 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     this._cacheDirty = true;
                     await this._sendInitialState(webviewView.webview);
                     return;
+                case 'refreshVanessaSteps':
+                    await vscode.commands.executeCommand('kotTestToolkit.refreshGherkinSteps');
+                    return;
                 case 'scanWorkspaceDiagnostics':
                     await vscode.commands.executeCommand('kotTestToolkit.scanWorkspaceDiagnostics');
+                    return;
+                case 'runScenarioRepairChanged':
+                    await vscode.commands.executeCommand('kotTestToolkit.processQueuedScenarioFiles');
+                    return;
+                case 'runScenarioRepairAll':
+                    await vscode.commands.executeCommand('kotTestToolkit.processAllScenarioFiles');
+                    return;
+                case 'cancelScenarioRepair':
+                    await vscode.commands.executeCommand('kotTestToolkit.cancelScenarioRepair');
                     return;
                 case 'log':
                     console.log(message.text);
@@ -3996,7 +4063,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private async _sendInitialState(webview: vscode.Webview) {
         console.log("[PhaseSwitcherProvider:_sendInitialState] Preparing and sending initial state...");
-        webview.postMessage({ command: 'updateStatus', text: this.t('Scanning files...'), enableControls: false, refreshButtonEnabled: false });
+        webview.postMessage({ command: 'updateStatus', text: this.t('Scanning files...'), enableControls: false });
 
         // Panels are always enabled now
         const switcherEnabled = true;
@@ -4010,7 +4077,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (!workspaceFolders || workspaceFolders.length === 0) {
             vscode.window.showErrorMessage(this.t('Please open a project folder.'));
             webview.postMessage({ command: 'loadInitialState', error: this.t('Project folder is not open') });
-            webview.postMessage({ command: 'updateStatus', text: this.t('Error: Project folder is not open'), refreshButtonEnabled: true });
+            webview.postMessage({ command: 'updateStatus', text: this.t('Error: Project folder is not open') });
             this._testCache = null; 
             this._onDidUpdateTestCache.fire(this._testCache); // Уведомляем об отсутствии данных
             return;
@@ -4058,7 +4125,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         if (this._testCache) {
             status = this.t('Checking test state...');
-            webview.postMessage({ command: 'updateStatus', text: status, refreshButtonEnabled: false });
+            webview.postMessage({ command: 'updateStatus', text: status });
 
             const testsForPhaseSwitcherProcessing = this.getMainScenariosFromCache();
             testsForPhaseSwitcherCount = testsForPhaseSwitcherProcessing.length;
@@ -4103,25 +4170,25 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 driveFeaturesEnabled: driveFeaturesEnabled,
                 highlightAffectedMainScenarios: highlightAffectedMainScenariosEnabled,
                 firstLaunchFolderExists: firstLaunchFolderExists,
-                buildInProgress: this._isBuildInProgress
+                buildInProgress: this._isBuildInProgress,
+                scenarioRepairInProgress: this._isScenarioRepairInProgress,
+                scenarioRepairCancelling: this._isScenarioRepairCancelling
             },
             error: !this._testCache ? status : undefined // Ошибка, если _testCache пуст
         });
-        // Always enable refresh button, but only enable other controls if there are tests and no build is running
+        // Enable controls only if there are tests and no build is running
         const hasTests = !!this._testCache && testsForPhaseSwitcherCount > 0;
         if (this._isBuildInProgress) {
             webview.postMessage({
                 command: 'updateStatus',
                 text: this.t('Building tests in progress...'),
                 enableControls: false,
-                refreshButtonEnabled: false,
                 target: 'main'
             });
             webview.postMessage({
                 command: 'updateStatus',
                 text: this.t('Building tests in progress...'),
                 enableControls: false,
-                refreshButtonEnabled: false,
                 target: 'assemble'
             });
         } else {
@@ -4131,12 +4198,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 enableControls: hasTests
             });
         }
-        
-        // Explicitly enable refresh button if there are no tests
-        if (!hasTests && !this._isBuildInProgress) {
-            webview.postMessage({ command: 'setRefreshButtonState', enabled: true });
-        }
-        
+
         // Генерируем событие с ПОЛНЫМ кэшем для других компонентов (например, CompletionProvider)
         this._onDidUpdateTestCache.fire(this._testCache);
     }
@@ -4478,14 +4540,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const sendStatus = (text: string, enableControls: boolean = false, target: 'main' | 'assemble' = 'assemble', refreshButtonEnabled?: boolean) => {
+        const sendStatus = (text: string, enableControls: boolean = false, target: 'main' | 'assemble' = 'assemble') => {
             if (this._view?.webview) {
                 this._view.webview.postMessage({ 
                     command: 'updateStatus', 
                     text: text, 
                     enableControls: enableControls, 
-                    target: target,
-                    refreshButtonEnabled: refreshButtonEnabled 
+                    target: target
                 });
             } else {
                 console.warn(`${methodStartLog} Cannot send status, view is not available. Status: ${text}`);
@@ -4498,7 +4559,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (this._view?.webview) {
             this._view.webview.postMessage({ command: 'buildStateChanged', inProgress: true });
         }
-        sendStatus(this.t('Building tests in progress...'), false, 'assemble', false);
+        sendStatus(this.t('Building tests in progress...'), false, 'assemble');
 
         try {
             await vscode.window.withProgress({
@@ -4525,7 +4586,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
                 const oneCPath_raw = config.get<string>('paths.oneCEnterpriseExe');
                 if (!oneCPath_raw) {
-                    sendStatus(this.t('Build error.'), true, 'assemble', true);
+                    sendStatus(this.t('Build error.'), true, 'assemble');
                     vscode.window.showErrorMessage(
                         this.t('Path to 1C:Enterprise (1cv8.exe) is not specified in settings.'),
                         this.t('Open Settings')
@@ -4537,7 +4598,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     return;
                 }
                 if (!fs.existsSync(oneCPath_raw)) {
-                    sendStatus(this.t('Build error.'), true, 'assemble', true);
+                    sendStatus(this.t('Build error.'), true, 'assemble');
                     vscode.window.showErrorMessage(
                         this.t('1C:Enterprise file (1cv8.exe) not found at path: {0}', oneCPath_raw),
                         this.t('Open Settings')
@@ -4552,7 +4613,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
                 const emptyIbPath_raw = config.get<string>('paths.emptyInfobase');
                 if (!emptyIbPath_raw) {
-                    sendStatus(this.t('Build error.'), true, 'assemble', true);
+                    sendStatus(this.t('Build error.'), true, 'assemble');
                     vscode.window.showErrorMessage(
                         this.t('Path to empty infobase is not specified in settings.'),
                         this.t('Open Settings')
@@ -4564,7 +4625,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     return;
                 }
                 if (!fs.existsSync(emptyIbPath_raw)) {
-                    sendStatus(this.t('Build error.'), true, 'assemble', true);
+                    sendStatus(this.t('Build error.'), true, 'assemble');
                     vscode.window.showErrorMessage(
                         this.t('Empty infobase directory not found at path: {0}', emptyIbPath_raw),
                         this.t('Open Settings')
@@ -4785,7 +4846,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     if (junitFileUri) {
                         this.outputAdvanced(outputChannel, this.t('For more details, check {0}', junitFileUri.fsPath));
                     }
-                    sendStatus(this.t('Build completed with errors.'), true, 'assemble', true);
+                    sendStatus(this.t('Build completed with errors.'), true, 'assemble');
                     
                     // Prepare buttons based on whether JUnit file is available
                     const buttons = [openFeatureButtonLabel, this.t('Open folder'), this.t('Show Output')];
@@ -4815,7 +4876,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     if (junitFileUri) {
                         this.outputAdvanced(outputChannel, this.t('For more details, check {0}', junitFileUri.fsPath));
                     }
-                    sendStatus(this.t('Build failed - no scenarios built.'), true, 'assemble', true);
+                    sendStatus(this.t('Build failed - no scenarios built.'), true, 'assemble');
                     
                     // Show single simplified notification for complete failure
                     const buttons = [this.t('Show Output')];
@@ -4836,7 +4897,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 } else if (!hasErrors && scenariosBuilt) {
                     // No errors and scenarios built - perfect success
                     this.outputInfo(outputChannel, this.t('Build process completed successfully with {0} scenario(s).', featureFiles.length.toString()));
-                    sendStatus(this.t('Tests successfully built.'), true, 'assemble', true); 
+                    sendStatus(this.t('Tests successfully built.'), true, 'assemble'); 
                 vscode.window.showInformationMessage(
                         this.t('Build completed: {0} successful.', featureFiles.length.toString()),
                         openFeatureButtonLabel,
@@ -4853,14 +4914,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 } else {
                     // No errors but no scenarios built either (strange case)
                     this.outputInfo(outputChannel, this.t('Build process completed but no scenarios were found.'));
-                    sendStatus(this.t('Build completed - no scenarios found.'), true, 'assemble', true);
+                    sendStatus(this.t('Build completed - no scenarios found.'), true, 'assemble');
                     vscode.window.showWarningMessage(this.t('Build completed but no scenarios were found.'));
                 }
 
             } catch (error: any) {
                 if (this.isBuildCancelledError(error)) {
                     this.outputInfo(outputChannel, this.t('Build cancelled.'));
-                    sendStatus(this.t('Build cancelled.'), true, 'assemble', true);
+                    sendStatus(this.t('Build cancelled.'), true, 'assemble');
                     vscode.window.showInformationMessage(this.t('Build cancelled by user.'));
                     return;
                 }
@@ -4884,7 +4945,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     vscode.window.showErrorMessage(this.t('Build error: {0}. See Output.', errorMessage));
                 }
                 
-                sendStatus(this.t('Build error.'), true, 'assemble', true); 
+                sendStatus(this.t('Build error.'), true, 'assemble'); 
             }
         });
         } finally {

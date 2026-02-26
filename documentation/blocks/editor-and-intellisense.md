@@ -46,6 +46,7 @@
 | `kotTestToolkit.editor.autoFillNestedScenariosOnSave` | Автоподдержка `ВложенныеСценарии` |
 | `kotTestToolkit.editor.autoFillScenarioParametersOnSave` | Автоподдержка `ПараметрыСценария` |
 | `kotTestToolkit.editor.showRefillMessages` | Показывать уведомления о перезаполнении |
+| `kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios` | Опциональная миграция legacy-тегов `# PhaseSwitcher_*` в `KOTМетаданные` для главных сценариев |
 | `kotTestToolkit.editor.newScenarioLanguage` | Язык новых сценариев (`#language`) |
 | `kotTestToolkit.steps.externalUrl` | URL внешней библиотеки шагов |
 

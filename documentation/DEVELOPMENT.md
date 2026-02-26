@@ -47,6 +47,13 @@
 
 Важно: перезаполнение секций запускается только при релевантных изменениях или неполной структуре.
 
+Дополнительно:
+
+- тяжелая post-save обработка выполняется для активного сценария;
+- сохранения неактивных сценариев ставятся в очередь `pendingBackgroundScenarioFiles` и обрабатываются командой batch-repair (например, при использовании глобальной замены поиском);
+- для batch-repair файл считается `updated` только при фактическом изменении итогового текста;
+- в batch-repair есть защита критичных секций с rollback.
+
 ## 4) Диагностика
 
 Режимы:
@@ -69,6 +76,7 @@
 - Собирает/отдает состояние групп, тестов, избранного, статусов запуска.
 - Управляет сборкой и запуском Vanessa.
 - Ведет run-state (`running/passed/failed/stale`) и runtime-логи.
+- Ведет состояние `scenarioRepairInProgress/scenarioRepairCancelling` для webview.
 
 ### Frontend (`media/phaseSwitcher.js`)
 
@@ -76,6 +84,7 @@
 - Отправка команд backend через `postMessage`.
 - Контекстные действия по сценарию/группе.
 - Вкладка `Избранное`, drag-and-drop в редактор.
+- Меню `More actions`.
 
 ## 6) Сборка и запуск Vanessa
 
@@ -114,6 +123,12 @@
 3. Зарегистрировать handler в `src/extension.ts`.
 4. Реализовать логику в `src/commandHandlers.ts` или отдельном модуле.
 5. Добавить l10n-строки (`package.nls*`, `l10n/bundle*`).
+
+Пример новых batch-команд:
+
+- `kotTestToolkit.processQueuedScenarioFiles`
+- `kotTestToolkit.processAllScenarioFiles`
+- `kotTestToolkit.cancelScenarioRepair`
 
 ### Добавить новую диагностику
 

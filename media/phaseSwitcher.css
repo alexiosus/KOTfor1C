@@ -14,7 +14,8 @@ html, body {
 
 .main-content-area {
     flex-grow: 1; 
-    overflow-y: auto; 
+    overflow-y: auto;
+    overflow-x: visible;
     min-height: 0; 
     padding: 0em 1em 2em 1em; 
     display: flex;
@@ -27,7 +28,7 @@ html, body {
     flex-grow: 1; 
     flex-shrink: 1; 
     min-height: 250px; 
-    overflow: hidden; 
+    overflow: visible;
     margin-bottom: 0;
 }
 
@@ -77,21 +78,39 @@ h1 {
     cursor: not-allowed;
 }
 
+.compact-top-btn.is-disabled {
+    background-color: transparent;
+    color: var(--vscode-disabledForeground);
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .global-list-actions {
     display: flex;
-    align-items: center;
-    padding: 2px 0 4px 0;
-    margin-bottom: 6px;
-    flex-shrink: 0;
-    gap: 8px;
+    align-items: flex-start;
+    justify-content: flex-end;
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    padding: 0;
+    margin: 0;
+    gap: 0;
 }
 
 .global-list-actions-right {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
+    justify-content: flex-end;
     gap: 6px;
+    row-gap: 4px;
     min-width: 0;
-    width: 100%;
+    max-width: 100%;
+    flex-wrap: wrap;
+    margin-left: auto;
+}
+
+.global-list-actions-right > * {
+    flex: 0 0 auto;
 }
 .compact-action-btn {
     background-color: transparent;
@@ -125,23 +144,35 @@ h1 {
     opacity: 0.5;
 }
 
+.compact-action-btn.is-disabled {
+    background-color: transparent;
+    color: var(--vscode-disabledForeground);
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
 .hidden {
     display: none !important;
 }
 
 .manager-tabs-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 10px;
     margin-bottom: 6px;
+    flex-wrap: wrap;
 }
 
 .manager-tabs-side {
-    display: inline-flex;
-    align-items: center;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+    flex: 1 1 auto;
+    width: 0;
     gap: 10px;
     min-width: 0;
+    flex-wrap: wrap;
 }
 
 .manager-search-toggle-btn {
@@ -295,11 +326,12 @@ h1 {
     background-color: var(--vscode-menu-background, var(--vscode-editorWidget-background));
     min-width: 200px;
     box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
-    z-index: 1;
+    z-index: 1000;
     border: 1px solid var(--vscode-menu-border, var(--vscode-contrastBorder));
     border-radius: 4px;
     right: 0; /* Выравнивание по правому краю кнопки */
     top: 100%; /* Появление под кнопкой */
+    max-width: min(420px, calc(100vw - 16px));
 }
 
 .dropdown-content .dropdown-item {
@@ -309,15 +341,28 @@ h1 {
     display: flex; /* Используем flex для иконки и текста */
     align-items: center; /* Выравнивание по центру */
     gap: 8px; /* Промежуток между иконкой и текстом */
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 .dropdown-content .dropdown-item .codicon {
     font-size: 16px;
 }
 
+.dropdown-content .dropdown-item-with-chevron .dropdown-item-chevron {
+    margin-left: auto;
+    font-size: 13px;
+    opacity: 0.72;
+}
+
 .dropdown-content .dropdown-item:hover {
     background-color: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
     color: var(--vscode-menu-selectionForeground, var(--vscode-list-hoverForeground));
+}
+
+.dropdown-separator {
+    height: 1px;
+    margin: 4px 8px;
+    background: var(--vscode-menu-separatorBackground, var(--vscode-panel-border));
 }
 
 .dropdown-container.show .dropdown-content {
@@ -346,15 +391,6 @@ h1 {
     border-top: 1px solid var(--vscode-panel-border); 
     margin-top: 0.8em;
     background-color: var(--vscode-editor-background); 
-}
-
-.selection-summary-compact {
-    color: var(--vscode-descriptionForeground);
-    font-size: 0.92em;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    margin-left: auto;
 }
 
 .scenario-search-row {
@@ -577,7 +613,8 @@ h1 {
     min-height: 1.3em;
     white-space: pre-wrap; 
     padding: 0 0 0.55em 0;
-    font-size: 0.92em;
+    font-size: 0.84em;
+    text-align: center;
 }
 
 #statusBar.is-empty {
@@ -880,13 +917,6 @@ label.checkbox-item:hover .open-scenario-btn .codicon.open-scenario-icon-edit,
     flex-grow: 1;
     flex-basis: 0;
 }
-#assembleStatus { 
-    font-size: var(--vscode-editor-font-size); 
-    color: var(--vscode-descriptionForeground); 
-    min-height: 1.5em; 
-    white-space: pre-wrap;
-    margin-top: 5px;
-}
 .assemble-options-inline {
     display: flex;          
     align-items: center;    
@@ -970,6 +1000,23 @@ label.checkbox-item:hover .open-scenario-btn .codicon.open-scenario-icon-edit,
     width: 100%;
     min-width: 0;
     justify-content: center;
+    position: relative;
+}
+
+.split-main-content {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 0;
+    transform: translateX(0);
+}
+
+.split-main-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .split-menu-btn {
@@ -982,7 +1029,7 @@ label.checkbox-item:hover .open-scenario-btn .codicon.open-scenario-icon-edit,
     border-bottom-left-radius: 0 !important;
     border-top-right-radius: 2px !important;
     border-bottom-right-radius: 2px !important;
-    border-left: 1px solid var(--vscode-button-border, var(--vscode-contrastBorder));
+    border-left: none !important;
     flex: 0 0 auto;
     min-width: 30px !important;
     width: 30px !important;
@@ -1059,7 +1106,7 @@ label.checkbox-item:hover .open-scenario-btn .codicon.open-scenario-icon-edit,
 
 .dropdown-content .dropdown-item.is-disabled {
     opacity: 0.6;
-    pointer-events: none;
+    cursor: not-allowed;
 }
 
 .split-dropdown-content .dropdown-item {

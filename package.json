@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/KOTfor1C",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -113,6 +113,12 @@
             "description": "%config.showRefillMessages.description%",
             "order": 7
           },
+          "kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios": {
+            "type": "boolean",
+            "default": false,
+            "description": "%config.editor.enableLegacyMetadataMigrationForMainScenarios.description%",
+            "order": 8
+          },
           "kotTestToolkit.editor.newScenarioLanguage": {
             "type": "string",
             "default": "en",
@@ -125,7 +131,7 @@
               "%config.editor.newScenarioLanguage.ru.desc%"
             ],
             "description": "%config.editor.newScenarioLanguage.description%",
-            "order": 8
+            "order": 9
           }
         }
       },
@@ -374,6 +380,21 @@
         "category": "%cmd.category%"
       },
       {
+        "command": "kotTestToolkit.processQueuedScenarioFiles",
+        "title": "%cmd.processQueuedScenarioFiles.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.processAllScenarioFiles",
+        "title": "%cmd.processAllScenarioFiles.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.cancelScenarioRepair",
+        "title": "%cmd.cancelScenarioRepair.title%",
+        "category": "%cmd.category%"
+      },
+      {
         "command": "kotTestToolkit.addActiveScenarioToFavorites",
         "title": "%cmd.addActiveScenarioToFavorites.title%",
         "category": "%cmd.category%"
@@ -601,6 +622,18 @@
         },
         {
           "command": "kotTestToolkit.openScenarioInVanessaManual",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.processQueuedScenarioFiles",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.processAllScenarioFiles",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.cancelScenarioRepair",
           "when": "true"
         },
         {
