@@ -59,17 +59,23 @@
 | `kotTestToolkit.editor.autoFillNestedScenariosOnSave` | `true` | Автоподдержка секции `ВложенныеСценарии` |
 | `kotTestToolkit.editor.autoFillScenarioParametersOnSave` | `true` | Автоподдержка секции `ПараметрыСценария` |
 | `kotTestToolkit.editor.showRefillMessages` | `true` | Показывать уведомления о перезаполнении секций |
-| `kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios` | `false` | Опциональная миграция legacy-тегов `# PhaseSwitcher_*` в `KOTМетаданные` для главных сценариев |
 | `kotTestToolkit.editor.newScenarioLanguage` | `en` | Язык новых сценариев (`#language: en/ru`) |
 
-### 3.4 Diagnostics and Steps Library
+### 3.4 Legacy support
+
+| Ключ | Default | Назначение |
+|---|---|---|
+| `kotTestToolkit.editor.autoEnsureKotMetadataForMainScenarios` | `true` | Автодобавление/восстановление `KOTМетаданные` для всех типов сценариев при save/repair |
+| `kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios` | `true` | Опциональная миграция legacy-тегов `# PhaseSwitcher_*` в `KOTМетаданные` только для главных сценариев (работает при включенном `autoEnsureKotMetadataForMainScenarios`) |
+
+### 3.5 Diagnostics and Steps Library
 
 | Ключ | Default | Назначение |
 |---|---|---|
 | `kotTestToolkit.steps.externalUrl` | `https://raw.githubusercontent.com/kakoytochelik/KOTfor1C/main/res/steps.htm` | Источник `steps.htm` для библиотеки шагов |
 | `kotTestToolkit.editor.checkRelatedParentScenarios` | `true` | Проверять связанные родительские сценарии вместе с активным |
 
-### 3.5 Test Assembly settings
+### 3.6 Test Assembly settings
 
 | Ключ | Default | Назначение |
 |---|---|---|
@@ -77,7 +83,7 @@
 | `kotTestToolkit.output.advancedLogging` | `false` | Расширенные технические логи |
 | `kotTestToolkit.paths.openBuildScenarioParametersManager` | `-` | Кнопка-переход к менеджеру параметров в Settings |
 
-### 3.6 Vanessa Automation Launch
+### 3.7 Vanessa Automation Launch
 
 | Ключ | Default | Назначение |
 |---|---|---|
@@ -100,13 +106,13 @@
 
 Рекомендация: в путях и строковых аргументах используйте `*Quoted` варианты, чтобы корректно обрабатывать пробелы и спецсимволы.
 
-### 3.7 1C startup parameters
+### 3.8 1C startup parameters
 
 | Ключ | Default | Назначение |
 |---|---|---|
 | `kotTestToolkit.startupParams.parameters` | `/L ru /DisableStartupMessages /DisableStartupDialogs` | Строка параметров запуска 1С |
 
-### 3.8 System paths settings
+### 3.9 System paths settings
 
 | Ключ | Default | Назначение |
 |---|---|---|

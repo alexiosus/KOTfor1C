@@ -1,6 +1,6 @@
 # Change Log
 
-# 2.2.0
+# 2.2.1
 
 ### UI: Test Manager
 
@@ -19,7 +19,11 @@
     - полная post-save обработка файла со стороны плагина выполняется только для активного файла;
     - прочие измененные сценарии ставятся в очередь для опциональной команды `KOT - Repair and validate changed scenarios (safe batch)` / `KOT - Исправить и проверить измененные сценарии (безопасный пакетный режим)`;
     - снижен фоновый шум от post-save обработки.
-- Миграция legacy-тегов `# PhaseSwitcher_*` в `KOTМетаданные` для главных сценариев сделана опциональной и по умолчанию выключена (`kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios`) для поддержки старых тестовых сред, еще не готовых к миграции.
+
+### Поддержка старых тестовых сред, еще не готовых к миграции
+
+- Добавлен переключатель автодобавления/восстановления `KOTМетаданные` для всех типов сценариев (`kotTestToolkit.editor.autoEnsureKotMetadataForMainScenarios`), по умолчанию включен.
+- Миграция legacy-тегов `# PhaseSwitcher_*` в `KOTМетаданные` (`kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios`) оставлена опциональной и по умолчанию включена; применяется только для главных сценариев и работает при включенном `autoEnsureKotMetadataForMainScenarios`.
 
 ---
 

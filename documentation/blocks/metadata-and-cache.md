@@ -46,7 +46,8 @@
 | Настройка | Назначение |
 |---|---|
 | `kotTestToolkit.phaseSwitcher.highlightAffectedMainScenarios` | Подсветка затронутых главных сценариев |
-| `kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios` | Опциональная миграция legacy-тегов `# PhaseSwitcher_*` в `KOTМетаданные` для главных сценариев |
+| `kotTestToolkit.editor.autoEnsureKotMetadataForMainScenarios` | Автодобавление/восстановление `KOTМетаданные` для всех типов сценариев |
+| `kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios` | Опциональная миграция legacy-тегов `# PhaseSwitcher_*` в `KOTМетаданные` только для главных сценариев (под-настройка автообеспечения `KOTМетаданные`) |
 | `kotTestToolkit.editor.checkRelatedParentScenarios` | Проверка ошибок связанных родительских сценариев |
 | `kotTestToolkit.paths.yamlSourceDirectory` | Область сканирования сценариев |
 

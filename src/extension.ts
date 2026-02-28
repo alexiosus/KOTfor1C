@@ -912,10 +912,14 @@ export function activate(context: vscode.ExtensionContext) {
         const alignNestedCallParamsEnabled = config.get<boolean>('editor.autoAlignNestedScenarioParametersOnSave', true);
         const nestedEnabled = config.get<boolean>('editor.autoFillNestedScenariosOnSave', true);
         const paramsEnabled = config.get<boolean>('editor.autoFillScenarioParametersOnSave', true);
+        const autoEnsureKotMetadataForAllScenariosEnabled = config.get<boolean>(
+            'editor.autoEnsureKotMetadataForMainScenarios',
+            true
+        );
         const legacyMetadataMigrationForMainScenariosEnabled = config.get<boolean>(
             'editor.enableLegacyMetadataMigrationForMainScenarios',
             false
-        );
+        ) && autoEnsureKotMetadataForAllScenariosEnabled;
 
         let changedCount = 0;
         let unchangedCount = 0;
@@ -1005,7 +1009,7 @@ export function activate(context: vscode.ExtensionContext) {
                                     await clearAndFillScenarioParameters(document, true);
                                 }
 
-                                if (isScenarioYamlFile(document)) {
+                                if (isScenarioYamlFile(document) && autoEnsureKotMetadataForAllScenariosEnabled) {
                                     const migrationSourceText = document.getText();
                                     const cachedMetadataBlock = scenarioMetadataBlockSessionCache.get(fileKey);
                                     const migrationResult = migrateLegacyPhaseSwitcherMetadata(migrationSourceText, {
@@ -1355,14 +1359,18 @@ export function activate(context: vscode.ExtensionContext) {
                 }
 
                 const config = vscode.workspace.getConfiguration('kotTestToolkit');
+                const autoEnsureKotMetadataForAllScenariosEnabled = config.get<boolean>(
+                    'editor.autoEnsureKotMetadataForMainScenarios',
+                    true
+                );
                 const legacyMetadataMigrationForMainScenariosEnabled = config.get<boolean>(
                     'editor.enableLegacyMetadataMigrationForMainScenarios',
                     false
-                );
+                ) && autoEnsureKotMetadataForAllScenariosEnabled;
                 processingFiles.add(fileKey);
 
                 try {
-                    if (isScenarioYamlFile(document)) {
+                    if (isScenarioYamlFile(document) && autoEnsureKotMetadataForAllScenariosEnabled) {
                         // Migrate KOT metadata only on explicit save flow to avoid heavy work on file open.
                         const cachedMetadataBlock = scenarioMetadataBlockSessionCache.get(fileKey);
                         const migrationResult = migrateLegacyPhaseSwitcherMetadata(document.getText(), {

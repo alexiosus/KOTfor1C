@@ -3040,14 +3040,22 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         let changedFiles = 0;
-        const legacyMetadataMigrationForMainScenariosEnabled = vscode.workspace
-            .getConfiguration('kotTestToolkit')
-            .get<boolean>('editor.enableLegacyMetadataMigrationForMainScenarios', false);
+        const phaseSwitcherConfig = vscode.workspace.getConfiguration('kotTestToolkit');
+        const autoEnsureKotMetadataEnabled = phaseSwitcherConfig.get<boolean>(
+            'editor.autoEnsureKotMetadataForMainScenarios',
+            true
+        );
+        const legacyMetadataMigrationForMainScenariosEnabled = phaseSwitcherConfig.get<boolean>(
+            'editor.enableLegacyMetadataMigrationForMainScenarios',
+            false
+        ) && autoEnsureKotMetadataEnabled;
         for (const scenarioInfo of groupScenarios) {
             try {
                 const rawContent = Buffer.from(await vscode.workspace.fs.readFile(scenarioInfo.yamlFileUri)).toString('utf8');
-                const contentForUpdate = legacyMetadataMigrationForMainScenariosEnabled
-                    ? migrateLegacyPhaseSwitcherMetadata(rawContent).content
+                const contentForUpdate = autoEnsureKotMetadataEnabled
+                    ? migrateLegacyPhaseSwitcherMetadata(rawContent, {
+                        migrateLegacyPhaseSwitcherTags: legacyMetadataMigrationForMainScenariosEnabled
+                    }).content
                     : rawContent;
                 const updated = this.updateScenarioGroupInMetadataContent(contentForUpdate, newGroupName);
                 if (!updated.changed) {

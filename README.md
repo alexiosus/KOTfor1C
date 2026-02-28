@@ -1,6 +1,6 @@
 <p align="center">
   <img src="./docs/KOTfor1C_poster.png" alt="Иконка KOT for 1C" width="600"/><br>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.2.0-yellow"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.2.1-yellow"></a>
 </p>
 
 **KOT** (_**K**eep **O**n **T**esting_) **for 1C** — расширение VS Code для разработки и поддержки автотестов 1С в YAML-формате (экосистема СППР / Vanessa Automation).
