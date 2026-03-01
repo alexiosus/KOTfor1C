@@ -9,7 +9,7 @@ import { YamlParametersManager } from './yamlParametersManager';
 
 const VARIABLE_REFERENCE_PREFIX_REGEX = /^[A-Za-zА-Яа-яЁё0-9_]*$/;
 const SEMANTIC_STEP_PREFIX = '!';
-const GHERKIN_KEYWORD_PREFIX_REGEX = /^(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\s+/i;
+const GHERKIN_KEYWORD_PREFIX_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\s+/i;
 const SEMANTIC_SYNONYM_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
     ['нажать', 'нажатие', 'нажатия', 'нажат', 'кликнуть', 'клик', 'щелкнуть', 'щелчок', 'click', 'clicking', 'press', 'pressing', 'tap'],
     ['кнопка', 'button'],
@@ -26,10 +26,10 @@ const SEMANTIC_SYNONYM_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
     ['сохранить', 'запомнить', 'save', 'store', 'remember'],
     ['значение', 'параметр', 'value', 'parameter', 'argument']
 ];
-const SAVE_VARIABLE_STEP_REGEX_EN = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+in\s+(?:"([^"]+)"|'([^']+)')\s+variable\s*$/i;
-const SAVE_VARIABLE_STEP_REGEX_EN_VALUE_TO = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+value\s+to\s+(?:"([^"]+)"|'([^']+)')\s+variable\s*$/i;
-const SAVE_VARIABLE_STEP_REGEX_RU = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?Я\s+запоминаю\s+значение\s+выражения\s+(.+?)\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s*$/i;
-const SAVE_VARIABLE_STEP_REGEX_RU_VALUE_TO = /^\s*(?:(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?Я\s+запоминаю\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s+значение\s+(.+?)\s*$/i;
+const SAVE_VARIABLE_STEP_REGEX_EN = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+in\s+(?:"([^"]+)"|'([^']+)')\s+variable\s*$/i;
+const SAVE_VARIABLE_STEP_REGEX_EN_VALUE_TO = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+value\s+to\s+(?:"([^"]+)"|'([^']+)')\s+variable\s*$/i;
+const SAVE_VARIABLE_STEP_REGEX_RU = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?Я\s+запоминаю\s+значение\s+выражения\s+(.+?)\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s*$/i;
+const SAVE_VARIABLE_STEP_REGEX_RU_VALUE_TO = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?Я\s+запоминаю\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s+значение\s+(.+?)\s*$/i;
 
 function normalizeSemanticSynonymToken(value: string): string {
     return value.trim().toLocaleLowerCase().replace(/ё/g, 'е');
@@ -345,10 +345,14 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
         console.log("[DriveCompletionProvider:provideCompletionItems] Triggered.");
 
-        // Проверяем, что это файл сценария YAML
-        const { isScenarioYamlFile } = await import('./yamlValidator.js');
-        if (!isScenarioYamlFile(document)) {
-            console.log("[DriveCompletionProvider:provideCompletionItems] Not a scenario YAML file. Returning empty.");
+        const isFeatureDocument = this.isFeatureDocument(document);
+        let isSupportedDocument = isFeatureDocument;
+        if (!isSupportedDocument) {
+            const { isScenarioYamlFile } = await import('./yamlValidator.js');
+            isSupportedDocument = isScenarioYamlFile(document);
+        }
+        if (!isSupportedDocument) {
+            console.log("[DriveCompletionProvider:provideCompletionItems] Unsupported document type. Returning empty.");
             return [];
         }
 
@@ -381,7 +385,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         const completionList = new vscode.CompletionList();
 
         // Ищем отступы и ключевые слова в начале строки (регистронезависимо)
-        const lineStartPattern = /^(\s*)(and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)?\s*/i;
+        const lineStartPattern = /^(\s*)(?:\*\s*)?(and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)?\s*/i;
         const lineStartMatch = linePrefix.match(lineStartPattern);
 
         if (!lineStartMatch) {
@@ -399,7 +403,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         const userTextAfterIndentation = linePrefix.substring(indentation.length);
         // Текст, который пользователь ввел ПОСЛЕ ключевого слова (если оно было)
         const userTextAfterKeyword = linePrefix.substring(gherkinPrefixInLine.length);
-        const textToMatchAgainst = keywordInLine ? userTextAfterKeyword : userTextAfterIndentation;
+        const rawTextToMatch = keywordInLine ? userTextAfterKeyword : userTextAfterIndentation;
+        const textToMatchAgainst = rawTextToMatch.replace(/^\*\s*/, '');
         const scenarioLanguage = getScenarioLanguageForDocument(document);
         const scenarioCallKeyword = getScenarioCallKeyword(scenarioLanguage);
         const semanticQuery = this.extractSemanticStepQuery(textToMatchAgainst);
@@ -470,50 +475,52 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         const scenarioParameterDefaults = this.getScenarioParameterDefaults(document);
         console.log(`[DriveCompletionProvider:provideCompletionItems] Text for scenario fuzzy match: '${textForScenarioFuzzyMatch}' (based on userTextAfterIndentation: '${userTextAfterIndentation}')`);
 
-        this.scenarioCompletionItems.forEach(baseScenarioItem => {
-            const scenarioName = baseScenarioItem.filterText || (typeof baseScenarioItem.label === 'string'
-                ? baseScenarioItem.label
-                : baseScenarioItem.label.label);
-            if (!scenarioName) {
-                return;
-            }
+        if (!isFeatureDocument) {
+            this.scenarioCompletionItems.forEach(baseScenarioItem => {
+                const scenarioName = baseScenarioItem.filterText || (typeof baseScenarioItem.label === 'string'
+                    ? baseScenarioItem.label
+                    : baseScenarioItem.label.label);
+                if (!scenarioName) {
+                    return;
+                }
 
-            // baseScenarioItem.filterText это "ИмяСценария"
-            const matchResult = this.fuzzyMatch(scenarioName, textForScenarioFuzzyMatch);
+                // baseScenarioItem.filterText это "ИмяСценария"
+                const matchResult = this.fuzzyMatch(scenarioName, textForScenarioFuzzyMatch);
 
-            if (matchResult.matched) {
-                const completionItem = new vscode.CompletionItem(`${scenarioCallKeyword} ${scenarioName}`, baseScenarioItem.kind);
-                completionItem.filterText = scenarioName; // filterText = "ИмяСценария"
-                completionItem.documentation = baseScenarioItem.documentation;
-                completionItem.detail = baseScenarioItem.detail;
-                const {
-                    baseIndent: scenarioCallBaseIndent,
-                    firstLinePrefix: scenarioCallFirstLinePrefix,
-                    replacementStartCharacter: scenarioCallReplacementStart
-                } = this.resolveScenarioCallInsertIndent(document, position);
+                if (matchResult.matched) {
+                    const completionItem = new vscode.CompletionItem(`${scenarioCallKeyword} ${scenarioName}`, baseScenarioItem.kind);
+                    completionItem.filterText = scenarioName; // filterText = "ИмяСценария"
+                    completionItem.documentation = baseScenarioItem.documentation;
+                    completionItem.detail = baseScenarioItem.detail;
+                    const {
+                        baseIndent: scenarioCallBaseIndent,
+                        firstLinePrefix: scenarioCallFirstLinePrefix,
+                        replacementStartCharacter: scenarioCallReplacementStart
+                    } = this.resolveScenarioCallInsertIndent(document, position);
 
-                // Диапазон для замены: от начала пользовательского ввода (после отступа) до текущей позиции курсора.
-                const replacementRange = new vscode.Range(
-                    position.line,
-                    scenarioCallReplacementStart,
-                    position.line,
-                    position.character
-                );
-                completionItem.range = replacementRange;
+                    // Диапазон для замены: от начала пользовательского ввода (после отступа) до текущей позиции курсора.
+                    const replacementRange = new vscode.Range(
+                        position.line,
+                        scenarioCallReplacementStart,
+                        position.line,
+                        position.character
+                    );
+                    completionItem.range = replacementRange;
 
-                completionItem.insertText = this.buildScenarioCallInsertText(
-                    scenarioName,
-                    scenarioCallBaseIndent,
-                    scenarioCallFirstLinePrefix,
-                    scenarioParameterDefaults,
-                    scenarioCallKeyword
-                );
+                    completionItem.insertText = this.buildScenarioCallInsertText(
+                        scenarioName,
+                        scenarioCallBaseIndent,
+                        scenarioCallFirstLinePrefix,
+                        scenarioParameterDefaults,
+                        scenarioCallKeyword
+                    );
 
-                completionItem.sortText = "1" + (1 - matchResult.score).toFixed(3) + scenarioName; // Используем toFixed(3)
-                console.log(`[Scenario Autocomplete] Label: "${completionItem.label}", Scenario Name: ${scenarioName}, Input: "${textForScenarioFuzzyMatch}", Score: ${matchResult.score.toFixed(3)}, SortText: ${completionItem.sortText}`);
-                completionList.items.push(completionItem);
-            }
-        });
+                    completionItem.sortText = "1" + (1 - matchResult.score).toFixed(3) + scenarioName; // Используем toFixed(3)
+                    console.log(`[Scenario Autocomplete] Label: "${completionItem.label}", Scenario Name: ${scenarioName}, Input: "${textForScenarioFuzzyMatch}", Score: ${matchResult.score.toFixed(3)}, SortText: ${completionItem.sortText}`);
+                    completionList.items.push(completionItem);
+                }
+            });
+        }
 
         console.log(`[DriveCompletionProvider:provideCompletionItems] Total Gherkin items: ${this.gherkinCompletionItems.length}, Total Scenario items: ${this.scenarioCompletionItems.length}, Proposed items: ${completionList.items.length}`);
         return completionList;
@@ -1317,6 +1324,10 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
      * Проверяет, находится ли позиция в блоке текста сценария
      */
     private isInScenarioTextBlock(document: vscode.TextDocument, position: vscode.Position): boolean {
+        if (this.isFeatureDocument(document)) {
+            return this.isInFeatureScenarioBlock(document, position.line);
+        }
+
         // Простая проверка: работаем только с YAML файлами
         if (document.fileName.toLowerCase().endsWith('.yaml')) {
             // Ищем "ТекстСценария:" до текущей позиции курсора
@@ -1360,6 +1371,40 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             // console.log("[isInScenarioTextBlock] Cursor is within 'ТекстСценария:' block.");
             return true; // Если новых секций не найдено, считаем, что мы в блоке
         }
+        return false;
+    }
+
+    private isFeatureDocument(document: vscode.TextDocument): boolean {
+        return document.fileName.toLowerCase().endsWith('.feature');
+    }
+
+    private isInFeatureScenarioBlock(document: vscode.TextDocument, lineIndex: number): boolean {
+        const currentLine = document.lineAt(lineIndex).text.trim();
+        if (currentLine.startsWith('#')) {
+            return false;
+        }
+        if (currentLine.startsWith('@') || currentLine.startsWith('|') || currentLine.startsWith('"""')) {
+            return false;
+        }
+        if (/^(?:Feature|Функционал|Rule|Правило|Scenario|Сценарий|Scenario Outline|Структура сценария|Examples|Примеры|Scenarios|Сценарии)\s*:/i.test(currentLine)) {
+            return false;
+        }
+
+        for (let line = lineIndex; line >= 0; line--) {
+            const trimmed = document.lineAt(line).text.trim();
+            if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('@')) {
+                continue;
+            }
+
+            if (/^(?:Scenario|Сценарий|Scenario Outline|Структура сценария|Background|Предыстория)\s*:/i.test(trimmed)) {
+                return true;
+            }
+
+            if (/^(?:Feature|Функционал|Rule|Правило|Examples|Примеры)\s*:?/i.test(trimmed)) {
+                return false;
+            }
+        }
+
         return false;
     }
 

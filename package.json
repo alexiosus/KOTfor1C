@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/KOTfor1C",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -291,6 +291,11 @@
         "category": "%cmd.category%"
       },
       {
+        "command": "kotTestToolkit.openNestedScenarioFromFeature",
+        "title": "%cmd.openNestedScenarioFromFeature.title%",
+        "category": "%cmd.category%"
+      },
+      {
         "command": "kotTestToolkit.findCurrentFileReferences",
         "title": "%cmd.findCurrentFileReferences.title%",
         "category": "%cmd.category%"
@@ -512,6 +517,11 @@
           "group": "00_navigation@0"
         },
         {
+          "command": "kotTestToolkit.openNestedScenarioFromFeature",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "00_navigation@0"
+        },
+        {
           "command": "kotTestToolkit.findCurrentFileReferences",
           "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
           "group": "00_navigation@1"
@@ -673,6 +683,10 @@
         },
         {
           "command": "kotTestToolkit.changeNestedScenarioName",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.openNestedScenarioFromFeature",
           "when": "true"
         }
       ]

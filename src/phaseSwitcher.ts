@@ -11,6 +11,8 @@ import { parseKotScenarioDescription } from './kotMetadataDescription';
 import type { YamlParameter } from './yamlParametersManager';
 import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
 import { isScenarioYamlFile } from './yamlValidator';
+import { findFileByName } from './navigationUtils';
+import { getFeatureNestedScenarioContextAtLine } from './featureNestedScenarioUtils';
 
 // --- Вспомогательная функция для Nonce ---
 function getNonce(): string {
@@ -57,8 +59,18 @@ interface ScenarioRunState {
     runStatus: 'idle' | 'running' | 'passed' | 'failed';
     runMessage?: string;
     runUpdatedAt?: number;
+    progressCurrentLine?: number;
+    progressTotalLines?: number;
+    progressPercent?: number;
     hasRunLog: boolean;
+    canOpenRunLog: boolean;
     canWatchLiveLog: boolean;
+}
+
+interface FeatureLineCountCacheEntry {
+    lineCount: number;
+    mtimeMs: number;
+    size: number;
 }
 
 interface ScenarioExecutionState {
@@ -105,6 +117,40 @@ interface LiveRunLogWatcherState {
     pendingTail: string;
     missingFileNotified: boolean;
     isPolling: boolean;
+}
+
+interface LiveFeatureStepTrackerState {
+    scenarioName: string;
+    runLogPath: string;
+    timer: NodeJS.Timeout;
+    startOffset: number;
+    lastLength: number;
+    pendingTail: string;
+    isPolling: boolean;
+    featurePathFromLog?: string;
+    currentFeaturePathFromLog?: string;
+    currentScenarioNameFromLog?: string;
+}
+
+interface RunningFeatureStepHighlight {
+    scenarioName: string;
+    featurePath: string;
+    featurePathCompareKey: string;
+    featureLineNumber: number;
+    completedFeatureLineNumbers: Set<number>;
+    updatedAt: number;
+}
+
+interface FailedFeatureStepHighlight {
+    scenarioName: string;
+    featurePath: string;
+    featurePathCompareKey: string;
+    featureLineNumber: number;
+    failureSummary?: string;
+    failureDetails?: string;
+    failureStepDescription?: string;
+    runLogPath?: string;
+    updatedAt: number;
 }
 
 interface VanessaInfobaseCandidate {
@@ -274,6 +320,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _scenarioExecutionStates: Map<string, ScenarioExecutionState> = new Map();
     private _scenarioLastLaunchContexts: Map<string, ScenarioLaunchContext> = new Map();
     private _liveRunLogWatchers: Map<string, LiveRunLogWatcherState> = new Map();
+    private _liveFeatureStepTrackers: Map<string, LiveFeatureStepTrackerState> = new Map();
+    private _runningFeatureStepHighlights: Map<string, RunningFeatureStepHighlight> = new Map();
+    private _failedFeatureStepHighlights: Map<string, FailedFeatureStepHighlight> = new Map();
+    private _runningFeatureStepDecorationType!: vscode.TextEditorDecorationType;
+    private _completedFeatureStepDecorationType!: vscode.TextEditorDecorationType;
+    private _failedFeatureStepDecorationType!: vscode.TextEditorDecorationType;
+    private _isRunningFeatureStepAutoFollowEnabled: boolean = true;
+    private _runningFeatureStepUnlockHintShown: boolean = false;
+    private _runningFeatureStepRevealGuardByEditorUri: Map<string, number> = new Map();
+    private _lastAutoFollowLineByEditorUri: Map<string, number> = new Map();
+    private _featureLineCountCache: Map<string, FeatureLineCountCacheEntry> = new Map();
     private _activeScenarioUriForHighlight: vscode.Uri | null = null;
     private _lastHighlightedMainScenarioNames: Set<string> = new Set();
     private _startupArtifactsRestoreAttempted: boolean = false;
@@ -296,6 +353,29 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
      */
     public getTestCache(): Map<string, TestInfo> | null {
         return this._testCache;
+    }
+
+    public isFailedFeatureLine(documentUri: vscode.Uri, lineIndex: number): boolean {
+        if (lineIndex < 0 || documentUri.scheme !== 'file') {
+            return false;
+        }
+
+        const featurePathCompareKey = this.normalizeFilePathForComparison(documentUri.fsPath);
+        if (!featurePathCompareKey) {
+            return false;
+        }
+
+        const featureLineNumber = lineIndex + 1;
+        for (const highlight of this._failedFeatureStepHighlights.values()) {
+            if (highlight.featurePathCompareKey !== featurePathCompareKey) {
+                continue;
+            }
+            if (highlight.featureLineNumber === featureLineNumber) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public setScenarioRepairInProgress(inProgress: boolean, cancelling: boolean = false): void {
@@ -387,6 +467,49 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return false;
         }
         return this.areUrisEqual(left, right);
+    }
+
+    private stripWrappingQuotes(value: string): string {
+        const trimmed = value.trim();
+        if (trimmed.length < 2) {
+            return trimmed;
+        }
+
+        const startsWithDoubleQuote = trimmed.startsWith('"') && trimmed.endsWith('"');
+        const startsWithSingleQuote = trimmed.startsWith("'") && trimmed.endsWith("'");
+        if (startsWithDoubleQuote || startsWithSingleQuote) {
+            return trimmed.slice(1, -1).trim();
+        }
+
+        return trimmed;
+    }
+
+    private normalizeFilePathForComparison(rawPath: string): string | null {
+        const unquotedPath = this.stripWrappingQuotes(rawPath);
+        if (!unquotedPath) {
+            return null;
+        }
+
+        if (/^file:\/\//i.test(unquotedPath)) {
+            try {
+                return this.normalizeFilePathForComparison(vscode.Uri.parse(unquotedPath).fsPath);
+            } catch {
+                // Fall back to regular handling below.
+            }
+        }
+
+        const isWindowsAbsolutePath = /^[a-zA-Z]:[\\/]/.test(unquotedPath);
+        const isWindowsUncPath = /^\\\\/.test(unquotedPath) || /^\/\//.test(unquotedPath);
+        if (isWindowsAbsolutePath || isWindowsUncPath) {
+            return unquotedPath
+                .replace(/\//g, '\\')
+                .toLowerCase();
+        }
+
+        const normalized = path.normalize(path.resolve(unquotedPath));
+        return process.platform === 'win32'
+            ? normalized.toLowerCase()
+            : normalized;
     }
 
     private remapUriAfterRename(
@@ -1112,6 +1235,38 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this._context = context;
         console.log("[PhaseSwitcherProvider] Initialized.");
         this._buildOutputChannel = vscode.window.createOutputChannel("KOT Test Assembly");
+        this._runningFeatureStepDecorationType = vscode.window.createTextEditorDecorationType({
+            isWholeLine: true,
+            backgroundColor: new vscode.ThemeColor('editor.wordHighlightStrongBackground'),
+            borderColor: new vscode.ThemeColor('editor.wordHighlightStrongBorder'),
+            borderStyle: 'solid',
+            borderWidth: '1px',
+            overviewRulerColor: new vscode.ThemeColor('editor.wordHighlightStrongBackground'),
+            overviewRulerLane: vscode.OverviewRulerLane.Center
+        });
+        this._completedFeatureStepDecorationType = vscode.window.createTextEditorDecorationType({
+            isWholeLine: true,
+            backgroundColor: new vscode.ThemeColor('diffEditor.insertedTextBackground'),
+            borderColor: new vscode.ThemeColor('diffEditor.insertedTextBorder'),
+            borderStyle: 'solid',
+            borderWidth: '1px',
+            overviewRulerColor: new vscode.ThemeColor('diffEditor.insertedTextBackground'),
+            overviewRulerLane: vscode.OverviewRulerLane.Center
+        });
+        this._failedFeatureStepDecorationType = vscode.window.createTextEditorDecorationType({
+            isWholeLine: true,
+            // Use explicit red tint so failed line remains visible even in themes
+            // where editorError.background is subtle.
+            backgroundColor: 'rgba(255, 0, 0, 0.18)',
+            borderColor: new vscode.ThemeColor('editorError.border'),
+            borderStyle: 'solid',
+            borderWidth: '1px',
+            overviewRulerColor: new vscode.ThemeColor('editorError.foreground'),
+            overviewRulerLane: vscode.OverviewRulerLane.Center
+        });
+        context.subscriptions.push(this._runningFeatureStepDecorationType);
+        context.subscriptions.push(this._completedFeatureStepDecorationType);
+        context.subscriptions.push(this._failedFeatureStepDecorationType);
 
 
         context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
@@ -1121,6 +1276,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this._staleBuiltScenarioNames.clear();
                 this._scenarioExecutionStates.clear();
                 this._scenarioLastLaunchContexts.clear();
+                this.stopAllFeatureStepTrackers();
             }
             // Configuration changes will trigger panel refresh when needed
                 if (this._view && this._view.visible) {
@@ -1131,6 +1287,28 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         context.subscriptions.push(this.onDidUpdateTestCache(() => {
             this.sendAffectedMainScenariosToWebview();
+        }));
+
+        context.subscriptions.push(vscode.window.onDidChangeVisibleTextEditors(() => {
+            this.applyRunningFeatureStepDecorations();
+        }));
+
+        context.subscriptions.push(vscode.window.onDidChangeTextEditorVisibleRanges(event => {
+            this.handleRunningStepVisibleRangesChanged(event);
+        }));
+
+        context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
+            if (!event.contentChanges.length) {
+                return;
+            }
+            const document = event.document;
+            if (document.uri.scheme !== 'file') {
+                return;
+            }
+            if (path.extname(document.uri.fsPath).toLowerCase() !== '.feature') {
+                return;
+            }
+            this.clearFeatureStepHighlightsByFeaturePath(document.uri.fsPath);
         }));
 
         context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(document => {
@@ -1198,6 +1376,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         this._scenarioBuildArtifacts.delete(scenarioName);
                         this._staleBuiltScenarioNames.delete(scenarioName);
                         this._scenarioExecutionStates.delete(scenarioName);
+                        this.clearFailedFeatureStepHighlight(scenarioName);
+                        this.stopFeatureStepTracker(scenarioName);
                         changed = true;
                     }
                 }
@@ -1250,6 +1430,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._staleBuiltScenarioNames.clear();
             this._scenarioExecutionStates.clear();
             this._scenarioLastLaunchContexts.clear();
+            this.stopAllFeatureStepTrackers();
             this._activeScenarioUriForHighlight = null;
             this._lastHighlightedMainScenarioNames.clear();
             this.markCacheDirtyAndScheduleRefresh('workspaceFoldersChanged', true);
@@ -1263,6 +1444,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     clearTimeout(this._cacheRefreshTimer);
                     this._cacheRefreshTimer = null;
                 }
+                this.stopAllFeatureStepTrackers();
                 this.disposeAllLiveRunLogWatchers();
                 this._buildOutputChannel?.dispose();
                 this._buildOutputChannel = undefined;
@@ -1795,6 +1977,1046 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             .get<number>('runVanessa.liveLogRefreshSeconds', 2);
         const safeSeconds = Number.isFinite(seconds) ? Math.max(1, Math.min(60, Math.round(seconds))) : 2;
         return safeSeconds * 1000;
+    }
+
+    private extractFeaturePathFromRunLogLine(line: string): string | undefined {
+        const match = line.match(/^\s*(?:Фича|Feature|ПолныйПутьКФиче|FullPathToFeature)\s*:\s*(.+?)\s*$/i);
+        if (!match || !match[1]) {
+            return undefined;
+        }
+
+        const featurePath = this.stripWrappingQuotes(match[1]);
+        return featurePath.length > 0 ? featurePath : undefined;
+    }
+
+    private extractFeatureLineNumberFromRunLogLine(line: string): number | undefined {
+        const match = line.match(/\((\d+)\)\s*\.?\s*(?:Шаг|Step)\s*:/i)
+            || line.match(/^\s*(?:НомерСтрокиФичи|FeatureLineNumber)\s*:\s*(\d+)\s*$/i);
+        if (!match || !match[1]) {
+            return undefined;
+        }
+
+        const lineNumber = Number(match[1]);
+        if (!Number.isFinite(lineNumber) || lineNumber <= 0) {
+            return undefined;
+        }
+
+        return Math.floor(lineNumber);
+    }
+
+    private extractScenarioNameFromRunLogLine(line: string): string | undefined {
+        const match = line.match(/^\s*(?:Сценарий|Scenario|ИмяСценария|ScenarioName)\s*:\s*(.+?)\s*$/i);
+        if (!match || !match[1]) {
+            return undefined;
+        }
+
+        const scenarioName = this.stripWrappingQuotes(match[1]);
+        return scenarioName.length > 0 ? scenarioName : undefined;
+    }
+
+    private areScenarioNamesEqual(left: string | undefined, right: string | undefined): boolean {
+        if (!left || !right) {
+            return false;
+        }
+        return this.stripWrappingQuotes(left).trim().toLowerCase() === this.stripWrappingQuotes(right).trim().toLowerCase();
+    }
+
+    private isRunLogLineForScenario(
+        normalizedScenarioName: string | undefined,
+        currentScenarioNameFromLog: string | undefined,
+        hasScenarioMarkers: boolean
+    ): boolean {
+        if (!normalizedScenarioName) {
+            return true;
+        }
+        if (currentScenarioNameFromLog) {
+            return this.areScenarioNamesEqual(currentScenarioNameFromLog, normalizedScenarioName);
+        }
+        return !hasScenarioMarkers;
+    }
+
+    private isFailedStepLogLine(line: string): boolean {
+        const trimmed = line.trim();
+        if (!trimmed) {
+            return false;
+        }
+        if (/^Failed:\s*/i.test(trimmed)) {
+            return true;
+        }
+        return /^(?:Шаг|Step)\s*\(.+?\)\s*(?:не\s+выполнен|failed|is\s+not\s+executed|was\s+not\s+executed)/i.test(trimmed);
+    }
+
+    private collectFailedStepLogBlock(lines: string[], startIndex: number): string[] {
+        const block: string[] = [];
+        const maxLines = 400;
+
+        for (let index = startIndex; index < lines.length && block.length < maxLines; index++) {
+            const rawLine = lines[index];
+            const line = rawLine.replace(/\t/g, '    ').trimEnd();
+            const trimmed = line.trim();
+
+            if (index > startIndex) {
+                const isNewStepEntry = /^\s*\d{1,2}\/\d{1,2}\/\d{4}.*\(\d+\)\s*\.?\s*(?:Шаг|Step)\s*:/i.test(trimmed);
+                const isFeatureHeader = /^\s*(?:Фича|Feature)\s*:/i.test(trimmed);
+                const isScenarioHeader = /^\s*(?:Сценарий|Scenario)\s*:/i.test(trimmed);
+                if (isNewStepEntry || isFeatureHeader || isScenarioHeader) {
+                    break;
+                }
+            }
+
+            block.push(line);
+            if (/^\s*ErrorFileJson\s*:/i.test(trimmed)) {
+                break;
+            }
+        }
+
+        while (block.length > 0 && block[block.length - 1].trim().length === 0) {
+            block.pop();
+        }
+        return block;
+    }
+
+    private formatFailedStepSummaryFromLogBlock(block: string[]): string | undefined {
+        if (!block.length) {
+            return undefined;
+        }
+        const failedLine = block.find(line => /^Failed:\s*/i.test(line.trim()))?.trim();
+        if (failedLine) {
+            return failedLine;
+        }
+
+        const failedStepLine = block.find(line => /^(?:Шаг|Step)\s*\(.+?\)\s*(?:не\s+выполнен|failed|is\s+not\s+executed|was\s+not\s+executed)/i.test(line.trim()))?.trim();
+        if (failedStepLine) {
+            return failedStepLine;
+        }
+
+        const firstNonEmptyLine = block.find(line => line.trim().length > 0)?.trim();
+        return firstNonEmptyLine;
+    }
+
+    private formatFailedStepDetailsFromLogBlock(block: string[]): string | undefined {
+        if (!block.length) {
+            return undefined;
+        }
+
+        const stepLogLineRegex = /^\s*\d{1,2}\/\d{1,2}\/\d{4}.*\(\d+\)\s*\.?\s*(?:Шаг|Step)\s*:/i;
+        const failedStepLineRegex = /^(?:Шаг|Step)\s*\(.+?\)\s*(?:не\s+выполнен|failed|is\s+not\s+executed|was\s+not\s+executed)/i;
+        const failedLineRegex = /^Failed:\s*/i;
+
+        const filtered: string[] = [];
+        let previousNonEmptyTrimmed: string | undefined;
+
+        for (const line of block) {
+            const trimmed = line.trim();
+            if (stepLogLineRegex.test(trimmed)) {
+                continue;
+            }
+            if (failedStepLineRegex.test(trimmed)) {
+                continue;
+            }
+            if (failedLineRegex.test(trimmed)) {
+                continue;
+            }
+
+            if (!trimmed) {
+                if (filtered.length > 0 && filtered[filtered.length - 1].trim().length > 0) {
+                    filtered.push('');
+                }
+                continue;
+            }
+
+            if (trimmed === previousNonEmptyTrimmed) {
+                continue;
+            }
+
+            filtered.push(line);
+            previousNonEmptyTrimmed = trimmed;
+        }
+
+        while (filtered.length > 0 && filtered[0].trim().length === 0) {
+            filtered.shift();
+        }
+        while (filtered.length > 0 && filtered[filtered.length - 1].trim().length === 0) {
+            filtered.pop();
+        }
+
+        const details = filtered.join('\n').trim();
+        return details.length > 0 ? details : undefined;
+    }
+
+    private formatFailedStepDescriptionFromLogBlock(block: string[]): string | undefined {
+        if (!block.length) {
+            return undefined;
+        }
+
+        const failedStepLineRegex = /^(?:Шаг|Step)\s*\((.+?)\)\s*(?:не\s+выполнен|failed|is\s+not\s+executed|was\s+not\s+executed)/i;
+        const stepLogLineRegex = /^\s*\d{1,2}\/\d{1,2}\/\d{4}.*\(\d+\)\s*\.?\s*(?:Шаг|Step)\s*:\s*(.+)$/i;
+
+        for (const line of block) {
+            const trimmed = line.trim();
+            const failedStepMatch = trimmed.match(failedStepLineRegex);
+            if (failedStepMatch?.[1]) {
+                const description = failedStepMatch[1].trim();
+                if (description.length > 0) {
+                    return description;
+                }
+            }
+        }
+
+        for (const line of block) {
+            const trimmed = line.trim();
+            const stepLogMatch = trimmed.match(stepLogLineRegex);
+            if (stepLogMatch?.[1]) {
+                const description = stepLogMatch[1].trim();
+                if (description.length > 0) {
+                    return description;
+                }
+            }
+        }
+
+        return undefined;
+    }
+
+    private extractFailedStepDetailsFromRunLog(
+        runLogPath: string,
+        scenarioName?: string,
+        startOffset?: number
+    ): { failureSummary?: string; failureDetails?: string; failureStepDescription?: string } | null {
+        if (!runLogPath || !fs.existsSync(runLogPath)) {
+            return null;
+        }
+
+        let content = '';
+        try {
+            const fileBuffer = fs.readFileSync(runLogPath);
+            const normalizedStartOffset = Number.isFinite(startOffset)
+                ? Math.max(0, Math.floor(startOffset as number))
+                : 0;
+            const safeStartOffset = normalizedStartOffset >= fileBuffer.byteLength
+                ? 0
+                : normalizedStartOffset;
+            content = fileBuffer.subarray(safeStartOffset).toString('utf8');
+        } catch {
+            return null;
+        }
+
+        const lines = content.split(/\r\n|\r|\n/);
+        const normalizedScenarioName = scenarioName?.trim();
+        let currentScenarioNameFromLog: string | undefined;
+        let hasScenarioMarkers = false;
+        let latestFailureBlock: string[] = [];
+
+        for (let index = 0; index < lines.length; index++) {
+            const line = lines[index];
+            const scenarioNameFromLine = this.extractScenarioNameFromRunLogLine(line);
+            if (scenarioNameFromLine) {
+                hasScenarioMarkers = true;
+                currentScenarioNameFromLog = scenarioNameFromLine;
+            }
+
+            if (!this.isRunLogLineForScenario(normalizedScenarioName, currentScenarioNameFromLog, hasScenarioMarkers)) {
+                continue;
+            }
+
+            if (this.isFailedStepLogLine(line)) {
+                latestFailureBlock = this.collectFailedStepLogBlock(lines, index);
+            }
+        }
+
+        if (!latestFailureBlock.length) {
+            return null;
+        }
+
+        return {
+            failureSummary: this.formatFailedStepSummaryFromLogBlock(latestFailureBlock),
+            failureDetails: this.formatFailedStepDetailsFromLogBlock(latestFailureBlock),
+            failureStepDescription: this.formatFailedStepDescriptionFromLogBlock(latestFailureBlock)
+        };
+    }
+
+    private clearFailedFeatureStepHighlight(scenarioName: string): void {
+        if (this._failedFeatureStepHighlights.delete(scenarioName)) {
+            this.applyRunningFeatureStepDecorations();
+        }
+    }
+
+    private setFailedFeatureStepHighlight(
+        scenarioName: string,
+        featurePath: string,
+        featureLineNumber: number,
+        details?: {
+            failureSummary?: string;
+            failureDetails?: string;
+            failureStepDescription?: string;
+            runLogPath?: string;
+        }
+    ): void {
+        const featurePathCompareKey = this.normalizeFilePathForComparison(featurePath);
+        if (!featurePathCompareKey || featureLineNumber <= 0) {
+            return;
+        }
+
+        const runLogPath = details?.runLogPath?.trim();
+        this._failedFeatureStepHighlights.set(scenarioName, {
+            scenarioName,
+            featurePath,
+            featurePathCompareKey,
+            featureLineNumber,
+            failureSummary: details?.failureSummary?.trim() || undefined,
+            failureDetails: details?.failureDetails?.trim() || undefined,
+            failureStepDescription: details?.failureStepDescription?.trim() || undefined,
+            runLogPath: runLogPath && runLogPath.length > 0 ? runLogPath : undefined,
+            updatedAt: Date.now()
+        });
+        this.applyRunningFeatureStepDecorations();
+    }
+
+    private clearFeatureStepHighlightsForScenarios(
+        scenarioNames: Iterable<string>,
+        options?: {
+            clearRunning?: boolean;
+            clearFailed?: boolean;
+        }
+    ): void {
+        const clearRunning = options?.clearRunning !== false;
+        const clearFailed = options?.clearFailed !== false;
+        let runningChanged = false;
+        let failedChanged = false;
+
+        for (const scenarioName of scenarioNames) {
+            if (clearRunning && this._runningFeatureStepHighlights.delete(scenarioName)) {
+                runningChanged = true;
+            }
+            if (clearFailed && this._failedFeatureStepHighlights.delete(scenarioName)) {
+                failedChanged = true;
+            }
+        }
+
+        if (!runningChanged && !failedChanged) {
+            return;
+        }
+
+        if (runningChanged && this._runningFeatureStepHighlights.size === 0) {
+            this._runningFeatureStepRevealGuardByEditorUri.clear();
+            this._lastAutoFollowLineByEditorUri.clear();
+            this.setRunningFeatureStepAutoFollowEnabled(true);
+        }
+        this.applyRunningFeatureStepDecorations();
+    }
+
+    private clearFeatureStepHighlightsByFeaturePath(featurePath: string): void {
+        const featurePathCompareKey = this.normalizeFilePathForComparison(featurePath);
+        if (!featurePathCompareKey) {
+            return;
+        }
+
+        let runningChanged = false;
+        for (const [scenarioName, highlight] of this._runningFeatureStepHighlights) {
+            if (highlight.featurePathCompareKey !== featurePathCompareKey) {
+                continue;
+            }
+            this._runningFeatureStepHighlights.delete(scenarioName);
+            runningChanged = true;
+        }
+
+        let failedChanged = false;
+        for (const [scenarioName, highlight] of this._failedFeatureStepHighlights) {
+            if (highlight.featurePathCompareKey !== featurePathCompareKey) {
+                continue;
+            }
+            this._failedFeatureStepHighlights.delete(scenarioName);
+            failedChanged = true;
+        }
+
+        if (!runningChanged && !failedChanged) {
+            return;
+        }
+
+        if (runningChanged && this._runningFeatureStepHighlights.size === 0) {
+            this._runningFeatureStepRevealGuardByEditorUri.clear();
+            this._lastAutoFollowLineByEditorUri.clear();
+            this.setRunningFeatureStepAutoFollowEnabled(true);
+        }
+        this.applyRunningFeatureStepDecorations();
+    }
+
+    private finalizeRunningFeatureStepHighlight(scenarioName: string): void {
+        const highlight = this._runningFeatureStepHighlights.get(scenarioName);
+        if (!highlight) {
+            return;
+        }
+
+        let changed = false;
+        if (highlight.featureLineNumber > 0) {
+            if (!highlight.completedFeatureLineNumbers.has(highlight.featureLineNumber)) {
+                highlight.completedFeatureLineNumbers.add(highlight.featureLineNumber);
+            }
+            highlight.featureLineNumber = 0;
+            changed = true;
+        }
+
+        if (!changed) {
+            return;
+        }
+
+        highlight.updatedAt = Date.now();
+        this.applyRunningFeatureStepDecorations();
+    }
+
+    private extractLastStepLocationFromRunLog(
+        runLogPath: string,
+        scenarioName?: string,
+        startOffset?: number
+    ): { featurePath?: string; featureLineNumber?: number } | null {
+        if (!runLogPath || !fs.existsSync(runLogPath)) {
+            return null;
+        }
+
+        let content = '';
+        try {
+            const fileBuffer = fs.readFileSync(runLogPath);
+            const normalizedStartOffset = Number.isFinite(startOffset)
+                ? Math.max(0, Math.floor(startOffset as number))
+                : 0;
+            const safeStartOffset = normalizedStartOffset >= fileBuffer.byteLength
+                ? 0
+                : normalizedStartOffset;
+            content = fileBuffer.subarray(safeStartOffset).toString('utf8');
+        } catch {
+            return null;
+        }
+
+        const lines = content.split(/\r\n|\r|\n/);
+        const normalizedScenarioName = scenarioName?.trim();
+        let featurePath: string | undefined;
+        let featureLineNumber: number | undefined;
+        let currentFeaturePathFromLog: string | undefined;
+        let currentScenarioNameFromLog: string | undefined;
+        let currentScenarioFeaturePathFromLog: string | undefined;
+        let hasScenarioMarkers = false;
+        for (const line of lines) {
+            const pathFromLine = this.extractFeaturePathFromRunLogLine(line);
+            if (pathFromLine) {
+                currentFeaturePathFromLog = pathFromLine;
+                if (!normalizedScenarioName) {
+                    featurePath = pathFromLine;
+                }
+            }
+
+            const scenarioNameFromLine = this.extractScenarioNameFromRunLogLine(line);
+            if (scenarioNameFromLine) {
+                hasScenarioMarkers = true;
+                currentScenarioNameFromLog = scenarioNameFromLine;
+                currentScenarioFeaturePathFromLog = currentFeaturePathFromLog;
+            }
+
+            const lineNumber = this.extractFeatureLineNumberFromRunLogLine(line);
+            if (lineNumber) {
+                if (!this.isRunLogLineForScenario(normalizedScenarioName, currentScenarioNameFromLog, hasScenarioMarkers)) {
+                    continue;
+                }
+                if (normalizedScenarioName) {
+                    if (currentScenarioFeaturePathFromLog) {
+                        featurePath = currentScenarioFeaturePathFromLog;
+                    } else if (currentFeaturePathFromLog) {
+                        featurePath = currentFeaturePathFromLog;
+                    }
+                }
+                featureLineNumber = lineNumber;
+            }
+        }
+
+        if (!featureLineNumber) {
+            return null;
+        }
+
+        return {
+            featurePath,
+            featureLineNumber
+        };
+    }
+
+    private captureFailedStepHighlight(scenarioName: string, runLogPath?: string): void {
+        const tracker = this._liveFeatureStepTrackers.get(scenarioName);
+        const failedDetails = runLogPath
+            ? this.extractFailedStepDetailsFromRunLog(runLogPath, scenarioName, tracker?.startOffset)
+            : null;
+
+        const runningHighlight = this._runningFeatureStepHighlights.get(scenarioName);
+        if (runningHighlight && runningHighlight.featureLineNumber > 0) {
+            this.setFailedFeatureStepHighlight(
+                scenarioName,
+                runningHighlight.featurePath,
+                runningHighlight.featureLineNumber,
+                {
+                    failureSummary: failedDetails?.failureSummary,
+                    failureDetails: failedDetails?.failureDetails,
+                    failureStepDescription: failedDetails?.failureStepDescription,
+                    runLogPath
+                }
+            );
+            return;
+        }
+
+        const fromRunLog = runLogPath
+            ? this.extractLastStepLocationFromRunLog(runLogPath, scenarioName, tracker?.startOffset)
+            : null;
+        const featurePath = fromRunLog?.featurePath
+            || this._scenarioBuildArtifacts.get(scenarioName)?.featurePath
+            || '';
+        const featureLineNumber = fromRunLog?.featureLineNumber;
+        if (!featurePath || !featureLineNumber) {
+            return;
+        }
+
+        this.setFailedFeatureStepHighlight(
+            scenarioName,
+            featurePath,
+            featureLineNumber,
+            {
+                failureSummary: failedDetails?.failureSummary,
+                failureDetails: failedDetails?.failureDetails,
+                failureStepDescription: failedDetails?.failureStepDescription,
+                runLogPath
+            }
+        );
+    }
+
+    private getLatestRunningStepForEditor(editor: vscode.TextEditor): { lineIndex: number; updatedAt: number } | null {
+        if (editor.document.uri.scheme !== 'file') {
+            return null;
+        }
+        const editorPathKey = this.normalizeFilePathForComparison(editor.document.uri.fsPath);
+        if (!editorPathKey) {
+            return null;
+        }
+
+        let selected: { lineIndex: number; updatedAt: number } | null = null;
+        for (const highlight of this._runningFeatureStepHighlights.values()) {
+            if (highlight.featurePathCompareKey !== editorPathKey) {
+                continue;
+            }
+            const lineIndex = highlight.featureLineNumber - 1;
+            if (lineIndex < 0 || lineIndex >= editor.document.lineCount) {
+                continue;
+            }
+            if (!selected || highlight.updatedAt > selected.updatedAt) {
+                selected = { lineIndex, updatedAt: highlight.updatedAt };
+            }
+        }
+
+        return selected;
+    }
+
+    private revealRunningStepInEditor(editor: vscode.TextEditor, lineIndex: number): void {
+        if (lineIndex < 0 || lineIndex >= editor.document.lineCount) {
+            return;
+        }
+
+        const editorUriKey = editor.document.uri.toString();
+        this._runningFeatureStepRevealGuardByEditorUri.set(editorUriKey, Date.now() + 350);
+        editor.revealRange(editor.document.lineAt(lineIndex).range, vscode.TextEditorRevealType.InCenter);
+        this._lastAutoFollowLineByEditorUri.set(editorUriKey, lineIndex);
+    }
+
+    private setRunningFeatureStepAutoFollowEnabled(enabled: boolean): void {
+        if (this._isRunningFeatureStepAutoFollowEnabled === enabled) {
+            return;
+        }
+        this._isRunningFeatureStepAutoFollowEnabled = enabled;
+        if (enabled) {
+            this._runningFeatureStepUnlockHintShown = false;
+        }
+    }
+
+    private returnToRunningFeatureStepAndRelock(preferredEditor?: vscode.TextEditor): void {
+        const visibleEditors = vscode.window.visibleTextEditors;
+        const preferred = preferredEditor ? this.getLatestRunningStepForEditor(preferredEditor) : null;
+        if (preferredEditor && preferred) {
+            this.setRunningFeatureStepAutoFollowEnabled(true);
+            this.revealRunningStepInEditor(preferredEditor, preferred.lineIndex);
+            return;
+        }
+
+        const activeEditor = vscode.window.activeTextEditor;
+        const activeTarget = activeEditor ? this.getLatestRunningStepForEditor(activeEditor) : null;
+        if (activeEditor && activeTarget) {
+            this.setRunningFeatureStepAutoFollowEnabled(true);
+            this.revealRunningStepInEditor(activeEditor, activeTarget.lineIndex);
+            return;
+        }
+
+        for (const editor of visibleEditors) {
+            const target = this.getLatestRunningStepForEditor(editor);
+            if (!target) {
+                continue;
+            }
+            this.setRunningFeatureStepAutoFollowEnabled(true);
+            this.revealRunningStepInEditor(editor, target.lineIndex);
+            return;
+        }
+    }
+
+    private handleRunningStepVisibleRangesChanged(event: vscode.TextEditorVisibleRangesChangeEvent): void {
+        if (!this._isRunningFeatureStepAutoFollowEnabled) {
+            return;
+        }
+        if (this._runningFeatureStepHighlights.size === 0) {
+            return;
+        }
+
+        const editor = event.textEditor;
+        const guardUntil = this._runningFeatureStepRevealGuardByEditorUri.get(editor.document.uri.toString()) || 0;
+        if (guardUntil > Date.now()) {
+            return;
+        }
+
+        const target = this.getLatestRunningStepForEditor(editor);
+        if (!target) {
+            return;
+        }
+
+        const lineIndex = target.lineIndex;
+        const isLineVisible = event.visibleRanges.some(range => range.start.line <= lineIndex && range.end.line >= lineIndex);
+        if (isLineVisible) {
+            return;
+        }
+
+        this.setRunningFeatureStepAutoFollowEnabled(false);
+        if (this._runningFeatureStepUnlockHintShown) {
+            return;
+        }
+        this._runningFeatureStepUnlockHintShown = true;
+
+        const returnAction = this.t('Return to running step');
+        const keepUnlockedAction = this.t('Keep scroll unlocked');
+        void vscode.window.showInformationMessage(
+            this.t('Auto-follow for running step is unlocked while you scroll.'),
+            returnAction,
+            keepUnlockedAction
+        ).then(selection => {
+            if (selection === returnAction) {
+                this.returnToRunningFeatureStepAndRelock(editor);
+            }
+        });
+    }
+
+    private setRunningFeatureStepHighlight(scenarioName: string, featurePath: string, featureLineNumber: number): void {
+        const featurePathCompareKey = this.normalizeFilePathForComparison(featurePath);
+        if (!featurePathCompareKey || featureLineNumber <= 0) {
+            return;
+        }
+        const now = Date.now();
+
+        const previous = this._runningFeatureStepHighlights.get(scenarioName);
+        if (!previous || previous.featurePathCompareKey !== featurePathCompareKey) {
+            this._runningFeatureStepHighlights.set(scenarioName, {
+                scenarioName,
+                featurePath,
+                featurePathCompareKey,
+                featureLineNumber,
+                completedFeatureLineNumbers: new Set<number>(),
+                updatedAt: now
+            });
+            this.applyRunningFeatureStepDecorations();
+            this.sendRunArtifactsStateToWebview();
+            return;
+        }
+
+        if (previous.featureLineNumber === featureLineNumber) {
+            return;
+        }
+
+        if (previous.featureLineNumber > 0) {
+            previous.completedFeatureLineNumbers.add(previous.featureLineNumber);
+        }
+        previous.featurePath = featurePath;
+        previous.featureLineNumber = featureLineNumber;
+        previous.updatedAt = now;
+        this.applyRunningFeatureStepDecorations();
+        this.sendRunArtifactsStateToWebview();
+    }
+
+    private clearRunningFeatureStepHighlight(scenarioName: string): void {
+        if (this._runningFeatureStepHighlights.delete(scenarioName)) {
+            if (this._runningFeatureStepHighlights.size === 0) {
+                this._runningFeatureStepRevealGuardByEditorUri.clear();
+                this._lastAutoFollowLineByEditorUri.clear();
+                this.setRunningFeatureStepAutoFollowEnabled(true);
+            }
+            this.applyRunningFeatureStepDecorations();
+        }
+    }
+
+    private buildFailedStepHoverMessage(highlights: FailedFeatureStepHighlight[]): vscode.MarkdownString | undefined {
+        if (!highlights.length) {
+            return undefined;
+        }
+
+        const markdown = new vscode.MarkdownString();
+        markdown.isTrusted = true;
+
+        highlights.slice(0, 3).forEach((highlight, index) => {
+            if (index > 0) {
+                markdown.appendMarkdown('\n\n---\n\n');
+            }
+
+            markdown.appendMarkdown(`**${this.t('Failed step in scenario "{0}"', highlight.scenarioName)}**\n\n`);
+
+            const openLogUri = `command:kotTestToolkit.openRunScenarioLog?${encodeURIComponent(JSON.stringify([highlight.scenarioName]))}`;
+            const openNestedScenarioUri = `command:kotTestToolkit.openFailedNestedScenarioFromRun?${encodeURIComponent(JSON.stringify([highlight.scenarioName]))}`;
+            markdown.appendMarkdown(
+                `[${this.t('Open run log')}](${openLogUri}) • ` +
+                `[${this.t('Open failed nested scenario')}](${openNestedScenarioUri})\n\n`
+            );
+
+            const summary = highlight.failureSummary?.trim();
+            if (summary) {
+                markdown.appendCodeblock(summary, 'text');
+            } else {
+                markdown.appendMarkdown(`_${this.t('No failure details available.')}_\n\n`);
+            }
+
+            const details = highlight.failureDetails?.trim();
+            if (details) {
+                const maxDetailsLength = 20000;
+                const preparedDetails = details.length > maxDetailsLength
+                    ? `${details.slice(0, maxDetailsLength)}\n...`
+                    : details;
+                markdown.appendMarkdown('\n');
+                markdown.appendCodeblock(preparedDetails, 'text');
+            }
+
+            const stepDescription = highlight.failureStepDescription?.trim();
+            if (stepDescription) {
+                markdown.appendMarkdown(`\n_${this.t('Step description')}_\n`);
+                markdown.appendCodeblock(stepDescription, 'text');
+            }
+        });
+
+        if (highlights.length > 3) {
+            markdown.appendMarkdown(`\n\n_${this.t('And {0} more failed scenario(s) on this line.', String(highlights.length - 3))}_`);
+        }
+
+        return markdown;
+    }
+
+    private applyRunningFeatureStepDecorations(): void {
+        const editors = vscode.window.visibleTextEditors;
+        if (editors.length === 0) {
+            return;
+        }
+
+        const currentLineIndexesByEditorUri = new Map<string, Set<number>>();
+        const completedLineIndexesByEditorUri = new Map<string, Set<number>>();
+        const failedLineIndexesByEditorUri = new Map<string, Set<number>>();
+        const failedHighlightsByEditorUri = new Map<string, Map<number, FailedFeatureStepHighlight[]>>();
+        const followTargetByEditorUri = new Map<string, { lineIndex: number; updatedAt: number }>();
+        const editorsByPathKey = new Map<string, vscode.TextEditor[]>();
+        for (const editor of editors) {
+            const editorUriKey = editor.document.uri.toString();
+            currentLineIndexesByEditorUri.set(editorUriKey, new Set<number>());
+            completedLineIndexesByEditorUri.set(editorUriKey, new Set<number>());
+            failedLineIndexesByEditorUri.set(editorUriKey, new Set<number>());
+            failedHighlightsByEditorUri.set(editorUriKey, new Map<number, FailedFeatureStepHighlight[]>());
+
+            if (editor.document.uri.scheme !== 'file') {
+                continue;
+            }
+            const compareKey = this.normalizeFilePathForComparison(editor.document.uri.fsPath);
+            if (!compareKey) {
+                continue;
+            }
+            const bucket = editorsByPathKey.get(compareKey) ?? [];
+            bucket.push(editor);
+            editorsByPathKey.set(compareKey, bucket);
+        }
+
+        for (const highlight of this._runningFeatureStepHighlights.values()) {
+            const matchingEditors = editorsByPathKey.get(highlight.featurePathCompareKey);
+            if (!matchingEditors || matchingEditors.length === 0) {
+                continue;
+            }
+
+            const currentLineIndex = highlight.featureLineNumber - 1;
+            for (const editor of matchingEditors) {
+                const editorUriKey = editor.document.uri.toString();
+                const currentIndexes = currentLineIndexesByEditorUri.get(editorUriKey);
+                const completedIndexes = completedLineIndexesByEditorUri.get(editorUriKey);
+                if (!currentIndexes || !completedIndexes) {
+                    continue;
+                }
+
+                if (currentLineIndex >= 0 && currentLineIndex < editor.document.lineCount) {
+                    currentIndexes.add(currentLineIndex);
+                    const previousFollowTarget = followTargetByEditorUri.get(editorUriKey);
+                    if (!previousFollowTarget || highlight.updatedAt > previousFollowTarget.updatedAt) {
+                        followTargetByEditorUri.set(editorUriKey, {
+                            lineIndex: currentLineIndex,
+                            updatedAt: highlight.updatedAt
+                        });
+                    }
+                }
+
+                for (const completedLineNumber of highlight.completedFeatureLineNumbers) {
+                    const completedLineIndex = completedLineNumber - 1;
+                    if (completedLineIndex < 0 || completedLineIndex >= editor.document.lineCount) {
+                        continue;
+                    }
+                    if (completedLineIndex === currentLineIndex) {
+                        continue;
+                    }
+                    completedIndexes.add(completedLineIndex);
+                }
+            }
+        }
+
+        for (const highlight of this._failedFeatureStepHighlights.values()) {
+            const matchingEditors = editorsByPathKey.get(highlight.featurePathCompareKey);
+            if (!matchingEditors || matchingEditors.length === 0) {
+                continue;
+            }
+
+            const failedLineIndex = highlight.featureLineNumber - 1;
+            for (const editor of matchingEditors) {
+                if (failedLineIndex < 0 || failedLineIndex >= editor.document.lineCount) {
+                    continue;
+                }
+                const editorUriKey = editor.document.uri.toString();
+                const failedIndexes = failedLineIndexesByEditorUri.get(editorUriKey);
+                if (failedIndexes) {
+                    failedIndexes.add(failedLineIndex);
+                }
+                const failedHighlightMap = failedHighlightsByEditorUri.get(editorUriKey);
+                if (failedHighlightMap) {
+                    const lineHighlights = failedHighlightMap.get(failedLineIndex) || [];
+                    lineHighlights.push(highlight);
+                    failedHighlightMap.set(failedLineIndex, lineHighlights);
+                }
+            }
+        }
+
+        for (const editor of editors) {
+            const editorUriKey = editor.document.uri.toString();
+            const currentIndexes = currentLineIndexesByEditorUri.get(editorUriKey) ?? new Set<number>();
+            const completedIndexes = completedLineIndexesByEditorUri.get(editorUriKey) ?? new Set<number>();
+            const failedIndexes = failedLineIndexesByEditorUri.get(editorUriKey) ?? new Set<number>();
+
+            const currentSorted = Array.from(currentIndexes).sort((left, right) => left - right);
+            const currentRanges = currentSorted
+                .filter(lineIndex => !failedIndexes.has(lineIndex))
+                .map(lineIndex => editor.document.lineAt(lineIndex).range);
+
+            const completedSorted = Array.from(completedIndexes)
+                .filter(lineIndex => !currentIndexes.has(lineIndex) && !failedIndexes.has(lineIndex))
+                .sort((left, right) => left - right);
+            const completedRanges = completedSorted
+                .map(lineIndex => editor.document.lineAt(lineIndex).range);
+            const failedSorted = Array.from(failedIndexes).sort((left, right) => left - right);
+            const failedHighlightMap = failedHighlightsByEditorUri.get(editorUriKey);
+            const failedRanges: vscode.DecorationOptions[] = failedSorted
+                .map(lineIndex => {
+                    const range = editor.document.lineAt(lineIndex).range;
+                    const lineHighlights = failedHighlightMap?.get(lineIndex) || [];
+                    const hoverMessage = this.buildFailedStepHoverMessage(lineHighlights);
+                    return hoverMessage
+                        ? { range, hoverMessage }
+                        : { range };
+                });
+
+            editor.setDecorations(this._runningFeatureStepDecorationType, currentRanges);
+            editor.setDecorations(this._completedFeatureStepDecorationType, completedRanges);
+            editor.setDecorations(this._failedFeatureStepDecorationType, failedRanges);
+
+            const followTarget = followTargetByEditorUri.get(editorUriKey);
+            if (!followTarget) {
+                this._lastAutoFollowLineByEditorUri.delete(editorUriKey);
+                continue;
+            }
+            if (!this._isRunningFeatureStepAutoFollowEnabled) {
+                continue;
+            }
+            if (failedIndexes.has(followTarget.lineIndex)) {
+                continue;
+            }
+
+            const previousLine = this._lastAutoFollowLineByEditorUri.get(editorUriKey);
+            if (previousLine === followTarget.lineIndex) {
+                continue;
+            }
+
+            this.revealRunningStepInEditor(editor, followTarget.lineIndex);
+        }
+    }
+
+    private applyFeatureStepSyncLogLine(tracker: LiveFeatureStepTrackerState, line: string): void {
+        const featurePathFromLine = this.extractFeaturePathFromRunLogLine(line);
+        if (featurePathFromLine) {
+            tracker.currentFeaturePathFromLog = featurePathFromLine;
+        }
+
+        const scenarioNameFromLine = this.extractScenarioNameFromRunLogLine(line);
+        if (scenarioNameFromLine) {
+            tracker.currentScenarioNameFromLog = scenarioNameFromLine;
+            if (this.areScenarioNamesEqual(scenarioNameFromLine, tracker.scenarioName)) {
+                tracker.featurePathFromLog = tracker.currentFeaturePathFromLog || tracker.featurePathFromLog;
+            }
+        }
+
+        const featureLineNumber = this.extractFeatureLineNumberFromRunLogLine(line);
+        if (!featureLineNumber) {
+            return;
+        }
+
+        if (tracker.currentScenarioNameFromLog
+            && !this.areScenarioNamesEqual(tracker.currentScenarioNameFromLog, tracker.scenarioName)) {
+            return;
+        }
+
+        const expectedFeaturePath = tracker.featurePathFromLog
+            || this._scenarioBuildArtifacts.get(tracker.scenarioName)?.featurePath
+            || '';
+        if (!expectedFeaturePath) {
+            return;
+        }
+
+        // Guard against mixed live logs from parallel runs:
+        // when scenario marker is absent, do not apply step lines that belong
+        // to a different feature path than the one expected for this scenario.
+        if (!tracker.currentScenarioNameFromLog && tracker.currentFeaturePathFromLog) {
+            const expectedKey = this.normalizeFilePathForComparison(expectedFeaturePath);
+            const currentKey = this.normalizeFilePathForComparison(tracker.currentFeaturePathFromLog);
+            if (expectedKey && currentKey && expectedKey !== currentKey) {
+                return;
+            }
+        }
+
+        this.setRunningFeatureStepHighlight(tracker.scenarioName, expectedFeaturePath, featureLineNumber);
+    }
+
+    private stopFeatureStepTracker(
+        scenarioName: string,
+        options?: {
+            preserveHighlight?: boolean;
+        }
+    ): void {
+        const tracker = this._liveFeatureStepTrackers.get(scenarioName);
+        if (tracker) {
+            clearInterval(tracker.timer);
+            this._liveFeatureStepTrackers.delete(scenarioName);
+        }
+        if (options?.preserveHighlight) {
+            this.finalizeRunningFeatureStepHighlight(scenarioName);
+            return;
+        }
+        this.clearRunningFeatureStepHighlight(scenarioName);
+    }
+
+    private stopAllFeatureStepTrackers(): void {
+        for (const scenarioName of Array.from(this._liveFeatureStepTrackers.keys())) {
+            this.stopFeatureStepTracker(scenarioName);
+        }
+        let decorationsChanged = false;
+        if (this._failedFeatureStepHighlights.size > 0) {
+            this._failedFeatureStepHighlights.clear();
+            decorationsChanged = true;
+        }
+        if (this._runningFeatureStepHighlights.size > 0) {
+            this._runningFeatureStepHighlights.clear();
+            decorationsChanged = true;
+        }
+        if (decorationsChanged) {
+            this._runningFeatureStepRevealGuardByEditorUri.clear();
+            this._lastAutoFollowLineByEditorUri.clear();
+            this.setRunningFeatureStepAutoFollowEnabled(true);
+            this.applyRunningFeatureStepDecorations();
+        }
+    }
+
+    private pollFeatureStepTracker(scenarioName: string): void {
+        const tracker = this._liveFeatureStepTrackers.get(scenarioName);
+        if (!tracker || tracker.isPolling) {
+            return;
+        }
+        tracker.isPolling = true;
+
+        try {
+            const runState = this._scenarioExecutionStates.get(scenarioName);
+            const isRunning = runState?.status === 'running';
+            if (!fs.existsSync(tracker.runLogPath)) {
+                if (!isRunning) {
+                    this.stopFeatureStepTracker(scenarioName, { preserveHighlight: true });
+                }
+                return;
+            }
+
+            const fileBuffer = fs.readFileSync(tracker.runLogPath);
+            const currentLength = fileBuffer.byteLength;
+            if (currentLength < tracker.lastLength) {
+                tracker.lastLength = 0;
+                tracker.startOffset = 0;
+                tracker.pendingTail = '';
+            }
+
+            if (currentLength > tracker.lastLength) {
+                const deltaBuffer = fileBuffer.subarray(tracker.lastLength);
+                const chunk = deltaBuffer.toString('utf8');
+                const chunkWithPendingTail = tracker.pendingTail + chunk;
+                const endsWithNewline = /\r?\n$/.test(chunkWithPendingTail);
+                const lines = chunkWithPendingTail.split(/\r\n|\r|\n/);
+
+                tracker.pendingTail = endsWithNewline ? '' : (lines.pop() || '');
+                if (endsWithNewline && lines.length > 0 && lines[lines.length - 1] === '') {
+                    lines.pop();
+                }
+                for (const line of lines) {
+                    this.applyFeatureStepSyncLogLine(tracker, line);
+                }
+                tracker.lastLength = currentLength;
+            }
+
+            if (!isRunning) {
+                this.stopFeatureStepTracker(scenarioName, { preserveHighlight: true });
+            }
+        } finally {
+            tracker.isPolling = false;
+        }
+    }
+
+    private startFeatureStepTracker(
+        scenarioName: string,
+        runLogPath?: string,
+        initialFeaturePath?: string
+    ): void {
+        this.stopFeatureStepTracker(scenarioName);
+
+        const normalizedRunLogPath = runLogPath?.trim();
+        if (!normalizedRunLogPath) {
+            return;
+        }
+        let startOffset = 0;
+        try {
+            if (fs.existsSync(normalizedRunLogPath)) {
+                startOffset = fs.statSync(normalizedRunLogPath).size;
+            }
+        } catch {
+            startOffset = 0;
+        }
+
+        const tracker: LiveFeatureStepTrackerState = {
+            scenarioName,
+            runLogPath: normalizedRunLogPath,
+            timer: setInterval(() => this.pollFeatureStepTracker(scenarioName), this.getLiveRunLogRefreshIntervalMs()),
+            startOffset,
+            lastLength: startOffset,
+            pendingTail: '',
+            isPolling: false,
+            featurePathFromLog: initialFeaturePath?.trim() || undefined,
+            currentFeaturePathFromLog: undefined,
+            currentScenarioNameFromLog: undefined
+        };
+        this._liveFeatureStepTrackers.set(scenarioName, tracker);
+        this.pollFeatureStepTracker(scenarioName);
     }
 
     private stopLiveRunLogWatcher(
@@ -3870,6 +5092,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 runScenarioNoArtifacts: this.t('No build artifacts found. Build tests first in current session.'),
                 runScenarioLogTitle: this.t('Open run log for scenario: {0}', '{0}'),
                 runScenarioWatchLogTitle: this.t('Watch live run log for scenario: {0}', '{0}'),
+                runScenarioOpenRunningStepTitle: this.t('Open current running step in feature: {0}', '{0}'),
+                runScenarioOpenFailedStepTitle: this.t('Open failed step in feature: {0}', '{0}'),
+                runScenarioOpenRunLogFile: this.t('Open run log file'),
+                runScenarioOpenRunLogFileHint: this.t('Open run log file in editor for this scenario.'),
+                runScenarioOpenRunLogFileUnavailable: this.t('Run log file path is not available for this scenario.'),
+                runScenarioWatchLiveOutput: this.t('Watch live log output'),
+                runScenarioWatchLiveOutputHint: this.t('Open live run log output panel for this scenario.'),
+                runScenarioWatchLiveOutputUnavailable: this.t('Scenario is not running. Live log output is unavailable.'),
                 runScenarioModeTitle: this.t('Choose launch mode'),
                 runScenarioModeAutomatic: this.t('Run test (auto close)'),
                 runScenarioModeManual: this.t('Open for debugging (keep Vanessa open)'),
@@ -3972,6 +5202,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 case 'openRunScenarioLog':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
                         await this.openRunScenarioLog(message.name.trim());
+                    }
+                    return;
+                case 'openScenarioRunStepInFeature':
+                    if (typeof message.name === 'string' && message.name.trim().length > 0) {
+                        await this.openScenarioRunStepInFeature(message.name.trim());
                     }
                     return;
                 case 'watchRunScenarioLog':
@@ -4307,6 +5542,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this._staleBuiltScenarioNames = new Set(this._scenarioBuildArtifacts.keys());
         this._scenarioExecutionStates.clear();
         this._scenarioLastLaunchContexts.clear();
+        this.stopAllFeatureStepTrackers();
     }
 
     /**
@@ -4530,6 +5766,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private async _handleRunAssembleScriptTypeScript(recordGLValue: string): Promise<void> {
         const methodStartLog = "[PhaseSwitcherProvider:_handleRunAssembleScriptTypeScript]";
+        if (this._isBuildInProgress) {
+            vscode.window.showWarningMessage(this.t('Please wait for the current build to finish.'));
+            return;
+        }
+        if (this.hasAnyScenarioRunsInProgress()) {
+            vscode.window.showWarningMessage(this.t('Cannot start build while scenario run is in progress.'));
+            return;
+        }
         console.log(`${methodStartLog} Starting with RecordGL=${recordGLValue}`);
         const outputChannel = this.getOutputChannel();
         outputChannel.clear();
@@ -5275,6 +6519,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._staleBuiltScenarioNames.clear();
             this._scenarioExecutionStates.clear();
             this._scenarioLastLaunchContexts.clear();
+            this.stopAllFeatureStepTrackers();
             return;
         }
 
@@ -5285,6 +6530,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this._staleBuiltScenarioNames.delete(scenarioName);
                 this._scenarioExecutionStates.delete(scenarioName);
                 this._scenarioLastLaunchContexts.delete(scenarioName);
+                this.clearFailedFeatureStepHighlight(scenarioName);
+                this.stopFeatureStepTracker(scenarioName);
                 continue;
             }
 
@@ -5366,7 +6613,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         message?: string,
         runLogPath?: string
     ): void {
+        const normalizedRunLogPath = runLogPath && runLogPath.trim().length > 0
+            ? runLogPath.trim()
+            : undefined;
+
         if (status === 'idle') {
+            this.stopFeatureStepTracker(scenarioName, { preserveHighlight: true });
             if (this._scenarioExecutionStates.delete(scenarioName)) {
                 this.stopLiveRunLogWatcher(scenarioName, {
                     appendMessage: this.t('Live run log watcher stopped for "{0}".', scenarioName)
@@ -5380,22 +6632,89 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             status,
             updatedAt: Date.now(),
             message: message && message.trim().length > 0 ? message.trim() : undefined,
-            runLogPath: runLogPath && runLogPath.trim().length > 0 ? runLogPath.trim() : undefined
+            runLogPath: normalizedRunLogPath
         });
         if (status === 'running') {
             this.stopLiveRunLogWatcher(scenarioName, {
                 disposeChannel: true
             });
+            this.clearRunningFeatureStepHighlight(scenarioName);
+            this.clearFailedFeatureStepHighlight(scenarioName);
+            this.startFeatureStepTracker(
+                scenarioName,
+                normalizedRunLogPath,
+                this._scenarioBuildArtifacts.get(scenarioName)?.featurePath
+            );
         } else {
             this.stopLiveRunLogWatcher(scenarioName, {
                 appendMessage: this.t('Live run log watcher stopped for "{0}".', scenarioName)
             });
+            if (status === 'failed') {
+                this.captureFailedStepHighlight(scenarioName, normalizedRunLogPath);
+            } else {
+                this.clearFailedFeatureStepHighlight(scenarioName);
+            }
+            this.stopFeatureStepTracker(scenarioName, { preserveHighlight: true });
         }
         this.sendRunArtifactsStateToWebview();
     }
 
     private isScenarioRunInProgress(scenarioName: string): boolean {
         return this._scenarioExecutionStates.get(scenarioName)?.status === 'running';
+    }
+
+    private hasAnyScenarioRunsInProgress(): boolean {
+        for (const executionState of this._scenarioExecutionStates.values()) {
+            if (executionState.status === 'running') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private getFeatureProgressInfo(featurePath?: string): { lineCount: number } | undefined {
+        const normalizedPath = featurePath?.trim();
+        if (!normalizedPath) {
+            return undefined;
+        }
+        if (!fs.existsSync(normalizedPath)) {
+            return undefined;
+        }
+
+        const cacheKey = this.normalizeFilePathForComparison(normalizedPath) || normalizedPath;
+        try {
+            const stat = fs.statSync(normalizedPath);
+            const cached = this._featureLineCountCache.get(cacheKey);
+            if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+                return {
+                    lineCount: cached.lineCount
+                };
+            }
+
+            const content = fs.readFileSync(normalizedPath, 'utf8');
+            const lines = content.length > 0
+                ? content.split(/\r\n|\r|\n/)
+                : [];
+            const lineCount = lines.length;
+
+            const normalizedLineCount = Math.max(0, Math.floor(lineCount));
+            this._featureLineCountCache.set(cacheKey, {
+                lineCount: normalizedLineCount,
+                mtimeMs: stat.mtimeMs,
+                size: stat.size
+            });
+            return {
+                lineCount: normalizedLineCount
+            };
+        } catch {
+            const cached = this._featureLineCountCache.get(cacheKey);
+            if (!cached) {
+                return undefined;
+            }
+            return {
+                lineCount: cached.lineCount
+            };
+        }
     }
 
     private buildRunArtifactsState(): Record<string, ScenarioRunState> {
@@ -5410,6 +6729,19 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 ? 'idle'
                 : rawRunStatus;
             const runLogPath = executionState?.runLogPath?.trim();
+            const runningHighlight = this._runningFeatureStepHighlights.get(scenarioName);
+            let progressCurrentLine: number | undefined;
+            let progressTotalLines: number | undefined;
+            let progressPercent: number | undefined;
+            if (rawRunStatus === 'running' && runningHighlight?.featureLineNumber && runningHighlight.featureLineNumber > 0) {
+                progressCurrentLine = runningHighlight.featureLineNumber;
+                const progressInfo = this.getFeatureProgressInfo(runningHighlight.featurePath || artifact.featurePath);
+                if (progressInfo?.lineCount && progressInfo.lineCount > 0) {
+                    progressTotalLines = progressInfo.lineCount;
+                    const boundedLine = Math.min(Math.max(1, progressCurrentLine), progressInfo.lineCount);
+                    progressPercent = Math.min(100, Math.max(0, Math.round((boundedLine / progressInfo.lineCount) * 100)));
+                }
+            }
             state[scenarioName] = {
                 featurePath: artifact.featurePath,
                 jsonPath: artifact.jsonPath,
@@ -5417,9 +6749,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 runStatus,
                 runMessage: executionState?.message,
                 runUpdatedAt: executionState?.updatedAt,
+                progressCurrentLine,
+                progressTotalLines,
+                progressPercent,
                 hasRunLog: rawRunStatus === 'failed'
                     && Boolean(runLogPath)
                     && fs.existsSync(runLogPath!),
+                canOpenRunLog: Boolean(runLogPath),
                 canWatchLiveLog: rawRunStatus === 'running'
                     && Boolean(runLogPath)
             };
@@ -5519,6 +6855,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this._staleBuiltScenarioNames.clear();
         this._scenarioExecutionStates.clear();
         this._scenarioLastLaunchContexts.clear();
+        this.stopAllFeatureStepTrackers();
         this.disposeAllLiveRunLogWatchers();
         this.sendRunArtifactsStateToWebview();
     }
@@ -5593,7 +6930,42 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return this.tryResolveScenarioByName(featureTitle, exactNamesByLowercase, normalizedNames);
     }
 
+    private wasScenarioArtifactRebuiltSince(
+        previousArtifact: ScenarioBuildArtifact | undefined,
+        nextArtifact: ScenarioBuildArtifact
+    ): boolean {
+        if (!previousArtifact) {
+            return true;
+        }
+
+        if ((previousArtifact.featurePath || '') !== (nextArtifact.featurePath || '')
+            || (previousArtifact.jsonPath || '') !== (nextArtifact.jsonPath || '')) {
+            return true;
+        }
+
+        const artifactPaths = [
+            nextArtifact.featurePath?.trim(),
+            nextArtifact.jsonPath?.trim()
+        ].filter((candidate): candidate is string => !!candidate);
+
+        for (const artifactPath of artifactPaths) {
+            try {
+                if (!fs.existsSync(artifactPath)) {
+                    continue;
+                }
+                if (fs.statSync(artifactPath).mtimeMs > previousArtifact.builtAt) {
+                    return true;
+                }
+            } catch {
+                // Ignore fs errors and continue checking other artifact paths.
+            }
+        }
+
+        return false;
+    }
+
     private async updateScenarioBuildArtifacts(featureFiles: vscode.Uri[], buildRootUri: vscode.Uri): Promise<void> {
+        const previousArtifacts = this._scenarioBuildArtifacts;
         const staleScenarioNamesBeforeBuild = new Set<string>(this._staleBuiltScenarioNames);
         this.pruneScenarioBuildArtifactsByCache();
         if (!this._testCache || this._testCache.size === 0) {
@@ -5601,6 +6973,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._staleBuiltScenarioNames.clear();
             this._scenarioExecutionStates.clear();
             this._scenarioLastLaunchContexts.clear();
+            this.stopAllFeatureStepTrackers();
             return;
         }
         if (featureFiles.length === 0) {
@@ -5608,6 +6981,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._staleBuiltScenarioNames.clear();
             this._scenarioExecutionStates.clear();
             this._scenarioLastLaunchContexts.clear();
+            this.stopAllFeatureStepTrackers();
             return;
         }
 
@@ -5694,17 +7068,29 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             nextArtifacts.set(scenarioName, existingArtifact);
         }
 
+        const rebuiltScenarioNames = new Set<string>();
+        for (const [scenarioName, artifact] of nextArtifacts) {
+            if (this.wasScenarioArtifactRebuiltSince(previousArtifacts.get(scenarioName), artifact)) {
+                rebuiltScenarioNames.add(scenarioName);
+            }
+        }
+
         this._scenarioBuildArtifacts = nextArtifacts;
+        if (rebuiltScenarioNames.size > 0) {
+            this.clearFeatureStepHighlightsForScenarios(rebuiltScenarioNames);
+        }
         // Rebuilt stale scenarios should return to neutral run state (play icon).
         // This mirrors the behavior already used for previously passed scenarios.
         for (const scenarioName of staleScenarioNamesBeforeBuild) {
             if (nextArtifacts.has(scenarioName) && this._scenarioExecutionStates.get(scenarioName)?.status !== 'running') {
                 this._scenarioExecutionStates.delete(scenarioName);
+                this.clearFailedFeatureStepHighlight(scenarioName);
             }
         }
         for (const scenarioName of Array.from(this._scenarioExecutionStates.keys())) {
             if (!nextArtifacts.has(scenarioName)) {
                 this._scenarioExecutionStates.delete(scenarioName);
+                this.clearFailedFeatureStepHighlight(scenarioName);
             }
         }
         for (const scenarioName of Array.from(this._scenarioLastLaunchContexts.keys())) {
@@ -7388,7 +8774,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         ];
 
         const outputChannel = this.getRunOutputChannel();
-        outputChannel.show(true);
+        if (manualDebug) {
+            outputChannel.show(true);
+        }
         const outputTitle = manualDebug
             ? this.t('Opening Vanessa Automation manual debug session for "{0}"...', scenarioName)
             : this.t('Starting Vanessa Automation launch for "{0}" via built-in runner...', scenarioName);
@@ -7578,9 +8966,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private async openRunScenarioLog(scenarioName: string): Promise<void> {
         const runState = this._scenarioExecutionStates.get(scenarioName);
-        if (!runState || runState.status !== 'failed') {
+        if (!runState) {
             vscode.window.showInformationMessage(
-                this.t('No failure log is available yet for scenario "{0}".', scenarioName)
+                this.t('No run log is available yet for scenario "{0}".', scenarioName)
             );
             return;
         }
@@ -7614,6 +9002,71 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    public async openRunScenarioLogFromCommand(scenarioName: string): Promise<void> {
+        const normalizedName = typeof scenarioName === 'string' ? scenarioName.trim() : '';
+        if (!normalizedName) {
+            return;
+        }
+        await this.openRunScenarioLog(normalizedName);
+    }
+
+    public async openFailedNestedScenarioFromCommand(scenarioName: string): Promise<void> {
+        const normalizedName = typeof scenarioName === 'string' ? scenarioName.trim() : '';
+        if (!normalizedName) {
+            return;
+        }
+
+        const nestedScenarioName = await this.getFailedNestedScenarioName(normalizedName);
+        if (!nestedScenarioName) {
+            vscode.window.showInformationMessage(
+                this.t('Failed nested scenario is not available for scenario "{0}".', normalizedName)
+            );
+            return;
+        }
+
+        await this.openScenarioByNameFromCache(nestedScenarioName);
+    }
+
+    private async openFeatureAtLineInEditor(featurePath: string, featureLineNumber: number): Promise<boolean> {
+        if (!featurePath || !fs.existsSync(featurePath)) {
+            return false;
+        }
+
+        try {
+            const featureUri = vscode.Uri.file(featurePath);
+            const document = await vscode.workspace.openTextDocument(featureUri);
+            const lineIndex = Math.min(Math.max(0, featureLineNumber - 1), Math.max(0, document.lineCount - 1));
+            const lineRange = document.lineAt(lineIndex).range;
+            const editor = await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
+            editor.selection = new vscode.Selection(lineRange.start, lineRange.end);
+            editor.revealRange(lineRange, vscode.TextEditorRevealType.InCenter);
+            return true;
+        } catch (error: any) {
+            vscode.window.showErrorMessage(
+                this.t('Failed to open feature file "{0}": {1}', featurePath, error?.message || String(error))
+            );
+            return false;
+        }
+    }
+
+    private async openScenarioRunStepInFeature(scenarioName: string): Promise<void> {
+        const failedHighlight = this._failedFeatureStepHighlights.get(scenarioName);
+        if (failedHighlight?.featureLineNumber && failedHighlight.featurePath) {
+            await this.openFailedStepInFeature(scenarioName);
+            return;
+        }
+
+        const runningHighlight = this._runningFeatureStepHighlights.get(scenarioName);
+        if (runningHighlight?.featureLineNumber && runningHighlight.featurePath) {
+            const opened = await this.openFeatureAtLineInEditor(runningHighlight.featurePath, runningHighlight.featureLineNumber);
+            if (opened) {
+                return;
+            }
+        }
+
+        await this.openScenarioFeatureInEditor(scenarioName);
+    }
+
     private async openScenarioFeatureInEditor(scenarioName: string): Promise<void> {
         this.pruneScenarioBuildArtifactsByCache();
 
@@ -7633,14 +9086,129 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
+        await this.openFeatureAtLineInEditor(featurePath, 1);
+    }
+
+    private async openScenarioByNameFromCache(scenarioName: string): Promise<boolean> {
+        const normalizedName = scenarioName.trim();
+        if (!normalizedName) {
+            return false;
+        }
+
+        const targetUri = await findFileByName(normalizedName, this.getTestCache());
+        if (!targetUri) {
+            vscode.window.showInformationMessage(this.t('File for "{0}" not found.', normalizedName));
+            return false;
+        }
+
         try {
-            const featureUri = vscode.Uri.file(featurePath);
-            const document = await vscode.workspace.openTextDocument(featureUri);
-            await vscode.window.showTextDocument(document, { preview: false });
+            const document = await vscode.workspace.openTextDocument(targetUri);
+            await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
+            return true;
         } catch (error: any) {
             vscode.window.showErrorMessage(
-                this.t('Failed to open feature file "{0}": {1}', featurePath, error?.message || String(error))
+                this.t('Failed to open file: {0}', error?.message || String(error))
             );
+            return false;
+        }
+    }
+
+    private async openFailedStepInFeature(scenarioName: string): Promise<string | null> {
+        const failedHighlight = this._failedFeatureStepHighlights.get(scenarioName);
+        const fallbackFeaturePath = this._scenarioBuildArtifacts.get(scenarioName)?.featurePath?.trim() || '';
+        const featurePath = failedHighlight?.featurePath || fallbackFeaturePath;
+        const featureLineNumber = failedHighlight?.featureLineNumber;
+
+        if (!featurePath || !featureLineNumber) {
+            vscode.window.showInformationMessage(
+                this.t('Failed step location is not available for scenario "{0}".', scenarioName)
+            );
+            return null;
+        }
+        if (!fs.existsSync(featurePath)) {
+            vscode.window.showWarningMessage(
+                this.t('Feature file not found at path: {0}', featurePath)
+            );
+            return null;
+        }
+
+        const opened = await this.openFeatureAtLineInEditor(featurePath, featureLineNumber);
+        if (!opened) {
+            return null;
+        }
+
+        try {
+            const document = await vscode.workspace.openTextDocument(vscode.Uri.file(featurePath));
+            const lineIndex = Math.min(Math.max(0, featureLineNumber - 1), Math.max(0, document.lineCount - 1));
+            const nestedScenarioContext = getFeatureNestedScenarioContextAtLine(document, lineIndex);
+            return nestedScenarioContext?.scenarioName || null;
+        } catch {
+            return null;
+        }
+    }
+
+    private async getFailedNestedScenarioName(scenarioName: string): Promise<string | null> {
+        const failedHighlight = this._failedFeatureStepHighlights.get(scenarioName);
+        const featurePath = failedHighlight?.featurePath?.trim();
+        const featureLineNumber = failedHighlight?.featureLineNumber;
+        if (!featurePath || !featureLineNumber || !fs.existsSync(featurePath)) {
+            return null;
+        }
+
+        try {
+            const document = await vscode.workspace.openTextDocument(vscode.Uri.file(featurePath));
+            const lineIndex = Math.min(Math.max(0, featureLineNumber - 1), Math.max(0, document.lineCount - 1));
+            const nestedScenarioContext = getFeatureNestedScenarioContextAtLine(document, lineIndex);
+            return nestedScenarioContext?.scenarioName || null;
+        } catch {
+            return null;
+        }
+    }
+
+    private async showRunFailureMessageWithActions(
+        scenarioName: string,
+        errorMessage: string,
+        runLogPath?: string
+    ): Promise<void> {
+        const openFailedStepAction = this.t('Open failed step');
+        const openFailedNestedScenarioAction = this.t('Open failed nested scenario');
+        const openRunLogAction = this.t('Open run log');
+
+        const hasFailedStep = this._failedFeatureStepHighlights.has(scenarioName);
+        const nestedScenarioName = hasFailedStep
+            ? await this.getFailedNestedScenarioName(scenarioName)
+            : null;
+        const canOpenRunLog = !!(runLogPath && fs.existsSync(runLogPath));
+
+        const actions: string[] = [];
+        if (hasFailedStep) {
+            actions.push(openFailedStepAction);
+        }
+        if (nestedScenarioName) {
+            actions.push(openFailedNestedScenarioAction);
+        }
+        if (canOpenRunLog) {
+            actions.push(openRunLogAction);
+        }
+
+        const selection = await vscode.window.showErrorMessage(
+            this.t('Failed to launch Vanessa for "{0}": {1}', scenarioName, errorMessage),
+            ...actions
+        );
+        if (!selection) {
+            return;
+        }
+
+        if (selection === openFailedStepAction) {
+            await this.openFailedStepInFeature(scenarioName);
+            return;
+        }
+        if (selection === openFailedNestedScenarioAction && nestedScenarioName) {
+            await this.openScenarioByNameFromCache(nestedScenarioName);
+            return;
+        }
+        if (selection === openRunLogAction) {
+            await this.openRunScenarioLog(scenarioName);
         }
     }
 
@@ -7700,7 +9268,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         });
         outputChannel.clear();
         this.setScenarioExecutionState(scenarioName, 'running', this.t('Run in progress'), runLogPath);
-        outputChannel.show(true);
 
         if (!commandTemplate) {
             try {
@@ -7725,7 +9292,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this.setScenarioExecutionState(scenarioName, 'failed', errorMessage, runLogPath);
                 this.outputError(outputChannel, this.t('Scenario run failed: "{0}" -> {1}', scenarioName, errorMessage), error);
                 this.appendScenarioRunLogReference(outputChannel, scenarioName, runLogPath);
-                vscode.window.showErrorMessage(this.t('Failed to launch Vanessa for "{0}": {1}', scenarioName, error.message || error));
+                await this.showRunFailureMessageWithActions(scenarioName, errorMessage, runLogPath);
             }
             return;
         }
@@ -7794,7 +9361,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this.outputError(outputChannel, this.t('Vanessa launch failed: {0}', errorMessage), error);
             this.outputError(outputChannel, this.t('Scenario run failed: "{0}" -> {1}', scenarioName, errorMessage));
             this.appendScenarioRunLogReference(outputChannel, scenarioName, runLogPath);
-            vscode.window.showErrorMessage(this.t('Failed to launch Vanessa for "{0}": {1}', scenarioName, error.message || error));
+            await this.showRunFailureMessageWithActions(scenarioName, errorMessage, runLogPath);
         } finally {
             if (templateJsonContext.jsonWasPatched && jsonPathForTemplate) {
                 try {

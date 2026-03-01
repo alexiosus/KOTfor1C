@@ -498,10 +498,10 @@ h1 {
 }
 .phase-header.disabled-header .phase-expand-collapse-btn {
     opacity: 0.7;
-    cursor: not-allowed;
+    cursor: pointer;
 }
 .phase-header.disabled-header .phase-expand-collapse-btn:hover {
-    background-color: transparent;
+    background-color: var(--vscode-list-hoverBackground, var(--vscode-toolbar-hoverBackground));
 }
 
 
@@ -641,6 +641,21 @@ label.checkbox-item input[type=checkbox] {
     flex-shrink: 0; 
     accent-color: var(--vscode-button-background); 
 }
+.checkbox-run-indicator {
+    width: 16px;
+    height: 16px;
+    margin: 3px 3px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--vscode-testing-iconQueued, var(--vscode-progressBar-background));
+    opacity: 0.95;
+}
+.checkbox-run-indicator .codicon {
+    font-size: 16px;
+    line-height: 16px;
+}
 label.checkbox-item span.checkbox-label-text {
     flex-grow: 1; 
     white-space: nowrap; 
@@ -648,6 +663,32 @@ label.checkbox-item span.checkbox-label-text {
     text-overflow: ellipsis;
     margin-right: 5px; 
     min-width: 0; 
+}
+.scenario-run-progress {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    font-size: 0.78em;
+    line-height: 1.25;
+    color: var(--vscode-testing-iconQueued, var(--vscode-progressBar-background));
+    opacity: 0.95;
+    min-width: 52px;
+    text-align: right;
+    margin-right: 2px;
+}
+.scenario-run-progress-percent,
+.scenario-run-progress-counter {
+    white-space: nowrap;
+}
+.scenario-run-progress-counter {
+    display: none;
+}
+.scenario-run-progress.has-hover-counter:hover .scenario-run-progress-percent {
+    display: none;
+}
+.scenario-run-progress.has-hover-counter:hover .scenario-run-progress-counter {
+    display: inline;
 }
 label.checkbox-item.disabled { 
     cursor: not-allowed; 
@@ -744,6 +785,9 @@ label.checkbox-item:hover .open-scenario-btn .codicon.open-scenario-icon-edit,
 .run-scenario-btn .codicon {
     vertical-align: middle;
 }
+.run-scenario-btn .run-scenario-icon-retry {
+    display: none;
+}
 .run-scenario-btn:hover {
     opacity: 1;
     color: var(--vscode-testing-iconPassed);
@@ -788,6 +832,12 @@ label.checkbox-item:hover .open-scenario-btn .codicon.open-scenario-icon-edit,
 .run-scenario-btn-failed:hover {
     color: var(--vscode-testing-iconFailed, var(--vscode-editorError-foreground));
 }
+.run-scenario-btn-failed:hover .run-scenario-icon-failed {
+    display: none;
+}
+.run-scenario-btn-failed:hover .run-scenario-icon-retry {
+    display: inline-block;
+}
 
 .run-scenario-log-btn {
     background: none;
@@ -811,13 +861,6 @@ label.checkbox-item:hover .open-scenario-btn .codicon.open-scenario-icon-edit,
     cursor: not-allowed;
     color: var(--vscode-disabledForeground);
     opacity: 0.5;
-}
-.run-scenario-log-btn-live {
-    color: var(--vscode-testing-iconQueued, var(--vscode-progressBar-background));
-    opacity: 1;
-}
-.run-scenario-log-btn-live:hover {
-    color: var(--vscode-testing-iconQueued, var(--vscode-progressBar-background));
 }
 
 .run-mode-menu {

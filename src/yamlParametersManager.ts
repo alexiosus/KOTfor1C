@@ -134,7 +134,7 @@ export class YamlParametersManager {
             { key: 'BDDLogFolder', value: path.join(buildPath, 'vanessa_error_logs') },
             { key: 'Libraries', value: 'tools/vanessa/features/Libraries' },
             { key: 'UC', value: 'GodMode' },
-            { key: 'SplitFeatureFiles', value: 'False' },
+            { key: 'SplitFeatureFiles', value: 'True' },
             { key: 'onerrorscreenshoteverywindow', value: 'False' },
             { key: 'runtestclientwithmaximizedwindow', value: 'True' }
         ];

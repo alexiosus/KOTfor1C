@@ -59,6 +59,7 @@
 
   "cmd.category": "KOT for 1C",
   "cmd.openSubscenario.title": "KOT - Открыть сценарий",
+  "cmd.openNestedScenarioFromFeature.title": "KOT - Открыть вложенный сценарий из feature",
   "cmd.findCurrentFileReferences.title": "KOT - Найти вызовы текущего сценария",
   "cmd.createNestedScenario.title": "KOT - Создать вложенный сценарий",
   "cmd.createMainScenario.title": "KOT - Создать главный сценарий",
