@@ -9,6 +9,7 @@ import { findFileByName, findScenarioReferences } from './navigationUtils';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { TestInfo } from './types';
 import { normalizeScenarioParameterName } from './scenarioParameterUtils';
+import { getFeatureNestedScenarioContextAtPosition } from './featureNestedScenarioUtils';
 import JSZip = require('jszip');
 
 /**
@@ -324,6 +325,43 @@ export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit
             vscode.window.showInformationMessage(t('File for "{0}" not found.', scenarioNameFromLine)); 
         }
     });
+}
+
+/**
+ * Открывает вложенный сценарий из feature-файла по позиции курсора.
+ * Поиск контекста вложенного сценария выполняется по строкам вызова вида "*And ..."
+ * и структуре отступов.
+ */
+export async function openNestedScenarioFromFeatureHandler(
+    textEditor: vscode.TextEditor,
+    edit: vscode.TextEditorEdit,
+    phaseSwitcherProvider: PhaseSwitcherProvider
+): Promise<void> {
+    const t = await getTranslator(getExtensionUri());
+    const document = textEditor.document;
+    if (path.extname(document.uri.fsPath).toLowerCase() !== '.feature') {
+        return;
+    }
+
+    const context = getFeatureNestedScenarioContextAtPosition(document, textEditor.selection.active);
+    if (!context) {
+        vscode.window.showInformationMessage(t('Nested scenario call not found at current cursor position.'));
+        return;
+    }
+
+    const testCache = phaseSwitcherProvider.getTestCache();
+    const targetUri = await findFileByName(context.scenarioName, testCache);
+    if (!targetUri) {
+        vscode.window.showInformationMessage(t('File for "{0}" not found.', context.scenarioName));
+        return;
+    }
+
+    try {
+        const docToOpen = await vscode.workspace.openTextDocument(targetUri);
+        await vscode.window.showTextDocument(docToOpen, { preview: false, preserveFocus: false });
+    } catch (error: any) {
+        vscode.window.showErrorMessage(t('Failed to open file: {0}', error?.message || String(error)));
+    }
 }
 
 /**

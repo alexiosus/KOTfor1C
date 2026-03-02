@@ -12,6 +12,7 @@ import {
     revealFileInExplorerHandler, 
     revealFileInOSHandler,
     openSubscenarioHandler,
+    openNestedScenarioFromFeatureHandler,
     openScenarioByNameHandler,
     findCurrentFileReferencesHandler,
     insertNestedScenarioRefHandler,
@@ -348,10 +349,14 @@ export function activate(context: vscode.ExtensionContext) {
     // --- Регистрация Провайдеров Языковых Функций (Автодополнение и Подсказки) ---
     const completionProvider = new DriveCompletionProvider(context);
     const hoverProvider = new DriveHoverProvider(context, phaseSwitcherProvider);
+    const completionAndHoverSelector: vscode.DocumentSelector = [
+        { pattern: '**/*.yaml', scheme: 'file' },
+        { pattern: '**/*.feature', scheme: 'file' }
+    ];
     
     context.subscriptions.push(
         vscode.languages.registerCompletionItemProvider(
-            { pattern: '**/*.yaml', scheme: 'file' }, 
+            completionAndHoverSelector,
             completionProvider,
             ' ', '.', ',', ':', ';', '(', ')', '"', "'", '$', '!',
             // Добавляем буквы для триггера автодополнения
@@ -369,7 +374,7 @@ export function activate(context: vscode.ExtensionContext) {
     );
     context.subscriptions.push(
         vscode.languages.registerHoverProvider(
-            { pattern: '**/*.yaml', scheme: 'file' },
+            completionAndHoverSelector,
             hoverProvider
         )
     );
@@ -497,6 +502,10 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         'kotTestToolkit.openSubscenario', (editor, edit) => openSubscenarioHandler(editor, edit, phaseSwitcherProvider)
     ));
+    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+        'kotTestToolkit.openNestedScenarioFromFeature',
+        (editor, edit) => openNestedScenarioFromFeatureHandler(editor, edit, phaseSwitcherProvider)
+    ));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openScenarioByName',
         async (scenarioName: unknown) => {
@@ -504,6 +513,24 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
             await openScenarioByNameHandler(scenarioName, phaseSwitcherProvider);
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.openRunScenarioLog',
+        async (scenarioName: unknown) => {
+            if (typeof scenarioName !== 'string') {
+                return;
+            }
+            await phaseSwitcherProvider.openRunScenarioLogFromCommand(scenarioName);
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.openFailedNestedScenarioFromRun',
+        async (scenarioName: unknown) => {
+            if (typeof scenarioName !== 'string') {
+                return;
+            }
+            await phaseSwitcherProvider.openFailedNestedScenarioFromCommand(scenarioName);
         }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(

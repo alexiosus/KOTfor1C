@@ -25,6 +25,7 @@ const STEP_LITERAL_REGEX = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\[[A-Za-zА-Яа
 
 interface ScenarioCacheProvider {
     getTestCache(): Map<string, TestInfo> | null;
+    isFailedFeatureLine?(documentUri: vscode.Uri, lineIndex: number): boolean;
 }
 
 interface ScenarioDescriptionInfo {
@@ -269,7 +270,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             const firstLineOriginal = lines[0].trim();
             let cleanedPattern = pattern.replace(/\r?\n\s*/g, ' ').trim();
             
-            const gherkinKeywords = /^(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+            const gherkinKeywords = /^(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
             const firstLineWithoutKeywords = firstLineOriginal.replace(gherkinKeywords, '');
 
             const placeholderRegex = PLACEHOLDER_REGEX;
@@ -316,7 +317,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             const firstLineOriginal = lines[0].trim();
             let cleanedPattern = pattern.replace(/\r?\n\s*/g, ' ').trim();
 
-            const gherkinKeywords = /^(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+            const gherkinKeywords = /^(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
             const firstLineWithoutKeywords = firstLineOriginal.replace(gherkinKeywords, '');
 
             const placeholderRegex = PLACEHOLDER_REGEX;
@@ -351,7 +352,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
     }
 
     private stripGherkinKeyword(text: string): string {
-        const gherkinKeywords = /^(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+        const gherkinKeywords = /^(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
         return text.trim().replace(gherkinKeywords, '').trim();
     }
 
@@ -421,7 +422,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
     }
 
     private parseScenarioCallNameFromLine(lineText: string): string | null {
-        const match = lineText.match(/^\s*(And|И|Допустим)\s+(.+)$/i);
+        const match = lineText.match(/^\s*(?:\*\s*)?(And|И|Допустим)\s+(.+)$/i);
         if (!match || !match[2]) {
             return null;
         }
@@ -707,9 +708,13 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         position: vscode.Position,
         token: vscode.CancellationToken
     ): Promise<vscode.Hover | null> {
-        // Проверяем, что это файл сценария YAML
-        const { isScenarioYamlFile } = await import('./yamlValidator.js');
-        if (!isScenarioYamlFile(document)) {
+        const isFeatureDocument = this.isFeatureDocument(document);
+        let isSupportedDocument = isFeatureDocument;
+        if (!isSupportedDocument) {
+            const { isScenarioYamlFile } = await import('./yamlValidator.js');
+            isSupportedDocument = isScenarioYamlFile(document);
+        }
+        if (!isSupportedDocument) {
             return null;
         }
 
@@ -721,6 +726,10 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         // Получаем текст строки
         const lineText = document.lineAt(position.line).text.trim();
         if (!lineText || lineText.startsWith('#') || lineText.startsWith('|') || lineText.startsWith('"""')) {
+            return null;
+        }
+
+        if (isFeatureDocument && this.scenarioCacheProvider?.isFailedFeatureLine?.(document.uri, position.line)) {
             return null;
         }
 
@@ -821,6 +830,10 @@ export class DriveHoverProvider implements vscode.HoverProvider {
     }
 
     private isInScenarioTextBlock(document: vscode.TextDocument, position: vscode.Position): boolean {
+        if (this.isFeatureDocument(document)) {
+            return this.isInFeatureScenarioBlock(document, position.line);
+        }
+
         if (!document.fileName.toLowerCase().endsWith('.yaml')) return false;
         const textUpToPosition = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
         const scenarioBlockStartRegex = /\nТекстСценария:\s*\|?\s*(\r\n|\r|\n)/m;
@@ -833,6 +846,40 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         return lastScenarioBlockStart !== -1;
     }
 
+    private isFeatureDocument(document: vscode.TextDocument): boolean {
+        return document.fileName.toLowerCase().endsWith('.feature');
+    }
+
+    private isInFeatureScenarioBlock(document: vscode.TextDocument, lineIndex: number): boolean {
+        const currentLine = document.lineAt(lineIndex).text.trim();
+        if (currentLine.startsWith('#')) {
+            return false;
+        }
+        if (currentLine.startsWith('@') || currentLine.startsWith('|') || currentLine.startsWith('"""')) {
+            return false;
+        }
+        if (/^(?:Feature|Функционал|Rule|Правило|Scenario|Сценарий|Scenario Outline|Структура сценария|Examples|Примеры|Scenarios|Сценарии)\s*:/i.test(currentLine)) {
+            return false;
+        }
+
+        for (let line = lineIndex; line >= 0; line--) {
+            const trimmed = document.lineAt(line).text.trim();
+            if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('@')) {
+                continue;
+            }
+
+            if (/^(?:Scenario|Сценарий|Scenario Outline|Структура сценария|Background|Предыстория)\s*:/i.test(trimmed)) {
+                return true;
+            }
+
+            if (/^(?:Feature|Функционал|Rule|Правило|Examples|Примеры)\s*:?/i.test(trimmed)) {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
     private isRussianText(text: string): boolean {
         // Простая эвристика для определения русского текста
         // Ищем кириллические символы
@@ -841,7 +888,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
     }
 
     private normalizeForSuggestion(text: string): string {
-        const gherkinKeywords = /^(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+        const gherkinKeywords = /^(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
         return text
             .trim()
             .replace(gherkinKeywords, '')

@@ -131,7 +131,7 @@
      */
     function enablePhaseControls(enable) {
         const isPhaseSwitcherVisible = settings.switcherEnabled;
-        const effectiveEnable = enable && isPhaseSwitcherVisible && !isBuildInProgress;
+        const effectiveEnable = enable && isPhaseSwitcherVisible && !isBuildInProgress && !hasScenarioRunsInProgress();
         phaseControlsActive = effectiveEnable;
         const isDisabled = !effectiveEnable;
 
@@ -139,7 +139,10 @@
 
         if (collapseAllBtn instanceof HTMLButtonElement) {
             const hasPhases = Object.keys(testDataByPhase).length > 0;
-            setSoftDisabled(collapseAllBtn, isDisabled || !hasPhases);
+            setSoftDisabled(
+                collapseAllBtn,
+                !(hasPhases && settings.switcherEnabled && !isBuildInProgress)
+            );
         }
         
         if (addScenarioDropdownBtn instanceof HTMLButtonElement) {
@@ -153,7 +156,11 @@
                 if (cb instanceof HTMLInputElement) {
                     const isInitiallyDisabled = initialTestStates[cb.name] === 'disabled';
                     cb.disabled = isDisabled || isInitiallyDisabled;
-                    cb.closest('.checkbox-item')?.classList.toggle('globally-disabled', isDisabled && !isInitiallyDisabled);
+                    const checkboxLabel = cb.closest('.checkbox-item');
+                    if (checkboxLabel instanceof HTMLElement) {
+                        checkboxLabel.classList.toggle('disabled', cb.disabled);
+                        checkboxLabel.classList.toggle('globally-disabled', isDisabled && !isInitiallyDisabled);
+                    }
                 }
             });
             const phaseHeaders = phaseTreeContainer.querySelectorAll('.phase-header');
@@ -361,6 +368,13 @@
         return Object.values(runArtifacts).some(info => !!(info && (info.featurePath || info.jsonPath)));
     }
 
+    function hasScenarioRunsInProgress() {
+        if (!runArtifacts || typeof runArtifacts !== 'object') {
+            return false;
+        }
+        return Object.values(runArtifacts).some(info => !!info && info.runStatus === 'running');
+    }
+
     function updateTopRunButtonState() {
         const canRun = settings.switcherEnabled && !isBuildInProgress;
         setDropdownItemDisabledState(
@@ -457,7 +471,7 @@
      */
      function enableAssembleControls(enable) {
          const isAssemblerVisible = settings.assemblerEnabled;
-         const effectiveEnable = enable && isAssemblerVisible && !isBuildInProgress;
+         const effectiveEnable = enable && isAssemblerVisible && !isBuildInProgress && !hasScenarioRunsInProgress();
          const showCancelButton = isAssemblerVisible && isBuildInProgress;
          const driveFeaturesVisible = settings.driveFeaturesEnabled !== false;
          const firstLaunchVisible = driveFeaturesVisible && !!settings.firstLaunchFolderExists;
@@ -905,6 +919,25 @@
         const isRunPassedFresh = isRunPassed && !isStale;
         const isRunFailed = runStatus === 'failed';
         const runMessage = typeof runInfo?.runMessage === 'string' ? runInfo.runMessage.trim() : '';
+        const progressCurrentLineRaw = Number(runInfo?.progressCurrentLine);
+        const progressTotalLinesRaw = Number(runInfo?.progressTotalLines);
+        const progressPercentRaw = Number(runInfo?.progressPercent);
+        const progressCurrentLine = Number.isFinite(progressCurrentLineRaw) ? Math.max(0, Math.floor(progressCurrentLineRaw)) : 0;
+        const progressTotalLines = Number.isFinite(progressTotalLinesRaw) ? Math.max(0, Math.floor(progressTotalLinesRaw)) : 0;
+        const hasLineProgress = isRunInProgress && progressCurrentLine > 0 && progressTotalLines > 0;
+        let progressPercent = Number.isFinite(progressPercentRaw) ? Math.max(0, Math.min(100, Math.floor(progressPercentRaw))) : null;
+        if (progressPercent === null && hasLineProgress && progressTotalLines > 0) {
+            progressPercent = Math.max(0, Math.min(100, Math.round((progressCurrentLine / progressTotalLines) * 100)));
+        }
+        const progressTitle = hasLineProgress
+            ? `${progressCurrentLine}/${progressTotalLines}${progressPercent !== null ? ` (${progressPercent}%)` : ''}`
+            : '';
+        const progressCounterText = hasLineProgress
+            ? `${progressCurrentLine}/${progressTotalLines}`
+            : '';
+        const progressBadgeText = hasLineProgress
+            ? (progressPercent !== null ? `${progressPercent}%` : `${progressCurrentLine}/${progressTotalLines}`)
+            : '';
         const runTitleTemplate = window.__loc?.runScenarioJsonTitle || 'Run scenario in Vanessa Automation by json: {0}';
         const runTitle = runTitleTemplate.replace('{0}', name);
         const staleSuffix = isStale ? ` • ${window.__loc?.runScenarioStaleSuffix || 'Build is stale'}` : '';
@@ -923,21 +956,35 @@
             isRunPassedStale ? 'run-scenario-btn-stale-passed' : '',
             isRunFailed ? 'run-scenario-btn-failed' : ''
         ].filter(Boolean).join(' ');
-        const runButtonIconClass = isRunInProgress
-            ? 'codicon codicon-loading codicon-modifier-spin'
-            : (isRunPassed
-                ? 'codicon codicon-check'
-                : (isRunFailed
-                    ? 'codicon codicon-error'
-                    : 'codicon codicon-play-circle'));
-        const runButtonTitle = `${runTitle}${statusSuffix}${staleSuffix}${runMessage ? `\n${runMessage}` : ''}`;
+        const runButtonIconClass = isRunPassed
+            ? 'codicon codicon-check'
+            : 'codicon codicon-play-circle';
+        const runButtonIconHtml = isRunFailed
+            ? `<span class="codicon codicon-error run-scenario-icon-failed"></span>
+               <span class="codicon codicon-play-circle run-scenario-icon-retry"></span>`
+            : `<span class="${runButtonIconClass}"></span>`;
+        const runButtonTitle = `${runTitle}${statusSuffix}${staleSuffix}${progressTitle ? ` • ${progressTitle}` : ''}${runMessage ? `\n${runMessage}` : ''}`;
         const escapedRunTitle = escapeHtmlAttr(runButtonTitle);
         const runButtonDisabledAttr = (isBuildInProgress || isRunInProgress) ? ' disabled' : '';
-        const canWatchLiveLog = !!runInfo?.canWatchLiveLog;
-        const runLogTitleTemplate = canWatchLiveLog
-            ? (window.__loc?.runScenarioWatchLogTitle || 'Watch live run log for scenario: {0}')
-            : (window.__loc?.runScenarioLogTitle || 'Open run log for scenario: {0}');
-        const runLogTitle = escapeHtmlAttr(runLogTitleTemplate.replace('{0}', name));
+        const canOpenFailedStepInFeature = isRunFailed && !!runInfo?.featurePath;
+        const runStepTitleTemplate = window.__loc?.runScenarioOpenFailedStepTitle || 'Open failed step in feature: {0}';
+        const runStepTitle = escapeHtmlAttr(runStepTitleTemplate.replace('{0}', name));
+        const runInProgressTitle = escapeHtmlAttr(window.__loc?.runScenarioRunningSuffix || 'Run in progress');
+        const leadingControlHtml = isRunInProgress
+            ? `<span class="checkbox-run-indicator" title="${runInProgressTitle}">
+                   <span class="codicon codicon-loading codicon-modifier-spin"></span>
+               </span>`
+            : `<input
+                        type="checkbox"
+                        id="chk-${safeName}"
+                        name="${escapedNameAttr}"
+                        data-default="${defaultState}">`;
+        const progressHtml = hasLineProgress
+            ? `<span class="scenario-run-progress has-hover-counter">
+                   <span class="scenario-run-progress-percent">${escapeHtmlText(progressBadgeText)}</span>
+                   <span class="scenario-run-progress-counter">${escapeHtmlText(progressCounterText)}</span>
+               </span>`
+            : '';
 
         const openButtonHtml = fileUriString
             ? `<button class="open-scenario-btn" data-name="${escapedNameAttr}" title="${escapedIconTitle}">
@@ -946,26 +993,23 @@
                </button>`
             : '';
 
-        const runButtonHtml = hasRunArtifact
+        const runButtonHtml = hasRunArtifact && !isRunInProgress
             ? `<button class="${runButtonClass}" data-name="${escapedNameAttr}" title="${escapedRunTitle}"${runButtonDisabledAttr}>
-                   <span class="${runButtonIconClass}"></span>
+                   ${runButtonIconHtml}
                </button>`
             : '';
-        const runLogButtonHtml = (runInfo?.hasRunLog || canWatchLiveLog)
-            ? `<button class="run-scenario-log-btn${canWatchLiveLog ? ' run-scenario-log-btn-live' : ''}" data-name="${escapedNameAttr}" title="${runLogTitle}">
-                   <span class="codicon ${canWatchLiveLog ? 'codicon-list-flat' : 'codicon-output'}"></span>
+        const runLogButtonHtml = canOpenFailedStepInFeature
+            ? `<button class="run-scenario-log-btn" data-name="${escapedNameAttr}" title="${runStepTitle}">
+                   <span class="codicon codicon-go-to-file"></span>
                </button>`
             : '';
 
         return `
             <div class="item-container">
                 <label class="checkbox-item${isAffectedMainScenario ? ' affected-main-scenario' : ''}" id="label-${safeName}" data-name="${escapedNameAttr}" title="${escapedTitleAttr}">
-                    <input
-                        type="checkbox"
-                        id="chk-${safeName}"
-                        name="${escapedNameAttr}"
-                        data-default="${defaultState}">
+                    ${leadingControlHtml}
                     <span class="checkbox-label-text">${name}</span>
+                    ${progressHtml}
                     ${runLogButtonHtml}
                     ${runButtonHtml}
                     ${openButtonHtml}
@@ -1372,13 +1416,56 @@
         event.stopPropagation();
         const name = button.getAttribute('data-name');
         if (!name) {
-            log('ERROR: Run log button clicked without data-name attribute!');
+            log('ERROR: Run step button clicked without data-name attribute!');
             return;
         }
-        const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
-        log(`Run log button clicked for: ${name}`);
+        log(`Run step button clicked for: ${name}`);
         vscode.postMessage({
-            command: runInfo?.canWatchLiveLog ? 'watchRunScenarioLog' : 'openRunScenarioLog',
+            command: 'openScenarioRunStepInFeature',
+            name
+        });
+    }
+
+    function handleScenarioRowClick(event) {
+        if (!(event.target instanceof Element)) return;
+        const row = event.currentTarget;
+        if (!(row instanceof HTMLElement)) return;
+
+        // Dedicated buttons/inputs inside row keep their own behavior.
+        if (
+            event.target.closest('.open-scenario-btn')
+            || event.target.closest('.run-scenario-btn')
+            || event.target.closest('.run-scenario-log-btn')
+            || event.target.closest('input[type="checkbox"]')
+        ) {
+            return;
+        }
+
+        const name = row.getAttribute('data-name');
+        if (!name) {
+            return;
+        }
+
+        const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
+        const runStatus = runInfo?.runStatus || 'idle';
+        if (runStatus !== 'running' && runStatus !== 'failed') {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        if (runStatus === 'running') {
+            log(`Running scenario row clicked, opening current step in feature: ${name}`);
+            vscode.postMessage({
+                command: 'openScenarioRunStepInFeature',
+                name
+            });
+            return;
+        }
+
+        log(`Failed scenario row clicked, opening scenario yaml: ${name}`);
+        vscode.postMessage({
+            command: 'openScenario',
             name
         });
     }
@@ -1495,6 +1582,7 @@
         const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
         const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
         const hasFeatureArtifact = !!(runInfo && runInfo.featurePath);
+        const canOpenRunLog = !!runInfo?.canOpenRunLog;
         const isRunInProgress = runInfo?.runStatus === 'running';
         const runDisabled = isBuildInProgress || isRunInProgress || !hasRunArtifact;
         const runModeAutomaticLabel = window.__loc?.runScenarioModeAutomatic || 'Run test (auto close)';
@@ -1504,6 +1592,12 @@
         const openFeatureLabel = window.__loc?.runScenarioModeOpenFeature || 'Open feature in editor';
         const openFeatureHint = window.__loc?.runScenarioModeOpenFeatureHint || 'Opens built feature file for this scenario in editor.';
         const openFeatureUnavailable = window.__loc?.runScenarioNoFeatureArtifact || 'Feature artifact is not available for this scenario.';
+        const openRunLogLabel = window.__loc?.runScenarioOpenRunLogFile || 'Open run log file';
+        const openRunLogHint = window.__loc?.runScenarioOpenRunLogFileHint || 'Open run log file in editor for this scenario.';
+        const openRunLogUnavailable = window.__loc?.runScenarioOpenRunLogFileUnavailable || 'Run log file path is not available for this scenario.';
+        const watchLiveOutputLabel = window.__loc?.runScenarioWatchLiveOutput || 'Watch live log output';
+        const watchLiveOutputHint = window.__loc?.runScenarioWatchLiveOutputHint || 'Open live run log output panel for this scenario.';
+        const watchLiveOutputUnavailable = window.__loc?.runScenarioWatchLiveOutputUnavailable || 'Scenario is not running. Live log output is unavailable.';
 
         showContextMenuAt(event.clientX, event.clientY, [
             {
@@ -1522,6 +1616,20 @@
                 title: hasFeatureArtifact ? openFeatureHint : openFeatureUnavailable,
                 disabled: !hasFeatureArtifact,
                 onClick: () => vscode.postMessage({ command: 'openScenarioFeatureInEditor', name })
+            },
+            {
+                icon: 'codicon-output',
+                label: openRunLogLabel,
+                title: canOpenRunLog ? openRunLogHint : openRunLogUnavailable,
+                disabled: !canOpenRunLog,
+                onClick: () => vscode.postMessage({ command: 'openRunScenarioLog', name })
+            },
+            {
+                icon: 'codicon-list-flat',
+                label: watchLiveOutputLabel,
+                title: isRunInProgress ? watchLiveOutputHint : watchLiveOutputUnavailable,
+                disabled: !isRunInProgress,
+                onClick: () => vscode.postMessage({ command: 'watchRunScenarioLog', name })
             },
             {
                 icon: 'codicon-play-circle',
@@ -1746,6 +1854,8 @@
         log('Applying states to visible checkboxes...');
         if (!phaseTreeContainer) return;
         const checkboxes = phaseTreeContainer.querySelectorAll('input[type="checkbox"]');
+        const lockByRunningTests = hasScenarioRunsInProgress();
+        const lockByGlobalState = !phaseControlsActive || isBuildInProgress || lockByRunningTests;
         let count = 0;
         checkboxes.forEach(cb => {
             if (!(cb instanceof HTMLInputElement)) return;
@@ -1756,10 +1866,12 @@
             if (name && initialTestStates.hasOwnProperty(name)) {
                 count++;
                 const initialState = initialTestStates[name];
-                cb.disabled = (initialState === 'disabled');
+                const disabledByInitialState = initialState === 'disabled';
+                cb.disabled = disabledByInitialState || lockByGlobalState;
                 cb.checked = !!currentCheckboxStates[name];
                 if(label) {
                     label.classList.toggle('disabled', cb.disabled);
+                    label.classList.toggle('globally-disabled', !disabledByInitialState && lockByGlobalState);
                     label.classList.remove('changed');
                 }
                 if (!cb.disabled) {
@@ -1767,7 +1879,10 @@
                 }
             } else if (name) {
                 cb.disabled = true;
-                if(label) label.classList.add('disabled');
+                if(label) {
+                    label.classList.add('disabled');
+                    label.classList.remove('globally-disabled');
+                }
             } else {
                 log("ERROR: Checkbox found with NO NAME attribute!");
             }
@@ -1778,6 +1893,8 @@
             if (!(label instanceof HTMLElement)) return;
             label.removeEventListener('contextmenu', handleScenarioContextMenu);
             label.addEventListener('contextmenu', handleScenarioContextMenu);
+            label.removeEventListener('click', handleScenarioRowClick);
+            label.addEventListener('click', handleScenarioRowClick);
         });
 
         const openButtons = phaseTreeContainer.querySelectorAll('.open-scenario-btn');
@@ -2038,7 +2155,6 @@
             case 'updateRunArtifactsState':
                 closeRunModeMenu();
                 closeAssembleOptionsMenu();
-                closeContextMenu();
                 runArtifacts = message.runArtifacts || {};
                 updateTopRunButtonState();
                 if (settings.switcherEnabled && testDataByPhase && Object.keys(testDataByPhase).length > 0) {
@@ -2046,6 +2162,13 @@
                     updatePendingStatus();
                 } else {
                     updateRunButtonsState();
+                }
+                {
+                    const mainControlsShouldBeActive = settings.switcherEnabled
+                        && !!testDataByPhase
+                        && Object.keys(testDataByPhase).length > 0;
+                    enablePhaseControls(mainControlsShouldBeActive);
+                    enableAssembleControls(settings.assemblerEnabled);
                 }
                 applyAffectedMainScenarioHighlighting();
                 break;
