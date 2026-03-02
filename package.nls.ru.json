@@ -25,6 +25,7 @@
   "config.showRefillMessages.description": "Показывать уведомления при автоматическом перезаполнении секций при сохранении.",
   "config.editor.autoEnsureKotMetadataForMainScenarios.description": "Автоматически добавлять и восстанавливать верхнеуровневый блок KOTМетаданные для всех типов сценариев при сохранении/исправлении.",
   "config.editor.enableLegacyMetadataMigrationForMainScenarios.description": "Включить миграцию legacy-тегов # PhaseSwitcher_* в KOTМетаданные только для главных сценариев (работает при включенном автодобавлении KOTМетаданные).",
+  "config.legacy.enableDisabledTestsDirectoryMoveOnBuild.description": "Легаси-режим: при Build tests временно переносить test/*.yaml выключенных сценариев во временную папку ОС и возвращать их после сборки.",
   "config.editor.newScenarioLanguage.description": "Язык для новых сценариев (строка #language в тексте сценария).",
   "config.editor.newScenarioLanguage.en.desc": "Английский (en)",
   "config.editor.newScenarioLanguage.ru.desc": "Русский (ru)",

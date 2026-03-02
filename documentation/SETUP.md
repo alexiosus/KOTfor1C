@@ -67,6 +67,7 @@
 |---|---|---|
 | `kotTestToolkit.editor.autoEnsureKotMetadataForMainScenarios` | `true` | Автодобавление/восстановление `KOTМетаданные` для всех типов сценариев при save/repair |
 | `kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios` | `true` | Опциональная миграция legacy-тегов `# PhaseSwitcher_*` в `KOTМетаданные` только для главных сценариев (работает при включенном `autoEnsureKotMetadataForMainScenarios`) |
+| `kotTestToolkit.legacy.enableDisabledTestsDirectoryMoveOnBuild` | `false` | Опциональный legacy-режим: при `Build tests` временно переносить `test/*.yaml` выключенных сценариев в системную temp-папку и возвращать их после завершения сборки |
 
 ### 3.5 Diagnostics and Steps Library
 

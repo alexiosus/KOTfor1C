@@ -25,6 +25,7 @@
   "config.showRefillMessages.description": "Show notification messages when sections are automatically refilled on save.",
   "config.editor.autoEnsureKotMetadataForMainScenarios.description": "Automatically ensure and restore the top-level KOT metadata block for all scenario types on save/repair.",
   "config.editor.enableLegacyMetadataMigrationForMainScenarios.description": "Enable migration of legacy # PhaseSwitcher_* tags into KOT metadata only for main scenarios (works when KOT metadata auto-ensure is enabled).",
+  "config.legacy.enableDisabledTestsDirectoryMoveOnBuild.description": "Legacy mode: during Build tests temporarily move disabled scenarios test/*.yaml files to an OS temp directory and restore them after build.",
   "config.editor.newScenarioLanguage.description": "Language for newly created scenarios (#language line in scenario text).",
   "config.editor.newScenarioLanguage.en.desc": "English (en)",
   "config.editor.newScenarioLanguage.ru.desc": "Russian (ru)",

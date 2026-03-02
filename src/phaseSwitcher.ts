@@ -98,6 +98,17 @@ interface BuildScenarioFilterDecision {
     names: string[];
 }
 
+interface LegacyTemporarilyMovedTestFile {
+    scenarioName: string;
+    sourceUri: vscode.Uri;
+    temporaryUri: vscode.Uri;
+}
+
+interface LegacyTemporarilyMovedTestFilesResult {
+    temporaryRootUri: vscode.Uri | null;
+    movedFiles: LegacyTemporarilyMovedTestFile[];
+}
+
 interface FavoriteScenarioEntry {
     uri: string;
     name: string;
@@ -762,6 +773,202 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 value
             }
         ];
+    }
+
+    private isLegacyDisabledTestsMoveOnBuildEnabled(): boolean {
+        return vscode.workspace
+            .getConfiguration('kotTestToolkit')
+            .get<boolean>('legacy.enableDisabledTestsDirectoryMoveOnBuild', false);
+    }
+
+    private getLegacyDisabledTestsTempRootUri(workspaceRootUri: vscode.Uri): vscode.Uri {
+        const workspaceNameRaw = path.basename(workspaceRootUri.fsPath).trim();
+        const workspaceNameSafe = (workspaceNameRaw || 'workspace').replace(/[^A-Za-z0-9._-]+/g, '_');
+        const runToken = `${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
+        return vscode.Uri.file(
+            path.join(os.tmpdir(), 'kot-test-toolkit', 'legacy-disabled-tests', workspaceNameSafe, runToken)
+        );
+    }
+
+    private async uriExists(uri: vscode.Uri): Promise<boolean> {
+        try {
+            await vscode.workspace.fs.stat(uri);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    private async collectScenarioTestYamlFiles(scenarioInfo: TestInfo): Promise<vscode.Uri[]> {
+        const testDirectoryUri = vscode.Uri.joinPath(vscode.Uri.file(path.dirname(scenarioInfo.yamlFileUri.fsPath)), 'test');
+        let entries: [string, vscode.FileType][];
+        try {
+            entries = await vscode.workspace.fs.readDirectory(testDirectoryUri);
+        } catch {
+            return [];
+        }
+
+        return entries
+            .filter(([entryName, entryType]) => entryType === vscode.FileType.File && /\.yaml$/i.test(entryName))
+            .map(([entryName]) => vscode.Uri.joinPath(testDirectoryUri, entryName));
+    }
+
+    private async reserveLegacyTemporaryTargetUri(targetUri: vscode.Uri): Promise<vscode.Uri> {
+        if (!(await this.uriExists(targetUri))) {
+            return targetUri;
+        }
+
+        const directoryPath = path.dirname(targetUri.fsPath);
+        const extension = path.extname(targetUri.fsPath) || '.yaml';
+        const baseName = path.basename(targetUri.fsPath, extension);
+        const timestamp = Date.now();
+
+        for (let index = 1; index <= 1000; index++) {
+            const candidate = vscode.Uri.file(
+                path.join(directoryPath, `${baseName}.kot_legacy_disabled_${timestamp}_${index}${extension}`)
+            );
+            if (!(await this.uriExists(candidate))) {
+                return candidate;
+            }
+        }
+
+        throw new Error(this.t('Unable to allocate temporary path for legacy disabled test file move: {0}', targetUri.fsPath));
+    }
+
+    private async temporarilyMoveDisabledScenarioTestFilesForBuild(
+        workspaceRootUri: vscode.Uri,
+        disabledScenarioNames: string[],
+        outputChannel: vscode.OutputChannel
+    ): Promise<LegacyTemporarilyMovedTestFilesResult> {
+        if (!this.isLegacyDisabledTestsMoveOnBuildEnabled()) {
+            return {
+                temporaryRootUri: null,
+                movedFiles: []
+            };
+        }
+
+        if (!this._testCache || this._testCache.size === 0 || disabledScenarioNames.length === 0) {
+            return {
+                temporaryRootUri: null,
+                movedFiles: []
+            };
+        }
+
+        const temporaryRootUri = this.getLegacyDisabledTestsTempRootUri(workspaceRootUri);
+        const movedFiles: LegacyTemporarilyMovedTestFile[] = [];
+
+        try {
+            await vscode.workspace.fs.createDirectory(temporaryRootUri);
+            for (const scenarioName of disabledScenarioNames) {
+                const scenarioInfo = this._testCache.get(scenarioName);
+                if (!scenarioInfo) {
+                    continue;
+                }
+
+                const testYamlFiles = await this.collectScenarioTestYamlFiles(scenarioInfo);
+                if (testYamlFiles.length === 0) {
+                    continue;
+                }
+
+                const relativeSegments = scenarioInfo.relativePath
+                    .split('/')
+                    .map(segment => segment.trim())
+                    .filter(segment => segment.length > 0);
+                const targetDirectoryUri = vscode.Uri.joinPath(temporaryRootUri, ...relativeSegments, 'test');
+                await vscode.workspace.fs.createDirectory(targetDirectoryUri);
+
+                for (const sourceUri of testYamlFiles) {
+                    const preferredTargetUri = vscode.Uri.joinPath(targetDirectoryUri, path.basename(sourceUri.fsPath));
+                    const temporaryUri = await this.reserveLegacyTemporaryTargetUri(preferredTargetUri);
+                    await vscode.workspace.fs.rename(sourceUri, temporaryUri, { overwrite: false });
+                    movedFiles.push({
+                        scenarioName,
+                        sourceUri,
+                        temporaryUri
+                    });
+                }
+            }
+        } catch (error: any) {
+            await this.restoreTemporarilyMovedDisabledScenarioFiles(temporaryRootUri, movedFiles, outputChannel);
+            throw new Error(this.t('Failed to move disabled test files in legacy mode: {0}', error?.message || String(error)));
+        }
+
+        return {
+            temporaryRootUri,
+            movedFiles
+        };
+    }
+
+    private async deleteLegacyDisabledTestsTempDirectory(
+        temporaryRootUri: vscode.Uri,
+        outputChannel: vscode.OutputChannel
+    ): Promise<void> {
+        try {
+            await vscode.workspace.fs.delete(temporaryRootUri, { recursive: true, useTrash: false });
+        } catch (error: any) {
+            if (error?.code === 'FileNotFound') {
+                return;
+            }
+            this.outputAdvanced(
+                outputChannel,
+                this.t('Failed to delete legacy temp directory: {0}', error?.message || String(error))
+            );
+        }
+    }
+
+    private async restoreTemporarilyMovedDisabledScenarioFiles(
+        temporaryRootUri: vscode.Uri | null,
+        movedFiles: LegacyTemporarilyMovedTestFile[],
+        outputChannel: vscode.OutputChannel
+    ): Promise<number> {
+        if (movedFiles.length === 0) {
+            if (temporaryRootUri) {
+                await this.deleteLegacyDisabledTestsTempDirectory(temporaryRootUri, outputChannel);
+            }
+            return 0;
+        }
+
+        const restoreFailures: string[] = [];
+        for (const movedFile of [...movedFiles].reverse()) {
+            const temporaryExists = await this.uriExists(movedFile.temporaryUri);
+            if (!temporaryExists) {
+                continue;
+            }
+
+            const sourceExists = await this.uriExists(movedFile.sourceUri);
+            if (sourceExists) {
+                restoreFailures.push(this.t('{0} (target already exists)', movedFile.sourceUri.fsPath));
+                continue;
+            }
+
+            try {
+                await vscode.workspace.fs.rename(movedFile.temporaryUri, movedFile.sourceUri, { overwrite: false });
+            } catch (error: any) {
+                restoreFailures.push(this.t('{0} ({1})', movedFile.sourceUri.fsPath, error?.message || String(error)));
+            }
+        }
+
+        if (restoreFailures.length > 0) {
+            const warningMessage = temporaryRootUri
+                ? this.t(
+                    'Some legacy-moved test files were not restored automatically. Temporary files were kept at {0}. See Output for details.',
+                    temporaryRootUri.fsPath
+                )
+                : this.t('Some legacy-moved test files were not restored automatically. See Output for details.');
+            this.outputError(
+                outputChannel,
+                this.t('Failed to restore {0} temporarily moved legacy test file(s).', String(restoreFailures.length)),
+                new Error(restoreFailures.join('\n'))
+            );
+            vscode.window.showWarningMessage(warningMessage);
+            return restoreFailures.length;
+        }
+
+        if (temporaryRootUri) {
+            await this.deleteLegacyDisabledTestsTempDirectory(temporaryRootUri, outputChannel);
+        }
+
+        return 0;
     }
 
     private areStringSetsEqual(left: Set<string>, right: Set<string>): boolean {
@@ -5824,6 +6031,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             });
             const ensureBuildNotCancelled = () => this.throwIfBuildCancellationRequested();
             let featureFileDirUri: vscode.Uri; // Объявляем здесь, чтобы была доступна в конце
+            let legacyTemporaryRootUri: vscode.Uri | null = null;
+            let temporarilyMovedLegacyFiles: LegacyTemporarilyMovedTestFile[] = [];
             try {
                 progress.report({ increment: 0, message: this.t('Preparing...') });
                 this.outputInfo(outputChannel, this.t('Starting build process...'));
@@ -5926,6 +6135,24 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     );
                 } else {
                     this.outputInfo(outputChannel, this.t('Build filter applied: none (all scenarios enabled).'));
+                }
+
+                ensureBuildNotCancelled();
+                const legacyMoveResult = await this.temporarilyMoveDisabledScenarioTestFilesForBuild(
+                    workspaceRootUri,
+                    selectionSnapshot.disabledNames,
+                    outputChannel
+                );
+                legacyTemporaryRootUri = legacyMoveResult.temporaryRootUri;
+                temporarilyMovedLegacyFiles = legacyMoveResult.movedFiles;
+                if (temporarilyMovedLegacyFiles.length > 0) {
+                    this.outputInfo(
+                        outputChannel,
+                        this.t(
+                            'Legacy mode: temporarily moved {0} disabled test file(s) before build.',
+                            String(temporarilyMovedLegacyFiles.length)
+                        )
+                    );
                 }
                 
                 this.outputAdvanced(outputChannel, this.t('yaml_parameters.json generated at {0}', localSettingsPath.fsPath));
@@ -6198,6 +6425,26 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
                 
                 sendStatus(this.t('Build error.'), true, 'assemble'); 
+            } finally {
+                if (legacyTemporaryRootUri || temporarilyMovedLegacyFiles.length > 0) {
+                    const movedCount = temporarilyMovedLegacyFiles.length;
+                    const restoreFailures = await this.restoreTemporarilyMovedDisabledScenarioFiles(
+                        legacyTemporaryRootUri,
+                        temporarilyMovedLegacyFiles,
+                        outputChannel
+                    );
+                    if (movedCount > 0 && restoreFailures === 0) {
+                        this.outputInfo(
+                            outputChannel,
+                            this.t(
+                                'Legacy mode: restored {0} temporarily moved disabled test file(s) after build.',
+                                String(movedCount)
+                            )
+                        );
+                    }
+                    legacyTemporaryRootUri = null;
+                    temporarilyMovedLegacyFiles = [];
+                }
             }
         });
         } finally {
