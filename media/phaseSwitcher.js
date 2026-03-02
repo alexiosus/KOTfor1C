@@ -155,7 +155,11 @@
             checkboxes.forEach(cb => {
                 if (cb instanceof HTMLInputElement) {
                     const isInitiallyDisabled = initialTestStates[cb.name] === 'disabled';
+                    cb.removeEventListener('change', handleCheckboxChange);
                     cb.disabled = isDisabled || isInitiallyDisabled;
+                    if (!cb.disabled) {
+                        cb.addEventListener('change', handleCheckboxChange);
+                    }
                     const checkboxLabel = cb.closest('.checkbox-item');
                     if (checkboxLabel instanceof HTMLElement) {
                         checkboxLabel.classList.toggle('disabled', cb.disabled);
@@ -2153,8 +2157,6 @@
                 break;
 
             case 'updateRunArtifactsState':
-                closeRunModeMenu();
-                closeAssembleOptionsMenu();
                 runArtifacts = message.runArtifacts || {};
                 updateTopRunButtonState();
                 if (settings.switcherEnabled && testDataByPhase && Object.keys(testDataByPhase).length > 0) {
