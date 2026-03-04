@@ -138,6 +138,16 @@
 - `KOT - Find references to current scenario` (`KOT - Найти вызовы текущего сценария`)
 - `KOT - Add or remove current scenario from favorites` (`KOT - Добавить/убрать открытый сценарий в избранное`)
 
+В `feature`-файлах (ПКМ в редакторе):
+
+- `KOT - Track scenario run by log for opened feature` (`KOT - Отслеживать прогон по логу для открытого feature`)
+- `KOT - Switch tracked run for opened feature` (`KOT - Переключить отслеживаемый прогон для открытого feature`)
+- `KOT - Stop tracked runs for opened feature` (`KOT - Остановить отслеживание прогонов для открытого feature`)
+
+В `.log`-файлах (ПКМ в редакторе):
+
+- `KOT - Track run by opened log file` (`KOT - Отслеживать прогон по открытому log-файлу`) — использует путь из строки `Feature: ...` и открывает связанный `feature`.
+
 Подменю `KOT - Work with files` (`KOT - Работа с файлами`) - появляется при вызове контекстного меню на выделенном тексте:
 
 - `KOT - Open MXL file in editor` (`KOT - Открыть MXL файл в редакторе`)

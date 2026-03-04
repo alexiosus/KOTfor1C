@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/KOTfor1C",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -450,6 +450,26 @@
         "command": "kotTestToolkit.changeNestedScenarioName",
         "title": "%cmd.changeNestedScenarioName.title%",
         "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.trackScenarioRunByFeatureLog",
+        "title": "%cmd.trackScenarioRunByFeatureLog.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.switchTrackedScenarioRunForFeature",
+        "title": "%cmd.switchTrackedScenarioRunForFeature.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.stopTrackedScenarioRunForFeature",
+        "title": "%cmd.stopTrackedScenarioRunForFeature.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.trackScenarioRunFromOpenedLogFile",
+        "title": "%cmd.trackScenarioRunFromOpenedLogFile.title%",
+        "category": "%cmd.category%"
       }
     ],
     "submenus": [
@@ -525,6 +545,26 @@
         {
           "command": "kotTestToolkit.openNestedScenarioFromFeature",
           "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "00_navigation@0"
+        },
+        {
+          "command": "kotTestToolkit.trackScenarioRunByFeatureLog",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "00_navigation@1"
+        },
+        {
+          "command": "kotTestToolkit.switchTrackedScenarioRunForFeature",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "00_navigation@2"
+        },
+        {
+          "command": "kotTestToolkit.stopTrackedScenarioRunForFeature",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "00_navigation@3"
+        },
+        {
+          "command": "kotTestToolkit.trackScenarioRunFromOpenedLogFile",
+          "when": "editorTextFocus && resourceExtname == .log",
           "group": "00_navigation@0"
         },
         {
@@ -693,6 +733,22 @@
         },
         {
           "command": "kotTestToolkit.openNestedScenarioFromFeature",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.trackScenarioRunByFeatureLog",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.switchTrackedScenarioRunForFeature",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.stopTrackedScenarioRunForFeature",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.trackScenarioRunFromOpenedLogFile",
           "when": "true"
         }
       ]

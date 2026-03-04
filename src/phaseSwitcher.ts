@@ -59,6 +59,11 @@ interface ScenarioRunState {
     runStatus: 'idle' | 'running' | 'passed' | 'failed';
     runMessage?: string;
     runUpdatedAt?: number;
+    activeRunLogPath?: string;
+    activeRunSource?: 'internal' | 'tracked';
+    trackedRunCount?: number;
+    canSwitchTrackedRun: boolean;
+    blocksControls?: boolean;
     progressCurrentLine?: number;
     progressTotalLines?: number;
     progressPercent?: number;
@@ -141,6 +146,40 @@ interface LiveFeatureStepTrackerState {
     featurePathFromLog?: string;
     currentFeaturePathFromLog?: string;
     currentScenarioNameFromLog?: string;
+}
+
+interface ExternalTrackedRunState {
+    scenarioName: string;
+    expectedScenarioName?: string;
+    runLogPath: string;
+    runLogKey: string;
+    timer: NodeJS.Timeout | null;
+    startOffset: number;
+    lastLength: number;
+    pendingTail: string;
+    isPolling: boolean;
+    status: 'running' | 'passed' | 'failed';
+    updatedAt: number;
+    message?: string;
+    featurePathFromLog?: string;
+    currentFeaturePathFromLog?: string;
+    currentScenarioNameFromLog?: string;
+    latestFeaturePath?: string;
+    latestFeatureLineNumber?: number;
+    failureSummary?: string;
+    failureDetails?: string;
+    failureStepDescription?: string;
+}
+
+interface ScenarioDisplayedRunState {
+    status: 'idle' | 'running' | 'passed' | 'failed';
+    message?: string;
+    updatedAt?: number;
+    runLogPath?: string;
+    source?: 'internal' | 'tracked';
+    progressCurrentLine?: number;
+    progressTotalLines?: number;
+    progressPercent?: number;
 }
 
 interface RunningFeatureStepHighlight {
@@ -332,6 +371,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _scenarioLastLaunchContexts: Map<string, ScenarioLaunchContext> = new Map();
     private _liveRunLogWatchers: Map<string, LiveRunLogWatcherState> = new Map();
     private _liveFeatureStepTrackers: Map<string, LiveFeatureStepTrackerState> = new Map();
+    private _externalTrackedRunsByScenario: Map<string, Map<string, ExternalTrackedRunState>> = new Map();
+    private _activeTrackedRunKeyByScenario: Map<string, string> = new Map();
     private _runningFeatureStepHighlights: Map<string, RunningFeatureStepHighlight> = new Map();
     private _failedFeatureStepHighlights: Map<string, FailedFeatureStepHighlight> = new Map();
     private _runningFeatureStepDecorationType!: vscode.TextEditorDecorationType;
@@ -521,6 +562,69 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return process.platform === 'win32'
             ? normalized.toLowerCase()
             : normalized;
+    }
+
+    private areFeaturePathsEquivalentForTracking(expectedPath: string, currentPath: string): boolean {
+        const normalizedExpected = this.normalizeFilePathForComparison(expectedPath);
+        const normalizedCurrent = this.normalizeFilePathForComparison(currentPath);
+        if (normalizedExpected && normalizedCurrent && normalizedExpected === normalizedCurrent) {
+            return true;
+        }
+
+        const expectedUnquoted = this.stripWrappingQuotes(expectedPath);
+        const currentUnquoted = this.stripWrappingQuotes(currentPath);
+        if (!expectedUnquoted || !currentUnquoted) {
+            return false;
+        }
+
+        const expectedBaseName = path.basename(expectedUnquoted, path.extname(expectedUnquoted));
+        const currentBaseName = path.basename(currentUnquoted, path.extname(currentUnquoted));
+        const normalizedExpectedBase = this.normalizeScenarioLookupKey(expectedBaseName);
+        const normalizedCurrentBase = this.normalizeScenarioLookupKey(currentBaseName);
+        if (!normalizedExpectedBase || !normalizedCurrentBase) {
+            return false;
+        }
+        return normalizedExpectedBase === normalizedCurrentBase;
+    }
+
+    private getRunLogTrackingKey(runLogPath: string): string {
+        const normalized = this.normalizeFilePathForComparison(runLogPath);
+        if (normalized) {
+            return normalized;
+        }
+        const resolved = path.resolve(this.stripWrappingQuotes(runLogPath));
+        return process.platform === 'win32'
+            ? resolved.toLowerCase()
+            : resolved;
+    }
+
+    private getTrackedRunsMapForScenario(
+        scenarioName: string,
+        options?: { createIfMissing?: boolean }
+    ): Map<string, ExternalTrackedRunState> | undefined {
+        const existing = this._externalTrackedRunsByScenario.get(scenarioName);
+        if (existing || !options?.createIfMissing) {
+            return existing;
+        }
+        const created = new Map<string, ExternalTrackedRunState>();
+        this._externalTrackedRunsByScenario.set(scenarioName, created);
+        return created;
+    }
+
+    private getActiveTrackedRunForScenario(scenarioName: string): ExternalTrackedRunState | undefined {
+        const runKey = this._activeTrackedRunKeyByScenario.get(scenarioName);
+        if (!runKey) {
+            return undefined;
+        }
+        return this.getTrackedRunsMapForScenario(scenarioName)?.get(runKey);
+    }
+
+    private isTrackedRunSelectedForScenario(scenarioName: string): boolean {
+        return !!this.getActiveTrackedRunForScenario(scenarioName);
+    }
+
+    private getTrackedRunCountForScenario(scenarioName: string): number {
+        return this.getTrackedRunsMapForScenario(scenarioName)?.size || 0;
     }
 
     private remapUriAfterRename(
@@ -1484,6 +1588,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this._scenarioExecutionStates.clear();
                 this._scenarioLastLaunchContexts.clear();
                 this.stopAllFeatureStepTrackers();
+                this.stopAllTrackedRunLogWatchers();
+            }
+            if (e.affectsConfiguration('kotTestToolkit.runVanessa.liveLogRefreshSeconds')) {
+                this.rearmLiveFeatureStepTrackerTimers();
+                this.rearmLiveRunLogWatcherTimers();
+                this.rearmTrackedRunWatcherTimers();
             }
             // Configuration changes will trigger panel refresh when needed
                 if (this._view && this._view.visible) {
@@ -1585,6 +1695,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         this._scenarioExecutionStates.delete(scenarioName);
                         this.clearFailedFeatureStepHighlight(scenarioName);
                         this.stopFeatureStepTracker(scenarioName);
+                        this.clearTrackedRunLogWatchersForScenario(scenarioName);
                         changed = true;
                     }
                 }
@@ -1638,6 +1749,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._scenarioExecutionStates.clear();
             this._scenarioLastLaunchContexts.clear();
             this.stopAllFeatureStepTrackers();
+            this.stopAllTrackedRunLogWatchers();
             this._activeScenarioUriForHighlight = null;
             this._lastHighlightedMainScenarioNames.clear();
             this.markCacheDirtyAndScheduleRefresh('workspaceFoldersChanged', true);
@@ -1652,6 +1764,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     this._cacheRefreshTimer = null;
                 }
                 this.stopAllFeatureStepTrackers();
+                this.stopAllTrackedRunLogWatchers();
                 this.disposeAllLiveRunLogWatchers();
                 this._buildOutputChannel?.dispose();
                 this._buildOutputChannel = undefined;
@@ -2186,6 +2299,35 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return safeSeconds * 1000;
     }
 
+    private rearmLiveFeatureStepTrackerTimers(): void {
+        const intervalMs = this.getLiveRunLogRefreshIntervalMs();
+        for (const [scenarioName, tracker] of this._liveFeatureStepTrackers.entries()) {
+            clearInterval(tracker.timer);
+            tracker.timer = setInterval(() => this.pollFeatureStepTracker(scenarioName), intervalMs);
+        }
+    }
+
+    private rearmLiveRunLogWatcherTimers(): void {
+        const intervalMs = this.getLiveRunLogRefreshIntervalMs();
+        for (const [scenarioName, watcher] of this._liveRunLogWatchers.entries()) {
+            clearInterval(watcher.timer);
+            watcher.timer = setInterval(() => this.pollLiveRunLogWatcher(scenarioName), intervalMs);
+        }
+    }
+
+    private rearmTrackedRunWatcherTimers(): void {
+        const intervalMs = this.getLiveRunLogRefreshIntervalMs();
+        for (const [scenarioName, runsMap] of this._externalTrackedRunsByScenario.entries()) {
+            for (const [runLogKey, tracker] of runsMap.entries()) {
+                if (!tracker.timer) {
+                    continue;
+                }
+                clearInterval(tracker.timer);
+                tracker.timer = setInterval(() => this.pollTrackedRunLogWatcher(scenarioName, runLogKey), intervalMs);
+            }
+        }
+    }
+
     private extractFeaturePathFromRunLogLine(line: string): string | undefined {
         const match = line.match(/^\s*(?:Фича|Feature|ПолныйПутьКФиче|FullPathToFeature)\s*:\s*(.+?)\s*$/i);
         if (!match || !match[1]) {
@@ -2198,7 +2340,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private extractFeatureLineNumberFromRunLogLine(line: string): number | undefined {
         const match = line.match(/\((\d+)\)\s*\.?\s*(?:Шаг|Step)\s*:/i)
-            || line.match(/^\s*(?:НомерСтрокиФичи|FeatureLineNumber)\s*:\s*(\d+)\s*$/i);
+            || line.match(/^\s*(?:НомерСтрокиФичи|FeatureLineNumber)\s*:\s*(\d+)\s*$/i)
+            // Some external logs emit step line index without "Step:" marker.
+            || line.match(/\((\d+)\)\s*(?:Given|When|Then|And|But|Но|Тогда|Когда|Если|И|К\s+тому\s+же|Допустим|Дано|Пусть)\b/i)
+            || line.match(/^\s*(\d+)\s*[\)\.]\s*(?:Шаг|Step)\s*:/i)
+            || line.match(/^\s*(\d+)\s*[\)\.]\s*(?:Given|When|Then|And|But|Но|Тогда|Когда|Если|И|К\s+тому\s+же|Допустим|Дано|Пусть)\b/i);
         if (!match || !match[1]) {
             return undefined;
         }
@@ -2251,6 +2397,31 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return true;
         }
         return /^(?:Шаг|Step)\s*\(.+?\)\s*(?:не\s+выполнен|failed|is\s+not\s+executed|was\s+not\s+executed)/i.test(trimmed);
+    }
+
+    private extractFailedSummaryFromLogLine(
+        line: string
+    ): { failedCount?: number; summaryLine: string } | null {
+        const trimmed = line.trim();
+        if (!/^Failed:\s*/i.test(trimmed)) {
+            return null;
+        }
+
+        const valuePart = trimmed.replace(/^Failed:\s*/i, '').trim();
+        const countMatch = valuePart.match(/-?\d+/);
+        if (!countMatch) {
+            return { summaryLine: trimmed };
+        }
+
+        const count = Number(countMatch[0]);
+        if (!Number.isFinite(count)) {
+            return { summaryLine: trimmed };
+        }
+
+        return {
+            failedCount: Math.floor(count),
+            summaryLine: trimmed
+        };
     }
 
     private collectFailedStepLogBlock(lines: string[], startIndex: number): string[] {
@@ -3091,11 +3262,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         // when scenario marker is absent, do not apply step lines that belong
         // to a different feature path than the one expected for this scenario.
         if (!tracker.currentScenarioNameFromLog && tracker.currentFeaturePathFromLog) {
-            const expectedKey = this.normalizeFilePathForComparison(expectedFeaturePath);
-            const currentKey = this.normalizeFilePathForComparison(tracker.currentFeaturePathFromLog);
-            if (expectedKey && currentKey && expectedKey !== currentKey) {
+            const isSameFeature = this.areFeaturePathsEquivalentForTracking(
+                expectedFeaturePath,
+                tracker.currentFeaturePathFromLog
+            );
+            if (!isSameFeature) {
                 return;
             }
+        }
+
+        if (this.isTrackedRunSelectedForScenario(tracker.scenarioName)) {
+            return;
         }
 
         this.setRunningFeatureStepHighlight(tracker.scenarioName, expectedFeaturePath, featureLineNumber);
@@ -3226,6 +3403,409 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.pollFeatureStepTracker(scenarioName);
     }
 
+    private stopTrackedRunTimer(tracker: ExternalTrackedRunState): void {
+        if (tracker.timer) {
+            clearInterval(tracker.timer);
+            tracker.timer = null;
+        }
+    }
+
+    private refreshScenarioHighlightsBySelectedRunSource(scenarioName: string): void {
+        const activeTrackedRun = this.getActiveTrackedRunForScenario(scenarioName);
+        if (activeTrackedRun) {
+            if (activeTrackedRun.status === 'failed') {
+                const featurePath = activeTrackedRun.latestFeaturePath
+                    || this._scenarioBuildArtifacts.get(scenarioName)?.featurePath
+                    || '';
+                const featureLineNumber = activeTrackedRun.latestFeatureLineNumber;
+                this.finalizeRunningFeatureStepHighlight(scenarioName);
+                if (featurePath && featureLineNumber && featureLineNumber > 0) {
+                    this.setFailedFeatureStepHighlight(
+                        scenarioName,
+                        featurePath,
+                        featureLineNumber,
+                        {
+                            failureSummary: activeTrackedRun.failureSummary,
+                            failureDetails: activeTrackedRun.failureDetails,
+                            failureStepDescription: activeTrackedRun.failureStepDescription,
+                            runLogPath: activeTrackedRun.runLogPath
+                        }
+                    );
+                } else {
+                    this.clearFailedFeatureStepHighlight(scenarioName);
+                }
+                return;
+            }
+
+            this.clearFailedFeatureStepHighlight(scenarioName);
+            if (activeTrackedRun.latestFeaturePath && activeTrackedRun.latestFeatureLineNumber) {
+                this.setRunningFeatureStepHighlight(
+                    scenarioName,
+                    activeTrackedRun.latestFeaturePath,
+                    activeTrackedRun.latestFeatureLineNumber
+                );
+            } else if (activeTrackedRun.status === 'passed') {
+                this.finalizeRunningFeatureStepHighlight(scenarioName);
+            } else {
+                this.clearRunningFeatureStepHighlight(scenarioName);
+            }
+            return;
+        }
+
+        const runState = this._scenarioExecutionStates.get(scenarioName);
+        if (runState?.status === 'running') {
+            this.clearFailedFeatureStepHighlight(scenarioName);
+            if (runState.runLogPath) {
+                const fromRunLog = this.extractLastStepLocationFromRunLog(runState.runLogPath, scenarioName);
+                const featurePath = fromRunLog?.featurePath
+                    || this._scenarioBuildArtifacts.get(scenarioName)?.featurePath;
+                const featureLineNumber = fromRunLog?.featureLineNumber;
+                if (featurePath && featureLineNumber) {
+                    this.setRunningFeatureStepHighlight(scenarioName, featurePath, featureLineNumber);
+                }
+            }
+            return;
+        }
+
+        if (runState?.status === 'failed') {
+            this.captureFailedStepHighlight(scenarioName, runState.runLogPath);
+            this.finalizeRunningFeatureStepHighlight(scenarioName);
+            return;
+        }
+
+        if (runState?.status === 'passed') {
+            this.clearFailedFeatureStepHighlight(scenarioName);
+            this.finalizeRunningFeatureStepHighlight(scenarioName);
+            return;
+        }
+
+        this.clearFailedFeatureStepHighlight(scenarioName);
+        this.clearRunningFeatureStepHighlight(scenarioName);
+    }
+
+    private setActiveTrackedRunForScenario(
+        scenarioName: string,
+        runLogKey?: string,
+        options?: { refreshHighlights?: boolean; notifyWebview?: boolean }
+    ): void {
+        const trackedRuns = this.getTrackedRunsMapForScenario(scenarioName);
+        if (!trackedRuns || trackedRuns.size === 0 || !runLogKey || !trackedRuns.has(runLogKey)) {
+            this._activeTrackedRunKeyByScenario.delete(scenarioName);
+        } else {
+            this._activeTrackedRunKeyByScenario.set(scenarioName, runLogKey);
+        }
+
+        this.stopLiveRunLogWatcher(scenarioName, { disposeChannel: true });
+        if (options?.refreshHighlights !== false) {
+            this.refreshScenarioHighlightsBySelectedRunSource(scenarioName);
+        }
+        if (options?.notifyWebview !== false) {
+            this.sendRunArtifactsStateToWebview();
+        }
+    }
+
+    private applyTrackedRunStepSyncLogLine(tracker: ExternalTrackedRunState, line: string): void {
+        const featurePathFromLine = this.extractFeaturePathFromRunLogLine(line);
+        if (featurePathFromLine) {
+            tracker.currentFeaturePathFromLog = featurePathFromLine;
+        }
+
+        const scenarioNameFromLine = this.extractScenarioNameFromRunLogLine(line);
+        if (scenarioNameFromLine) {
+            tracker.currentScenarioNameFromLog = scenarioNameFromLine;
+            if (!tracker.expectedScenarioName) {
+                if (!tracker.featurePathFromLog) {
+                    tracker.featurePathFromLog = tracker.currentFeaturePathFromLog || tracker.featurePathFromLog;
+                }
+            } else if (this.areScenarioNamesEqual(scenarioNameFromLine, tracker.expectedScenarioName)) {
+                tracker.featurePathFromLog = tracker.currentFeaturePathFromLog || tracker.featurePathFromLog;
+            }
+        }
+
+        const featureLineNumber = this.extractFeatureLineNumberFromRunLogLine(line);
+        if (!featureLineNumber) {
+            return;
+        }
+
+        if (tracker.expectedScenarioName
+            && tracker.currentScenarioNameFromLog
+            && !this.areScenarioNamesEqual(tracker.currentScenarioNameFromLog, tracker.expectedScenarioName)) {
+            return;
+        }
+
+        const expectedFeaturePath = tracker.featurePathFromLog
+            || this._scenarioBuildArtifacts.get(tracker.scenarioName)?.featurePath
+            || '';
+        if (!expectedFeaturePath) {
+            return;
+        }
+
+        if (!tracker.currentScenarioNameFromLog && tracker.currentFeaturePathFromLog) {
+            const isSameFeature = this.areFeaturePathsEquivalentForTracking(
+                expectedFeaturePath,
+                tracker.currentFeaturePathFromLog
+            );
+            if (!isSameFeature) {
+                return;
+            }
+        }
+
+        tracker.latestFeaturePath = expectedFeaturePath;
+        tracker.latestFeatureLineNumber = featureLineNumber;
+        tracker.updatedAt = Date.now();
+
+        const isActiveTrackedRun = this.getActiveTrackedRunForScenario(tracker.scenarioName)?.runLogKey === tracker.runLogKey;
+        if (isActiveTrackedRun && tracker.status === 'running') {
+            this.clearFailedFeatureStepHighlight(tracker.scenarioName);
+            this.setRunningFeatureStepHighlight(
+                tracker.scenarioName,
+                expectedFeaturePath,
+                featureLineNumber
+            );
+        }
+    }
+
+    private stopTrackedRunLogWatcherPolling(tracker: ExternalTrackedRunState): void {
+        this.stopTrackedRunTimer(tracker);
+    }
+
+    private pollTrackedRunLogWatcher(scenarioName: string, runLogKey: string): void {
+        const tracker = this.getTrackedRunsMapForScenario(scenarioName)?.get(runLogKey);
+        if (!tracker || tracker.isPolling) {
+            return;
+        }
+        tracker.isPolling = true;
+
+        try {
+            if (!fs.existsSync(tracker.runLogPath)) {
+                return;
+            }
+
+            const fileBuffer = fs.readFileSync(tracker.runLogPath);
+            const currentLength = fileBuffer.byteLength;
+            if (currentLength < tracker.lastLength) {
+                tracker.lastLength = 0;
+                tracker.startOffset = 0;
+                tracker.pendingTail = '';
+            }
+
+            let hasStateChanges = false;
+            let hasNewLines = false;
+            if (currentLength > tracker.lastLength) {
+                const deltaBuffer = fileBuffer.subarray(tracker.lastLength);
+                const chunk = deltaBuffer.toString('utf8');
+                const chunkWithPendingTail = tracker.pendingTail + chunk;
+                const endsWithNewline = /\r?\n$/.test(chunkWithPendingTail);
+                const lines = chunkWithPendingTail.split(/\r\n|\r|\n/);
+
+                tracker.pendingTail = endsWithNewline ? '' : (lines.pop() || '');
+                if (endsWithNewline && lines.length > 0 && lines[lines.length - 1] === '') {
+                    lines.pop();
+                }
+                hasNewLines = lines.length > 0;
+
+                const previousStatus = tracker.status;
+                for (const line of lines) {
+                    this.applyTrackedRunStepSyncLogLine(tracker, line);
+                    const failedSummary = this.extractFailedSummaryFromLogLine(line);
+                    if (!failedSummary) {
+                        continue;
+                    }
+
+                    tracker.message = failedSummary.summaryLine;
+                    if (typeof failedSummary.failedCount === 'number') {
+                        tracker.status = failedSummary.failedCount > 0 ? 'failed' : 'passed';
+                    } else {
+                        tracker.status = 'failed';
+                    }
+                    tracker.updatedAt = Date.now();
+                }
+                hasStateChanges = previousStatus !== tracker.status;
+                tracker.lastLength = currentLength;
+            }
+
+            if (tracker.status === 'failed'
+                && (!tracker.failureSummary || !tracker.failureDetails || !tracker.failureStepDescription)) {
+                const failedDetails = this.extractFailedStepDetailsFromRunLog(
+                    tracker.runLogPath,
+                    tracker.expectedScenarioName,
+                    tracker.startOffset
+                );
+                tracker.failureSummary = failedDetails?.failureSummary;
+                tracker.failureDetails = failedDetails?.failureDetails;
+                tracker.failureStepDescription = failedDetails?.failureStepDescription;
+            }
+
+            const isActiveTrackedRun = this.getActiveTrackedRunForScenario(scenarioName)?.runLogKey === runLogKey;
+            if (isActiveTrackedRun) {
+                this.refreshScenarioHighlightsBySelectedRunSource(scenarioName);
+            }
+
+            if (tracker.status !== 'running') {
+                this.stopTrackedRunLogWatcherPolling(tracker);
+            }
+
+            if (hasStateChanges || (hasNewLines && isActiveTrackedRun)) {
+                this.sendRunArtifactsStateToWebview();
+            }
+        } finally {
+            tracker.isPolling = false;
+        }
+    }
+
+    private startTrackedRunLogWatcher(
+        scenarioName: string,
+        runLogPath: string,
+        options?: { initialFeaturePath?: string; expectedScenarioName?: string }
+    ): ExternalTrackedRunState {
+        const normalizedRunLogPath = runLogPath.trim();
+        const runLogKey = this.getRunLogTrackingKey(normalizedRunLogPath);
+        const trackedRuns = this.getTrackedRunsMapForScenario(
+            scenarioName,
+            { createIfMissing: true }
+        )!;
+        const existing = trackedRuns.get(runLogKey);
+        if (existing) {
+            this.setActiveTrackedRunForScenario(scenarioName, runLogKey);
+            this.pollTrackedRunLogWatcher(scenarioName, runLogKey);
+            return existing;
+        }
+
+        const tracker: ExternalTrackedRunState = {
+            scenarioName,
+            expectedScenarioName: options?.expectedScenarioName?.trim() || undefined,
+            runLogPath: normalizedRunLogPath,
+            runLogKey,
+            timer: null,
+            startOffset: 0,
+            lastLength: 0,
+            pendingTail: '',
+            isPolling: false,
+            status: 'running',
+            updatedAt: Date.now(),
+            message: this.t('Run in progress'),
+            featurePathFromLog: options?.initialFeaturePath?.trim() || undefined,
+            currentFeaturePathFromLog: undefined,
+            currentScenarioNameFromLog: undefined,
+            latestFeaturePath: undefined,
+            latestFeatureLineNumber: undefined,
+            failureSummary: undefined,
+            failureDetails: undefined,
+            failureStepDescription: undefined
+        };
+
+        tracker.timer = setInterval(
+            () => this.pollTrackedRunLogWatcher(scenarioName, runLogKey),
+            this.getLiveRunLogRefreshIntervalMs()
+        );
+        trackedRuns.set(runLogKey, tracker);
+        this.setActiveTrackedRunForScenario(scenarioName, runLogKey, { refreshHighlights: true, notifyWebview: false });
+        this.pollTrackedRunLogWatcher(scenarioName, runLogKey);
+        this.sendRunArtifactsStateToWebview();
+        return tracker;
+    }
+
+    private clearTrackedRunLogWatchersForScenario(scenarioName: string): void {
+        const trackedRuns = this.getTrackedRunsMapForScenario(scenarioName);
+        if (!trackedRuns) {
+            return;
+        }
+
+        for (const tracker of trackedRuns.values()) {
+            this.stopTrackedRunTimer(tracker);
+        }
+        trackedRuns.clear();
+        this._externalTrackedRunsByScenario.delete(scenarioName);
+        this._activeTrackedRunKeyByScenario.delete(scenarioName);
+        this.stopLiveRunLogWatcher(scenarioName, { disposeChannel: true });
+        this.refreshScenarioHighlightsBySelectedRunSource(scenarioName);
+    }
+
+    private stopAllTrackedRunLogWatchers(): void {
+        for (const scenarioName of Array.from(this._externalTrackedRunsByScenario.keys())) {
+            this.clearTrackedRunLogWatchersForScenario(scenarioName);
+        }
+    }
+
+    private getScenarioDisplayedRunState(
+        scenarioName: string,
+        artifact: ScenarioBuildArtifact
+    ): ScenarioDisplayedRunState {
+        const activeTrackedRun = this.getActiveTrackedRunForScenario(scenarioName);
+        if (activeTrackedRun) {
+            const progressCurrentLine = activeTrackedRun.latestFeatureLineNumber;
+            let progressTotalLines: number | undefined;
+            let progressPercent: number | undefined;
+            if (activeTrackedRun.status === 'running'
+                && progressCurrentLine
+                && progressCurrentLine > 0) {
+                const progressInfo = this.getFeatureProgressInfo(
+                    activeTrackedRun.latestFeaturePath || artifact.featurePath
+                );
+                if (progressInfo?.lineCount && progressInfo.lineCount > 0) {
+                    progressTotalLines = progressInfo.lineCount;
+                    const boundedLine = Math.min(Math.max(1, progressCurrentLine), progressInfo.lineCount);
+                    progressPercent = Math.min(100, Math.max(0, Math.round((boundedLine / progressInfo.lineCount) * 100)));
+                }
+            }
+
+            return {
+                status: activeTrackedRun.status,
+                message: activeTrackedRun.message || this.t('Tracking log: {0}', activeTrackedRun.runLogPath),
+                updatedAt: activeTrackedRun.updatedAt,
+                runLogPath: activeTrackedRun.runLogPath,
+                source: 'tracked',
+                progressCurrentLine,
+                progressTotalLines,
+                progressPercent
+            };
+        }
+
+        const executionState = this._scenarioExecutionStates.get(scenarioName);
+        const rawRunStatus = executionState?.status || 'idle';
+        const runLogPath = executionState?.runLogPath?.trim();
+        const runningHighlight = this._runningFeatureStepHighlights.get(scenarioName);
+        let progressCurrentLine: number | undefined;
+        let progressTotalLines: number | undefined;
+        let progressPercent: number | undefined;
+        if (rawRunStatus === 'running' && runningHighlight?.featureLineNumber && runningHighlight.featureLineNumber > 0) {
+            progressCurrentLine = runningHighlight.featureLineNumber;
+            const progressInfo = this.getFeatureProgressInfo(runningHighlight.featurePath || artifact.featurePath);
+            if (progressInfo?.lineCount && progressInfo.lineCount > 0) {
+                progressTotalLines = progressInfo.lineCount;
+                const boundedLine = Math.min(Math.max(1, progressCurrentLine), progressInfo.lineCount);
+                progressPercent = Math.min(100, Math.max(0, Math.round((boundedLine / progressInfo.lineCount) * 100)));
+            }
+        }
+
+        return {
+            status: rawRunStatus,
+            message: executionState?.message,
+            updatedAt: executionState?.updatedAt,
+            runLogPath,
+            source: rawRunStatus === 'idle' ? undefined : 'internal',
+            progressCurrentLine,
+            progressTotalLines,
+            progressPercent
+        };
+    }
+
+    private getSelectedRunLogPathForScenario(scenarioName: string): string | undefined {
+        const activeTrackedRun = this.getActiveTrackedRunForScenario(scenarioName);
+        if (activeTrackedRun?.runLogPath) {
+            return activeTrackedRun.runLogPath;
+        }
+        return this._scenarioExecutionStates.get(scenarioName)?.runLogPath?.trim();
+    }
+
+    private getSelectedRunStatusForScenario(scenarioName: string): 'idle' | 'running' | 'passed' | 'failed' {
+        const activeTrackedRun = this.getActiveTrackedRunForScenario(scenarioName);
+        if (activeTrackedRun) {
+            return activeTrackedRun.status;
+        }
+        return this._scenarioExecutionStates.get(scenarioName)?.status || 'idle';
+    }
+
     private stopLiveRunLogWatcher(
         scenarioName: string,
         options?: {
@@ -3268,8 +3848,18 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         watcher.isPolling = true;
 
         try {
-            const runState = this._scenarioExecutionStates.get(scenarioName);
-            const isRunning = runState?.status === 'running';
+            const selectedRunLogPath = this.getSelectedRunLogPathForScenario(scenarioName)?.trim();
+            const isRunning = this.getSelectedRunStatusForScenario(scenarioName) === 'running';
+            if (selectedRunLogPath) {
+                const selectedKey = this.getRunLogTrackingKey(selectedRunLogPath);
+                const watcherKey = this.getRunLogTrackingKey(watcher.runLogPath);
+                if (selectedKey !== watcherKey) {
+                    this.stopLiveRunLogWatcher(scenarioName, {
+                        appendMessage: this.t('Live run log watcher stopped for "{0}".', scenarioName)
+                    });
+                    return;
+                }
+            }
 
             if (!fs.existsSync(watcher.runLogPath)) {
                 if (!watcher.missingFileNotified) {
@@ -3330,15 +3920,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private async openLiveRunLog(scenarioName: string): Promise<void> {
-        const runState = this._scenarioExecutionStates.get(scenarioName);
-        if (!runState || runState.status !== 'running') {
+        const runStatus = this.getSelectedRunStatusForScenario(scenarioName);
+        if (runStatus !== 'running') {
             vscode.window.showInformationMessage(
                 this.t('Scenario "{0}" is not running. Live log is unavailable.', scenarioName)
             );
             return;
         }
 
-        const runLogPath = runState.runLogPath?.trim();
+        const runLogPath = this.getSelectedRunLogPathForScenario(scenarioName)?.trim();
         if (!runLogPath) {
             vscode.window.showWarningMessage(
                 this.t('Run log path is not available for scenario "{0}".', scenarioName)
@@ -3348,8 +3938,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const existingWatcher = this._liveRunLogWatchers.get(scenarioName);
         if (existingWatcher) {
-            existingWatcher.outputChannel.show(true);
-            return;
+            const existingKey = this.getRunLogTrackingKey(existingWatcher.runLogPath);
+            const requestedKey = this.getRunLogTrackingKey(runLogPath);
+            if (existingKey !== requestedKey) {
+                this.stopLiveRunLogWatcher(scenarioName, { disposeChannel: true });
+            } else {
+                existingWatcher.outputChannel.show(true);
+                return;
+            }
         }
 
         const outputChannel = vscode.window.createOutputChannel(
@@ -5304,6 +5900,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 runScenarioOpenRunLogFile: this.t('Open run log file'),
                 runScenarioOpenRunLogFileHint: this.t('Open run log file in editor for this scenario.'),
                 runScenarioOpenRunLogFileUnavailable: this.t('Run log file path is not available for this scenario.'),
+                runScenarioSelectedLog: this.t('Log: {0}', '{0}'),
+                runScenarioTrackedSourceSuffix: this.t('Tracked log'),
                 runScenarioWatchLiveOutput: this.t('Watch live log output'),
                 runScenarioWatchLiveOutputHint: this.t('Open live run log output panel for this scenario.'),
                 runScenarioWatchLiveOutputUnavailable: this.t('Scenario is not running. Live log output is unavailable.'),
@@ -6767,6 +7365,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._scenarioExecutionStates.clear();
             this._scenarioLastLaunchContexts.clear();
             this.stopAllFeatureStepTrackers();
+            this.stopAllTrackedRunLogWatchers();
             return;
         }
 
@@ -6779,6 +7378,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this._scenarioLastLaunchContexts.delete(scenarioName);
                 this.clearFailedFeatureStepHighlight(scenarioName);
                 this.stopFeatureStepTracker(scenarioName);
+                this.clearTrackedRunLogWatchersForScenario(scenarioName);
                 continue;
             }
 
@@ -6865,13 +7465,18 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             : undefined;
 
         if (status === 'idle') {
-            this.stopFeatureStepTracker(scenarioName, { preserveHighlight: true });
+            if (!this.isTrackedRunSelectedForScenario(scenarioName)) {
+                this.stopFeatureStepTracker(scenarioName, { preserveHighlight: true });
+            } else {
+                this.stopFeatureStepTracker(scenarioName);
+            }
             if (this._scenarioExecutionStates.delete(scenarioName)) {
                 this.stopLiveRunLogWatcher(scenarioName, {
                     appendMessage: this.t('Live run log watcher stopped for "{0}".', scenarioName)
                 });
-                this.sendRunArtifactsStateToWebview();
             }
+            this.refreshScenarioHighlightsBySelectedRunSource(scenarioName);
+            this.sendRunArtifactsStateToWebview();
             return;
         }
 
@@ -6882,6 +7487,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             runLogPath: normalizedRunLogPath
         });
         if (status === 'running') {
+            this.setActiveTrackedRunForScenario(scenarioName, undefined, { refreshHighlights: false, notifyWebview: false });
             this.stopLiveRunLogWatcher(scenarioName, {
                 disposeChannel: true
             });
@@ -6896,12 +7502,18 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this.stopLiveRunLogWatcher(scenarioName, {
                 appendMessage: this.t('Live run log watcher stopped for "{0}".', scenarioName)
             });
-            if (status === 'failed') {
-                this.captureFailedStepHighlight(scenarioName, normalizedRunLogPath);
-            } else {
-                this.clearFailedFeatureStepHighlight(scenarioName);
+            const trackedRunSelected = this.isTrackedRunSelectedForScenario(scenarioName);
+            if (!trackedRunSelected) {
+                if (status === 'failed') {
+                    this.captureFailedStepHighlight(scenarioName, normalizedRunLogPath);
+                } else {
+                    this.clearFailedFeatureStepHighlight(scenarioName);
+                }
             }
             this.stopFeatureStepTracker(scenarioName, { preserveHighlight: true });
+            if (trackedRunSelected) {
+                this.refreshScenarioHighlightsBySelectedRunSource(scenarioName);
+            }
         }
         this.sendRunArtifactsStateToWebview();
     }
@@ -6969,36 +7581,29 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.pruneScenarioBuildArtifactsByCache();
 
         for (const [scenarioName, artifact] of this._scenarioBuildArtifacts.entries()) {
-            const executionState = this._scenarioExecutionStates.get(scenarioName);
-            const rawRunStatus = executionState?.status || 'idle';
+            const displayedRunState = this.getScenarioDisplayedRunState(scenarioName, artifact);
+            const rawRunStatus = displayedRunState.status;
             const isStale = this._staleBuiltScenarioNames.has(scenarioName);
-            const runStatus = isStale && rawRunStatus === 'failed'
+            const runStatus = isStale && rawRunStatus === 'failed' && displayedRunState.source !== 'tracked'
                 ? 'idle'
                 : rawRunStatus;
-            const runLogPath = executionState?.runLogPath?.trim();
-            const runningHighlight = this._runningFeatureStepHighlights.get(scenarioName);
-            let progressCurrentLine: number | undefined;
-            let progressTotalLines: number | undefined;
-            let progressPercent: number | undefined;
-            if (rawRunStatus === 'running' && runningHighlight?.featureLineNumber && runningHighlight.featureLineNumber > 0) {
-                progressCurrentLine = runningHighlight.featureLineNumber;
-                const progressInfo = this.getFeatureProgressInfo(runningHighlight.featurePath || artifact.featurePath);
-                if (progressInfo?.lineCount && progressInfo.lineCount > 0) {
-                    progressTotalLines = progressInfo.lineCount;
-                    const boundedLine = Math.min(Math.max(1, progressCurrentLine), progressInfo.lineCount);
-                    progressPercent = Math.min(100, Math.max(0, Math.round((boundedLine / progressInfo.lineCount) * 100)));
-                }
-            }
+            const runLogPath = displayedRunState.runLogPath?.trim();
+            const trackedRunCount = this.getTrackedRunCountForScenario(scenarioName);
             state[scenarioName] = {
                 featurePath: artifact.featurePath,
                 jsonPath: artifact.jsonPath,
                 stale: isStale,
                 runStatus,
-                runMessage: executionState?.message,
-                runUpdatedAt: executionState?.updatedAt,
-                progressCurrentLine,
-                progressTotalLines,
-                progressPercent,
+                runMessage: displayedRunState.message,
+                runUpdatedAt: displayedRunState.updatedAt,
+                activeRunLogPath: runLogPath,
+                activeRunSource: displayedRunState.source,
+                trackedRunCount,
+                canSwitchTrackedRun: trackedRunCount > 0,
+                blocksControls: displayedRunState.source !== 'tracked' && rawRunStatus === 'running',
+                progressCurrentLine: displayedRunState.progressCurrentLine,
+                progressTotalLines: displayedRunState.progressTotalLines,
+                progressPercent: displayedRunState.progressPercent,
                 hasRunLog: rawRunStatus === 'failed'
                     && Boolean(runLogPath)
                     && fs.existsSync(runLogPath!),
@@ -7103,6 +7708,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this._scenarioExecutionStates.clear();
         this._scenarioLastLaunchContexts.clear();
         this.stopAllFeatureStepTrackers();
+        this.stopAllTrackedRunLogWatchers();
         this.disposeAllLiveRunLogWatchers();
         this.sendRunArtifactsStateToWebview();
     }
@@ -7338,6 +7944,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             if (!nextArtifacts.has(scenarioName)) {
                 this._scenarioExecutionStates.delete(scenarioName);
                 this.clearFailedFeatureStepHighlight(scenarioName);
+                this.clearTrackedRunLogWatchersForScenario(scenarioName);
             }
         }
         for (const scenarioName of Array.from(this._scenarioLastLaunchContexts.keys())) {
@@ -8594,75 +9201,81 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return this.resolveVanessaAuxPath(logFileRaw, workspaceRootPath, jsonPath);
     }
 
-    private validateVanessaStatusFromJson(
-        jsonPath: string,
-        workspaceRootPath: string,
+    private validateRunLogForFailedSummary(
+        runLogPath: string,
         outputChannel: vscode.OutputChannel
     ): { ok: true } | { ok: false; message: string } {
-        let parsedJson: any;
+        if (!runLogPath || !runLogPath.trim()) {
+            return { ok: true };
+        }
+        const normalizedRunLogPath = runLogPath.trim();
+        if (!fs.existsSync(normalizedRunLogPath)) {
+            this.outputAdvanced(
+                outputChannel,
+                this.t('Run log file not found at path: {0}', normalizedRunLogPath)
+            );
+            return { ok: true };
+        }
+
+        let logContent = '';
         try {
-            parsedJson = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+            logContent = fs.readFileSync(normalizedRunLogPath, 'utf8');
         } catch {
+            this.outputAdvanced(
+                outputChannel,
+                this.t('Failed to read run log file: {0}', normalizedRunLogPath)
+            );
             return { ok: true };
         }
 
-        const statusFileRaw = this.findFirstStringByKeySet(
-            parsedJson,
-            this.getVanessaStatusFileKeySet()
-        );
-        if (!statusFileRaw) {
+        const logLines = logContent.split(/\r\n|\r|\n/);
+        let latestFailedSummaryLine: string | undefined;
+        let latestFailedCount: number | undefined;
+        for (const line of logLines) {
+            const failedSummary = this.extractFailedSummaryFromLogLine(line);
+            if (!failedSummary) {
+                continue;
+            }
+            latestFailedSummaryLine = failedSummary.summaryLine;
+            latestFailedCount = failedSummary.failedCount;
+        }
+
+        if (!latestFailedSummaryLine) {
             return { ok: true };
         }
 
-        const statusPath = this.resolveVanessaAuxPath(statusFileRaw, workspaceRootPath, jsonPath);
-        if (!fs.existsSync(statusPath)) {
-            return {
-                ok: false,
-                message: this.t('Vanessa status file not found at path: {0}', statusPath)
-            };
-        }
-
-        let statusContent = '';
-        try {
-            statusContent = fs.readFileSync(statusPath, 'utf8');
-        } catch {
-            return {
-                ok: false,
-                message: this.t('Failed to read Vanessa status file at path: {0}', statusPath)
-            };
-        }
-
-        const statusCode = (statusContent.match(/\d+/)?.[0] || '').trim();
-        if (statusCode === '0') {
+        if (typeof latestFailedCount === 'number' && latestFailedCount <= 0) {
             return { ok: true };
         }
 
-        const logFileRaw = this.findFirstStringByKeySet(
-            parsedJson,
-            this.getVanessaLogFileKeySet()
-        );
-        if (logFileRaw) {
-            const logPath = this.resolveVanessaAuxPath(logFileRaw, workspaceRootPath, jsonPath);
-            if (fs.existsSync(logPath)) {
-                try {
-                    const logLines = fs.readFileSync(logPath, 'utf8').split(/\r\n|\r|\n/);
-                    const tail = logLines.slice(Math.max(0, logLines.length - 30)).join('\n');
-                    if (tail.trim().length > 0) {
-                        this.outputAdvanced(outputChannel, this.t('Last Vanessa log lines from {0}:', logPath));
-                        if (this.isAdvancedOutputLoggingEnabled()) {
-                            outputChannel.appendLine(tail);
-                        }
-                    }
-                } catch {
-                    // Ignore log read errors.
-                }
+        const tail = logLines.slice(Math.max(0, logLines.length - 30)).join('\n').trim();
+        if (tail.length > 0) {
+            this.outputAdvanced(outputChannel, this.t('Last Vanessa log lines from {0}:', normalizedRunLogPath));
+            if (this.isAdvancedOutputLoggingEnabled()) {
+                outputChannel.appendLine(tail);
             }
         }
 
         return {
             ok: false,
-            message: this.t('Vanessa status file indicates test failure: {0}', statusPath)
+            message: this.t(
+                'Run log indicates test failure: {0} ({1})',
+                normalizedRunLogPath,
+                latestFailedSummaryLine
+            )
         };
+    }
+
+    private validateVanessaRunLogFromJson(
+        jsonPath: string,
+        workspaceRootPath: string,
+        outputChannel: vscode.OutputChannel
+    ): { ok: true } | { ok: false; message: string } {
+        const runLogPath = this.resolveVanessaLogPathFromJson(jsonPath, workspaceRootPath);
+        if (!runLogPath) {
+            return { ok: true };
+        }
+        return this.validateRunLogForFailedSummary(runLogPath, outputChannel);
     }
 
     private async prepareVanessaLaunchContext(
@@ -9057,7 +9670,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     { outputChannel }
                 );
 
-                const statusResult = this.validateVanessaStatusFromJson(launchJsonPath, workspaceRootPath, outputChannel);
+                const statusResult = this.validateVanessaRunLogFromJson(launchJsonPath, workspaceRootPath, outputChannel);
                 if (!statusResult.ok) {
                     throw new Error(statusResult.message);
                 }
@@ -9211,19 +9824,659 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async openRunScenarioLog(scenarioName: string): Promise<void> {
-        const runState = this._scenarioExecutionStates.get(scenarioName);
-        if (!runState) {
+    private resolveFeatureTrackingSession(document: vscode.TextDocument): {
+        sessionKey: string;
+        displayName: string;
+        featurePath: string;
+        expectedScenarioName?: string;
+    } | undefined {
+        if (document.uri.scheme !== 'file') {
+            return undefined;
+        }
+        if (path.extname(document.uri.fsPath).toLowerCase() !== '.feature') {
+            return undefined;
+        }
+
+        this.pruneScenarioBuildArtifactsByCache();
+
+        const currentFeatureKey = this.normalizeFilePathForComparison(document.uri.fsPath);
+        if (!currentFeatureKey) {
+            return undefined;
+        }
+
+        for (const [scenarioName, artifact] of this._scenarioBuildArtifacts.entries()) {
+            const artifactFeaturePath = artifact.featurePath?.trim();
+            if (!artifactFeaturePath) {
+                continue;
+            }
+            const artifactFeatureKey = this.normalizeFilePathForComparison(artifactFeaturePath);
+            if (!artifactFeatureKey) {
+                continue;
+            }
+            if (artifactFeatureKey === currentFeatureKey) {
+                return {
+                    sessionKey: scenarioName,
+                    displayName: scenarioName,
+                    featurePath: artifactFeaturePath,
+                    expectedScenarioName: scenarioName
+                };
+            }
+        }
+
+        const baseName = path.basename(document.uri.fsPath, path.extname(document.uri.fsPath)) || path.basename(document.uri.fsPath);
+        return {
+            sessionKey: `feature::${currentFeatureKey}`,
+            displayName: baseName,
+            featurePath: document.uri.fsPath,
+            expectedScenarioName: undefined
+        };
+    }
+
+    private resolveFeatureTrackingSessionByFeaturePath(featurePathRaw: string): {
+        sessionKey: string;
+        displayName: string;
+        featurePath: string;
+        expectedScenarioName?: string;
+    } | undefined {
+        const featurePath = this.stripWrappingQuotes(featurePathRaw).trim();
+        if (!featurePath) {
+            return undefined;
+        }
+
+        this.pruneScenarioBuildArtifactsByCache();
+        const featureKey = this.normalizeFilePathForComparison(featurePath);
+        if (!featureKey) {
+            return undefined;
+        }
+
+        for (const [scenarioName, artifact] of this._scenarioBuildArtifacts.entries()) {
+            const artifactFeaturePath = artifact.featurePath?.trim();
+            if (!artifactFeaturePath) {
+                continue;
+            }
+            const artifactFeatureKey = this.normalizeFilePathForComparison(artifactFeaturePath);
+            if (!artifactFeatureKey) {
+                continue;
+            }
+            if (artifactFeatureKey === featureKey) {
+                return {
+                    sessionKey: scenarioName,
+                    displayName: scenarioName,
+                    featurePath: artifactFeaturePath,
+                    expectedScenarioName: scenarioName
+                };
+            }
+        }
+
+        const baseName = path.basename(featurePath, path.extname(featurePath)) || path.basename(featurePath);
+        return {
+            sessionKey: `feature::${featureKey}`,
+            displayName: baseName,
+            featurePath,
+            expectedScenarioName: undefined
+        };
+    }
+
+    private parseTrackingSessionFromLogFile(
+        runLogPath: string
+    ): {
+        session: { sessionKey: string; displayName: string; featurePath: string; expectedScenarioName?: string };
+        scenarioFromLog?: string;
+        featurePathFromLog: string;
+    } | undefined {
+        if (!runLogPath || !fs.existsSync(runLogPath)) {
+            return undefined;
+        }
+
+        let content = '';
+        try {
+            content = fs.readFileSync(runLogPath, 'utf8');
+        } catch {
+            return undefined;
+        }
+
+        const lines = content.split(/\r\n|\r|\n/);
+        let featurePathFromLog: string | undefined;
+        let scenarioNameFromLog: string | undefined;
+        for (const line of lines) {
+            if (!featurePathFromLog) {
+                featurePathFromLog = this.extractFeaturePathFromRunLogLine(line);
+            }
+            if (!scenarioNameFromLog) {
+                scenarioNameFromLog = this.extractScenarioNameFromRunLogLine(line);
+            }
+            if (featurePathFromLog && scenarioNameFromLog) {
+                break;
+            }
+        }
+
+        if (!featurePathFromLog) {
+            return undefined;
+        }
+
+        const session = this.resolveFeatureTrackingSessionByFeaturePath(featurePathFromLog);
+        if (!session) {
+            return undefined;
+        }
+
+        return {
+            session,
+            scenarioFromLog: scenarioNameFromLog?.trim() || undefined,
+            featurePathFromLog
+        };
+    }
+
+    public async trackScenarioRunByActiveFeatureEditor(): Promise<void> {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.document.uri.scheme !== 'file' || path.extname(editor.document.uri.fsPath).toLowerCase() !== '.feature') {
+            vscode.window.showWarningMessage(this.t('Open a feature file to use this command.'));
+            return;
+        }
+
+        const trackingSession = this.resolveFeatureTrackingSession(editor.document);
+        if (!trackingSession) {
+            return;
+        }
+
+        await this.trackScenarioRunByLog(
+            trackingSession.sessionKey,
+            {
+                displayName: trackingSession.displayName,
+                featurePath: trackingSession.featurePath,
+                expectedScenarioName: trackingSession.expectedScenarioName
+            }
+        );
+    }
+
+    public async switchTrackedRunByActiveFeatureEditor(): Promise<void> {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.document.uri.scheme !== 'file' || path.extname(editor.document.uri.fsPath).toLowerCase() !== '.feature') {
+            vscode.window.showWarningMessage(this.t('Open a feature file to use this command.'));
+            return;
+        }
+
+        const trackingSession = this.resolveFeatureTrackingSession(editor.document);
+        if (!trackingSession) {
+            return;
+        }
+
+        await this.switchTrackedScenarioRun(
+            trackingSession.sessionKey,
+            {
+                displayName: trackingSession.displayName,
+                includeInternalRun: !!trackingSession.expectedScenarioName
+            }
+        );
+    }
+
+    public async stopTrackedRunByActiveFeatureEditor(): Promise<void> {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.document.uri.scheme !== 'file' || path.extname(editor.document.uri.fsPath).toLowerCase() !== '.feature') {
+            vscode.window.showWarningMessage(this.t('Open a feature file to use this command.'));
+            return;
+        }
+
+        const trackingSession = this.resolveFeatureTrackingSession(editor.document);
+        if (!trackingSession) {
+            return;
+        }
+
+        const trackedRuns = this.getTrackedRunsMapForScenario(trackingSession.sessionKey);
+        if (!trackedRuns || trackedRuns.size === 0) {
             vscode.window.showInformationMessage(
-                this.t('No run log is available yet for scenario "{0}".', scenarioName)
+                this.t('No tracked runs are active for "{0}".', trackingSession.displayName)
             );
             return;
         }
 
-        const runLogPath = runState.runLogPath?.trim();
-        if (!runLogPath) {
+        this.clearTrackedRunLogWatchersForScenario(trackingSession.sessionKey);
+        this.sendRunArtifactsStateToWebview();
+        vscode.window.showInformationMessage(
+            this.t('Stopped tracked runs for "{0}".', trackingSession.displayName)
+        );
+    }
+
+    public async trackScenarioRunByActiveLogEditor(): Promise<void> {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.document.uri.scheme !== 'file' || path.extname(editor.document.uri.fsPath).toLowerCase() !== '.log') {
+            vscode.window.showWarningMessage(this.t('Open a log file to use this command.'));
+            return;
+        }
+
+        const runLogPath = editor.document.uri.fsPath;
+        const parsed = this.parseTrackingSessionFromLogFile(runLogPath);
+        if (!parsed) {
             vscode.window.showWarningMessage(
-                this.t('Run log path is not available for scenario "{0}".', scenarioName)
+                this.t('No Feature path found in log header. Use feature context menu command instead.')
+            );
+            return;
+        }
+
+        const started = await this.trackScenarioRunByLog(
+            parsed.session.sessionKey,
+            {
+                displayName: parsed.session.displayName,
+                featurePath: parsed.session.featurePath,
+                // For unbound feature sessions do not lock to Scenario marker from log header,
+                // because external logs may interleave nested scenario markers.
+                expectedScenarioName: parsed.session.expectedScenarioName,
+                preferredRunLogPath: runLogPath
+            }
+        );
+        if (!started) {
+            return;
+        }
+
+        await this.openFeatureFromTrackedLogSession(parsed.session, parsed.featurePathFromLog);
+    }
+
+    private resolveRunLogPathInput(rawInput: string): string {
+        const normalizedInput = this.stripWrappingQuotes(rawInput).trim();
+        if (!normalizedInput) {
+            return '';
+        }
+        if (path.isAbsolute(normalizedInput)) {
+            return path.normalize(normalizedInput);
+        }
+        const workspaceRootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+        return path.resolve(workspaceRootPath, normalizedInput);
+    }
+
+    private getExpectedRunLogNameCandidates(options: {
+        displayName?: string;
+        expectedScenarioName?: string;
+        featurePath?: string;
+        sessionKey?: string;
+    }): string[] {
+        const candidates = new Set<string>();
+        const expectedScenarioName = options.expectedScenarioName?.trim();
+        if (expectedScenarioName) {
+            candidates.add(expectedScenarioName);
+        }
+
+        const displayName = options.displayName?.trim();
+        if (displayName) {
+            candidates.add(displayName);
+        }
+
+        const artifactFeaturePath = options.expectedScenarioName
+            ? this._scenarioBuildArtifacts.get(options.expectedScenarioName)?.featurePath
+            : undefined;
+        const featurePath = options.featurePath?.trim() || artifactFeaturePath?.trim() || '';
+        const featureBaseName = featurePath
+            ? path.basename(featurePath, path.extname(featurePath))
+            : '';
+        if (featureBaseName.trim()) {
+            candidates.add(featureBaseName.trim());
+        }
+
+        return Array.from(candidates);
+    }
+
+    private doesRunLogNameMatchFeature(
+        runLogPath: string,
+        options: {
+            displayName?: string;
+            expectedScenarioName?: string;
+            featurePath?: string;
+            sessionKey?: string;
+        }
+    ): boolean {
+        const runLogBaseName = path.basename(runLogPath, path.extname(runLogPath));
+        const normalizedRunLogName = this.normalizeScenarioLookupKey(runLogBaseName);
+        if (!normalizedRunLogName) {
+            return false;
+        }
+
+        const expectedNames = this.getExpectedRunLogNameCandidates(options);
+        for (const expectedName of expectedNames) {
+            const normalizedExpected = this.normalizeScenarioLookupKey(expectedName);
+            if (!normalizedExpected) {
+                continue;
+            }
+            if (normalizedRunLogName === normalizedExpected
+                || normalizedRunLogName.startsWith(normalizedExpected)
+                || normalizedExpected.startsWith(normalizedRunLogName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private async promptRunLogPathForTracking(displayName: string): Promise<string | undefined> {
+        const chooseFileLabel = this.t('Choose log file');
+        const manualPathLabel = this.t('Enter log path manually');
+        const source = await vscode.window.showQuickPick(
+            [
+                {
+                    label: chooseFileLabel,
+                    description: this.t('Select run log file from disk.'),
+                    source: 'file'
+                },
+                {
+                    label: manualPathLabel,
+                    description: this.t('Specify run log path manually.'),
+                    source: 'manual'
+                }
+            ] as Array<vscode.QuickPickItem & { source: 'file' | 'manual' }>,
+            {
+                title: this.t('Track scenario run by log for "{0}"', displayName),
+                placeHolder: this.t('Choose how to provide run log path.'),
+                ignoreFocusOut: true
+            }
+        );
+        if (!source) {
+            return undefined;
+        }
+
+        if (source.source === 'file') {
+            const selected = await vscode.window.showOpenDialog({
+                canSelectFiles: true,
+                canSelectFolders: false,
+                canSelectMany: false,
+                openLabel: this.t('Use this log file'),
+                title: this.t('Select run log file for "{0}"', displayName),
+                defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri
+            });
+            if (!selected || selected.length === 0) {
+                return undefined;
+            }
+            return selected[0].fsPath;
+        }
+
+        const manualValue = await vscode.window.showInputBox({
+            title: this.t('Track scenario run by log for "{0}"', displayName),
+            prompt: this.t('Enter absolute or workspace-relative path to run log file.'),
+            placeHolder: this.t('Example: .vscode/kot-runtime/vanessa/myScenario.log'),
+            ignoreFocusOut: true,
+            validateInput: (value) => value.trim().length > 0
+                ? undefined
+                : this.t('Path cannot be empty.')
+        });
+        if (!manualValue) {
+            return undefined;
+        }
+        return this.resolveRunLogPathInput(manualValue);
+    }
+
+    private getRunStatusLabel(status: 'idle' | 'running' | 'passed' | 'failed'): string {
+        if (status === 'running') {
+            return this.t('Run in progress');
+        }
+        if (status === 'failed') {
+            return this.t('Last run failed');
+        }
+        if (status === 'passed') {
+            return this.t('Last run passed');
+        }
+        return this.t('Ready to run');
+    }
+
+    private async trackScenarioRunByLog(
+        sessionKey: string,
+        options?: {
+            displayName?: string;
+            featurePath?: string;
+            expectedScenarioName?: string;
+            preferredRunLogPath?: string;
+        }
+    ): Promise<boolean> {
+        this.pruneScenarioBuildArtifactsByCache();
+        const displayName = options?.displayName?.trim() || sessionKey;
+        const featurePath = options?.featurePath?.trim();
+        const expectedScenarioName = options?.expectedScenarioName?.trim();
+        const preferredRunLogPath = options?.preferredRunLogPath?.trim();
+        const runLogPathRaw = preferredRunLogPath || await this.promptRunLogPathForTracking(displayName);
+        if (!runLogPathRaw) {
+            return false;
+        }
+        const runLogPath = this.resolveRunLogPathInput(runLogPathRaw);
+        if (!runLogPath) {
+            return false;
+        }
+
+        if (!fs.existsSync(runLogPath)) {
+            vscode.window.showWarningMessage(this.t('Run log file not found at path: {0}', runLogPath));
+            return false;
+        }
+
+        let stat: fs.Stats;
+        try {
+            stat = fs.statSync(runLogPath);
+        } catch {
+            vscode.window.showWarningMessage(this.t('Run log file not found at path: {0}', runLogPath));
+            return false;
+        }
+        if (!stat.isFile()) {
+            vscode.window.showWarningMessage(this.t('Selected path is not a file: {0}', runLogPath));
+            return false;
+        }
+
+        if (!this.doesRunLogNameMatchFeature(runLogPath, {
+            displayName,
+            expectedScenarioName,
+            featurePath,
+            sessionKey
+        })) {
+            const continueAction = this.t('Track anyway');
+            const selection = await vscode.window.showWarningMessage(
+                this.t('Run log file name does not match feature name for scenario "{0}".', displayName),
+                { modal: true, detail: runLogPath },
+                continueAction
+            );
+            if (selection !== continueAction) {
+                return false;
+            }
+        }
+
+        const tracker = this.startTrackedRunLogWatcher(
+            sessionKey,
+            runLogPath,
+            {
+                initialFeaturePath: featurePath,
+                expectedScenarioName
+            }
+        );
+        this.setActiveTrackedRunForScenario(sessionKey, tracker.runLogKey);
+        this.outputInfo(
+            this.getRunOutputChannel(),
+            this.t('Tracking scenario "{0}" by log file: {1}', displayName, runLogPath)
+        );
+        return true;
+    }
+
+    private async openFeatureFromTrackedLogSession(
+        session: { sessionKey: string; displayName: string; featurePath: string; expectedScenarioName?: string },
+        featurePathFromLog?: string
+    ): Promise<void> {
+        const candidatePaths: string[] = [];
+        const tryAddCandidate = (candidate?: string) => {
+            const normalized = candidate?.trim();
+            if (!normalized) {
+                return;
+            }
+            if (candidatePaths.includes(normalized)) {
+                return;
+            }
+            candidatePaths.push(normalized);
+        };
+
+        tryAddCandidate(session.featurePath);
+        tryAddCandidate(featurePathFromLog);
+        if (session.expectedScenarioName) {
+            tryAddCandidate(this._scenarioBuildArtifacts.get(session.expectedScenarioName)?.featurePath);
+        }
+
+        for (const candidatePath of candidatePaths) {
+            if (!candidatePath) {
+                continue;
+            }
+            if (path.extname(candidatePath).toLowerCase() !== '.feature') {
+                continue;
+            }
+            if (!fs.existsSync(candidatePath)) {
+                continue;
+            }
+
+            const opened = await this.openFeatureAtLineInEditor(candidatePath, 1);
+            if (opened) {
+                return;
+            }
+        }
+
+        const referencePath = featurePathFromLog?.trim() || session.featurePath?.trim();
+        const featureBaseName = referencePath
+            ? path.basename(referencePath, path.extname(referencePath))
+            : '';
+        if (!featureBaseName) {
+            return;
+        }
+
+        let workspaceMatches: vscode.Uri[] = [];
+        try {
+            const pattern = `**/${featureBaseName}.feature`;
+            workspaceMatches = await vscode.workspace.findFiles(pattern, '**/node_modules/**', 30);
+        } catch {
+            workspaceMatches = [];
+        }
+        if (workspaceMatches.length === 0) {
+            return;
+        }
+
+        const scoredMatches = workspaceMatches
+            .map(uri => {
+                const candidatePath = uri.fsPath;
+                const candidateNormalized = this.normalizeFilePathForComparison(candidatePath) || '';
+                const normalizedExpectedScenarioName = session.expectedScenarioName
+                    ? this.normalizeScenarioLookupKey(session.expectedScenarioName)
+                    : '';
+                let score = 0;
+
+                if (referencePath && this.areFeaturePathsEquivalentForTracking(referencePath, candidatePath)) {
+                    score += 1000;
+                }
+                if (candidateNormalized.includes('feature_builds')) {
+                    score += 100;
+                }
+                if (normalizedExpectedScenarioName && candidateNormalized.includes(normalizedExpectedScenarioName)) {
+                    score += 20;
+                }
+                score -= candidatePath.length / 1000;
+
+                return { candidatePath, score };
+            })
+            .sort((left, right) => right.score - left.score);
+
+        const bestCandidate = scoredMatches[0]?.candidatePath;
+        if (!bestCandidate) {
+            return;
+        }
+        await this.openFeatureAtLineInEditor(bestCandidate, 1);
+    }
+
+    private async switchTrackedScenarioRun(
+        sessionKey: string,
+        options?: {
+            displayName?: string;
+            includeInternalRun?: boolean;
+        }
+    ): Promise<void> {
+        this.pruneScenarioBuildArtifactsByCache();
+        const displayName = options?.displayName?.trim() || sessionKey;
+        const includeInternalRun = options?.includeInternalRun === true;
+
+        type TrackedRunQuickPickItem = vscode.QuickPickItem & {
+            kind: 'internal' | 'tracked';
+            runKey?: string;
+            runLogPath?: string;
+        };
+
+        const items: TrackedRunQuickPickItem[] = [];
+        const activeTracked = this.getActiveTrackedRunForScenario(sessionKey);
+        const internalState = this._scenarioExecutionStates.get(sessionKey);
+        const internalRunLogPath = internalState?.runLogPath?.trim();
+        if (includeInternalRun && internalRunLogPath) {
+            items.push({
+                kind: 'internal',
+                label: this.t('VS Code launched run'),
+                description: this.getRunStatusLabel(internalState?.status || 'idle'),
+                detail: internalRunLogPath,
+                picked: !activeTracked
+            });
+        }
+
+        const trackedRuns = this.getTrackedRunsMapForScenario(sessionKey);
+        if (trackedRuns) {
+            const sortedTrackedRuns = Array.from(trackedRuns.values())
+                .sort((left, right) => right.updatedAt - left.updatedAt);
+            for (const trackedRun of sortedTrackedRuns) {
+                const isActive = activeTracked?.runLogKey === trackedRun.runLogKey;
+                items.push({
+                    kind: 'tracked',
+                    runKey: trackedRun.runLogKey,
+                    runLogPath: trackedRun.runLogPath,
+                    label: isActive
+                        ? `$(check) ${this.t('Tracked run')}`
+                        : this.t('Tracked run'),
+                    description: this.getRunStatusLabel(trackedRun.status),
+                    detail: trackedRun.runLogPath,
+                    picked: isActive
+                });
+            }
+        }
+
+        if (items.length === 0) {
+            vscode.window.showInformationMessage(
+                this.t('No tracked runs are available for scenario "{0}".', displayName)
+            );
+            return;
+        }
+
+        const picked = await vscode.window.showQuickPick(items, {
+            title: this.t('Select tracked run for scenario "{0}"', displayName),
+            placeHolder: this.t('Choose run log to show progress and failures for this scenario.'),
+            matchOnDescription: true,
+            matchOnDetail: true,
+            ignoreFocusOut: true
+        });
+        if (!picked) {
+            return;
+        }
+
+        if (picked.kind === 'internal') {
+            this.setActiveTrackedRunForScenario(sessionKey, undefined);
+            return;
+        }
+
+        const runKey = picked.runKey;
+        if (!runKey) {
+            return;
+        }
+        this.setActiveTrackedRunForScenario(sessionKey, runKey);
+        this.pollTrackedRunLogWatcher(sessionKey, runKey);
+    }
+
+    private async openRunScenarioLog(scenarioName: string): Promise<void> {
+        let runLogPath = this.getSelectedRunLogPathForScenario(scenarioName)?.trim();
+        if (!runLogPath) {
+            const trackedRuns = this.getTrackedRunsMapForScenario(scenarioName);
+            if (trackedRuns && trackedRuns.size > 0) {
+                const fallbackRun = Array.from(trackedRuns.values())
+                    .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+                if (fallbackRun) {
+                    this.setActiveTrackedRunForScenario(
+                        scenarioName,
+                        fallbackRun.runLogKey,
+                        { refreshHighlights: true, notifyWebview: false }
+                    );
+                    runLogPath = fallbackRun.runLogPath;
+                }
+            }
+        }
+
+        if (!runLogPath) {
+            vscode.window.showInformationMessage(
+                this.t('No run log is available yet for scenario "{0}".', scenarioName)
             );
             return;
         }
@@ -9569,6 +10822,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         let templateStdoutData = '';
         let templateStderrData = '';
+        let effectiveRunLogPath = runLogPath;
         try {
             await new Promise<void>((resolve, reject) => {
                 const child = cp.spawn(command, [], {
@@ -9596,19 +10850,29 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 });
             });
 
-            this.setScenarioExecutionState(scenarioName, 'passed', this.t('Last run passed'), runLogPath);
+            if (jsonPathForTemplate && fs.existsSync(jsonPathForTemplate)) {
+                effectiveRunLogPath = this.resolveVanessaLogPathFromJson(jsonPathForTemplate, workspaceRootPath) || runLogPath;
+            }
+            if (effectiveRunLogPath) {
+                const logValidation = this.validateRunLogForFailedSummary(effectiveRunLogPath, outputChannel);
+                if (!logValidation.ok) {
+                    throw new Error(logValidation.message);
+                }
+            }
+
+            this.setScenarioExecutionState(scenarioName, 'passed', this.t('Last run passed'), effectiveRunLogPath);
             this.outputInfo(outputChannel, this.t('Scenario run finished successfully: "{0}"', scenarioName));
             vscode.window.showInformationMessage(
                 this.t('Vanessa launch completed for scenario "{0}".', scenarioName)
             );
         } catch (error: any) {
             const errorMessage = error?.message || String(error);
-            this.setScenarioExecutionState(scenarioName, 'failed', errorMessage, runLogPath);
+            this.setScenarioExecutionState(scenarioName, 'failed', errorMessage, effectiveRunLogPath);
             this.appendProcessOutputTail(outputChannel, `Vanessa template launch (${scenarioName})`, templateStdoutData, templateStderrData);
             this.outputError(outputChannel, this.t('Vanessa launch failed: {0}', errorMessage), error);
             this.outputError(outputChannel, this.t('Scenario run failed: "{0}" -> {1}', scenarioName, errorMessage));
-            this.appendScenarioRunLogReference(outputChannel, scenarioName, runLogPath);
-            await this.showRunFailureMessageWithActions(scenarioName, errorMessage, runLogPath);
+            this.appendScenarioRunLogReference(outputChannel, scenarioName, effectiveRunLogPath);
+            await this.showRunFailureMessageWithActions(scenarioName, errorMessage, effectiveRunLogPath);
         } finally {
             if (templateJsonContext.jsonWasPatched && jsonPathForTemplate) {
                 try {

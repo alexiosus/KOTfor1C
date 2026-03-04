@@ -358,8 +358,8 @@
             if (button instanceof HTMLButtonElement) {
                 const scenarioName = button.getAttribute('data-name') || '';
                 const runInfo = scenarioName && runArtifacts ? runArtifacts[scenarioName] : null;
-                const isRunInProgress = runInfo?.runStatus === 'running';
-                button.disabled = isBuildInProgress || isRunInProgress;
+                const isBlockingRunInProgress = runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false;
+                button.disabled = isBuildInProgress || isBlockingRunInProgress;
             }
         });
         updateTopRunButtonState();
@@ -376,7 +376,7 @@
         if (!runArtifacts || typeof runArtifacts !== 'object') {
             return false;
         }
-        return Object.values(runArtifacts).some(info => !!info && info.runStatus === 'running');
+        return Object.values(runArtifacts).some(info => !!info && info.runStatus === 'running' && info.blocksControls !== false);
     }
 
     function updateTopRunButtonState() {
@@ -918,11 +918,14 @@
         const runStatus = runInfo?.runStatus || 'idle';
         const isStale = Boolean(runInfo?.stale);
         const isRunInProgress = runStatus === 'running';
+        const isBlockingRunInProgress = isRunInProgress && runInfo?.blocksControls !== false;
         const isRunPassed = runStatus === 'passed';
         const isRunPassedStale = isRunPassed && isStale;
         const isRunPassedFresh = isRunPassed && !isStale;
         const isRunFailed = runStatus === 'failed';
         const runMessage = typeof runInfo?.runMessage === 'string' ? runInfo.runMessage.trim() : '';
+        const activeRunLogPath = typeof runInfo?.activeRunLogPath === 'string' ? runInfo.activeRunLogPath.trim() : '';
+        const activeRunSource = typeof runInfo?.activeRunSource === 'string' ? runInfo.activeRunSource : '';
         const progressCurrentLineRaw = Number(runInfo?.progressCurrentLine);
         const progressTotalLinesRaw = Number(runInfo?.progressTotalLines);
         const progressPercentRaw = Number(runInfo?.progressPercent);
@@ -945,6 +948,9 @@
         const runTitleTemplate = window.__loc?.runScenarioJsonTitle || 'Run scenario in Vanessa Automation by json: {0}';
         const runTitle = runTitleTemplate.replace('{0}', name);
         const staleSuffix = isStale ? ` • ${window.__loc?.runScenarioStaleSuffix || 'Build is stale'}` : '';
+        const trackedSourceSuffix = activeRunSource === 'tracked'
+            ? ` • ${window.__loc?.runScenarioTrackedSourceSuffix || 'Tracked log'}`
+            : '';
         const statusSuffix = isRunInProgress
             ? ` • ${window.__loc?.runScenarioRunningSuffix || 'Run in progress'}`
             : (isRunPassed
@@ -967,9 +973,10 @@
             ? `<span class="codicon codicon-error run-scenario-icon-failed"></span>
                <span class="codicon codicon-play-circle run-scenario-icon-retry"></span>`
             : `<span class="${runButtonIconClass}"></span>`;
-        const runButtonTitle = `${runTitle}${statusSuffix}${staleSuffix}${progressTitle ? ` • ${progressTitle}` : ''}${runMessage ? `\n${runMessage}` : ''}`;
+        const selectedLogTemplate = window.__loc?.runScenarioSelectedLog || 'Log: {0}';
+        const runButtonTitle = `${runTitle}${statusSuffix}${trackedSourceSuffix}${staleSuffix}${progressTitle ? ` • ${progressTitle}` : ''}${runMessage ? `\n${runMessage}` : ''}${activeRunLogPath ? `\n${selectedLogTemplate.replace('{0}', activeRunLogPath)}` : ''}`;
         const escapedRunTitle = escapeHtmlAttr(runButtonTitle);
-        const runButtonDisabledAttr = (isBuildInProgress || isRunInProgress) ? ' disabled' : '';
+        const runButtonDisabledAttr = (isBuildInProgress || isBlockingRunInProgress) ? ' disabled' : '';
         const canOpenFailedStepInFeature = isRunFailed && !!runInfo?.featurePath;
         const runStepTitleTemplate = window.__loc?.runScenarioOpenFailedStepTitle || 'Open failed step in feature: {0}';
         const runStepTitle = escapeHtmlAttr(runStepTitleTemplate.replace('{0}', name));
@@ -997,7 +1004,7 @@
                </button>`
             : '';
 
-        const runButtonHtml = hasRunArtifact && !isRunInProgress
+        const runButtonHtml = hasRunArtifact && !isBlockingRunInProgress
             ? `<button class="${runButtonClass}" data-name="${escapedNameAttr}" title="${escapedRunTitle}"${runButtonDisabledAttr}>
                    ${runButtonIconHtml}
                </button>`
@@ -1400,7 +1407,7 @@
             return;
         }
         const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
-        if (runInfo?.runStatus === 'running') {
+        if (runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false) {
             log(`Run request ignored for "${name}" because run is already in progress.`);
             return;
         }
@@ -1588,7 +1595,8 @@
         const hasFeatureArtifact = !!(runInfo && runInfo.featurePath);
         const canOpenRunLog = !!runInfo?.canOpenRunLog;
         const isRunInProgress = runInfo?.runStatus === 'running';
-        const runDisabled = isBuildInProgress || isRunInProgress || !hasRunArtifact;
+        const isBlockingRunInProgress = isRunInProgress && runInfo?.blocksControls !== false;
+        const runDisabled = isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact;
         const runModeAutomaticLabel = window.__loc?.runScenarioModeAutomatic || 'Run test (auto close)';
         const runLabel = runModeAutomaticLabel.replace(/\s*\([^)]*\)\s*$/, '') || 'Run test';
         const runHint = window.__loc?.runScenarioModeAutomaticHint || 'Runs scenario with StartFeaturePlayer and waits for completion.';
@@ -1912,8 +1920,8 @@
             if (!(btn instanceof HTMLButtonElement)) return;
             const scenarioName = btn.getAttribute('data-name') || '';
             const runInfo = scenarioName && runArtifacts ? runArtifacts[scenarioName] : null;
-            const isRunInProgress = runInfo?.runStatus === 'running';
-            btn.disabled = isBuildInProgress || isRunInProgress;
+            const isBlockingRunInProgress = runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false;
+            btn.disabled = isBuildInProgress || isBlockingRunInProgress;
             btn.removeEventListener('click', handleRunScenarioClick);
             btn.addEventListener('click', handleRunScenarioClick);
         });

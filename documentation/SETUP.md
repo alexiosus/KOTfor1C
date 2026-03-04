@@ -179,3 +179,7 @@
 - `KOT - Open build folder` (`KOT - Открыть папку сборки`)
 - `KOT - Create FirstLaunch archive` (`KOT - Собрать архив FirstLaunch`)
 - `KOT - Open scenario in Vanessa (manual debug)` (`KOT - Открыть сценарий в Vanessa (ручная отладка)`)
+- `KOT - Track scenario run by log for opened feature` (`KOT - Отслеживать прогон по логу для открытого feature`)
+- `KOT - Switch tracked run for opened feature` (`KOT - Переключить отслеживаемый прогон для открытого feature`)
+- `KOT - Stop tracked runs for opened feature` (`KOT - Остановить отслеживание прогонов для открытого feature`)
+- `KOT - Track run by opened log file` (`KOT - Отслеживать прогон по открытому log-файлу`)

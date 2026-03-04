@@ -679,6 +679,34 @@ export function activate(context: vscode.ExtensionContext) {
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.trackScenarioRunByFeatureLog',
+        async () => {
+            await phaseSwitcherProvider.trackScenarioRunByActiveFeatureEditor();
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.switchTrackedScenarioRunForFeature',
+        async () => {
+            await phaseSwitcherProvider.switchTrackedRunByActiveFeatureEditor();
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.stopTrackedScenarioRunForFeature',
+        async () => {
+            await phaseSwitcherProvider.stopTrackedRunByActiveFeatureEditor();
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.trackScenarioRunFromOpenedLogFile',
+        async () => {
+            await phaseSwitcherProvider.trackScenarioRunByActiveLogEditor();
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.processQueuedScenarioFiles',
         async () => {
             await runScenarioRepairBatch('changed');
