@@ -4,6 +4,14 @@ import { getStepsHtml, forceRefreshSteps as forceRefreshStepsCore } from './step
 import { getTranslator } from './localization';
 import * as path from 'path';
 import { TestInfo } from './types';
+import {
+    buildVariableReferenceText,
+    extractSavedVariableFromStepLine,
+    formatVariableValueForDisplay,
+    findVariableReferenceAtPosition,
+    SavedVariableDefinition
+} from './completionProvider';
+import { YamlParametersManager } from './yamlParametersManager';
 
 // Интерфейс для хранения определений шагов и их описаний
 interface StepDefinition {
@@ -703,6 +711,145 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         return new vscode.Hover(content);
     }
 
+    private collectScenarioVariableDefinitionsBeforeLine(
+        document: vscode.TextDocument,
+        lineExclusive: number,
+        sourceFilter?: SavedVariableDefinition['source']
+    ): SavedVariableDefinition[] {
+        const variables: SavedVariableDefinition[] = [];
+        const seen = new Set<string>();
+
+        for (let line = lineExclusive - 1; line >= 0; line--) {
+            const variable = extractSavedVariableFromStepLine(document.lineAt(line).text);
+            if (!variable) {
+                continue;
+            }
+
+            if (sourceFilter && variable.source !== sourceFilter) {
+                continue;
+            }
+
+            const normalizedName = `${variable.source}:${variable.name.toLocaleLowerCase()}`;
+            if (seen.has(normalizedName)) {
+                continue;
+            }
+
+            seen.add(normalizedName);
+            variables.push(variable);
+        }
+
+        return variables;
+    }
+
+    private async collectGlobalVariableDefinitions(): Promise<SavedVariableDefinition[]> {
+        try {
+            const manager = YamlParametersManager.getInstance(this.context);
+            const globalVariables = await manager.loadGlobalVanessaVariables();
+            return globalVariables
+                .map(variable => ({
+                    name: (variable.key || '').trim(),
+                    value: typeof variable.value === 'string' ? variable.value : String(variable.value ?? ''),
+                    source: 'global' as const
+                }))
+                .filter(variable => variable.name.length > 0);
+        } catch (error) {
+            console.warn('[DriveHoverProvider] Failed to load GlobalVars for hover:', error);
+            return [];
+        }
+    }
+
+    private mergeVariableDefinitions(
+        firstVariables: SavedVariableDefinition[],
+        secondVariables: SavedVariableDefinition[]
+    ): SavedVariableDefinition[] {
+        const merged: SavedVariableDefinition[] = [];
+        const seen = new Set<string>();
+
+        firstVariables.forEach(variable => {
+            const normalizedName = `${variable.source}:${variable.name.toLocaleLowerCase()}`;
+            if (seen.has(normalizedName)) {
+                return;
+            }
+            seen.add(normalizedName);
+            merged.push(variable);
+        });
+
+        secondVariables.forEach(variable => {
+            const normalizedName = `${variable.source}:${variable.name.toLocaleLowerCase()}`;
+            if (seen.has(normalizedName)) {
+                return;
+            }
+            seen.add(normalizedName);
+            merged.push(variable);
+        });
+
+        return merged;
+    }
+
+    private async provideVariableHover(
+        document: vscode.TextDocument,
+        position: vscode.Position
+    ): Promise<vscode.Hover | null> {
+        const lineText = document.lineAt(position.line).text;
+        const variableReference = findVariableReferenceAtPosition(lineText, position.character);
+        if (!variableReference) {
+            return null;
+        }
+
+        const scenarioLocalVariables = this.collectScenarioVariableDefinitionsBeforeLine(document, position.line, 'saved');
+        const scenarioGlobalVariables = this.collectScenarioVariableDefinitionsBeforeLine(document, position.line, 'global');
+        const managerGlobalVariables = await this.collectGlobalVariableDefinitions();
+        const globalVariables = this.mergeVariableDefinitions(scenarioGlobalVariables, managerGlobalVariables);
+        const availableVariables = variableReference.source === 'global'
+            ? globalVariables
+            : this.mergeVariableDefinitions(
+                this.mergeVariableDefinitions(scenarioLocalVariables, scenarioGlobalVariables),
+                globalVariables
+            );
+        const variable = availableVariables.find(candidate =>
+            candidate.source === variableReference.source &&
+            candidate.name.localeCompare(variableReference.name, undefined, { sensitivity: 'accent' }) === 0
+        );
+
+        if (!variable) {
+            return null;
+        }
+
+        const t = await this.getHoverTranslator();
+        const referenceText = buildVariableReferenceText(variable.name, variableReference.source);
+        const title = variable.source === 'global'
+            ? t('Global variable')
+            : t('Saved variable');
+        const content = new vscode.MarkdownString();
+        const displayValue = formatVariableValueForDisplay(variable.value || ' ', variable.source);
+        content.appendMarkdown(`**${title}:** \`${referenceText}\`\n\n`);
+        this.appendVariableValueMarkdown(content, t('Value'), displayValue);
+
+        return new vscode.Hover(
+            content,
+            new vscode.Range(
+                position.line,
+                variableReference.startCharacter,
+                position.line,
+                variableReference.endCharacter
+            )
+        );
+    }
+
+    private appendVariableValueMarkdown(
+        markdown: vscode.MarkdownString,
+        label: string,
+        value: string
+    ): void {
+        if (!value.includes('\n') && !value.includes('\r')) {
+            markdown.appendMarkdown(`**${label}:** \`${value}\``);
+            return;
+        }
+
+        markdown.appendMarkdown(`**${label}:**\n\n`);
+        markdown.appendCodeblock(value);
+    }
+
     public async provideHover(
         document: vscode.TextDocument,
         position: vscode.Position,
@@ -731,6 +878,11 @@ export class DriveHoverProvider implements vscode.HoverProvider {
 
         if (isFeatureDocument && this.scenarioCacheProvider?.isFailedFeatureLine?.(document.uri, position.line)) {
             return null;
+        }
+
+        const variableHover = await this.provideVariableHover(document, position);
+        if (variableHover) {
+            return variableHover;
         }
 
         const scenarioCallHover = await this.provideScenarioCallHover(lineText);

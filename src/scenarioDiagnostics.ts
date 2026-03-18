@@ -6,10 +6,12 @@ import { TestInfo } from './types';
 import { isScenarioYamlFile } from './yamlValidator';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
+import { parseBlockKeyword } from './blockKeywordParser';
 
 const DIAGNOSTIC_SOURCE = 'KOT for 1C';
 const CODE_UNCLOSED_IF = 'kotTestToolkit.unclosedIf';
 const CODE_UNCLOSED_DO = 'kotTestToolkit.unclosedDo';
+const CODE_UNCLOSED_TRY = 'kotTestToolkit.unclosedTry';
 const CODE_UNCLOSED_QUOTE = 'kotTestToolkit.unclosedQuote';
 const CODE_UNKNOWN_STEP = 'kotTestToolkit.unknownStep';
 const CODE_UNKNOWN_SCENARIO = 'kotTestToolkit.unknownScenario';
@@ -98,6 +100,8 @@ interface DiagnosticMessages {
     extraEndIf: string;
     unmatchedDo: string;
     extraEndDo: string;
+    unmatchedTry: string;
+    extraEndTry: string;
     unmatchedQuote: string;
     missingQuotesLikely: string;
     defaultDescription: string;
@@ -118,6 +122,8 @@ function buildMessages(): DiagnosticMessages {
         extraEndIf: vscode.l10n.t('EndIf without matching If.'),
         unmatchedDo: vscode.l10n.t('Do block is not closed with EndDo.'),
         extraEndDo: vscode.l10n.t('EndDo without matching Do.'),
+        unmatchedTry: vscode.l10n.t('Try block is not closed with EndTry.'),
+        extraEndTry: vscode.l10n.t('EndTry without matching Try.'),
         unmatchedQuote: vscode.l10n.t('Unclosed double quote in line.'),
         missingQuotesLikely: vscode.l10n.t('Likely missing quotes in step/call arguments.'),
         defaultDescription: vscode.l10n.t('Scenario description is empty.'),
@@ -418,30 +424,6 @@ function getScenarioCallNames(blocks: ScenarioCallBlock[]): Set<string> {
     const names = new Set<string>();
     blocks.forEach(block => names.add(block.name));
     return names;
-}
-
-type BlockKeyword = 'If' | 'EndIf' | 'Do' | 'EndDo' | null;
-
-function parseBlockKeyword(line: string): BlockKeyword {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) {
-        return null;
-    }
-
-    if (/^If\b/i.test(trimmed)) {
-        return 'If';
-    }
-    if (/^EndIf\b/i.test(trimmed)) {
-        return 'EndIf';
-    }
-    if (/^Do\b/i.test(trimmed)) {
-        return 'Do';
-    }
-    if (/^EndDo\b/i.test(trimmed)) {
-        return 'EndDo';
-    }
-
-    return null;
 }
 
 function buildMissingParameterInsertion(
@@ -845,6 +827,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 CODE_INCOMPLETE_BLOCK,
                 CODE_UNCLOSED_IF,
                 CODE_UNCLOSED_DO,
+                CODE_UNCLOSED_TRY,
                 CODE_UNCLOSED_QUOTE
             ].includes(diagnostic.code)
         );
@@ -1357,9 +1340,10 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             await this.hoverProvider.ensureStepDefinitionsLoaded();
         }
 
-        // If/EndIf and Do/EndDo + quotes checks
+        // If/EndIf, Do/EndDo, Try/EndTry + quotes checks
         const ifStack: number[] = [];
         const doStack: number[] = [];
+        const tryStack: number[] = [];
         for (let line = bodyRange.startLine; line <= bodyRange.endLine; line++) {
             const text = document.lineAt(line).text;
             const blockKeyword = parseBlockKeyword(text);
@@ -1386,6 +1370,17 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 doStack.push(line);
             }
 
+            if (blockKeyword === 'EndTry') {
+                if (tryStack.length === 0) {
+                    diagnostics.push(createDiagnostic(document, line, this.messages.extraEndTry, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_TRY));
+                } else {
+                    tryStack.pop();
+                }
+            }
+            if (blockKeyword === 'Try') {
+                tryStack.push(line);
+            }
+
             const quotes = text.match(/(?<!\\)"/g);
             if (quotes && quotes.length % 2 !== 0) {
                 diagnostics.push(createDiagnostic(document, line, this.messages.unmatchedQuote, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_QUOTE));
@@ -1397,6 +1392,9 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         });
         doStack.forEach(line => {
             diagnostics.push(createDiagnostic(document, line, this.messages.unmatchedDo, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_DO));
+        });
+        tryStack.forEach(line => {
+            diagnostics.push(createDiagnostic(document, line, this.messages.unmatchedTry, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_TRY));
         });
 
         // Scenario calls checks

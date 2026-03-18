@@ -10,6 +10,7 @@ import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { TestInfo } from './types';
 import { normalizeScenarioParameterName } from './scenarioParameterUtils';
 import { getFeatureNestedScenarioContextAtPosition } from './featureNestedScenarioUtils';
+import { alignGherkinTablesInText } from './gherkinTableUtils';
 import JSZip = require('jszip');
 
 /**
@@ -1824,73 +1825,6 @@ function alignNestedScenarioCallParametersInText(
         if (j > i + 1) {
             i = j - 1;
         }
-    }
-
-    if (!changed) {
-        return scriptText;
-    }
-
-    return lines.join(eol);
-}
-
-function alignGherkinTablesInText(scriptText: string, eol: string): string {
-    const lines = scriptText.split(/\r\n|\r|\n/);
-    let changed = false;
-
-    const tableRowRegex = /^(\s*)\|(.*)\|\s*$/;
-
-    let i = 0;
-    while (i < lines.length) {
-        const firstMatch = lines[i].match(tableRowRegex);
-        if (!firstMatch) {
-            i++;
-            continue;
-        }
-
-        const tableRows: { lineIndex: number; indent: string; cells: string[] }[] = [];
-        let j = i;
-
-        while (j < lines.length) {
-            const rowMatch = lines[j].match(tableRowRegex);
-            if (!rowMatch) {
-                break;
-            }
-
-            const cells = rowMatch[2].split('|').map(cell => cell.trim());
-            tableRows.push({
-                lineIndex: j,
-                indent: rowMatch[1],
-                cells
-            });
-            j++;
-        }
-
-        if (tableRows.length > 0) {
-            const maxColumns = Math.max(...tableRows.map(row => row.cells.length));
-            const columnWidths = Array.from({ length: maxColumns }, () => 0);
-
-            for (const row of tableRows) {
-                for (let col = 0; col < maxColumns; col++) {
-                    const cellValue = row.cells[col] || '';
-                    columnWidths[col] = Math.max(columnWidths[col], cellValue.length);
-                }
-            }
-
-            for (const row of tableRows) {
-                const paddedCells: string[] = [];
-                for (let col = 0; col < maxColumns; col++) {
-                    const value = row.cells[col] || '';
-                    paddedCells.push(value.padEnd(columnWidths[col], ' '));
-                }
-                const alignedRow = `${row.indent}| ${paddedCells.join(' | ')} |`;
-                if (lines[row.lineIndex] !== alignedRow) {
-                    lines[row.lineIndex] = alignedRow;
-                    changed = true;
-                }
-            }
-        }
-
-        i = j;
     }
 
     if (!changed) {

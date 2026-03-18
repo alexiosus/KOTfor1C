@@ -6,10 +6,15 @@ import { getTranslator } from './localization';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { ScenarioLanguage, getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
 import { YamlParametersManager } from './yamlParametersManager';
+import { getBlockClosingKeyword, parseBlockKeyword } from './blockKeywordParser';
+import { normalizeMultilineStepInsertText } from './gherkinTableUtils';
 
 const VARIABLE_REFERENCE_PREFIX_REGEX = /^[A-Za-zА-Яа-яЁё0-9_]*$/;
 const SEMANTIC_STEP_PREFIX = '!';
 const GHERKIN_KEYWORD_PREFIX_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\s+/i;
+const OPTIONAL_GHERKIN_PREFIX_FRAGMENT = String.raw`(?:(?:\*\s*)?(?:And|But|Then|When|Given|If|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?`;
+const VARIABLE_ASSIGNMENT_VERB_FRAGMENT = String.raw`(?:save|store|remember|read|create|determine|define|generate|wait|execute|put|retrieve|get|copy|запоминаю|сохраняю|читаю|создаю|определяю|генерирую|ожидаю|выполняю|вставляю|получаю|копирую)`;
+const OPTIONAL_TRAILING_ANNOTATION_FRAGMENT = String.raw`(?:\s+\([^)]*\))?\s*$`;
 const SEMANTIC_SYNONYM_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
     ['нажать', 'нажатие', 'нажатия', 'нажат', 'кликнуть', 'клик', 'щелкнуть', 'щелчок', 'click', 'clicking', 'press', 'pressing', 'tap'],
     ['кнопка', 'button'],
@@ -26,10 +31,305 @@ const SEMANTIC_SYNONYM_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
     ['сохранить', 'запомнить', 'save', 'store', 'remember'],
     ['значение', 'параметр', 'value', 'parameter', 'argument']
 ];
-const SAVE_VARIABLE_STEP_REGEX_EN = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+in\s+(?:"([^"]+)"|'([^']+)')\s+variable\s*$/i;
-const SAVE_VARIABLE_STEP_REGEX_EN_VALUE_TO = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+value\s+to\s+(?:"([^"]+)"|'([^']+)')\s+variable\s*$/i;
-const SAVE_VARIABLE_STEP_REGEX_RU = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?Я\s+запоминаю\s+значение\s+выражения\s+(.+?)\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s*$/i;
+const SAVE_VARIABLE_STEP_REGEX_EN_VALUE_TO = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+value\s+to\s+(?:"([^"]+)"|'([^']+)')\s+variable(?:\s+globally)?\s*$/i;
 const SAVE_VARIABLE_STEP_REGEX_RU_VALUE_TO = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?Я\s+запоминаю\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s+значение\s+(.+?)\s*$/i;
+const EXECUTE_AND_PUT_TO_VARIABLE_REGEX = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?(?:I\s+execute\s+code\s+and\s+put\s+to\s+varible|Я\s+выполняю\s+код\s+и\s+вставляю\s+в\s+переменную)\s+(?:"([^"]+)"|'([^']+)')\s+(?:"([^"]+)"|'([^']+)')\s*$/i;
+const VARIABLE_ASSIGNMENT_TO_THE_VARIABLE_REGEX = new RegExp(
+    String.raw`^\s*${OPTIONAL_GHERKIN_PREFIX_FRAGMENT}.*\b${VARIABLE_ASSIGNMENT_VERB_FRAGMENT}\s+(.+?)\s+(?:to|into|in)\s+the\s+variable\s+(?:"([^"]+)"|'([^']+)')(?:\s+UI\s+Automation)?${OPTIONAL_TRAILING_ANNOTATION_FRAGMENT}`,
+    'i'
+);
+const VARIABLE_ASSIGNMENT_TO_VARIABLE_REGEX = new RegExp(
+    String.raw`^\s*${OPTIONAL_GHERKIN_PREFIX_FRAGMENT}.*\b${VARIABLE_ASSIGNMENT_VERB_FRAGMENT}\s+(.+?)\s*(?:to|in)\s+(?:the\s+)?(?:"([^"]+)"|'([^']+)')\s+variable(?:\s+globally)?${OPTIONAL_TRAILING_ANNOTATION_FRAGMENT}`,
+    'i'
+);
+const VARIABLE_ASSIGNMENT_FIND_OR_CREATE_REGEX = new RegExp(
+    String.raw`^\s*${OPTIONAL_GHERKIN_PREFIX_FRAGMENT}(?:I\s+find\s+or\s+create|И\s+я\s+нахожу\s+или\s+создаю)\s+(.+?)\s+(?:named|с\s+именем)\s+(?:"([^"]+)"|'([^']+)')(?:\s+.+?)?${OPTIONAL_TRAILING_ANNOTATION_FRAGMENT}`,
+    'i'
+);
+const VARIABLE_ASSIGNMENT_COPY_REGEX = new RegExp(
+    String.raw`^\s*${OPTIONAL_GHERKIN_PREFIX_FRAGMENT}(?:I\s+copy\s+the\s+variable|И\s+я\s+копирую\s+переменную)\s+(?:"([^"]+)"|'([^']+)')\s+(?:to|в)\s+(?:"([^"]+)"|'([^']+)')${OPTIONAL_TRAILING_ANNOTATION_FRAGMENT}`,
+    'i'
+);
+const VARIABLE_ASSIGNMENT_AS_REGEX = new RegExp(
+    String.raw`^\s*${OPTIONAL_GHERKIN_PREFIX_FRAGMENT}.*\b${VARIABLE_ASSIGNMENT_VERB_FRAGMENT}\s+(.+?)\s+(?:as|как)\s+(?:"([^"]+)"|'([^']+)')(?:\s+variable(?:\s+of\s+[^()]*)?)?(?:\s+(?:globally|глобально))?${OPTIONAL_TRAILING_ANNOTATION_FRAGMENT}`,
+    'i'
+);
+const VARIABLE_ASSIGNMENT_INTO_RU_REGEX = new RegExp(
+    String.raw`^\s*${OPTIONAL_GHERKIN_PREFIX_FRAGMENT}.*\b${VARIABLE_ASSIGNMENT_VERB_FRAGMENT}\s+(.+?)\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')(?:\s+глобально)?(?:\s+UI\s+Automation)?${OPTIONAL_TRAILING_ANNOTATION_FRAGMENT}`,
+    'i'
+);
+const VARIABLE_ASSIGNMENT_IN_SHORT_RU_REGEX = new RegExp(
+    String.raw`^\s*${OPTIONAL_GHERKIN_PREFIX_FRAGMENT}.*\b${VARIABLE_ASSIGNMENT_VERB_FRAGMENT}\s+(.+?)\s+в\s+(?:"([^"]+)"|'([^']+)')${OPTIONAL_TRAILING_ANNOTATION_FRAGMENT}`,
+    'i'
+);
+
+export type VariableCompletionMode = 'all' | 'globalOnly';
+export type VariableCompletionSource = 'saved' | 'global';
+
+export interface VariableReferenceContext {
+    startCharacter: number;
+    typedPrefix: string;
+    mode: VariableCompletionMode;
+}
+
+export interface SavedVariableDefinition {
+    name: string;
+    value: string;
+    source: VariableCompletionSource;
+}
+
+export interface VariableReferenceToken {
+    name: string;
+    source: VariableCompletionSource;
+    startCharacter: number;
+    endCharacter: number;
+}
+
+interface SavedVariableStepPattern {
+    regex: RegExp;
+    createDefinition: (match: RegExpMatchArray, source: VariableCompletionSource) => SavedVariableDefinition | null;
+}
+
+export function parseVariableReferenceContext(linePrefix: string): VariableReferenceContext | null {
+    const match = linePrefix.match(/(\${1,2})([A-Za-zА-Яа-яЁё0-9_]*)$/);
+    if (!match) {
+        return null;
+    }
+
+    const prefixWithDollars = match[0];
+    const dollarPrefix = match[1];
+    const typedPrefix = match[2];
+    const startCharacter = linePrefix.length - prefixWithDollars.length;
+
+    if (startCharacter > 0 && linePrefix[startCharacter - 1] === '$') {
+        return null;
+    }
+
+    if (!VARIABLE_REFERENCE_PREFIX_REGEX.test(typedPrefix)) {
+        return null;
+    }
+
+    return {
+        startCharacter,
+        typedPrefix,
+        mode: dollarPrefix === '$$' ? 'globalOnly' : 'all'
+    };
+}
+
+export function buildVariableReferenceText(
+    variableName: string,
+    source: VariableCompletionSource
+): string {
+    return source === 'global'
+        ? `$$${variableName}$$`
+        : `$${variableName}$`;
+}
+
+export function findVariableReferenceAtPosition(
+    lineText: string,
+    character: number
+): VariableReferenceToken | null {
+    const variableRegex = /\$\$([A-Za-zА-Яа-яЁё0-9_]+)\$\$|\$([A-Za-zА-Яа-яЁё0-9_]+)\$/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = variableRegex.exec(lineText)) !== null) {
+        const fullMatch = match[0];
+        const isGlobal = fullMatch.startsWith('$$');
+        const variableName = match[1] || match[2];
+        if (!variableName) {
+            continue;
+        }
+
+        const startCharacter = match.index;
+        const endCharacter = startCharacter + fullMatch.length;
+        if (character < startCharacter || character > endCharacter) {
+            continue;
+        }
+
+        return {
+            name: variableName,
+            source: isGlobal ? 'global' : 'saved',
+            startCharacter,
+            endCharacter
+        };
+    }
+
+    return null;
+}
+
+function getFirstTrimmedMatch(match: RegExpMatchArray, indices: number[]): string {
+    for (const index of indices) {
+        const value = match[index];
+        if (typeof value === 'string' && value.trim().length > 0) {
+            return value.trim();
+        }
+    }
+    return '';
+}
+
+function inferSavedVariableSourceFromLine(lineText: string): VariableCompletionSource {
+    return /\b(?:globally|глобально)\b/i.test(lineText) ? 'global' : 'saved';
+}
+
+function createSavedVariableDefinition(
+    variableName: string,
+    value: string,
+    source: VariableCompletionSource
+): SavedVariableDefinition | null {
+    const normalizedName = variableName.trim();
+    if (!normalizedName) {
+        return null;
+    }
+
+    return {
+        name: normalizedName,
+        value: value.trim(),
+        source
+    };
+}
+
+const SAVED_VARIABLE_STEP_PATTERNS: SavedVariableStepPattern[] = [
+    {
+        regex: SAVE_VARIABLE_STEP_REGEX_EN_VALUE_TO,
+        createDefinition: (match, source) => createSavedVariableDefinition(
+            getFirstTrimmedMatch(match, [2, 3]),
+            getFirstTrimmedMatch(match, [1]),
+            source
+        )
+    },
+    {
+        regex: SAVE_VARIABLE_STEP_REGEX_RU_VALUE_TO,
+        createDefinition: (match, source) => createSavedVariableDefinition(
+            getFirstTrimmedMatch(match, [1, 2]),
+            getFirstTrimmedMatch(match, [3]),
+            source
+        )
+    },
+    {
+        regex: EXECUTE_AND_PUT_TO_VARIABLE_REGEX,
+        createDefinition: (match, source) => createSavedVariableDefinition(
+            getFirstTrimmedMatch(match, [3, 4]),
+            getFirstTrimmedMatch(match, [1, 2]),
+            source
+        )
+    },
+    {
+        regex: VARIABLE_ASSIGNMENT_FIND_OR_CREATE_REGEX,
+        createDefinition: (match, source) => createSavedVariableDefinition(
+            getFirstTrimmedMatch(match, [2, 3]),
+            getFirstTrimmedMatch(match, [1]),
+            source
+        )
+    },
+    {
+        regex: VARIABLE_ASSIGNMENT_COPY_REGEX,
+        createDefinition: (match, source) => createSavedVariableDefinition(
+            getFirstTrimmedMatch(match, [3, 4]),
+            getFirstTrimmedMatch(match, [1, 2]),
+            source
+        )
+    },
+    {
+        regex: VARIABLE_ASSIGNMENT_TO_THE_VARIABLE_REGEX,
+        createDefinition: (match, source) => createSavedVariableDefinition(
+            getFirstTrimmedMatch(match, [2, 3]),
+            getFirstTrimmedMatch(match, [1]),
+            source
+        )
+    },
+    {
+        regex: VARIABLE_ASSIGNMENT_TO_VARIABLE_REGEX,
+        createDefinition: (match, source) => createSavedVariableDefinition(
+            getFirstTrimmedMatch(match, [2, 3]),
+            getFirstTrimmedMatch(match, [1]),
+            source
+        )
+    },
+    {
+        regex: VARIABLE_ASSIGNMENT_AS_REGEX,
+        createDefinition: (match, source) => createSavedVariableDefinition(
+            getFirstTrimmedMatch(match, [2, 3]),
+            getFirstTrimmedMatch(match, [1]),
+            source
+        )
+    },
+    {
+        regex: VARIABLE_ASSIGNMENT_INTO_RU_REGEX,
+        createDefinition: (match, source) => createSavedVariableDefinition(
+            getFirstTrimmedMatch(match, [2, 3]),
+            getFirstTrimmedMatch(match, [1]),
+            source
+        )
+    },
+    {
+        regex: VARIABLE_ASSIGNMENT_IN_SHORT_RU_REGEX,
+        createDefinition: (match, source) => createSavedVariableDefinition(
+            getFirstTrimmedMatch(match, [2, 3]),
+            getFirstTrimmedMatch(match, [1]),
+            source
+        )
+    }
+];
+
+export function extractSavedVariableFromStepLine(lineText: string): SavedVariableDefinition | null {
+    const source = inferSavedVariableSourceFromLine(lineText);
+
+    for (const pattern of SAVED_VARIABLE_STEP_PATTERNS) {
+        const match = lineText.match(pattern.regex);
+        if (!match) {
+            continue;
+        }
+
+        const definition = pattern.createDefinition(match, source);
+        if (definition) {
+            return definition;
+        }
+    }
+
+    return null;
+}
+
+export function buildVariableValuePreview(value: string, maxLength: number = 60): string {
+    if (!value) {
+        return '…';
+    }
+    const singleLine = value.replace(/\s+/g, ' ').trim();
+    if (singleLine.length <= maxLength) {
+        return singleLine;
+    }
+    return `${singleLine.slice(0, maxLength - 1)}…`;
+}
+
+export function formatVariableValueForDisplay(
+    value: string,
+    source: VariableCompletionSource
+): string {
+    if (source !== 'global') {
+        return value;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.includes('\n') || trimmed.includes('\r')) {
+        return value;
+    }
+
+    const isAlreadyQuoted =
+        (trimmed.startsWith('\'') && trimmed.endsWith('\'')) ||
+        (trimmed.startsWith('"') && trimmed.endsWith('"'));
+    if (isAlreadyQuoted) {
+        return value;
+    }
+
+    if (!value.includes('\'')) {
+        return `'${value}'`;
+    }
+
+    if (!value.includes('"')) {
+        return `"${value}"`;
+    }
+
+    return `'${value.replace(/'/g, '\'\'')}'`;
+}
 
 function normalizeSemanticSynonymToken(value: string): string {
     return value.trim().toLocaleLowerCase().replace(/ё/g, 'е');
@@ -65,12 +365,6 @@ function buildSemanticSynonymIndex(
 }
 
 const SEMANTIC_SYNONYM_INDEX = buildSemanticSynonymIndex(SEMANTIC_SYNONYM_GROUPS);
-
-interface SavedVariableDefinition {
-    name: string;
-    value: string;
-    source: 'saved' | 'global';
-}
 
 interface SemanticStepEntry {
     item: vscode.CompletionItem;
@@ -457,12 +751,14 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     position.character // Заменяем только то, что пользователь ввел после отступа
                 );
                 completionItem.range = replacementRange;
-                const baseInsertText = typeof baseItem.insertText === 'string'
-                    ? baseItem.insertText
-                    : itemFullText;
-                completionItem.insertText = baseInsertText;
-                // Сортировка по релевантности
                 const itemLanguage = this.getStepLanguageForItem(baseItem);
+                completionItem.insertText = this.buildStepCompletionInsertText(
+                    itemFullText,
+                    indentation,
+                    itemLanguage,
+                    baseItem.insertText
+                );
+                // Сортировка по релевантности
                 const languageBucket = itemLanguage && itemLanguage !== scenarioLanguage ? '1' : '0';
                 completionItem.sortText = `0${languageBucket}${(1 - matchResult.score).toFixed(3)}${itemFullText}`;
                 completionList.items.push(completionItem);
@@ -576,36 +872,26 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
     private getVariableReferenceContext(
         linePrefix: string
-    ): { startCharacter: number; typedPrefix: string } | null {
-        const lastDollarIndex = linePrefix.lastIndexOf('$');
-        if (lastDollarIndex < 0) {
-            return null;
-        }
-
-        const typedPrefix = linePrefix.substring(lastDollarIndex + 1);
-        if (typedPrefix.includes('$') || /\s/.test(typedPrefix)) {
-            return null;
-        }
-
-        if (!VARIABLE_REFERENCE_PREFIX_REGEX.test(typedPrefix)) {
-            return null;
-        }
-
-        return {
-            startCharacter: lastDollarIndex,
-            typedPrefix
-        };
+    ): VariableReferenceContext | null {
+        return parseVariableReferenceContext(linePrefix);
     }
 
     private async buildSavedVariableCompletionList(
         document: vscode.TextDocument,
         position: vscode.Position,
-        context: { startCharacter: number; typedPrefix: string }
+        context: VariableReferenceContext
     ): Promise<vscode.CompletionList> {
-        const completionList = new vscode.CompletionList([], false);
-        const savedVariables = this.collectSavedVariableDefinitionsBeforeLine(document, position.line);
-        const globalVariables = await this.collectGlobalVariableDefinitions();
-        const allVariables = this.mergeVariableDefinitions(savedVariables, globalVariables);
+        const completionList = new vscode.CompletionList<vscode.CompletionItem>([], false);
+        const scenarioLocalVariables = this.collectScenarioVariableDefinitionsBeforeLine(document, position.line, 'saved');
+        const scenarioGlobalVariables = this.collectScenarioVariableDefinitionsBeforeLine(document, position.line, 'global');
+        const managerGlobalVariables = await this.collectGlobalVariableDefinitions();
+        const globalVariables = this.mergeVariableDefinitions(scenarioGlobalVariables, managerGlobalVariables);
+        const allVariables = context.mode === 'globalOnly'
+            ? globalVariables
+            : this.mergeVariableDefinitions(
+                this.mergeVariableDefinitions(scenarioLocalVariables, scenarioGlobalVariables),
+                globalVariables
+            );
 
         if (allVariables.length === 0) {
             return completionList;
@@ -627,17 +913,20 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
         filteredVariables.forEach((variable, index) => {
             const variableName = variable.name;
-            const variableReference = `$${variableName}$`;
+            const variableReference = buildVariableReferenceText(variableName, variable.source);
             const completionItem = new vscode.CompletionItem(variableName, vscode.CompletionItemKind.Variable);
-            const preview = this.buildSavedVariableValuePreview(variable.value);
+            const displayValue = formatVariableValueForDisplay(variable.value, variable.source);
+            const preview = buildVariableValuePreview(displayValue);
             completionItem.detail = variable.source === 'global'
-                ? vscode.l10n.t('Global variable: {0}', preview)
-                : vscode.l10n.t('Saved variable: {0}', preview);
+                ? vscode.l10n.t('Global variable')
+                : vscode.l10n.t('Saved variable');
             completionItem.insertText = variableReference;
-            completionItem.filterText = variableReference;
+            completionItem.filterText = `${variableReference} ${variableName}`;
+            completionItem.documentation = this.buildVariableCompletionDocumentation(variable, variableReference, displayValue);
             completionItem.label = {
                 label: variableName,
-                detail: `  ${variableReference}`
+                detail: `  ${variableReference}`,
+                description: preview
             };
             completionItem.sortText = `${index.toString().padStart(3, '0')}_${variableName.toLocaleLowerCase()}`;
             completionItem.range = new vscode.Range(
@@ -652,18 +941,26 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         return completionList;
     }
 
-    private collectSavedVariableDefinitionsBeforeLine(document: vscode.TextDocument, lineExclusive: number): SavedVariableDefinition[] {
+    private collectScenarioVariableDefinitionsBeforeLine(
+        document: vscode.TextDocument,
+        lineExclusive: number,
+        sourceFilter?: VariableCompletionSource
+    ): SavedVariableDefinition[] {
         const variables: SavedVariableDefinition[] = [];
         const seen = new Set<string>();
 
         for (let line = lineExclusive - 1; line >= 0; line--) {
             const lineText = document.lineAt(line).text;
-            const variable = this.extractSavedVariableFromStepLine(lineText);
+            const variable = extractSavedVariableFromStepLine(lineText);
             if (!variable) {
                 continue;
             }
 
-            const normalized = variable.name.toLocaleLowerCase();
+            if (sourceFilter && variable.source !== sourceFilter) {
+                continue;
+            }
+
+            const normalized = `${variable.source}:${variable.name.toLocaleLowerCase()}`;
             if (seen.has(normalized)) {
                 continue;
             }
@@ -692,14 +989,14 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     }
 
     private mergeVariableDefinitions(
-        savedVariables: SavedVariableDefinition[],
-        globalVariables: SavedVariableDefinition[]
+        firstVariables: SavedVariableDefinition[],
+        secondVariables: SavedVariableDefinition[]
     ): SavedVariableDefinition[] {
         const merged: SavedVariableDefinition[] = [];
         const seen = new Set<string>();
 
-        savedVariables.forEach(variable => {
-            const normalized = variable.name.toLocaleLowerCase();
+        firstVariables.forEach(variable => {
+            const normalized = `${variable.source}:${variable.name.toLocaleLowerCase()}`;
             if (seen.has(normalized)) {
                 return;
             }
@@ -707,8 +1004,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             merged.push(variable);
         });
 
-        globalVariables.forEach(variable => {
-            const normalized = variable.name.toLocaleLowerCase();
+        secondVariables.forEach(variable => {
+            const normalized = `${variable.source}:${variable.name.toLocaleLowerCase()}`;
             if (seen.has(normalized)) {
                 return;
             }
@@ -719,72 +1016,34 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         return merged;
     }
 
-    private extractSavedVariableFromStepLine(lineText: string): SavedVariableDefinition | null {
-        const englishExpressionMatch = lineText.match(SAVE_VARIABLE_STEP_REGEX_EN);
-        if (englishExpressionMatch) {
-            const variableName = (englishExpressionMatch[2] || englishExpressionMatch[3] || '').trim();
-            if (!variableName) {
-                return null;
-            }
-            return {
-                name: variableName,
-                value: (englishExpressionMatch[1] || '').trim(),
-                source: 'saved'
-            };
-        }
+    private buildVariableCompletionDocumentation(
+        variable: SavedVariableDefinition,
+        variableReference: string,
+        displayValue: string
+    ): vscode.MarkdownString {
+        const content = new vscode.MarkdownString();
+        const title = variable.source === 'global'
+            ? vscode.l10n.t('Global variable')
+            : vscode.l10n.t('Saved variable');
+        const value = displayValue || ' ';
 
-        const englishValueToMatch = lineText.match(SAVE_VARIABLE_STEP_REGEX_EN_VALUE_TO);
-        if (englishValueToMatch) {
-            const variableName = (englishValueToMatch[2] || englishValueToMatch[3] || '').trim();
-            if (!variableName) {
-                return null;
-            }
-            return {
-                name: variableName,
-                value: (englishValueToMatch[1] || '').trim(),
-                source: 'saved'
-            };
-        }
-
-        const russianExpressionMatch = lineText.match(SAVE_VARIABLE_STEP_REGEX_RU);
-        if (russianExpressionMatch) {
-            const variableName = (russianExpressionMatch[2] || russianExpressionMatch[3] || '').trim();
-            if (!variableName) {
-                return null;
-            }
-            return {
-                name: variableName,
-                value: (russianExpressionMatch[1] || '').trim(),
-                source: 'saved'
-            };
-        }
-
-        const russianValueToMatch = lineText.match(SAVE_VARIABLE_STEP_REGEX_RU_VALUE_TO);
-        if (russianValueToMatch) {
-            const variableName = (russianValueToMatch[1] || russianValueToMatch[2] || '').trim();
-            if (!variableName) {
-                return null;
-            }
-            return {
-                name: variableName,
-                value: (russianValueToMatch[3] || '').trim(),
-                source: 'saved'
-            };
-        }
-
-        return null;
+        content.appendMarkdown(`**${title}:** \`${variableReference}\`\n\n`);
+        this.appendVariableValueMarkdown(content, vscode.l10n.t('Value'), value);
+        return content;
     }
 
-    private buildSavedVariableValuePreview(value: string): string {
-        if (!value) {
-            return '…';
+    private appendVariableValueMarkdown(
+        markdown: vscode.MarkdownString,
+        label: string,
+        value: string
+    ): void {
+        if (!value.includes('\n') && !value.includes('\r')) {
+            markdown.appendMarkdown(`**${label}:** \`${value}\``);
+            return;
         }
-        const singleLine = value.replace(/\s+/g, ' ').trim();
-        const maxLength = 60;
-        if (singleLine.length <= maxLength) {
-            return singleLine;
-        }
-        return `${singleLine.slice(0, maxLength - 1)}…`;
+
+        markdown.appendMarkdown(`**${label}:**\n\n`);
+        markdown.appendCodeblock(value);
     }
 
     private createSemanticStepEntry(
@@ -816,6 +1075,55 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
     private getStepLanguageForItem(item: vscode.CompletionItem): ScenarioLanguage | null {
         return this.gherkinItemLanguageByItem.get(item) || null;
+    }
+
+    private buildStepCompletionInsertText(
+        stepText: string,
+        _indentation: string,
+        language: ScenarioLanguage | null,
+        baseInsertText?: string | vscode.SnippetString
+    ): string | vscode.SnippetString {
+        const resolvedInsertText = this.cloneCompletionInsertText(baseInsertText, stepText);
+        if (resolvedInsertText instanceof vscode.SnippetString) {
+            return resolvedInsertText;
+        }
+
+        const normalizedInsertText = normalizeMultilineStepInsertText(resolvedInsertText);
+
+        const openingBlockKeyword = parseBlockKeyword(normalizedInsertText);
+        const closingKeyword = getBlockClosingKeyword(
+            openingBlockKeyword,
+            language ?? this.inferStepLanguageFromText(stepText)
+        );
+        if (!closingKeyword) {
+            return normalizedInsertText;
+        }
+
+        // VS Code keeps the base indentation of the insertion line for snippet newlines,
+        // so only the relative block indent should be added here.
+        const innerIndent = '    ';
+        return new vscode.SnippetString(
+            `${this.escapeSnippetText(normalizedInsertText)}\n${innerIndent}$0\n${this.escapeSnippetText(closingKeyword)}`
+        );
+    }
+
+    private cloneCompletionInsertText(
+        insertText: string | vscode.SnippetString | undefined,
+        fallbackText: string
+    ): string | vscode.SnippetString {
+        if (insertText instanceof vscode.SnippetString) {
+            return new vscode.SnippetString(insertText.value);
+        }
+
+        if (typeof insertText === 'string') {
+            return insertText;
+        }
+
+        return fallbackText;
+    }
+
+    private inferStepLanguageFromText(stepText: string): ScenarioLanguage {
+        return /[А-Яа-яЁё]/.test(stepText) ? 'ru' : 'en';
     }
 
     private rebuildSemanticVectorIndex(): void {
@@ -1143,7 +1451,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     ): vscode.CompletionList {
         // Re-query semantic results as user types so relevance does not depend on
         // whether a trailing space/trigger character was entered.
-        const completionList = new vscode.CompletionList([], true);
+        const completionList = new vscode.CompletionList<vscode.CompletionItem>([], true);
         if (this.semanticStepEntries.length === 0) {
             return completionList;
         }
@@ -1217,9 +1525,12 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 position.character
             );
             completionItem.range = replacementRange;
-            completionItem.insertText = typeof baseItem.insertText === 'string'
-                ? baseItem.insertText
-                : itemFullText;
+            completionItem.insertText = this.buildStepCompletionInsertText(
+                itemFullText,
+                indentation,
+                result.entry.language,
+                baseItem.insertText
+            );
             completionItem.filterText = [
                 rawFilterKey,
                 normalizedFilterKey,
@@ -1505,10 +1816,14 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         return new vscode.SnippetString(snippetText);
     }
 
-    private escapeSnippetDefaultValue(value: string): string {
+    private escapeSnippetText(value: string): string {
         return value
             .replace(/\\/g, '\\\\')
             .replace(/\$/g, '\\$')
             .replace(/\}/g, '\\}');
+    }
+
+    private escapeSnippetDefaultValue(value: string): string {
+        return this.escapeSnippetText(value);
     }
 }
