@@ -124,6 +124,15 @@ interface FavoriteQuickPickItem extends vscode.QuickPickItem {
     favorite: FavoriteScenarioEntry;
 }
 
+interface PhaseSwitcherWebviewTestInfo {
+    name: string;
+    relativePath: string;
+    defaultState?: boolean;
+    order?: number;
+    scenarioCode?: string;
+    yamlFileUriString?: string;
+}
+
 interface LiveRunLogWatcherState {
     scenarioName: string;
     runLogPath: string;
@@ -5794,14 +5803,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 vscode.Uri.joinPath(this._extensionUri, 'node_modules')
             ]
         };
-        // Ждем завершения промиса первоначальной инициализации.
-        // Если он еще не был создан, это не страшно (будет null).
-        // Если он уже выполняется, мы дождемся его завершения.
-        if (this.initializationPromise) {
-            console.log("[PhaseSwitcherProvider] Waiting for initial test cache to be ready...");
-            await this.initializationPromise;
-            console.log("[PhaseSwitcherProvider] Initial test cache is ready.");
-        }
 
         await this.loadLocalizationBundleIfNeeded();
         const nonce = getNonce();
@@ -5984,18 +5985,21 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     await this.requestBuildCancellation();
                     return;
                 case 'openScenario':
-                    if (message.name && this._testCache) {
-                        const testInfo = this._testCache.get(message.name);
-                        if (testInfo && testInfo.yamlFileUri) {
-                            try {
-                                const doc = await vscode.workspace.openTextDocument(testInfo.yamlFileUri);
-                                await vscode.window.showTextDocument(doc, { preview: false });
-                            } catch (error: any) {
-                                console.error(`[PhaseSwitcherProvider] Error opening scenario file: ${error.message || error}`);
-                                vscode.window.showErrorMessage(this.t('Failed to open scenario file: {0}', error.message || error));
-                            }
-                        } else {
-                            vscode.window.showWarningMessage(this.t('Scenario "{0}" not found or its path is not defined.', message.name));
+                    if (typeof message.name === 'string' && message.name.trim().length > 0) {
+                        const scenarioName = message.name.trim();
+                        const testInfo = this._testCache?.get(scenarioName);
+                        const targetUri = testInfo?.yamlFileUri || await findFileByName(scenarioName, this._testCache);
+                        if (!targetUri) {
+                            vscode.window.showWarningMessage(this.t('Scenario "{0}" not found or its path is not defined.', scenarioName));
+                            return;
+                        }
+
+                        try {
+                            const doc = await vscode.workspace.openTextDocument(targetUri);
+                            await vscode.window.showTextDocument(doc, { preview: false });
+                        } catch (error: any) {
+                            console.error(`[PhaseSwitcherProvider] Error opening scenario file: ${error.message || error}`);
+                            vscode.window.showErrorMessage(this.t('Failed to open scenario file: {0}', error.message || error));
                         }
                     }
                     return;
@@ -6132,6 +6136,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
         const workspaceRootUri = workspaceFolders[0].uri;
 
+        if (this._testCache === null && this.initializationPromise) {
+            console.log("[PhaseSwitcherProvider:_sendInitialState] Waiting for initial cache warmup after webview render...");
+            try {
+                await this.initializationPromise;
+                console.log("[PhaseSwitcherProvider:_sendInitialState] Initial cache warmup completed.");
+            } catch (error) {
+                console.error("[PhaseSwitcherProvider:_sendInitialState] Initial cache warmup failed:", error);
+            }
+        }
+
         // Check if first launch folder exists (independent of test cache)
         const projectPaths = this.getProjectPaths(workspaceRootUri);
         let firstLaunchFolderExists = false;
@@ -6162,11 +6176,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             console.log(`[PhaseSwitcherProvider:_sendInitialState] Using existing cache with ${this._testCache.size} scenarios`);
         }
 
-        await this.restoreScenarioBuildArtifactsFromDiskIfNeeded(workspaceRootUri);
-
         let states: { [key: string]: 'checked' | 'unchecked' | 'disabled' } = {};
         let status = this.t('Scan error or no tests found');
-        let tabDataForUI: { [tabName: string]: TestInfo[] } = {}; // Данные только для UI Test Manager
+        let tabDataForUI: { [tabName: string]: PhaseSwitcherWebviewTestInfo[] } = {}; // Данные только для UI Test Manager
         let checkedCount = 0;
         let testsForPhaseSwitcherCount = 0;
 
@@ -6200,7 +6212,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.pruneScenarioBuildArtifactsByCache();
         const runArtifacts = this.buildRunArtifactsState();
         const affectedMainScenarioNames = this.getAffectedMainScenarioNamesForActiveEditor();
-        const favoriteEntries = await this.synchronizeFavoriteEntriesWithCache({ skipEnsureFreshCache: true });
+        const favoriteEntries = this.sortFavoriteEntries(this.getFavoriteEntries());
         const favoriteSortMode = this.getFavoriteSortMode();
         this._lastHighlightedMainScenarioNames = new Set(affectedMainScenarioNames);
 
@@ -6249,6 +6261,22 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         // Генерируем событие с ПОЛНЫМ кэшем для других компонентов (например, CompletionProvider)
         this._onDidUpdateTestCache.fire(this._testCache);
+
+        void this.restoreScenarioBuildArtifactsFromDiskIfNeeded(workspaceRootUri)
+            .then(() => {
+                this.sendRunArtifactsStateToWebview();
+            })
+            .catch(error => {
+                console.warn('[PhaseSwitcherProvider:_sendInitialState] Deferred startup artifacts restore failed:', error);
+            });
+
+        void this.synchronizeFavoriteEntriesWithCache({ skipEnsureFreshCache: true })
+            .then(entries => {
+                this.sendFavoritesStateToWebview(entries);
+            })
+            .catch(error => {
+                console.warn('[PhaseSwitcherProvider:_sendInitialState] Deferred favorites sync failed:', error);
+            });
     }
 
     /**
@@ -7263,8 +7291,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
      * Группирует и сортирует данные тестов для отображения в Test Manager.
      * Использует только тесты, у которых есть tabName.
      */
-    private _groupAndSortTestData(testCacheForUI: Map<string, TestInfo>): { [tabName: string]: TestInfo[] } {
-        const grouped: { [tabName: string]: TestInfo[] } = {};
+    private _groupAndSortTestData(testCacheForUI: Map<string, TestInfo>): { [tabName: string]: PhaseSwitcherWebviewTestInfo[] } {
+        const grouped: { [tabName: string]: PhaseSwitcherWebviewTestInfo[] } = {};
         if (!testCacheForUI) {
             return grouped;
         }
@@ -7272,14 +7300,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         for (const info of testCacheForUI.values()) {
             // Убедимся, что tabName существует и является строкой для группировки
             if (info.tabName && typeof info.tabName === 'string' && info.tabName.trim() !== "") {
-                let finalUriString = '';
-                if (info.yamlFileUri && typeof info.yamlFileUri.toString === 'function') {
-                    finalUriString = info.yamlFileUri.toString();
-                }
-                const infoWithUriString = { ...info, yamlFileUriString: finalUriString };
+                const infoForWebview: PhaseSwitcherWebviewTestInfo = {
+                    name: info.name,
+                    relativePath: info.relativePath,
+                    defaultState: info.defaultState,
+                    order: info.order,
+                    scenarioCode: info.scenarioCode,
+                    yamlFileUriString: info.yamlFileUri?.toString()
+                };
 
                 if (!grouped[info.tabName]) { grouped[info.tabName] = []; }
-                grouped[info.tabName].push(infoWithUriString);
+                grouped[info.tabName].push(infoForWebview);
             }
         }
 
