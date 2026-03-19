@@ -41,7 +41,7 @@
 - Отдельный run-лог на сценарий.
 - `Open run log` (`Открыть лог запуска`) открывает файл run-лога в редакторе.
 - Live-режим для сценария открывает `feature` на текущем выполняемом шаге (вместо принудительного открытия Output).
-- Output панель не открывается автоматически при старте прогона.
+- Output панель не открывается автоматически при старте прогона, если отдельно не включен `kotTestToolkit.runVanessa.showOutputPanel`.
 - При падении в уведомлении и hover доступны быстрые действия для run-лога.
 - Для внешних серверных прогонов доступен трекинг по содержимому run-лога:
   - старт из контекстного меню открытого `feature` (выбор файла лога) или из открытого `.log`;
@@ -72,6 +72,7 @@
 | `kotTestToolkit.runVanessa.vanessaEpfPath` | EPF Vanessa |
 | `kotTestToolkit.assembleScript.buildPath` | Папка сборки |
 | `kotTestToolkit.runVanessa.runtimeDirectory` | Папка runtime-логов/статусов |
+| `kotTestToolkit.runVanessa.showOutputPanel` | Автопоказ Output при запуске Vanessa |
 | `kotTestToolkit.startupParams.parameters` | Параметры старта 1С |
 | `kotTestToolkit.runVanessa.liveLogRefreshSeconds` | Интервал live-обновления лога |
 | `kotTestToolkit.runVanessa.checkUnsafeActionProtection` | Проверка conf.cfg перед запуском (Windows) |

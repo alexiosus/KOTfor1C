@@ -90,6 +90,7 @@
 |---|---|---|
 | `kotTestToolkit.runVanessa.vanessaEpfPath` | `tools/vanessa/vanessa-automation.epf` | Путь к EPF Vanessa |
 | `kotTestToolkit.runVanessa.runtimeDirectory` | `.vscode/kot-runtime/vanessa` | Папка runtime-файлов (логи/статусы) |
+| `kotTestToolkit.runVanessa.showOutputPanel` | `false` | Автооткрытие Output при запуске Vanessa |
 | `kotTestToolkit.runVanessa.commandTemplate` | `""` | Кастомный shell-шаблон запуска (optional override) |
 | `kotTestToolkit.runVanessa.checkUnsafeActionProtection` | `true` | Проверка `conf.cfg` (Windows) перед запуском Vanessa |
 | `kotTestToolkit.runVanessa.liveLogRefreshSeconds` | `2` | Интервал обновления live-лога |

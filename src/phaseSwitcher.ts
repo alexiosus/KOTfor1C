@@ -1844,6 +1844,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             .get<boolean>('output.advancedLogging', false);
     }
 
+    private shouldShowVanessaOutputPanel(): boolean {
+        return vscode.workspace
+            .getConfiguration('kotTestToolkit')
+            .get<boolean>('runVanessa.showOutputPanel', false);
+    }
+
     private getOutputTimestamp(): string {
         return new Date().toLocaleTimeString(undefined, { hour12: false });
     }
@@ -5756,7 +5762,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const outputChannel = this.getRunOutputChannel();
         outputChannel.clear();
-        outputChannel.show(true);
+        if (this.shouldShowVanessaOutputPanel()) {
+            outputChannel.show(true);
+        }
         this.outputInfo(outputChannel, this.t('Opening Vanessa Automation standalone debug session...'));
         this.outputAdvanced(outputChannel, this.t('Vanessa EPF path: {0}', vanessaEpfPath));
         this.outputAdvanced(outputChannel, this.t('Vanessa JSON run settings: {0}', launchJsonPath));
@@ -9665,7 +9673,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         ];
 
         const outputChannel = this.getRunOutputChannel();
-        if (manualDebug) {
+        if (manualDebug && this.shouldShowVanessaOutputPanel()) {
             outputChannel.show(true);
         }
         const outputTitle = manualDebug
@@ -10798,6 +10806,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             updatedAt: Date.now()
         });
         outputChannel.clear();
+        if (this.shouldShowVanessaOutputPanel()) {
+            outputChannel.show(true);
+        }
         this.setScenarioExecutionState(scenarioName, 'running', this.t('Run in progress'), runLogPath);
 
         if (!commandTemplate) {

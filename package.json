@@ -208,18 +208,24 @@
             "description": "%config.runVanessa.runtimeDirectory.description%",
             "order": 2
           },
+          "kotTestToolkit.runVanessa.showOutputPanel": {
+            "type": "boolean",
+            "default": false,
+            "description": "%config.runVanessa.showOutputPanel.description%",
+            "order": 3
+          },
           "kotTestToolkit.runVanessa.commandTemplate": {
             "type": "string",
             "default": "",
             "description": "%config.runVanessa.commandTemplate.description%",
             "markdownDescription": "%config.runVanessa.commandTemplate.markdownDescription%",
-            "order": 3
+            "order": 4
           },
           "kotTestToolkit.runVanessa.checkUnsafeActionProtection": {
             "type": "boolean",
             "default": true,
             "description": "%config.runVanessa.checkUnsafeActionProtection.description%",
-            "order": 4
+            "order": 5
           },
           "kotTestToolkit.runVanessa.liveLogRefreshSeconds": {
             "type": "number",
@@ -227,7 +233,7 @@
             "minimum": 1,
             "maximum": 60,
             "description": "%config.runVanessa.liveLogRefreshSeconds.description%",
-            "order": 5
+            "order": 6
           }
         }
       },

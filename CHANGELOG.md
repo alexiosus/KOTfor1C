@@ -19,6 +19,7 @@
 
 ## Исправления и доработки
 
+- Добавлена настройка `kotTestToolkit.runVanessa.showOutputPanel` для управления автооткрытием Output при запуске Vanessa Automation, включая обычный запуск и ручные debug-режимы.
 - Исправлено поведение кнопки `Defaults` при первом запуске и состояние чекбоксов при сборке тестов. ([#23](https://github.com/kakoytochelik/KOTfor1C/issues/23))
 - Исправлено закрытие меню `More actions` при активном прогоне теста.
 - Улучшена работа `Test Manager` при подключении через VS Code `Remote Tunnel`:

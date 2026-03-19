@@ -37,6 +37,7 @@
   "config.output.advancedLogging.description": "Показывать дополнительные технические детали в Output (для диагностики).",
   "config.runVanessa.vanessaEpfPath.description": "Путь к vanessa-automation.epf для встроенного запуска Vanessa из Менеджера тестов (абсолютный или относительный от корня workspace).",
   "config.runVanessa.runtimeDirectory.description": "Папка для runtime-файлов Vanessa (лог/статус сценария). Абсолютный путь или относительный от корня workspace.",
+  "config.runVanessa.showOutputPanel.description": "Автоматически показывать панель Output при запуске Vanessa Automation.",
   "config.runVanessa.commandTemplate.description": "Шаблон shell-команды для запуска Vanessa Automation по выбранному сценарию.",
   "config.runVanessa.commandTemplate.markdownDescription": "Опциональный шаблон команды для кнопки запуска в Менеджере тестов.\n\nДоступные плейсхолдеры:\n- `${scenarioName}` / `${scenarioNameQuoted}`\n- `${featurePath}` / `${featurePathQuoted}`\n- `${jsonPath}` / `${jsonPathQuoted}`\n- `${workspaceRoot}` / `${workspaceRootQuoted}`\n\nЕсли оставить пустым, расширение использует встроенный запуск Vanessa (1C + vanessa-automation.epf + StartFeaturePlayer).",
   "config.runVanessa.checkUnsafeActionProtection.description": "Перед встроенным запуском Vanessa проверять DisableUnsafeActionProtection в conf.cfg для EmptyInfobase и предлагать исправление при отсутствии значения.",

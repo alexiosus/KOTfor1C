@@ -37,6 +37,7 @@
   "config.output.advancedLogging.description": "Show additional technical details in Output (for troubleshooting).",
   "config.runVanessa.vanessaEpfPath.description": "Path to vanessa-automation.epf for built-in Vanessa launch from Test Manager (absolute or relative to workspace root).",
   "config.runVanessa.runtimeDirectory.description": "Directory for Vanessa runtime files (scenario log/status). Absolute or relative to workspace root.",
+  "config.runVanessa.showOutputPanel.description": "Automatically show the Output panel when starting Vanessa Automation launch.",
   "config.runVanessa.commandTemplate.description": "Shell command template for launching Vanessa Automation for a selected scenario.",
   "config.runVanessa.commandTemplate.markdownDescription": "Optional command template used by the run icon in Test Manager.\n\nAvailable placeholders:\n- `${scenarioName}` / `${scenarioNameQuoted}`\n- `${featurePath}` / `${featurePathQuoted}`\n- `${jsonPath}` / `${jsonPathQuoted}`\n- `${workspaceRoot}` / `${workspaceRootQuoted}`\n\nIf empty, the extension uses built-in Vanessa launch logic (1C + vanessa-automation.epf + StartFeaturePlayer).",
   "config.runVanessa.checkUnsafeActionProtection.description": "Before built-in Vanessa launch, verify DisableUnsafeActionProtection in conf.cfg for EmptyInfobase and offer to patch conf.cfg if missing.",
