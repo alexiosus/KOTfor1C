@@ -3,7 +3,9 @@
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.4.0-yellow"></a>
 </p>
 
-**KOT** (_**K**eep **O**n **T**esting_) **for 1C** — расширение VS Code для разработки и поддержки автотестов 1С в YAML-формате (экосистема СППР / Vanessa Automation).
+**KOT** (_**K**eep **O**n **T**esting_) **for 1C** — расширение VS Code для разработки и поддержки автотестов 1С в YAML-формате (экосистема СППР / Vanessa Automation), а также для исследования управляемых форм 1С через generated runtime `.cfe`.
+
+`KOT Form Explorer` в версии `2.4.0` поставляется как beta-функционал.
 
 Проект начинался внутри 1C:Drive, но сейчас применим в любом 1С-проекте с совместимой структурой сценариев.
 
@@ -93,6 +95,26 @@
 - Вкладка глобальных переменных `GlobalVars`.
 - Импорт/экспорт JSON и поиск по параметрам.
 
+### 6) KOT Form Explorer (beta)
+
+- One-click генерация lightweight runtime-расширения `.cfe` по выгрузке `cf`.
+- Панель в VS Code для исследования текущей управляемой формы 1С:
+  - активный элемент;
+  - UI name / technical name / value;
+  - связанный атрибут;
+  - переход к `Form.xml` на строку элемента.
+- Кнопка открытия `KOT Form Explorer` в меню `...` Test Manager рядом с `Open Vanessa`.
+- Отдельная форма настроек адаптера на стороне 1С:
+  - путь к snapshot;
+  - preset hotkey;
+  - auto snapshot;
+  - интервал автообновления.
+- Переключаемые `manual` / `auto` режимы:
+  - из настроек адаптера;
+  - по hotkey;
+  - прямо из VS Code через mode-indicator.
+- Встроенная Windows-сборка `.cfe` с кэшируемой builder-ИБ Form Explorer, автоопределением `1cv8c.exe` и внешним override через `oscript` / `PowerShell` / custom builder.
+
 ## Документация по параметрам
 
 - ИТС: параметры и использование обработки `СборкаТекстовСценариев`  
@@ -108,6 +130,7 @@
 - Для запуска тестов необходимо наличие [Vanessa Automation](https://github.com/Pr-Mex/vanessa-automation).
 - Для работы MXL-команд нужен установленный клиент [1С:Предприятие — работа с файлами](https://v8.1c.ru/static/1s-predpriyatie-rabota-s-faylami/).
 - Работа расширения полноценно проверена только на Windows.
+- `KOT Form Explorer` пока имеет beta-статус и может дорабатываться по edge-cases конкретных конфигураций.
 
 ## Дисклеймер
 
@@ -127,6 +150,7 @@
 - Подробная настройка: [`SETUP.md`](./documentation/SETUP.md)
 - Документация по коду: [`DEVELOPMENT.md`](./documentation/DEVELOPMENT.md)
 - Функциональные блоки: [`blocks/README.md`](./documentation/blocks/README.md)
+- Отдельно по Form Explorer: [`blocks/form-explorer.md`](./documentation/blocks/form-explorer.md)
 
 ## Скриншоты
 _На скриншотах продемонстрирован интерфейс на английском языке, но русские переводы так же доступны._

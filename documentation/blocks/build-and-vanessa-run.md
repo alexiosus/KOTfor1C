@@ -66,8 +66,7 @@
 
 | Настройка | Назначение |
 |---|---|
-| `kotTestToolkit.paths.oneCEnterpriseExe` | Исполняемый файл 1С |
-| `kotTestToolkit.paths.emptyInfobase` | Пустая ИБ для запуска |
+| `kotTestToolkit.paths.oneCEnterpriseExe` | Путь к `1cv8c.exe` тонкого клиента 1С |
 | `kotTestToolkit.paths.buildScenarioBddEpf` | EPF обработки сборки |
 | `kotTestToolkit.runVanessa.vanessaEpfPath` | EPF Vanessa |
 | `kotTestToolkit.assembleScript.buildPath` | Папка сборки |
@@ -77,6 +76,16 @@
 | `kotTestToolkit.runVanessa.liveLogRefreshSeconds` | Интервал live-обновления лога |
 | `kotTestToolkit.runVanessa.checkUnsafeActionProtection` | Проверка conf.cfg перед запуском (Windows) |
 | `kotTestToolkit.runVanessa.commandTemplate` | Кастомный шаблон запуска Vanessa |
+
+### Shared startup-ИБ
+
+Встроенные сценарии запуска и сборки используют общую lightweight startup-ИБ:
+
+- она прогревается расширением автоматически;
+- переиспользуется между `СборкаТекстовСценариев` и Vanessa;
+- не требует отдельной legacy-настройки пути к пустой ИБ.
+
+`KOT Form Explorer` использует отдельную builder-ИБ и не влияет на легкость startup-окружения для запуска тестов.
 
 ## commandTemplate: когда использовать
 

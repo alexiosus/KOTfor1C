@@ -51,6 +51,7 @@
     const cancelScenarioRepairFromDropdownBtn = document.getElementById('cancelScenarioRepairFromDropdownBtn');
     const refreshVanessaStepsFromDropdownBtn = document.getElementById('refreshVanessaStepsFromDropdownBtn');
     const runVanessaFromDropdownBtn = document.getElementById('runVanessaFromDropdownBtn');
+    const openFormExplorerFromDropdownBtn = document.getElementById('openFormExplorerFromDropdownBtn');
     const openYamlParamsFromDropdownBtn = document.getElementById('openYamlParamsFromDropdownBtn');
     const openSettingsFromDropdownBtn = document.getElementById('openSettingsFromDropdownBtn');
     const testsTabBtn = document.getElementById('testsTabBtn');
@@ -302,6 +303,12 @@
             !canRunVanessa,
             disabledByStateTitle,
             window.__loc?.runVanessaTopTitle || 'Open Vanessa'
+        );
+        setDropdownItemDisabledState(
+            openFormExplorerFromDropdownBtn,
+            false,
+            '',
+            window.__loc?.openFormExplorerTopTitle || 'Open KOT Form Explorer'
         );
         setDropdownItemDisabledState(
             openYamlParamsFromDropdownBtn,
@@ -2671,6 +2678,18 @@
                     return;
                 }
                 handleTopRunVanessaClick(event);
+            });
+        }
+
+        if (openFormExplorerFromDropdownBtn) {
+            openFormExplorerFromDropdownBtn.addEventListener('click', event => {
+                event.preventDefault();
+                if (openFormExplorerFromDropdownBtn.classList.contains('is-disabled')) {
+                    return;
+                }
+                closeScenarioRepairDropdownMenu();
+                log('Open KOT Form Explorer from actions menu clicked.');
+                vscode.postMessage({ command: 'openFormExplorer' });
             });
         }
 

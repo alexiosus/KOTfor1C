@@ -13,6 +13,7 @@ import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherki
 import { isScenarioYamlFile } from './yamlValidator';
 import { findFileByName } from './navigationUtils';
 import { getFeatureNestedScenarioContextAtLine } from './featureNestedScenarioUtils';
+import { ensureSharedStartupInfobaseReady, getSharedStartupInfobaseOutputChannel } from './startupInfobase';
 
 // --- Вспомогательная функция для Nonce ---
 function getNonce(): string {
@@ -5655,7 +5656,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const oneCPath = (config.get<string>('paths.oneCEnterpriseExe') || '').trim();
         if (!oneCPath) {
             vscode.window.showErrorMessage(
-                this.t('Path to 1C:Enterprise (1cv8.exe) is not specified in settings.'),
+                this.t('Path to 1C:Enterprise client (1cv8c.exe) is not specified in settings.'),
                 this.t('Open Settings')
             ).then(selection => {
                 if (selection === this.t('Open Settings')) {
@@ -5666,7 +5667,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
         if (!fs.existsSync(oneCPath)) {
             vscode.window.showErrorMessage(
-                this.t('1C:Enterprise file (1cv8.exe) not found at path: {0}', oneCPath),
+                this.t('1C:Enterprise client file not found at path: {0}', oneCPath),
                 this.t('Open Settings')
             ).then(selection => {
                 if (selection === this.t('Open Settings')) {
@@ -5676,27 +5677,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const emptyIbPath = (config.get<string>('paths.emptyInfobase') || '').trim();
-        if (!emptyIbPath) {
-            vscode.window.showErrorMessage(
-                this.t('Path to empty infobase is not specified in settings.'),
-                this.t('Open Settings')
-            ).then(selection => {
-                if (selection === this.t('Open Settings')) {
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.emptyInfobase');
-                }
-            });
-            return;
-        }
-        if (!fs.existsSync(emptyIbPath)) {
-            vscode.window.showErrorMessage(
-                this.t('Empty infobase directory not found at path: {0}', emptyIbPath),
-                this.t('Open Settings')
-            ).then(selection => {
-                if (selection === this.t('Open Settings')) {
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.emptyInfobase');
-                }
-            });
+        const startupInfobasePath = await this.ensureSharedStartupInfobaseReady(
+            oneCPath,
+            this.t('Preparing shared startup infobase for Vanessa...')
+        );
+        if (!startupInfobasePath) {
             return;
         }
 
@@ -5725,7 +5710,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const unsafeProtectionConfigured = await this.ensureUnsafeActionProtectionConfiguredForVanessa(oneCPath, emptyIbPath);
+        const unsafeProtectionConfigured = await this.ensureUnsafeActionProtectionConfiguredForVanessa(oneCPath, startupInfobasePath);
         if (!unsafeProtectionConfigured) {
             return;
         }
@@ -5753,7 +5738,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         ];
         const vaCommand = `${vaCommandParts.join(';')};`;
         const args = [
-            ...this.buildStartupParams(emptyIbPath),
+            ...this.buildStartupParams(startupInfobasePath),
             '/Execute',
             `"${vanessaEpfPath}"`,
             `/C"${vaCommand}"`,
@@ -5768,7 +5753,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.outputInfo(outputChannel, this.t('Opening Vanessa Automation standalone debug session...'));
         this.outputAdvanced(outputChannel, this.t('Vanessa EPF path: {0}', vanessaEpfPath));
         this.outputAdvanced(outputChannel, this.t('Vanessa JSON run settings: {0}', launchJsonPath));
-        this.outputAdvanced(outputChannel, this.t('Using startup infobase path for this run: {0}', emptyIbPath));
+        this.outputAdvanced(outputChannel, this.t('Using startup infobase path for this run: {0}', startupInfobasePath));
 
         try {
             await this.execute1CProcessDetached(
@@ -5895,6 +5880,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 errorWithDetails: this.t('Error: {0}', '{0}'),
                 openScenarioFileTitle: this.t('Open scenario file {0}', '{0}'),
                 runVanessaTopTitle: this.t('Open Vanessa'),
+                openFormExplorerTopTitle: this.t('Open KOT Form Explorer'),
                 runScenarioFeatureTitle: this.t('Run scenario in Vanessa Automation by feature: {0}', '{0}'),
                 runScenarioJsonTitle: this.t('Run scenario in Vanessa Automation by json: {0}', '{0}'),
                 runScenarioStaleSuffix: this.t('Build is stale'),
@@ -6079,6 +6065,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 case 'openSettings':
                     console.log("[PhaseSwitcherProvider] Opening extension settings...");
                     vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit');
+                    return;
+                case 'openFormExplorer':
+                    console.log("[PhaseSwitcherProvider] Opening KOT Form Explorer...");
+                    vscode.commands.executeCommand('kotTestToolkit.openFormExplorer');
                     return;
                 case 'createMainScenario':
                     console.log("[PhaseSwitcherProvider] Received createMainScenario command from webview.");
@@ -6290,13 +6280,43 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     /**
      * Builds 1C:Enterprise startup parameters based on configuration settings
      */
-    private buildStartupParams(emptyIbPath: string): string[] {
+    private async ensureSharedStartupInfobaseReady(
+        oneCClientPath: string,
+        progressTitle: string,
+        showProgressNotification: boolean = true
+    ): Promise<string | null> {
+        try {
+            const startupInfobaseResult = await ensureSharedStartupInfobaseReady(this._context, oneCClientPath, {
+                showOutputPanel: false,
+                showProgressNotification,
+                progressTitle
+            });
+            return startupInfobaseResult.infobaseDirectory;
+        } catch (error: any) {
+            const message = error?.message || String(error);
+            const openOutput = this.t('Open Output');
+            vscode.window.showErrorMessage(
+                this.t('Failed to prepare shared startup infobase: {0}', message),
+                openOutput
+            ).then(selection => {
+                if (selection === openOutput) {
+                    getSharedStartupInfobaseOutputChannel().show(true);
+                }
+            });
+            return null;
+        }
+    }
+
+    /**
+     * Builds 1C:Enterprise startup parameters based on configuration settings
+     */
+    private buildStartupParams(startupInfobasePath: string): string[] {
         const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const startupParameters = config.get<string>('startupParams.parameters') || '/L en /DisableStartupMessages /DisableStartupDialogs';
 
         const params = [
             "ENTERPRISE",
-            `/IBConnectionString`, `"File=${emptyIbPath};"`
+            `/IBConnectionString`, `"File=${startupInfobasePath};"`
         ];
 
         // Add custom startup parameters (split by space and filter empty strings)
@@ -6683,7 +6703,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 if (!oneCPath_raw) {
                     sendStatus(this.t('Build error.'), true, 'assemble');
                     vscode.window.showErrorMessage(
-                        this.t('Path to 1C:Enterprise (1cv8.exe) is not specified in settings.'),
+                        this.t('Path to 1C:Enterprise client (1cv8c.exe) is not specified in settings.'),
                         this.t('Open Settings')
                     ).then(selection => {
                         if (selection === this.t('Open Settings')) {
@@ -6695,7 +6715,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 if (!fs.existsSync(oneCPath_raw)) {
                     sendStatus(this.t('Build error.'), true, 'assemble');
                     vscode.window.showErrorMessage(
-                        this.t('1C:Enterprise file (1cv8.exe) not found at path: {0}', oneCPath_raw),
+                        this.t('1C:Enterprise client file not found at path: {0}', oneCPath_raw),
                         this.t('Open Settings')
                     ).then(selection => {
                         if (selection === this.t('Open Settings')) {
@@ -6706,29 +6726,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
                 const oneCExePath = oneCPath_raw;
 
-                const emptyIbPath_raw = config.get<string>('paths.emptyInfobase');
-                if (!emptyIbPath_raw) {
+                const startupInfobasePath = await this.ensureSharedStartupInfobaseReady(
+                    oneCExePath,
+                    this.t('Preparing shared startup infobase for test assembly...'),
+                    false
+                );
+                if (!startupInfobasePath) {
                     sendStatus(this.t('Build error.'), true, 'assemble');
-                    vscode.window.showErrorMessage(
-                        this.t('Path to empty infobase is not specified in settings.'),
-                        this.t('Open Settings')
-                    ).then(selection => {
-                        if (selection === this.t('Open Settings')) {
-                            vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.emptyInfobase');
-                        }
-                    });
-                    return;
-                }
-                if (!fs.existsSync(emptyIbPath_raw)) {
-                    sendStatus(this.t('Build error.'), true, 'assemble');
-                    vscode.window.showErrorMessage(
-                        this.t('Empty infobase directory not found at path: {0}', emptyIbPath_raw),
-                        this.t('Open Settings')
-                    ).then(selection => {
-                        if (selection === this.t('Open Settings')) {
-                            vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.emptyInfobase');
-                        }
-                    });
                     return;
                 }
                 
@@ -6804,7 +6808,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const buildErrorsPathUri = await this.prepareBuildErrorsFolder(absoluteBuildPathUri, outputChannel);
 
                 const yamlBuildParams = [
-                    ...this.buildStartupParams(emptyIbPath_raw),
+                    ...this.buildStartupParams(startupInfobasePath),
                     `/Execute`, `"${buildScenarioBddEpfPath}"`,
                     this.buildBuildScenarioBddCommand(localSettingsPath.fsPath, yamlBuildResultFileUri.fsPath, yamlBuildLogFileUri.fsPath, buildErrorsPathUri.fsPath)
                 ];
@@ -7201,7 +7205,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             };
 
             if (process.platform === 'darwin' && completionMarker) {
-                this.outputAdvanced(outputChannel, `macOS detected. Will poll for completion marker: ${completionMarker.filePath}`);
+                this.outputAdvanced(outputChannel, `Completion-marker polling enabled: ${completionMarker.filePath}`);
                 const startTime = Date.now();
                 const timeoutMs = completionMarker.timeoutMs || 180000; 
                 const checkIntervalMs = completionMarker.checkIntervalMs || 2000; 
@@ -8194,7 +8198,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     }
                 }
 
-                // Fallback: treat parameter as configured if path segments of EmptyInfobase
+                // Fallback: treat parameter as configured if path segments of the shared startup infobase
                 // are present in order (works for escaped regex variants and literal paths).
                 if (normalizedEmptyIbPath && this.hasPathSegmentsInOrder(pattern, normalizedEmptyIbPath)) {
                     return true;
@@ -8322,7 +8326,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private async ensureUnsafeActionProtectionConfiguredForVanessa(
         oneCPath: string,
-        emptyIbPath: string
+        startupInfobasePath: string
     ): Promise<boolean> {
         if (process.platform !== 'win32' || !this.getRunVanessaCheckUnsafeActionProtection()) {
             return true;
@@ -8331,13 +8335,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const confCandidates = this.resolveConfCfgCandidates(oneCPath);
         const existingConfFiles = confCandidates.filter(candidate => fs.existsSync(candidate));
         const checkedPaths = confCandidates.slice(0, 8).join(', ');
-        const connectionCandidates = this.buildUnsafeProtectionConnectionCandidates(emptyIbPath);
-        const expectedPattern = this.buildDisableUnsafeActionProtectionPattern(emptyIbPath);
+        const connectionCandidates = this.buildUnsafeProtectionConnectionCandidates(startupInfobasePath);
+        const expectedPattern = this.buildDisableUnsafeActionProtectionPattern(startupInfobasePath);
 
         for (const confPath of existingConfFiles) {
             try {
                 const confText = fs.readFileSync(confPath, 'utf8');
-                if (this.hasDisableUnsafeActionProtectionForConnection(confText, connectionCandidates, emptyIbPath, expectedPattern)) {
+                if (this.hasDisableUnsafeActionProtectionForConnection(confText, connectionCandidates, startupInfobasePath, expectedPattern)) {
                     return true;
                 }
             } catch {
@@ -8370,7 +8374,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const selectedAction = await vscode.window.showWarningMessage(
-            this.t('DisableUnsafeActionProtection not found for current EmptyInfobase in conf.cfg. Vanessa may show repeated security prompts.'),
+            this.t('DisableUnsafeActionProtection not found for the shared startup infobase in conf.cfg. Vanessa may show repeated security prompts.'),
             {
                 modal: true,
                 detail: this.t('Checked conf.cfg paths: {0}', checkedPaths)
@@ -9320,7 +9324,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private async prepareVanessaLaunchContext(
         scenarioName: string,
         jsonLaunchPath: string,
-        configuredEmptyIbPath: string,
+        startupInfobasePath: string,
         workspaceRootPath: string
     ): Promise<VanessaLaunchContext | null> {
         let rawJson = '';
@@ -9341,19 +9345,19 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const jsonDefaultInfobase = candidates.length > 0
             ? candidates[0].extractedPath
             : '';
-        const defaultScenarioInfobase = jsonDefaultInfobase || configuredEmptyIbPath;
+        const defaultScenarioInfobase = jsonDefaultInfobase || startupInfobasePath;
 
         const lastCustomInfobase = this.getScenarioCustomInfobasePath(scenarioName);
         const quickPickItems: Array<vscode.QuickPickItem & { source: VanessaInfobaseSource }> = [];
 
         quickPickItems.push({
-            label: this.t('Use path from JSON/settings'),
+            label: this.t('Use path from JSON/startup infobase'),
             description: defaultScenarioInfobase,
-            detail: jsonDefaultInfobase
-                ? this.t('Path extracted from scenario JSON.')
-                : this.t('JSON path was not detected. Fallback to settings path.'),
-            source: 'jsonOrSettings'
-        });
+                detail: jsonDefaultInfobase
+                    ? this.t('Path extracted from scenario JSON.')
+                    : this.t('JSON path was not detected. Fallback to shared startup infobase path.'),
+                source: 'jsonOrSettings'
+            });
 
         if (lastCustomInfobase) {
             quickPickItems.push({
@@ -9431,7 +9435,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         if (!shouldPatchInfobase && !shouldPatchAdditionalParams && !shouldPatchGlobalVars) {
             return {
-                startupInfobasePath: configuredEmptyIbPath,
+                startupInfobasePath,
                 scenarioInfobasePath: chosenScenarioInfobasePath,
                 vaParamsJsonPath: jsonLaunchPath,
                 jsonWasPatched: false
@@ -9455,7 +9459,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 );
             }
             return {
-                startupInfobasePath: configuredEmptyIbPath,
+                startupInfobasePath,
                 scenarioInfobasePath: chosenScenarioInfobasePath,
                 vaParamsJsonPath: jsonLaunchPath,
                 jsonWasPatched: false
@@ -9498,7 +9502,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         if (!infobaseChanged && !additionalChanged && !globalVarsChanged) {
             return {
-                startupInfobasePath: configuredEmptyIbPath,
+                startupInfobasePath,
                 scenarioInfobasePath: chosenScenarioInfobasePath,
                 vaParamsJsonPath: jsonLaunchPath,
                 jsonWasPatched: false
@@ -9512,7 +9516,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         await fs.promises.writeFile(tempJsonPath, JSON.stringify(patchedJson, null, 2), 'utf8');
 
         return {
-            startupInfobasePath: configuredEmptyIbPath,
+            startupInfobasePath,
             scenarioInfobasePath: chosenScenarioInfobasePath,
             vaParamsJsonPath: tempJsonPath,
             jsonWasPatched: true
@@ -9540,7 +9544,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const oneCPath = (config.get<string>('paths.oneCEnterpriseExe') || '').trim();
         if (!oneCPath) {
             vscode.window.showErrorMessage(
-                this.t('Path to 1C:Enterprise (1cv8.exe) is not specified in settings.'),
+                this.t('Path to 1C:Enterprise client (1cv8c.exe) is not specified in settings.'),
                 this.t('Open Settings')
             ).then(selection => {
                 if (selection === this.t('Open Settings')) {
@@ -9551,7 +9555,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
         if (!fs.existsSync(oneCPath)) {
             vscode.window.showErrorMessage(
-                this.t('1C:Enterprise file (1cv8.exe) not found at path: {0}', oneCPath),
+                this.t('1C:Enterprise client file not found at path: {0}', oneCPath),
                 this.t('Open Settings')
             ).then(selection => {
                 if (selection === this.t('Open Settings')) {
@@ -9561,27 +9565,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return 'skipped';
         }
 
-        const configuredEmptyIbPath = (config.get<string>('paths.emptyInfobase') || '').trim();
-        if (!configuredEmptyIbPath) {
-            vscode.window.showErrorMessage(
-                this.t('Path to empty infobase is not specified in settings.'),
-                this.t('Open Settings')
-            ).then(selection => {
-                if (selection === this.t('Open Settings')) {
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.emptyInfobase');
-                }
-            });
-            return 'skipped';
-        }
-        if (!fs.existsSync(configuredEmptyIbPath)) {
-            vscode.window.showErrorMessage(
-                this.t('Empty infobase directory not found at path: {0}', configuredEmptyIbPath),
-                this.t('Open Settings')
-            ).then(selection => {
-                if (selection === this.t('Open Settings')) {
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.emptyInfobase');
-                }
-            });
+        const startupInfobasePath = await this.ensureSharedStartupInfobaseReady(
+            oneCPath,
+            this.t('Preparing shared startup infobase for Vanessa...')
+        );
+        if (!startupInfobasePath) {
             return 'skipped';
         }
 
@@ -9628,17 +9616,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const launchContext = await this.prepareVanessaLaunchContext(
             scenarioName,
             jsonLaunchPath,
-            configuredEmptyIbPath,
+            startupInfobasePath,
             workspaceRootPath
         );
         if (!launchContext) {
             return 'aborted';
         }
 
-        const emptyIbPath = launchContext.startupInfobasePath;
+        const startupInfobasePathForRun = launchContext.startupInfobasePath;
         const scenarioInfobasePath = launchContext.scenarioInfobasePath;
         const launchJsonPath = launchContext.vaParamsJsonPath;
-        const unsafeProtectionConfigured = await this.ensureUnsafeActionProtectionConfiguredForVanessa(oneCPath, emptyIbPath);
+        const unsafeProtectionConfigured = await this.ensureUnsafeActionProtectionConfiguredForVanessa(oneCPath, startupInfobasePathForRun);
         if (!unsafeProtectionConfigured) {
             return 'aborted';
         }
@@ -9665,7 +9653,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
         const vaCommand = `${vaCommandParts.join(';')};`;
         const args = [
-            ...this.buildStartupParams(emptyIbPath),
+            ...this.buildStartupParams(startupInfobasePathForRun),
             '/Execute',
             `"${vanessaEpfPath}"`,
             `/C"${vaCommand}"`,
@@ -9684,7 +9672,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.outputAdvanced(outputChannel, this.t('Vanessa JSON run settings: {0}', launchJsonPath));
         this.outputAdvanced(outputChannel, this.t('Requested artifact mode: {0}', targetKind));
         this.outputAdvanced(outputChannel, this.t('Requested artifact path: {0}', targetPath));
-        this.outputAdvanced(outputChannel, this.t('Using startup infobase path for this run: {0}', emptyIbPath));
+        this.outputAdvanced(outputChannel, this.t('Using startup infobase path for this run: {0}', startupInfobasePathForRun));
         this.outputAdvanced(outputChannel, this.t('Using scenario infobase path for this run: {0}', scenarioInfobasePath));
         if (!manualDebug) {
             this.cleanupVanessaRunLogFileBeforeRun(launchJsonPath, workspaceRootPath, outputChannel);

@@ -348,6 +348,20 @@ h1 {
     font-size: 16px;
 }
 
+.dropdown-item-title-with-beta {
+    min-width: 0;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.beta-inline-symbol {
+    color: var(--vscode-descriptionForeground);
+    font-size: 0.95em;
+    font-weight: 500;
+    line-height: 1;
+}
+
 .dropdown-content .dropdown-item-with-chevron .dropdown-item-chevron {
     margin-left: auto;
     font-size: 13px;

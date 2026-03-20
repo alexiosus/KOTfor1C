@@ -16,8 +16,7 @@
 | Настройка | Для чего нужна |
 |---|---|
 | `kotTestToolkit.paths.yamlSourceDirectory` | Папка YAML-сценариев (источник кеша, диагностики, списка тестов) |
-| `kotTestToolkit.paths.oneCEnterpriseExe` | Путь к `1cv8.exe` / `1cestart` |
-| `kotTestToolkit.paths.emptyInfobase` | Путь к пустой файловой ИБ для запуска обработок |
+| `kotTestToolkit.paths.oneCEnterpriseExe` | Путь к `1cv8c.exe` тонкого клиента 1С; если оставить пустым, KOT попробует определить его автоматически |
 | `kotTestToolkit.paths.buildScenarioBddEpf` | Путь к обработке `СборкаТекстовСценариев.epf` |
 | `kotTestToolkit.runVanessa.vanessaEpfPath` | Путь к `vanessa-automation.epf` |
 | `kotTestToolkit.assembleScript.buildPath` | Куда сохранять результаты сборки |
@@ -25,6 +24,11 @@
 Рекомендуется сразу указать также:
 
 - `kotTestToolkit.startupParams.parameters`
+
+Если путь к клиенту 1С удалось определить автоматически, расширение само подготовит в фоне две служебные ИБ:
+
+- lightweight startup-ИБ для запуска Vanessa и `СборкаТекстовСценариев`;
+- отдельную builder-ИБ для `KOT Form Explorer`.
 
 Справка по параметрам обработки `СборкаТекстовСценариев` (СППР):  
 [https://its.1c.ru/db/sppr2doc#content:124:hdoc](https://its.1c.ru/db/sppr2doc#content:124:hdoc)
@@ -189,5 +193,6 @@
 ## 11) Что читать дальше
 
 - Полная настройка: [`SETUP.md`](./SETUP.md)
+- KOT Form Explorer (beta): [`blocks/form-explorer.md`](./blocks/form-explorer.md)
 - Детали по функциональным блокам: [`blocks/README.md`](./blocks/README.md)
 - Архитектура и код: [`DEVELOPMENT.md`](./DEVELOPMENT.md)
