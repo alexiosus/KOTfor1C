@@ -7,14 +7,12 @@ export interface FormExplorerResolvedPaths {
     snapshotPath: string | null;
     configurationSourceDirectory: string | null;
     generatedArtifactsDirectory: string | null;
-    extensionOutputPath: string | null;
 }
 
 type FormExplorerPathSettingKey =
     | 'snapshotPath'
     | 'configurationSourceDirectory'
-    | 'generatedArtifactsDirectory'
-    | 'extensionOutputPath';
+    | 'generatedArtifactsDirectory';
 
 function getWorkspaceRootPath(): string | null {
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || null;
@@ -56,8 +54,7 @@ export function getFormExplorerResolvedPaths(): FormExplorerResolvedPaths {
         workspaceRootPath: getWorkspaceRootPath(),
         snapshotPath: resolveFormExplorerPathSetting('snapshotPath'),
         configurationSourceDirectory: resolveFormExplorerPathSetting('configurationSourceDirectory'),
-        generatedArtifactsDirectory: resolveFormExplorerPathSetting('generatedArtifactsDirectory'),
-        extensionOutputPath: resolveFormExplorerPathSetting('extensionOutputPath')
+        generatedArtifactsDirectory: resolveFormExplorerPathSetting('generatedArtifactsDirectory')
     };
 }
 
@@ -71,8 +68,4 @@ export function getFormExplorerConfigurationSourceDirectory(): string | null {
 
 export function getFormExplorerGeneratedArtifactsDirectory(): string | null {
     return resolveFormExplorerPathSetting('generatedArtifactsDirectory');
-}
-
-export function getFormExplorerExtensionOutputPath(): string | null {
-    return resolveFormExplorerPathSetting('extensionOutputPath');
 }

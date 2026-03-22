@@ -43,7 +43,12 @@ import { ScenarioDiagnosticsProvider } from './scenarioDiagnostics';
 import { isScenarioYamlFile } from './yamlValidator';
 import { ScenarioHeaderInlayHintsProvider } from './scenarioHeaderInlayHintsProvider';
 import { FormExplorerPanel } from './formExplorerPanel';
-import { handleGenerateFormExplorerExtension } from './formExplorerExtensionGenerator';
+import {
+    handleBuildFormExplorerExtensionCfe,
+    handleGenerateFormExplorerExtension,
+    handleInstallFormExplorerExtension,
+    handleStartFormExplorerInfobase
+} from './formExplorerExtensionGenerator';
 import {
     ensureFormExplorerBuilderInfobaseReady,
     initializeFormExplorerRuntimeSidecars,
@@ -885,6 +890,27 @@ export function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.generateFormExplorerExtension',
         async () => {
             await handleGenerateFormExplorerExtension(context);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.buildFormExplorerExtensionCfe',
+        async () => {
+            await handleBuildFormExplorerExtensionCfe(context);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.installFormExplorerExtension',
+        async () => {
+            await handleInstallFormExplorerExtension(context);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.startFormExplorerInfobase',
+        async (preferredInfobasePath?: string) => {
+            return await handleStartFormExplorerInfobase(context, preferredInfobasePath);
         }
     ));
 

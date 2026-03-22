@@ -258,18 +258,12 @@
             "description": "%config.formExplorer.generatedArtifactsDirectory.description%",
             "order": 3
           },
-          "kotTestToolkit.formExplorer.extensionOutputPath": {
-            "type": "string",
-            "default": ".vscode/kot-runtime/form-explorer/KOTFormExplorerRuntime.cfe",
-            "description": "%config.formExplorer.extensionOutputPath.description%",
-            "order": 4
-          },
           "kotTestToolkit.formExplorer.extensionBuildCommandTemplate": {
             "type": "string",
             "default": "",
             "description": "%config.formExplorer.extensionBuildCommandTemplate.description%",
             "markdownDescription": "%config.formExplorer.extensionBuildCommandTemplate.markdownDescription%",
-            "order": 5
+            "order": 4
           },
           "kotTestToolkit.formExplorer.autoRefreshSeconds": {
             "type": "number",
@@ -277,13 +271,13 @@
             "minimum": 1,
             "maximum": 60,
             "description": "%config.formExplorer.autoRefreshSeconds.description%",
-            "order": 6
+            "order": 5
           },
           "kotTestToolkit.formExplorer.showOutputPanel": {
             "type": "boolean",
             "default": false,
             "description": "%config.formExplorer.showOutputPanel.description%",
-            "order": 7
+            "order": 6
           }
         }
       },
@@ -444,6 +438,16 @@
       {
         "command": "kotTestToolkit.generateFormExplorerExtension",
         "title": "%cmd.generateFormExplorerExtension.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.buildFormExplorerExtensionCfe",
+        "title": "%cmd.buildFormExplorerExtensionCfe.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.installFormExplorerExtension",
+        "title": "%cmd.installFormExplorerExtension.title%",
         "category": "%cmd.category%"
       },
       {
@@ -745,6 +749,14 @@
         },
         {
           "command": "kotTestToolkit.generateFormExplorerExtension",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.buildFormExplorerExtensionCfe",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.installFormExplorerExtension",
           "when": "true"
         },
         {

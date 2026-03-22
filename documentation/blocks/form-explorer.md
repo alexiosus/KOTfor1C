@@ -263,6 +263,7 @@ oscript ./tools/form-explorer/build-cfe.os --onec ${oneCExePathQuoted} --base-co
     "activeElementPath": "Client application form.Header.HeaderLeft.Counterparty"
   },
   "elements": [],
+  "tables": [],
   "attributes": [],
   "commands": []
 }
@@ -278,6 +279,7 @@ oscript ./tools/form-explorer/build-cfe.os --onec ${oneCExePathQuoted} --base-co
 - `type`
 - `boundAttributePath`
 - `valuePreview`
+- `tableData` (for table/list controls; includes `columns`, `rows`, `rowCount`, `truncated`)
 - `active`
 - `visible`
 - `enabled`
@@ -286,6 +288,10 @@ oscript ./tools/form-explorer/build-cfe.os --onec ${oneCExePathQuoted} --base-co
 - `metadataPath`
 - `source`
 - `children`
+
+### Поддерживаемые ключевые поля snapshot
+
+- `tables` (optional list of detected form tabular sources; each item may contain `path`, `title`, `elementPath`, `boundAttributePath`, `sourcePath`, `tableData`)
 
 ## Ограничения
 

@@ -62,9 +62,28 @@ export interface FormExplorerElementInfo {
     readOnly?: boolean;
     active?: boolean;
     valuePreview?: string;
+    tableData?: FormExplorerTableData;
     metadataPath?: string;
     source?: FormExplorerSourceLocation;
     children: FormExplorerElementInfo[];
+}
+
+export interface FormExplorerTableData {
+    columns: string[];
+    rows: string[][];
+    rowCount?: number;
+    truncated?: boolean;
+    sourcePath?: string;
+}
+
+export interface FormExplorerTableInfo {
+    path?: string;
+    name?: string;
+    title?: string;
+    elementPath?: string;
+    boundAttributePath?: string;
+    sourcePath?: string;
+    tableData: FormExplorerTableData;
 }
 
 export interface FormExplorerCommandInfo {
@@ -80,6 +99,7 @@ export interface FormExplorerSnapshot {
     source?: FormExplorerSourceInfo;
     form: FormExplorerFormInfo;
     elements: FormExplorerElementInfo[];
+    tables: FormExplorerTableInfo[];
     attributes: FormExplorerAttributeInfo[];
     commands: FormExplorerCommandInfo[];
     notes: string[];
@@ -304,9 +324,71 @@ function normalizeElementInfo(
         readOnly: asBoolean(record.readOnly),
         active,
         valuePreview: toPreviewString(record.valuePreview ?? record.value ?? record.currentValue),
+        tableData: normalizeTableData(record.tableData),
         metadataPath: asString(record.metadataPath),
         source: normalizeSourceLocation(record.source),
         children: childrenRaw.map((child, childIndex) => normalizeElementInfo(child, childIndex, path, activeElementPath))
+    };
+}
+
+function normalizeTableData(value: unknown): FormExplorerTableData | undefined {
+    const record = asRecord(value);
+    if (!record) {
+        return undefined;
+    }
+
+    const columns = asStringArray(record.columns);
+    const rowsRaw = Array.isArray(record.rows) ? record.rows : [];
+    const rows = rowsRaw.map((row, rowIndex) => {
+        if (!Array.isArray(row)) {
+            return [toPreviewString(row) || `Row${rowIndex + 1}`];
+        }
+
+        return row.map(cell => toPreviewString(cell) || '');
+    });
+
+    if (columns.length === 0 && rows.length === 0) {
+        return undefined;
+    }
+
+    const inferredColumns = columns.length > 0
+        ? columns
+        : Array.from({ length: Math.max(...rows.map(row => row.length), 0) }, (_, index) => `Column${index + 1}`);
+
+    const rowCount = asNumber(record.rowCount);
+    const truncated = asBoolean(record.truncated);
+
+    return {
+        columns: inferredColumns,
+        rows,
+        rowCount: rowCount ?? rows.length,
+        truncated,
+        sourcePath: asString(record.sourcePath)
+    };
+}
+
+function normalizeTableInfo(value: unknown): FormExplorerTableInfo | undefined {
+    const record = asRecord(value);
+    if (!record) {
+        return undefined;
+    }
+
+    const tableData = normalizeTableData(record.tableData ?? record.data ?? value);
+    if (!tableData) {
+        return undefined;
+    }
+
+    const path = asString(record.path) || asString(record.boundAttributePath);
+    const sourcePath = asString(record.sourcePath) || tableData.sourcePath;
+
+    return {
+        path: path || sourcePath || asString(record.elementPath),
+        name: asString(record.name),
+        title: asString(record.title),
+        elementPath: asString(record.elementPath),
+        boundAttributePath: asString(record.boundAttributePath),
+        sourcePath,
+        tableData
     };
 }
 
@@ -351,6 +433,7 @@ export function parseFormExplorerSnapshotText(rawText: string): FormExplorerSnap
         : form;
 
     const attributesRaw = Array.isArray(record.attributes) ? record.attributes : [];
+    const tablesRaw = Array.isArray(record.tables) ? record.tables : [];
     const commandsRaw = Array.isArray(record.commands) ? record.commands : [];
     const notes = asStringArray(record.notes);
     const schemaVersion = asNumber(record.schemaVersion) ?? 1;
@@ -362,6 +445,9 @@ export function parseFormExplorerSnapshotText(rawText: string): FormExplorerSnap
         source: normalizeSourceInfo(record.source),
         form: normalizedForm,
         elements,
+        tables: tablesRaw
+            .map(table => normalizeTableInfo(table))
+            .filter((table): table is FormExplorerTableInfo => !!table),
         attributes: attributesRaw.map((attribute, index) => normalizeAttributeInfo(attribute, index)),
         commands: commandsRaw.map((command, index) => normalizeCommandInfo(command, index)),
         notes

@@ -6,7 +6,6 @@ import * as vscode from 'vscode';
 import { getTranslator } from './localization';
 import {
     getFormExplorerConfigurationSourceDirectory,
-    getFormExplorerExtensionOutputPath,
     getFormExplorerGeneratedArtifactsDirectory,
     getFormExplorerSnapshotPath
 } from './formExplorerPaths';
@@ -29,7 +28,6 @@ export interface FormExplorerBuilderPaths {
     configurationSourceDirectory: string;
     generatedArtifactsDirectory: string;
     snapshotPath: string | null;
-    extensionOutputPath: string | null;
     builderInfobaseDirectory: string;
     builderCacheStatePath: string;
     settingsFilePath: string;
@@ -223,7 +221,6 @@ export function getFormExplorerBuilderPaths(): FormExplorerBuilderPaths | null {
         configurationSourceDirectory,
         generatedArtifactsDirectory,
         snapshotPath: getFormExplorerSnapshotPath(),
-        extensionOutputPath: getFormExplorerExtensionOutputPath(),
         builderInfobaseDirectory: path.join(generatedArtifactsDirectory, BUILDER_INFOBASE_DIRECTORY_NAME),
         builderCacheStatePath: path.join(generatedArtifactsDirectory, 'builder-base-state.json'),
         settingsFilePath: path.join(generatedArtifactsDirectory, DEFAULT_SETTINGS_FILE_NAME),

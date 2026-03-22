@@ -923,6 +923,7 @@ export async function enrichFormExplorerSnapshot(
             } : undefined)
         },
         elements: elementsWithValues,
+        tables: snapshot.tables,
         attributes: mergedAttributes
     };
 }

@@ -6,17 +6,30 @@
     let copiedResetTimer = null;
     let overflowMenuOpen = false;
     let filterMenuOpen = false;
+    let snapshotMenuOpen = false;
+    let lastSelectionPosted = '';
+    let focusAfterLocatorPending = false;
+    let locatorFocusBaseline = '';
+    const suggestedStepsCache = new Map();
 
     const uiState = {
         selectedElementPath: typeof persistedState.selectedElementPath === 'string' ? persistedState.selectedElementPath : '',
         searchQuery: typeof persistedState.searchQuery === 'string' ? persistedState.searchQuery : '',
         showTechnical: Boolean(persistedState.showTechnical),
         showGroups: Boolean(persistedState.showGroups),
+        showTechnicalInfo: typeof persistedState.showTechnicalInfo === 'boolean'
+            ? persistedState.showTechnicalInfo
+            : false,
         followActive: persistedState.followActive !== false,
-        activeTab: isKnownTab(persistedState.activeTab) ? persistedState.activeTab : 'attributes'
+        detailsExpanded: typeof persistedState.detailsExpanded === 'boolean'
+            ? persistedState.detailsExpanded
+            : false,
+        suggestedStepsExpanded: persistedState.suggestedStepsExpanded !== false,
+        activeTab: isKnownTab(persistedState.activeTab) ? persistedState.activeTab : 'selected'
     };
 
     let pendingScrollPath = '';
+    let pendingScrollReset = false;
 
     const refs = {
         currentFormPanel: document.getElementById('currentFormPanel'),
@@ -26,19 +39,24 @@
         openSnapshotFileBtn: document.getElementById('openSnapshotFileBtn'),
         revealSnapshotFileBtn: document.getElementById('revealSnapshotFileBtn'),
         currentFormOpenSourceBtn: document.getElementById('currentFormOpenSourceBtn'),
+        manualRefreshBtn: document.getElementById('manualRefreshBtn'),
         focusActiveBtn: document.getElementById('focusActiveBtn'),
+        locatorBtn: document.getElementById('locatorBtn'),
         filterMenuBtn: document.getElementById('filterMenuBtn'),
         filterMenu: document.getElementById('filterMenu'),
+        searchFrame: document.getElementById('searchFrame'),
+        showTechnicalTabsInput: document.getElementById('showTechnicalTabsInput'),
         showTechnicalInput: document.getElementById('showTechnicalInput'),
         showGroupsInput: document.getElementById('showGroupsInput'),
         searchInput: document.getElementById('searchInput'),
         alertBanner: document.getElementById('alertBanner'),
         alertText: document.getElementById('alertText'),
-        pathModeChip: document.getElementById('pathModeChip'),
-        pathModeValue: document.getElementById('pathModeValue'),
         modeChip: document.getElementById('modeChip'),
         modeValue: document.getElementById('modeValue'),
         generatedAtValue: document.getElementById('generatedAtValue'),
+        snapshotPickerBtn: document.getElementById('snapshotPickerBtn'),
+        snapshotMenu: document.getElementById('snapshotMenu'),
+        startInfobaseBtn: document.getElementById('startInfobaseBtn'),
         formTitleValue: document.getElementById('formTitleValue'),
         formMetaLine: document.getElementById('formMetaLine'),
         elementCountValue: document.getElementById('elementCountValue'),
@@ -48,6 +66,7 @@
         detailsPanel: document.getElementById('detailsPanel'),
         attributesPanel: document.getElementById('attributesPanel'),
         commandsPanel: document.getElementById('commandsPanel'),
+        detailsTabsBar: document.getElementById('detailsTabsBar'),
         attributeCountValue: document.getElementById('attributeCountValue'),
         commandCountValue: document.getElementById('commandCountValue')
     };
@@ -67,6 +86,36 @@
             const message = event.data || {};
             if (message.command === 'setState') {
                 viewState = message.state || {};
+                const suggestedPath = typeof viewState.suggestedStepsForPath === 'string'
+                    ? viewState.suggestedStepsForPath
+                    : '';
+                if (suggestedPath && Array.isArray(viewState.suggestedSteps)) {
+                    suggestedStepsCache.set(suggestedPath, viewState.suggestedSteps.slice());
+                } else {
+                    const selectedPath = typeof viewState.selectedElementPath === 'string'
+                        ? viewState.selectedElementPath
+                        : '';
+                    if (selectedPath && Array.isArray(viewState.suggestedSteps) && viewState.suggestedSteps.length > 0) {
+                        suggestedStepsCache.set(selectedPath, viewState.suggestedSteps.slice());
+                    }
+                }
+                if (focusAfterLocatorPending) {
+                    const currentStamp = String(viewState.snapshotMtime || viewState?.snapshot?.generatedAt || '');
+                    const activePath = viewState?.snapshot?.form?.activeElementPath || findActiveElementPath(viewState?.snapshot?.elements || []);
+                    const hasFreshSnapshot = !locatorFocusBaseline || (currentStamp && currentStamp !== locatorFocusBaseline);
+                    if (activePath && hasFreshSnapshot) {
+                        uiState.searchQuery = '';
+                        if (refs.searchInput instanceof HTMLInputElement) {
+                            refs.searchInput.value = '';
+                        }
+                        uiState.followActive = true;
+                        uiState.selectedElementPath = activePath;
+                        pendingScrollPath = activePath;
+                        persistUiState();
+                        focusAfterLocatorPending = false;
+                        locatorFocusBaseline = '';
+                    }
+                }
                 render();
             }
         });
@@ -78,26 +127,49 @@
             event.preventDefault();
             event.stopPropagation();
             filterMenuOpen = false;
+            snapshotMenuOpen = false;
             overflowMenuOpen = !overflowMenuOpen;
             renderOverflowMenu();
             renderFilterMenu();
+            renderSnapshotMenu();
         });
         bindClick(refs.filterMenuBtn, event => {
             event.preventDefault();
             event.stopPropagation();
             overflowMenuOpen = false;
+            snapshotMenuOpen = false;
             filterMenuOpen = !filterMenuOpen;
             renderFilterMenu();
             renderOverflowMenu();
+            renderSnapshotMenu();
         });
         bindClick(refs.modeChip, event => {
             event.preventDefault();
             event.stopPropagation();
             overflowMenuOpen = false;
             filterMenuOpen = false;
+            snapshotMenuOpen = false;
             renderOverflowMenu();
             renderFilterMenu();
+            renderSnapshotMenu();
             post('toggleAdapterMode');
+        });
+        bindClick(refs.snapshotPickerBtn, event => {
+            event.preventDefault();
+            event.stopPropagation();
+            overflowMenuOpen = false;
+            filterMenuOpen = false;
+            snapshotMenuOpen = !snapshotMenuOpen;
+            renderOverflowMenu();
+            renderFilterMenu();
+            renderSnapshotMenu();
+        });
+        bindClick(refs.startInfobaseBtn, () => post('startInfobase'));
+        bindClick(refs.manualRefreshBtn, () => post('requestAdapterRefresh'));
+        bindClick(refs.locatorBtn, () => {
+            focusAfterLocatorPending = true;
+            locatorFocusBaseline = String(viewState.snapshotMtime || viewState?.snapshot?.generatedAt || '');
+            post('requestAdapterLocator');
         });
         bindClick(refs.openSettingsBtn, () => post('openSettings'));
         bindClick(refs.openSnapshotFileBtn, () => post('openSnapshotFile'));
@@ -116,10 +188,22 @@
             });
         });
         bindClick(refs.focusActiveBtn, () => focusActiveElement());
+        if (refs.showTechnicalTabsInput instanceof HTMLInputElement) {
+            refs.showTechnicalTabsInput.checked = uiState.showTechnicalInfo;
+            refs.showTechnicalTabsInput.addEventListener('change', () => {
+                uiState.showTechnicalInfo = refs.showTechnicalTabsInput.checked;
+                if (!uiState.showTechnicalInfo && (uiState.activeTab === 'attributes' || uiState.activeTab === 'commands')) {
+                    uiState.activeTab = 'selected';
+                }
+                persistUiState();
+                renderTabs();
+            });
+        }
         if (refs.showTechnicalInput instanceof HTMLInputElement) {
             refs.showTechnicalInput.checked = uiState.showTechnical;
             refs.showTechnicalInput.addEventListener('change', () => {
                 uiState.showTechnical = refs.showTechnicalInput.checked;
+                pendingScrollReset = true;
                 persistUiState();
                 render();
             });
@@ -128,6 +212,7 @@
             refs.showGroupsInput.checked = uiState.showGroups;
             refs.showGroupsInput.addEventListener('change', () => {
                 uiState.showGroups = refs.showGroupsInput.checked;
+                pendingScrollReset = true;
                 persistUiState();
                 render();
             });
@@ -136,11 +221,11 @@
         if (refs.searchInput instanceof HTMLInputElement) {
             refs.searchInput.addEventListener('input', () => {
                 uiState.searchQuery = refs.searchInput.value || '';
+                pendingScrollReset = true;
                 persistUiState();
                 render();
             });
         }
-
         for (const button of tabButtons) {
             button.addEventListener('click', () => {
                 const nextTab = String(button.dataset.tab || '');
@@ -178,6 +263,31 @@
                 return;
             }
 
+            if (action === 'toggle-details') {
+                uiState.detailsExpanded = !uiState.detailsExpanded;
+                persistUiState();
+                if (!toggleSectionCard('details', uiState.detailsExpanded)) {
+                    renderElementDetails(viewState.snapshot, getSelectedElementFromState(viewState.snapshot));
+                }
+                return;
+            }
+
+            if (action === 'toggle-suggested-steps') {
+                uiState.suggestedStepsExpanded = !uiState.suggestedStepsExpanded;
+                persistUiState();
+                if (!toggleSectionCard('suggested', uiState.suggestedStepsExpanded)) {
+                    renderElementDetails(viewState.snapshot, getSelectedElementFromState(viewState.snapshot));
+                }
+                if (uiState.suggestedStepsExpanded) {
+                    const selectedPath = uiState.selectedElementPath || '';
+                    const suggestionsPath = String(viewState.suggestedStepsForPath || '');
+                    if (selectedPath && suggestionsPath !== selectedPath) {
+                        post('selectElementPath', { value: selectedPath });
+                    }
+                }
+                return;
+            }
+
             if (action === 'copy') {
                 overflowMenuOpen = false;
                 filterMenuOpen = false;
@@ -188,10 +298,33 @@
                 return;
             }
 
+            if (action === 'copy-gherkin-inline') {
+                overflowMenuOpen = false;
+                filterMenuOpen = false;
+                snapshotMenuOpen = false;
+                renderOverflowMenu();
+                renderFilterMenu();
+                renderSnapshotMenu();
+                const codeNode = target.querySelector('code');
+                const value = codeNode?.textContent || '';
+                post('copyToClipboard', { value });
+                flashCopied(target);
+                return;
+            }
+
+            if (action === 'refresh-table-snapshot') {
+                post('requestTableSnapshotRefresh');
+                return;
+            }
+
             if (action === 'refresh-snapshot') {
                 overflowMenuOpen = false;
                 renderOverflowMenu();
-                post('refreshSnapshot');
+                if (String(viewState.adapterMode || '') === 'manual') {
+                    post('requestAdapterRefresh');
+                } else {
+                    post('refreshSnapshot');
+                }
                 return;
             }
 
@@ -199,6 +332,13 @@
                 overflowMenuOpen = false;
                 renderOverflowMenu();
                 post('buildExtension');
+                return;
+            }
+
+            if (action === 'install-extension') {
+                overflowMenuOpen = false;
+                renderOverflowMenu();
+                post('installExtension');
                 return;
             }
 
@@ -233,20 +373,41 @@
                     }
                 });
             }
+
+            if (action === 'select-snapshot-path') {
+                const nextPath = String(target.dataset.path || '');
+                snapshotMenuOpen = false;
+                renderSnapshotMenu();
+                post('selectSnapshotPath', { value: nextPath });
+                return;
+            }
+
+            if (action === 'delete-snapshot-path') {
+                event.preventDefault();
+                event.stopPropagation();
+                const targetPath = String(target.dataset.path || '');
+                if (!targetPath) {
+                    return;
+                }
+                post('deleteSnapshotPath', { value: targetPath });
+                return;
+            }
         });
 
         document.addEventListener('click', event => {
-            if (!overflowMenuOpen) {
+            if (!overflowMenuOpen && !filterMenuOpen && !snapshotMenuOpen) {
                 return;
             }
             const target = event.target instanceof Element ? event.target : null;
-            if (target?.closest('.menu-shell') || target?.closest('.filter-shell')) {
+            if (target?.closest('.menu-shell') || target?.closest('.filter-shell') || target?.closest('.snapshot-picker-controls')) {
                 return;
             }
             overflowMenuOpen = false;
             filterMenuOpen = false;
+            snapshotMenuOpen = false;
             renderOverflowMenu();
             renderFilterMenu();
+            renderSnapshotMenu();
         });
     }
 
@@ -275,6 +436,7 @@
         const snapshot = viewState.snapshot;
         if (!snapshot) {
             renderEmptyView();
+            notifySelectionChanged();
             return;
         }
 
@@ -285,6 +447,12 @@
         const filteredElements = filterElementTree(rawElements, normalizeQuery(uiState.searchQuery));
         const flatElements = flattenElements(filteredElements);
         const visiblePaths = new Set(flatElements.map(item => item.element.path));
+
+        if (!uiState.selectedElementPath && typeof viewState.selectedElementPath === 'string' && viewState.selectedElementPath) {
+            uiState.selectedElementPath = viewState.selectedElementPath;
+            pendingScrollPath = uiState.selectedElementPath;
+            persistUiState();
+        }
 
         if (uiState.followActive && activePath && activePath !== uiState.selectedElementPath) {
             uiState.selectedElementPath = activePath;
@@ -313,7 +481,7 @@
         renderSidebar(snapshot, flatElements, activeElement);
         renderElementTree(flatElements, activePath, attributesByPath);
         renderSelectedElementHeader(selectedElement, activeElement, snapshot, attributesByPath);
-        renderElementDetails(snapshot, selectedElement, activeElement);
+        renderElementDetails(snapshot, selectedElement);
         renderAttributes(attributes, selectedElement);
         renderCommands(snapshot.commands || []);
 
@@ -321,17 +489,12 @@
         setText(refs.commandCountValue, String((snapshot.commands || []).length));
         renderTabs();
         scrollPendingSelectionIntoView();
+        notifySelectionChanged();
     }
 
     function renderStaticFrame() {
         const snapshot = viewState.snapshot;
         const generatedAt = snapshot?.generatedAt || viewState.snapshotMtime || '';
-        setText(
-            refs.pathModeValue,
-            viewState.usingCustomSnapshotPath
-                ? t('usingCustomPath', 'Custom file')
-                : t('usingConfiguredPath', 'Configured path')
-        );
         const adapterMode = String(viewState.adapterMode || 'unknown');
         setText(
             refs.modeValue,
@@ -342,13 +505,20 @@
                     : t('unknownValue', 'n/a')
         );
         setText(refs.generatedAtValue, generatedAt ? formatDateTime(generatedAt) : t('unknownValue', 'n/a'));
-        if (refs.pathModeChip instanceof HTMLElement) {
-            refs.pathModeChip.title = viewState.snapshotPath || '';
-        }
         if (refs.modeChip instanceof HTMLElement) {
             refs.modeChip.title = viewState.adapterModeStatePath || '';
             refs.modeChip.dataset.mode = adapterMode;
         }
+        if (refs.manualRefreshBtn instanceof HTMLButtonElement) {
+            refs.manualRefreshBtn.classList.toggle('view-hidden', adapterMode !== 'manual');
+            refs.manualRefreshBtn.title = t('refresh', 'Refresh');
+            refs.manualRefreshBtn.disabled = adapterMode !== 'manual';
+        }
+        if (refs.locatorBtn instanceof HTMLButtonElement) {
+            refs.locatorBtn.classList.toggle('view-hidden', adapterMode !== 'manual');
+            refs.locatorBtn.disabled = adapterMode !== 'manual';
+        }
+        renderSnapshotPicker();
 
         if (refs.openSnapshotFileBtn instanceof HTMLButtonElement) {
             refs.openSnapshotFileBtn.disabled = !viewState.snapshotPath;
@@ -365,8 +535,136 @@
         if (refs.showTechnicalInput instanceof HTMLInputElement) {
             refs.showTechnicalInput.checked = uiState.showTechnical;
         }
+        if (refs.showTechnicalTabsInput instanceof HTMLInputElement) {
+            refs.showTechnicalTabsInput.checked = uiState.showTechnicalInfo;
+        }
         renderOverflowMenu();
         renderFilterMenu();
+    }
+
+    function renderSnapshotPicker() {
+        const snapshotCandidates = Array.isArray(viewState.snapshotCandidates)
+            ? viewState.snapshotCandidates
+            : [];
+        const selectedSnapshotPath = firstDefined(
+            typeof viewState.selectedSnapshotPath === 'string' ? viewState.selectedSnapshotPath : '',
+            typeof viewState.snapshotPath === 'string' ? viewState.snapshotPath : ''
+        );
+        const hasSelectedOption = snapshotCandidates.some(candidate => String(candidate.path || '') === selectedSnapshotPath);
+        const effectiveSelectedPath = hasSelectedOption
+            ? selectedSnapshotPath
+            : String(snapshotCandidates[0]?.path || '');
+        const selectedCandidate = snapshotCandidates.find(candidate => String(candidate.path || '') === effectiveSelectedPath) || null;
+
+        if (refs.snapshotPickerBtn instanceof HTMLButtonElement) {
+            if (!selectedCandidate) {
+                refs.snapshotPickerBtn.textContent = t('waitingForSnapshot', 'Waiting for snapshot');
+                refs.snapshotPickerBtn.disabled = true;
+            } else {
+                refs.snapshotPickerBtn.textContent = formatSnapshotCandidateLabel(selectedCandidate);
+                refs.snapshotPickerBtn.disabled = false;
+            }
+            refs.snapshotPickerBtn.title = selectedCandidate?.path || '';
+        }
+
+        renderSnapshotMenu(snapshotCandidates, effectiveSelectedPath);
+    }
+
+    function formatSnapshotCandidateLabel(candidate) {
+        const infobase = formatInfobaseCandidateLabel(candidate?.infobase);
+        if (infobase) {
+            return infobase;
+        }
+        return t('unknownValue', 'n/a');
+    }
+
+    function renderSnapshotMenu(snapshotCandidates, selectedSnapshotPath) {
+        const effectiveCandidates = Array.isArray(snapshotCandidates)
+            ? snapshotCandidates
+            : (Array.isArray(viewState.snapshotCandidates) ? viewState.snapshotCandidates : []);
+        const effectiveSelectedPath = typeof selectedSnapshotPath === 'string' && selectedSnapshotPath
+            ? selectedSnapshotPath
+            : firstDefined(
+                typeof viewState.selectedSnapshotPath === 'string' ? viewState.selectedSnapshotPath : '',
+                typeof viewState.snapshotPath === 'string' ? viewState.snapshotPath : ''
+            );
+
+        if (!(refs.snapshotMenu instanceof HTMLElement)) {
+            return;
+        }
+
+        refs.snapshotMenu.classList.toggle('is-open', snapshotMenuOpen);
+        if (refs.snapshotPickerBtn instanceof HTMLButtonElement) {
+            refs.snapshotPickerBtn.setAttribute('aria-expanded', snapshotMenuOpen ? 'true' : 'false');
+        }
+
+        if (!snapshotMenuOpen) {
+            refs.snapshotMenu.innerHTML = '';
+            return;
+        }
+
+        if (effectiveCandidates.length === 0) {
+            refs.snapshotMenu.innerHTML = `<div class="snapshot-menu-empty">${escapeHtml(t('waitingForSnapshot', 'Waiting for snapshot'))}</div>`;
+            return;
+        }
+
+        refs.snapshotMenu.innerHTML = effectiveCandidates.map(candidate => {
+            const candidatePath = String(candidate?.path || '');
+            const normalizedPath = candidatePath.replace(/\\/g, '/');
+            const isSelected = candidatePath === effectiveSelectedPath;
+            const candidateLabel = formatSnapshotCandidateLabel(candidate);
+            const candidateMtime = firstDefined(candidate?.mtime);
+            const candidateMtimeLabel = candidateMtime ? formatDateTime(candidateMtime) : t('unknownValue', 'n/a');
+            return `
+                <div class="snapshot-option${isSelected ? ' is-selected' : ''}">
+                    <button class="snapshot-option-main" type="button" role="menuitemradio" aria-checked="${isSelected ? 'true' : 'false'}" data-action="select-snapshot-path" data-path="${escapeHtml(candidatePath)}" title="${escapeHtml(normalizedPath || candidatePath)}">
+                        <span class="snapshot-option-title">${escapeHtml(candidateLabel)}</span>
+                        <span class="snapshot-option-subtitle">${escapeHtml(candidateMtimeLabel)}</span>
+                    </button>
+                    <button class="snapshot-option-delete" type="button" aria-label="${escapeHtml(t('deleteSnapshot', 'Delete snapshot'))}" data-action="delete-snapshot-path" data-path="${escapeHtml(candidatePath)}" ${candidate.exists ? '' : 'disabled'}>
+                        <span class="codicon codicon-trash"></span>
+                    </button>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function getSnapshotFileName(candidatePath) {
+        const rawPath = String(candidatePath || '');
+        if (!rawPath) {
+            return '';
+        }
+
+        const normalizedPath = rawPath.replace(/\\/g, '/');
+        return normalizedPath.split('/').pop() || rawPath;
+    }
+
+    function formatInfobaseCandidateLabel(rawInfobase) {
+        const infobaseText = String(rawInfobase || '').trim();
+        if (!infobaseText) {
+            return '';
+        }
+
+        const refMatch = infobaseText.match(/\bRef\s*=\s*"([^"]+)"/i);
+        if (refMatch?.[1]) {
+            return refMatch[1].trim();
+        }
+
+        const fileMatch = infobaseText.match(/\bFile\s*=\s*("([^"]+)"|([^;]+))/i);
+        if (fileMatch?.[2] || fileMatch?.[3]) {
+            const fullPath = (fileMatch[2] || fileMatch[3] || '').trim().replace(/[\\/]+$/, '');
+            if (fullPath) {
+                const normalizedPath = fullPath.replace(/\\/g, '/');
+                const tail = normalizedPath.split('/').pop() || fullPath;
+                return tail || fullPath;
+            }
+        }
+
+        const compact = infobaseText.replace(/[\\r\\n]+/g, ' ').trim();
+        if (!compact) {
+            return '';
+        }
+        return compact.length > 48 ? `${compact.slice(0, 47)}…` : compact;
     }
 
     function renderBanner() {
@@ -465,7 +763,8 @@
         }
 
         const preservedScrollTop = refs.elementTree.scrollTop;
-        const shouldPreserveScroll = !pendingScrollPath;
+        const shouldResetScroll = pendingScrollReset;
+        const shouldPreserveScroll = !pendingScrollPath && !shouldResetScroll;
 
         if (flatElements.length === 0) {
             refs.elementTree.innerHTML = renderEmptyState(
@@ -474,16 +773,22 @@
                     : t('noElements', 'No form elements in snapshot.'),
                 uiState.searchQuery || ''
             );
-            if (shouldPreserveScroll) {
+            if (shouldResetScroll) {
+                refs.elementTree.scrollTop = 0;
+            } else if (shouldPreserveScroll) {
                 refs.elementTree.scrollTop = preservedScrollTop;
             }
+            pendingScrollReset = false;
             return;
         }
 
         refs.elementTree.innerHTML = flatElements.map(item => renderOutlineRow(item.element, item.depth, activePath, attributesByPath)).join('');
-        if (shouldPreserveScroll) {
+        if (shouldResetScroll) {
+            refs.elementTree.scrollTop = 0;
+        } else if (shouldPreserveScroll) {
             refs.elementTree.scrollTop = preservedScrollTop;
         }
+        pendingScrollReset = false;
     }
 
     function renderSelectedElementHeader(selectedElement, activeElement, snapshot, attributesByPath) {
@@ -499,37 +804,39 @@
                     t('noSelection', 'Select an element in the tree to inspect its details.'),
                     ''
                 );
-                return;
+            } else {
+                const linkedAttribute = selectedElement.boundAttributePath
+                    ? (snapshot.attributes || []).find(attribute => attribute.path === selectedElement.boundAttributePath) || null
+                    : null;
+
+                refs.selectedKeyFacts.innerHTML = [
+                    renderKeyFactCard(
+                        t('uiName', 'UI name'),
+                        getElementLabel(selectedElement, attributesByPath),
+                        'copy'
+                    ),
+                    renderKeyFactCard(
+                        t('technicalName', 'Technical name'),
+                        firstDefined(selectedElement.name, lastSegment(selectedElement.path), selectedElement.path),
+                        'copy'
+                    ),
+                    renderKeyFactCard(
+                        t('valuePreview', 'Value'),
+                        firstDefined(selectedElement.valuePreview, linkedAttribute?.valuePreview, ''),
+                        'copy'
+                    )
+                ].filter(Boolean).join('');
             }
-
-            const linkedAttribute = selectedElement.boundAttributePath
-                ? (snapshot.attributes || []).find(attribute => attribute.path === selectedElement.boundAttributePath) || null
-                : null;
-
-            refs.selectedKeyFacts.innerHTML = [
-                renderKeyFactCard(
-                    t('uiName', 'UI name'),
-                    getElementLabel(selectedElement, attributesByPath),
-                    'copy'
-                ),
-                renderKeyFactCard(
-                    t('technicalName', 'Technical name'),
-                    firstDefined(selectedElement.name, lastSegment(selectedElement.path), selectedElement.path),
-                    'copy'
-                ),
-                renderKeyFactCard(
-                    t('valuePreview', 'Value'),
-                    firstDefined(selectedElement.valuePreview, linkedAttribute?.valuePreview, ''),
-                    'copy'
-                )
-            ].filter(Boolean).join('');
         }
+
     }
 
-    function renderElementDetails(snapshot, selectedElement, activeElement) {
+    function renderElementDetails(snapshot, selectedElement) {
         if (!refs.detailsPanel) {
             return;
         }
+
+        const suggestedScrollState = captureSuggestedScrollState();
 
         if (!selectedElement) {
             refs.detailsPanel.innerHTML = renderEmptyState(
@@ -553,17 +860,15 @@
                     createDetailRow(t('boundAttribute', 'Bound attribute'), selectedElement.boundAttributePath, true),
                     createDetailRow(t('metadataPath', 'Metadata path'), selectedElement.metadataPath, true),
                     createSourceDetailRow(t('source', 'Source'), selectedElement.source)
-                ])
+                ]),
+                {
+                    collapsible: true,
+                    expanded: uiState.detailsExpanded,
+                    action: 'toggle-details',
+                    sectionKey: 'details'
+                }
             ),
-            (selectedElement.toolTip || selectedElement.titleDataPath)
-                ? renderSectionCard(
-                    t('details', 'Details'),
-                    renderDetailRows([
-                        createDetailRow(t('toolTip', 'Tooltip'), selectedElement.toolTip),
-                        createDetailRow(t('titleDataPath', 'Title data path'), selectedElement.titleDataPath, true)
-                    ])
-                )
-                : '',
+            renderSuggestedStepsSection(selectedElement),
             notes.length > 0
                 ? renderSectionCard(
                     t('notes', 'Notes'),
@@ -573,6 +878,7 @@
         ].filter(Boolean);
 
         refs.detailsPanel.innerHTML = sections.join('');
+        restoreSuggestedScrollState(suggestedScrollState);
     }
 
     function renderAttributes(attributes, selectedElement) {
@@ -609,14 +915,35 @@
     }
 
     function renderTabs() {
+        if (!uiState.showTechnicalInfo && (uiState.activeTab === 'attributes' || uiState.activeTab === 'commands')) {
+            uiState.activeTab = 'selected';
+            persistUiState();
+        }
+
+        if (refs.detailsTabsBar instanceof HTMLElement) {
+            refs.detailsTabsBar.classList.toggle('view-hidden', !uiState.showTechnicalInfo);
+        }
+
         for (const button of tabButtons) {
-            const isActive = button.dataset.tab === uiState.activeTab;
+            const tab = String(button.dataset.tab || '');
+            const hidden = !uiState.showTechnicalInfo && (tab === 'attributes' || tab === 'commands');
+            button.classList.toggle('view-hidden', hidden);
+            if (hidden) {
+                button.setAttribute('aria-selected', 'false');
+                button.classList.remove('is-active');
+                continue;
+            }
+
+            const isActive = tab === uiState.activeTab;
             button.classList.toggle('is-active', isActive);
             button.setAttribute('aria-selected', isActive ? 'true' : 'false');
         }
 
         for (const panel of tabPanels) {
-            const isActive = panel.dataset.tabPanel === uiState.activeTab;
+            const tab = String(panel.dataset.tabPanel || '');
+            const hidden = !uiState.showTechnicalInfo && (tab === 'attributes' || tab === 'commands');
+            panel.classList.toggle('view-hidden', hidden);
+            const isActive = !hidden && tab === uiState.activeTab;
             panel.classList.toggle('is-active', isActive);
         }
     }
@@ -712,6 +1039,768 @@
         `;
     }
 
+    function renderSelectedFormTable(selectedTableEntry) {
+        if (!refs.tablesPanel) {
+            return;
+        }
+
+        const previousCard = refs.tablesPanel.querySelector('.form-table-card');
+        const previousPreview = refs.tablesPanel.querySelector('.gherkin-table-preview.inline');
+        const previousTableKey = previousCard instanceof HTMLElement
+            ? String(previousCard.dataset.tableKey || '')
+            : '';
+        const preservedPanelScrollTop = refs.tablesPanel.scrollTop;
+        const preservedPreviewScrollTop = previousPreview instanceof HTMLElement
+            ? previousPreview.scrollTop
+            : 0;
+        const preservedPreviewScrollLeft = previousPreview instanceof HTMLElement
+            ? previousPreview.scrollLeft
+            : 0;
+
+        if (!selectedTableEntry) {
+            refs.tablesPanel.innerHTML = renderEmptyState(
+                t('noFormTables', 'No form tables detected in snapshot.'),
+                ''
+            );
+            return;
+        }
+
+        refs.tablesPanel.innerHTML = `<div class="record-list">${renderFormTableCard(selectedTableEntry)}</div>`;
+
+        if (previousTableKey && previousTableKey === selectedTableEntry.key) {
+            refs.tablesPanel.scrollTop = preservedPanelScrollTop;
+            const nextPreview = refs.tablesPanel.querySelector('.gherkin-table-preview.inline');
+            if (nextPreview instanceof HTMLElement) {
+                nextPreview.scrollTop = preservedPreviewScrollTop;
+                nextPreview.scrollLeft = preservedPreviewScrollLeft;
+            }
+        }
+    }
+
+    function resolveSelectedFormTableEntry(entries) {
+        if (!Array.isArray(entries) || entries.length === 0) {
+            if (uiState.selectedTableKey) {
+                uiState.selectedTableKey = '';
+                persistUiState();
+            }
+            return null;
+        }
+
+        let selected = uiState.selectedTableKey
+            ? entries.find(entry => entry.key === uiState.selectedTableKey) || null
+            : null;
+        if (!selected) {
+            selected = entries[0];
+            if (selected && uiState.selectedTableKey !== selected.key) {
+                uiState.selectedTableKey = selected.key;
+                persistUiState();
+            }
+        }
+
+        return selected;
+    }
+
+    function renderFormTableList(entries) {
+        if (!refs.tableTree) {
+            return;
+        }
+
+        const query = normalizeQuery(uiState.tableSearchQuery);
+        const filteredEntries = query
+            ? entries.filter(entry => matchesTableSearch(entry, query))
+            : entries;
+
+        if (filteredEntries.length === 0) {
+            refs.tableTree.innerHTML = renderEmptyState(
+                query
+                    ? t('noMatchingTables', 'No tables match the current filter.')
+                    : t('noFormTables', 'No form tables detected in snapshot.'),
+                ''
+            );
+            return;
+        }
+
+        refs.tableTree.innerHTML = filteredEntries
+            .map(entry => renderTableOutlineRow(entry))
+            .join('');
+    }
+
+    function renderTableOutlineRow(entry) {
+        const rowCountTotal = Number.isFinite(entry.tableData.rowCount)
+            ? Number(entry.tableData.rowCount)
+            : entry.tableData.rows.length;
+        const rowCountShown = entry.tableData.rows.length;
+        const preview = `${t('tableRowsShown', 'Rows shown')}: ${rowCountShown} • ${t('tableRowsTotal', 'Rows total')}: ${rowCountTotal}`;
+        const chips = renderStateChips([
+            ...(entry.tableData.truncated ? [{ label: t('tableRowsTruncated', 'Table is truncated in snapshot.'), tone: 'warning' }] : [])
+        ]);
+
+        return `
+            <button
+                class="outline-row${entry.key === uiState.selectedTableKey ? ' is-selected' : ''}"
+                type="button"
+                data-action="select-table"
+                data-table-key="${escapeHtml(entry.key)}"
+            >
+                <span class="outline-main">
+                    <span class="outline-title">${escapeHtml(entry.label)}</span>
+                    ${entry.subtitle ? `<span class="outline-subtitle">${escapeHtml(entry.subtitle)}</span>` : ''}
+                    <span class="outline-value">${escapeHtml(preview)}</span>
+                </span>
+                ${chips ? `<span class="outline-side">${chips}</span>` : ''}
+            </button>
+        `;
+    }
+
+    function matchesTableSearch(entry, query) {
+        const probe = normalizeQuery([
+            entry.label,
+            entry.subtitle,
+            entry.path,
+            entry.elementPath,
+            entry.boundAttributePath
+        ].filter(Boolean).join(' '));
+        return probe.includes(query);
+    }
+
+    function renderSuggestedStepsSection(selectedElement) {
+        const headerActionsHtml = isTableLikeElement(selectedElement)
+            ? `
+                <button class="mini-btn compact" type="button" data-action="refresh-table-snapshot">
+                    <span class="codicon codicon-refresh"></span>
+                    <span>${escapeHtml(t('getTables', 'Get tables'))}</span>
+                </button>
+            `
+            : '';
+        return renderSectionCard(
+            t('suggestedSteps', 'Suggested steps'),
+            renderSuggestedStepsBody(selectedElement),
+            {
+                collapsible: true,
+                expanded: uiState.suggestedStepsExpanded,
+                action: 'toggle-suggested-steps',
+                sectionKey: 'suggested',
+                className: 'suggested-steps-card',
+                headerActionsHtml
+            }
+        );
+    }
+
+    function renderSuggestedStepsBody(selectedElement) {
+        if (!selectedElement) {
+            return renderEmptyState(
+                t('noSelection', 'Select an element in the tree to inspect its details.'),
+                ''
+            );
+        }
+
+        const currentPath = selectedElement.path;
+        const suggestionsForPath = viewState.suggestedStepsForPath || '';
+        const backendSuggestions = Array.isArray(viewState.suggestedSteps)
+            ? viewState.suggestedSteps
+            : [];
+        const backendSelectedPath = typeof viewState.selectedElementPath === 'string'
+            ? viewState.selectedElementPath
+            : '';
+        const hasCurrentSuggestions = suggestionsForPath === currentPath
+            || (backendSelectedPath === currentPath && backendSuggestions.length > 0);
+        const currentSuggestions = hasCurrentSuggestions
+            ? backendSuggestions
+            : [];
+        const cachedSuggestions = suggestedStepsCache.get(currentPath);
+        const fallbackSuggestions = backendSuggestions.length > 0 ? backendSuggestions : [];
+        const suggestions = currentSuggestions.length > 0
+            ? currentSuggestions
+            : (Array.isArray(cachedSuggestions) && cachedSuggestions.length > 0
+                ? cachedSuggestions
+                : fallbackSuggestions);
+
+        if (viewState.suggestedStepsError && hasCurrentSuggestions) {
+            return renderEmptyState(
+                t('suggestedStepsError', 'Failed to build step suggestions.'),
+                String(viewState.suggestedStepsError || '')
+            );
+        }
+
+        if (!hasCurrentSuggestions && suggestions.length === 0) {
+            return renderEmptyState(
+                t('suggestedStepsLoading', 'Preparing step suggestions...'),
+                ''
+            );
+        }
+
+        if (suggestions.length === 0) {
+            return renderEmptyState(
+                t('noSuggestedSteps', 'No suitable steps found for the selected element.'),
+                ''
+            );
+        }
+
+        return `
+            <div class="suggested-steps-scroll" data-suggested-path="${escapeHtml(currentPath)}">
+                <div class="record-list step-suggestion-list">${suggestions.map((step, index) => renderSuggestedStepCard(step, index)).join('')}</div>
+            </div>
+        `;
+    }
+
+    function isTableLikeElement(element) {
+        if (!element) {
+            return false;
+        }
+
+        if (element.tableData && Array.isArray(element.tableData.columns)) {
+            return true;
+        }
+
+        const probe = normalizeQuery([element.kind, element.type, element.path, element.boundAttributePath].filter(Boolean).join(' '));
+        return probe.includes('table') || probe.includes('таблиц');
+    }
+
+    function renderSuggestedStepCard(step, index) {
+        const filledText = firstDefined(step.filledText, step.templateText);
+        const normalizedFilledText = normalizeSuggestedStepText(filledText);
+        const isMultiline = normalizedFilledText.includes('\n');
+        const scoreText = typeof step.score === 'number' && Number.isFinite(step.score)
+            ? String(step.score)
+            : '';
+        const chips = renderStateChips([
+            ...(scoreText ? [{ label: `Score ${scoreText}`, tone: 'muted' }] : [])
+        ]);
+        const stepKey = String(index);
+
+        return `
+            <article class="record-card step-suggestion-card" data-action="copy-gherkin-inline">
+                <button class="gherkin-inline-copy step-suggestion-inline-copy" type="button" data-action="copy-gherkin-inline">
+                    <div class="gherkin-inline-head step-suggestion-copy-head">
+                        <span class="codicon codicon-copy" aria-hidden="true"></span>
+                    </div>
+                    <pre class="gherkin-table-preview inline step-suggestion-preview${isMultiline ? '' : ' single-line'}" data-step-key="${escapeHtml(stepKey)}"><code>${escapeHtml(normalizedFilledText)}</code></pre>
+                    ${step.description ? `<p class="record-subtitle step-suggestion-description">${escapeHtml(step.description)}</p>` : ''}
+                </button>
+                ${chips ? `<div class="chip-row compact step-suggestion-meta">${chips}</div>` : ''}
+            </article>
+        `;
+    }
+
+    function captureSuggestedScrollState() {
+        if (!(refs.detailsPanel instanceof HTMLElement)) {
+            return null;
+        }
+
+        const container = refs.detailsPanel.querySelector('.suggested-steps-scroll');
+        if (!(container instanceof HTMLElement)) {
+            return null;
+        }
+
+        return {
+            path: String(container.dataset.suggestedPath || ''),
+            scrollTop: container.scrollTop,
+            scrollLeft: container.scrollLeft,
+            previews: Array.from(container.querySelectorAll('.step-suggestion-preview'))
+                .filter(node => node instanceof HTMLElement)
+                .map(node => ({
+                    stepKey: String(node.dataset.stepKey || ''),
+                    scrollLeft: node.scrollLeft,
+                    scrollTop: node.scrollTop
+                }))
+        };
+    }
+
+    function restoreSuggestedScrollState(state) {
+        if (!state || !(refs.detailsPanel instanceof HTMLElement)) {
+            return;
+        }
+
+        const container = refs.detailsPanel.querySelector('.suggested-steps-scroll');
+        if (!(container instanceof HTMLElement)) {
+            return;
+        }
+
+        if (String(container.dataset.suggestedPath || '') !== state.path) {
+            return;
+        }
+
+        container.scrollTop = state.scrollTop;
+        container.scrollLeft = state.scrollLeft;
+        if (Array.isArray(state.previews)) {
+            const previewNodes = Array.from(container.querySelectorAll('.step-suggestion-preview'));
+            for (const previewState of state.previews) {
+                const matchingNode = previewNodes.find(node => String(node.dataset.stepKey || '') === previewState.stepKey);
+                if (!(matchingNode instanceof HTMLElement)) {
+                    continue;
+                }
+
+                matchingNode.scrollLeft = Number.isFinite(previewState.scrollLeft) ? previewState.scrollLeft : 0;
+                matchingNode.scrollTop = Number.isFinite(previewState.scrollTop) ? previewState.scrollTop : 0;
+            }
+        }
+    }
+
+    function normalizeSuggestedStepText(value) {
+        const raw = String(value || '')
+            .replace(/\r\n|\r/g, '\n')
+            .replace(/[ \t]+\n/g, '\n')
+            .trim();
+        if (!raw) {
+            return '';
+        }
+
+        const lines = raw.split('\n');
+        const compactLines = [];
+        for (let index = 0; index < lines.length; index++) {
+            const line = lines[index];
+            const trimmedLine = line.trim();
+            if (trimmedLine.length === 0) {
+                const previousLine = compactLines.length > 0 ? compactLines[compactLines.length - 1].trim() : '';
+                let nextNonEmptyLine = '';
+                for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex++) {
+                    const candidate = lines[nextIndex].trim();
+                    if (candidate.length > 0) {
+                        nextNonEmptyLine = candidate;
+                        break;
+                    }
+                }
+                const betweenTableLines = previousLine.startsWith('|') && nextNonEmptyLine.startsWith('|');
+                const duplicateGap = previousLine.length === 0 || nextNonEmptyLine.length === 0;
+                if (betweenTableLines || duplicateGap) {
+                    continue;
+                }
+            }
+            compactLines.push(line);
+        }
+
+        return compactLines
+            .join('\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    }
+
+    function normalizeTableData(rawTableData) {
+        if (!rawTableData) {
+            return null;
+        }
+
+        const rowsRaw = Array.isArray(rawTableData.rows) ? rawTableData.rows : [];
+        const rows = rowsRaw
+            .filter(row => Array.isArray(row))
+            .map(row => row.map(cell => sanitizeTableCellValue(cell)));
+        const columnsRaw = Array.isArray(rawTableData.columns) ? rawTableData.columns : [];
+        if (columnsRaw.length === 0 && rows.length === 0) {
+            return null;
+        }
+        const maxColumns = rows.length > 0 ? Math.max(...rows.map(row => row.length), 0) : columnsRaw.length;
+        const columns = columnsRaw.length > 0
+            ? columnsRaw.map(column => sanitizeTableCellValue(column))
+            : Array.from({ length: maxColumns }, (_, index) => `Column${index + 1}`);
+
+        return {
+            columns,
+            rows,
+            rowCount: Number.isFinite(rawTableData.rowCount) ? Number(rawTableData.rowCount) : rows.length,
+            truncated: Boolean(rawTableData.truncated),
+            sourcePath: firstDefined(rawTableData.sourcePath)
+        };
+    }
+
+    function sanitizeTableCellValue(value) {
+        if (value === undefined || value === null) {
+            return '';
+        }
+
+        const normalized = String(value);
+        const trimmed = normalized.trim();
+        if (trimmed === '""' || trimmed === "''") {
+            return '';
+        }
+
+        return normalized;
+    }
+
+    function collectFormTableEntries(snapshot, selectedElement, attributesByPath) {
+        const entries = [];
+        const dedupe = new Set();
+        const allElements = Array.isArray(snapshot?.elements) ? snapshot.elements : [];
+
+        const tryAdd = (rawEntry, fallbackElement) => {
+            const tableData = normalizeTableData(rawEntry?.tableData || rawEntry);
+            if (!tableData) {
+                return;
+            }
+
+            const path = firstDefined(rawEntry?.path, rawEntry?.boundAttributePath, tableData.sourcePath);
+            const elementPath = firstDefined(rawEntry?.elementPath, fallbackElement?.path);
+            const boundAttributePath = firstDefined(rawEntry?.boundAttributePath, fallbackElement?.boundAttributePath, path);
+            const linkedAttribute = boundAttributePath ? attributesByPath?.get(boundAttributePath) : null;
+            const resolvedTableElement = fallbackElement
+                || findTableElementByBoundPath(allElements, boundAttributePath || path)
+                || null;
+            const tableName = firstDefined(rawEntry?.name, resolvedTableElement?.name, lastSegment(path), lastSegment(elementPath));
+            const projectedTableData = projectTableDataForDisplay(tableData, resolvedTableElement, tableName);
+            const label = firstDefined(
+                getTableElementUiLabel(resolvedTableElement, allElements, attributesByPath),
+                linkedAttribute?.title,
+                linkedAttribute?.synonym,
+                fallbackElement ? firstDefined(fallbackElement.title, fallbackElement.synonym) : '',
+                humanizeToken(firstDefined(rawEntry?.title, rawEntry?.name)),
+                humanizeMetadataPath(path),
+                t('gherkinTable', 'Gherkin table')
+            );
+            const subtitle = firstDefined(path, elementPath, tableData.sourcePath);
+
+            const dedupeKey = [
+                firstDefined(path),
+                firstDefined(elementPath),
+                firstDefined(projectedTableData.sourcePath),
+                firstDefined(rawEntry?.name),
+                firstDefined(rawEntry?.title)
+            ].join('::');
+            if (dedupe.has(dedupeKey)) {
+                return;
+            }
+            dedupe.add(dedupeKey);
+
+            entries.push({
+                key: dedupeKey,
+                label,
+                subtitle,
+                path,
+                elementPath,
+                boundAttributePath,
+                tableData: projectedTableData,
+                related: false
+            });
+        };
+
+        const snapshotTables = Array.isArray(snapshot?.tables) ? snapshot.tables : [];
+        for (const rawTable of snapshotTables) {
+            const fallbackElement = rawTable?.elementPath ? findElementByPath(allElements, String(rawTable.elementPath)) : null;
+            tryAdd(rawTable, fallbackElement);
+        }
+
+        const collectFromElements = (elements) => {
+            for (const element of elements || []) {
+                tryAdd({
+                    path: firstDefined(element.boundAttributePath, element.path),
+                    elementPath: element.path,
+                    boundAttributePath: element.boundAttributePath,
+                    title: firstDefined(element.title, element.synonym),
+                    name: element.name,
+                    tableData: element.tableData
+                }, element);
+
+                if (Array.isArray(element.children) && element.children.length > 0) {
+                    collectFromElements(element.children);
+                }
+            }
+        };
+        collectFromElements(allElements);
+
+        entries.sort((left, right) => {
+            return left.label.localeCompare(right.label, 'ru')
+                || left.subtitle.localeCompare(right.subtitle, 'ru');
+        });
+
+        return entries;
+    }
+
+    function getTableElementUiLabel(tableElement, allElements, attributesByPath) {
+        if (!tableElement) {
+            return '';
+        }
+
+        const directLabel = firstDefined(tableElement.title, tableElement.synonym);
+        if (directLabel) {
+            return directLabel;
+        }
+
+        const chain = findElementPathChain(allElements, tableElement.path);
+        if (chain.length > 1) {
+            const ancestors = chain.slice(0, -1).reverse();
+            for (const ancestor of ancestors) {
+                const ancestorLabel = firstDefined(ancestor.title, ancestor.synonym);
+                if (!ancestorLabel) {
+                    continue;
+                }
+
+                const probe = normalizeQuery([ancestor.kind, ancestor.type, ancestor.name].filter(Boolean).join(' '));
+                if (probe.includes('page') || probe.includes('вклад') || probe.includes('tab')) {
+                    return ancestorLabel;
+                }
+            }
+
+            for (const ancestor of ancestors) {
+                const ancestorLabel = firstDefined(ancestor.title, ancestor.synonym);
+                if (ancestorLabel) {
+                    return ancestorLabel;
+                }
+            }
+        }
+
+        return getElementLabel(tableElement, attributesByPath);
+    }
+
+    function findElementPathChain(elements, targetPath, chain) {
+        const nextChain = Array.isArray(chain) ? chain : [];
+        for (const element of elements || []) {
+            const currentChain = nextChain.concat(element);
+            if (element.path === targetPath) {
+                return currentChain;
+            }
+
+            const nested = findElementPathChain(element.children || [], targetPath, currentChain);
+            if (nested.length > 0) {
+                return nested;
+            }
+        }
+
+        return [];
+    }
+
+    function findTableElementByBoundPath(elements, targetPath) {
+        if (!targetPath) {
+            return null;
+        }
+
+        for (const element of elements || []) {
+            const isTableElement = normalizeQuery([element.kind, element.type].filter(Boolean).join(' ')).includes('table');
+            if (isTableElement && firstDefined(element.boundAttributePath, '') === targetPath) {
+                return element;
+            }
+
+            const nested = findTableElementByBoundPath(element.children || [], targetPath);
+            if (nested) {
+                return nested;
+            }
+        }
+
+        return null;
+    }
+
+    function projectTableDataForDisplay(tableData, tableElement, tableName) {
+        const columns = Array.isArray(tableData.columns) ? tableData.columns : [];
+        const rows = Array.isArray(tableData.rows) ? tableData.rows : [];
+        if (columns.length === 0) {
+            return tableData;
+        }
+
+        const descriptors = collectTableColumnDescriptorsFromElement(tableElement, tableName);
+        const selectedIndexes = [];
+        const selectedColumns = [];
+
+        for (let index = 0; index < columns.length; index += 1) {
+            const rawColumnName = sanitizeTableCellValue(columns[index]);
+            const descriptor = findColumnDescriptor(descriptors, rawColumnName, tableName);
+            if (descriptor && descriptor.visible === false) {
+                continue;
+            }
+
+            selectedIndexes.push(index);
+            selectedColumns.push(buildDisplayColumnTitle(rawColumnName, descriptor, tableName));
+        }
+
+        if (selectedIndexes.length === 0) {
+            return tableData;
+        }
+
+        const nextRows = rows.map(row => {
+            const sourceRow = Array.isArray(row) ? row : [];
+            return selectedIndexes.map(index => sanitizeTableCellValue(sourceRow[index]));
+        });
+
+        return {
+            ...tableData,
+            columns: selectedColumns,
+            rows: nextRows
+        };
+    }
+
+    function collectTableColumnDescriptorsFromElement(tableElement, tableName) {
+        if (!tableElement || !Array.isArray(tableElement.children)) {
+            return [];
+        }
+
+        const descriptors = [];
+        for (const child of tableElement.children) {
+            if (!isTableColumnElement(child)) {
+                continue;
+            }
+
+            const name = firstDefined(child.name, lastSegment(child.path), '');
+            if (!name) {
+                continue;
+            }
+
+            const title = firstDefined(
+                child.title,
+                child.synonym,
+                buildFallbackColumnTitle(name, tableName)
+            );
+
+            descriptors.push({
+                key: toCaseFoldKey(name),
+                shortKey: toCaseFoldKey(trimTechnicalTablePrefix(name, tableName)),
+                title,
+                visible: child.visible !== false
+            });
+        }
+
+        return descriptors;
+    }
+
+    function isTableColumnElement(element) {
+        const probe = normalizeQuery([element?.kind, element?.type].filter(Boolean).join(' '));
+        return probe.includes('field') || probe.includes('поле');
+    }
+
+    function findColumnDescriptor(descriptors, rawColumnName, tableName) {
+        if (!Array.isArray(descriptors) || descriptors.length === 0) {
+            return null;
+        }
+
+        const key = toCaseFoldKey(rawColumnName);
+        const shortKey = toCaseFoldKey(trimTechnicalTablePrefix(rawColumnName, tableName));
+
+        return descriptors.find(descriptor => {
+            return descriptor.key === key
+                || (descriptor.shortKey && descriptor.shortKey === key)
+                || (shortKey && (descriptor.key === shortKey || descriptor.shortKey === shortKey));
+        }) || null;
+    }
+
+    function toCaseFoldKey(value) {
+        return normalizeQuery(String(value || '')).replace(/[\s._-]+/g, '');
+    }
+
+    function buildDisplayColumnTitle(rawColumnName, descriptor, tableName) {
+        if (descriptor && descriptor.title) {
+            return descriptor.title;
+        }
+        return buildFallbackColumnTitle(rawColumnName, tableName);
+    }
+
+    function buildFallbackColumnTitle(rawColumnName, tableName) {
+        const rawName = sanitizeTableCellValue(rawColumnName);
+        if (!rawName) {
+            return '';
+        }
+
+        const withoutPrefix = trimTechnicalTablePrefix(rawName, tableName);
+        if (/^(line(number)?|linenumber)$/i.test(withoutPrefix)) {
+            return '#';
+        }
+
+        const humanized = humanizeToken(withoutPrefix);
+        return humanized || rawName;
+    }
+
+    function trimTechnicalTablePrefix(columnName, tableName) {
+        const rawColumn = String(columnName || '');
+        const rawTable = String(tableName || '');
+        if (!rawColumn || !rawTable) {
+            return rawColumn;
+        }
+
+        if (rawColumn.length > rawTable.length && rawColumn.toLowerCase().startsWith(rawTable.toLowerCase())) {
+            return rawColumn.slice(rawTable.length);
+        }
+
+        return rawColumn;
+    }
+
+    function renderFormTableCard(entry) {
+        const gherkinTable = buildGherkinTable(entry.label, entry.tableData);
+        const rowCountShown = entry.tableData.rows.length;
+        const rowCountTotal = Number.isFinite(entry.tableData.rowCount)
+            ? Number(entry.tableData.rowCount)
+            : rowCountShown;
+        const rowMetricChips = renderStateChips([
+            { label: `${t('tableRowsShown', 'Rows shown')}: ${rowCountShown}`, tone: 'neutral' },
+            { label: `${t('tableRowsTotal', 'Rows total')}: ${rowCountTotal}`, tone: 'muted' }
+        ]);
+        const statusChips = renderStateChips([
+            ...(entry.tableData.truncated ? [{ label: t('tableRowsTruncated', 'Table is truncated in snapshot.'), tone: 'warning' }] : [])
+        ]);
+
+        return `
+            <article class="record-card form-table-card${entry.related ? ' is-highlighted' : ''}" data-table-key="${escapeHtml(entry.key)}">
+                ${statusChips ? `<div class="chip-row compact">${statusChips}</div>` : ''}
+                <button class="gherkin-inline-copy" type="button" data-action="copy-gherkin-inline">
+                    <div class="gherkin-inline-head">
+                        <span class="section-label">${escapeHtml(t('copyGherkinStep', 'Copy full step'))}</span>
+                        <span class="codicon codicon-copy" aria-hidden="true"></span>
+                    </div>
+                    <pre class="gherkin-table-preview inline"><code>${escapeHtml(gherkinTable.fullStep)}</code></pre>
+                </button>
+            </article>
+        `;
+    }
+
+    function buildGherkinTable(label, tableData) {
+        const columns = tableData.columns.length > 0
+            ? tableData.columns
+            : Array.from(
+                { length: Math.max(...tableData.rows.map(row => row.length), 0) },
+                (_, index) => `Column${index + 1}`
+            );
+        if (columns.length === 0) {
+            columns.push('Column1');
+        }
+
+        const normalizedRows = tableData.rows.map(row => {
+            const copy = row.slice(0, columns.length);
+            while (copy.length < columns.length) {
+                copy.push('');
+            }
+            return copy;
+        });
+
+        const escapedRows = [columns, ...normalizedRows]
+            .map(row => row.map(value => `'${escapeGherkinCell(value)}'`));
+        const columnWidths = columns.map((_, columnIndex) => {
+            return escapedRows.reduce((maxWidth, row) => {
+                const width = row[columnIndex]?.length || 0;
+                return width > maxWidth ? width : maxWidth;
+            }, 0);
+        });
+        const tableLines = escapedRows.map(row => formatAlignedGherkinLine(row, columnWidths));
+
+        const scenarioLanguage = getScenarioLanguage();
+        const elementLabel = firstDefined(label, scenarioLanguage === 'ru' ? 'Список' : 'List');
+        const escapedStepName = escapeGherkinSingleQuotedText(elementLabel);
+        const header = scenarioLanguage === 'ru'
+            ? `И таблица '${escapedStepName}' стала равной:`
+            : `And '${escapedStepName}' table became equal`;
+        const tableOnly = tableLines.join('\n');
+        const fullStep = `${header}\n${tableOnly}`;
+
+        return {
+            tableOnly,
+            fullStep
+        };
+    }
+
+    function formatAlignedGherkinLine(row, columnWidths) {
+        const paddedCells = row.map((value, index) => value.padEnd(columnWidths[index], ' '));
+        return `    | ${paddedCells.join(' | ')} |`;
+    }
+
+    function getScenarioLanguage() {
+        return String(viewState?.scenarioLanguage || '').toLowerCase() === 'ru' ? 'ru' : 'en';
+    }
+
+    function escapeGherkinSingleQuotedText(value) {
+        return String(value || '')
+            .replace(/\r\n|\r|\n/g, ' ')
+            .replace(/'/g, "''");
+    }
+
+    function escapeGherkinCell(value) {
+        return String(value || '')
+            .replace(/\r\n|\r|\n/g, '\\n')
+            .replace(/\|/g, '\\|')
+            .replace(/'/g, "''");
+    }
+
     function renderKeyFactCard(label, value, action, emphasize) {
         const normalizedValue = firstDefined(value, '');
         const className = `key-fact${normalizedValue ? '' : ' is-empty'}${emphasize ? ' emphasized' : ''}${normalizedValue && action ? ' is-copyable' : ''}`;
@@ -735,16 +1824,96 @@
         `;
     }
 
-    function renderSectionCard(title, bodyHtml) {
+    function renderSectionCard(title, bodyHtml, options) {
         if (!bodyHtml) {
             return '';
         }
+        const collapsible = Boolean(options?.collapsible);
+        const expanded = collapsible ? options?.expanded === true : true;
+        const action = collapsible ? String(options?.action || '') : '';
+        const extraClassName = String(options?.className || '').trim();
+        const sectionKey = String(options?.sectionKey || '').trim();
+        const headerActionsHtml = String(options?.headerActionsHtml || '').trim();
         return `
-            <section class="section-card">
-                <h3>${escapeHtml(title)}</h3>
-                ${bodyHtml}
+            <section class="section-card${collapsible ? ' is-collapsible' : ''}${expanded ? ' is-expanded' : ' is-collapsed'}${extraClassName ? ` ${escapeHtml(extraClassName)}` : ''}"${sectionKey ? ` data-section-key="${escapeHtml(sectionKey)}"` : ''}>
+                ${collapsible
+                    ? `<div class="section-toggle-row">
+                        <button class="section-toggle" type="button" data-action="${escapeHtml(action)}" aria-expanded="${expanded ? 'true' : 'false'}">
+                            <span class="codicon codicon-chevron-${expanded ? 'down' : 'right'} section-toggle-icon"></span>
+                            <span class="section-toggle-text">${escapeHtml(title)}</span>
+                        </button>
+                        ${headerActionsHtml ? `<div class="section-toggle-actions">${headerActionsHtml}</div>` : ''}
+                    </div>`
+                    : `<h3>${escapeHtml(title)}</h3>`}
+                <div class="section-card-body${expanded ? '' : ' is-collapsed'}">
+                    <div class="section-card-inner">
+                        ${bodyHtml}
+                    </div>
+                </div>
             </section>
         `;
+    }
+
+    function toggleSectionCard(sectionKey, expanded) {
+        if (!(refs.detailsPanel instanceof HTMLElement) || !sectionKey) {
+            return false;
+        }
+
+        const card = refs.detailsPanel.querySelector(`.section-card[data-section-key="${sectionKey}"]`);
+        if (!(card instanceof HTMLElement)) {
+            return false;
+        }
+
+        applySectionExpandedState(card, expanded);
+        return true;
+    }
+
+    function applySectionExpandedState(card, expanded) {
+        card.classList.toggle('is-expanded', expanded);
+        card.classList.toggle('is-collapsed', !expanded);
+
+        const toggle = card.querySelector('.section-toggle');
+        if (toggle instanceof HTMLElement) {
+            toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+            const icon = toggle.querySelector('.section-toggle-icon');
+            if (icon instanceof HTMLElement) {
+                icon.classList.toggle('codicon-chevron-down', expanded);
+                icon.classList.toggle('codicon-chevron-right', !expanded);
+            }
+        }
+
+        const body = card.querySelector('.section-card-body');
+        if (body instanceof HTMLElement) {
+            if (expanded) {
+                body.classList.remove('is-collapsed');
+                body.style.maxHeight = '0px';
+                // Trigger reflow so expansion animation starts from 0.
+                void body.offsetHeight;
+                const expandedHeight = measureSectionBodyHeight(body);
+                body.style.maxHeight = `${expandedHeight}px`;
+                window.setTimeout(() => {
+                    if (card.classList.contains('is-expanded')) {
+                        body.style.maxHeight = 'none';
+                    }
+                }, 260);
+            } else {
+                const collapsedHeight = measureSectionBodyHeight(body);
+                body.style.maxHeight = `${collapsedHeight}px`;
+                void body.offsetHeight;
+                body.classList.add('is-collapsed');
+                body.style.maxHeight = '0px';
+            }
+        }
+    }
+
+    function measureSectionBodyHeight(body) {
+        if (!(body instanceof HTMLElement)) {
+            return 1;
+        }
+
+        const inner = body.querySelector('.section-card-inner');
+        const innerHeight = inner instanceof HTMLElement ? inner.scrollHeight : 0;
+        return Math.max(body.scrollHeight, innerHeight, 1);
     }
 
     function renderDetailRows(rows) {
@@ -1222,11 +2391,28 @@
         }, 1200);
     }
 
+    function notifySelectionChanged() {
+        const selectedPath = viewState.snapshot ? (uiState.selectedElementPath || '') : '';
+        if (selectedPath === lastSelectionPosted) {
+            return;
+        }
+
+        lastSelectionPosted = selectedPath;
+        post('selectElementPath', { value: selectedPath });
+    }
+
     function post(command, extra) {
         vscode.postMessage({
             command,
             ...(extra || {})
         });
+    }
+
+    function getSelectedElementFromState(snapshot) {
+        const elements = snapshot?.elements || [];
+        return uiState.selectedElementPath
+            ? findElementByPath(elements, uiState.selectedElementPath)
+            : null;
     }
 
     function persistUiState() {
@@ -1238,7 +2424,9 @@
     }
 
     function isKnownTab(value) {
-        return value === 'attributes' || value === 'commands';
+        return value === 'selected'
+            || value === 'attributes'
+            || value === 'commands';
     }
 
     function escapeHtml(value) {

@@ -86,10 +86,77 @@
               "readOnly": false,
               "valuePreview": "",
               "children": []
+            },
+            {
+              "path": "Root.MainGroup.Items",
+              "name": "Items",
+              "title": "Items",
+              "synonym": "Items",
+              "kind": "Table",
+              "type": "Table",
+              "boundAttributePath": "Object.Items",
+              "visible": true,
+              "available": true,
+              "enabled": true,
+              "readOnly": false,
+              "tableData": {
+                "columns": [
+                  "Product",
+                  "Quantity",
+                  "Price"
+                ],
+                "rows": [
+                  [
+                    "Cake",
+                    "3",
+                    "100.00"
+                  ],
+                  [
+                    "Tea",
+                    "2",
+                    "60.00"
+                  ]
+                ],
+                "rowCount": 2,
+                "truncated": false,
+                "sourcePath": "Object.Items"
+              },
+              "children": []
             }
           ]
         }
       ]
+    }
+  ],
+  "tables": [
+    {
+      "path": "Object.Items",
+      "title": "Items",
+      "elementPath": "Root.MainGroup.Items",
+      "boundAttributePath": "Object.Items",
+      "sourcePath": "Object.Items",
+      "tableData": {
+        "columns": [
+          "Product",
+          "Quantity",
+          "Price"
+        ],
+        "rows": [
+          [
+            "Cake",
+            "3",
+            "100.00"
+          ],
+          [
+            "Tea",
+            "2",
+            "60.00"
+          ]
+        ],
+        "rowCount": 2,
+        "truncated": false,
+        "sourcePath": "Object.Items"
+      }
     }
   ],
   "attributes": [

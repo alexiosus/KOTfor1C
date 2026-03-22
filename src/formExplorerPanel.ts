@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
+    FormExplorerElementInfo,
     FormExplorerSnapshot,
     FormExplorerSourceLocation,
     parseFormExplorerSnapshotText
@@ -9,18 +10,37 @@ import {
 import { getFormExplorerGeneratedArtifactsDirectory, getFormExplorerSnapshotPath } from './formExplorerPaths';
 import { getTranslator } from './localization';
 import { enrichFormExplorerSnapshot } from './formExplorerEnrichment';
+import {
+    FormExplorerSuggestedStep,
+    suggestFormExplorerSteps
+} from './formExplorerStepSuggestions';
+import { getConfiguredScenarioLanguage, ScenarioLanguage } from './gherkinLanguage';
 
 type AdapterMode = 'auto' | 'manual' | 'unknown';
+
+interface FormExplorerSnapshotCandidate {
+    path: string;
+    mtime: string | null;
+    exists: boolean;
+    infobase: string | null;
+}
 
 interface FormExplorerWebviewState {
     snapshotPath: string | null;
     usingCustomSnapshotPath: boolean;
     snapshotExists: boolean;
     snapshotMtime: string | null;
+    snapshotCandidates: FormExplorerSnapshotCandidate[];
+    selectedSnapshotPath: string | null;
     adapterMode: AdapterMode;
     adapterModeStatePath: string | null;
     lastError: string | null;
     snapshot: FormExplorerSnapshot | null;
+    scenarioLanguage: ScenarioLanguage;
+    selectedElementPath: string | null;
+    suggestedSteps: FormExplorerSuggestedStep[];
+    suggestedStepsForPath: string | null;
+    suggestedStepsError: string | null;
 }
 
 interface FormExplorerWebviewMessage {
@@ -63,19 +83,33 @@ export class FormExplorerPanel implements vscode.Disposable {
     private lastError: string | null = null;
     private snapshotExists = false;
     private snapshotMtime: string | null = null;
+    private snapshotCandidates: FormExplorerSnapshotCandidate[] = [];
+    private readonly snapshotCandidateMetadataCache = new Map<string, { fingerprint: string; infobase: string | null }>();
+    private selectedSnapshotPath: string | null = null;
+    private pendingSnapshotInfobasePath: string | null = null;
     private adapterMode: AdapterMode = 'unknown';
     private adapterModeStatePath: string | null = null;
     private lastSnapshotFingerprint: string | null = null;
+    private selectedElementPath: string | null = null;
+    private suggestedSteps: FormExplorerSuggestedStep[] = [];
+    private suggestedStepsForPath: string | null = null;
+    private suggestedStepsError: string | null = null;
+    private lastSuggestedStepsFingerprint: string | null = null;
 
     constructor(private readonly context: vscode.ExtensionContext) {
         this.disposables.push(
             vscode.workspace.onDidChangeConfiguration(event => {
-                if (
-                    event.affectsConfiguration('kotTestToolkit.formExplorer.snapshotPath')
-                    || event.affectsConfiguration('kotTestToolkit.formExplorer.autoRefreshSeconds')
-                ) {
+                const affectsSnapshotPath = event.affectsConfiguration('kotTestToolkit.formExplorer.snapshotPath');
+                const affectsRefreshSeconds = event.affectsConfiguration('kotTestToolkit.formExplorer.autoRefreshSeconds');
+                const affectsScenarioLanguage = event.affectsConfiguration('kotTestToolkit.editor.newScenarioLanguage');
+                if (affectsSnapshotPath || affectsRefreshSeconds || affectsScenarioLanguage) {
+                    if (affectsSnapshotPath || affectsRefreshSeconds) {
+                        this.restartRefreshTimer();
+                    }
+                    if (affectsScenarioLanguage) {
+                        this.lastSuggestedStepsFingerprint = null;
+                    }
                     this.lastSnapshotFingerprint = null;
-                    this.restartRefreshTimer();
                     void this.refreshSnapshot(true);
                 }
             })
@@ -154,11 +188,34 @@ export class FormExplorerPanel implements vscode.Disposable {
                 break;
             case 'useConfiguredSnapshotPath':
                 this.customSnapshotPath = null;
+                this.selectedSnapshotPath = null;
                 this.lastSnapshotFingerprint = null;
                 await this.refreshSnapshot(true);
                 break;
+            case 'selectSnapshotPath':
+                await this.selectSnapshotPath(message.value);
+                break;
+            case 'deleteSnapshotPath':
+                await this.deleteSnapshotPath(message.value);
+                break;
             case 'buildExtension':
-                await vscode.commands.executeCommand('kotTestToolkit.generateFormExplorerExtension');
+                await vscode.commands.executeCommand('kotTestToolkit.buildFormExplorerExtensionCfe');
+                break;
+            case 'installExtension':
+                await vscode.commands.executeCommand('kotTestToolkit.installFormExplorerExtension');
+                break;
+            case 'startInfobase':
+                {
+                    const startedInfobasePath = await vscode.commands.executeCommand<string | null>(
+                    'kotTestToolkit.startFormExplorerInfobase',
+                    this.resolvePreferredStartInfobasePath()
+                );
+                    if (startedInfobasePath && startedInfobasePath.trim()) {
+                        this.pendingSnapshotInfobasePath = path.resolve(startedInfobasePath.trim());
+                        this.lastSnapshotFingerprint = null;
+                        await this.refreshSnapshot(true);
+                    }
+                }
                 break;
             case 'openSettings':
                 await vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.formExplorer.snapshotPath');
@@ -176,6 +233,18 @@ export class FormExplorerPanel implements vscode.Disposable {
                 break;
             case 'toggleAdapterMode':
                 await this.toggleAdapterModeRequest();
+                break;
+            case 'requestAdapterRefresh':
+                await this.requestAdapterRefresh();
+                break;
+            case 'requestAdapterLocator':
+                await this.requestAdapterLocator();
+                break;
+            case 'requestTableSnapshotRefresh':
+                await this.requestAdapterRefresh();
+                break;
+            case 'selectElementPath':
+                await this.handleElementSelectionChanged(message.value);
                 break;
             case 'openSourceLocation':
                 await this.openSourceLocation(message.source);
@@ -204,8 +273,255 @@ export class FormExplorerPanel implements vscode.Disposable {
         }
 
         this.customSnapshotPath = selection[0].fsPath;
+        this.selectedSnapshotPath = this.customSnapshotPath;
         this.lastSnapshotFingerprint = null;
         await this.refreshSnapshot(true);
+    }
+
+    private async selectSnapshotPath(rawPath: string | undefined): Promise<void> {
+        const selectedPath = typeof rawPath === 'string' ? rawPath.trim() : '';
+        if (!selectedPath) {
+            this.customSnapshotPath = null;
+            this.selectedSnapshotPath = null;
+            this.lastSnapshotFingerprint = null;
+            await this.refreshSnapshot(true);
+            return;
+        }
+
+        const normalizedPath = path.resolve(selectedPath);
+        this.customSnapshotPath = null;
+        this.selectedSnapshotPath = normalizedPath;
+        this.lastSnapshotFingerprint = null;
+        await this.refreshSnapshot(true);
+    }
+
+    private async deleteSnapshotPath(rawPath: string | undefined): Promise<void> {
+        const targetPath = typeof rawPath === 'string' ? rawPath.trim() : '';
+        if (!targetPath) {
+            return;
+        }
+
+        const normalizedPath = path.resolve(targetPath);
+        const t = await getTranslator(this.context.extensionUri);
+        try {
+            await fs.promises.rm(normalizedPath, { force: true });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            vscode.window.showErrorMessage(t('Failed to delete snapshot file: {0}', message));
+            return;
+        }
+
+        if (this.customSnapshotPath === normalizedPath) {
+            this.customSnapshotPath = null;
+        }
+        if (this.selectedSnapshotPath === normalizedPath) {
+            this.selectedSnapshotPath = null;
+        }
+        this.snapshotCandidateMetadataCache.delete(normalizedPath);
+        this.lastSnapshotFingerprint = null;
+        await this.refreshSnapshot(true);
+    }
+
+    private async collectSnapshotCandidates(): Promise<FormExplorerSnapshotCandidate[]> {
+        const candidates = new Map<string, FormExplorerSnapshotCandidate>();
+
+        const addCandidate = async (candidatePath: string | null | undefined): Promise<void> => {
+            if (!candidatePath) {
+                return;
+            }
+            const normalizedPath = path.resolve(candidatePath);
+            if (candidates.has(normalizedPath)) {
+                return;
+            }
+
+            try {
+                const stat = await fs.promises.stat(normalizedPath);
+                const metadata = await this.readSnapshotCandidateMetadata(normalizedPath, stat);
+                candidates.set(normalizedPath, {
+                    path: normalizedPath,
+                    mtime: stat.mtime.toISOString(),
+                    exists: true,
+                    infobase: metadata.infobase
+                });
+            } catch {
+                candidates.set(normalizedPath, {
+                    path: normalizedPath,
+                    mtime: null,
+                    exists: false,
+                    infobase: null
+                });
+            }
+        };
+
+        if (this.customSnapshotPath) {
+            await addCandidate(this.customSnapshotPath);
+        }
+
+        const configuredPath = this.getConfiguredSnapshotPath();
+        if (configuredPath) {
+            const normalizedConfiguredPath = path.resolve(configuredPath);
+            await addCandidate(normalizedConfiguredPath);
+
+            const configuredDirectory = path.dirname(normalizedConfiguredPath);
+            const configuredFileName = path.basename(normalizedConfiguredPath);
+            const configuredPrefix = `${configuredFileName}.`;
+
+            try {
+                const directoryEntries = await fs.promises.readdir(configuredDirectory, { withFileTypes: true });
+                for (const entry of directoryEntries) {
+                    if (!entry.isFile()) {
+                        continue;
+                    }
+
+                    if (entry.name !== configuredFileName && !entry.name.startsWith(configuredPrefix)) {
+                        continue;
+                    }
+
+                    await addCandidate(path.join(configuredDirectory, entry.name));
+                }
+            } catch {
+                // Ignore directory scan errors and keep explicit candidates only.
+            }
+        }
+
+        const result = Array.from(candidates.values());
+        const candidatePaths = new Set(result.map(candidate => candidate.path));
+        for (const cachedPath of this.snapshotCandidateMetadataCache.keys()) {
+            if (!candidatePaths.has(cachedPath)) {
+                this.snapshotCandidateMetadataCache.delete(cachedPath);
+            }
+        }
+        result.sort((left, right) => {
+            const leftMtime = left.mtime ? Date.parse(left.mtime) : 0;
+            const rightMtime = right.mtime ? Date.parse(right.mtime) : 0;
+            if (rightMtime !== leftMtime) {
+                return rightMtime - leftMtime;
+            }
+            if (left.exists !== right.exists) {
+                return left.exists ? -1 : 1;
+            }
+            return left.path.localeCompare(right.path, undefined, { sensitivity: 'base' });
+        });
+
+        return result;
+    }
+
+    private async readSnapshotCandidateMetadata(
+        snapshotPath: string,
+        stat: fs.Stats
+    ): Promise<{ infobase: string | null }> {
+        const fingerprint = `${stat.mtimeMs}:${stat.size}`;
+        const cached = this.snapshotCandidateMetadataCache.get(snapshotPath);
+        if (cached && cached.fingerprint === fingerprint) {
+            return {
+                infobase: cached.infobase
+            };
+        }
+
+        let infobase: string | null = null;
+        try {
+            const rawText = await fs.promises.readFile(snapshotPath, 'utf8');
+            const parsedSnapshot = parseFormExplorerSnapshotText(rawText);
+            const normalizedInfobase = typeof parsedSnapshot.source?.infobase === 'string'
+                ? parsedSnapshot.source.infobase.trim()
+                : '';
+            infobase = normalizedInfobase || null;
+        } catch {
+            infobase = null;
+        }
+
+        this.snapshotCandidateMetadataCache.set(snapshotPath, {
+            fingerprint,
+            infobase
+        });
+
+        return {
+            infobase
+        };
+    }
+
+    private resolveSnapshotPathFromCandidates(candidates: FormExplorerSnapshotCandidate[]): string | null {
+        if (this.pendingSnapshotInfobasePath) {
+            const targetInfobasePath = this.normalizePathForCompare(this.pendingSnapshotInfobasePath);
+            const matchedCandidate = candidates.find(candidate => {
+                if (!candidate.exists || !candidate.infobase) {
+                    return false;
+                }
+                const parsedInfobasePath = this.parseInfobasePathFromMarker(candidate.infobase);
+                if (!parsedInfobasePath) {
+                    return false;
+                }
+                return this.normalizePathForCompare(parsedInfobasePath) === targetInfobasePath;
+            });
+            if (matchedCandidate) {
+                this.pendingSnapshotInfobasePath = null;
+                this.customSnapshotPath = null;
+                this.selectedSnapshotPath = matchedCandidate.path;
+                return matchedCandidate.path;
+            }
+        }
+
+        if (this.customSnapshotPath) {
+            return this.customSnapshotPath;
+        }
+
+        if (this.selectedSnapshotPath) {
+            const selectedEntry = candidates.find(candidate => candidate.path === this.selectedSnapshotPath);
+            if (selectedEntry) {
+                return selectedEntry.path;
+            }
+        }
+
+        const firstExistingCandidate = candidates.find(candidate => candidate.exists);
+        if (firstExistingCandidate) {
+            this.selectedSnapshotPath = firstExistingCandidate.path;
+            return firstExistingCandidate.path;
+        }
+
+        const configuredPath = this.getConfiguredSnapshotPath();
+        if (configuredPath) {
+            const normalizedConfiguredPath = path.resolve(configuredPath);
+            this.selectedSnapshotPath = normalizedConfiguredPath;
+            return normalizedConfiguredPath;
+        }
+
+        this.selectedSnapshotPath = null;
+        return null;
+    }
+
+    private parseInfobasePathFromMarker(value: string): string | null {
+        const match = value.match(/File\s*=\s*("([^"]+)"|([^;]+))/i);
+        if (!match) {
+            return null;
+        }
+
+        const extractedPath = (match[2] || match[3] || '').trim();
+        if (!extractedPath) {
+            return null;
+        }
+
+        return extractedPath.replace(/[\\/]+$/, '');
+    }
+
+    private normalizePathForCompare(value: string): string {
+        const normalized = path.resolve(value.trim());
+        return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+    }
+
+    private resolvePreferredStartInfobasePath(): string | undefined {
+        const selectedSnapshotPath = this.getEffectiveSnapshotPath();
+        if (!selectedSnapshotPath) {
+            return undefined;
+        }
+
+        const selectedCandidate = this.snapshotCandidates.find(candidate => candidate.path === selectedSnapshotPath);
+        const infobaseMarker = (selectedCandidate?.infobase || '').trim();
+        if (!infobaseMarker) {
+            return undefined;
+        }
+
+        const parsedPath = this.parseInfobasePathFromMarker(infobaseMarker);
+        return parsedPath || undefined;
     }
 
     private async openSnapshotFile(): Promise<void> {
@@ -264,6 +580,91 @@ export class FormExplorerPanel implements vscode.Disposable {
             const message = error instanceof Error ? error.message : String(error);
             vscode.window.showErrorMessage(t('Failed to open source location: {0}', message));
         }
+    }
+
+    private async handleElementSelectionChanged(rawPath: string | undefined): Promise<void> {
+        const normalizedPath = typeof rawPath === 'string' ? rawPath.trim() : '';
+        const nextSelectedPath = normalizedPath.length > 0 ? normalizedPath : null;
+
+        if (this.selectedElementPath === nextSelectedPath) {
+            return;
+        }
+
+        this.selectedElementPath = nextSelectedPath;
+        this.lastSuggestedStepsFingerprint = null;
+        await this.refreshSuggestedSteps(false);
+        await this.postState();
+    }
+
+    private findElementByPath(elements: FormExplorerElementInfo[], targetPath: string): FormExplorerElementInfo | null {
+        for (const element of elements) {
+            if (element.path === targetPath) {
+                return element;
+            }
+
+            const nested = this.findElementByPath(element.children || [], targetPath);
+            if (nested) {
+                return nested;
+            }
+        }
+
+        return null;
+    }
+
+    private findActiveElementPath(elements: FormExplorerElementInfo[]): string | null {
+        for (const element of elements) {
+            if (element.active && element.path) {
+                return element.path;
+            }
+
+            const nestedPath = this.findActiveElementPath(element.children || []);
+            if (nestedPath) {
+                return nestedPath;
+            }
+        }
+
+        return null;
+    }
+
+    private async refreshSuggestedSteps(force: boolean): Promise<void> {
+        const snapshot = this.latestSnapshot;
+        const selectedPath = this.selectedElementPath;
+        const preferredLanguage = getConfiguredScenarioLanguage();
+
+        if (!snapshot || !selectedPath) {
+            this.suggestedSteps = [];
+            this.suggestedStepsForPath = null;
+            this.suggestedStepsError = null;
+            this.lastSuggestedStepsFingerprint = null;
+            return;
+        }
+
+        const suggestionFingerprint = `${this.lastSnapshotFingerprint || ''}|${selectedPath}|${preferredLanguage}`;
+        if (!force && suggestionFingerprint === this.lastSuggestedStepsFingerprint) {
+            return;
+        }
+
+        const selectedElement = this.findElementByPath(snapshot.elements, selectedPath);
+        if (!selectedElement) {
+            this.suggestedSteps = [];
+            this.suggestedStepsForPath = selectedPath;
+            this.suggestedStepsError = null;
+            this.lastSuggestedStepsFingerprint = suggestionFingerprint;
+            return;
+        }
+
+        try {
+            this.suggestedSteps = await suggestFormExplorerSteps(this.context, snapshot, selectedElement, 12, preferredLanguage);
+            this.suggestedStepsForPath = selectedPath;
+            this.suggestedStepsError = null;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.suggestedSteps = [];
+            this.suggestedStepsForPath = selectedPath;
+            this.suggestedStepsError = message;
+        }
+
+        this.lastSuggestedStepsFingerprint = suggestionFingerprint;
     }
 
     private resolveSourcePath(candidatePath: string): string {
@@ -380,32 +781,66 @@ export class FormExplorerPanel implements vscode.Disposable {
         };
     }
 
-    private async toggleAdapterModeRequest(): Promise<void> {
+    private async writeAdapterModeRequest(requestCode: string): Promise<boolean> {
         const t = await getTranslator(this.context.extensionUri);
         const modeRequestPath = this.getAdapterModeRequestPath();
         if (!modeRequestPath) {
             vscode.window.showWarningMessage(
                 t('Form Explorer generated artifacts directory is not configured. Set kotTestToolkit.formExplorer.generatedArtifactsDirectory.')
             );
-            return;
+            return false;
         }
-
-        const nextMode = this.adapterMode === 'auto' ? 'manual' : 'auto';
 
         try {
             await fs.promises.mkdir(path.dirname(modeRequestPath), { recursive: true });
-            await fs.promises.writeFile(modeRequestPath, `${nextMode}\n`, 'utf8');
+            await fs.promises.writeFile(modeRequestPath, `${requestCode}\n`, 'utf8');
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             vscode.window.showErrorMessage(t('Failed to write Form Explorer mode request: {0}', message));
+            return false;
+        }
+
+        return true;
+    }
+
+    private async toggleAdapterModeRequest(): Promise<void> {
+        const nextMode = this.adapterMode === 'auto' ? 'manual' : 'auto';
+        const applied = await this.writeAdapterModeRequest(nextMode);
+        if (!applied) {
             return;
         }
 
         await this.refreshSnapshot(true);
     }
 
+    private async requestAdapterRefresh(): Promise<void> {
+        const applied = await this.writeAdapterModeRequest('refresh');
+        if (!applied) {
+            return;
+        }
+
+        const previousFingerprint = this.lastSnapshotFingerprint;
+        this.lastSnapshotFingerprint = null;
+        await this.refreshSnapshot(true);
+        if (this.lastSnapshotFingerprint === previousFingerprint) {
+            await new Promise(resolve => setTimeout(resolve, 1200));
+            this.lastSnapshotFingerprint = null;
+            await this.refreshSnapshot(true);
+        }
+    }
+
+    private async requestAdapterLocator(): Promise<void> {
+        const applied = await this.writeAdapterModeRequest('locator');
+        if (!applied) {
+            return;
+        }
+
+        this.lastSnapshotFingerprint = null;
+        await this.refreshSnapshot(true);
+    }
+
     private getEffectiveSnapshotPath(): string | null {
-        return this.customSnapshotPath || this.getConfiguredSnapshotPath();
+        return this.customSnapshotPath || this.selectedSnapshotPath || this.getConfiguredSnapshotPath();
     }
 
     private getRefreshIntervalMs(): number {
@@ -443,11 +878,17 @@ export class FormExplorerPanel implements vscode.Disposable {
         const modeState = await this.readAdapterModeState();
         this.adapterMode = modeState.mode;
         this.adapterModeStatePath = modeState.statePath;
-        const snapshotPath = this.getEffectiveSnapshotPath();
+        this.snapshotCandidates = await this.collectSnapshotCandidates();
+        const snapshotPath = this.resolveSnapshotPathFromCandidates(this.snapshotCandidates);
 
         if (!snapshotPath) {
             this.snapshotExists = false;
             this.snapshotMtime = null;
+            this.latestSnapshot = null;
+            this.suggestedSteps = [];
+            this.suggestedStepsForPath = null;
+            this.suggestedStepsError = null;
+            this.lastSuggestedStepsFingerprint = null;
             const missingPathFingerprint = `missing-snapshot-path|${modeState.fingerprint || ''}`;
             if (!force && missingPathFingerprint === this.lastSnapshotFingerprint) {
                 return;
@@ -468,6 +909,11 @@ export class FormExplorerPanel implements vscode.Disposable {
         } catch {
             this.snapshotExists = false;
             this.snapshotMtime = null;
+            this.latestSnapshot = null;
+            this.suggestedSteps = [];
+            this.suggestedStepsForPath = null;
+            this.suggestedStepsError = null;
+            this.lastSuggestedStepsFingerprint = null;
             const missingFileFingerprint = `missing-snapshot-file:${snapshotPath}|${modeState.fingerprint || ''}`;
             if (!force && missingFileFingerprint === this.lastSnapshotFingerprint) {
                 return;
@@ -487,11 +933,29 @@ export class FormExplorerPanel implements vscode.Disposable {
             const rawText = await fs.promises.readFile(snapshotPath, 'utf8');
             const parsedSnapshot = parseFormExplorerSnapshotText(rawText);
             this.latestSnapshot = await enrichFormExplorerSnapshot(parsedSnapshot, snapshotPath);
+            if (this.latestSnapshot) {
+                const activeElementPath = this.latestSnapshot.form?.activeElementPath
+                    || this.findActiveElementPath(this.latestSnapshot.elements)
+                    || this.latestSnapshot.elements[0]?.path
+                    || null;
+                const selectedElementExists = this.selectedElementPath
+                    ? this.findElementByPath(this.latestSnapshot.elements, this.selectedElementPath) !== null
+                    : false;
+                if (!selectedElementExists) {
+                    this.selectedElementPath = activeElementPath;
+                }
+            }
             this.lastError = null;
             this.lastSnapshotFingerprint = fingerprint;
+            await this.refreshSuggestedSteps(false);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.lastError = t('Failed to load Form Explorer snapshot from {0}: {1}', snapshotPath, message);
+            this.latestSnapshot = null;
+            this.suggestedSteps = [];
+            this.suggestedStepsForPath = null;
+            this.suggestedStepsError = null;
+            this.lastSuggestedStepsFingerprint = null;
         }
 
         this.lastSnapshotFingerprint = fingerprint;
@@ -515,10 +979,17 @@ export class FormExplorerPanel implements vscode.Disposable {
             usingCustomSnapshotPath: !!this.customSnapshotPath,
             snapshotExists: this.snapshotExists,
             snapshotMtime: this.snapshotMtime,
+            snapshotCandidates: this.snapshotCandidates,
+            selectedSnapshotPath: this.getEffectiveSnapshotPath(),
             adapterMode: this.adapterMode,
             adapterModeStatePath: this.adapterModeStatePath,
             lastError: this.lastError,
-            snapshot: this.latestSnapshot
+            snapshot: this.latestSnapshot,
+            scenarioLanguage: getConfiguredScenarioLanguage(),
+            selectedElementPath: this.selectedElementPath,
+            suggestedSteps: this.suggestedSteps,
+            suggestedStepsForPath: this.suggestedStepsForPath,
+            suggestedStepsError: this.suggestedStepsError
         };
     }
 
@@ -532,7 +1003,11 @@ export class FormExplorerPanel implements vscode.Disposable {
         const loc = {
             title: t('KOT Form Explorer'),
             refresh: t('Refresh'),
+            getTables: t('Get tables'),
+            locator: t('Locator'),
             buildExtension: t('Build .cfe'),
+            installExtension: t('Install to infobase'),
+            startInfobase: t('Start infobase'),
             chooseSnapshotFile: t('Choose snapshot file'),
             useConfiguredPath: t('Use configured path'),
             moreActions: t('More actions'),
@@ -541,12 +1016,14 @@ export class FormExplorerPanel implements vscode.Disposable {
             openSnapshotFile: t('Open snapshot JSON'),
             revealSnapshotFile: t('Reveal snapshot file'),
             elements: t('Elements'),
+            formElements: t('Form elements'),
             details: t('Details'),
             selectedElement: t('Selected element'),
             currentForm: t('Current form'),
             formAttributes: t('Form attributes'),
             commands: t('Commands'),
             searchPlaceholder: t('Search elements'),
+            searchTablesPlaceholder: t('Search tables'),
             waitingForSnapshot: t('Waiting for snapshot'),
             noSnapshotHint: t('The panel reads a universal JSON snapshot file produced by a 1C-side adapter in the current client session.'),
             noElements: t('No form elements in snapshot.'),
@@ -566,16 +1043,17 @@ export class FormExplorerPanel implements vscode.Disposable {
             toolTip: t('Tooltip'),
             inputHint: t('Input hint'),
             generatedAt: t('Updated at'),
-            pathMode: t('Path mode'),
             mode: t('Update mode'),
             modeAuto: t('Auto'),
             modeManual: t('Manual'),
             snapshotPath: t('Snapshot path'),
-            usingConfiguredPath: t('Configured path'),
-            usingCustomPath: t('Custom file'),
+            snapshots: t('Snapshots'),
+            deleteSnapshot: t('Delete snapshot'),
+            selectSnapshot: t('Select snapshot'),
             showTechnicalItems: t('Show technical items'),
             hideTechnicalItems: t('Hide technical items'),
             showGroups: t('Show form groups'),
+            technicalInfo: t('Technical info'),
             filters: t('Filters'),
             focusActive: t('Focus active'),
             copyPath: t('Copy path'),
@@ -616,6 +1094,25 @@ export class FormExplorerPanel implements vscode.Disposable {
             elementDetails: t('Element details'),
             attributesDescription: t('Form attributes are underlying data items bound to UI controls.'),
             commandsDescription: t('Commands available in the current snapshot.'),
+            suggestedSteps: t('Suggested steps'),
+            suggestedStepsDescription: t('Recommended steps for the selected element from the connected Gherkin steps library.'),
+            noSuggestedSteps: t('No suitable steps found for the selected element.'),
+            suggestedStepsLoading: t('Preparing step suggestions...'),
+            suggestedStepsError: t('Failed to build step suggestions.'),
+            copySuggestedStep: t('Copy step'),
+            copyStepTemplate: t('Copy template'),
+            gherkinTable: t('Gherkin table'),
+            gherkinTableDescription: t('Current tabular section snapshot in Gherkin format.'),
+            formTables: t('Form tables'),
+            formTablesDescription: t('Detected tabular sections from the current form snapshot.'),
+            noFormTables: t('No form tables detected in snapshot.'),
+            noMatchingTables: t('No tables match the current filter.'),
+            copyGherkinTable: t('Copy Gherkin table'),
+            copyGherkinStep: t('Copy full step'),
+            noTableData: t('No tabular data is available for the selected element.'),
+            tableRowsShown: t('Rows shown'),
+            tableRowsTotal: t('Rows total'),
+            tableRowsTruncated: t('Table is truncated in snapshot.'),
             copied: t('Copied'),
             activeElementNotDetected: t('Active element is not reported in snapshot.')
         };
@@ -641,18 +1138,27 @@ export class FormExplorerPanel implements vscode.Disposable {
                 <span class="beta-inline-symbol" aria-hidden="true">β</span>
             </div>
             <div class="toolbar">
-                <div id="pathModeChip" class="meta-chip compact">
-                    <span class="meta-chip-label">${escapeHtml(loc.pathMode)}</span>
-                    <span id="pathModeValue" class="meta-chip-value"></span>
-                </div>
                 <button id="modeChip" class="meta-chip compact interactive-chip" type="button" aria-label="${escapeHtml(loc.toggleMode)}">
-                    <span class="meta-chip-label">${escapeHtml(loc.mode)}</span>
+                    <span class="meta-chip-label meta-chip-label-with-icon">
+                        <span class="codicon codicon-arrow-swap" aria-hidden="true"></span>
+                        <span>${escapeHtml(loc.mode)}</span>
+                    </span>
                     <span id="modeValue" class="meta-chip-value"></span>
                 </button>
                 <div class="meta-chip compact">
                     <span class="meta-chip-label">${escapeHtml(loc.generatedAt)}</span>
                     <span id="generatedAtValue" class="meta-chip-value"></span>
                 </div>
+                <div class="meta-chip compact snapshot-picker">
+                    <span class="meta-chip-label">${escapeHtml(loc.snapshots)}</span>
+                    <div class="snapshot-picker-controls">
+                        <button id="snapshotPickerBtn" class="snapshot-picker-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeHtml(loc.selectSnapshot)}"></button>
+                        <div id="snapshotMenu" class="snapshot-menu" role="menu" aria-label="${escapeHtml(loc.snapshots)}"></div>
+                    </div>
+                </div>
+                <button id="startInfobaseBtn" class="toolbar-btn" type="button" aria-label="${escapeHtml(loc.startInfobase)}">
+                    <span class="codicon codicon-play"></span> ${escapeHtml(loc.startInfobase)}
+                </button>
                 <div class="menu-shell">
                     <button id="moreActionsBtn" class="toolbar-btn icon-only" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeHtml(loc.moreActions)}">
                         <span class="codicon codicon-ellipsis"></span>
@@ -661,8 +1167,15 @@ export class FormExplorerPanel implements vscode.Disposable {
                         <button class="menu-item" type="button" data-action="refresh-snapshot" role="menuitem">
                             <span class="codicon codicon-refresh"></span> ${escapeHtml(loc.refresh)}
                         </button>
+                        <label class="menu-check" for="showTechnicalTabsInput">
+                            <input id="showTechnicalTabsInput" type="checkbox">
+                            <span>${escapeHtml(loc.technicalInfo)}</span>
+                        </label>
                         <button class="menu-item" type="button" data-action="build-extension" role="menuitem">
                             <span class="codicon codicon-tools"></span> ${escapeHtml(loc.buildExtension)}
+                        </button>
+                        <button class="menu-item" type="button" data-action="install-extension" role="menuitem">
+                            <span class="codicon codicon-cloud-upload"></span> ${escapeHtml(loc.installExtension)}
                         </button>
                         <button class="menu-item" type="button" data-action="choose-snapshot-file" role="menuitem">
                             <span class="codicon codicon-folder-opened"></span> ${escapeHtml(loc.chooseSnapshotFile)}
@@ -701,6 +1214,9 @@ export class FormExplorerPanel implements vscode.Disposable {
                     <p id="formMetaLine" class="meta-line"></p>
                 </div>
                 <div class="current-form-actions">
+                    <button id="manualRefreshBtn" class="ghost-btn small view-hidden" type="button">
+                        <span class="codicon codicon-refresh"></span> ${escapeHtml(loc.refresh)}
+                    </button>
                     <button id="currentFormOpenSourceBtn" class="ghost-btn small" type="button">
                         <span class="codicon codicon-go-to-file"></span> ${escapeHtml(loc.openSourceFile)}
                     </button>
@@ -709,16 +1225,25 @@ export class FormExplorerPanel implements vscode.Disposable {
 
             <aside class="panel sidebar-panel">
                 <div class="sidebar-section-head">
-                    <p class="section-label">${escapeHtml(loc.elements)}</p>
-                    <div id="elementCountValue" class="count-pill">0</div>
+                    <p class="section-label">${escapeHtml(loc.formElements)}</p>
+                    <span id="elementCountValue" class="count-pill">0</span>
                 </div>
                 <div class="sidebar-actions">
                     <button id="focusActiveBtn" class="ghost-btn small" type="button">
                         <span class="codicon codicon-target"></span> ${escapeHtml(loc.focusActive)}
                     </button>
-                    <div class="filter-shell">
-                        <button id="filterMenuBtn" class="toggle-btn small" type="button" aria-haspopup="menu" aria-expanded="false">
-                            <span class="codicon codicon-settings"></span> ${escapeHtml(loc.filters)}
+                    <button id="locatorBtn" class="ghost-btn small view-hidden" type="button">
+                        <span class="codicon codicon-location"></span> ${escapeHtml(loc.locator)}
+                    </button>
+                </div>
+                <div class="search-row">
+                    <label id="searchFrame" class="search-frame search-frame-wide">
+                        <span class="codicon codicon-search" aria-hidden="true"></span>
+                        <input id="searchInput" type="text" class="search-input" placeholder="${escapeHtml(loc.searchPlaceholder)}">
+                    </label>
+                    <div class="filter-shell filter-shell-inline">
+                        <button id="filterMenuBtn" class="toggle-btn small icon-only" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeHtml(loc.filters)}">
+                            <span class="codicon codicon-settings" aria-hidden="true"></span>
                         </button>
                         <div id="filterMenu" class="menu-popover filter-menu" role="menu">
                             <label class="menu-check" for="showTechnicalInput">
@@ -732,27 +1257,17 @@ export class FormExplorerPanel implements vscode.Disposable {
                         </div>
                     </div>
                 </div>
-                <label class="search-frame search-frame-wide">
-                    <span class="codicon codicon-search" aria-hidden="true"></span>
-                    <input id="searchInput" type="text" class="search-input" placeholder="${escapeHtml(loc.searchPlaceholder)}">
-                </label>
-
                 <div id="elementTree" class="scroll-region outline-scroll"></div>
             </aside>
 
             <main class="content">
-                <section class="panel selected-panel">
-                    <div class="selected-topline">
-                        <p class="section-label">${escapeHtml(loc.selectedElement)}</p>
-                        <div id="selectedStateRow" class="chip-row compact"></div>
-                    </div>
-                    <div id="selectedKeyFacts" class="key-facts"></div>
-                    <section id="detailsPanel" class="selected-details"></section>
-                </section>
                 <section class="panel tabs-panel">
-                    <div class="tabs-bar">
-                        <div class="tab-buttons" role="tablist" aria-label="${escapeHtml(loc.details)}">
-                            <button id="tabAttributesBtn" class="tab-btn" type="button" data-tab="attributes" role="tab" aria-selected="true">
+                    <div id="detailsTabsBar" class="tabs-bar secondary-tabs-bar">
+                        <div class="tab-buttons" role="tablist" aria-label="${escapeHtml(loc.selectedElement)}">
+                            <button id="tabSelectedBtn" class="tab-btn" type="button" data-tab="selected" role="tab" aria-selected="true">
+                                ${escapeHtml(loc.selectedElement)}
+                            </button>
+                            <button id="tabAttributesBtn" class="tab-btn" type="button" data-tab="attributes" role="tab" aria-selected="false">
                                 ${escapeHtml(loc.formAttributes)}
                                 <span id="attributeCountValue" class="tab-count">0</span>
                             </button>
@@ -764,7 +1279,15 @@ export class FormExplorerPanel implements vscode.Disposable {
                     </div>
 
                     <div class="tab-stage">
-                        <section class="tab-panel scroll-region is-active" data-tab-panel="attributes">
+                        <section class="tab-panel scroll-region is-active" data-tab-panel="selected">
+                            <div class="selected-topline">
+                                <p class="section-label">${escapeHtml(loc.selectedElement)}</p>
+                                <div id="selectedStateRow" class="chip-row compact"></div>
+                            </div>
+                            <div id="selectedKeyFacts" class="key-facts"></div>
+                            <section id="detailsPanel" class="selected-details"></section>
+                        </section>
+                        <section class="tab-panel scroll-region" data-tab-panel="attributes">
                             <div class="tab-note">${escapeHtml(loc.attributesDescription)}</div>
                             <div id="attributesPanel"></div>
                         </section>
