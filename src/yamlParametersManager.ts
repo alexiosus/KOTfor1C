@@ -956,7 +956,6 @@ export class YamlParametersManager {
             // Создаем объект переводов
             const loc = {
                 title: this.t('Build Scenario Parameters Manager'),
-                description: this.t('Manage build scenario parameters for test configuration'),
                 buildSectionTitle: this.t('SPPR build parameters'),
                 buildSectionDescription: this.t('Parameters saved into yaml_parameters.json for СборкаТекстовСценариев processing.'),
                 additionalSectionTitle: this.t('Additional Vanessa Automation parameters'),

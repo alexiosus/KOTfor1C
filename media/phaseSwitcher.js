@@ -173,9 +173,25 @@
                 if (isDisabled) header.classList.add('disabled-header');
                 else header.classList.remove('disabled-header');
 
-                const toggleBtn = header.querySelector('.phase-toggle-checkboxes-btn');
-                if (toggleBtn instanceof HTMLButtonElement) {
-                    toggleBtn.disabled = isDisabled;
+                const countButton = header.querySelector('.phase-test-count');
+                if (countButton instanceof HTMLButtonElement) {
+                    const phaseName = header instanceof HTMLElement ? header.dataset.phaseName : '';
+                    const testsInPhase = phaseName ? testDataByPhase[phaseName] : null;
+                    let enabledCount = 0;
+                    let totalInPhase = 0;
+
+                    if (Array.isArray(testsInPhase)) {
+                        testsInPhase.forEach(testInfo => {
+                            if (testInfo && initialTestStates[testInfo.name] !== 'disabled') {
+                                totalInPhase++;
+                                if (currentCheckboxStates[testInfo.name]) {
+                                    enabledCount++;
+                                }
+                            }
+                        });
+                    }
+
+                    updatePhaseCountButton(countButton, phaseName || '', enabledCount, totalInPhase);
                 }
             });
         }
@@ -1113,21 +1129,13 @@
             titleSpan.textContent = phaseName;
             expandCollapseButton.appendChild(titleSpan);
 
-            const countSpan = document.createElement('span');
-            countSpan.className = 'phase-test-count';
-            countSpan.textContent = `${enabledCount}/${totalInPhase}`;
-
-            const toggleCheckboxesBtn = document.createElement('button');
-            toggleCheckboxesBtn.className = 'phase-toggle-checkboxes-btn button-with-icon';
-            toggleCheckboxesBtn.title = window.__loc?.toggleAllInPhaseTitle || 'Toggle all tests in this group';
-            toggleCheckboxesBtn.dataset.phaseName = phaseName;
-            const toggleIcon = document.createElement('span');
-            toggleIcon.className = 'codicon codicon-check-all';
-            toggleCheckboxesBtn.appendChild(toggleIcon);
+            const countButton = document.createElement('button');
+            countButton.type = 'button';
+            countButton.className = 'phase-test-count';
+            updatePhaseCountButton(countButton, phaseName, enabledCount, totalInPhase);
 
             phaseHeaderDiv.appendChild(expandCollapseButton);
-            phaseHeaderDiv.appendChild(countSpan);
-            phaseHeaderDiv.appendChild(toggleCheckboxesBtn);
+            phaseHeaderDiv.appendChild(countButton);
 
             const testsListDiv = document.createElement('div');
             testsListDiv.className = 'phase-tests-list';
@@ -1158,13 +1166,39 @@
                     handlePhaseHeaderClick(event);
                 }
             });
-            toggleCheckboxesBtn.addEventListener('click', handleTogglePhaseCheckboxesClick);
+            countButton.addEventListener('click', handleTogglePhaseCheckboxesClick);
             phaseHeaderDiv.addEventListener('contextmenu', handlePhaseContextMenu);
         });
         applyCheckboxStatesToVisible();
         syncScenarioSearchHighlightState(false);
         log('Phase tree rendered.');
         updateAreAllPhasesExpandedState();
+    }
+
+    /**
+     * Обновляет интерактивный счетчик тестов в заголовке группы.
+     * @param {HTMLButtonElement} countButton
+     * @param {string} phaseName
+     * @param {number} enabledCount
+     * @param {number} totalInPhase
+     */
+    function updatePhaseCountButton(countButton, phaseName, enabledCount, totalInPhase) {
+        if (!(countButton instanceof HTMLButtonElement)) {
+            return;
+        }
+
+        countButton.dataset.phaseName = phaseName;
+        countButton.dataset.totalCount = String(totalInPhase);
+        countButton.textContent = `${enabledCount}/${totalInPhase}`;
+        countButton.classList.remove('group-changed');
+
+        const title = totalInPhase > 0
+            ? (window.__loc?.toggleAllInPhaseTitle || 'Toggle all tests in this group')
+            : (window.__loc?.noTestsInPhase || 'No tests in this group.');
+        countButton.title = title;
+        countButton.setAttribute('aria-label', title);
+        countButton.disabled = !phaseControlsActive || totalInPhase === 0;
+        countButton.classList.toggle('is-disabled', countButton.disabled);
     }
 
     function setPhaseListExpandedState(testsList, expanded, animate = true) {
@@ -1260,20 +1294,21 @@
     }
 
     /**
-     * Обработчик клика по кнопке переключения всех чекбоксов внутри фазы.
+     * Обработчик клика по счетчику группы для переключения всех чекбоксов внутри фазы.
      * @param {MouseEvent} event
      */
     function handleTogglePhaseCheckboxesClick(event) {
         const button = event.currentTarget;
         if (!(button instanceof HTMLButtonElement)) return;
+        if (button.disabled) return;
         event.stopPropagation();
 
         const phaseName = button.dataset.phaseName;
         if (!phaseName) {
-            log("ERROR: Toggle phase checkboxes button clicked without phaseName!");
+            log("ERROR: Phase count toggle clicked without phaseName!");
             return;
         }
-        log(`Toggle checkboxes for phase '${phaseName}' clicked.`);
+        log(`Phase count toggle for phase '${phaseName}' clicked.`);
 
         const testsListId = 'tests-list-' + phaseName.replace(/[^a-zA-Z0-9_\\-]/g, '_');
         const testsList = document.getElementById(testsListId);
@@ -1997,9 +2032,8 @@
                 });
             }
             const countElement = header.querySelector('.phase-test-count');
-            if (countElement) {
-                countElement.textContent = `${enabledCount}/${totalInPhase}`;
-                countElement.classList.remove('group-changed');
+            if (countElement instanceof HTMLButtonElement) {
+                updatePhaseCountButton(countElement, phaseName, enabledCount, totalInPhase);
             }
         });
     }

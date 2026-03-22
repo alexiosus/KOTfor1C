@@ -16,6 +16,7 @@ const BUILDER_INFOBASE_DIRECTORY_NAME = 'builder-infobase';
 const DEFAULT_SETTINGS_FILE_NAME = 'adapter-settings.json';
 const DEFAULT_MODE_STATE_FILE_NAME = 'adapter-mode.txt';
 const DEFAULT_MODE_REQUEST_FILE_NAME = 'adapter-mode-request.txt';
+const DEFAULT_REQUEST_CONTEXT_FILE_NAME = 'adapter-request-context.json';
 const DEFAULT_HOTKEY_PRESET_KEY = 'ctrlShiftF12';
 const DEFAULT_AUTO_SNAPSHOT_INTERVAL_SECONDS = 5;
 
@@ -33,6 +34,7 @@ export interface FormExplorerBuilderPaths {
     settingsFilePath: string;
     modeFilePath: string;
     modeRequestFilePath: string;
+    requestContextFilePath: string;
     logsDirectory: string;
 }
 
@@ -190,7 +192,7 @@ async function run1CCommand(
 }
 
 async function initializeAdapterRuntimeFiles(pathsInfo: FormExplorerBuilderPaths): Promise<void> {
-    const { settingsFilePath, modeFilePath, modeRequestFilePath, snapshotPath } = pathsInfo;
+    const { settingsFilePath, modeFilePath, modeRequestFilePath, requestContextFilePath, snapshotPath } = pathsInfo;
 
     if (!(await pathExists(settingsFilePath))) {
         await writeTextFile(settingsFilePath, `${JSON.stringify({
@@ -207,6 +209,10 @@ async function initializeAdapterRuntimeFiles(pathsInfo: FormExplorerBuilderPaths
 
     if (!(await pathExists(modeRequestFilePath))) {
         await writeTextFile(modeRequestFilePath, '\n');
+    }
+
+    if (!(await pathExists(requestContextFilePath))) {
+        await writeTextFile(requestContextFilePath, '{}\n');
     }
 }
 
@@ -226,6 +232,7 @@ export function getFormExplorerBuilderPaths(): FormExplorerBuilderPaths | null {
         settingsFilePath: path.join(generatedArtifactsDirectory, DEFAULT_SETTINGS_FILE_NAME),
         modeFilePath: path.join(generatedArtifactsDirectory, DEFAULT_MODE_STATE_FILE_NAME),
         modeRequestFilePath: path.join(generatedArtifactsDirectory, DEFAULT_MODE_REQUEST_FILE_NAME),
+        requestContextFilePath: path.join(generatedArtifactsDirectory, DEFAULT_REQUEST_CONTEXT_FILE_NAME),
         logsDirectory: path.join(generatedArtifactsDirectory, 'build-logs')
     };
 }

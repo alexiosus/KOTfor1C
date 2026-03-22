@@ -106,6 +106,16 @@ function normalizeQuery(value: string): string {
     return String(value || '').trim().toLocaleLowerCase();
 }
 
+function isTableLikeProbe(probe: string, hasInlineTableData: boolean = false): boolean {
+    return hasInlineTableData
+        || probe.includes('table')
+        || probe.includes('таблиц')
+        || probe.includes('dynamiclist')
+        || probe.includes('dynamic list')
+        || probe.includes('динамическийспис')
+        || probe.includes('динамический спис');
+}
+
 function normalizeDisplayText(value: string): string {
     return value
         .replace(/\r\n|\r/g, '\n')
@@ -393,7 +403,7 @@ async function getCatalogIndex(context: vscode.ExtensionContext): Promise<Map<st
 function detectElementKind(element: FormExplorerElementInfo): ElementKind {
     const probe = normalizeText(`${element.kind || ''} ${element.type || ''}`);
 
-    if (probe.includes('table') || probe.includes('таблиц') || Boolean(element.tableData)) {
+    if (isTableLikeProbe(probe, Boolean(element.tableData))) {
         return 'table';
     }
     if (probe.includes('button') || probe.includes('кноп')) {
@@ -463,7 +473,7 @@ function findTableElementByBoundPath(
     }
 
     for (const element of elements || []) {
-        const isTable = normalizeQuery([element.kind, element.type].filter(Boolean).join(' ')).includes('table');
+        const isTable = isTableLikeProbe(normalizeQuery([element.kind, element.type].filter(Boolean).join(' ')));
         if (isTable && firstNonEmpty(element.boundAttributePath) === targetPath) {
             return element;
         }

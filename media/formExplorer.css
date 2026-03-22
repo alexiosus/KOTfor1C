@@ -159,6 +159,11 @@ input {
     background: color-mix(in srgb, var(--fe-warning) 10%, var(--fe-surface-1) 90%);
 }
 
+.generated-at-chip[data-pending="true"] {
+    border-color: color-mix(in srgb, var(--fe-accent) 58%, transparent);
+    background: color-mix(in srgb, var(--fe-accent) 10%, var(--fe-surface-1) 90%);
+}
+
 .meta-chip-value {
     font-size: 11px;
     line-height: 1.4;
@@ -415,6 +420,16 @@ input {
 .menu-item:hover {
     border-color: var(--fe-border-strong);
     background: var(--fe-surface-1);
+}
+
+.dropdown-separator {
+    height: 1px;
+    margin: 4px 8px;
+    background: var(--vscode-menu-separatorBackground, var(--vscode-panel-border));
+}
+
+.menu-check {
+    min-height: 0;
 }
 
 .toolbar-btn,

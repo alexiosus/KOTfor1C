@@ -15,24 +15,22 @@
     data-remove-parameter="${loc.removeParameter}"
     data-override-title="${loc.overrideExistingValue}"
 >
-    <div class="container">
-        <div class="header">
-            <h1>${loc.title}</h1>
-            <p>${loc.description}</p>
-        </div>
-
-        <div class="controls">
-            <div class="controls-left">
-                <button id="saveBtn" class="button-with-icon">
+    <div class="app-shell yaml-parameters-shell">
+        <header class="topbar parameters-topbar">
+            <div class="topbar-title-wrap">
+                <div class="topbar-copy">
+                    <h1 class="topbar-title">${loc.title}</h1>
+                </div>
+            </div>
+            <div class="toolbar parameters-toolbar">
+                <button id="saveBtn" class="button-with-icon toolbar-btn primary">
                     <span class="codicon codicon-save"></span> ${loc.save}
                 </button>
-            </div>
-            <div class="controls-right">
                 <div class="help-container">
-                    <button id="helpBtn" class="help-button" title="${loc.help}">
+                    <button id="helpBtn" class="help-button ghost-btn icon-only" title="${loc.help}">
                         <span class="codicon codicon-question"></span>
                     </button>
-                    <div id="helpTooltip" class="help-tooltip">
+                    <div id="helpTooltip" class="help-tooltip menu-popover">
                         <div class="help-content">
                             <p class="path-hint">${loc.sectionsHint}</p>
                             <p class="path-hint">${loc.pathHint}</p>
@@ -50,48 +48,49 @@
                     </div>
                 </div>
                 <div class="dropdown-container">
-                    <button id="moreActionsBtn" class="button-with-icon compact-action-btn" title="${loc.moreActions}">
+                    <button id="moreActionsBtn" class="button-with-icon toolbar-btn" title="${loc.moreActions}">
                         <span class="codicon codicon-ellipsis"></span> ${loc.moreActions}
                     </button>
-                    <div id="moreActionsDropdown" class="dropdown-content">
+                    <div id="moreActionsDropdown" class="dropdown-content menu-popover">
                         <div class="dropdown-section-title">${loc.buildMoreActionsLabel}</div>
-                        <a href="#" id="createBuildFileBtn" class="dropdown-item">
+                        <a href="#" id="createBuildFileBtn" class="dropdown-item menu-item">
                             <span class="codicon codicon-file-code"></span> ${loc.createFile}
                         </a>
-                        <a href="#" id="loadBuildFromJsonBtn" class="dropdown-item">
+                        <a href="#" id="loadBuildFromJsonBtn" class="dropdown-item menu-item">
                             <span class="codicon codicon-folder-opened"></span> ${loc.loadFromJson}
                         </a>
-                        <a href="#" id="resetBuildDefaultsBtn" class="dropdown-item">
+                        <a href="#" id="resetBuildDefaultsBtn" class="dropdown-item menu-item">
                             <span class="codicon codicon-discard"></span> ${loc.resetDefaults}
                         </a>
-                        <div class="dropdown-divider"></div>
+                        <div class="dropdown-divider menu-separator"></div>
                         <div class="dropdown-section-title">${loc.additionalMoreActionsLabel}</div>
-                        <a href="#" id="createAdditionalFileBtn" class="dropdown-item">
+                        <a href="#" id="createAdditionalFileBtn" class="dropdown-item menu-item">
                             <span class="codicon codicon-file-code"></span> ${loc.saveAdditionalFile}
                         </a>
-                        <a href="#" id="loadAdditionalFromJsonBtn" class="dropdown-item">
+                        <a href="#" id="loadAdditionalFromJsonBtn" class="dropdown-item menu-item">
                             <span class="codicon codicon-folder-opened"></span> ${loc.loadAdditionalFromJson}
                         </a>
-                        <a href="#" id="clearAdditionalBtn" class="dropdown-item">
+                        <a href="#" id="clearAdditionalBtn" class="dropdown-item menu-item">
                             <span class="codicon codicon-clear-all"></span> ${loc.clearAdditionalParameters}
                         </a>
-                        <div class="dropdown-divider"></div>
+                        <div class="dropdown-divider menu-separator"></div>
                         <div class="dropdown-section-title">${loc.globalVarsMoreActionsLabel}</div>
-                        <a href="#" id="createGlobalVarsFileBtn" class="dropdown-item">
+                        <a href="#" id="createGlobalVarsFileBtn" class="dropdown-item menu-item">
                             <span class="codicon codicon-file-code"></span> ${loc.saveGlobalVarsFile}
                         </a>
-                        <a href="#" id="loadGlobalVarsFromJsonBtn" class="dropdown-item">
+                        <a href="#" id="loadGlobalVarsFromJsonBtn" class="dropdown-item menu-item">
                             <span class="codicon codicon-folder-opened"></span> ${loc.loadGlobalVarsFromJson}
                         </a>
-                        <a href="#" id="clearGlobalVarsBtn" class="dropdown-item">
+                        <a href="#" id="clearGlobalVarsBtn" class="dropdown-item menu-item">
                             <span class="codicon codicon-clear-all"></span> ${loc.clearGlobalVariables}
                         </a>
                     </div>
                 </div>
             </div>
-        </div>
+        </header>
 
-        <div class="tabs" role="tablist" aria-label="${loc.title}">
+        <section class="panel parameters-main-panel">
+        <div class="tabs tab-strip" role="tablist" aria-label="${loc.title}">
             <button
                 id="buildTabBtn"
                 class="tab-btn active"
@@ -127,14 +126,14 @@
         <div class="tab-panels">
             <section id="buildTabPanel" class="tab-panel active" role="tabpanel" aria-labelledby="buildTabBtn">
                 <div class="section-summary-text">
-                    <span class="section-description">${loc.buildSectionDescription}</span>
+                    <span class="section-description tab-note">${loc.buildSectionDescription}</span>
                 </div>
                 <div class="section-content">
                     <div class="section-toolbar">
-                        <button id="addBuildRowBtn" class="button-with-icon">
+                        <button id="addBuildRowBtn" class="button-with-icon ghost-btn">
                             <span class="codicon codicon-add"></span> ${loc.addBuildParameter}
                         </button>
-                        <div class="search-box">
+                        <div class="search-box search-frame">
                             <span class="codicon codicon-search search-icon" aria-hidden="true"></span>
                             <input
                                 id="buildSearchInput"
@@ -174,14 +173,14 @@
 
             <section id="additionalTabPanel" class="tab-panel" role="tabpanel" aria-labelledby="additionalTabBtn" hidden>
                 <div class="section-summary-text">
-                    <span class="section-description">${loc.additionalSectionDescription}</span>
+                    <span class="section-description tab-note">${loc.additionalSectionDescription}</span>
                 </div>
                 <div class="section-content">
                     <div class="section-toolbar">
-                        <button id="addAdditionalRowBtn" class="button-with-icon">
+                        <button id="addAdditionalRowBtn" class="button-with-icon ghost-btn">
                             <span class="codicon codicon-add"></span> ${loc.addAdditionalParameter}
                         </button>
-                        <div class="search-box">
+                        <div class="search-box search-frame">
                             <span class="codicon codicon-search search-icon" aria-hidden="true"></span>
                             <input
                                 id="additionalSearchInput"
@@ -222,14 +221,14 @@
 
             <section id="globalVarsTabPanel" class="tab-panel" role="tabpanel" aria-labelledby="globalVarsTabBtn" hidden>
                 <div class="section-summary-text">
-                    <span class="section-description">${loc.globalVarsSectionDescription}</span>
+                    <span class="section-description tab-note">${loc.globalVarsSectionDescription}</span>
                 </div>
                 <div class="section-content">
                     <div class="section-toolbar">
-                        <button id="addGlobalVarRowBtn" class="button-with-icon">
+                        <button id="addGlobalVarRowBtn" class="button-with-icon ghost-btn">
                             <span class="codicon codicon-add"></span> ${loc.addGlobalVariable}
                         </button>
-                        <div class="search-box">
+                        <div class="search-box search-frame">
                             <span class="codicon codicon-search search-icon" aria-hidden="true"></span>
                             <input
                                 id="globalVarsSearchInput"
@@ -268,6 +267,7 @@
                 </div>
             </section>
         </div>
+        </section>
     </div>
 
     <script type="application/javascript" nonce="${nonce}">

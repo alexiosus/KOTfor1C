@@ -1,0 +1,332 @@
+:root {
+    --kot-bg:
+        radial-gradient(circle at top right, color-mix(in srgb, var(--vscode-focusBorder) 14%, transparent) 0, transparent 24%),
+        linear-gradient(180deg, color-mix(in srgb, var(--vscode-editor-background) 96%, var(--vscode-sideBar-background) 4%) 0%, var(--vscode-editor-background) 100%);
+    --kot-surface-0: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--vscode-sideBar-background) 8%);
+    --kot-surface-1: color-mix(in srgb, var(--vscode-editor-background) 86%, var(--vscode-sideBar-background) 14%);
+    --kot-surface-2: color-mix(in srgb, var(--vscode-editor-background) 78%, var(--vscode-list-hoverBackground) 22%);
+    --kot-button-bg: color-mix(in srgb, var(--vscode-editor-background) 83%, var(--vscode-sideBar-background) 17%);
+    --kot-border: color-mix(in srgb, var(--vscode-panel-border) 84%, transparent);
+    --kot-border-strong: color-mix(in srgb, var(--vscode-focusBorder) 62%, transparent);
+    --kot-muted: var(--vscode-descriptionForeground);
+    --kot-accent: var(--vscode-focusBorder);
+    --kot-good: var(--vscode-testing-iconPassed);
+    --kot-warning: var(--vscode-testing-iconQueued);
+    --kot-shadow: 0 12px 28px rgba(0, 0, 0, 0.12);
+}
+
+html,
+body {
+    height: 100%;
+}
+
+body {
+    margin: 0;
+    overflow: hidden;
+    background: var(--kot-bg);
+    color: var(--vscode-editor-foreground);
+    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+    font: inherit;
+}
+
+.app-shell {
+    height: 100%;
+    min-height: 0;
+    box-sizing: border-box;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.topbar,
+.panel,
+.banner {
+    border: 1px solid var(--kot-border);
+    border-radius: 16px;
+    background: var(--kot-surface-0);
+    box-shadow: var(--kot-shadow);
+}
+
+.surface-card {
+    border: 1px solid var(--kot-border);
+    border-radius: 14px;
+    background: var(--kot-surface-1);
+}
+
+.topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px 14px;
+    align-items: center;
+    padding: 6px 10px;
+    min-height: 44px;
+}
+
+.topbar-title-wrap {
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.topbar-copy {
+    min-width: 0;
+}
+
+.topbar-title {
+    margin: 0;
+    font-size: 16px;
+    line-height: 1.1;
+    font-weight: 800;
+}
+
+.topbar-description {
+    margin: 4px 0 0;
+    color: var(--kot-muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.eyebrow,
+.section-label,
+.dropdown-section-title {
+    color: var(--kot-muted);
+    font-size: 11px;
+    line-height: 1.2;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 700;
+}
+
+.section-label {
+    margin: 0;
+}
+
+.toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.toolbar-btn,
+.ghost-btn,
+.toggle-btn,
+.tab-btn,
+.surface-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 32px;
+    padding: 7px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--kot-border);
+    background: var(--kot-button-bg);
+    color: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: transform 0.12s ease, border-color 0.12s ease, background-color 0.12s ease, opacity 0.12s ease;
+}
+
+.toolbar-btn:hover,
+.ghost-btn:hover,
+.toggle-btn:hover,
+.tab-btn:hover,
+.surface-button:hover {
+    border-color: var(--kot-border-strong);
+    background: var(--kot-surface-2);
+}
+
+.toolbar-btn:disabled,
+.ghost-btn:disabled,
+.toggle-btn:disabled,
+.surface-button:disabled {
+    opacity: 0.58;
+    cursor: default;
+    transform: none;
+}
+
+.toolbar-btn.primary {
+    border-color: color-mix(in srgb, var(--vscode-button-background) 70%, transparent);
+    background: color-mix(in srgb, var(--vscode-button-background) 82%, var(--vscode-textLink-foreground) 18%);
+    color: var(--vscode-button-foreground);
+}
+
+.toolbar-btn.primary:hover {
+    background: color-mix(in srgb, var(--vscode-button-hoverBackground) 84%, var(--vscode-textLink-foreground) 16%);
+}
+
+.icon-only {
+    min-width: 32px;
+    padding-inline: 8px;
+}
+
+.ghost-btn.small,
+.toolbar-btn.small {
+    min-height: 28px;
+    padding: 5px 9px;
+}
+
+.toggle-btn.is-active,
+.tab-btn.is-active,
+.tab-btn.active {
+    border-color: color-mix(in srgb, var(--kot-accent) 80%, transparent);
+    background: color-mix(in srgb, var(--kot-accent) 14%, var(--kot-surface-1) 86%);
+}
+
+.tab-strip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--kot-border);
+    border-radius: 14px;
+    background: var(--kot-surface-1);
+}
+
+.count-pill,
+.tab-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 28px;
+    padding: 0 9px;
+    border-radius: 999px;
+    border: 1px solid var(--kot-border);
+    background: var(--kot-surface-1);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.surface-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--kot-border);
+    background: var(--kot-surface-1);
+}
+
+.surface-select {
+    border: 1px solid var(--kot-border);
+    border-radius: 10px;
+    padding: 4px 8px;
+    background: color-mix(in srgb, var(--vscode-input-background) 84%, var(--kot-surface-1) 16%);
+    color: var(--vscode-input-foreground, var(--vscode-foreground));
+}
+
+.surface-select:focus {
+    outline: 1px solid var(--kot-accent);
+    border-color: var(--kot-accent);
+}
+
+.search-frame {
+    position: relative;
+    min-width: 0;
+}
+
+.search-frame .codicon,
+.search-box .search-icon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--kot-muted);
+    pointer-events: none;
+}
+
+.search-input,
+.surface-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 12px 8px 36px;
+    border-radius: 12px;
+    border: 1px solid var(--kot-border);
+    background: color-mix(in srgb, var(--vscode-input-background) 84%, var(--kot-surface-1) 16%);
+    color: var(--vscode-input-foreground);
+}
+
+.search-input:focus,
+.surface-input:focus {
+    outline: 1px solid var(--kot-accent);
+    border-color: var(--kot-accent);
+}
+
+.menu-shell,
+.dropdown-container,
+.help-container {
+    position: relative;
+}
+
+.menu-popover {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    min-width: 220px;
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px;
+    border-radius: 12px;
+    border: 1px solid var(--kot-border);
+    background: var(--kot-surface-0);
+    box-shadow: var(--kot-shadow);
+    z-index: 1000;
+}
+
+.dropdown-container.show > .menu-popover,
+.help-tooltip.show,
+.menu-shell > .menu-popover.is-open {
+    display: flex;
+}
+
+.menu-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    padding: 7px 10px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    color: inherit;
+    text-decoration: none;
+    text-align: left;
+    cursor: pointer;
+}
+
+.menu-item:hover {
+    border-color: var(--kot-border-strong);
+    background: var(--kot-surface-1);
+}
+
+.menu-separator {
+    height: 1px;
+    margin: 4px 8px;
+    background: var(--vscode-menu-separatorBackground, var(--kot-border));
+}
+
+.hidden {
+    display: none !important;
+}
+
+@media (max-width: 980px) {
+    .topbar {
+        grid-template-columns: 1fr;
+    }
+
+    .toolbar {
+        justify-content: flex-start;
+    }
+}

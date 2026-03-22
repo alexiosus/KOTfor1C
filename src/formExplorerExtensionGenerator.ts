@@ -125,6 +125,12 @@ interface InfobaseExtensionProbeResult {
     authentication: InfobaseAuthentication | null;
 }
 
+export interface StartFormExplorerInfobaseResult {
+    status: 'started' | 'cancelled' | 'error';
+    infobasePath: string | null;
+    error: string | null;
+}
+
 interface HotkeyPresetDefinition {
     key: string;
     shortcut: string;
@@ -146,6 +152,7 @@ const DEFAULT_SETTINGS_FILE_NAME = 'adapter-settings.json';
 const DEFAULT_RUNTIME_STATE_FILE_NAME = 'adapter-runtime-state.json';
 const DEFAULT_MODE_STATE_FILE_NAME = 'adapter-mode.txt';
 const DEFAULT_MODE_REQUEST_FILE_NAME = 'adapter-mode-request.txt';
+const DEFAULT_REQUEST_CONTEXT_FILE_NAME = 'adapter-request-context.json';
 const HOTKEY_PRESET_NONE_KEY = 'none';
 const DEFAULT_HOTKEY_PRESET_KEY = 'ctrlShiftF12';
 const DEFAULT_AUTO_SNAPSHOT_INTERVAL_SECONDS = 5;
@@ -380,19 +387,14 @@ async function promptInfobaseAuthentication(
     initialAuthentication: InfobaseAuthentication | null,
     retryMode: boolean
 ): Promise<InfobaseAuthentication | undefined> {
+    const defaultUsername = (initialAuthentication?.username || '').trim() || 'Administrator';
     const username = await vscode.window.showInputBox({
         title: retryMode
             ? t('Infobase authentication failed. Enter infobase login')
             : t('Enter infobase login'),
         placeHolder: t('Example: Administrator'),
-        value: initialAuthentication?.username || '',
-        ignoreFocusOut: true,
-        validateInput: value => {
-            if (!value.trim()) {
-                return t('Login cannot be empty.');
-            }
-            return null;
-        }
+        value: defaultUsername,
+        ignoreFocusOut: true
     });
     if (username === undefined) {
         return undefined;
@@ -410,7 +412,7 @@ async function promptInfobaseAuthentication(
     }
 
     return {
-        username: username.trim(),
+        username: username.trim() || 'Administrator',
         password
     };
 }
@@ -577,6 +579,37 @@ async function pickTargetInfobasePath(
     }
 
     return path.resolve(manualPath.trim());
+}
+
+async function pickStartInfobaseAction(
+    t: Awaited<ReturnType<typeof getTranslator>>,
+    targetInfobasePath: string,
+    extensionInstalled: boolean
+): Promise<'start' | 'reinstall' | undefined> {
+    if (!extensionInstalled) {
+        return 'reinstall';
+    }
+
+    const selection = await vscode.window.showQuickPick([
+        {
+            label: t('Start infobase'),
+            description: targetInfobasePath,
+            detail: t('Use the already installed Form Explorer extension.'),
+            actionKey: 'start' as const
+        },
+        {
+            label: t('Reinstall extension and start'),
+            description: targetInfobasePath,
+            detail: t('Rebuild the runtime extension, reinstall it into the selected infobase, then start 1C.'),
+            actionKey: 'reinstall' as const
+        }
+    ], {
+        title: t('Form Explorer extension is already installed'),
+        placeHolder: t('Choose how to start the selected infobase'),
+        ignoreFocusOut: true
+    });
+
+    return selection?.actionKey;
 }
 
 async function pickCfeOutputPath(
@@ -2034,6 +2067,7 @@ function buildAdapterSupportTextRussian(
     const escapedStatePath = escapeBslStringLiteral(path.join(path.dirname(settingsPath), DEFAULT_RUNTIME_STATE_FILE_NAME));
     const escapedModePath = escapeBslStringLiteral(path.join(path.dirname(settingsPath), DEFAULT_MODE_STATE_FILE_NAME));
     const escapedModeRequestPath = escapeBslStringLiteral(path.join(path.dirname(settingsPath), DEFAULT_MODE_REQUEST_FILE_NAME));
+    const escapedRequestContextPath = escapeBslStringLiteral(path.join(path.dirname(settingsPath), DEFAULT_REQUEST_CONTEXT_FILE_NAME));
     const escapedConfigurationSourceDirectory = escapeBslStringLiteral(configurationSourceDirectory);
 
     return `
@@ -2203,8 +2237,12 @@ function buildAdapterSupportTextRussian(
         Возврат "manual";
     КонецЕсли;
 
-    Если КодРежима = "refresh" Или КодРежима = "snapshot" Или КодРежима = "table" Тогда
+    Если КодРежима = "refresh" Или КодРежима = "snapshot" Тогда
         Возврат "refresh";
+    КонецЕсли;
+
+    Если КодРежима = "table" Или КодРежима = "tables" Тогда
+        Возврат "table";
     КонецЕсли;
 
     Если КодРежима = "locator" Или КодРежима = "locate" Тогда
@@ -2234,6 +2272,34 @@ function buildAdapterSupportTextRussian(
     KOTFormExplorer_WriteTextFile("${escapedModeRequestPath}", "");
 
 КонецПроцедуры
+
+
+Функция KOTFormExplorer_ReadRequestContext() Экспорт
+
+    Попытка
+        ТекстДокумент = Новый ТекстовыйДокумент;
+        ТекстДокумент.Прочитать("${escapedRequestContextPath}", КодировкаТекста.UTF8);
+        ТекстJSON = ТекстДокумент.ПолучитьТекст();
+
+        Если ЭтоПустаяСтрока(СокрЛП(ТекстJSON)) Тогда
+            Возврат Новый Структура;
+        КонецЕсли;
+
+        ЧтениеJSON = Новый ЧтениеJSON;
+        ЧтениеJSON.УстановитьСтроку(ТекстJSON);
+        Контекст = ПрочитатьJSON(ЧтениеJSON);
+        ЧтениеJSON.Закрыть();
+
+        Если Контекст = Неопределено Тогда
+            Возврат Новый Структура;
+        КонецЕсли;
+
+        Возврат Контекст;
+    Исключение
+        Возврат Новый Структура;
+    КонецПопытки;
+
+КонецФункции
 
 
 Функция KOTFormExplorer_CreateDefaultRuntimeState()
@@ -2305,6 +2371,144 @@ function buildAdapterSupportTextRussian(
 КонецПроцедуры
 
 
+Функция KOTFormExplorer_ReadSnapshotObject(ПутьКСнимку)
+
+    Попытка
+        ТекстДокумент = Новый ТекстовыйДокумент;
+        ТекстДокумент.Прочитать(ПутьКСнимку, КодировкаТекста.UTF8);
+        ТекстJSON = ТекстДокумент.ПолучитьТекст();
+
+        Если ЭтоПустаяСтрока(СокрЛП(ТекстJSON)) Тогда
+            Возврат Неопределено;
+        КонецЕсли;
+
+        ЧтениеJSON = Новый ЧтениеJSON;
+        ЧтениеJSON.УстановитьСтроку(ТекстJSON);
+        Снимок = ПрочитатьJSON(ЧтениеJSON);
+        ЧтениеJSON.Закрыть();
+
+        Возврат Снимок;
+    Исключение
+        Возврат Неопределено;
+    КонецПопытки;
+
+КонецФункции
+
+
+Функция KOTFormExplorer_CollectElementTableDataIndex(ПлоскиеЭлементы)
+
+    Индекс = Новый Соответствие;
+    Если ПлоскиеЭлементы = Неопределено Тогда
+        Возврат Индекс;
+    КонецЕсли;
+
+    Для Каждого ОписаниеЭлемента Из ПлоскиеЭлементы Цикл
+        ПутьЭлемента = ПолучитьСтрокуИзСтруктуры(ОписаниеЭлемента, "path");
+        ТабличныеДанные = ПолучитьПараметр(ОписаниеЭлемента, "tableData");
+        Если ЭтоПустаяСтрока(ПутьЭлемента) Или ТабличныеДанные = Неопределено Тогда
+            Продолжить;
+        КонецЕсли;
+
+        Индекс.Вставить(ПутьЭлемента, ТабличныеДанные);
+    КонецЦикла;
+
+    Возврат Индекс;
+
+КонецФункции
+
+
+Процедура KOTFormExplorer_ApplyTableDataToSnapshotElements(Элементы, ТабличныеДанныеПоПути)
+
+    Если Элементы = Неопределено Или ТабличныеДанныеПоПути = Неопределено Тогда
+        Возврат;
+    КонецЕсли;
+
+    Для Каждого ОписаниеЭлемента Из Элементы Цикл
+        ПутьЭлемента = ПолучитьСтрокуИзСтруктуры(ОписаниеЭлемента, "path");
+        Если Не ЭтоПустаяСтрока(ПутьЭлемента) И ИндексСодержитКлюч(ТабличныеДанныеПоПути, ПутьЭлемента) Тогда
+            ОписаниеЭлемента.Вставить("tableData", ТабличныеДанныеПоПути.Получить(ПутьЭлемента));
+        КонецЕсли;
+
+        ДочерниеЭлементы = ПолучитьПараметр(ОписаниеЭлемента, "children");
+        Если ДочерниеЭлементы <> Неопределено Тогда
+            KOTFormExplorer_ApplyTableDataToSnapshotElements(ДочерниеЭлементы, ТабличныеДанныеПоПути);
+        КонецЕсли;
+    КонецЦикла;
+
+КонецПроцедуры
+
+
+Функция KOTFormExplorer_UpdateSnapshotTables(ПараметрыВыполненияКоманды = Неопределено, Origin = "") Экспорт
+
+    Настройки = KOTFormExplorer_ReadAdapterSettings();
+    БазовыйПутьКСнимку = KOTFormExplorer_GetStringSetting(Настройки, "snapshotPath", "${escapedSnapshotPath}");
+    Если ЭтоПустаяСтрока(СокрЛП(БазовыйПутьКСнимку)) Тогда
+        Возврат Ложь;
+    КонецЕсли;
+
+    Форма = KOTFormExplorer_DetectCurrentManagedForm(ПараметрыВыполненияКоманды);
+    Если Форма = Неопределено Тогда
+        Возврат Ложь;
+    КонецЕсли;
+
+    ПутьМетаданных = KOTFormExplorer_DetectFormMetadataPath(Форма);
+    Если ПутьМетаданных = "CommonForm.${SETTINGS_FORM_NAME}" Тогда
+        Возврат Ложь;
+    КонецЕсли;
+
+    ЗаголовокОкна = KOTFormExplorer_DetectFormWindowTitle(Форма, ПараметрыВыполненияКоманды);
+    БыстраяСигнатура = KOTFormExplorer_BuildQuickSignature(Форма, ПараметрыВыполненияКоманды, ПутьМетаданных, ЗаголовокОкна);
+    КонтекстИсточника = KOTFormExplorer_BuildSourceContext(Origin);
+    ПутьКСнимку = KOTFormExplorer_ResolveSessionSnapshotPath(БазовыйПутьКСнимку);
+    ТокенСеанса = KOTFormExplorer_GetSessionSnapshotToken();
+    КонтекстЗапроса = KOTFormExplorer_ReadRequestContext();
+    ПредпочтительныйПутьЭлемента = KOTFormExplorer_GetStringSetting(КонтекстЗапроса, "elementPath", "");
+
+    ПлоскиеЭлементы = СобратьПлоскийСписокЭлементов(
+        Форма,
+        Ложь,
+        ПредпочтительныйПутьЭлемента,
+        Ложь,
+        ""
+    );
+    АтрибутыФормы = СобратьАтрибутыФормы(Форма, ПлоскиеЭлементы);
+    ТаблицыФормы = СобратьТабличныеИсточникиФормы(Форма, ПлоскиеЭлементы, АтрибутыФормы);
+
+    Снимок = KOTFormExplorer_ReadSnapshotObject(ПутьКСнимку);
+    Если Снимок = Неопределено Тогда
+        Возврат KOTFormExplorer_WriteCurrentFormSnapshot(ПараметрыВыполненияКоманды, Origin, Ложь, Истина);
+    КонецЕсли;
+
+    Снимок.Вставить("generatedAt", ЗначениеВСтроку(ТекущаяДата()));
+    Снимок.Вставить("source", КонтекстИсточника);
+    Снимок.Вставить("tables", ТаблицыФормы);
+
+    ОписаниеФормы = ПолучитьПараметр(Снимок, "form");
+    Если ОписаниеФормы = Неопределено Тогда
+        ОписаниеФормы = Новый Структура;
+        Снимок.Вставить("form", ОписаниеФормы);
+    КонецЕсли;
+    ОписаниеФормы.Вставить("title", ЗаголовокОкна);
+    ОписаниеФормы.Вставить("windowTitle", ЗаголовокОкна);
+    ОписаниеФормы.Вставить("metadataPath", ПутьМетаданных);
+    ОписаниеФормы.Вставить("activeElementPath", ПолучитьПутьАктивногоЭлемента(Форма, ПлоскиеЭлементы));
+
+    ЭлементыСнимка = ПолучитьПараметр(Снимок, "elements");
+    Если ЭлементыСнимка <> Неопределено Тогда
+        KOTFormExplorer_ApplyTableDataToSnapshotElements(
+            ЭлементыСнимка,
+            KOTFormExplorer_CollectElementTableDataIndex(ПлоскиеЭлементы)
+        );
+    КонецЕсли;
+
+    KOTFormExplorer_WriteTextFile(ПутьКСнимку, ПреобразоватьВJSONСтроку(Снимок));
+    KOTFormExplorer_SaveRuntimeState(ПутьКСнимку, БыстраяСигнатура, ТокенСеанса);
+
+    Возврат Истина;
+
+КонецФункции
+
+
 Функция KOTFormExplorer_BuildQuickSignature(Форма, ПараметрыВыполненияКоманды, ПутьМетаданных, ЗаголовокОкна)
 
     ТекущийЭлемент = ПолучитьТекущийЭлементФормы(Форма);
@@ -2369,7 +2573,15 @@ function buildAdapterSupportTextRussian(
 
 Процедура KOTFormExplorer_RunManualRefresh(ПараметрыВыполненияКоманды = Неопределено) Экспорт
 
-    KOTFormExplorer_WriteCurrentFormSnapshot(ПараметрыВыполненияКоманды, "CommonCommand.${REFRESH_COMMAND_NAME}");
+    KOTFormExplorer_WriteCurrentFormSnapshot(ПараметрыВыполненияКоманды, "CommonCommand.${REFRESH_COMMAND_NAME}", Ложь, Ложь);
+    KOTFormExplorer_ApplyAutoSnapshotSettings(Ложь);
+
+КонецПроцедуры
+
+
+Процедура KOTFormExplorer_RunTableRefresh(ПараметрыВыполненияКоманды = Неопределено) Экспорт
+
+    KOTFormExplorer_UpdateSnapshotTables(ПараметрыВыполненияКоманды, "VSCode.TableRefresh");
     KOTFormExplorer_ApplyAutoSnapshotSettings(Ложь);
 
 КонецПроцедуры
@@ -2453,7 +2665,7 @@ function buildAdapterSupportTextRussian(
         Возврат;
     КонецЕсли;
 
-    KOTFormExplorer_WriteCurrentFormSnapshot(ПараметрыВыполненияКоманды, "Hotkey." + ЗначениеВСтроку(КодПресета));
+    KOTFormExplorer_WriteCurrentFormSnapshot(ПараметрыВыполненияКоманды, "Hotkey." + ЗначениеВСтроку(КодПресета), Ложь, Ложь);
     KOTFormExplorer_ApplyAutoSnapshotSettings(Ложь);
 
 КонецПроцедуры
@@ -2498,6 +2710,11 @@ function buildAdapterSupportTextRussian(
 
     Если КодРежима = "refresh" Тогда
         KOTFormExplorer_RunManualRefresh();
+        Возврат;
+    КонецЕсли;
+
+    Если КодРежима = "table" Тогда
+        KOTFormExplorer_RunTableRefresh();
         Возврат;
     КонецЕсли;
 
@@ -2576,7 +2793,12 @@ function buildAdapterSupportTextRussian(
 КонецПроцедуры
 
 
-Функция KOTFormExplorer_WriteCurrentFormSnapshot(ПараметрыВыполненияКоманды = Неопределено, Origin = "", ИспользоватьБыструюПроверку = Ложь) Экспорт
+Функция KOTFormExplorer_WriteCurrentFormSnapshot(
+    ПараметрыВыполненияКоманды = Неопределено,
+    Origin = "",
+    ИспользоватьБыструюПроверку = Ложь,
+    ВключатьТаблицы = Неопределено
+) Экспорт
 
     Настройки = KOTFormExplorer_ReadAdapterSettings();
     БазовыйПутьКСнимку = KOTFormExplorer_GetStringSetting(Настройки, "snapshotPath", "${escapedSnapshotPath}");
@@ -2610,13 +2832,17 @@ function buildAdapterSupportTextRussian(
     КонецЕсли;
 
     ПутьТекущегоЭлемента = ПолучитьПутьЭлемента(ПолучитьТекущийЭлементФормы(Форма));
+    РежимВключенияТаблиц = Не ИспользоватьБыструюПроверку;
+    Если ВключатьТаблицы <> Неопределено Тогда
+        РежимВключенияТаблиц = ВключатьТаблицы;
+    КонецЕсли;
 
     ПараметрыСнимка = Новый Структура;
     ПараметрыСнимка.Вставить("MetadataPath", ПутьМетаданных);
     ПараметрыСнимка.Вставить("WindowTitle", ЗаголовокОкна);
     ПараметрыСнимка.Вставить("Source", КонтекстИсточника);
-    ПараметрыСнимка.Вставить("IncludeTables", Не ИспользоватьБыструюПроверку);
-    ПараметрыСнимка.Вставить("IncludeElementTableData", Не ИспользоватьБыструюПроверку);
+    ПараметрыСнимка.Вставить("IncludeTables", РежимВключенияТаблиц);
+    ПараметрыСнимка.Вставить("IncludeElementTableData", РежимВключенияТаблиц);
     ПараметрыСнимка.Вставить("IncludeElementValues", Не ИспользоватьБыструюПроверку);
     Если ИспользоватьБыструюПроверку Тогда
         ПараметрыСнимка.Вставить(
@@ -2955,6 +3181,7 @@ function buildAdapterSupportTextEnglish(
     const escapedStatePath = escapeBslStringLiteral(path.join(path.dirname(settingsPath), DEFAULT_RUNTIME_STATE_FILE_NAME));
     const escapedModePath = escapeBslStringLiteral(path.join(path.dirname(settingsPath), DEFAULT_MODE_STATE_FILE_NAME));
     const escapedModeRequestPath = escapeBslStringLiteral(path.join(path.dirname(settingsPath), DEFAULT_MODE_REQUEST_FILE_NAME));
+    const escapedRequestContextPath = escapeBslStringLiteral(path.join(path.dirname(settingsPath), DEFAULT_REQUEST_CONTEXT_FILE_NAME));
     const escapedConfigurationSourceDirectory = escapeBslStringLiteral(configurationSourceDirectory);
 
     return `
@@ -3124,8 +3351,12 @@ Function KOTFormExplorer_NormalizeModeCode(Value) Export
         Return "manual";
     EndIf;
 
-    If ModeCode = "refresh" Or ModeCode = "snapshot" Or ModeCode = "table" Then
+    If ModeCode = "refresh" Or ModeCode = "snapshot" Then
         Return "refresh";
+    EndIf;
+
+    If ModeCode = "table" Or ModeCode = "tables" Then
+        Return "table";
     EndIf;
 
     If ModeCode = "locator" Or ModeCode = "locate" Then
@@ -3155,6 +3386,34 @@ Procedure KOTFormExplorer_ClearModeRequest() Export
     KOTFormExplorer_WriteTextFile("${escapedModeRequestPath}", "");
 
 EndProcedure
+
+
+Function KOTFormExplorer_ReadRequestContext() Export
+
+    Try
+        TextDocument = New TextDocument;
+        TextDocument.Read("${escapedRequestContextPath}", TextEncoding.UTF8);
+        JSONText = TextDocument.GetText();
+
+        If IsBlankString(TrimAll(JSONText)) Then
+            Return New Structure;
+        EndIf;
+
+        JSONReader = New JSONReader;
+        JSONReader.SetString(JSONText);
+        Context = ReadJSON(JSONReader);
+        JSONReader.Close();
+
+        If Context = Undefined Then
+            Return New Structure;
+        EndIf;
+
+        Return Context;
+    Except
+        Return New Structure;
+    EndTry;
+
+EndFunction
 
 
 Function KOTFormExplorer_CreateDefaultRuntimeState()
@@ -3226,6 +3485,144 @@ Procedure KOTFormExplorer_SaveRuntimeState(SnapshotPath, QuickSignature, Session
 EndProcedure
 
 
+Function KOTFormExplorer_ReadSnapshotObject(SnapshotPath)
+
+    Try
+        TextDocument = New TextDocument;
+        TextDocument.Read(SnapshotPath, TextEncoding.UTF8);
+        JSONText = TextDocument.GetText();
+
+        If IsBlankString(TrimAll(JSONText)) Then
+            Return Undefined;
+        EndIf;
+
+        JSONReader = New JSONReader;
+        JSONReader.SetString(JSONText);
+        Snapshot = ReadJSON(JSONReader);
+        JSONReader.Close();
+
+        Return Snapshot;
+    Except
+        Return Undefined;
+    EndTry;
+
+EndFunction
+
+
+Function KOTFormExplorer_CollectElementTableDataIndex(FlatElements)
+
+    Index = New Map;
+    If FlatElements = Undefined Then
+        Return Index;
+    EndIf;
+
+    For Each ElementDescription In FlatElements Do
+        ElementPath = ПолучитьСтрокуИзСтруктуры(ElementDescription, "path");
+        TableData = ПолучитьПараметр(ElementDescription, "tableData");
+        If IsBlankString(TrimAll(ElementPath)) Or TableData = Undefined Then
+            Continue;
+        EndIf;
+
+        Index.Insert(ElementPath, TableData);
+    EndDo;
+
+    Return Index;
+
+EndFunction
+
+
+Procedure KOTFormExplorer_ApplyTableDataToSnapshotElements(Elements, TableDataByPath)
+
+    If Elements = Undefined Or TableDataByPath = Undefined Then
+        Return;
+    EndIf;
+
+    For Each ElementDescription In Elements Do
+        ElementPath = ПолучитьСтрокуИзСтруктуры(ElementDescription, "path");
+        If Not IsBlankString(TrimAll(ElementPath)) And ИндексСодержитКлюч(TableDataByPath, ElementPath) Then
+            ElementDescription.Insert("tableData", TableDataByPath.Get(ElementPath));
+        EndIf;
+
+        ChildElements = ПолучитьПараметр(ElementDescription, "children");
+        If ChildElements <> Undefined Then
+            KOTFormExplorer_ApplyTableDataToSnapshotElements(ChildElements, TableDataByPath);
+        EndIf;
+    EndDo;
+
+EndProcedure
+
+
+Function KOTFormExplorer_UpdateSnapshotTables(ExecutionParameters = Undefined, Origin = "") Export
+
+    Settings = KOTFormExplorer_ReadAdapterSettings();
+    BaseSnapshotPath = KOTFormExplorer_GetStringSetting(Settings, "snapshotPath", "${escapedSnapshotPath}");
+    If IsBlankString(TrimAll(BaseSnapshotPath)) Then
+        Return False;
+    EndIf;
+
+    Form = KOTFormExplorer_DetectCurrentManagedForm(ExecutionParameters);
+    If Form = Undefined Then
+        Return False;
+    EndIf;
+
+    MetadataPath = KOTFormExplorer_DetectFormMetadataPath(Form);
+    If MetadataPath = "CommonForm.${SETTINGS_FORM_NAME}" Then
+        Return False;
+    EndIf;
+
+    WindowTitle = KOTFormExplorer_DetectFormWindowTitle(Form, ExecutionParameters);
+    QuickSignature = KOTFormExplorer_BuildQuickSignature(Form, ExecutionParameters, MetadataPath, WindowTitle);
+    SourceContext = KOTFormExplorer_BuildSourceContext(Origin);
+    SnapshotPath = KOTFormExplorer_ResolveSessionSnapshotPath(BaseSnapshotPath);
+    SessionToken = KOTFormExplorer_GetSessionSnapshotToken();
+    RequestContext = KOTFormExplorer_ReadRequestContext();
+    PreferredElementPath = KOTFormExplorer_GetStringSetting(RequestContext, "elementPath", "");
+
+    FlatElements = СобратьПлоскийСписокЭлементов(
+        Form,
+        False,
+        PreferredElementPath,
+        False,
+        ""
+    );
+    FormAttributes = СобратьАтрибутыФормы(Form, FlatElements);
+    FormTables = СобратьТабличныеИсточникиФормы(Form, FlatElements, FormAttributes);
+
+    Snapshot = KOTFormExplorer_ReadSnapshotObject(SnapshotPath);
+    If Snapshot = Undefined Then
+        Return KOTFormExplorer_WriteCurrentFormSnapshot(ExecutionParameters, Origin, False, True);
+    EndIf;
+
+    Snapshot.Insert("generatedAt", ЗначениеВСтроку(CurrentDate()));
+    Snapshot.Insert("source", SourceContext);
+    Snapshot.Insert("tables", FormTables);
+
+    FormDescription = ПолучитьПараметр(Snapshot, "form");
+    If FormDescription = Undefined Then
+        FormDescription = New Structure;
+        Snapshot.Insert("form", FormDescription);
+    EndIf;
+    FormDescription.Insert("title", WindowTitle);
+    FormDescription.Insert("windowTitle", WindowTitle);
+    FormDescription.Insert("metadataPath", MetadataPath);
+    FormDescription.Insert("activeElementPath", ПолучитьПутьАктивногоЭлемента(Form, FlatElements));
+
+    SnapshotElements = ПолучитьПараметр(Snapshot, "elements");
+    If SnapshotElements <> Undefined Then
+        KOTFormExplorer_ApplyTableDataToSnapshotElements(
+            SnapshotElements,
+            KOTFormExplorer_CollectElementTableDataIndex(FlatElements)
+        );
+    EndIf;
+
+    KOTFormExplorer_WriteTextFile(SnapshotPath, ПреобразоватьВJSONСтроку(Snapshot));
+    KOTFormExplorer_SaveRuntimeState(SnapshotPath, QuickSignature, SessionToken);
+
+    Return True;
+
+EndFunction
+
+
 Function KOTFormExplorer_BuildQuickSignature(Form, ExecutionParameters, MetadataPath, WindowTitle)
 
     CurrentItem = ПолучитьТекущийЭлементФормы(Form);
@@ -3290,7 +3687,15 @@ EndFunction
 
 Procedure KOTFormExplorer_RunManualRefresh(ExecutionParameters = Undefined) Export
 
-    KOTFormExplorer_WriteCurrentFormSnapshot(ExecutionParameters, "CommonCommand.${REFRESH_COMMAND_NAME}");
+    KOTFormExplorer_WriteCurrentFormSnapshot(ExecutionParameters, "CommonCommand.${REFRESH_COMMAND_NAME}", False, False);
+    KOTFormExplorer_ApplyAutoSnapshotSettings(False);
+
+EndProcedure
+
+
+Procedure KOTFormExplorer_RunTableRefresh(ExecutionParameters = Undefined) Export
+
+    KOTFormExplorer_UpdateSnapshotTables(ExecutionParameters, "VSCode.TableRefresh");
     KOTFormExplorer_ApplyAutoSnapshotSettings(False);
 
 EndProcedure
@@ -3374,7 +3779,7 @@ Procedure KOTFormExplorer_HandleHotkeyRefresh(PresetKey, ExecutionParameters = U
         Return;
     EndIf;
 
-    KOTFormExplorer_WriteCurrentFormSnapshot(ExecutionParameters, "Hotkey." + ЗначениеВСтроку(PresetKey));
+    KOTFormExplorer_WriteCurrentFormSnapshot(ExecutionParameters, "Hotkey." + ЗначениеВСтроку(PresetKey), False, False);
     KOTFormExplorer_ApplyAutoSnapshotSettings(False);
 
 EndProcedure
@@ -3419,6 +3824,11 @@ Procedure KOTFormExplorer_ApplyPendingModeRequest() Export
 
     If ModeCode = "refresh" Then
         KOTFormExplorer_RunManualRefresh();
+        Return;
+    EndIf;
+
+    If ModeCode = "table" Then
+        KOTFormExplorer_RunTableRefresh();
         Return;
     EndIf;
 
@@ -3497,7 +3907,12 @@ Procedure KOTFormExplorer_ToggleSnapshotMode() Export
 EndProcedure
 
 
-Function KOTFormExplorer_WriteCurrentFormSnapshot(ExecutionParameters = Undefined, Origin = "", UseQuickCheck = False) Export
+Function KOTFormExplorer_WriteCurrentFormSnapshot(
+    ExecutionParameters = Undefined,
+    Origin = "",
+    UseQuickCheck = False,
+    IncludeTables = Undefined
+) Export
 
     Settings = KOTFormExplorer_ReadAdapterSettings();
     BaseSnapshotPath = KOTFormExplorer_GetStringSetting(Settings, "snapshotPath", "${escapedSnapshotPath}");
@@ -3531,13 +3946,17 @@ Function KOTFormExplorer_WriteCurrentFormSnapshot(ExecutionParameters = Undefine
     EndIf;
 
     CurrentElementPath = ПолучитьПутьЭлемента(ПолучитьТекущийЭлементФормы(Form));
+    EffectiveIncludeTables = Not UseQuickCheck;
+    If IncludeTables <> Undefined Then
+        EffectiveIncludeTables = IncludeTables;
+    EndIf;
 
     SnapshotParameters = New Structure;
     SnapshotParameters.Insert("MetadataPath", MetadataPath);
     SnapshotParameters.Insert("WindowTitle", WindowTitle);
     SnapshotParameters.Insert("Source", SourceContext);
-    SnapshotParameters.Insert("IncludeTables", Not UseQuickCheck);
-    SnapshotParameters.Insert("IncludeElementTableData", Not UseQuickCheck);
+    SnapshotParameters.Insert("IncludeTables", EffectiveIncludeTables);
+    SnapshotParameters.Insert("IncludeElementTableData", EffectiveIncludeTables);
     SnapshotParameters.Insert("IncludeElementValues", Not UseQuickCheck);
     If UseQuickCheck Then
         SnapshotParameters.Insert(
@@ -4557,6 +4976,7 @@ async function initializeAdapterRuntimeFiles(
     await writeTextFile(settingsFilePath, `${JSON.stringify(normalizedSettings, null, 2)}\n`);
     await writeTextFile(modeFilePath, `${normalizedSettings.autoSnapshotEnabled ? 'auto' : 'manual'}\n`);
     await writeTextFile(modeRequestFilePath, '');
+    await writeTextFile(path.join(path.dirname(settingsFilePath), DEFAULT_REQUEST_CONTEXT_FILE_NAME), '{}\n');
 }
 
 async function generateManagedFormArtifacts(
@@ -5872,13 +6292,17 @@ export async function handleInstallFormExplorerExtension(context: vscode.Extensi
 export async function handleStartFormExplorerInfobase(
     context: vscode.ExtensionContext,
     preferredInfobasePath?: string
-): Promise<string | null> {
+): Promise<StartFormExplorerInfobaseResult> {
     const t = await getTranslator(context.extensionUri);
     if (process.platform !== 'win32') {
         vscode.window.showErrorMessage(
             t('Starting target infobase is supported only on Windows where 1C client is available.')
         );
-        return null;
+        return {
+            status: 'error',
+            infobasePath: null,
+            error: t('Starting target infobase is supported only on Windows where 1C client is available.')
+        };
     }
 
     const configuredPreferredInfobasePath = typeof preferredInfobasePath === 'string' && preferredInfobasePath.trim()
@@ -5902,7 +6326,11 @@ export async function handleStartFormExplorerInfobase(
             preferredInfobasePath: configuredPreferredInfobasePath
         });
         if (selectedTargetInfobasePath === undefined || !selectedTargetInfobasePath) {
-            return null;
+            return {
+                status: 'cancelled',
+                infobasePath: null,
+                error: null
+            };
         }
 
         const targetInfobasePath = path.resolve(selectedTargetInfobasePath);
@@ -5921,48 +6349,17 @@ export async function handleStartFormExplorerInfobase(
             outputChannel,
             t
         );
-        if (probeResult.installed) {
-            const startAction = t('Start infobase');
-            const reinstallAction = t('Reinstall extension');
-            const cancelAction = t('Cancel');
-            const selection = await vscode.window.showInformationMessage(
-                t('Form Explorer extension is already installed in selected infobase: {0}', targetInfobasePath),
-                startAction,
-                reinstallAction,
-                cancelAction
-            );
-            if (selection === reinstallAction) {
-                await handleGenerateFormExplorerExtensionCore(context, 'install', { targetInfobasePath });
-                probeResult = await probeExtensionInstalledInInfobaseWithAuthRetry(
-                    oneCDesignerExePath,
-                    targetInfobasePath,
-                    runtimeDirectory,
-                    logsDirectory,
-                    outputChannel,
-                    t
-                );
-                if (!probeResult.installed) {
-                    throw new Error(
-                        t('Form Explorer extension is still not installed in target infobase after reinstall attempt: {0}', targetInfobasePath)
-                    );
-                }
-            } else if (selection !== startAction) {
-                return null;
-            }
-        } else {
-            const installAction = t('Install extension');
-            const reinstallAction = t('Reinstall extension');
-            const cancelAction = t('Cancel');
-            const selection = await vscode.window.showWarningMessage(
-                t('Form Explorer extension is not installed in selected infobase: {0}', targetInfobasePath),
-                installAction,
-                reinstallAction,
-                cancelAction
-            );
-            if (selection !== installAction && selection !== reinstallAction) {
-                return null;
-            }
+        const extensionWasInstalled = probeResult.installed;
+        const startAction = await pickStartInfobaseAction(t, targetInfobasePath, probeResult.installed);
+        if (!startAction) {
+            return {
+                status: 'cancelled',
+                infobasePath: targetInfobasePath,
+                error: null
+            };
+        }
 
+        if (startAction === 'reinstall') {
             await handleGenerateFormExplorerExtensionCore(context, 'install', { targetInfobasePath });
             probeResult = await probeExtensionInstalledInInfobaseWithAuthRetry(
                 oneCDesignerExePath,
@@ -5974,7 +6371,9 @@ export async function handleStartFormExplorerInfobase(
             );
             if (!probeResult.installed) {
                 throw new Error(
-                    t('Form Explorer extension is still not installed in target infobase after install attempt: {0}', targetInfobasePath)
+                    extensionWasInstalled
+                        ? t('Form Explorer extension is still not installed in target infobase after reinstall attempt: {0}', targetInfobasePath)
+                        : t('Form Explorer extension is still not installed in target infobase after install attempt: {0}', targetInfobasePath)
                 );
             }
         }
@@ -5991,13 +6390,23 @@ export async function handleStartFormExplorerInfobase(
         vscode.window.showInformationMessage(
             t('1C infobase launch started: {0}', targetInfobasePath)
         );
-        return targetInfobasePath;
+        return {
+            status: 'started',
+            infobasePath: targetInfobasePath,
+            error: null
+        };
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         outputChannel.appendLine(t('Failed to start target infobase for Form Explorer: {0}', message));
         if (!(error instanceof Error && 'alreadyShownToUser' in error && (error as Error & { alreadyShownToUser?: boolean }).alreadyShownToUser)) {
             vscode.window.showErrorMessage(t('Failed to start target infobase for Form Explorer: {0}', message));
         }
-        return null;
+        return {
+            status: 'error',
+            infobasePath: typeof preferredInfobasePath === 'string' && preferredInfobasePath.trim()
+                ? path.resolve(preferredInfobasePath.trim())
+                : null,
+            error: t('Failed to start target infobase for Form Explorer: {0}', message)
+        };
     }
 }

@@ -488,7 +488,6 @@ export function activate(context: vscode.ExtensionContext) {
     void ensureOneCClientPathConfigured(context)
         .then(() => Promise.all([
             warmUpSharedStartupInfobase(context, 'startup'),
-            warmUpFormExplorerBuilder(context, 'startup')
         ]))
         .catch(error => {
             console.warn('[Extension] Failed to initialize 1C platform or startup/builder infobases.', error);
@@ -861,7 +860,6 @@ export function activate(context: vscode.ExtensionContext) {
 
                 await Promise.all([
                     warmUpSharedStartupInfobase(context, 'configuration'),
-                    warmUpFormExplorerBuilder(context, 'configuration')
                 ]);
             } catch (error) {
                 console.warn('[Extension] Failed to react to 1C platform/Form Explorer configuration change.', error);

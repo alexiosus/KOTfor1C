@@ -53,10 +53,13 @@
         alertText: document.getElementById('alertText'),
         modeChip: document.getElementById('modeChip'),
         modeValue: document.getElementById('modeValue'),
+        generatedAtChip: document.getElementById('generatedAtChip'),
+        generatedAtLabel: document.getElementById('generatedAtLabel'),
         generatedAtValue: document.getElementById('generatedAtValue'),
         snapshotPickerBtn: document.getElementById('snapshotPickerBtn'),
         snapshotMenu: document.getElementById('snapshotMenu'),
         startInfobaseBtn: document.getElementById('startInfobaseBtn'),
+        startInfobaseLabel: document.getElementById('startInfobaseLabel'),
         formTitleValue: document.getElementById('formTitleValue'),
         formMetaLine: document.getElementById('formMetaLine'),
         elementCountValue: document.getElementById('elementCountValue'),
@@ -496,6 +499,9 @@
         const snapshot = viewState.snapshot;
         const generatedAt = snapshot?.generatedAt || viewState.snapshotMtime || '';
         const adapterMode = String(viewState.adapterMode || 'unknown');
+        const pendingOperation = String(viewState.pendingOperation || '');
+        const isPending = Boolean(pendingOperation);
+        const isStartingInfobase = pendingOperation === 'start';
         setText(
             refs.modeValue,
             adapterMode === 'auto'
@@ -504,20 +510,57 @@
                     ? t('modeManual', 'Manual')
                     : t('unknownValue', 'n/a')
         );
-        setText(refs.generatedAtValue, generatedAt ? formatDateTime(generatedAt) : t('unknownValue', 'n/a'));
         if (refs.modeChip instanceof HTMLElement) {
             refs.modeChip.title = viewState.adapterModeStatePath || '';
             refs.modeChip.dataset.mode = adapterMode;
         }
+        if (refs.generatedAtChip instanceof HTMLElement) {
+            refs.generatedAtChip.dataset.pending = isPending ? 'true' : 'false';
+        }
+        setText(
+            refs.generatedAtLabel,
+            isPending
+                ? (isStartingInfobase
+                    ? t('starting', 'Starting...')
+                    : t('updating', 'Updating...'))
+                : t('generatedAt', 'Updated at')
+        );
+        setText(
+            refs.generatedAtValue,
+            isPending
+                ? (isStartingInfobase
+                    ? t('launchingInfobase', 'Launching infobase')
+                    : t('loadingForm', 'Loading form'))
+                : generatedAt
+                    ? formatDateTime(generatedAt)
+                    : t('unknownValue', 'n/a')
+        );
+        if (refs.generatedAtValue instanceof HTMLElement) {
+            refs.generatedAtValue.title = isPending ? '' : String(generatedAt || '');
+        }
         if (refs.manualRefreshBtn instanceof HTMLButtonElement) {
             refs.manualRefreshBtn.classList.toggle('view-hidden', adapterMode !== 'manual');
-            refs.manualRefreshBtn.title = t('refresh', 'Refresh');
-            refs.manualRefreshBtn.disabled = adapterMode !== 'manual';
+            refs.manualRefreshBtn.title = pendingOperation === 'refresh'
+                ? t('updatingSnapshot', 'Refreshing form snapshot...')
+                : t('refresh', 'Refresh');
+            refs.manualRefreshBtn.disabled = adapterMode !== 'manual' || Boolean(pendingOperation);
         }
         if (refs.locatorBtn instanceof HTMLButtonElement) {
             refs.locatorBtn.classList.toggle('view-hidden', adapterMode !== 'manual');
-            refs.locatorBtn.disabled = adapterMode !== 'manual';
+            refs.locatorBtn.disabled = adapterMode !== 'manual' || Boolean(pendingOperation);
         }
+        if (refs.startInfobaseBtn instanceof HTMLButtonElement) {
+            refs.startInfobaseBtn.disabled = isStartingInfobase;
+            refs.startInfobaseBtn.title = isStartingInfobase
+                ? t('launchingInfobase', 'Launching infobase')
+                : t('startInfobase', 'Start infobase');
+        }
+        setText(
+            refs.startInfobaseLabel,
+            isStartingInfobase
+                ? t('starting', 'Starting...')
+                : t('startInfobase', 'Start infobase')
+        );
         renderSnapshotPicker();
 
         if (refs.openSnapshotFileBtn instanceof HTMLButtonElement) {
@@ -550,14 +593,15 @@
             typeof viewState.selectedSnapshotPath === 'string' ? viewState.selectedSnapshotPath : '',
             typeof viewState.snapshotPath === 'string' ? viewState.snapshotPath : ''
         );
+        const waitingForTrackedSnapshot = !selectedSnapshotPath;
         const hasSelectedOption = snapshotCandidates.some(candidate => String(candidate.path || '') === selectedSnapshotPath);
-        const effectiveSelectedPath = hasSelectedOption
+        const effectiveSelectedPath = hasSelectedOption || waitingForTrackedSnapshot
             ? selectedSnapshotPath
             : String(snapshotCandidates[0]?.path || '');
         const selectedCandidate = snapshotCandidates.find(candidate => String(candidate.path || '') === effectiveSelectedPath) || null;
 
         if (refs.snapshotPickerBtn instanceof HTMLButtonElement) {
-            if (!selectedCandidate) {
+            if (!selectedCandidate || waitingForTrackedSnapshot) {
                 refs.snapshotPickerBtn.textContent = t('waitingForSnapshot', 'Waiting for snapshot');
                 refs.snapshotPickerBtn.disabled = true;
             } else {
@@ -668,9 +712,11 @@
     }
 
     function renderBanner() {
+        const hasSnapshotFile = Boolean(viewState.snapshotExists);
         const hasError = Boolean(viewState.lastError);
-        refs.alertBanner?.classList.toggle('hidden', !hasError);
-        setText(refs.alertText, viewState.lastError || '');
+        const shouldShowBanner = hasError && hasSnapshotFile;
+        refs.alertBanner?.classList.toggle('hidden', !shouldShowBanner);
+        setText(refs.alertText, shouldShowBanner ? (viewState.lastError || '') : '');
     }
 
     function renderEmptyView() {
@@ -694,7 +740,7 @@
         if (refs.elementTree) {
             refs.elementTree.innerHTML = renderEmptyState(
                 t('waitingForSnapshot', 'Waiting for snapshot'),
-                t('noSnapshotHint', 'The panel reads a universal JSON snapshot file produced by a 1C-side adapter in the current client session.')
+                ''
             );
         }
         if (refs.selectedKeyFacts) {
@@ -709,7 +755,7 @@
         if (refs.detailsPanel) {
             refs.detailsPanel.innerHTML = renderEmptyState(
                 t('waitingForSnapshot', 'Waiting for snapshot'),
-                t('noSnapshotHint', 'The panel reads a universal JSON snapshot file produced by a 1C-side adapter in the current client session.')
+                ''
             );
         }
         if (refs.attributesPanel) {
@@ -1164,11 +1210,14 @@
     }
 
     function renderSuggestedStepsSection(selectedElement) {
+        const pendingOperation = String(viewState.pendingOperation || '');
         const headerActionsHtml = isTableLikeElement(selectedElement)
             ? `
-                <button class="mini-btn compact" type="button" data-action="refresh-table-snapshot">
+                <button class="mini-btn compact" type="button" data-action="refresh-table-snapshot" ${pendingOperation ? 'disabled' : ''}>
                     <span class="codicon codicon-refresh"></span>
-                    <span>${escapeHtml(t('getTables', 'Get tables'))}</span>
+                    <span>${escapeHtml(pendingOperation === 'table'
+                        ? t('loadingTables', 'Loading tables into snapshot...')
+                        : t('getTables', 'Get tables'))}</span>
                 </button>
             `
             : '';
@@ -1253,7 +1302,7 @@
         }
 
         const probe = normalizeQuery([element.kind, element.type, element.path, element.boundAttributePath].filter(Boolean).join(' '));
-        return probe.includes('table') || probe.includes('таблиц');
+        return isTableLikeProbe(probe);
     }
 
     function renderSuggestedStepCard(step, index) {
@@ -1562,7 +1611,7 @@
         }
 
         for (const element of elements || []) {
-            const isTableElement = normalizeQuery([element.kind, element.type].filter(Boolean).join(' ')).includes('table');
+            const isTableElement = isTableLikeProbe(normalizeQuery([element.kind, element.type].filter(Boolean).join(' ')));
             if (isTableElement && firstDefined(element.boundAttributePath, '') === targetPath) {
                 return element;
             }
@@ -2307,6 +2356,16 @@
 
     function normalizeQuery(value) {
         return String(value || '').trim().toLocaleLowerCase();
+    }
+
+    function isTableLikeProbe(probe) {
+        const normalized = normalizeQuery(probe);
+        return normalized.includes('table')
+            || normalized.includes('таблиц')
+            || normalized.includes('dynamiclist')
+            || normalized.includes('dynamic list')
+            || normalized.includes('динамическийспис')
+            || normalized.includes('динамический спис');
     }
 
     function firstDefined() {
