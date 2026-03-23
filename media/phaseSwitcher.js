@@ -132,7 +132,7 @@
      */
     function enablePhaseControls(enable) {
         const isPhaseSwitcherVisible = settings.switcherEnabled;
-        const effectiveEnable = enable && isPhaseSwitcherVisible && !isBuildInProgress && !hasScenarioRunsInProgress();
+        const effectiveEnable = enable && isPhaseSwitcherVisible && !isBuildInProgress;
         phaseControlsActive = effectiveEnable;
         const isDisabled = !effectiveEnable;
 

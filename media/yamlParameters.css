@@ -28,7 +28,9 @@ body {
     background: var(--yp-bg);
     color: var(--vscode-editor-foreground);
     display: flex;
+    flex-direction: column;
     min-height: 0;
+    height: 100vh;
     overflow: hidden;
 }
 
@@ -168,7 +170,7 @@ body {
 }
 
 .section-content {
-    padding: 0;
+    padding: 10px;
     flex: 1 1 auto;
     min-height: 0;
     display: flex;
@@ -631,13 +633,17 @@ body {
 }
 
 body {
-    display: block;
     padding: 0 20px;
     font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
 
 .yaml-parameters-shell {
     height: 100%;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
 }
 
 .parameters-topbar {
@@ -645,7 +651,9 @@ body {
 }
 
 .parameters-main-panel {
+    display: flex;
     flex: 1 1 auto;
+    flex-direction: column;
     min-height: 0;
     gap: 12px;
 }
@@ -754,6 +762,17 @@ body {
 #additionalParametersTable tr:hover,
 #globalVarsTable tr:hover {
     background: color-mix(in srgb, var(--yp-surface-2) 78%, transparent);
+}
+
+#buildParametersTable th,
+#additionalParametersTable th,
+#globalVarsTable th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: color-mix(in srgb, var(--yp-surface-0) 88%, var(--yp-surface-2) 12%);
+    border-bottom: none !important;
+    box-shadow: 0 1px 0 color-mix(in srgb, var(--yp-border) 68%, transparent);
 }
 
 .param-key,
