@@ -234,6 +234,22 @@
             "maximum": 60,
             "description": "%config.runVanessa.liveLogRefreshSeconds.description%",
             "order": 6
+          },
+          "kotTestToolkit.runVanessa.autoDetectMinStartupUpdates": {
+            "type": "number",
+            "default": 2,
+            "minimum": 1,
+            "maximum": 10,
+            "description": "%config.runVanessa.autoDetectMinStartupUpdates.description%",
+            "order": 7
+          },
+          "kotTestToolkit.runVanessa.autoDetectInactivityTimeoutSeconds": {
+            "type": "number",
+            "default": 20,
+            "minimum": 5,
+            "maximum": 3600,
+            "description": "%config.runVanessa.autoDetectInactivityTimeoutSeconds.description%",
+            "order": 8
           }
         }
       },

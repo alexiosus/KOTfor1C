@@ -9,6 +9,7 @@
     let initialTestStates = {};
     let currentCheckboxStates = {};
     let testDefaultStates = {};
+    let testInfoByName = new Map();
     let phaseExpandedState = {}; 
     let runArtifacts = {};
     let affectedMainScenarioNames = new Set();
@@ -124,6 +125,29 @@
         updateTopRunButtonState();
         updateScenarioRepairControls();
         log(`Status updated [${target}]: ${text}`);
+    }
+
+    function rebuildTestInfoIndex() {
+        const nextIndex = new Map();
+        if (testDataByPhase && typeof testDataByPhase === 'object') {
+            Object.values(testDataByPhase).forEach(groupItems => {
+                if (!Array.isArray(groupItems)) {
+                    return;
+                }
+                groupItems.forEach(testInfo => {
+                    if (testInfo && typeof testInfo.name === 'string' && testInfo.name) {
+                        nextIndex.set(testInfo.name, testInfo);
+                    }
+                });
+            });
+        }
+        testInfoByName = nextIndex;
+    }
+
+    function getTestInfoByName(name) {
+        return typeof name === 'string' && name
+            ? (testInfoByName.get(name) || null)
+            : null;
     }
 
     /**
@@ -381,8 +405,9 @@
             if (button instanceof HTMLButtonElement) {
                 const scenarioName = button.getAttribute('data-name') || '';
                 const runInfo = scenarioName && runArtifacts ? runArtifacts[scenarioName] : null;
+                const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
                 const isBlockingRunInProgress = runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false;
-                button.disabled = isBuildInProgress || isBlockingRunInProgress;
+                button.disabled = isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact;
             }
         });
         updateTopRunButtonState();
@@ -436,11 +461,10 @@
         if (!(phaseTreeContainer instanceof HTMLElement)) {
             return;
         }
-        const checkboxes = phaseTreeContainer.querySelectorAll('input[type="checkbox"]');
-        checkboxes.forEach(cb => {
-            if (!(cb instanceof HTMLInputElement)) return;
-            const label = cb.closest('.checkbox-item');
-            label?.classList.remove('affected-main-scenario');
+        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-name]');
+        scenarioLabels.forEach(label => {
+            if (!(label instanceof HTMLElement)) return;
+            label.classList.remove('affected-main-scenario');
         });
         const phaseGroups = phaseTreeContainer.querySelectorAll('.phase-group');
         phaseGroups.forEach(group => {
@@ -460,25 +484,23 @@
             return;
         }
 
-        const checkboxes = phaseTreeContainer.querySelectorAll('input[type="checkbox"]');
-        checkboxes.forEach(cb => {
-            if (!(cb instanceof HTMLInputElement)) return;
-            const name = cb.name || cb.getAttribute('name') || '';
-            const label = cb.closest('.checkbox-item');
-            if (!label) return;
+        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-name]');
+        scenarioLabels.forEach(label => {
+            if (!(label instanceof HTMLElement)) return;
+            const name = label.getAttribute('data-name') || '';
             label.classList.toggle('affected-main-scenario', !!name && affectedMainScenarioNames.has(name));
         });
 
         const phaseGroups = phaseTreeContainer.querySelectorAll('.phase-group');
         phaseGroups.forEach(group => {
             if (!(group instanceof HTMLElement)) return;
-            const groupCheckboxes = group.querySelectorAll('input[type="checkbox"]');
+            const groupCheckboxes = group.querySelectorAll('.checkbox-item[data-name]');
             let hasAffectedScenarioInGroup = false;
-            groupCheckboxes.forEach(cb => {
-                if (hasAffectedScenarioInGroup || !(cb instanceof HTMLInputElement)) {
+            groupCheckboxes.forEach(label => {
+                if (hasAffectedScenarioInGroup || !(label instanceof HTMLElement)) {
                     return;
                 }
-                const name = cb.name || cb.getAttribute('name') || '';
+                const name = label.getAttribute('data-name') || '';
                 if (name && affectedMainScenarioNames.has(name)) {
                     hasAffectedScenarioInGroup = true;
                 }
@@ -922,15 +944,36 @@
      * @returns {string} HTML-строка.
      */
     function createCheckboxHtml(testInfo) {
-        if (!testInfo || typeof testInfo.name !== 'string' || !testInfo.name) {
+        const viewState = buildScenarioViewState(testInfo);
+        if (!viewState) {
              log("ERROR: Invalid testInfo in createCheckboxHtml!");
              const checkboxError = window.__loc?.checkboxDataError || 'Checkbox data error';
              return `<p style="color:var(--vscode-errorForeground);">${checkboxError}</p>`;
         }
+
+        return `
+            <div class="item-container">
+                <label class="checkbox-item${viewState.isAffectedMainScenario ? ' affected-main-scenario' : ''}" id="label-${viewState.safeName}" data-name="${viewState.escapedNameAttr}" title="${viewState.escapedTitleAttr}">
+                    ${viewState.leadingControlHtml}
+                    <span class="checkbox-label-text">${viewState.name}</span>
+                    ${viewState.progressHtml}
+                    ${viewState.runLogButtonHtml}
+                    ${viewState.runButtonHtml}
+                    ${viewState.openButtonHtml}
+                </label>
+            </div>
+        `;
+    }
+
+    function buildScenarioViewState(testInfo) {
+        if (!testInfo || typeof testInfo.name !== 'string' || !testInfo.name) {
+            return null;
+        }
+
         const name = testInfo.name;
         const relativePath = testInfo.relativePath || '';
         const defaultState = !!testInfo.defaultState;
-        const safeName = name.replace(/[^a-zA-Z0-9_\\-]/g, '_'); 
+        const safeName = name.replace(/[^a-zA-Z0-9_\\-]/g, '_');
         const escapedNameAttr = escapeHtmlAttr(name);
         const escapedTitleAttr = escapeHtmlAttr(relativePath);
         const fileUriString = testInfo.yamlFileUriString || '';
@@ -939,6 +982,7 @@
         const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
         const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
         const runStatus = runInfo?.runStatus || 'idle';
+        const shouldShowRunIndicator = hasRunArtifact || runStatus !== 'idle';
         const isStale = Boolean(runInfo?.stale);
         const isRunInProgress = runStatus === 'running';
         const isBlockingRunInProgress = isRunInProgress && runInfo?.blocksControls !== false;
@@ -999,13 +1043,14 @@
         const selectedLogTemplate = window.__loc?.runScenarioSelectedLog || 'Log: {0}';
         const runButtonTitle = `${runTitle}${statusSuffix}${trackedSourceSuffix}${staleSuffix}${progressTitle ? ` • ${progressTitle}` : ''}${runMessage ? `\n${runMessage}` : ''}${activeRunLogPath ? `\n${selectedLogTemplate.replace('{0}', activeRunLogPath)}` : ''}`;
         const escapedRunTitle = escapeHtmlAttr(runButtonTitle);
-        const runButtonDisabledAttr = (isBuildInProgress || isBlockingRunInProgress) ? ' disabled' : '';
+        const runButtonDisabledAttr = (isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact) ? ' disabled' : '';
         const canOpenFailedStepInFeature = isRunFailed && !!runInfo?.featurePath;
         const runStepTitleTemplate = window.__loc?.runScenarioOpenFailedStepTitle || 'Open failed step in feature: {0}';
         const runStepTitle = escapeHtmlAttr(runStepTitleTemplate.replace('{0}', name));
-        const runInProgressTitle = escapeHtmlAttr(window.__loc?.runScenarioRunningSuffix || 'Run in progress');
+        const runInProgressTitle = window.__loc?.runScenarioRunningSuffix || 'Run in progress';
+        const escapedRunInProgressTitle = escapeHtmlAttr(runInProgressTitle);
         const leadingControlHtml = isRunInProgress
-            ? `<span class="checkbox-run-indicator" title="${runInProgressTitle}">
+            ? `<span class="checkbox-run-indicator" title="${escapedRunInProgressTitle}">
                    <span class="codicon codicon-loading codicon-modifier-spin"></span>
                </span>`
             : `<input
@@ -1014,7 +1059,7 @@
                         name="${escapedNameAttr}"
                         data-default="${defaultState}">`;
         const progressHtml = hasLineProgress
-            ? `<span class="scenario-run-progress has-hover-counter">
+            ? `<span class="scenario-run-progress has-hover-counter" title="${escapeHtmlAttr(progressTitle)}">
                    <span class="scenario-run-progress-percent">${escapeHtmlText(progressBadgeText)}</span>
                    <span class="scenario-run-progress-counter">${escapeHtmlText(progressCounterText)}</span>
                </span>`
@@ -1027,7 +1072,7 @@
                </button>`
             : '';
 
-        const runButtonHtml = hasRunArtifact && !isBlockingRunInProgress
+        const runButtonHtml = shouldShowRunIndicator && !isBlockingRunInProgress
             ? `<button class="${runButtonClass}" data-name="${escapedNameAttr}" title="${escapedRunTitle}"${runButtonDisabledAttr}>
                    ${runButtonIconHtml}
                </button>`
@@ -1038,18 +1083,188 @@
                </button>`
             : '';
 
-        return `
-            <div class="item-container">
-                <label class="checkbox-item${isAffectedMainScenario ? ' affected-main-scenario' : ''}" id="label-${safeName}" data-name="${escapedNameAttr}" title="${escapedTitleAttr}">
-                    ${leadingControlHtml}
-                    <span class="checkbox-label-text">${name}</span>
-                    ${progressHtml}
-                    ${runLogButtonHtml}
-                    ${runButtonHtml}
-                    ${openButtonHtml}
-                </label>
-            </div>
-        `;
+        return {
+            name,
+            relativePath,
+            defaultState,
+            safeName,
+            escapedNameAttr,
+            escapedTitleAttr,
+            isAffectedMainScenario,
+            isRunInProgress,
+            hasLineProgress,
+            progressBadgeText,
+            progressCounterText,
+            progressTitle,
+            leadingControlHtml,
+            runButtonHtml,
+            runLogButtonHtml,
+            progressHtml,
+            openButtonHtml,
+            runInProgressTitle
+        };
+    }
+
+    function createElementFromHtml(html) {
+        if (typeof html !== 'string' || !html.trim()) {
+            return null;
+        }
+        const template = document.createElement('template');
+        template.innerHTML = html.trim();
+        return template.content.firstElementChild;
+    }
+
+    function findDirectScenarioChild(label, predicate) {
+        return Array.from(label.children).find(predicate) || null;
+    }
+
+    function insertScenarioChildBefore(label, element, selector) {
+        if (!(element instanceof Element)) {
+            return;
+        }
+        const anchor = selector ? label.querySelector(selector) : null;
+        if (anchor && anchor.parentElement === label) {
+            label.insertBefore(element, anchor);
+            return;
+        }
+        label.appendChild(element);
+    }
+
+    function syncScenarioLeadingControl(label, viewState) {
+        const labelText = findDirectScenarioChild(
+            label,
+            child => child instanceof HTMLElement && child.classList.contains('checkbox-label-text')
+        );
+        if (!(labelText instanceof HTMLElement)) {
+            return;
+        }
+
+        const existingCheckbox = findDirectScenarioChild(
+            label,
+            child => child instanceof HTMLInputElement && child.type === 'checkbox'
+        );
+        const existingIndicator = findDirectScenarioChild(
+            label,
+            child => child instanceof HTMLElement && child.classList.contains('checkbox-run-indicator')
+        );
+
+        if (viewState.isRunInProgress) {
+            if (existingCheckbox instanceof HTMLInputElement) {
+                existingCheckbox.remove();
+            }
+            if (existingIndicator instanceof HTMLElement) {
+                existingIndicator.title = viewState.runInProgressTitle;
+                return;
+            }
+            const indicator = createElementFromHtml(viewState.leadingControlHtml);
+            if (indicator) {
+                label.insertBefore(indicator, labelText);
+            }
+            return;
+        }
+
+        if (existingIndicator instanceof HTMLElement) {
+            existingIndicator.remove();
+        }
+        if (existingCheckbox instanceof HTMLInputElement) {
+            existingCheckbox.id = `chk-${viewState.safeName}`;
+            existingCheckbox.name = viewState.name;
+            existingCheckbox.setAttribute('data-default', String(viewState.defaultState));
+            return;
+        }
+        const checkbox = createElementFromHtml(viewState.leadingControlHtml);
+        if (checkbox) {
+            label.insertBefore(checkbox, labelText);
+        }
+    }
+
+    function syncScenarioProgress(label, viewState) {
+        const existingProgress = label.querySelector('.scenario-run-progress');
+        if (!viewState.hasLineProgress) {
+            if (existingProgress instanceof HTMLElement) {
+                existingProgress.remove();
+            }
+            return;
+        }
+
+        if (!(existingProgress instanceof HTMLElement)) {
+            const progressElement = createElementFromHtml(viewState.progressHtml);
+            if (progressElement) {
+                insertScenarioChildBefore(label, progressElement, '.run-scenario-log-btn, .run-scenario-btn, .open-scenario-btn');
+            }
+            return;
+        }
+
+        existingProgress.classList.add('has-hover-counter');
+        existingProgress.title = viewState.progressTitle;
+        const percentElement = existingProgress.querySelector('.scenario-run-progress-percent');
+        const counterElement = existingProgress.querySelector('.scenario-run-progress-counter');
+        if (percentElement instanceof HTMLElement && counterElement instanceof HTMLElement) {
+            percentElement.textContent = viewState.progressBadgeText;
+            counterElement.textContent = viewState.progressCounterText;
+        } else {
+            existingProgress.innerHTML = `
+                <span class="scenario-run-progress-percent">${escapeHtmlText(viewState.progressBadgeText)}</span>
+                <span class="scenario-run-progress-counter">${escapeHtmlText(viewState.progressCounterText)}</span>
+            `;
+        }
+    }
+
+    function syncScenarioActionButton(label, selector, html, anchorSelector) {
+        const existingButton = label.querySelector(selector);
+        if (!html) {
+            if (existingButton instanceof HTMLElement) {
+                existingButton.remove();
+            }
+            return;
+        }
+
+        const desiredButton = createElementFromHtml(html);
+        if (!(desiredButton instanceof HTMLButtonElement)) {
+            return;
+        }
+
+        if (!(existingButton instanceof HTMLButtonElement)) {
+            insertScenarioChildBefore(label, desiredButton, anchorSelector);
+            return;
+        }
+
+        existingButton.className = desiredButton.className;
+        existingButton.title = desiredButton.title;
+        existingButton.disabled = desiredButton.disabled;
+        const desiredName = desiredButton.getAttribute('data-name');
+        if (desiredName !== null) {
+            existingButton.setAttribute('data-name', desiredName);
+        }
+        existingButton.innerHTML = desiredButton.innerHTML;
+    }
+
+    function updateVisibleScenarioRunState() {
+        if (!(phaseTreeContainer instanceof HTMLElement)) {
+            return;
+        }
+
+        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-name]');
+        scenarioLabels.forEach(label => {
+            if (!(label instanceof HTMLElement)) {
+                return;
+            }
+            const scenarioName = label.getAttribute('data-name') || '';
+            const testInfo = getTestInfoByName(scenarioName);
+            const viewState = buildScenarioViewState(testInfo);
+            if (!viewState) {
+                return;
+            }
+
+            label.title = viewState.relativePath;
+            label.classList.toggle('affected-main-scenario', viewState.isAffectedMainScenario);
+            syncScenarioLeadingControl(label, viewState);
+            syncScenarioProgress(label, viewState);
+            syncScenarioActionButton(label, '.run-scenario-log-btn', viewState.runLogButtonHtml, '.run-scenario-btn, .open-scenario-btn');
+            syncScenarioActionButton(label, '.run-scenario-btn', viewState.runButtonHtml, '.open-scenario-btn');
+        });
+
+        applyCheckboxStatesToVisible();
     }
 
     /**
@@ -1962,8 +2177,9 @@
             if (!(btn instanceof HTMLButtonElement)) return;
             const scenarioName = btn.getAttribute('data-name') || '';
             const runInfo = scenarioName && runArtifacts ? runArtifacts[scenarioName] : null;
+            const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
             const isBlockingRunInProgress = runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false;
-            btn.disabled = isBuildInProgress || isBlockingRunInProgress;
+            btn.disabled = isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact;
             btn.removeEventListener('click', handleRunScenarioClick);
             btn.addEventListener('click', handleRunScenarioClick);
         });
@@ -2104,6 +2320,7 @@
                     favoriteScenarios = Array.isArray(message.favorites) ? message.favorites : [];
                     favoriteSortMode = normalizeFavoriteSortMode(message.favoriteSortMode || favoriteSortMode);
                     affectedMainScenarioNames = normalizeAffectedMainScenarioNames(message.affectedMainScenarioNames);
+                    rebuildTestInfoIndex();
                     settings = message.settings || {
                         assemblerEnabled: true,
                         switcherEnabled: true,
@@ -2209,7 +2426,7 @@
                 runArtifacts = message.runArtifacts || {};
                 updateTopRunButtonState();
                 if (settings.switcherEnabled && testDataByPhase && Object.keys(testDataByPhase).length > 0) {
-                    renderPhaseTree(testDataByPhase);
+                    updateVisibleScenarioRunState();
                     updatePendingStatus();
                 } else {
                     updateRunButtonsState();

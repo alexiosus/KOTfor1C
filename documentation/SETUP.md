@@ -93,6 +93,8 @@
 | `kotTestToolkit.runVanessa.commandTemplate` | `""` | Кастомный shell-шаблон запуска (optional override) |
 | `kotTestToolkit.runVanessa.checkUnsafeActionProtection` | `true` | Проверка `conf.cfg` (Windows) перед запуском Vanessa |
 | `kotTestToolkit.runVanessa.liveLogRefreshSeconds` | `2` | Интервал обновления live-лога |
+| `kotTestToolkit.runVanessa.autoDetectMinStartupUpdates` | `2` | Сколько свежих обновлений run-лога нужно на старте, чтобы фоновый монитор посчитал прогон реальным |
+| `kotTestToolkit.runVanessa.autoDetectInactivityTimeoutSeconds` | `20` | Через сколько секунд без обновлений run-лога автоопределенный трекинг снимается как неактивный |
 
 Плейсхолдеры для `runVanessa.commandTemplate` (если необходимо открывать Vanessa Automation своим способом):
 
@@ -129,7 +131,7 @@
 | Ключ | Default | Назначение |
 |---|---|---|
 | `kotTestToolkit.formExplorer.snapshotPath` | `.vscode/kot-runtime/form-explorer/form-snapshot.json` | Путь к snapshot-файлу формы |
-| `kotTestToolkit.formExplorer.configurationSourceDirectory` | `cf` | Папка файловой выгрузки конфигурации |
+| `kotTestToolkit.formExplorer.configurationSourceDirectory` | `cf` | Папка файловой выгрузки конфигурации, которая используется для static enrichment и сборки адаптера Form Explorer |
 | `kotTestToolkit.formExplorer.generatedArtifactsDirectory` | `.vscode/kot-runtime/form-explorer` | Папка generated artifacts и builder-ИБ Form Explorer |
 | `kotTestToolkit.formExplorer.extensionOutputPath` | `.vscode/kot-runtime/form-explorer/KOTFormExplorerRuntime.cfe` | Путь к итоговому `.cfe` |
 | `kotTestToolkit.formExplorer.extensionBuildCommandTemplate` | `""` | Override встроенного builder через внешний скрипт |
@@ -141,6 +143,7 @@
 - пустая ИБ больше не настраивается отдельно;
 - `СборкаТекстовСценариев` и Vanessa используют общую lightweight startup-ИБ;
 - `KOT Form Explorer` использует отдельную builder-ИБ;
+- при установке/запуске Form Explorer в выбранной базе источник сборки адаптера всё равно берется из `configurationSourceDirectory`;
 - обе служебные ИБ создаются автоматически в фоне, если KOT смог определить путь к `1cv8c.exe`.
 
 ## 4) Менеджер параметров: как работает
