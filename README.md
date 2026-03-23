@@ -158,9 +158,8 @@ _На скриншотах продемонстрирован интерфейс
 ---
 
 - Результат прохождения теста с информацией об ошибке в открытом `feature`-файле:
-<p align="center"><video controls style="max-width: 100%; width: 700px; height: auto;">
-    <source src="./docs/LiveRunResult.mp4" type="video/mp4">
-</video>
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/44383d8e-978b-4e87-9f49-3a3c24e6bb81" controls style="max-width: 100%; width: 600px; height: auto;"></img>
 </p>
 
 ---
@@ -191,9 +190,8 @@ _На скриншотах продемонстрирован интерфейс
 ---
 
 - Автоматическое выравнивание таблиц Gherkin и параметров сценариев:
-<p align="center"><video controls style="max-width: 100%; width: 500px; height: auto;">
-    <source src="./docs/AutoAlign.mp4" type="video/mp4">
-</video>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/718f064e-7713-4477-b6cc-69f33144033f" controls style="max-width: 100%; width: 500px; height: auto;"></img>
 </p>
 
 ---
