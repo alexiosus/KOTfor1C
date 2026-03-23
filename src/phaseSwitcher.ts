@@ -13,7 +13,9 @@ import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherki
 import { isScenarioYamlFile } from './yamlValidator';
 import { findFileByName } from './navigationUtils';
 import { getFeatureNestedScenarioContextAtLine } from './featureNestedScenarioUtils';
-import { pickTargetInfobasePath, registerInfobaseInLauncher, resolveLauncherInfobaseNameByPath } from './infobasePicker';
+import { registerInfobaseInLauncher, resolveLauncherInfobaseNameByPath } from './infobasePicker';
+import { pickManagedInfobasePath, promptNewInfobaseTarget, updateManagedInfobaseMetadata } from './infobaseManager';
+import { buildFileInfobaseConnectionArgument } from './oneCInfobaseConnection';
 import { ensureSharedStartupInfobaseReady, getSharedStartupInfobaseOutputChannel } from './startupInfobase';
 import { resolveOneCDesignerExePath } from './oneCPlatform';
 
@@ -6835,7 +6837,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const params = [
             "ENTERPRISE",
-            `/IBConnectionString`, `"File=${startupInfobasePath};"`
+            `/IBConnectionString`, buildFileInfobaseConnectionArgument(startupInfobasePath, { trailingSemicolon: true })
         ];
 
         // Add custom startup parameters (split by space and filter empty strings)
@@ -10161,45 +10163,18 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 return false;
             }
         }) || workspaceRootPath;
-
-        let currentDefaultUri = vscode.Uri.file(defaultDialogPath);
-        const chooseAnotherFolderLabel = this.t('Choose another folder');
-
-        while (true) {
-            const pickedFolder = await vscode.window.showOpenDialog({
-                canSelectFiles: false,
-                canSelectFolders: true,
-                canSelectMany: false,
-                title: this.t('Choose folder for new infobase'),
-                openLabel: this.t('Use this folder'),
-                defaultUri: currentDefaultUri
-            });
-            if (!pickedFolder || pickedFolder.length === 0) {
-                return null;
-            }
-
-            const resolvedPath = path.resolve(pickedFolder[0].fsPath);
-            const validationError = this.validateNewVanessaInfobasePath(resolvedPath);
-            if (!validationError) {
-                const launcherRegistrationName = await this.promptNewVanessaInfobaseLauncherName(scenarioName, resolvedPath);
-                if (!launcherRegistrationName) {
-                    return null;
-                }
-                return {
-                    targetInfobasePath: resolvedPath,
-                    launcherRegistrationName
-                };
-            }
-
-            currentDefaultUri = vscode.Uri.file(resolvedPath);
-            const choice = await vscode.window.showErrorMessage(
-                validationError,
-                chooseAnotherFolderLabel
-            );
-            if (choice !== chooseAnotherFolderLabel) {
-                return null;
-            }
+        const creationTarget = await promptNewInfobaseTarget(this._context, this.t.bind(this), {
+            defaultName: scenarioName.trim() || safeScenarioName,
+            defaultDirectoryPath: defaultDialogPath
+        });
+        if (!creationTarget) {
+            return null;
         }
+
+        return {
+            targetInfobasePath: creationTarget.infobasePath,
+            launcherRegistrationName: creationTarget.launcherRegistrationName
+        };
     }
 
     private async promptResetExistingVanessaInfobase(
@@ -10423,8 +10398,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         let targetInfobasePath = selection.infobasePath?.trim() || '';
         let launcherRegistrationName: string | undefined;
         if (selection.source === 'existing') {
-            const pickedPath = await pickTargetInfobasePath(this.t.bind(this), {
+            const pickedPath = await pickManagedInfobasePath(this._context, this.t.bind(this), {
                 allowBuildOnly: false,
+                allowCreateNew: false,
                 placeHolder: this.t('Choose target infobase for Vanessa run of "{0}"', scenarioName)
             });
             if (pickedPath === undefined || pickedPath === null || !pickedPath.trim()) {
@@ -10535,7 +10511,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             '/DisableStartupDialogs',
             '/DisableStartupMessages',
             '/IBConnectionString',
-            `File=${plan.targetInfobasePath}`
+            buildFileInfobaseConnectionArgument(plan.targetInfobasePath)
         ];
 
         const plannedSteps: Array<{ title: string; run: () => Promise<void> }> = [];
@@ -10556,7 +10532,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     await fs.promises.mkdir(plan.targetInfobasePath, { recursive: true });
                     await this.runVanessaDesignerCommand(
                         designerExePath,
-                        ['CREATEINFOBASE', `File=${plan.targetInfobasePath}`],
+                        ['CREATEINFOBASE', buildFileInfobaseConnectionArgument(plan.targetInfobasePath, { trailingSemicolon: true })],
                         workspaceRootPath,
                         this.t('Create target infobase'),
                         makeLogPath('01-create-infobase'),
@@ -10569,6 +10545,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                             outputChannel
                         );
                     }
+                    await updateManagedInfobaseMetadata(this._context, plan.targetInfobasePath, {
+                        displayName: plan.launcherRegistrationName || path.basename(plan.targetInfobasePath),
+                        addRoles: ['vanessa'],
+                        stateHint: 'empty'
+                    });
                 }
             });
         }
@@ -10590,6 +10571,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         makeLogPath('02-restore-dt'),
                         outputChannel
                     );
+                    await updateManagedInfobaseMetadata(this._context, plan.targetInfobasePath, {
+                        displayName: plan.launcherRegistrationName || path.basename(plan.targetInfobasePath),
+                        addRoles: ['vanessa'],
+                        stateHint: 'ready'
+                    });
                 }
             });
         }
@@ -10612,6 +10598,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         makeLogPath('03-update-from-source'),
                         outputChannel
                     );
+                    await updateManagedInfobaseMetadata(this._context, plan.targetInfobasePath, {
+                        displayName: plan.launcherRegistrationName || path.basename(plan.targetInfobasePath),
+                        addRoles: ['vanessa'],
+                        stateHint: 'ready'
+                    });
                 }
             });
         }
@@ -10634,6 +10625,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         makeLogPath('03-update-from-cf'),
                         outputChannel
                     );
+                    await updateManagedInfobaseMetadata(this._context, plan.targetInfobasePath, {
+                        displayName: plan.launcherRegistrationName || path.basename(plan.targetInfobasePath),
+                        addRoles: ['vanessa'],
+                        stateHint: 'ready'
+                    });
                 }
             });
         }
@@ -10995,6 +10991,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.outputAdvanced(outputChannel, this.t('Requested artifact path: {0}', targetPath));
         this.outputAdvanced(outputChannel, this.t('Using startup infobase path for this run: {0}', startupInfobasePathForRun));
         this.outputAdvanced(outputChannel, this.t('Using scenario infobase path for this run: {0}', scenarioInfobasePath));
+        const resolvedRunLogPath = this.resolveVanessaLogPathFromJson(launchJsonPath, workspaceRootPath);
         if (!manualDebug) {
             this.cleanupVanessaRunLogFileBeforeRun(launchJsonPath, workspaceRootPath, outputChannel);
             this.cleanupVanessaStatusFileBeforeRun(launchJsonPath, workspaceRootPath, outputChannel);
@@ -11023,6 +11020,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     throw new Error(statusResult.message);
                 }
             }
+
+            await updateManagedInfobaseMetadata(this._context, scenarioInfobasePath, {
+                displayName: path.basename(scenarioInfobasePath),
+                addRoles: ['vanessa'],
+                lastLaunchAt: new Date().toISOString(),
+                lastLaunchKind: manualDebug ? 'vanessaManual' : 'vanessa',
+                lastRunLogPath: resolvedRunLogPath || null,
+                lastRunLogAt: resolvedRunLogPath ? new Date().toISOString() : null
+            });
         } finally {
             if (launchContext.jsonWasPatched && !manualDebug) {
                 try {

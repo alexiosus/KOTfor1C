@@ -115,6 +115,11 @@
 |---|---|---|
 | `kotTestToolkit.startupParams.parameters` | `/L ru /DisableStartupMessages /DisableStartupDialogs` | Строка параметров запуска 1С |
 
+Примечание:
+
+- для отдельной базы эти параметры можно переопределить через `KOT Infobase Manager` (`Edit base` -> `Edit launch keys`);
+- если для базы override не задан, используется именно `kotTestToolkit.startupParams.parameters`.
+
 ### 3.9 System paths settings
 
 | Ключ | Default | Назначение |
@@ -197,6 +202,8 @@
 ### 5.4 Сборка и запуск
 
 - `KOT - Open Build Scenario Parameters Manager` (`KOT - Открыть Менеджер параметров Сборки Сценариев`)
+- `KOT - Open Infobase Manager` (`KOT - Открыть Менеджер баз`)
+- `KOT - Open 1C Form Explorer` (`KOT - Открыть Исследователь форм 1С`)
 - `KOT - Open build folder` (`KOT - Открыть папку сборки`)
 - `KOT - Create FirstLaunch archive` (`KOT - Собрать архив FirstLaunch`)
 - `KOT - Open scenario in Vanessa (manual debug)` (`KOT - Открыть сценарий в Vanessa (ручная отладка)`)

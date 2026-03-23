@@ -43,6 +43,7 @@ import { ScenarioDiagnosticsProvider } from './scenarioDiagnostics';
 import { isScenarioYamlFile } from './yamlValidator';
 import { ScenarioHeaderInlayHintsProvider } from './scenarioHeaderInlayHintsProvider';
 import { FormExplorerPanel } from './formExplorerPanel';
+import { InfobaseManagerPanel } from './infobaseManagerPanel';
 import {
     handleBuildFormExplorerExtensionCfe,
     handleGenerateFormExplorerExtension,
@@ -484,7 +485,9 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('Extension "kotTestToolkit" activated.');
     setExtensionUri(context.extensionUri);
     const formExplorerPanel = new FormExplorerPanel(context);
+    const infobaseManagerPanel = new InfobaseManagerPanel(context);
     context.subscriptions.push(formExplorerPanel);
+    context.subscriptions.push(infobaseManagerPanel);
     void ensureOneCClientPathConfigured(context)
         .then(() => Promise.all([
             warmUpSharedStartupInfobase(context, 'startup'),
@@ -878,9 +881,23 @@ export function activate(context: vscode.ExtensionContext) {
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.openInfobaseManager',
+        async () => {
+            await infobaseManagerPanel.open();
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openFormExplorer',
         async () => {
             await formExplorerPanel.open();
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.openFormExplorerForInfobase',
+        async (preferredInfobasePath?: string) => {
+            await formExplorerPanel.openAndStart(preferredInfobasePath);
         }
     ));
 

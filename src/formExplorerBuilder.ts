@@ -9,6 +9,7 @@ import {
     getFormExplorerGeneratedArtifactsDirectory,
     getFormExplorerSnapshotPath
 } from './formExplorerPaths';
+import { buildFileInfobaseConnectionArgument } from './oneCInfobaseConnection';
 import { resolveOneCDesignerExePath } from './oneCPlatform';
 
 const OUTPUT_CHANNEL_NAME = 'KOT Form Explorer Build';
@@ -315,7 +316,7 @@ async function ensureBuilderInfobaseCore(
 
     await run1CCommand(
         designerExePath,
-        ['CREATEINFOBASE', `File=${builderPaths.builderInfobaseDirectory}`],
+        ['CREATEINFOBASE', buildFileInfobaseConnectionArgument(builderPaths.builderInfobaseDirectory, { trailingSemicolon: true })],
         builderPaths.generatedArtifactsDirectory,
         t('Create builder infobase'),
         path.join(builderPaths.logsDirectory, '01-create-builder-infobase.log'),
@@ -330,7 +331,7 @@ async function ensureBuilderInfobaseCore(
             '/DisableStartupDialogs',
             '/DisableStartupMessages',
             '/IBConnectionString',
-            `File=${builderPaths.builderInfobaseDirectory}`,
+            buildFileInfobaseConnectionArgument(builderPaths.builderInfobaseDirectory),
             '/LoadConfigFromFiles',
             builderPaths.configurationSourceDirectory,
             '/UpdateDBCfg'

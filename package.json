@@ -452,6 +452,11 @@
         "category": "%cmd.category%"
       },
       {
+        "command": "kotTestToolkit.openInfobaseManager",
+        "title": "%cmd.openInfobaseManager.title%",
+        "category": "%cmd.category%"
+      },
+      {
         "command": "kotTestToolkit.generateFormExplorerExtension",
         "title": "%cmd.generateFormExplorerExtension.title%",
         "category": "%cmd.category%"
@@ -761,6 +766,10 @@
         },
         {
           "command": "kotTestToolkit.openFormExplorer",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.openInfobaseManager",
           "when": "true"
         },
         {

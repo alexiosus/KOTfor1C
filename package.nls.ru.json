@@ -89,6 +89,7 @@
   "cmd.createFirstLaunchZip.title": "KOT - Собрать архив FirstLaunch",
   "cmd.openYamlParametersManager.title": "KOT - Открыть Менеджер параметров Сборки Сценариев",
   "cmd.openFormExplorer.title": "KOT - Открыть Исследователь форм 1С",
+  "cmd.openInfobaseManager.title": "KOT - Открыть Менеджер баз",
   "cmd.generateFormExplorerExtension.title": "KOT - Сгенерировать проект расширения Form Explorer",
   "cmd.buildFormExplorerExtensionCfe.title": "KOT - Собрать .cfe для Form Explorer",
   "cmd.installFormExplorerExtension.title": "KOT - Установить расширение Form Explorer в базу",

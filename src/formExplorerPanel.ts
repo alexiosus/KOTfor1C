@@ -184,6 +184,11 @@ export class FormExplorerPanel implements vscode.Disposable {
         await this.refreshSnapshot(true);
     }
 
+    public async openAndStart(preferredInfobasePath?: string): Promise<void> {
+        await this.open();
+        await this.startInfobase(preferredInfobasePath);
+    }
+
     private async clearSnapshotsOnPanelOpen(): Promise<void> {
         const configuredPath = this.getConfiguredSnapshotPath();
         if (!configuredPath) {
@@ -986,7 +991,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         await this.refreshSnapshot(true);
     }
 
-    private async startInfobase(): Promise<void> {
+    private async startInfobase(preferredInfobasePath?: string): Promise<void> {
         const t = await getTranslator(this.context.extensionUri);
         const previousError = this.lastError;
         this.lastError = null;
@@ -996,7 +1001,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         try {
             const startResult = await vscode.commands.executeCommand<StartFormExplorerInfobaseResult | string | null>(
                 'kotTestToolkit.startFormExplorerInfobase',
-                this.resolvePreferredStartInfobasePath()
+                preferredInfobasePath?.trim() || this.resolvePreferredStartInfobasePath()
             );
 
             if (typeof startResult === 'string' && startResult.trim()) {
@@ -1008,7 +1013,7 @@ export class FormExplorerPanel implements vscode.Disposable {
                 return;
             }
 
-            if (startResult?.status === 'started' && startResult.infobasePath?.trim()) {
+            if (startResult && typeof startResult !== 'string' && startResult.status === 'started' && startResult.infobasePath?.trim()) {
                 this.pendingSnapshotInfobasePath = path.resolve(startResult.infobasePath.trim());
                 this.selectedSnapshotPath = null;
                 this.customSnapshotPath = null;
@@ -1018,7 +1023,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             }
 
             this.pendingOperation = null;
-            this.lastError = startResult?.status === 'error'
+            this.lastError = startResult && typeof startResult !== 'string' && startResult.status === 'error'
                 ? startResult.error || t('Failed to start target infobase for Form Explorer.')
                 : previousError;
         } catch (error) {

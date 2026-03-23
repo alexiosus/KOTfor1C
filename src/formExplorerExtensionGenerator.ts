@@ -13,7 +13,12 @@ import {
     getFormExplorerGeneratedArtifactsDirectory,
     getFormExplorerSnapshotPath
 } from './formExplorerPaths';
-import { pickTargetInfobasePath } from './infobasePicker';
+import {
+    getManagedInfobaseStartupParameterArgs,
+    pickManagedInfobasePath,
+    updateManagedInfobaseMetadata
+} from './infobaseManager';
+import { buildFileInfobaseConnectionArgument } from './oneCInfobaseConnection';
 import { resolveOneCDesignerExePath } from './oneCPlatform';
 
 interface BaseConfigurationInfo {
@@ -5371,7 +5376,7 @@ async function runBuiltInWindowsExtensionExport(
             '/DisableStartupDialogs',
             '/DisableStartupMessages',
             '/IBConnectionString',
-            `File=${project.builderInfobaseDirectory}`,
+            buildFileInfobaseConnectionArgument(project.builderInfobaseDirectory),
             '/LoadConfigFromFiles',
             project.extensionSourceDirectory,
             '-Extension',
@@ -5392,7 +5397,7 @@ async function runBuiltInWindowsExtensionExport(
             '/DisableStartupDialogs',
             '/DisableStartupMessages',
             '/IBConnectionString',
-            `File=${project.builderInfobaseDirectory}`,
+            buildFileInfobaseConnectionArgument(project.builderInfobaseDirectory),
             '/DumpCfg',
             project.cfeOutputPath,
             '-Extension',
@@ -5422,7 +5427,7 @@ async function runBuiltInWindowsInstallToInfobase(
             '/DisableStartupDialogs',
             '/DisableStartupMessages',
             '/IBConnectionString',
-            `File=${targetInfobasePath}`,
+            buildFileInfobaseConnectionArgument(targetInfobasePath),
             '/LoadCfg',
             project.cfeOutputPath,
             '-Extension',
@@ -5462,7 +5467,7 @@ async function runBuiltInWindowsProbeExtensionInInfobase(
             '/DisableStartupDialogs',
             '/DisableStartupMessages',
             '/IBConnectionString',
-            `File=${targetInfobasePath}`,
+            buildFileInfobaseConnectionArgument(targetInfobasePath),
             '/DumpCfg',
             probeOutputPath,
             '-Extension',
@@ -5689,16 +5694,18 @@ async function launchInfobaseClientDetached(
     oneCClientExePath: string,
     targetInfobasePath: string,
     authentication: InfobaseAuthentication | null,
+    startupArgs: string[],
     outputChannel: vscode.OutputChannel,
     t: Awaited<ReturnType<typeof getTranslator>>
 ): Promise<void> {
     const launchArgs = appendInfobaseAuthenticationArgs(
         [
             'ENTERPRISE',
-            '/DisableStartupDialogs',
-            '/DisableStartupMessages',
             '/IBConnectionString',
-            `File=${targetInfobasePath};`
+            buildFileInfobaseConnectionArgument(targetInfobasePath, { trailingSemicolon: true }),
+            ...(authentication
+                ? ['/DisableStartupDialogs', '/DisableStartupMessages', ...startupArgs]
+                : startupArgs)
         ],
         authentication
     );
@@ -5708,12 +5715,9 @@ async function launchInfobaseClientDetached(
 
     await new Promise<void>((resolve, reject) => {
         try {
-            const command = oneCClientExePath.includes(' ') && !oneCClientExePath.startsWith('"')
-                ? `"${oneCClientExePath}"`
-                : oneCClientExePath;
-            const child = cp.spawn(command, launchArgs, {
+            const child = cp.spawn(oneCClientExePath, launchArgs, {
                 cwd: workspaceRootPath,
-                shell: true,
+                shell: false,
                 windowsHide: false,
                 detached: true,
                 stdio: 'ignore'
@@ -5863,8 +5867,9 @@ async function handleGenerateFormExplorerExtensionCore(
     const targetInfobasePath = runMode === 'install'
         ? (hasPreselectedTargetInfobasePath
             ? preselectedTargetInfobasePath
-            : await pickTargetInfobasePath(t, {
+            : await pickManagedInfobasePath(context, t, {
                 allowBuildOnly: false,
+                allowCreateNew: false,
                 placeHolder: t('Choose target infobase for extension install')
             }))
         : null;
@@ -6047,6 +6052,14 @@ async function handleGenerateFormExplorerExtensionCore(
             return;
         }
 
+        if (installExecuted && installedInfobasePath) {
+            await updateManagedInfobaseMetadata(context, installedInfobasePath, {
+                displayName: path.basename(installedInfobasePath),
+                addRoles: ['formExplorer'],
+                stateHint: 'ready'
+            });
+        }
+
         if (await pathExists(builtProject.cfeOutputPath)) {
             outputChannel.appendLine(t('Form Explorer .cfe build completed: {0}', builtProject.cfeOutputPath));
             if (installExecuted && installedInfobasePath) {
@@ -6137,16 +6150,20 @@ export async function handleStartFormExplorerInfobase(
     try {
         const oneCClientExePath = await resolveConfiguredOneCClientExePath(t);
         const oneCDesignerExePath = await resolveConfiguredOneCDesignerExePath(t);
-        const selectedTargetInfobasePath = await pickTargetInfobasePath(t, {
-            allowBuildOnly: false,
-            placeHolder: t('Choose target infobase to start with Form Explorer'),
-            preferredInfobasePath: configuredPreferredInfobasePath
-        });
-        if (selectedTargetInfobasePath === undefined || !selectedTargetInfobasePath) {
-            return {
-                status: 'cancelled',
-                infobasePath: null,
-                error: null
+        let selectedTargetInfobasePath = configuredPreferredInfobasePath;
+        if (!selectedTargetInfobasePath) {
+            selectedTargetInfobasePath = await pickManagedInfobasePath(context, t, {
+                allowBuildOnly: false,
+                allowCreateNew: false,
+                placeHolder: t('Choose target infobase to start with Form Explorer'),
+                preferredInfobasePath: null
+            });
+            if (selectedTargetInfobasePath === undefined || !selectedTargetInfobasePath) {
+                return {
+                    status: 'cancelled',
+                    infobasePath: null,
+                    error: null
+                };
             };
         }
 
@@ -6196,10 +6213,14 @@ export async function handleStartFormExplorerInfobase(
         }
 
         await writeFormExplorerModeRequest('refresh', outputChannel, t);
+        const startupArgs = getManagedInfobaseStartupParameterArgs(context, targetInfobasePath, {
+            allowDialogSuppression: probeResult.authentication !== null
+        });
         await launchInfobaseClientDetached(
             oneCClientExePath,
             targetInfobasePath,
             probeResult.authentication,
+            startupArgs,
             outputChannel,
             t
         );
@@ -6207,6 +6228,13 @@ export async function handleStartFormExplorerInfobase(
         vscode.window.showInformationMessage(
             t('1C infobase launch started: {0}', targetInfobasePath)
         );
+        await updateManagedInfobaseMetadata(context, targetInfobasePath, {
+            displayName: path.basename(targetInfobasePath),
+            addRoles: ['formExplorer'],
+            lastLaunchAt: new Date().toISOString(),
+            lastLaunchKind: 'formExplorer',
+            stateHint: 'ready'
+        });
         return {
             status: 'started',
             infobasePath: targetInfobasePath,

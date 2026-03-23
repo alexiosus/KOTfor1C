@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { getTranslator } from './localization';
+import { buildFileInfobaseConnectionArgument } from './oneCInfobaseConnection';
 import { resolveOneCDesignerExePath } from './oneCPlatform';
 
 const OUTPUT_CHANNEL_NAME = 'KOT Startup Infobase';
@@ -213,7 +214,7 @@ export async function ensureSharedStartupInfobaseReady(
         await recreateDirectory(startupPaths.infobaseDirectory);
         await run1CCommand(
             designerExePath,
-            ['CREATEINFOBASE', `File=${startupPaths.infobaseDirectory}`],
+            ['CREATEINFOBASE', buildFileInfobaseConnectionArgument(startupPaths.infobaseDirectory, { trailingSemicolon: true })],
             startupPaths.rootDirectory,
             t('Create shared startup infobase'),
             path.join(startupPaths.logsDirectory, '01-create-startup-infobase.log'),

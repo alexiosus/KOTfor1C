@@ -17,6 +17,17 @@ export interface RegisterLauncherInfobaseResult {
     sourceFilePath: string | null;
 }
 
+export interface UnregisterLauncherInfobaseResult {
+    status: 'removed' | 'notFound' | 'unsupported';
+    removedFromFilePaths: string[];
+}
+
+export interface UpdateLauncherInfobaseResult {
+    status: 'updated' | 'notFound' | 'unsupported';
+    updatedFilePaths: string[];
+    registeredName: string | null;
+}
+
 async function pathExists(targetPath: string): Promise<boolean> {
     try {
         await fs.promises.access(targetPath, fs.constants.F_OK);
@@ -149,6 +160,13 @@ function bufferEndsWithNewline(buffer: Buffer): boolean {
     return buffer[buffer.length - 1] === 0x0a;
 }
 
+function bufferHasUtf8Bom(buffer: Buffer): boolean {
+    return buffer.length >= 3
+        && buffer[0] === 0xef
+        && buffer[1] === 0xbb
+        && buffer[2] === 0xbf;
+}
+
 function getLauncherInfobaseFileCandidates(): string[] {
     if (process.platform !== 'win32') {
         return [];
@@ -214,6 +232,21 @@ function buildUniqueLauncherInfobaseName(preferredName: string, existingNames: I
         }
         suffix += 1;
     }
+}
+
+function rewriteLauncherSectionHeader(sectionBlock: string, nextSectionName: string): string {
+    return sectionBlock.replace(/^\s*\[[^\]]+\]\s*$/m, `[${nextSectionName}]`);
+}
+
+function rewriteLauncherSectionConnect(sectionBlock: string, infobasePath: string): string {
+    const serializedConnection = path.resolve(infobasePath).replace(/"/g, '""');
+    const nextConnectLine = `Connect=File="${serializedConnection}";`;
+    if (/^\s*Connect\s*=.+$/im.test(sectionBlock)) {
+        return sectionBlock.replace(/^\s*Connect\s*=.+$/im, nextConnectLine);
+    }
+
+    const newline = detectPreferredNewline(sectionBlock);
+    return `${sectionBlock}${newline}${nextConnectLine}`;
 }
 
 export async function discoverLauncherInfobases(): Promise<LauncherInfobaseInfo[]> {
@@ -343,6 +376,158 @@ export async function registerInfobaseInLauncher(
         status: updatedFilesCount > 0 ? 'added' : 'alreadyExists',
         registeredName: registeredName || preferredExistingName || null,
         sourceFilePath: firstTouchedFilePath
+    };
+}
+
+export async function unregisterInfobaseFromLauncher(
+    infobasePath: string
+): Promise<UnregisterLauncherInfobaseResult> {
+    const candidateFiles = getLauncherInfobaseFileCandidates();
+    if (candidateFiles.length === 0) {
+        return {
+            status: 'unsupported',
+            removedFromFilePaths: []
+        };
+    }
+
+    const normalizedTargetPath = normalizeInfobasePathForCompare(infobasePath);
+    const removedFromFilePaths: string[] = [];
+
+    for (const candidateFilePath of candidateFiles) {
+        if (!(await pathExists(candidateFilePath))) {
+            continue;
+        }
+
+        let existingBuffer = Buffer.alloc(0);
+        let existingContent = '';
+        try {
+            existingBuffer = await fs.promises.readFile(candidateFilePath);
+            existingContent = existingBuffer.toString('utf8');
+        } catch {
+            continue;
+        }
+
+        const sections = splitV8iSections(existingContent);
+        const keptSections = sections.filter(sectionBlock => {
+            const parsedEntries = parseV8iInfobaseEntries(sectionBlock, candidateFilePath);
+            if (parsedEntries.length === 0) {
+                return true;
+            }
+
+            return !parsedEntries.some(entry =>
+                normalizeInfobasePathForCompare(entry.infobasePath) === normalizedTargetPath
+            );
+        });
+
+        if (keptSections.length === sections.length) {
+            continue;
+        }
+
+        const newline = detectPreferredNewline(existingContent);
+        const hasBom = bufferHasUtf8Bom(existingBuffer);
+        const rewrittenContent = keptSections.length > 0
+            ? `${keptSections.join(`${newline}${newline}`)}${newline}`
+            : '';
+        const rewrittenBuffer = Buffer.from(`${hasBom ? '\uFEFF' : ''}${rewrittenContent}`, 'utf8');
+        await fs.promises.writeFile(candidateFilePath, rewrittenBuffer);
+        removedFromFilePaths.push(candidateFilePath);
+    }
+
+    return {
+        status: removedFromFilePaths.length > 0 ? 'removed' : 'notFound',
+        removedFromFilePaths
+    };
+}
+
+export async function updateInfobaseInLauncher(
+    infobasePath: string,
+    options?: {
+        nextInfobasePath?: string | null;
+        preferredName?: string | null;
+    }
+): Promise<UpdateLauncherInfobaseResult> {
+    const candidateFiles = getLauncherInfobaseFileCandidates();
+    if (candidateFiles.length === 0) {
+        return {
+            status: 'unsupported',
+            updatedFilePaths: [],
+            registeredName: null
+        };
+    }
+
+    const normalizedTargetPath = normalizeInfobasePathForCompare(infobasePath);
+    const nextInfobasePath = options?.nextInfobasePath?.trim()
+        ? path.resolve(options.nextInfobasePath.trim())
+        : path.resolve(infobasePath);
+    const updatedFilePaths: string[] = [];
+    let registeredName: string | null = null;
+
+    for (const candidateFilePath of candidateFiles) {
+        if (!(await pathExists(candidateFilePath))) {
+            continue;
+        }
+
+        let existingBuffer = Buffer.alloc(0);
+        let existingContent = '';
+        try {
+            existingBuffer = await fs.promises.readFile(candidateFilePath);
+            existingContent = existingBuffer.toString('utf8');
+        } catch {
+            continue;
+        }
+
+        const sections = splitV8iSections(existingContent);
+        if (sections.length === 0) {
+            continue;
+        }
+
+        const matchingIndices: number[] = [];
+        for (let index = 0; index < sections.length; index += 1) {
+            const parsedEntries = parseV8iInfobaseEntries(sections[index], candidateFilePath);
+            if (parsedEntries.some(entry => normalizeInfobasePathForCompare(entry.infobasePath) === normalizedTargetPath)) {
+                matchingIndices.push(index);
+            }
+        }
+
+        if (matchingIndices.length === 0) {
+            continue;
+        }
+
+        const usedSectionNames = collectV8iSectionNames(existingContent)
+            .filter((_, index) => !matchingIndices.includes(index));
+        let nextRegisteredName = options?.preferredName?.trim() || null;
+
+        for (const index of matchingIndices) {
+            let nextSection = sections[index];
+            if (nextRegisteredName) {
+                nextRegisteredName = buildUniqueLauncherInfobaseName(nextRegisteredName, usedSectionNames);
+                nextSection = rewriteLauncherSectionHeader(nextSection, nextRegisteredName);
+                usedSectionNames.push(nextRegisteredName);
+            } else if (!registeredName) {
+                const headerMatch = nextSection.match(/^\s*\[([^\]]+)\]/m);
+                registeredName = headerMatch?.[1]?.trim() || registeredName;
+            }
+
+            nextSection = rewriteLauncherSectionConnect(nextSection, nextInfobasePath);
+            sections[index] = nextSection;
+        }
+
+        if (nextRegisteredName) {
+            registeredName = nextRegisteredName;
+        }
+
+        const newline = detectPreferredNewline(existingContent);
+        const hasBom = bufferHasUtf8Bom(existingBuffer);
+        const rewrittenContent = `${sections.join(`${newline}${newline}`)}${newline}`;
+        const rewrittenBuffer = Buffer.from(`${hasBom ? '\uFEFF' : ''}${rewrittenContent}`, 'utf8');
+        await fs.promises.writeFile(candidateFilePath, rewrittenBuffer);
+        updatedFilePaths.push(candidateFilePath);
+    }
+
+    return {
+        status: updatedFilePaths.length > 0 ? 'updated' : 'notFound',
+        updatedFilePaths,
+        registeredName
     };
 }
 

@@ -13,3 +13,4 @@
 7. [`metadata-and-cache.md`](./metadata-and-cache.md) — `KOTМетаданные`, кеш сценариев, stale-логика.
 8. [`navigation-and-files.md`](./navigation-and-files.md) — навигация по сценариям и работа с MXL/файлами.
 9. [`form-explorer.md`](./form-explorer.md) — KOT Form Explorer (beta): generated `.cfe`, snapshot текущей формы, auto/manual режим и static enrichment из `cf`.
+10. [`infobase-manager.md`](./infobase-manager.md) — единый менеджер ИБ: launcher/runtime/manual/snapshot, подготовка баз, launch keys, rename/move/delete и связь с Vanessa/Form Explorer.
