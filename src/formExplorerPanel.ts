@@ -10,6 +10,7 @@ import {
 import { getFormExplorerGeneratedArtifactsDirectory, getFormExplorerSnapshotPath } from './formExplorerPaths';
 import { getTranslator } from './localization';
 import { enrichFormExplorerSnapshot } from './formExplorerEnrichment';
+import { resolveLauncherInfobaseNameByPath } from './infobasePicker';
 import {
     FormExplorerSuggestedStep,
     suggestFormExplorerSteps
@@ -31,6 +32,7 @@ interface FormExplorerSnapshotCandidate {
     mtime: string | null;
     exists: boolean;
     infobase: string | null;
+    infobaseDisplayName: string | null;
 }
 
 interface FormExplorerWebviewState {
@@ -94,7 +96,11 @@ export class FormExplorerPanel implements vscode.Disposable {
     private snapshotExists = false;
     private snapshotMtime: string | null = null;
     private snapshotCandidates: FormExplorerSnapshotCandidate[] = [];
-    private readonly snapshotCandidateMetadataCache = new Map<string, { fingerprint: string; infobase: string | null }>();
+    private readonly snapshotCandidateMetadataCache = new Map<string, {
+        fingerprint: string;
+        infobase: string | null;
+        infobaseDisplayName: string | null;
+    }>();
     private selectedSnapshotPath: string | null = null;
     private pendingSnapshotInfobasePath: string | null = null;
     private adapterMode: AdapterMode = 'unknown';
@@ -399,14 +405,16 @@ export class FormExplorerPanel implements vscode.Disposable {
                     path: normalizedPath,
                     mtime: stat.mtime.toISOString(),
                     exists: true,
-                    infobase: metadata.infobase
+                    infobase: metadata.infobase,
+                    infobaseDisplayName: metadata.infobaseDisplayName
                 });
             } catch {
                 candidates.set(normalizedPath, {
                     path: normalizedPath,
                     mtime: null,
                     exists: false,
-                    infobase: null
+                    infobase: null,
+                    infobaseDisplayName: null
                 });
             }
         };
@@ -467,16 +475,18 @@ export class FormExplorerPanel implements vscode.Disposable {
     private async readSnapshotCandidateMetadata(
         snapshotPath: string,
         stat: fs.Stats
-    ): Promise<{ infobase: string | null }> {
+    ): Promise<{ infobase: string | null; infobaseDisplayName: string | null }> {
         const fingerprint = `${stat.mtimeMs}:${stat.size}`;
         const cached = this.snapshotCandidateMetadataCache.get(snapshotPath);
         if (cached && cached.fingerprint === fingerprint) {
             return {
-                infobase: cached.infobase
+                infobase: cached.infobase,
+                infobaseDisplayName: cached.infobaseDisplayName
             };
         }
 
         let infobase: string | null = null;
+        let infobaseDisplayName: string | null = null;
         try {
             const rawText = await fs.promises.readFile(snapshotPath, 'utf8');
             const parsedSnapshot = parseFormExplorerSnapshotText(rawText);
@@ -484,17 +494,31 @@ export class FormExplorerPanel implements vscode.Disposable {
                 ? parsedSnapshot.source.infobase.trim()
                 : '';
             infobase = normalizedInfobase || null;
+            const snapshotDisplayName = typeof parsedSnapshot.source?.infobaseName === 'string'
+                ? parsedSnapshot.source.infobaseName.trim()
+                : '';
+            if (snapshotDisplayName) {
+                infobaseDisplayName = snapshotDisplayName;
+            } else if (infobase) {
+                const parsedInfobasePath = this.parseInfobasePathFromMarker(infobase);
+                if (parsedInfobasePath) {
+                    infobaseDisplayName = await resolveLauncherInfobaseNameByPath(parsedInfobasePath);
+                }
+            }
         } catch {
             infobase = null;
+            infobaseDisplayName = null;
         }
 
         this.snapshotCandidateMetadataCache.set(snapshotPath, {
             fingerprint,
-            infobase
+            infobase,
+            infobaseDisplayName
         });
 
         return {
-            infobase
+            infobase,
+            infobaseDisplayName
         };
     }
 

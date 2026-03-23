@@ -615,6 +615,10 @@
     }
 
     function formatSnapshotCandidateLabel(candidate) {
+        const infobaseDisplayName = String(candidate?.infobaseDisplayName || '').trim();
+        if (infobaseDisplayName) {
+            return infobaseDisplayName;
+        }
         const infobase = formatInfobaseCandidateLabel(candidate?.infobase);
         if (infobase) {
             return infobase;

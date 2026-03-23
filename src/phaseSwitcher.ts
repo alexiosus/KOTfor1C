@@ -13,7 +13,7 @@ import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherki
 import { isScenarioYamlFile } from './yamlValidator';
 import { findFileByName } from './navigationUtils';
 import { getFeatureNestedScenarioContextAtLine } from './featureNestedScenarioUtils';
-import { pickTargetInfobasePath } from './infobasePicker';
+import { pickTargetInfobasePath, registerInfobaseInLauncher, resolveLauncherInfobaseNameByPath } from './infobasePicker';
 import { ensureSharedStartupInfobaseReady, getSharedStartupInfobaseOutputChannel } from './startupInfobase';
 import { resolveOneCDesignerExePath } from './oneCPlatform';
 
@@ -245,6 +245,8 @@ interface VanessaInfobasePreparationPlan {
     targetInfobasePath: string;
     source: 'lastSelected' | 'json' | 'existing' | 'create';
     createNewInfobase: boolean;
+    recreateExistingInfobase?: boolean;
+    launcherRegistrationName?: string;
     restoreDtPath?: string;
     updateConfiguration?: {
         kind: 'sourceDirectory' | 'cfFile';
@@ -10115,10 +10117,31 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return null;
     }
 
+    private async promptNewVanessaInfobaseLauncherName(scenarioName: string, targetInfobasePath: string): Promise<string | null> {
+        const defaultName = scenarioName.trim() || path.basename(targetInfobasePath) || 'KOT Infobase';
+        const input = await vscode.window.showInputBox({
+            title: this.t('Enter name for new infobase in 1C launcher'),
+            value: defaultName,
+            ignoreFocusOut: true,
+            validateInput: value => {
+                if (!value.trim()) {
+                    return this.t('Infobase launcher name cannot be empty.');
+                }
+                return null;
+            }
+        });
+        if (input === undefined) {
+            return null;
+        }
+
+        const normalizedName = input.trim();
+        return normalizedName || null;
+    }
+
     private async promptNewVanessaInfobasePath(
         scenarioName: string,
         workspaceRootPath: string
-    ): Promise<string | null> {
+    ): Promise<{ targetInfobasePath: string; launcherRegistrationName: string } | null> {
         const runtimeDirectory = this.resolveVanessaRuntimeDirectory(workspaceRootPath);
         const safeScenarioName = scenarioName.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'scenario';
         const defaultPath = path.join(runtimeDirectory, 'infobases', safeScenarioName);
@@ -10158,7 +10181,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const resolvedPath = path.resolve(pickedFolder[0].fsPath);
             const validationError = this.validateNewVanessaInfobasePath(resolvedPath);
             if (!validationError) {
-                return resolvedPath;
+                const launcherRegistrationName = await this.promptNewVanessaInfobaseLauncherName(scenarioName, resolvedPath);
+                if (!launcherRegistrationName) {
+                    return null;
+                }
+                return {
+                    targetInfobasePath: resolvedPath,
+                    launcherRegistrationName
+                };
             }
 
             currentDefaultUri = vscode.Uri.file(resolvedPath);
@@ -10170,6 +10200,38 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 return null;
             }
         }
+    }
+
+    private async promptResetExistingVanessaInfobase(
+        scenarioName: string,
+        targetInfobasePath: string
+    ): Promise<boolean | undefined> {
+        const selection = await vscode.window.showQuickPick(
+            [
+                {
+                    label: this.t('Keep current infobase contents'),
+                    description: targetInfobasePath,
+                    detail: this.t('Use the existing infobase as is before optional DT restore or configuration update.'),
+                    actionKey: 'keep' as const
+                },
+                {
+                    label: this.t('Recreate infobase from scratch'),
+                    description: targetInfobasePath,
+                    detail: this.t('Delete all files in the selected infobase folder, create a fresh file infobase, then continue preparation.'),
+                    actionKey: 'reset' as const
+                }
+            ],
+            {
+                title: this.t('Reset selected infobase for "{0}" before launch?', scenarioName),
+                placeHolder: this.t('Choose whether to reuse the current infobase or recreate it from scratch.'),
+                ignoreFocusOut: true
+            }
+        );
+        if (!selection) {
+            return undefined;
+        }
+
+        return selection.actionKey === 'reset';
     }
 
     private async promptVanessaRestoreDtPath(
@@ -10359,6 +10421,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         let targetInfobasePath = selection.infobasePath?.trim() || '';
+        let launcherRegistrationName: string | undefined;
         if (selection.source === 'existing') {
             const pickedPath = await pickTargetInfobasePath(this.t.bind(this), {
                 allowBuildOnly: false,
@@ -10369,11 +10432,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
             targetInfobasePath = path.resolve(pickedPath.trim());
         } else if (selection.source === 'create') {
-            const createdPath = await this.promptNewVanessaInfobasePath(scenarioName, workspaceRootPath);
-            if (!createdPath) {
+            const createdInfobase = await this.promptNewVanessaInfobasePath(scenarioName, workspaceRootPath);
+            if (!createdInfobase) {
                 return null;
             }
-            targetInfobasePath = createdPath;
+            targetInfobasePath = createdInfobase.targetInfobasePath;
+            launcherRegistrationName = createdInfobase.launcherRegistrationName;
         }
 
         if (!targetInfobasePath) {
@@ -10385,6 +10449,27 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this.t('Target infobase path does not exist: {0}', targetInfobasePath)
             );
             return null;
+        }
+
+        let recreateExistingInfobase = false;
+        if (selection.source !== 'create') {
+            const recreateSelection = await this.promptResetExistingVanessaInfobase(scenarioName, targetInfobasePath);
+            if (recreateSelection === undefined) {
+                return null;
+            }
+            recreateExistingInfobase = recreateSelection;
+            if (recreateExistingInfobase) {
+                const existingLauncherName = await resolveLauncherInfobaseNameByPath(targetInfobasePath);
+                if (existingLauncherName) {
+                    launcherRegistrationName = existingLauncherName;
+                } else {
+                    const promptedLauncherName = await this.promptNewVanessaInfobaseLauncherName(scenarioName, targetInfobasePath);
+                    if (!promptedLauncherName) {
+                        return null;
+                    }
+                    launcherRegistrationName = promptedLauncherName;
+                }
+            }
         }
 
         const restoreDtPath = await this.promptVanessaRestoreDtPath(scenarioName, targetInfobasePath);
@@ -10400,9 +10485,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return null;
         }
 
-        if (selection.source === 'create' && !restoreDtPath && !updateConfiguration) {
+        if ((selection.source === 'create' || recreateExistingInfobase) && !restoreDtPath && !updateConfiguration) {
             vscode.window.showErrorMessage(
-                this.t('New infobase would be empty. Choose DT restore or configuration update before launch.')
+                selection.source === 'create'
+                    ? this.t('New infobase would be empty. Choose DT restore or configuration update before launch.')
+                    : this.t('Recreated infobase would be empty. Choose DT restore or configuration update before launch.')
             );
             return null;
         }
@@ -10411,6 +10498,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             targetInfobasePath,
             source: selection.source,
             createNewInfobase: selection.source === 'create',
+            recreateExistingInfobase: recreateExistingInfobase || undefined,
+            launcherRegistrationName,
             restoreDtPath: restoreDtPath || undefined,
             updateConfiguration: updateConfiguration || undefined
         };
@@ -10421,7 +10510,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         workspaceRootPath: string,
         outputChannel: vscode.OutputChannel
     ): Promise<void> {
-        if (!plan.createNewInfobase && !plan.restoreDtPath && !plan.updateConfiguration) {
+        if (!plan.createNewInfobase && !plan.recreateExistingInfobase && !plan.restoreDtPath && !plan.updateConfiguration) {
             return;
         }
 
@@ -10451,7 +10540,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const plannedSteps: Array<{ title: string; run: () => Promise<void> }> = [];
 
-        if (plan.createNewInfobase) {
+        if (plan.recreateExistingInfobase) {
+            plannedSteps.push({
+                title: this.t('Delete existing target infobase files'),
+                run: async () => {
+                    await this.clearInfobaseDirectoryContents(plan.targetInfobasePath);
+                }
+            });
+        }
+
+        if (plan.createNewInfobase || plan.recreateExistingInfobase) {
             plannedSteps.push({
                 title: this.t('Create target infobase'),
                 run: async () => {
@@ -10464,6 +10562,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         makeLogPath('01-create-infobase'),
                         outputChannel
                     );
+                    if ((plan.createNewInfobase || plan.recreateExistingInfobase) && plan.launcherRegistrationName) {
+                        await this.tryRegisterVanessaInfobaseInLauncher(
+                            plan.targetInfobasePath,
+                            plan.launcherRegistrationName,
+                            outputChannel
+                        );
+                    }
                 }
             });
         }
@@ -10565,6 +10670,59 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 });
             }
         );
+    }
+
+    private async clearInfobaseDirectoryContents(targetDirectoryPath: string): Promise<void> {
+        const directoryEntries = await fs.promises.readdir(targetDirectoryPath, { withFileTypes: true });
+        for (const entry of directoryEntries) {
+            const entryPath = path.join(targetDirectoryPath, entry.name);
+            await fs.promises.rm(entryPath, { recursive: true, force: true });
+        }
+    }
+
+    private async tryRegisterVanessaInfobaseInLauncher(
+        infobasePath: string,
+        launcherRegistrationName: string,
+        outputChannel: vscode.OutputChannel
+    ): Promise<void> {
+        try {
+            const registrationResult = await registerInfobaseInLauncher(infobasePath, launcherRegistrationName);
+            if (registrationResult.status === 'added') {
+                this.outputInfo(
+                    outputChannel,
+                    this.t(
+                        'Added target infobase to 1C launcher as "{0}" in {1}.',
+                        registrationResult.registeredName || launcherRegistrationName,
+                        registrationResult.sourceFilePath || this.t('<unknown file>')
+                    )
+                );
+                return;
+            }
+
+            if (registrationResult.status === 'alreadyExists') {
+                this.outputAdvanced(
+                    outputChannel,
+                    this.t(
+                        'Target infobase is already registered in 1C launcher as "{0}".',
+                        registrationResult.registeredName || launcherRegistrationName
+                    )
+                );
+                return;
+            }
+
+            if (registrationResult.status === 'unsupported') {
+                this.outputAdvanced(
+                    outputChannel,
+                    this.t('Target infobase launcher registration is not supported in the current extension host environment.')
+                );
+            }
+        } catch (error: any) {
+            this.outputError(
+                outputChannel,
+                this.t('Failed to add target infobase to 1C launcher: {0}', error?.message || String(error)),
+                error
+            );
+        }
     }
 
     private async prepareVanessaLaunchContext(

@@ -9,6 +9,7 @@ export interface FormExplorerSourceInfo {
     adapter?: string;
     origin?: string;
     infobase?: string;
+    infobaseName?: string;
     platformVersion?: string;
     configurationVersion?: string;
     user?: string;
@@ -217,6 +218,7 @@ function normalizeSourceInfo(value: unknown): FormExplorerSourceInfo | undefined
         adapter: asString(record.adapter),
         origin: asString(record.origin),
         infobase: asString(record.infobase) || asString(record.infobasePath),
+        infobaseName: asString(record.infobaseName) || asString(record.infobaseDisplayName) || asString(record.displayName),
         platformVersion: asString(record.platformVersion),
         configurationVersion: asString(record.configurationVersion),
         user: asString(record.user),
