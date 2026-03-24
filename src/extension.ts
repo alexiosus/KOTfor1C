@@ -36,7 +36,12 @@ import {
 } from './commandHandlers';
 import { getTranslator } from './localization';
 import { setExtensionUri } from './appContext';
-import { handleCreateNestedScenario, handleCreateMainScenario } from './scenarioCreator';
+import {
+    handleCreateNestedScenario,
+    handleCreateMainScenario,
+    handleManageSystemFunctions,
+    handleChangeScenarioSystemFunctionFromEditor
+} from './scenarioCreator';
 import { TestInfo } from './types'; // Импортируем TestInfo
 import { SettingsProvider } from './settingsProvider';
 import { ScenarioDiagnosticsProvider } from './scenarioDiagnostics';
@@ -720,6 +725,16 @@ export function activate(context: vscode.ExtensionContext) {
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.createMainScenario', () => handleCreateMainScenario(context)
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.manageSystemFunctions', () => handleManageSystemFunctions(context)
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.changeScenarioSystemFunctionFromEditor',
+        async () => {
+            await handleChangeScenarioSystemFunctionFromEditor(context);
+            await updateActiveScenarioContext(vscode.window.activeTextEditor);
+        }
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         'kotTestToolkit.insertNestedScenarioRef', (editor, edit) => insertNestedScenarioRefHandler(editor, edit, phaseSwitcherProvider)

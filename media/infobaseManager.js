@@ -111,6 +111,14 @@
         return Boolean(record) && record.infobaseKind === 'file';
     }
 
+    function supportsDesignerOperations(record) {
+        return Boolean(record) && record.infobaseKind !== 'web';
+    }
+
+    function getInfobaseByPath(infobasePath) {
+        return (state.infobases || []).find(item => item.infobasePath === infobasePath) || null;
+    }
+
     function getLastActivity(record) {
         const candidates = [
             record.lastLaunchAt || null,
@@ -522,7 +530,27 @@
         }
         const saveCfAction = document.querySelector('[data-command="saveCf"]');
         if (saveCfAction instanceof HTMLButtonElement) {
-            saveCfAction.disabled = Boolean(state.pendingAction);
+            saveCfAction.disabled = !supportsDesignerOperations(selected) || Boolean(state.pendingAction);
+        }
+        const openDesignerAction = document.querySelector('[data-command="openDesigner"]');
+        if (openDesignerAction instanceof HTMLButtonElement) {
+            openDesignerAction.disabled = !supportsDesignerOperations(selected) || Boolean(state.pendingAction);
+        }
+        const startFormExplorerAction = document.querySelector('[data-command="startFormExplorer"]');
+        if (startFormExplorerAction instanceof HTMLButtonElement) {
+            startFormExplorerAction.disabled = !supportsDesignerOperations(selected) || Boolean(state.pendingAction);
+        }
+        const restoreDtAction = document.querySelector('[data-command="restoreDt"]');
+        if (restoreDtAction instanceof HTMLButtonElement) {
+            restoreDtAction.disabled = !supportsDesignerOperations(selected) || Boolean(state.pendingAction);
+        }
+        const exportDtAction = document.querySelector('[data-command="exportDt"]');
+        if (exportDtAction instanceof HTMLButtonElement) {
+            exportDtAction.disabled = !supportsDesignerOperations(selected) || Boolean(state.pendingAction);
+        }
+        const updateConfigAction = document.querySelector('[data-command="updateConfig"]');
+        if (updateConfigAction instanceof HTMLButtonElement) {
+            updateConfigAction.disabled = !supportsDesignerOperations(selected) || Boolean(state.pendingAction);
         }
 
         syncTechnicalSection();
@@ -618,6 +646,11 @@
 
         const targetPath = target.dataset.path || '';
         if (!targetPath) {
+            return;
+        }
+
+        const targetRecord = getInfobaseByPath(targetPath);
+        if (!targetRecord) {
             return;
         }
 

@@ -850,11 +850,164 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         markdown.appendCodeblock(value);
     }
 
+    private parseYamlKeyLine(
+        lineText: string
+    ): { indent: number; key: string; keyStartCharacter: number; keyEndCharacter: number } | null {
+        const match = lineText.match(/^(\s*)([^:#][^:]*?):(?:\s.*)?$/);
+        if (!match) {
+            return null;
+        }
+
+        const key = match[2].trim();
+        if (!key || key.startsWith('-')) {
+            return null;
+        }
+
+        return {
+            indent: match[1].replace(/\t/g, '    ').length,
+            key,
+            keyStartCharacter: match[1].length,
+            keyEndCharacter: match[1].length + match[2].length
+        };
+    }
+
+    private getYamlKeyPathAtLine(
+        document: vscode.TextDocument,
+        lineIndex: number
+    ): { path: string; range: vscode.Range } | null {
+        const stack: Array<{ indent: number; key: string }> = [];
+        let currentLineInfo: ReturnType<typeof this.parseYamlKeyLine> = null;
+
+        for (let currentIndex = 0; currentIndex <= lineIndex; currentIndex++) {
+            const lineInfo = this.parseYamlKeyLine(document.lineAt(currentIndex).text);
+            if (!lineInfo) {
+                continue;
+            }
+
+            while (stack.length > 0 && lineInfo.indent <= stack[stack.length - 1].indent) {
+                stack.pop();
+            }
+
+            stack.push({ indent: lineInfo.indent, key: lineInfo.key });
+
+            if (currentIndex === lineIndex) {
+                currentLineInfo = lineInfo;
+            }
+        }
+
+        if (!currentLineInfo || stack.length === 0) {
+            return null;
+        }
+
+        return {
+            path: stack.map(item => item.key).join('.'),
+            range: new vscode.Range(
+                lineIndex,
+                currentLineInfo.keyStartCharacter,
+                lineIndex,
+                currentLineInfo.keyEndCharacter
+            )
+        };
+    }
+
+    private getYamlFieldHoverDescription(
+        fieldPath: string,
+        t: (message: string, ...args: string[]) => string
+    ): string | null {
+        switch (fieldPath) {
+            case 'ТипФайла':
+                return t('Identifies how the YAML file should be treated. `СборкаТекстовСценариев` uses this field to distinguish scenario files from test-setting files.');
+            case 'ДанныеСценария':
+                return t('Service header of the scenario. Stores the main metadata used by build, lookup and reporting.');
+            case 'ДанныеСценария.UID':
+                return t('Unique identifier of the scenario. Test settings and nested references are linked through this value.');
+            case 'ДанныеСценария.Имя':
+                return t('Human-readable scenario name. Used in snippets, diagnostics and scenario lookup.');
+            case 'ДанныеСценария.Код':
+                return t('Scenario code. Used in generated tags, JSON artifacts and some error messages.');
+            case 'ДанныеСценария.Проект':
+                return t('Project context of the scenario. In SPPR terms it corresponds to the owning project.');
+            case 'ДанныеСценария.ФункцияСистемы':
+                return t('Defines which system function the scenario belongs to. Used as semantic context for function scoping.');
+            case 'ДанныеСценария.РазрешеноИспользоватьВДругихФункциях':
+                return t('Controls whether the scenario may be called from scenarios belonging to another system function.');
+            case 'ДанныеСценария.UIDФункцияСистемы':
+                return t('GUID of the system function. `СборкаТекстовСценариев` uses it to restrict callable scenarios and templates to the same function.');
+            case 'ДанныеСценария.ПрофильПользователя':
+                return t('Default TestClient profile for the scenario. A test setting may override this value.');
+            case 'ДанныеСценария.УровеньОтчета1':
+                return t('Used for the generated `#report.feature` header in the assembled feature file.');
+            case 'ДанныеСценария.УровеньОтчета2':
+                return t('Used for the generated `#report.story` header in the assembled feature file.');
+            case 'ПараметрыСценария':
+                return t('Declares input and output parameters of the scenario.');
+            case 'ВложенныеСценарии':
+                return t('Stores references to called nested scenarios and their parameter mapping.');
+            case 'ТекстСценария':
+                return t('Main Gherkin body of the scenario.');
+            case 'ДанныеТеста':
+                return t('Service header of the test setting. Links the test configuration to a scenario and a target infobase.');
+            case 'ДанныеТеста.UIDСценария':
+                return t('Links the test setting to the scenario by the scenario UID.');
+            case 'ДанныеТеста.ПрофильПользователя':
+                return t('Overrides scenario `ПрофильПользователя` for this test setting. Has priority over the scenario value during build.');
+            case 'KOTМетаданные':
+                return t('KOT-specific metadata used by the extension UI. Not used by `СборкаТекстовСценариев`.');
+            case 'KOTМетаданные.Описание':
+                return t('Description shown by KOT in the UI and hovers. Not used by `СборкаТекстовСценариев`.');
+            case 'KOTМетаданные.PhaseSwitcher':
+                return t('Grouping metadata for Test Manager. Used by KOT, not by `СборкаТекстовСценариев`.');
+            case 'KOTМетаданные.PhaseSwitcher.Tab':
+                return t('Name of the Test Manager group for the main scenario.');
+            case 'KOTМетаданные.PhaseSwitcher.OrderOnTab':
+                return t('Sort order inside the Test Manager group.');
+            case 'KOTМетаданные.PhaseSwitcher.Default':
+                return t('Default checkbox value in Test Manager for this main scenario.');
+            default:
+                return null;
+        }
+    }
+
+    private async provideYamlFieldHover(
+        document: vscode.TextDocument,
+        position: vscode.Position
+    ): Promise<vscode.Hover | null> {
+        if (document.languageId !== 'yaml' && !document.fileName.toLowerCase().endsWith('.yaml')) {
+            return null;
+        }
+
+        if (this.isInScenarioTextBlock(document, position)) {
+            return null;
+        }
+
+        const keyPathInfo = this.getYamlKeyPathAtLine(document, position.line);
+        if (!keyPathInfo) {
+            return null;
+        }
+
+        const t = await this.getHoverTranslator();
+        const description = this.getYamlFieldHoverDescription(keyPathInfo.path, t);
+        if (!description) {
+            return null;
+        }
+
+        const content = new vscode.MarkdownString();
+        content.appendMarkdown(`**\`${keyPathInfo.path}\`**\n\n`);
+        content.appendMarkdown(description);
+
+        return new vscode.Hover(content, keyPathInfo.range);
+    }
+
     public async provideHover(
         document: vscode.TextDocument,
         position: vscode.Position,
         token: vscode.CancellationToken
     ): Promise<vscode.Hover | null> {
+        const yamlFieldHover = await this.provideYamlFieldHover(document, position);
+        if (yamlFieldHover) {
+            return yamlFieldHover;
+        }
+
         const isFeatureDocument = this.isFeatureDocument(document);
         let isSupportedDocument = isFeatureDocument;
         if (!isSupportedDocument) {

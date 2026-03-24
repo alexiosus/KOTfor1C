@@ -21,6 +21,7 @@ import {
     updateInfobaseConfigurationInteractive
 } from './infobaseManager';
 import { getTranslator } from './localization';
+import { normalizeInfobaseConnectionIdentity } from './oneCInfobaseConnection';
 
 type InfobaseManagerSortMode = 'alphabetical' | 'lastOpened' | 'manual';
 
@@ -285,10 +286,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             return normalized;
         }
 
-        const resolved = vscode.Uri.file(normalized).fsPath;
-        return process.platform === 'win32'
-            ? resolved.toLowerCase()
-            : resolved;
+        return normalizeInfobaseConnectionIdentity(normalized);
     }
 
     private findInfobaseRecord(targetPath?: string | null): ManagedInfobaseRecord | null {

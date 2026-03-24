@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/KOTfor1C",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -126,6 +126,81 @@
             ],
             "description": "%config.editor.newScenarioLanguage.description%",
             "order": 8
+          }
+        }
+      },
+      {
+        "title": "%config.newScenarioDefaults.title%",
+        "properties": {
+          "kotTestToolkit.newScenarioDefaults.project": {
+            "type": "string",
+            "default": "Drive",
+            "description": "%config.newScenarioDefaults.project.description%",
+            "markdownDescription": "%config.newScenarioDefaults.project.markdownDescription%",
+            "order": 1
+          },
+          "kotTestToolkit.newScenarioDefaults.systemFunctions": {
+            "type": "array",
+            "default": [
+              {
+                "name": "Drive automation testing",
+                "uid": "98999f57-13dc-11e8-aed1-005056a5c4e8"
+              }
+            ],
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "uid"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "uid": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "description": "%config.newScenarioDefaults.systemFunctions.description%",
+            "markdownDescription": "%config.newScenarioDefaults.systemFunctions.markdownDescription%",
+            "order": 2
+          },
+          "kotTestToolkit.newScenarioDefaults.allowCrossFunctionUsage": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.newScenarioDefaults.allowCrossFunctionUsage.description%",
+            "markdownDescription": "%config.newScenarioDefaults.allowCrossFunctionUsage.markdownDescription%",
+            "order": 3
+          },
+          "kotTestToolkit.newScenarioDefaults.userProfile": {
+            "type": "string",
+            "default": "Administrator",
+            "description": "%config.newScenarioDefaults.userProfile.description%",
+            "markdownDescription": "%config.newScenarioDefaults.userProfile.markdownDescription%",
+            "order": 4
+          },
+          "kotTestToolkit.newScenarioDefaults.reportLevel1": {
+            "type": "string",
+            "default": "Drive",
+            "description": "%config.newScenarioDefaults.reportLevel1.description%",
+            "markdownDescription": "%config.newScenarioDefaults.reportLevel1.markdownDescription%",
+            "order": 5
+          },
+          "kotTestToolkit.newScenarioDefaults.mainReportLevel2": {
+            "type": "string",
+            "default": "Parent",
+            "description": "%config.newScenarioDefaults.mainReportLevel2.description%",
+            "markdownDescription": "%config.newScenarioDefaults.mainReportLevel2.markdownDescription%",
+            "order": 6
+          },
+          "kotTestToolkit.newScenarioDefaults.nestedReportLevel2": {
+            "type": "string",
+            "default": "Tests",
+            "description": "%config.newScenarioDefaults.nestedReportLevel2.description%",
+            "markdownDescription": "%config.newScenarioDefaults.nestedReportLevel2.markdownDescription%",
+            "order": 7
           }
         }
       },
@@ -374,6 +449,11 @@
       {
         "command": "kotTestToolkit.createMainScenario",
         "title": "%cmd.createMainScenario.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.manageSystemFunctions",
+        "title": "%cmd.manageSystemFunctions.title%",
         "category": "%cmd.category%"
       },
       {

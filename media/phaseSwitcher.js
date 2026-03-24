@@ -1882,6 +1882,11 @@
                 onClick: () => vscode.postMessage({ command: 'openScenario', name })
             },
             {
+                icon: 'codicon-file',
+                label: window.__loc?.openTestSettingsTitle || 'Open test settings',
+                onClick: () => vscode.postMessage({ command: 'openMainScenarioTestSettings', name })
+            },
+            {
                 icon: 'codicon-rename',
                 label: window.__loc?.renameScenarioTitle || 'Rename scenario',
                 onClick: () => vscode.postMessage({ command: 'renameScenario', name })
@@ -1913,6 +1918,11 @@
                 title: runDisabled ? runUnavailable : runHint,
                 disabled: runDisabled,
                 onClick: () => vscode.postMessage({ command: 'runScenarioInVanessa', name })
+            },
+            {
+                icon: 'codicon-trash',
+                label: window.__loc?.deleteMainScenarioTitle || 'Delete main scenario',
+                onClick: () => vscode.postMessage({ command: 'deleteMainScenario', name })
             }
         ], `scenario:${name}`);
     }
