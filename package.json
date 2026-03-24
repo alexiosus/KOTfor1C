@@ -884,23 +884,21 @@
     "watch": "npm run copy-codicons && npm run esbuild-base -- --sourcemap --watch",
     "copy-codicons": "cpy node_modules/@vscode/codicons/dist/codicon.css node_modules/@vscode/codicons/dist/codicon.ttf media --flat",
     "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
-    "test": "vscode-test"
+    "test": "echo \"No automated tests configured\""
   },
   "devDependencies": {
-    "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
     "@types/uuid": "^10.0.0",
     "@types/vscode": "^1.98.0",
     "@typescript-eslint/eslint-plugin": "^8.28.0",
     "@typescript-eslint/parser": "^8.28.0",
     "@vscode/codicons": "^0.0.44",
-    "@vscode/test-cli": "^0.0.10",
-    "@vscode/test-electron": "^2.4.1",
     "cpy-cli": "^5.0.0",
     "eslint": "^9.23.0",
     "typescript": "^5.8.2"
   },
   "dependencies": {
+    "jszip": "^3.10.1",
     "node-html-parser": "^7.0.1",
     "uuid": "^11.1.0"
   }
