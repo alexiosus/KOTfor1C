@@ -850,6 +850,21 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         await this.saveMainScenarioSelectionStates(states);
     }
 
+    private async removeMainScenarioSelectionState(scenarioName: string): Promise<void> {
+        const trimmedScenarioName = scenarioName.trim();
+        if (!trimmedScenarioName) {
+            return;
+        }
+
+        const states = this.getStoredMainScenarioSelectionStates();
+        if (!Object.prototype.hasOwnProperty.call(states, trimmedScenarioName)) {
+            return;
+        }
+
+        delete states[trimmedScenarioName];
+        await this.saveMainScenarioSelectionStates(states);
+    }
+
     private async getMainScenarioSelectionSnapshotForBuild(): Promise<MainScenarioSelectionSnapshot> {
         const mainScenarios = this.getMainScenariosFromCache();
         if (mainScenarios.length === 0) {
@@ -4589,6 +4604,81 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return undefined;
     }
 
+    private collectMainScenarioTestConfigUris(scenarioDirectory: string): vscode.Uri[] {
+        const testDirectory = path.join(scenarioDirectory, 'test');
+        if (!fs.existsSync(testDirectory) || !fs.statSync(testDirectory).isDirectory()) {
+            return [];
+        }
+
+        const result: vscode.Uri[] = [];
+        for (const entry of fs.readdirSync(testDirectory, { withFileTypes: true })) {
+            if (!entry.isFile() || !/\.yaml$/i.test(entry.name)) {
+                continue;
+            }
+            result.push(vscode.Uri.file(path.join(testDirectory, entry.name)));
+        }
+        return result;
+    }
+
+    private resolveMainScenarioTestConfigUri(scenarioInfo: TestInfo): vscode.Uri | null {
+        const scenarioDirectory = path.dirname(scenarioInfo.yamlFileUri.fsPath);
+        const testConfigUris = this.collectMainScenarioTestConfigUris(scenarioDirectory);
+        if (testConfigUris.length === 0) {
+            return null;
+        }
+
+        const lowerScenarioName = (scenarioInfo.name || '').trim().toLowerCase();
+        const exactMatch = testConfigUris.find(uri => {
+            const base = path.basename(uri.fsPath).toLowerCase();
+            return base === `${lowerScenarioName}.yaml`;
+        });
+
+        return exactMatch || (testConfigUris.length === 1 ? testConfigUris[0] : null);
+    }
+
+    private cleanupDeletedScenarioRuntimeState(scenarioName: string): void {
+        const trimmedScenarioName = scenarioName.trim();
+        if (!trimmedScenarioName) {
+            return;
+        }
+
+        this._scenarioBuildArtifacts.delete(trimmedScenarioName);
+        this._staleBuiltScenarioNames.delete(trimmedScenarioName);
+        this._scenarioExecutionStates.delete(trimmedScenarioName);
+        this._scenarioLastLaunchContexts.delete(trimmedScenarioName);
+        this.clearFailedFeatureStepHighlight(trimmedScenarioName);
+        this.stopFeatureStepTracker(trimmedScenarioName);
+        this.clearTrackedRunLogWatchersForScenario(trimmedScenarioName);
+    }
+
+    private async removeFavoriteEntriesUnderDirectory(directoryUri: vscode.Uri): Promise<void> {
+        const directoryPath = path.resolve(directoryUri.fsPath);
+        const prefix = `${directoryPath}${path.sep}`;
+        const favorites = this.getFavoriteEntries();
+        const nextFavorites = favorites.filter(entry => {
+            if (!entry?.uri) {
+                return false;
+            }
+            try {
+                const favoriteUri = vscode.Uri.parse(entry.uri);
+                if (favoriteUri.scheme !== 'file') {
+                    return true;
+                }
+                const favoritePath = path.resolve(favoriteUri.fsPath);
+                return favoritePath !== directoryPath && !favoritePath.startsWith(prefix);
+            } catch {
+                return true;
+            }
+        });
+
+        if (nextFavorites.length === favorites.length) {
+            return;
+        }
+
+        await this.saveFavoriteEntries(nextFavorites);
+        this.sendFavoritesStateToWebview(nextFavorites);
+    }
+
     private buildFavoriteEntryFromTestInfo(testInfo: TestInfo): FavoriteScenarioEntry {
         return {
             uri: testInfo.yamlFileUri.toString(),
@@ -5917,6 +6007,127 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         );
     }
 
+    private async openMainScenarioTestSettings(scenarioName: string): Promise<void> {
+        const trimmedScenarioName = scenarioName.trim();
+        if (!trimmedScenarioName) {
+            return;
+        }
+
+        await this.ensureFreshTestCache();
+        if (!this._testCache || this._testCache.size === 0) {
+            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
+            return;
+        }
+
+        const scenarioInfo = this._testCache.get(trimmedScenarioName);
+        if (!scenarioInfo) {
+            vscode.window.showWarningMessage(this.t('Scenario "{0}" was not found in cache.', trimmedScenarioName));
+            return;
+        }
+
+        if (!this.isMainScenario(scenarioInfo)) {
+            vscode.window.showWarningMessage(this.t('Open test settings is available for main scenarios only.'));
+            return;
+        }
+
+        const testConfigUri = this.resolveMainScenarioTestConfigUri(scenarioInfo);
+        if (!testConfigUri) {
+            vscode.window.showWarningMessage(this.t('Test settings file was not found for scenario "{0}".', trimmedScenarioName));
+            return;
+        }
+
+        try {
+            const document = await vscode.workspace.openTextDocument(testConfigUri);
+            await vscode.window.showTextDocument(document, { preview: false });
+        } catch (error: any) {
+            vscode.window.showErrorMessage(this.t('Failed to open test settings file: {0}', error?.message || String(error)));
+        }
+    }
+
+    private async deleteMainScenario(scenarioName: string): Promise<void> {
+        const trimmedScenarioName = scenarioName.trim();
+        if (!trimmedScenarioName) {
+            return;
+        }
+
+        await this.ensureFreshTestCache();
+        if (!this._testCache || this._testCache.size === 0) {
+            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
+            return;
+        }
+
+        const scenarioInfo = this._testCache.get(trimmedScenarioName);
+        if (!scenarioInfo) {
+            vscode.window.showWarningMessage(this.t('Scenario "{0}" was not found in cache.', trimmedScenarioName));
+            return;
+        }
+
+        if (!this.isMainScenario(scenarioInfo)) {
+            vscode.window.showWarningMessage(this.t('Delete is available for main scenarios only.'));
+            return;
+        }
+
+        const scenarioDirectory = path.dirname(scenarioInfo.yamlFileUri.fsPath);
+        if (!fs.existsSync(scenarioDirectory) || !fs.statSync(scenarioDirectory).isDirectory()) {
+            vscode.window.showWarningMessage(this.t('Scenario folder was not found: {0}', scenarioDirectory));
+            return;
+        }
+
+        const dirtyDocuments = vscode.workspace.textDocuments.filter(document => {
+            if (!document.isDirty || document.uri.scheme !== 'file') {
+                return false;
+            }
+            const documentPath = path.resolve(document.uri.fsPath);
+            const scenarioDirectoryPath = path.resolve(scenarioDirectory);
+            return documentPath === scenarioDirectoryPath || documentPath.startsWith(`${scenarioDirectoryPath}${path.sep}`);
+        });
+        if (dirtyDocuments.length > 0) {
+            vscode.window.showWarningMessage(
+                this.t('Save modified files before deleting main scenario "{0}".', trimmedScenarioName)
+            );
+            return;
+        }
+
+        const confirmation = await vscode.window.showWarningMessage(
+            this.t('Delete main scenario "{0}"?', trimmedScenarioName),
+            {
+                modal: true,
+                detail: this.t(
+                    'This will permanently delete folder "{0}" with scen.yaml, test settings, files and all nested contents.',
+                    scenarioDirectory
+                )
+            },
+            { title: this.t('Delete') }
+        );
+        if (!confirmation) {
+            return;
+        }
+
+        try {
+            await vscode.workspace.fs.delete(vscode.Uri.file(scenarioDirectory), { recursive: true, useTrash: false });
+        } catch (error: any) {
+            vscode.window.showErrorMessage(
+                this.t('Failed to delete main scenario "{0}": {1}', trimmedScenarioName, error?.message || String(error))
+            );
+            return;
+        }
+
+        await this.removeFavoriteEntriesUnderDirectory(vscode.Uri.file(scenarioDirectory));
+        await this.removeMainScenarioSelectionState(trimmedScenarioName);
+        this.cleanupDeletedScenarioRuntimeState(trimmedScenarioName);
+        this.sendRunArtifactsStateToWebview();
+        await this.refreshTestCacheFromDisk('deleteMainScenario');
+        this.pruneScenarioBuildArtifactsByCache();
+        this.sendRunArtifactsStateToWebview();
+        if (this._view?.visible) {
+            await this._sendInitialState(this._view.webview);
+        }
+        this.handleActiveEditorChanged(vscode.window.activeTextEditor);
+        this.sendAffectedMainScenariosToWebview(true);
+
+        vscode.window.showInformationMessage(this.t('Main scenario "{0}" was deleted.', trimmedScenarioName));
+    }
+
     private isBuildCancelledError(error: unknown): error is BuildCancelledError {
         if (error instanceof BuildCancelledError) {
             return true;
@@ -6447,8 +6658,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 statusCancellingBuild: this.t('Cancelling build...'),
                 selectionStateSummary: this.t('Will be built: {0}/{1}'),
                 openScenarioTitle: this.t('Open scenario'),
+                openTestSettingsTitle: this.t('Open test settings'),
                 renameGroupTitle: this.t('Rename group'),
                 renameScenarioTitle: this.t('Rename scenario'),
+                deleteMainScenarioTitle: this.t('Delete main scenario'),
                 openYamlParametersManagerTitle: this.t('Open Build Scenario Parameters Manager'),
                 yamlParameters: this.t('Build Scenario Parameters')
             };
@@ -6560,6 +6773,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 case 'renameScenario':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
                         await this.renameScenario(message.name.trim());
+                    }
+                    return;
+                case 'openMainScenarioTestSettings':
+                    if (typeof message.name === 'string' && message.name.trim().length > 0) {
+                        await this.openMainScenarioTestSettings(message.name.trim());
+                    }
+                    return;
+                case 'deleteMainScenario':
+                    if (typeof message.name === 'string' && message.name.trim().length > 0) {
+                        await this.deleteMainScenario(message.name.trim());
                     }
                     return;
                 case 'openFavoriteScenarios':
@@ -10422,6 +10645,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const pickedPath = await pickManagedInfobasePath(this._context, this.t.bind(this), {
                 allowBuildOnly: false,
                 allowCreateNew: false,
+                allowedKinds: ['file', 'server'],
                 placeHolder: this.t('Choose target infobase for Vanessa run of "{0}"', scenarioName)
             });
             if (pickedPath === undefined || pickedPath === null || !pickedPath.trim()) {

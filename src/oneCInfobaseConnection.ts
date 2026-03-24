@@ -9,6 +9,10 @@ export type OneCInfobaseConnection =
         kind: 'server';
         server: string;
         ref: string;
+    }
+    | {
+        kind: 'web';
+        url: string;
     };
 
 function quoteConnectionValue(value: string): string {
@@ -19,6 +23,12 @@ function quoteConnectionValue(value: string): string {
 }
 
 function normalizeServerPart(value: string): string {
+    return value
+        .replace(/""/g, '"')
+        .trim();
+}
+
+function normalizeWebPart(value: string): string {
     return value
         .replace(/""/g, '"')
         .trim();
@@ -40,6 +50,19 @@ export function parseInfobaseConnectionString(value: string): OneCInfobaseConnec
         return {
             kind: 'file',
             filePath: path.resolve(rawPath.replace(/""/g, '"'))
+        };
+    }
+
+    const webMatch = source.match(/(?:^|;)\s*ws\s*=\s*("((?:[^"]|"")*)"|([^;]+))/i);
+    if (webMatch) {
+        const url = normalizeWebPart(webMatch[2] || webMatch[3] || '');
+        if (!url) {
+            return null;
+        }
+
+        return {
+            kind: 'web',
+            url
         };
     }
 
@@ -69,11 +92,16 @@ export function coerceInfobaseConnection(value: string | OneCInfobaseConnection)
                 kind: 'file',
                 filePath: path.resolve(value.filePath.trim())
             }
-            : {
+            : value.kind === 'server'
+                ? {
                 kind: 'server',
                 server: value.server.trim(),
                 ref: value.ref.trim()
-            };
+            }
+                : {
+                    kind: 'web',
+                    url: value.url.trim()
+                };
     }
 
     const parsed = parseInfobaseConnectionString(value);
@@ -89,6 +117,10 @@ export function coerceInfobaseConnection(value: string | OneCInfobaseConnection)
 
 export function isServerInfobaseConnection(value: string | OneCInfobaseConnection): boolean {
     return coerceInfobaseConnection(value).kind === 'server';
+}
+
+export function isWebInfobaseConnection(value: string | OneCInfobaseConnection): boolean {
+    return coerceInfobaseConnection(value).kind === 'web';
 }
 
 export function getFileInfobasePath(value: string | OneCInfobaseConnection): string | null {
@@ -111,7 +143,11 @@ export function buildInfobaseConnectionArgument(
         return `File=${quoteConnectionValue(connection.filePath)}${suffix}`;
     }
 
-    return `Srvr=${quoteConnectionValue(connection.server)};Ref=${quoteConnectionValue(connection.ref)}${suffix}`;
+    if (connection.kind === 'server') {
+        return `Srvr=${quoteConnectionValue(connection.server)};Ref=${quoteConnectionValue(connection.ref)}${suffix}`;
+    }
+
+    return `ws=${quoteConnectionValue(connection.url)}${suffix}`;
 }
 
 export function buildFileInfobaseConnectionArgument(
@@ -149,9 +185,13 @@ export function normalizeInfobaseConnectionIdentity(value: string | OneCInfobase
             : normalizedPath;
     }
 
-    const normalizedServer = connection.server.trim().toLowerCase();
-    const normalizedRef = connection.ref.trim().toLowerCase();
-    return `srvr=${normalizedServer};ref=${normalizedRef}`;
+    if (connection.kind === 'server') {
+        const normalizedServer = connection.server.trim().toLowerCase();
+        const normalizedRef = connection.ref.trim().toLowerCase();
+        return `srvr=${normalizedServer};ref=${normalizedRef}`;
+    }
+
+    return `ws=${connection.url.trim()}`;
 }
 
 export function normalizeInfobaseReference(value: string): string {
@@ -163,7 +203,13 @@ export function normalizeInfobaseReference(value: string): string {
 
 export function describeInfobaseConnection(value: string | OneCInfobaseConnection): string {
     const connection = coerceInfobaseConnection(value);
-    return connection.kind === 'file'
-        ? connection.filePath
-        : `${connection.server}/${connection.ref}`;
+    if (connection.kind === 'file') {
+        return connection.filePath;
+    }
+
+    if (connection.kind === 'server') {
+        return `${connection.server}/${connection.ref}`;
+    }
+
+    return connection.url;
 }

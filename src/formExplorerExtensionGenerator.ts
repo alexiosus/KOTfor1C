@@ -21,6 +21,7 @@ import {
 import {
     buildFileInfobaseConnectionArgument,
     buildInfobaseConnectionArgument,
+    coerceInfobaseConnection,
     describeInfobaseConnection,
     getFileInfobasePath,
     normalizeInfobaseConnectionIdentity,
@@ -5878,6 +5879,7 @@ async function handleGenerateFormExplorerExtensionCore(
             : await pickManagedInfobasePath(context, t, {
                 allowBuildOnly: false,
                 allowCreateNew: false,
+                allowedKinds: ['file', 'server'],
                 placeHolder: t('Choose target infobase for extension install')
             }))
         : null;
@@ -6166,6 +6168,7 @@ export async function handleStartFormExplorerInfobase(
             selectedTargetInfobasePath = await pickManagedInfobasePath(context, t, {
                 allowBuildOnly: false,
                 allowCreateNew: false,
+                allowedKinds: ['file', 'server'],
                 placeHolder: t('Choose target infobase to start with Form Explorer'),
                 preferredInfobasePath: null
             });
@@ -6179,6 +6182,9 @@ export async function handleStartFormExplorerInfobase(
         }
 
         const targetInfobasePath = normalizeInfobaseReference(selectedTargetInfobasePath);
+        if (coerceInfobaseConnection(targetInfobasePath).kind === 'web') {
+            throw new Error(t('Form Explorer is not supported for web infobases.'));
+        }
         const targetInfobaseFilePath = getFileInfobasePath(targetInfobasePath);
         if (targetInfobaseFilePath && !(await pathExists(targetInfobaseFilePath))) {
             throw new Error(t('Target infobase path does not exist: {0}', targetInfobasePath));

@@ -5,10 +5,9 @@
     UIDСценария: "UID_Placeholder"
     Имя: "Name_Placeholder"
     ЭталоннаяБазаИмя: "ModelDBib_Placeholder"
-    ПрофильПользователя: "Administrator"
+    ПрофильПользователя: "UserProfile_Placeholder"
     СценарийНаименование: "Name_Placeholder"
     ИдентификаторБазы: "ModelDBib_Placeholder"
     ПараметрыЗапуска: ""
 
 ПараметрыТеста:
-

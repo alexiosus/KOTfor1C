@@ -18,7 +18,6 @@ import {
     coerceInfobaseConnection,
     describeInfobaseConnection,
     getFileInfobasePath,
-    isServerInfobaseConnection,
     normalizeInfobaseConnectionIdentity,
     normalizeInfobaseReference,
     type OneCInfobaseConnection
@@ -77,6 +76,7 @@ export interface ManagedInfobaseSelectionOptions {
     allowCreateNew?: boolean;
     placeHolder?: string;
     preferredInfobasePath?: string | null;
+    allowedKinds?: ManagedInfobaseKind[];
 }
 
 export interface PromptNewInfobaseTargetResult {
@@ -188,7 +188,7 @@ function getFileInfobaseDirectory(rawValue: string): string | null {
 }
 
 function isFileInfobaseReference(rawValue: string): boolean {
-    return !isServerInfobaseConnection(rawValue);
+    return getInfobaseKind(rawValue) === 'file';
 }
 
 function getInfobaseDisplayNameFallback(rawValue: string): string {
@@ -1199,7 +1199,7 @@ export async function collectManagedInfobases(
             ? exists && await pathExists(path.join(fileInfobasePath, INFOBASE_MARKER_FILE_NAME))
             : false;
         let state: ManagedInfobaseState;
-        if (record.infobaseKind === 'server') {
+        if (record.infobaseKind !== 'file') {
             state = record.stateHint || 'ready';
         } else if (!exists) {
             state = 'missing';
@@ -1768,6 +1768,24 @@ function assertFileInfobaseRecord(
     throw new Error(t('"{0}" is available only for file-based infobases.', operationTitle));
 }
 
+function assertNonWebInfobaseReference(
+    t: Translator,
+    infobasePath: string,
+    operationTitle: string
+): void {
+    if (getInfobaseKind(infobasePath) === 'web') {
+        throw new Error(t('"{0}" is not supported for web infobases.', operationTitle));
+    }
+}
+
+function assertNonWebInfobaseRecord(
+    t: Translator,
+    infobase: ManagedInfobaseRecord,
+    operationTitle: string
+): void {
+    assertNonWebInfobaseReference(t, infobase.infobasePath, operationTitle);
+}
+
 export async function createInfobaseWithLauncherRegistration(
     context: vscode.ExtensionContext,
     infobasePath: string,
@@ -1908,6 +1926,7 @@ export async function exportInfobaseToDtInteractive(
     infobasePath: string
 ): Promise<string | null> {
     const t = await getTranslator(context.extensionUri);
+    assertNonWebInfobaseReference(t, infobasePath, t('Export DT'));
     const designerExePath = await resolveConfiguredOneCDesignerExePath(t);
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
@@ -1972,6 +1991,7 @@ export async function exportInfobaseConfigurationToCfInteractive(
     infobasePath: string
 ): Promise<string | null> {
     const t = await getTranslator(context.extensionUri);
+    assertNonWebInfobaseReference(t, infobasePath, t('Save CF'));
     const designerExePath = await resolveConfiguredOneCDesignerExePath(t);
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
@@ -2126,6 +2146,7 @@ export async function restoreInfobaseFromDtInteractive(
     infobase: ManagedInfobaseRecord
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
+    assertNonWebInfobaseRecord(t, infobase, t('Restore from DT'));
     const selectedFile = await vscode.window.showOpenDialog({
         canSelectFiles: true,
         canSelectFolders: false,
@@ -2192,6 +2213,7 @@ export async function updateInfobaseConfigurationInteractive(
     infobase: ManagedInfobaseRecord
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
+    assertNonWebInfobaseRecord(t, infobase, t('Update configuration'));
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const configuredSourceDirectoryRaw = (
         vscode.workspace.getConfiguration('kotTestToolkit').get<string>('formExplorer.configurationSourceDirectory')
@@ -2774,6 +2796,7 @@ export async function openInfobaseInDesigner(
     infobase: ManagedInfobaseRecord
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
+    assertNonWebInfobaseRecord(t, infobase, t('Open in Designer'));
     const designerExePath = await resolveConfiguredOneCDesignerExePath(t);
     const output = getInfobaseManagerOutputChannel();
     await launchOneCDetached(
@@ -2843,7 +2866,14 @@ export async function pickManagedInfobasePath(
     const allowBuildOnly = options?.allowBuildOnly !== false;
     const allowCreateNew = options?.allowCreateNew === true;
     const preferredInfobasePath = (options?.preferredInfobasePath || '').trim();
-    const records = await collectManagedInfobases(context);
+    const allowedKinds = new Set<ManagedInfobaseKind>(
+        (options?.allowedKinds && options.allowedKinds.length > 0)
+            ? options.allowedKinds
+            : ['file', 'server', 'web']
+    );
+    const allowsFileInfobases = allowedKinds.has('file');
+    const records = (await collectManagedInfobases(context))
+        .filter(record => allowedKinds.has(record.infobaseKind));
 
     const quickPickItems: Array<vscode.QuickPickItem & {
         actionKey: 'none' | 'manual' | 'managed' | 'create' | 'manager';
@@ -2864,7 +2894,7 @@ export async function pickManagedInfobasePath(
         actionKey: 'manager'
     });
 
-    if (allowCreateNew) {
+    if (allowCreateNew && allowsFileInfobases) {
         quickPickItems.push({
             label: t('Create new infobase'),
             detail: t('Choose a folder, create a new file infobase, and register it in the 1C launcher.'),
@@ -2872,13 +2902,19 @@ export async function pickManagedInfobasePath(
         });
     }
 
-    quickPickItems.push({
-        label: t('Choose infobase folder manually'),
-        detail: t('Select an existing file infobase directory from disk.'),
-        actionKey: 'manual'
-    });
+    if (allowsFileInfobases) {
+        quickPickItems.push({
+            label: t('Choose infobase folder manually'),
+            detail: t('Select an existing file infobase directory from disk.'),
+            actionKey: 'manual'
+        });
+    }
 
-    if (preferredInfobasePath && (!isFileInfobaseReference(preferredInfobasePath) || fs.existsSync(preferredInfobasePath))) {
+    if (
+        preferredInfobasePath
+        && allowedKinds.has(getInfobaseKind(preferredInfobasePath))
+        && (!isFileInfobaseReference(preferredInfobasePath) || fs.existsSync(preferredInfobasePath))
+    ) {
         quickPickItems.push({
             label: t('Use selected snapshot infobase'),
             description: getInfobaseLocationLabel(preferredInfobasePath),
