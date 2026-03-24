@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="${localeHtmlLang}">
 <head>
     <title>${extDisplayName}</title>
@@ -8,56 +8,63 @@
     <link href="${stylesUri}" rel="stylesheet">
 </head>
 <body>
-    <div class="main-content-area">
-
-        <div class="phase-switcher-section">
-            <div class="controls-top-bar">
-                 <h1>${loc.phaseSwitcherTitle}</h1>
-                 <div class="controls-top-buttons">
-                    <div class="dropdown-container">
-                        <button id="scenarioRepairDropdownBtn" class="button-with-icon compact-top-btn" title="${loc.maintenanceMenuTitle}">
-                            <span class="codicon codicon-ellipsis"></span>
-                        </button>
-                        <div id="scenarioRepairDropdownContent" class="dropdown-content">
-                            <a href="#" id="runVanessaFromDropdownBtn" class="dropdown-item dropdown-item-with-chevron" title="${loc.runVanessaTopTitle}">
-                                <span class="codicon codicon-play-circle"></span>
-                                <span>${loc.runVanessaTopTitle}</span>
-                                <span class="codicon codicon-chevron-right dropdown-item-chevron"></span>
-                            </a>
-                            <div class="dropdown-separator" role="separator"></div>
-                            <a href="#" id="reloadTestsFromDiskFromDropdownBtn" class="dropdown-item" title="${loc.reloadTestsFromDiskHint}">
-                                <span class="codicon codicon-refresh"></span> ${loc.reloadTestsFromDisk}
-                            </a>
-                            <a href="#" id="refreshVanessaStepsFromDropdownBtn" class="dropdown-item" title="${loc.refreshVanessaStepsHint}">
-                                <span class="codicon codicon-sync"></span> ${loc.refreshVanessaSteps}
-                            </a>
-                            <div class="dropdown-separator" role="separator"></div>
-                            <a href="#" id="openScenarioRepairMenuFromDropdownBtn" class="dropdown-item dropdown-item-with-chevron" title="${loc.repairScenariosTitle}">
-                                <span class="codicon codicon-wrench"></span>
-                                <span>${loc.repairScenariosTitle}</span>
-                                <span class="codicon codicon-chevron-right dropdown-item-chevron"></span>
-                            </a>
-                            <a href="#" id="cancelScenarioRepairFromDropdownBtn" class="dropdown-item" title="${loc.cancelScenarioRepairHint}">
-                                <span class="codicon codicon-stop-circle"></span> ${loc.cancelScenarioRepair}
-                            </a>
-                            <div class="dropdown-separator" role="separator"></div>
-                            <a href="#" id="openYamlParamsFromDropdownBtn" class="dropdown-item" title="${loc.openYamlParametersManagerTitle}">
-                                <span class="codicon codicon-json"></span> ${loc.openYamlParametersManagerTitle}
-                            </a>
-                            <a href="#" id="openSettingsFromDropdownBtn" class="dropdown-item" title="${loc.openSettingsTitle}">
-                                <span class="codicon codicon-settings-gear"></span> ${loc.openSettingsTitle}
-                            </a>
-                        </div>
+    <div class="app-shell phase-switcher-app">
+        <header class="topbar phase-switcher-topbar">
+            <div class="topbar-title-wrap">
+                <h1 class="topbar-title">${loc.phaseSwitcherTitle}</h1>
+            </div>
+            <div class="toolbar controls-top-buttons">
+                <button id="runVanessaFromDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only" title="${loc.runVanessaTopTitle}">
+                    <span class="codicon codicon-play-circle"></span>
+                </button>
+                <button id="openFormExplorerFromDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only top-action-btn-beta" title="${loc.openFormExplorerTopTitle}">
+                    <span class="top-action-icon-wrap">
+                        <span class="codicon codicon-telescope"></span>
+                        <span class="top-beta-badge" aria-hidden="true">β</span>
+                    </span>
+                </button>
+                <button id="openInfobaseManagerTopBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only" title="${loc.openInfobaseManagerTopTitle}">
+                    <span class="codicon codicon-database"></span>
+                </button>
+                <div class="dropdown-container">
+                    <button id="scenarioRepairDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only" title="${loc.maintenanceMenuTitle}">
+                        <span class="codicon codicon-ellipsis"></span>
+                    </button>
+                    <div id="scenarioRepairDropdownContent" class="dropdown-content menu-popover">
+                        <a href="#" id="reloadTestsFromDiskFromDropdownBtn" class="dropdown-item menu-item" title="${loc.reloadTestsFromDiskHint}">
+                            <span class="codicon codicon-refresh"></span> ${loc.reloadTestsFromDisk}
+                        </a>
+                        <a href="#" id="refreshVanessaStepsFromDropdownBtn" class="dropdown-item menu-item" title="${loc.refreshVanessaStepsHint}">
+                            <span class="codicon codicon-sync"></span> ${loc.refreshVanessaSteps}
+                        </a>
+                        <div class="dropdown-separator menu-separator" role="separator"></div>
+                        <a href="#" id="openScenarioRepairMenuFromDropdownBtn" class="dropdown-item menu-item dropdown-item-with-chevron" title="${loc.repairScenariosTitle}">
+                            <span class="codicon codicon-wrench"></span>
+                            <span>${loc.repairScenariosTitle}</span>
+                            <span class="codicon codicon-chevron-right dropdown-item-chevron"></span>
+                        </a>
+                        <a href="#" id="cancelScenarioRepairFromDropdownBtn" class="dropdown-item menu-item" title="${loc.cancelScenarioRepairHint}">
+                            <span class="codicon codicon-stop-circle"></span> ${loc.cancelScenarioRepair}
+                        </a>
+                        <div class="dropdown-separator menu-separator" role="separator"></div>
+                        <a href="#" id="openYamlParamsFromDropdownBtn" class="dropdown-item menu-item" title="${loc.openYamlParametersManagerTitle}">
+                            <span class="codicon codicon-json"></span> ${loc.openYamlParametersManagerTitle}
+                        </a>
+                        <a href="#" id="openSettingsFromDropdownBtn" class="dropdown-item menu-item" title="${loc.openSettingsTitle}">
+                            <span class="codicon codicon-settings-gear"></span> ${loc.openSettingsTitle}
+                        </a>
                     </div>
                 </div>
             </div>
+        </header>
 
+        <section class="panel phase-switcher-section">
             <div class="manager-tabs-row">
-                <div class="manager-tabs">
-                    <button id="testsTabBtn" class="manager-tab-btn is-active" title="${loc.testsTabTitle}">
+                <div class="manager-tabs tab-strip">
+                    <button id="testsTabBtn" class="manager-tab-btn tab-btn is-active" title="${loc.testsTabTitle}">
                         ${loc.testsTabTitle}
                     </button>
-                    <button id="favoritesTabBtn" class="manager-tab-btn" title="${loc.favoritesTabTitle}">
+                    <button id="favoritesTabBtn" class="manager-tab-btn tab-btn" title="${loc.favoritesTabTitle}">
                         ${loc.favoritesTabTitle}
                     </button>
                 </div>
@@ -65,36 +72,36 @@
                     <div id="globalListActions" class="global-list-actions">
                         <div class="global-list-actions-right">
                             <div class="dropdown-container">
-                                <button id="addScenarioDropdownBtn" class="button-with-icon compact-action-btn" title="${loc.createScenarioTitle}">
+                                <button id="addScenarioDropdownBtn" class="button-with-icon compact-action-btn ghost-btn icon-only" title="${loc.createScenarioTitle}">
                                     <span class="codicon codicon-add"></span>
                                 </button>
-                                <div id="addScenarioDropdownContent" class="dropdown-content">
-                                    <a href="#" id="createMainScenarioFromDropdownBtn" class="dropdown-item">
+                                <div id="addScenarioDropdownContent" class="dropdown-content menu-popover">
+                                    <a href="#" id="createMainScenarioFromDropdownBtn" class="dropdown-item menu-item">
                                         <span class="codicon codicon-code-oss"></span> ${loc.createMainScenario}
                                     </a>
-                                    <a href="#" id="createNestedScenarioFromDropdownBtn" class="dropdown-item">
+                                    <a href="#" id="createNestedScenarioFromDropdownBtn" class="dropdown-item menu-item">
                                         <span class="codicon codicon-references"></span> ${loc.createNestedScenario}
                                     </a>
                                 </div>
                             </div>
                             <button
                                 id="toggleScenarioSearchBtn"
-                                class="button-with-icon compact-action-btn manager-search-toggle-btn"
+                                class="button-with-icon compact-action-btn toggle-btn manager-search-toggle-btn icon-only"
                                 title="${loc.toggleScenarioSearchTitle}"
                                 aria-pressed="false">
                                 <span class="codicon codicon-search"></span>
                             </button>
-                            <button id="collapseAllBtn" class="button-with-icon compact-action-btn" title="${loc.collapseExpandAllTitle}">
+                            <button id="collapseAllBtn" class="button-with-icon compact-action-btn ghost-btn icon-only" title="${loc.collapseExpandAllTitle}">
                                 <span class="codicon codicon-list-tree"></span>
                             </button>
-                            <button id="selectAllBtn" class="button-with-icon compact-action-btn" title="${loc.toggleAllCheckboxesTitle}">
+                            <button id="selectAllBtn" class="button-with-icon compact-action-btn ghost-btn icon-only" title="${loc.toggleAllCheckboxesTitle}">
                                 <span class="codicon codicon-checklist"></span>
                             </button>
                         </div>
                     </div>
-                    <div id="favoritesSortControls" class="favorites-sort-controls">
+                    <div id="favoritesSortControls" class="favorites-sort-controls surface-chip">
                         <label for="favoritesSortSelect">${loc.favoritesSortLabel}:</label>
-                        <select id="favoritesSortSelect" title="${loc.favoritesSortLabel}">
+                        <select id="favoritesSortSelect" class="surface-select" title="${loc.favoritesSortLabel}">
                             <option value="code">${loc.favoritesSortByCode}</option>
                             <option value="name">${loc.favoritesSortByName}</option>
                         </select>
@@ -103,16 +110,17 @@
             </div>
 
             <div id="scenarioSearchRow" class="scenario-search-row hidden">
-                <div class="scenario-search-input-wrap">
+                <div class="scenario-search-input-wrap search-frame">
+                    <span class="codicon codicon-search scenario-search-icon" aria-hidden="true"></span>
                     <input
                         id="scenarioSearchInput"
-                        class="scenario-search-input"
+                        class="scenario-search-input search-input"
                         type="text"
                         placeholder="${loc.scenarioSearchPlaceholder}"
                         title="${loc.scenarioSearchTitle}">
                     <button
                         id="scenarioSearchClearBtn"
-                        class="scenario-search-clear-btn hidden"
+                        class="scenario-search-clear-btn ghost-btn icon-only hidden"
                         type="button"
                         title="${loc.scenarioSearchClearTitle}">
                         <span class="codicon codicon-close"></span>
@@ -128,27 +136,27 @@
                 <p>${loc.favoritesEmpty}</p>
             </div>
 
-            <div class="phase-switcher-controls-fixed-bottom">
+            <div class="phase-switcher-controls-fixed-bottom surface-card">
                 <div id="statusBar" class="status-bar">${loc.statusInit}</div>
 
                 <div class="phase-switcher-controls">
                     <div class="controls-row controls-row-primary">
-                        <button id="selectDefaultsBtn" class="button-with-icon">
+                        <button id="selectDefaultsBtn" class="button-with-icon ghost-btn">
                             <span class="codicon codicon-discard"></span>${loc.defaults}
                         </button>
                         <div id="assembleSplitContainer" class="dropdown-container split-button">
-                            <button id="assembleTestsBtn" class="button-with-icon split-main-btn">
+                            <button id="assembleTestsBtn" class="button-with-icon toolbar-btn primary split-main-btn">
                                 <span class="split-main-content">
                                     <span class="codicon codicon-beaker"></span>
                                     <span class="split-main-label">${loc.buildTests}</span>
                                 </span>
                             </button>
-                            <button id="assembleMenuBtn" class="button-with-icon split-menu-btn" title="${loc.buildOptionsTitle}">
+                            <button id="assembleMenuBtn" class="button-with-icon toolbar-btn primary split-menu-btn icon-only" title="${loc.buildOptionsTitle}">
                                 <span class="codicon codicon-chevron-down"></span>
                             </button>
-                            <div id="assembleDropdownContent" class="dropdown-content split-dropdown-content">
+                            <div id="assembleDropdownContent" class="dropdown-content menu-popover split-dropdown-content">
                                 <div id="driveAccountingModeRow" class="dropdown-control-row" title="${loc.recordGLSelectTitle}">
-                                    <span class="drive-accounting-label">${loc.accountingMode}:</span>
+                                    <span class="drive-accounting-label section-label">${loc.accountingMode}</span>
                                     <div id="recordGLModeList" class="record-gl-options-list" role="radiogroup" aria-label="${loc.accountingMode}">
                                         <button type="button" class="record-gl-option-btn" data-value="0" role="radio" aria-checked="false">
                                             <span class="record-gl-option-label">GL-</span>
@@ -166,19 +174,18 @@
                                 </div>
                             </div>
                         </div>
-                        <button id="cancelAssembleBtn" class="button-with-icon" title="${loc.cancelBuildTitle}">
+                        <button id="cancelAssembleBtn" class="button-with-icon ghost-btn danger-btn" title="${loc.cancelBuildTitle}">
                             <span class="codicon codicon-stop-circle"></span> ${loc.cancelBuild}
                         </button>
                     </div>
-
                     <div id="driveActionsRow" class="controls-row controls-row-drive" style="display:none;">
-                        <button id="createFirstLaunchBtn" class="button-with-icon" title="${loc.createFirstLaunchZipTitle}">
+                        <button id="createFirstLaunchBtn" class="button-with-icon toolbar-btn primary" title="${loc.createFirstLaunchZipTitle}">
                             <span class="codicon codicon-file-zip"></span> ${loc.buildFL}
                         </button>
                     </div>
                 </div>
             </div>
-        </div>
+        </section>
     </div>
     <script type="application/javascript" nonce="${nonce}">window.__loc = ${webviewLoc};</script>
     <script type="application/javascript" nonce="${nonce}" src="${scriptUri}"></script>

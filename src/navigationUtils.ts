@@ -1,5 +1,6 @@
 ﻿import * as vscode from 'vscode';
 import * as path from 'path'; // Используется для path.basename в логах или QuickPick
+import { findScenarioDescriptorUris, findYamlFilesUnderScanDir, readTextFileFast } from './workspaceScanner';
 
 /**
  * Асинхронно ищет первый YAML файл в папке tests,
@@ -26,18 +27,14 @@ export async function findFileByName(searchText: string, testCache?: Map<string,
         console.warn("[findFileByName] Рабочая область не открыта.");
         return null;
     }
-    // Ищем во всех YAML файлах в папке tests
-    const globPattern = 'tests/**/*.yaml';
-    const excludePattern = '**/node_modules/**'; // Стандартное исключение
-
     try {
-        const fileUris = await vscode.workspace.findFiles(globPattern, excludePattern);
+        const workspaceRootUri = workspaceFolders[0].uri;
+        const fileUris = await findScenarioDescriptorUris(workspaceRootUri);
         // console.log(`[findFileByName] Found ${fileUris.length} potential YAML files to check for "${searchText}".`);
 
         for (const fileUri of fileUris) {
             try {
-                const contentBytes = await vscode.workspace.fs.readFile(fileUri);
-                const content = Buffer.from(contentBytes).toString('utf-8');
+                const content = await readTextFileFast(fileUri);
                 // Ищем строку Имя: "..." с точным совпадением имени
                 const nameMatch = content.match(/Имя:\s*\"(.+?)\"/); // Находим первое вхождение
                 if (nameMatch && nameMatch[1] === searchText) {
@@ -67,9 +64,6 @@ export async function findFileByName(searchText: string, testCache?: Map<string,
 export async function findScenarioReferences(targetName: string, token?: vscode.CancellationToken): Promise<vscode.Location[]> {
     console.log(`[findScenarioReferences] Searching for nested scenario references: "${targetName}"...`);
     const locations: vscode.Location[] = [];
-    const searchPattern = 'tests/**/*.yaml';
-    const excludePattern = '**/node_modules/**';
-
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
         console.warn("[findScenarioReferences] Рабочая область не открыта.");
@@ -77,7 +71,8 @@ export async function findScenarioReferences(targetName: string, token?: vscode.
     }
 
     try {
-        const potentialFiles = await vscode.workspace.findFiles(searchPattern, excludePattern);
+        const workspaceRootUri = workspaceFolders[0].uri;
+        const potentialFiles = await findYamlFilesUnderScanDir(workspaceRootUri, token);
         console.log(`[findScenarioReferences] Found ${potentialFiles.length} potential files to search within.`);
 
         // Экранируем специальные символы Regex в targetName на всякий случай
@@ -92,8 +87,7 @@ export async function findScenarioReferences(targetName: string, token?: vscode.
                  break;
             }
             try {
-                const fileContentBytes = await vscode.workspace.fs.readFile(fileUri);
-                const fileContent = Buffer.from(fileContentBytes).toString('utf-8');
+                const fileContent = await readTextFileFast(fileUri);
                 const lines = fileContent.split('\n');
 
                 for (let i = 0; i < lines.length; i++) {

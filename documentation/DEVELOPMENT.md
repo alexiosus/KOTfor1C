@@ -17,10 +17,21 @@
 | `src/scenarioCreator.ts` | Создание главных и вложенных сценариев по шаблонам |
 | `src/phaseSwitcherMetadata.ts` | Работа с `KOTМетаданные`, миграция legacy-тегов |
 | `src/yamlParametersManager.ts` | Webview менеджера параметров (СППР/VA/GlobalVars) |
+| `src/formExplorerPanel.ts` | Webview-панель исследования открытой формы 1С через JSON snapshot |
+| `src/formExplorerPaths.ts` | Разрешение настроек путей Form Explorer: snapshot, исходники конфигурации, каталог генерации |
+| `src/formExplorerExtensionGenerator.ts` | Генерация source tree расширения Form Explorer, индекса форм и сборка `.cfe` (встроенный Windows builder через `1cv8c.exe` + sibling `1cv8.exe` или внешний override) |
+| `src/formExplorerBuilder.ts` | Builder-ИБ Form Explorer: sidecar-файлы адаптера, прогрев builder-ИБ, build output |
+| `src/startupInfobase.ts` | Lightweight startup-ИБ для Vanessa и `СборкаТекстовСценариев`: автосоздание, output и background warmup |
+| `src/oneCPlatform.ts` | Автоопределение установленной платформы 1С и разрешение путей `1cv8c.exe` / `1cv8.exe` |
+| `src/formExplorerEnrichment.ts` | Обогащение runtime snapshot-а данными из `Form.xml` и metadata выгрузки конфигурации |
+| `src/formExplorerTypes.ts` | Контракт и нормализация snapshot JSON для Form Explorer |
 | `src/stepsFetcher.ts` | Загрузка и кеширование `steps.htm` |
 | `src/scenarioParameterUtils.ts` | Нормализация и дефолты параметров |
 | `media/phaseSwitcher.*` | UI Test Manager (`Менеджер тестов`) |
 | `media/yamlParameters.*` | UI менеджера параметров |
+| `media/formExplorer.*` | UI панели Form Explorer |
+| `res/formExplorer/adapter/KOTFormExplorerAdapterClient.bsl` | Базовый source template runtime-модуля, который генератор дополняет support-кодом |
+| `tools/form-explorer/build-cfe.*` | Внешние helper-скрипты для optional override сборки `.cfe` |
 
 ## 2) Основной runtime-поток
 
@@ -114,7 +125,27 @@
 
 - используется SecretStorage для состояния менеджера.
 
-## 8) Где расширять функционал
+## 8) Form Explorer: runtime + static enrichment
+
+Поток Form Explorer:
+
+1. `src/formExplorerExtensionGenerator.ts` сканирует `cf`, строит `forms-index.json` и генерирует runtime `.cfe`.
+2. Generated runtime инициализируется на старте 1С через `ManagedApplicationModule`.
+3. Runtime пишет:
+   - `form-snapshot.json`
+   - `adapter-settings.json`
+   - `adapter-mode.txt`
+   - `adapter-mode-request.txt`
+4. `src/formExplorerPanel.ts` читает snapshot и mode-state, а `src/formExplorerEnrichment.ts` обогащает данные из `Form.xml`.
+5. `media/formExplorer.*` показывает UI-inspector и умеет переключать `manual/auto` режим.
+
+Особенности:
+
+- runtime intentionally lightweight: без заимствования прикладных форм;
+- builder на Windows кэширует file infobase и не перезагружает базовую конфигурацию без необходимости;
+- `auto snapshot` оптимизирован: полный snapshot строится не на каждом тике, а только если изменился cheap-signature активной формы.
+
+## 9) Где расширять функционал
 
 ### Добавить новую команду
 
@@ -144,7 +175,7 @@
 3. Обработать сообщение в `src/phaseSwitcher.ts`.
 4. Обновить модели состояния и l10n.
 
-## 9) Что проверять после изменений
+## 10) Что проверять после изменений
 
 Минимум:
 
@@ -154,9 +185,16 @@
    - diagnostics + quick fix;
    - save-pipeline;
    - Test Manager (чекбоксы -> build filter, build/run/statuses);
-   - менеджер параметров (все вкладки, импорт/экспорт).
+   - менеджер параметров (все вкладки, импорт/экспорт);
+   - Form Explorer webview.
 
-## 10) Что важно не ломать
+3. Если менялся runtime Form Explorer:
+   - пересобрать `.cfe`;
+   - переустановить его в тестовую базу;
+   - перезапустить клиент 1С;
+   - проверить manual/auto режим, hotkey и startup-init.
+
+## 11) Что важно не ломать
 
 - Инкрементальность кеша: избегать полных пересканирований без необходимости.
 - Производительность diagnostics на больших проектах.

@@ -1,4 +1,19 @@
+@import url("./kotWebviewTheme.css");
+
 /* Build Scenario Parameters Manager Styles */
+
+:root {
+    --yp-bg: var(--kot-bg);
+    --yp-surface-0: var(--kot-surface-0);
+    --yp-surface-1: var(--kot-surface-1);
+    --yp-surface-2: var(--kot-surface-2);
+    --yp-button-bg: var(--kot-button-bg);
+    --yp-border: var(--kot-border);
+    --yp-border-strong: var(--kot-border-strong);
+    --yp-shadow: var(--kot-shadow);
+    --yp-muted: var(--kot-muted);
+    --yp-accent: var(--kot-accent);
+}
 
 html,
 body {
@@ -8,37 +23,45 @@ body {
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     margin: 0;
-    padding: 12px 16px;
+    padding: 10px;
     box-sizing: border-box;
-    background-color: var(--vscode-editor-background);
+    background: var(--yp-bg);
     color: var(--vscode-editor-foreground);
     display: flex;
+    flex-direction: column;
     min-height: 0;
+    height: 100vh;
     overflow: hidden;
 }
 
 .container {
-    max-width: 1200px;
+    max-width: none;
     width: 100%;
-    margin: 0 auto;
+    margin: 0;
     height: 100%;
     margin-bottom: 8px;
     min-height: 0;
     display: flex;
     flex-direction: column;
+    gap: 10px;
 }
 
 .header {
-    margin-bottom: 14px;
-    text-align: center;
+    margin-bottom: 0;
+    text-align: left;
     flex-shrink: 0;
+    border: 1px solid var(--yp-border);
+    border-radius: 16px;
+    background: var(--yp-surface-0);
+    box-shadow: var(--yp-shadow);
+    padding: 10px 12px;
 }
 
 .header h1 {
-    margin: 0 0 10px 0;
+    margin: 0 0 6px 0;
     color: var(--vscode-editor-foreground);
-    font-size: 24px;
-    font-weight: 600;
+    font-size: 18px;
+    font-weight: 800;
 }
 
 .header p {
@@ -48,11 +71,16 @@ body {
 }
 
 .controls {
-    margin-bottom: 12px;
+    margin-bottom: 0;
     display: flex;
     justify-content: space-between;
     align-items: center;
     flex-shrink: 0;
+    border: 1px solid var(--yp-border);
+    border-radius: 16px;
+    background: var(--yp-surface-0);
+    box-shadow: var(--yp-shadow);
+    padding: 10px 12px;
 }
 
 .controls-left {
@@ -70,30 +98,34 @@ body {
 .tabs {
     display: flex;
     align-items: center;
-    border-bottom: 1px solid var(--vscode-panel-border);
-    margin-bottom: 8px;
+    border: 1px solid var(--yp-border);
+    border-radius: 14px;
+    background: var(--yp-surface-1);
+    margin-bottom: 0;
+    padding: 3px;
     flex-shrink: 0;
 }
 
 .tab-btn {
     border: none;
-    border-bottom: 2px solid transparent;
     background: transparent;
     color: var(--vscode-descriptionForeground);
-    padding: 8px 12px;
+    padding: 7px 12px;
     cursor: pointer;
     font-size: 13px;
     font-weight: 600;
+    border-radius: 10px;
 }
 
 .tab-btn:hover {
     color: var(--vscode-editor-foreground);
-    background-color: var(--vscode-list-hoverBackground);
+    background-color: var(--yp-surface-2);
 }
 
 .tab-btn.active {
     color: var(--vscode-editor-foreground);
-    border-bottom-color: var(--vscode-focusBorder);
+    border: 1px solid var(--yp-border-strong);
+    background: color-mix(in srgb, var(--vscode-focusBorder) 14%, var(--yp-surface-1) 86%);
 }
 
 .tab-btn:focus-visible {
@@ -102,9 +134,10 @@ body {
 }
 
 .tab-panels {
-    border: 1px solid var(--vscode-panel-border);
-    border-radius: 6px;
-    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--yp-border);
+    border-radius: 16px;
+    background-color: var(--yp-surface-0);
+    box-shadow: var(--yp-shadow);
     flex: 1 1 auto;
     min-height: 0;
     display: flex;
@@ -137,7 +170,7 @@ body {
 }
 
 .section-content {
-    padding: 0;
+    padding: 10px;
     flex: 1 1 auto;
     min-height: 0;
     display: flex;
@@ -174,10 +207,10 @@ body {
     width: 100%;
     box-sizing: border-box;
     padding: 7px 30px 7px 30px;
-    border: 1px solid var(--vscode-input-border);
-    background-color: var(--vscode-input-background);
+    border: 1px solid var(--yp-border);
+    background-color: color-mix(in srgb, var(--vscode-input-background) 84%, var(--yp-surface-1) 16%);
     color: var(--vscode-input-foreground);
-    border-radius: 4px;
+    border-radius: 12px;
     font-size: 13px;
 }
 
@@ -249,10 +282,10 @@ body {
     position: absolute;
     top: 100%;
     right: 0;
-    background-color: var(--vscode-editorWidget-background);
-    border: 1px solid var(--vscode-contrastBorder);
-    border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    background-color: var(--yp-surface-0);
+    border: 1px solid var(--yp-border);
+    border-radius: 14px;
+    box-shadow: var(--yp-shadow);
     z-index: 1000;
     margin-top: 2px;
     padding: 16px;
@@ -313,17 +346,18 @@ body {
     align-items: center;
     gap: 6px;
     padding: 8px 12px;
-    border: 1px solid var(--vscode-button-border);
-    background-color: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
-    border-radius: 4px;
+    border: 1px solid var(--yp-border);
+    background-color: var(--yp-surface-1);
+    color: var(--vscode-editor-foreground);
+    border-radius: 12px;
     cursor: pointer;
     font-size: 13px;
     transition: all 0.2s ease;
 }
 
 .button-with-icon:hover {
-    background-color: var(--vscode-button-hoverBackground);
+    border-color: var(--yp-border-strong);
+    background-color: var(--yp-surface-2);
 }
 
 .button-with-icon:disabled {
@@ -332,10 +366,10 @@ body {
 }
 
 .table-container {
-    border: 1px solid var(--vscode-panel-border);
-    border-radius: 6px;
+    border: 1px solid var(--yp-border);
+    border-radius: 14px;
     overflow: hidden;
-    background-color: var(--vscode-editor-background);
+    background-color: var(--yp-surface-1);
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
@@ -480,11 +514,11 @@ body {
 }
 
 .compact-action-btn {
-    background-color: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
-    border: 1px solid var(--vscode-button-border, var(--vscode-contrastBorder));
+    background-color: var(--yp-surface-1);
+    color: var(--vscode-editor-foreground);
+    border: 1px solid var(--yp-border);
     padding: 6px 10px;
-    border-radius: 4px;
+    border-radius: 12px;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
@@ -499,25 +533,27 @@ body {
 }
 
 .compact-action-btn:hover {
-    background-color: var(--vscode-button-hoverBackground);
+    border-color: var(--yp-border-strong);
+    background-color: var(--yp-surface-2);
 }
 
 .dropdown-content {
     display: none;
     position: absolute;
-    background-color: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+    background-color: var(--yp-surface-0);
     min-width: 250px;
-    box-shadow: 0 8px 16px 0 rgba(0, 0, 0, 0.2);
+    box-shadow: var(--yp-shadow);
     z-index: 1000;
-    border: 1px solid var(--vscode-menu-border, var(--vscode-contrastBorder));
-    border-radius: 4px;
+    border: 1px solid var(--yp-border);
+    border-radius: 14px;
     right: 0;
     top: 100%;
+    padding: 6px;
 }
 
 .dropdown-content .dropdown-item {
     color: var(--vscode-menu-foreground, var(--vscode-editor-foreground));
-    padding: 8px 12px;
+    padding: 0px 12px;
     text-decoration: none;
     display: flex;
     align-items: center;
@@ -531,8 +567,9 @@ body {
 }
 
 .dropdown-content .dropdown-item:hover {
-    background-color: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+    background-color: var(--yp-surface-2);
     color: var(--vscode-menu-selectionForeground, var(--vscode-list-hoverForeground));
+    border-radius: 10px;
 }
 
 .dropdown-section-title {
@@ -541,7 +578,7 @@ body {
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--vscode-descriptionForeground);
-    background-color: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+    background-color: transparent;
 }
 
 .dropdown-divider {
@@ -592,5 +629,210 @@ body {
     #globalVarsTable th,
     #globalVarsTable td {
         padding: 8px 12px;
+    }
+}
+
+body {
+    padding: 0 20px;
+    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}
+
+.yaml-parameters-shell {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+}
+
+.parameters-topbar {
+    flex: 0 0 auto;
+}
+
+.parameters-main-panel {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    gap: 12px;
+}
+
+.parameters-toolbar {
+    justify-content: flex-end;
+}
+
+.help-button {
+    min-width: 32px;
+    padding-inline: 8px;
+}
+
+.help-tooltip {
+    top: calc(100% + 8px);
+    right: 0;
+    width: min(520px, calc(100vw - 32px));
+}
+
+.help-content {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.help-content p {
+    margin: 0;
+}
+
+.tabs {
+    flex: 0 0 auto;
+    align-self: flex-start;
+}
+
+.tab-panels {
+    flex: 1 1 auto;
+    min-height: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.tab-panel {
+    padding: 0;
+}
+
+.section-summary-text {
+    gap: 0;
+}
+
+.section-description,
+.tab-note {
+    margin: 15px;
+    color: var(--yp-muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.section-toolbar {
+    gap: 10px;
+}
+
+.search-box {
+    margin-left: auto;
+    width: min(380px, 42%);
+    min-width: 220px;
+}
+
+.search-input {
+    padding: 8px 30px 8px 36px;
+}
+
+.table-container {
+    border-radius: 14px;
+    background: var(--yp-surface-1);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--yp-border) 42%, transparent);
+}
+
+#buildParametersTable thead,
+#additionalParametersTable thead,
+#globalVarsTable thead {
+    background: color-mix(in srgb, var(--yp-surface-0) 88%, var(--yp-surface-2) 12%);
+}
+
+#buildParametersTable th,
+#additionalParametersTable th,
+#globalVarsTable th {
+    padding: 10px 12px;
+    text-align: left;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--yp-muted);
+    font-weight: 700;
+}
+
+#buildParametersTable td,
+#additionalParametersTable td,
+#globalVarsTable td {
+    padding: 10px 12px;
+    border-bottom: 1px solid color-mix(in srgb, var(--yp-border) 68%, transparent);
+}
+
+#buildParametersTable tr:hover,
+#additionalParametersTable tr:hover,
+#globalVarsTable tr:hover {
+    background: color-mix(in srgb, var(--yp-surface-2) 78%, transparent);
+}
+
+#buildParametersTable th,
+#additionalParametersTable th,
+#globalVarsTable th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: color-mix(in srgb, var(--yp-surface-0) 88%, var(--yp-surface-2) 12%);
+    border-bottom: none !important;
+    box-shadow: 0 1px 0 color-mix(in srgb, var(--yp-border) 68%, transparent);
+}
+
+.param-key,
+.param-value {
+    border: 1px solid var(--yp-border);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--vscode-input-background) 84%, var(--yp-surface-1) 16%);
+}
+
+.param-key {
+    min-width: 180px;
+    font-weight: 600;
+}
+
+.param-value {
+    min-width: 280px;
+}
+
+.param-override {
+    accent-color: var(--yp-accent);
+}
+
+.remove-row-btn {
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    min-height: 28px !important;
+    border-radius: 10px !important;
+    border: 1px solid color-mix(in srgb, var(--vscode-errorForeground) 42%, transparent) !important;
+    background: color-mix(in srgb, var(--vscode-errorForeground) 18%, var(--yp-surface-1) 82%) !important;
+    color: var(--vscode-errorForeground) !important;
+}
+
+.remove-row-btn:hover {
+    background: color-mix(in srgb, var(--vscode-errorForeground) 24%, var(--yp-surface-2) 76%) !important;
+    opacity: 1;
+}
+
+.dropdown-container.show > .menu-popover {
+    display: flex;
+}
+
+.dropdown-content {
+    min-width: 260px;
+}
+
+.dropdown-section-title {
+    padding: 6px 10px;
+}
+
+@media (max-width: 768px) {
+    body {
+        padding: 0;
+    }
+
+    .parameters-topbar {
+        grid-template-columns: 1fr;
+    }
+
+    .parameters-main-panel {
+        gap: 10px;
     }
 }

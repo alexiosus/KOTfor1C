@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/KOTfor1C",
-  "version": "2.3.1",
+  "version": "2.5.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -208,18 +208,24 @@
             "description": "%config.runVanessa.runtimeDirectory.description%",
             "order": 2
           },
+          "kotTestToolkit.runVanessa.showOutputPanel": {
+            "type": "boolean",
+            "default": false,
+            "description": "%config.runVanessa.showOutputPanel.description%",
+            "order": 3
+          },
           "kotTestToolkit.runVanessa.commandTemplate": {
             "type": "string",
             "default": "",
             "description": "%config.runVanessa.commandTemplate.description%",
             "markdownDescription": "%config.runVanessa.commandTemplate.markdownDescription%",
-            "order": 3
+            "order": 4
           },
           "kotTestToolkit.runVanessa.checkUnsafeActionProtection": {
             "type": "boolean",
             "default": true,
             "description": "%config.runVanessa.checkUnsafeActionProtection.description%",
-            "order": 4
+            "order": 5
           },
           "kotTestToolkit.runVanessa.liveLogRefreshSeconds": {
             "type": "number",
@@ -227,7 +233,67 @@
             "minimum": 1,
             "maximum": 60,
             "description": "%config.runVanessa.liveLogRefreshSeconds.description%",
+            "order": 6
+          },
+          "kotTestToolkit.runVanessa.autoDetectMinStartupUpdates": {
+            "type": "number",
+            "default": 2,
+            "minimum": 1,
+            "maximum": 10,
+            "description": "%config.runVanessa.autoDetectMinStartupUpdates.description%",
+            "order": 7
+          },
+          "kotTestToolkit.runVanessa.autoDetectInactivityTimeoutSeconds": {
+            "type": "number",
+            "default": 20,
+            "minimum": 5,
+            "maximum": 3600,
+            "description": "%config.runVanessa.autoDetectInactivityTimeoutSeconds.description%",
+            "order": 8
+          }
+        }
+      },
+      {
+        "title": "%config.formExplorerSettings.title%",
+        "properties": {
+          "kotTestToolkit.formExplorer.snapshotPath": {
+            "type": "string",
+            "default": ".vscode/kot-runtime/form-explorer/form-snapshot.json",
+            "description": "%config.formExplorer.snapshotPath.description%",
+            "order": 1
+          },
+          "kotTestToolkit.formExplorer.configurationSourceDirectory": {
+            "type": "string",
+            "default": "cf",
+            "description": "%config.formExplorer.configurationSourceDirectory.description%",
+            "order": 2
+          },
+          "kotTestToolkit.formExplorer.generatedArtifactsDirectory": {
+            "type": "string",
+            "default": ".vscode/kot-runtime/form-explorer",
+            "description": "%config.formExplorer.generatedArtifactsDirectory.description%",
+            "order": 3
+          },
+          "kotTestToolkit.formExplorer.extensionBuildCommandTemplate": {
+            "type": "string",
+            "default": "",
+            "description": "%config.formExplorer.extensionBuildCommandTemplate.description%",
+            "markdownDescription": "%config.formExplorer.extensionBuildCommandTemplate.markdownDescription%",
+            "order": 4
+          },
+          "kotTestToolkit.formExplorer.autoRefreshSeconds": {
+            "type": "number",
+            "default": 1,
+            "minimum": 1,
+            "maximum": 60,
+            "description": "%config.formExplorer.autoRefreshSeconds.description%",
             "order": 5
+          },
+          "kotTestToolkit.formExplorer.showOutputPanel": {
+            "type": "boolean",
+            "default": false,
+            "description": "%config.formExplorer.showOutputPanel.description%",
+            "order": 6
           }
         }
       },
@@ -263,29 +329,23 @@
             "description": "%config.buildPath.description%",
             "order": 3
           },
-          "kotTestToolkit.paths.emptyInfobase": {
-            "type": "string",
-            "default": "",
-            "description": "%config.emptyInfobase.description%",
-            "order": 4
-          },
           "kotTestToolkit.paths.oneCEnterpriseExe": {
             "type": "string",
-            "default": "C:\\Program Files (x86)\\1cv8\\8.3.24.1738\\bin\\1cv8.exe",
+            "default": "",
             "description": "%config.oneCEnterpriseExe.description%",
-            "order": 5
+            "order": 4
           },
           "kotTestToolkit.paths.fileWorkshopExe": {
             "type": "string",
             "default": "C:\\Program Files (x86)\\1cv8fv\\bin\\1cv8fv.exe",
             "description": "%config.fileWorkshopExe.description%",
-            "order": 6
+            "order": 5
           },
           "kotTestToolkit.paths.firstLaunchFolder": {
             "type": "string",
             "default": "",
             "description": "%config.paths.firstLaunchFolder.description%",
-            "order": 7
+            "order": 6
           }
         }
       }
@@ -387,6 +447,31 @@
         "category": "%cmd.category%"
       },
       {
+        "command": "kotTestToolkit.openFormExplorer",
+        "title": "%cmd.openFormExplorer.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.openInfobaseManager",
+        "title": "%cmd.openInfobaseManager.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.generateFormExplorerExtension",
+        "title": "%cmd.generateFormExplorerExtension.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.buildFormExplorerExtensionCfe",
+        "title": "%cmd.buildFormExplorerExtensionCfe.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.installFormExplorerExtension",
+        "title": "%cmd.installFormExplorerExtension.title%",
+        "category": "%cmd.category%"
+      },
+      {
         "command": "kotTestToolkit.fixScenarioIssues",
         "title": "%cmd.fixScenarioIssues.title%",
         "category": "%cmd.category%"
@@ -449,6 +534,26 @@
       {
         "command": "kotTestToolkit.changeNestedScenarioName",
         "title": "%cmd.changeNestedScenarioName.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.trackScenarioRunByFeatureLog",
+        "title": "%cmd.trackScenarioRunByFeatureLog.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.switchTrackedScenarioRunForFeature",
+        "title": "%cmd.switchTrackedScenarioRunForFeature.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.stopTrackedScenarioRunForFeature",
+        "title": "%cmd.stopTrackedScenarioRunForFeature.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.trackScenarioRunFromOpenedLogFile",
+        "title": "%cmd.trackScenarioRunFromOpenedLogFile.title%",
         "category": "%cmd.category%"
       }
     ],
@@ -525,6 +630,26 @@
         {
           "command": "kotTestToolkit.openNestedScenarioFromFeature",
           "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "00_navigation@0"
+        },
+        {
+          "command": "kotTestToolkit.trackScenarioRunByFeatureLog",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "00_navigation@1"
+        },
+        {
+          "command": "kotTestToolkit.switchTrackedScenarioRunForFeature",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "00_navigation@2"
+        },
+        {
+          "command": "kotTestToolkit.stopTrackedScenarioRunForFeature",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "00_navigation@3"
+        },
+        {
+          "command": "kotTestToolkit.trackScenarioRunFromOpenedLogFile",
+          "when": "editorTextFocus && resourceExtname == .log",
           "group": "00_navigation@0"
         },
         {
@@ -640,6 +765,26 @@
           "when": "true"
         },
         {
+          "command": "kotTestToolkit.openFormExplorer",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.openInfobaseManager",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.generateFormExplorerExtension",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.buildFormExplorerExtensionCfe",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.installFormExplorerExtension",
+          "when": "true"
+        },
+        {
           "command": "kotTestToolkit.fixScenarioIssues",
           "when": "true"
         },
@@ -694,6 +839,22 @@
         {
           "command": "kotTestToolkit.openNestedScenarioFromFeature",
           "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.trackScenarioRunByFeatureLog",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.switchTrackedScenarioRunForFeature",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.stopTrackedScenarioRunForFeature",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.trackScenarioRunFromOpenedLogFile",
+          "when": "true"
         }
       ]
     },
@@ -723,23 +884,21 @@
     "watch": "npm run copy-codicons && npm run esbuild-base -- --sourcemap --watch",
     "copy-codicons": "cpy node_modules/@vscode/codicons/dist/codicon.css node_modules/@vscode/codicons/dist/codicon.ttf media --flat",
     "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
-    "test": "vscode-test"
+    "test": "echo \"No automated tests configured\""
   },
   "devDependencies": {
-    "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
     "@types/uuid": "^10.0.0",
     "@types/vscode": "^1.98.0",
     "@typescript-eslint/eslint-plugin": "^8.28.0",
     "@typescript-eslint/parser": "^8.28.0",
     "@vscode/codicons": "^0.0.44",
-    "@vscode/test-cli": "^0.0.10",
-    "@vscode/test-electron": "^2.4.1",
     "cpy-cli": "^5.0.0",
     "eslint": "^9.23.0",
     "typescript": "^5.8.2"
   },
   "dependencies": {
+    "jszip": "^3.10.1",
     "node-html-parser": "^7.0.1",
     "uuid": "^11.1.0"
   }

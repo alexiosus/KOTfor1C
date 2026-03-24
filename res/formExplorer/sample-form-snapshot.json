@@ -1,0 +1,218 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-03-19T10:15:00.000Z",
+  "source": {
+    "application": "1C:Enterprise",
+    "infobase": "Srvr=\"localhost\";Ref=\"Demo\";",
+    "platformVersion": "8.3.26.1540",
+    "configurationVersion": "2.5.1",
+    "user": "Admin",
+    "sessionId": "TestClient-01",
+    "host": "qa-host",
+    "project": "demo-workspace"
+  },
+  "form": {
+    "title": "Customer card",
+    "windowTitle": "Customers",
+    "name": "ItemForm",
+    "metadataPath": "Catalog.Customers.Form.ItemForm",
+    "type": "ManagedForm",
+    "viewKind": "Form",
+    "activeElementPath": "Root.MainGroup.Name",
+    "notes": [
+      "Snapshot was generated in the current client session.",
+      "Source paths are optional and project-specific."
+    ]
+  },
+  "elements": [
+    {
+      "path": "Root",
+      "name": "Root",
+      "title": "Root container",
+      "kind": "Group",
+      "children": [
+        {
+          "path": "Root.MainGroup",
+          "name": "MainGroup",
+          "title": "Main group",
+          "kind": "Group",
+          "children": [
+            {
+              "path": "Root.MainGroup.Name",
+              "name": "Name",
+              "title": "Customer name",
+              "synonym": "Name",
+              "kind": "Field",
+              "type": "InputField",
+              "boundAttributePath": "Object.Description",
+              "visible": true,
+              "available": true,
+              "enabled": true,
+              "readOnly": false,
+              "active": true,
+              "valuePreview": "John Smith",
+              "metadataPath": "Catalog.Customers.Form.ItemForm.Items.Name",
+              "source": {
+                "path": "src/forms/Customers/ItemForm.xml",
+                "line": 28,
+                "column": 1
+              },
+              "children": []
+            },
+            {
+              "path": "Root.MainGroup.Code",
+              "name": "Code",
+              "title": "Code",
+              "kind": "Field",
+              "type": "InputField",
+              "boundAttributePath": "Object.Code",
+              "visible": true,
+              "available": true,
+              "enabled": true,
+              "readOnly": true,
+              "valuePreview": "000000123",
+              "children": []
+            },
+            {
+              "path": "Root.MainGroup.Region",
+              "name": "Region",
+              "title": "Region",
+              "kind": "Field",
+              "type": "ChoiceField",
+              "boundAttributePath": "Object.Region",
+              "visible": true,
+              "available": false,
+              "enabled": false,
+              "readOnly": false,
+              "valuePreview": "",
+              "children": []
+            },
+            {
+              "path": "Root.MainGroup.Items",
+              "name": "Items",
+              "title": "Items",
+              "synonym": "Items",
+              "kind": "Table",
+              "type": "Table",
+              "boundAttributePath": "Object.Items",
+              "visible": true,
+              "available": true,
+              "enabled": true,
+              "readOnly": false,
+              "tableData": {
+                "columns": [
+                  "Product",
+                  "Quantity",
+                  "Price"
+                ],
+                "rows": [
+                  [
+                    "Cake",
+                    "3",
+                    "100.00"
+                  ],
+                  [
+                    "Tea",
+                    "2",
+                    "60.00"
+                  ]
+                ],
+                "rowCount": 2,
+                "truncated": false,
+                "sourcePath": "Object.Items"
+              },
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "tables": [
+    {
+      "path": "Object.Items",
+      "title": "Items",
+      "elementPath": "Root.MainGroup.Items",
+      "boundAttributePath": "Object.Items",
+      "sourcePath": "Object.Items",
+      "tableData": {
+        "columns": [
+          "Product",
+          "Quantity",
+          "Price"
+        ],
+        "rows": [
+          [
+            "Cake",
+            "3",
+            "100.00"
+          ],
+          [
+            "Tea",
+            "2",
+            "60.00"
+          ]
+        ],
+        "rowCount": 2,
+        "truncated": false,
+        "sourcePath": "Object.Items"
+      }
+    }
+  ],
+  "attributes": [
+    {
+      "path": "Object.Description",
+      "name": "Description",
+      "synonym": "Name",
+      "type": "String(100)",
+      "valuePreview": "John Smith",
+      "visible": true,
+      "available": true,
+      "readOnly": false,
+      "required": true,
+      "metadataPath": "Catalog.Customers.Description"
+    },
+    {
+      "path": "Object.Code",
+      "name": "Code",
+      "synonym": "Code",
+      "type": "String(9)",
+      "valuePreview": "000000123",
+      "visible": true,
+      "available": true,
+      "readOnly": true,
+      "required": true,
+      "metadataPath": "Catalog.Customers.Code"
+    },
+    {
+      "path": "Object.Region",
+      "name": "Region",
+      "synonym": "Region",
+      "type": "CatalogRef.Regions",
+      "valuePreview": "",
+      "visible": true,
+      "available": false,
+      "readOnly": false,
+      "required": false,
+      "metadataPath": "Catalog.Customers.Region"
+    }
+  ],
+  "commands": [
+    {
+      "name": "WriteAndClose",
+      "title": "Save and close",
+      "available": true,
+      "action": "Form command"
+    },
+    {
+      "name": "Delete",
+      "title": "Delete",
+      "available": false,
+      "action": "Form command"
+    }
+  ],
+  "notes": [
+    "Use boundAttributePath to highlight the related attribute row.",
+    "Elements and attributes may contain optional source locations."
+  ]
+}

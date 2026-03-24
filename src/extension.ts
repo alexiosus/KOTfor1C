@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { execFile } from 'node:child_process';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { promisify } from 'node:util';
@@ -41,6 +42,25 @@ import { SettingsProvider } from './settingsProvider';
 import { ScenarioDiagnosticsProvider } from './scenarioDiagnostics';
 import { isScenarioYamlFile } from './yamlValidator';
 import { ScenarioHeaderInlayHintsProvider } from './scenarioHeaderInlayHintsProvider';
+import { FormExplorerPanel } from './formExplorerPanel';
+import { InfobaseManagerPanel } from './infobaseManagerPanel';
+import {
+    handleBuildFormExplorerExtensionCfe,
+    handleGenerateFormExplorerExtension,
+    handleInstallFormExplorerExtension,
+    handleStartFormExplorerInfobase
+} from './formExplorerExtensionGenerator';
+import {
+    ensureFormExplorerBuilderInfobaseReady,
+    initializeFormExplorerRuntimeSidecars,
+    shouldPrepareFormExplorerBuilderInfobase
+} from './formExplorerBuilder';
+import { detectInstalledOneCClientExePath } from './oneCPlatform';
+import {
+    ensureSharedStartupInfobaseReady,
+    getSharedStartupInfobaseOutputChannel,
+    shouldPrepareSharedStartupInfobase
+} from './startupInfobase';
 import {
     extractTopLevelKotMetadataBlock,
     migrateLegacyPhaseSwitcherMetadata,
@@ -82,9 +102,160 @@ const pendingBackgroundScenarioFiles = new Set<string>();
 const kotDescriptionBlockLineRegex = /^Описание:\s*[|>][-+0-9]*\s*$/;
 const FAVORITE_SCENARIO_DROP_MIME = 'application/x-kot-favorite-scenario-uri';
 const execFileAsync = promisify(execFile);
+let builderWarmupInFlight: Promise<void> | null = null;
+let startupInfobaseWarmupInFlight: Promise<void> | null = null;
 
 function escapeRegexLiteral(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getConfigurationTarget(): vscode.ConfigurationTarget {
+    return vscode.workspace.workspaceFolders?.length
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+}
+
+function getConfiguredOneCClientPath(): string {
+    return (vscode.workspace.getConfiguration('kotTestToolkit').get<string>('paths.oneCEnterpriseExe') || '').trim();
+}
+
+function normalizePreferredOneCClientPath(configuredPath: string): string {
+    const trimmedPath = configuredPath.trim();
+    if (!trimmedPath) {
+        return '';
+    }
+
+    const lowerFileName = path.basename(trimmedPath).toLowerCase();
+    if (lowerFileName === '1cv8.exe') {
+        const siblingClientPath = path.join(path.dirname(trimmedPath), '1cv8c.exe');
+        if (fs.existsSync(siblingClientPath)) {
+            return siblingClientPath;
+        }
+    }
+
+    return trimmedPath;
+}
+
+async function ensureOneCClientPathConfigured(context: vscode.ExtensionContext): Promise<string | null> {
+    const config = vscode.workspace.getConfiguration('kotTestToolkit');
+    const configuredPath = getConfiguredOneCClientPath();
+    const preferredConfiguredPath = normalizePreferredOneCClientPath(configuredPath);
+
+    if (preferredConfiguredPath && preferredConfiguredPath !== configuredPath) {
+        await config.update('paths.oneCEnterpriseExe', preferredConfiguredPath, getConfigurationTarget());
+        return preferredConfiguredPath;
+    }
+
+    if (preferredConfiguredPath && fs.existsSync(preferredConfiguredPath)) {
+        return preferredConfiguredPath;
+    }
+
+    const detectedPath = await detectInstalledOneCClientExePath();
+    if (!detectedPath) {
+        return preferredConfiguredPath || null;
+    }
+
+    if (detectedPath !== configuredPath) {
+        await config.update('paths.oneCEnterpriseExe', detectedPath, getConfigurationTarget());
+    }
+
+    return detectedPath;
+}
+
+async function warmUpFormExplorerBuilder(
+    context: vscode.ExtensionContext,
+    reason: 'startup' | 'configuration'
+): Promise<void> {
+    if (builderWarmupInFlight) {
+        return builderWarmupInFlight;
+    }
+
+    builderWarmupInFlight = (async () => {
+        await initializeFormExplorerRuntimeSidecars();
+        const oneCClientPath = getConfiguredOneCClientPath();
+        if (!oneCClientPath || !fs.existsSync(oneCClientPath)) {
+            return;
+        }
+
+        if (!(await shouldPrepareFormExplorerBuilderInfobase())) {
+            return;
+        }
+
+        const t = await getTranslator(context.extensionUri);
+        try {
+            const showOutputPanel = vscode.workspace
+                .getConfiguration('kotTestToolkit.formExplorer')
+                .get<boolean>('showOutputPanel', false);
+            await ensureFormExplorerBuilderInfobaseReady(context, oneCClientPath, {
+                showOutputPanel,
+                showProgressNotification: true,
+                progressTitle: reason === 'startup'
+                    ? t('Preparing KOT Form Explorer builder infobase...')
+                    : t('Preparing KOT Form Explorer builder infobase after settings change...')
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const openOutput = t('Open Output');
+            vscode.window.showErrorMessage(
+                t('Failed to prepare KOT Form Explorer builder infobase: {0}', message),
+                openOutput
+            ).then(selection => {
+                if (selection === openOutput) {
+                    void vscode.commands.executeCommand('workbench.action.output.toggleOutput');
+                }
+            });
+        }
+    })().finally(() => {
+        builderWarmupInFlight = null;
+    });
+
+    return builderWarmupInFlight;
+}
+
+async function warmUpSharedStartupInfobase(
+    context: vscode.ExtensionContext,
+    reason: 'startup' | 'configuration'
+): Promise<void> {
+    if (startupInfobaseWarmupInFlight) {
+        return startupInfobaseWarmupInFlight;
+    }
+
+    startupInfobaseWarmupInFlight = (async () => {
+        const oneCClientPath = getConfiguredOneCClientPath();
+        if (!oneCClientPath || !fs.existsSync(oneCClientPath)) {
+            return;
+        }
+
+        if (!(await shouldPrepareSharedStartupInfobase())) {
+            return;
+        }
+
+        const t = await getTranslator(context.extensionUri);
+        try {
+            await ensureSharedStartupInfobaseReady(context, oneCClientPath, {
+                showOutputPanel: false,
+                showProgressNotification: true,
+                progressTitle: reason === 'startup'
+                    ? t('Preparing shared startup infobase...')
+                    : t('Preparing shared startup infobase after settings change...')
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const openOutput = t('Open Output');
+            vscode.window.showErrorMessage(
+                t('Failed to prepare shared startup infobase: {0}', message),
+                openOutput
+            ).then(selection => {
+                if (selection === openOutput) {
+                    getSharedStartupInfobaseOutputChannel().show(true);
+                }
+            });
+        }
+    })().finally(() => {
+        startupInfobaseWarmupInFlight = null;
+    });
+
+    return startupInfobaseWarmupInFlight;
 }
 
 function hasTopLevelScenarioSection(documentText: string, sectionName: string): boolean {
@@ -313,6 +484,17 @@ const EXTERNAL_STEPS_URL_CONFIG_KEY = 'kotTestToolkit.steps.externalUrl'; // К�
 export function activate(context: vscode.ExtensionContext) {
     console.log('Extension "kotTestToolkit" activated.');
     setExtensionUri(context.extensionUri);
+    const formExplorerPanel = new FormExplorerPanel(context);
+    const infobaseManagerPanel = new InfobaseManagerPanel(context);
+    context.subscriptions.push(formExplorerPanel);
+    context.subscriptions.push(infobaseManagerPanel);
+    void ensureOneCClientPathConfigured(context)
+        .then(() => Promise.all([
+            warmUpSharedStartupInfobase(context, 'startup'),
+        ]))
+        .catch(error => {
+            console.warn('[Extension] Failed to initialize 1C platform or startup/builder infobases.', error);
+        });
 
     // --- Регистрация Провайдера для Webview (Test Manager) ---
     const phaseSwitcherProvider = new PhaseSwitcherProvider(context.extensionUri, context);
@@ -659,6 +841,33 @@ export function activate(context: vscode.ExtensionContext) {
                 await vscode.commands.executeCommand('workbench.action.reloadWindow');
             }
         }
+
+        if (
+            event.affectsConfiguration('kotTestToolkit.paths.oneCEnterpriseExe')
+            || event.affectsConfiguration('kotTestToolkit.formExplorer.configurationSourceDirectory')
+            || event.affectsConfiguration('kotTestToolkit.formExplorer.generatedArtifactsDirectory')
+            || event.affectsConfiguration('kotTestToolkit.formExplorer.snapshotPath')
+        ) {
+            try {
+                await initializeFormExplorerRuntimeSidecars();
+                if (event.affectsConfiguration('kotTestToolkit.paths.oneCEnterpriseExe')) {
+                    const configuredPath = getConfiguredOneCClientPath();
+                    const preferredPath = normalizePreferredOneCClientPath(configuredPath);
+                    if (preferredPath && preferredPath !== configuredPath) {
+                        await vscode.workspace
+                            .getConfiguration('kotTestToolkit')
+                            .update('paths.oneCEnterpriseExe', preferredPath, getConfigurationTarget());
+                        return;
+                    }
+                }
+
+                await Promise.all([
+                    warmUpSharedStartupInfobase(context, 'configuration'),
+                ]);
+            } catch (error) {
+                console.warn('[Extension] Failed to react to 1C platform/Form Explorer configuration change.', error);
+            }
+        }
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand(
@@ -672,9 +881,86 @@ export function activate(context: vscode.ExtensionContext) {
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.openInfobaseManager',
+        async () => {
+            await infobaseManagerPanel.open();
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.openFormExplorer',
+        async () => {
+            await formExplorerPanel.open();
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.openFormExplorerForInfobase',
+        async (preferredInfobasePath?: string) => {
+            await formExplorerPanel.openAndStart(preferredInfobasePath);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.generateFormExplorerExtension',
+        async () => {
+            await handleGenerateFormExplorerExtension(context);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.buildFormExplorerExtensionCfe',
+        async () => {
+            await handleBuildFormExplorerExtensionCfe(context);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.installFormExplorerExtension',
+        async () => {
+            await handleInstallFormExplorerExtension(context);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.startFormExplorerInfobase',
+        async (preferredInfobasePath?: string) => {
+            return await handleStartFormExplorerInfobase(context, preferredInfobasePath);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openScenarioInVanessaManual',
         async () => {
             await phaseSwitcherProvider.openScenarioInVanessaManualFromCommandPalette();
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.trackScenarioRunByFeatureLog',
+        async () => {
+            await phaseSwitcherProvider.trackScenarioRunByActiveFeatureEditor();
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.switchTrackedScenarioRunForFeature',
+        async () => {
+            await phaseSwitcherProvider.switchTrackedRunByActiveFeatureEditor();
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.stopTrackedScenarioRunForFeature',
+        async () => {
+            await phaseSwitcherProvider.stopTrackedRunByActiveFeatureEditor();
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.trackScenarioRunFromOpenedLogFile',
+        async () => {
+            await phaseSwitcherProvider.trackScenarioRunByActiveLogEditor();
         }
     ));
 

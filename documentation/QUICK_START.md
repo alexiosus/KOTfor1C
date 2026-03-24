@@ -16,8 +16,7 @@
 | Настройка | Для чего нужна |
 |---|---|
 | `kotTestToolkit.paths.yamlSourceDirectory` | Папка YAML-сценариев (источник кеша, диагностики, списка тестов) |
-| `kotTestToolkit.paths.oneCEnterpriseExe` | Путь к `1cv8.exe` / `1cestart` |
-| `kotTestToolkit.paths.emptyInfobase` | Путь к пустой файловой ИБ для запуска обработок |
+| `kotTestToolkit.paths.oneCEnterpriseExe` | Путь к `1cv8c.exe` тонкого клиента 1С; если оставить пустым, KOT попробует определить его автоматически |
 | `kotTestToolkit.paths.buildScenarioBddEpf` | Путь к обработке `СборкаТекстовСценариев.epf` |
 | `kotTestToolkit.runVanessa.vanessaEpfPath` | Путь к `vanessa-automation.epf` |
 | `kotTestToolkit.assembleScript.buildPath` | Куда сохранять результаты сборки |
@@ -25,6 +24,11 @@
 Рекомендуется сразу указать также:
 
 - `kotTestToolkit.startupParams.parameters`
+
+Если путь к клиенту 1С удалось определить автоматически, расширение само подготовит в фоне две служебные ИБ:
+
+- lightweight startup-ИБ для запуска Vanessa и `СборкаТекстовСценариев`;
+- отдельную builder-ИБ для `KOT Form Explorer`.
 
 Справка по параметрам обработки `СборкаТекстовСценариев` (СППР):  
 [https://its.1c.ru/db/sppr2doc#content:124:hdoc](https://its.1c.ru/db/sppr2doc#content:124:hdoc)
@@ -117,6 +121,13 @@
 2. В верхней части Test Manager (`Менеджер тестов`) есть кнопка запуска Vanessa с выбором режима:
    - автоматический режим (выбор теста для запуска);
    - режим отладки (открыть Vanessa без автопрогона, для ручной работы, с ручной загрузкой .feature).
+3. Для встроенного запуска расширение предложит выбрать тестируемую ИБ:
+   - существующая ИБ из лаунчера 1С или вручную;
+   - либо создание новой файловой ИБ.
+4. Для выбранной ИБ можно дополнительно:
+   - восстановить базу из `DT`;
+   - обновить конфигурацию из `kotTestToolkit.formExplorer.configurationSourceDirectory` или из выбранного `.cf`.
+5. Если выбрана новая ИБ, но не указано ни восстановление из `DT`, ни обновление конфигурации, запуск будет остановлен как бессмысленный для пустой базы.
 
 ## 8) Повседневная работа
 
@@ -137,6 +148,16 @@
 - `KOT - Open scenario` (`KOT - Открыть сценарий`)
 - `KOT - Find references to current scenario` (`KOT - Найти вызовы текущего сценария`)
 - `KOT - Add or remove current scenario from favorites` (`KOT - Добавить/убрать открытый сценарий в избранное`)
+
+В `feature`-файлах (ПКМ в редакторе):
+
+- `KOT - Track scenario run by log for opened feature` (`KOT - Отслеживать прогон по логу для открытого feature`)
+- `KOT - Switch tracked run for opened feature` (`KOT - Переключить отслеживаемый прогон для открытого feature`)
+- `KOT - Stop tracked runs for opened feature` (`KOT - Остановить отслеживание прогонов для открытого feature`)
+
+В `.log`-файлах (ПКМ в редакторе):
+
+- `KOT - Track run by opened log file` (`KOT - Отслеживать прогон по открытому log-файлу`) — использует путь из строки `Feature: ...` и открывает связанный `feature`.
 
 Подменю `KOT - Work with files` (`KOT - Работа с файлами`) - появляется при вызове контекстного меню на выделенном тексте:
 
@@ -179,5 +200,6 @@
 ## 11) Что читать дальше
 
 - Полная настройка: [`SETUP.md`](./SETUP.md)
+- KOT Form Explorer (beta): [`blocks/form-explorer.md`](./blocks/form-explorer.md)
 - Детали по функциональным блокам: [`blocks/README.md`](./blocks/README.md)
 - Архитектура и код: [`DEVELOPMENT.md`](./DEVELOPMENT.md)

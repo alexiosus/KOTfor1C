@@ -7,10 +7,10 @@
 Для полного цикла (build + run) нужны:
 
 - VS Code `1.98+`.
-- Установленная платформа 1С (`1cv8.exe` на Windows или `1cestart` на macOS).
+- Установленная платформа 1С на Windows.
 - `СборкаТекстовСценариев.epf` из СППР.
 - `vanessa-automation.epf`.
-- Пустая файловая ИБ (Empty Infobase).
+- Доступ к файловой выгрузке конфигурации, если используется `KOT Form Explorer`.
 
 Для MXL-команд отдельно нужен клиент [1С:Предприятие — работа с файлами](https://v8.1c.ru/static/1s-predpriyatie-rabota-s-faylami/) (`1cv8fv.exe`).
 
@@ -26,8 +26,7 @@
 | Настройка | Обязательно |
 |---|---|
 | `kotTestToolkit.paths.yamlSourceDirectory` | Да |
-| `kotTestToolkit.paths.oneCEnterpriseExe` | Да |
-| `kotTestToolkit.paths.emptyInfobase` | Да |
+| `kotTestToolkit.paths.oneCEnterpriseExe` | Да, если KOT не определил путь автоматически |
 | `kotTestToolkit.paths.buildScenarioBddEpf` | Да |
 | `kotTestToolkit.runVanessa.vanessaEpfPath` | Для запуска Vanessa |
 | `kotTestToolkit.assembleScript.buildPath` | Да |
@@ -90,9 +89,12 @@
 |---|---|---|
 | `kotTestToolkit.runVanessa.vanessaEpfPath` | `tools/vanessa/vanessa-automation.epf` | Путь к EPF Vanessa |
 | `kotTestToolkit.runVanessa.runtimeDirectory` | `.vscode/kot-runtime/vanessa` | Папка runtime-файлов (логи/статусы) |
+| `kotTestToolkit.runVanessa.showOutputPanel` | `false` | Автооткрытие Output при запуске Vanessa |
 | `kotTestToolkit.runVanessa.commandTemplate` | `""` | Кастомный shell-шаблон запуска (optional override) |
 | `kotTestToolkit.runVanessa.checkUnsafeActionProtection` | `true` | Проверка `conf.cfg` (Windows) перед запуском Vanessa |
 | `kotTestToolkit.runVanessa.liveLogRefreshSeconds` | `2` | Интервал обновления live-лога |
+| `kotTestToolkit.runVanessa.autoDetectMinStartupUpdates` | `2` | Сколько свежих обновлений run-лога нужно на старте, чтобы фоновый монитор посчитал прогон реальным |
+| `kotTestToolkit.runVanessa.autoDetectInactivityTimeoutSeconds` | `20` | Через сколько секунд без обновлений run-лога автоопределенный трекинг снимается как неактивный |
 
 Плейсхолдеры для `runVanessa.commandTemplate` (если необходимо открывать Vanessa Automation своим способом):
 
@@ -113,6 +115,11 @@
 |---|---|---|
 | `kotTestToolkit.startupParams.parameters` | `/L ru /DisableStartupMessages /DisableStartupDialogs` | Строка параметров запуска 1С |
 
+Примечание:
+
+- для отдельной базы эти параметры можно переопределить через `KOT Infobase Manager` (`Edit base` -> `Edit launch keys`);
+- если для базы override не задан, используется именно `kotTestToolkit.startupParams.parameters`.
+
 ### 3.9 System paths settings
 
 | Ключ | Default | Назначение |
@@ -120,10 +127,29 @@
 | `kotTestToolkit.paths.yamlSourceDirectory` | `tests/RegressionTests/yaml` | Корень YAML-сценариев |
 | `kotTestToolkit.paths.buildScenarioBddEpf` | `build/BuildScenarioBDD.epf` | Путь к EPF сборки |
 | `kotTestToolkit.assembleScript.buildPath` | `C:\EtalonDrive\` | Папка артефактов сборки |
-| `kotTestToolkit.paths.emptyInfobase` | `""` | Путь к пустой ИБ |
-| `kotTestToolkit.paths.oneCEnterpriseExe` | `C:\Program Files (x86)\1cv8\8.3.24.1738\bin\1cv8.exe` | Путь к исполняемому файлу 1С |
+| `kotTestToolkit.paths.oneCEnterpriseExe` | `""` | Путь к `1cv8c.exe`; если пусто, KOT пытается определить последнюю установленную платформу автоматически |
 | `kotTestToolkit.paths.fileWorkshopExe` | `C:\Program Files (x86)\1cv8fv\bin\1cv8fv.exe` | Путь к File Workshop для MXL |
 | `kotTestToolkit.paths.firstLaunchFolder` | `""` | Папка FirstLaunch (кнопка `Build FL` показывается, если включены Drive-функции, путь задан и папка существует) |
+
+### 3.10 KOT Form Explorer (beta)
+
+| Ключ | Default | Назначение |
+|---|---|---|
+| `kotTestToolkit.formExplorer.snapshotPath` | `.vscode/kot-runtime/form-explorer/form-snapshot.json` | Путь к snapshot-файлу формы |
+| `kotTestToolkit.formExplorer.configurationSourceDirectory` | `cf` | Папка файловой выгрузки конфигурации, которая используется для static enrichment и сборки адаптера Form Explorer |
+| `kotTestToolkit.formExplorer.generatedArtifactsDirectory` | `.vscode/kot-runtime/form-explorer` | Папка generated artifacts и builder-ИБ Form Explorer |
+| `kotTestToolkit.formExplorer.extensionOutputPath` | `.vscode/kot-runtime/form-explorer/KOTFormExplorerRuntime.cfe` | Путь к итоговому `.cfe` |
+| `kotTestToolkit.formExplorer.extensionBuildCommandTemplate` | `""` | Override встроенного builder через внешний скрипт |
+| `kotTestToolkit.formExplorer.autoRefreshSeconds` | `2` | Интервал перечитывания snapshot-а в панели |
+| `kotTestToolkit.formExplorer.showOutputPanel` | `false` | Автопоказ Output при сборке `.cfe` и прогреве builder-ИБ Form Explorer |
+
+Важно:
+
+- пустая ИБ больше не настраивается отдельно;
+- `СборкаТекстовСценариев` и Vanessa используют общую lightweight startup-ИБ;
+- `KOT Form Explorer` использует отдельную builder-ИБ;
+- при установке/запуске Form Explorer в выбранной базе источник сборки адаптера всё равно берется из `configurationSourceDirectory`;
+- обе служебные ИБ создаются автоматически в фоне, если KOT смог определить путь к `1cv8c.exe`.
 
 ## 4) Менеджер параметров: как работает
 
@@ -176,6 +202,12 @@
 ### 5.4 Сборка и запуск
 
 - `KOT - Open Build Scenario Parameters Manager` (`KOT - Открыть Менеджер параметров Сборки Сценариев`)
+- `KOT - Open Infobase Manager` (`KOT - Открыть Менеджер баз`)
+- `KOT - Open 1C Form Explorer` (`KOT - Открыть Исследователь форм 1С`)
 - `KOT - Open build folder` (`KOT - Открыть папку сборки`)
 - `KOT - Create FirstLaunch archive` (`KOT - Собрать архив FirstLaunch`)
 - `KOT - Open scenario in Vanessa (manual debug)` (`KOT - Открыть сценарий в Vanessa (ручная отладка)`)
+- `KOT - Track scenario run by log for opened feature` (`KOT - Отслеживать прогон по логу для открытого feature`)
+- `KOT - Switch tracked run for opened feature` (`KOT - Переключить отслеживаемый прогон для открытого feature`)
+- `KOT - Stop tracked runs for opened feature` (`KOT - Остановить отслеживание прогонов для открытого feature`)
+- `KOT - Track run by opened log file` (`KOT - Отслеживать прогон по открытому log-файлу`)
