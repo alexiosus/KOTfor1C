@@ -20,6 +20,10 @@
         targetPath: '',
         placement: 'before'
     };
+    const clickState = {
+        lastInfobasePath: '',
+        lastTimestamp: 0
+    };
 
     const refs = {
         infobaseCountValue: document.getElementById('infobaseCountValue'),
@@ -32,7 +36,6 @@
         sortMenuBtn: document.getElementById('sortMenuBtn'),
         sortMenu: document.getElementById('sortMenu'),
         sortMenuLabel: document.getElementById('sortMenuLabel'),
-        sortHint: document.getElementById('sortHint'),
         infobaseList: document.getElementById('infobaseList'),
         emptyState: document.getElementById('emptyState'),
         detailsContent: document.getElementById('detailsContent'),
@@ -104,6 +107,10 @@
         return (state.infobases || []).find(item => item.infobasePath === selectedPath) || null;
     }
 
+    function supportsFileOperations(record) {
+        return Boolean(record) && record.infobaseKind === 'file';
+    }
+
     function getLastActivity(record) {
         const candidates = [
             record.lastLaunchAt || null,
@@ -125,6 +132,7 @@
 
         const haystack = [
             record.displayName,
+            record.locationLabel,
             record.infobasePath,
             record.launcherName,
             record.state,
@@ -292,9 +300,6 @@
         if (refs.infobaseCountValue instanceof HTMLElement) {
             refs.infobaseCountValue.textContent = String(state.infobases?.length || 0);
         }
-        if (refs.sortHint instanceof HTMLElement) {
-            refs.sortHint.classList.toggle('hidden', !isManualSortMode());
-        }
 
         if (!visibleInfobases.length) {
             refs.infobaseList.innerHTML = `
@@ -321,7 +326,7 @@
                         </div>
                         <span class="state-pill compact is-${escapeHtml(record.state)}">${escapeHtml(getStateLabel(record.state))}</span>
                     </div>
-                    <div class="infobase-item-path">${escapeHtml(record.infobasePath)}</div>
+                    <div class="infobase-item-path">${escapeHtml(record.locationLabel || record.infobasePath)}</div>
                     <div class="infobase-item-meta">
                         <span>${escapeHtml(launcherState)}</span>
                     </div>
@@ -449,7 +454,7 @@
             refs.infobaseTitle.textContent = selected.displayName || '';
         }
         if (refs.infobasePath instanceof HTMLElement) {
-            refs.infobasePath.textContent = selected.infobasePath || '';
+            refs.infobasePath.textContent = selected.locationLabel || selected.infobasePath || '';
         }
         if (refs.stateBadge instanceof HTMLElement) {
             refs.stateBadge.textContent = getStateLabel(selected.state);
@@ -501,15 +506,23 @@
         }
         const revealFolderAction = document.querySelector('[data-command="revealFolder"]');
         if (revealFolderAction instanceof HTMLButtonElement) {
-            revealFolderAction.disabled = !selected.exists || Boolean(state.pendingAction);
+            revealFolderAction.disabled = !supportsFileOperations(selected) || !selected.exists || Boolean(state.pendingAction);
         }
         const copyBaseAction = document.querySelector('[data-command="copyBase"]');
         if (copyBaseAction instanceof HTMLButtonElement) {
-            copyBaseAction.disabled = !selected.exists || Boolean(state.pendingAction);
+            copyBaseAction.disabled = !supportsFileOperations(selected) || !selected.exists || Boolean(state.pendingAction);
+        }
+        const recreateAction = document.querySelector('[data-command="recreate"]');
+        if (recreateAction instanceof HTMLButtonElement) {
+            recreateAction.disabled = !supportsFileOperations(selected) || Boolean(state.pendingAction);
+        }
+        const editBaseAction = document.querySelector('[data-command="editBase"]');
+        if (editBaseAction instanceof HTMLButtonElement) {
+            editBaseAction.disabled = !supportsFileOperations(selected) || Boolean(state.pendingAction);
         }
         const saveCfAction = document.querySelector('[data-command="saveCf"]');
         if (saveCfAction instanceof HTMLButtonElement) {
-            saveCfAction.disabled = !selected.exists || Boolean(state.pendingAction);
+            saveCfAction.disabled = Boolean(state.pendingAction);
         }
 
         syncTechnicalSection();
@@ -608,27 +621,18 @@
             return;
         }
 
+        const now = Date.now();
+        const isDoubleClick = clickState.lastInfobasePath === targetPath
+            && now - clickState.lastTimestamp <= 400;
+        clickState.lastInfobasePath = targetPath;
+        clickState.lastTimestamp = now;
+
         state.selectedInfobasePath = targetPath;
         render();
         vscode.postMessage({ command: 'select', infobasePath: targetPath });
-    });
-
-    refs.infobaseList?.addEventListener('dblclick', event => {
-        const target = event.target instanceof HTMLElement
-            ? event.target.closest('.infobase-item')
-            : null;
-        if (!(target instanceof HTMLElement)) {
-            return;
+        if (isDoubleClick && !state.pendingAction) {
+            vscode.postMessage({ command: 'openEnterprise', infobasePath: targetPath });
         }
-
-        const targetPath = target.dataset.path || '';
-        if (!targetPath || state.pendingAction) {
-            return;
-        }
-
-        state.selectedInfobasePath = targetPath;
-        render();
-        vscode.postMessage({ command: 'openEnterprise', infobasePath: targetPath });
     });
 
     refs.infobaseList?.addEventListener('dragstart', event => {

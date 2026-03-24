@@ -53,6 +53,7 @@
     const refreshVanessaStepsFromDropdownBtn = document.getElementById('refreshVanessaStepsFromDropdownBtn');
     const runVanessaFromDropdownBtn = document.getElementById('runVanessaFromDropdownBtn');
     const openFormExplorerFromDropdownBtn = document.getElementById('openFormExplorerFromDropdownBtn');
+    const openInfobaseManagerTopBtn = document.getElementById('openInfobaseManagerTopBtn');
     const openYamlParamsFromDropdownBtn = document.getElementById('openYamlParamsFromDropdownBtn');
     const openSettingsFromDropdownBtn = document.getElementById('openSettingsFromDropdownBtn');
     const testsTabBtn = document.getElementById('testsTabBtn');
@@ -349,6 +350,12 @@
             false,
             '',
             window.__loc?.openFormExplorerTopTitle || 'Open KOT Form Explorer'
+        );
+        setDropdownItemDisabledState(
+            openInfobaseManagerTopBtn,
+            false,
+            '',
+            window.__loc?.openInfobaseManagerTopTitle || 'Open Infobase Manager'
         );
         setDropdownItemDisabledState(
             openYamlParamsFromDropdownBtn,
@@ -2038,7 +2045,10 @@
     }
 
     function handleTopRunVanessaClick(event) {
-        if (!(scenarioRepairDropdownBtn instanceof HTMLButtonElement)) {
+        const anchorButton = event?.currentTarget instanceof HTMLElement
+            ? event.currentTarget
+            : null;
+        if (!(anchorButton instanceof HTMLElement)) {
             return;
         }
         event.preventDefault();
@@ -2047,7 +2057,7 @@
             return;
         }
         closeScenarioRepairDropdownMenu();
-        showRunModeMenu(scenarioRepairDropdownBtn, '');
+        showRunModeMenu(anchorButton, '');
     }
 
     function showRepairModeMenu(anchorButton) {
@@ -2939,8 +2949,20 @@
                     return;
                 }
                 closeScenarioRepairDropdownMenu();
-                log('Open KOT Form Explorer from actions menu clicked.');
+                log('Open KOT Form Explorer from top bar clicked.');
                 vscode.postMessage({ command: 'openFormExplorer' });
+            });
+        }
+
+        if (openInfobaseManagerTopBtn) {
+            openInfobaseManagerTopBtn.addEventListener('click', event => {
+                event.preventDefault();
+                if (openInfobaseManagerTopBtn.classList.contains('is-disabled')) {
+                    return;
+                }
+                closeScenarioRepairDropdownMenu();
+                log('Open KOT Infobase Manager from top bar clicked.');
+                vscode.postMessage({ command: 'openInfobaseManager' });
             });
         }
 

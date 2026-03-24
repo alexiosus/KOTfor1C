@@ -4,10 +4,21 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { Translator } from './localization';
+import {
+    buildInfobaseConnectionArgument,
+    coerceInfobaseConnection,
+    describeInfobaseConnection,
+    normalizeInfobaseConnectionIdentity,
+    normalizeInfobaseReference,
+    type OneCInfobaseConnection
+} from './oneCInfobaseConnection';
 
 export interface LauncherInfobaseInfo {
     name: string;
     infobasePath: string;
+    connectionKind: OneCInfobaseConnection['kind'];
+    connectionString: string;
+    locationLabel: string;
     sourceFilePath: string;
 }
 
@@ -41,20 +52,6 @@ async function readUtf8File(filePath: string): Promise<string> {
     return fs.promises.readFile(filePath, 'utf8');
 }
 
-function parseInfobasePathFromConnectionString(value: string): string | null {
-    const match = value.match(/File\s*=\s*("([^"]+)"|([^;]+))/i);
-    if (!match) {
-        return null;
-    }
-
-    const extractedPath = (match[2] || match[3] || '').trim();
-    if (!extractedPath) {
-        return null;
-    }
-
-    return extractedPath.replace(/[\\/]+$/, '');
-}
-
 function splitV8iSections(content: string): string[] {
     return content
         .replace(/^\uFEFF/, '')
@@ -83,14 +80,18 @@ function parseV8iInfobaseEntries(content: string, sourceFilePath: string): Launc
         }
 
         const connectionString = connectMatch[1].trim();
-        const infobasePath = parseInfobasePathFromConnectionString(connectionString);
-        if (!infobasePath) {
+        const connection = coerceInfobaseConnection(connectionString);
+        const infobasePath = normalizeInfobaseReference(connectionString);
+        if (!infobasePath.trim()) {
             continue;
         }
 
         entries.push({
             name: sectionName,
             infobasePath,
+            connectionKind: connection.kind,
+            connectionString: buildInfobaseConnectionArgument(connection, { trailingSemicolon: true }),
+            locationLabel: describeInfobaseConnection(connection),
             sourceFilePath
         });
     }
@@ -127,15 +128,14 @@ function computeNextLauncherOrder(content: string): number {
     return Math.ceil(maxOrder / 256) * 256 + 256;
 }
 
-function buildLauncherInfobaseSection(sectionName: string, infobasePath: string, order: number, newline: string): string {
-    const serializedConnection = path.resolve(infobasePath).replace(/"/g, '""');
+function buildLauncherInfobaseSection(sectionName: string, infobaseReference: string, order: number, newline: string): string {
     const normalizedOrder = Number.isFinite(order) && order > 0
         ? Math.floor(order)
         : 16384;
 
     return [
         `[${sectionName}]`,
-        `Connect=File="${serializedConnection}";`,
+        `Connect=${buildInfobaseConnectionArgument(infobaseReference, { trailingSemicolon: true })}`,
         `ID=${randomUUID()}`,
         `OrderInList=${normalizedOrder}`,
         'Folder=/',
@@ -188,13 +188,6 @@ function getLauncherInfobaseFileCandidates(): string[] {
     return Array.from(new Set(candidateFiles.map(candidate => path.resolve(candidate))));
 }
 
-function normalizeInfobasePathForCompare(rawPath: string): string {
-    const normalized = path.resolve(rawPath.trim());
-    return process.platform === 'win32'
-        ? normalized.toLowerCase()
-        : normalized;
-}
-
 function collectV8iSectionNames(content: string): string[] {
     return content
         .replace(/^\uFEFF/, '')
@@ -238,9 +231,8 @@ function rewriteLauncherSectionHeader(sectionBlock: string, nextSectionName: str
     return sectionBlock.replace(/^\s*\[[^\]]+\]\s*$/m, `[${nextSectionName}]`);
 }
 
-function rewriteLauncherSectionConnect(sectionBlock: string, infobasePath: string): string {
-    const serializedConnection = path.resolve(infobasePath).replace(/"/g, '""');
-    const nextConnectLine = `Connect=File="${serializedConnection}";`;
+function rewriteLauncherSectionConnect(sectionBlock: string, infobaseReference: string): string {
+    const nextConnectLine = `Connect=${buildInfobaseConnectionArgument(infobaseReference, { trailingSemicolon: true })}`;
     if (/^\s*Connect\s*=.+$/im.test(sectionBlock)) {
         return sectionBlock.replace(/^\s*Connect\s*=.+$/im, nextConnectLine);
     }
@@ -269,12 +261,9 @@ export async function discoverLauncherInfobases(): Promise<LauncherInfobaseInfo[
         }
 
         for (const entry of parseV8iInfobaseEntries(content, candidateFilePath)) {
-            const key = normalizeInfobasePathForCompare(entry.infobasePath);
+            const key = normalizeInfobaseConnectionIdentity(entry.infobasePath);
             if (!dedupe.has(key)) {
-                dedupe.set(key, {
-                    ...entry,
-                    infobasePath: path.resolve(entry.infobasePath)
-                });
+                dedupe.set(key, entry);
             }
         }
     }
@@ -296,9 +285,9 @@ export async function resolveLauncherInfobaseNameByPath(infobasePath: string): P
         return null;
     }
 
-    const normalizedTargetPath = normalizeInfobasePathForCompare(trimmedPath);
+    const normalizedTargetPath = normalizeInfobaseConnectionIdentity(trimmedPath);
     const entries = await discoverLauncherInfobases();
-    const matchedEntry = entries.find(entry => normalizeInfobasePathForCompare(entry.infobasePath) === normalizedTargetPath);
+    const matchedEntry = entries.find(entry => normalizeInfobaseConnectionIdentity(entry.infobasePath) === normalizedTargetPath);
     return matchedEntry?.name || null;
 }
 
@@ -315,9 +304,9 @@ export async function registerInfobaseInLauncher(
         };
     }
 
-    const normalizedTargetPath = normalizeInfobasePathForCompare(infobasePath);
+    const normalizedTargetPath = normalizeInfobaseConnectionIdentity(infobasePath);
     const existingEntries = await discoverLauncherInfobases();
-    const existingEntry = existingEntries.find(entry => normalizeInfobasePathForCompare(entry.infobasePath) === normalizedTargetPath);
+    const existingEntry = existingEntries.find(entry => normalizeInfobaseConnectionIdentity(entry.infobasePath) === normalizedTargetPath);
     const preferredExistingName = existingEntry?.name?.trim() || preferredName;
     let firstTouchedFilePath: string | null = existingEntry?.sourceFilePath || null;
     let registeredName: string | null = existingEntry?.name || null;
@@ -338,7 +327,7 @@ export async function registerInfobaseInLauncher(
 
         const fileEntries = parseV8iInfobaseEntries(existingContent, candidateFilePath);
         const alreadyPresentInThisFile = fileEntries.some(entry =>
-            normalizeInfobasePathForCompare(entry.infobasePath) === normalizedTargetPath
+            normalizeInfobaseConnectionIdentity(entry.infobasePath) === normalizedTargetPath
         );
         if (alreadyPresentInThisFile) {
             if (!firstTouchedFilePath) {
@@ -390,7 +379,7 @@ export async function unregisterInfobaseFromLauncher(
         };
     }
 
-    const normalizedTargetPath = normalizeInfobasePathForCompare(infobasePath);
+    const normalizedTargetPath = normalizeInfobaseConnectionIdentity(infobasePath);
     const removedFromFilePaths: string[] = [];
 
     for (const candidateFilePath of candidateFiles) {
@@ -415,7 +404,7 @@ export async function unregisterInfobaseFromLauncher(
             }
 
             return !parsedEntries.some(entry =>
-                normalizeInfobasePathForCompare(entry.infobasePath) === normalizedTargetPath
+                normalizeInfobaseConnectionIdentity(entry.infobasePath) === normalizedTargetPath
             );
         });
 
@@ -455,10 +444,10 @@ export async function updateInfobaseInLauncher(
         };
     }
 
-    const normalizedTargetPath = normalizeInfobasePathForCompare(infobasePath);
+    const normalizedTargetPath = normalizeInfobaseConnectionIdentity(infobasePath);
     const nextInfobasePath = options?.nextInfobasePath?.trim()
-        ? path.resolve(options.nextInfobasePath.trim())
-        : path.resolve(infobasePath);
+        ? normalizeInfobaseReference(options.nextInfobasePath.trim())
+        : normalizeInfobaseReference(infobasePath);
     const updatedFilePaths: string[] = [];
     let registeredName: string | null = null;
 
@@ -484,7 +473,7 @@ export async function updateInfobaseInLauncher(
         const matchingIndices: number[] = [];
         for (let index = 0; index < sections.length; index += 1) {
             const parsedEntries = parseV8iInfobaseEntries(sections[index], candidateFilePath);
-            if (parsedEntries.some(entry => normalizeInfobasePathForCompare(entry.infobasePath) === normalizedTargetPath)) {
+            if (parsedEntries.some(entry => normalizeInfobaseConnectionIdentity(entry.infobasePath) === normalizedTargetPath)) {
                 matchingIndices.push(index);
             }
         }
@@ -546,7 +535,7 @@ export async function pickTargetInfobasePath(
         },
         ...launcherEntries.map(entry => ({
             label: entry.name,
-            description: entry.infobasePath,
+            description: entry.locationLabel,
             detail: t('From launcher: {0}', entry.sourceFilePath),
             kindKey: 'launcher' as const,
             infobasePath: entry.infobasePath

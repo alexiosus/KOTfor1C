@@ -17,6 +17,7 @@ import {
 } from './formExplorerStepSuggestions';
 import { getConfiguredScenarioLanguage, ScenarioLanguage } from './gherkinLanguage';
 import type { StartFormExplorerInfobaseResult } from './formExplorerExtensionGenerator';
+import { normalizeInfobaseConnectionIdentity, normalizeInfobaseReference } from './oneCInfobaseConnection';
 
 type AdapterMode = 'auto' | 'manual' | 'unknown';
 type PendingOperationKind = 'refresh' | 'table' | 'locator' | 'start';
@@ -580,22 +581,16 @@ export class FormExplorerPanel implements vscode.Disposable {
     }
 
     private parseInfobasePathFromMarker(value: string): string | null {
-        const match = value.match(/File\s*=\s*("([^"]+)"|([^;]+))/i);
-        if (!match) {
+        const trimmedValue = value.trim();
+        if (!trimmedValue) {
             return null;
         }
 
-        const extractedPath = (match[2] || match[3] || '').trim();
-        if (!extractedPath) {
-            return null;
-        }
-
-        return extractedPath.replace(/[\\/]+$/, '');
+        return normalizeInfobaseReference(trimmedValue);
     }
 
     private normalizePathForCompare(value: string): string {
-        const normalized = path.resolve(value.trim());
-        return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+        return normalizeInfobaseConnectionIdentity(value.trim());
     }
 
     private resolvePreferredStartInfobasePath(): string | undefined {
@@ -1005,7 +1000,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             );
 
             if (typeof startResult === 'string' && startResult.trim()) {
-                this.pendingSnapshotInfobasePath = path.resolve(startResult.trim());
+                this.pendingSnapshotInfobasePath = normalizeInfobaseReference(startResult.trim());
                 this.selectedSnapshotPath = null;
                 this.customSnapshotPath = null;
                 this.lastSnapshotFingerprint = null;
@@ -1014,7 +1009,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             }
 
             if (startResult && typeof startResult !== 'string' && startResult.status === 'started' && startResult.infobasePath?.trim()) {
-                this.pendingSnapshotInfobasePath = path.resolve(startResult.infobasePath.trim());
+                this.pendingSnapshotInfobasePath = normalizeInfobaseReference(startResult.infobasePath.trim());
                 this.selectedSnapshotPath = null;
                 this.customSnapshotPath = null;
                 this.lastSnapshotFingerprint = null;

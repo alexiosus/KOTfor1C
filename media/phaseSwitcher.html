@@ -14,25 +14,23 @@
                 <h1 class="topbar-title">${loc.phaseSwitcherTitle}</h1>
             </div>
             <div class="toolbar controls-top-buttons">
+                <button id="runVanessaFromDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only" title="${loc.runVanessaTopTitle}">
+                    <span class="codicon codicon-play-circle"></span>
+                </button>
+                <button id="openFormExplorerFromDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only top-action-btn-beta" title="${loc.openFormExplorerTopTitle}">
+                    <span class="top-action-icon-wrap">
+                        <span class="codicon codicon-telescope"></span>
+                        <span class="top-beta-badge" aria-hidden="true">β</span>
+                    </span>
+                </button>
+                <button id="openInfobaseManagerTopBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only" title="${loc.openInfobaseManagerTopTitle}">
+                    <span class="codicon codicon-database"></span>
+                </button>
                 <div class="dropdown-container">
                     <button id="scenarioRepairDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only" title="${loc.maintenanceMenuTitle}">
                         <span class="codicon codicon-ellipsis"></span>
                     </button>
                     <div id="scenarioRepairDropdownContent" class="dropdown-content menu-popover">
-                        <a href="#" id="runVanessaFromDropdownBtn" class="dropdown-item menu-item dropdown-item-with-chevron" title="${loc.runVanessaTopTitle}">
-                            <span class="codicon codicon-play-circle"></span>
-                            <span>${loc.runVanessaTopTitle}</span>
-                            <span class="codicon codicon-chevron-right dropdown-item-chevron"></span>
-                        </a>
-                        <div class="dropdown-separator menu-separator" role="separator"></div>
-                        <a href="#" id="openFormExplorerFromDropdownBtn" class="dropdown-item menu-item" title="${loc.openFormExplorerTopTitle}">
-                            <span class="codicon codicon-symbol-misc"></span>
-                            <span class="dropdown-item-title-with-beta">
-                                <span>${loc.openFormExplorerTopTitle}</span>
-                                <span class="beta-inline-symbol" aria-hidden="true">β</span>
-                            </span>
-                        </a>
-                        <div class="dropdown-separator menu-separator" role="separator"></div>
                         <a href="#" id="reloadTestsFromDiskFromDropdownBtn" class="dropdown-item menu-item" title="${loc.reloadTestsFromDiskHint}">
                             <span class="codicon codicon-refresh"></span> ${loc.reloadTestsFromDisk}
                         </a>

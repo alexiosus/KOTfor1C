@@ -18,7 +18,14 @@ import {
     pickManagedInfobasePath,
     updateManagedInfobaseMetadata
 } from './infobaseManager';
-import { buildFileInfobaseConnectionArgument } from './oneCInfobaseConnection';
+import {
+    buildFileInfobaseConnectionArgument,
+    buildInfobaseConnectionArgument,
+    describeInfobaseConnection,
+    getFileInfobasePath,
+    normalizeInfobaseConnectionIdentity,
+    normalizeInfobaseReference
+} from './oneCInfobaseConnection';
 import { resolveOneCDesignerExePath } from './oneCPlatform';
 
 interface BaseConfigurationInfo {
@@ -408,6 +415,7 @@ async function pickStartInfobaseAction(
     targetInfobasePath: string,
     extensionInstalled: boolean
 ): Promise<'start' | 'reinstall' | undefined> {
+    const infobaseLabel = describeInfobaseConnection(targetInfobasePath);
     if (!extensionInstalled) {
         return 'reinstall';
     }
@@ -415,13 +423,13 @@ async function pickStartInfobaseAction(
     const selection = await vscode.window.showQuickPick([
         {
             label: t('Start infobase'),
-            description: targetInfobasePath,
+            description: infobaseLabel,
             detail: t('Use the already installed Form Explorer extension.'),
             actionKey: 'start' as const
         },
         {
             label: t('Reinstall extension and start'),
-            description: targetInfobasePath,
+            description: infobaseLabel,
             detail: t('Rebuild the runtime extension, reinstall it into the selected infobase, then start 1C.'),
             actionKey: 'reinstall' as const
         }
@@ -5427,7 +5435,7 @@ async function runBuiltInWindowsInstallToInfobase(
             '/DisableStartupDialogs',
             '/DisableStartupMessages',
             '/IBConnectionString',
-            buildFileInfobaseConnectionArgument(targetInfobasePath),
+            buildInfobaseConnectionArgument(targetInfobasePath),
             '/LoadCfg',
             project.cfeOutputPath,
             '-Extension',
@@ -5467,7 +5475,7 @@ async function runBuiltInWindowsProbeExtensionInInfobase(
             '/DisableStartupDialogs',
             '/DisableStartupMessages',
             '/IBConnectionString',
-            buildFileInfobaseConnectionArgument(targetInfobasePath),
+            buildInfobaseConnectionArgument(targetInfobasePath),
             '/DumpCfg',
             probeOutputPath,
             '-Extension',
@@ -5510,7 +5518,7 @@ async function probeExtensionInstalledInInfobaseWithAuthRetry(
     outputChannel: vscode.OutputChannel,
     t: Awaited<ReturnType<typeof getTranslator>>
 ): Promise<InfobaseExtensionProbeResult> {
-    const authCacheKey = path.resolve(targetInfobasePath).toLowerCase();
+    const authCacheKey = normalizeInfobaseConnectionIdentity(targetInfobasePath);
     let authentication: InfobaseAuthentication | null = INFOBASE_AUTH_CACHE.get(authCacheKey) || null;
 
     for (;;) {
@@ -5565,7 +5573,7 @@ async function runBuiltInWindowsInstallToInfobaseWithAuthRetry(
     outputChannel: vscode.OutputChannel,
     t: Awaited<ReturnType<typeof getTranslator>>
 ): Promise<void> {
-    const authCacheKey = path.resolve(targetInfobasePath).toLowerCase();
+    const authCacheKey = normalizeInfobaseConnectionIdentity(targetInfobasePath);
     let authentication: InfobaseAuthentication | null = INFOBASE_AUTH_CACHE.get(authCacheKey) || null;
 
     for (;;) {
@@ -5702,7 +5710,7 @@ async function launchInfobaseClientDetached(
         [
             'ENTERPRISE',
             '/IBConnectionString',
-            buildFileInfobaseConnectionArgument(targetInfobasePath, { trailingSemicolon: true }),
+            buildInfobaseConnectionArgument(targetInfobasePath, { trailingSemicolon: true }),
             ...(authentication
                 ? ['/DisableStartupDialogs', '/DisableStartupMessages', ...startupArgs]
                 : startupArgs)
@@ -5862,7 +5870,7 @@ async function handleGenerateFormExplorerExtensionCore(
     const preselectedTargetInfobasePathRaw = (options?.targetInfobasePath || '').trim();
     const hasPreselectedTargetInfobasePath = Boolean(preselectedTargetInfobasePathRaw);
     const preselectedTargetInfobasePath = hasPreselectedTargetInfobasePath
-        ? path.resolve(preselectedTargetInfobasePathRaw)
+        ? normalizeInfobaseReference(preselectedTargetInfobasePathRaw)
         : '';
     const targetInfobasePath = runMode === 'install'
         ? (hasPreselectedTargetInfobasePath
@@ -5876,6 +5884,9 @@ async function handleGenerateFormExplorerExtensionCore(
     if (runMode === 'install' && targetInfobasePath === undefined) {
         return;
     }
+    const targetInfobaseFilePath = targetInfobasePath
+        ? getFileInfobasePath(targetInfobasePath)
+        : null;
 
     const configurationXmlPath = path.join(configurationSourceDirectory, 'Configuration.xml');
     if (!(await pathExists(configurationXmlPath))) {
@@ -5945,7 +5956,7 @@ async function handleGenerateFormExplorerExtensionCore(
                             );
                         }
 
-                        if (!(await pathExists(targetInfobasePath))) {
+                        if (targetInfobaseFilePath && !(await pathExists(targetInfobaseFilePath))) {
                             throw new Error(t('Target infobase path does not exist: {0}', targetInfobasePath));
                         }
 
@@ -6012,7 +6023,7 @@ async function handleGenerateFormExplorerExtensionCore(
                 buildExecuted = true;
 
                 if (targetInfobasePath) {
-                    if (!(await pathExists(targetInfobasePath))) {
+                    if (targetInfobaseFilePath && !(await pathExists(targetInfobaseFilePath))) {
                         throw new Error(t('Target infobase path does not exist: {0}', targetInfobasePath));
                     }
 
@@ -6054,7 +6065,7 @@ async function handleGenerateFormExplorerExtensionCore(
 
         if (installExecuted && installedInfobasePath) {
             await updateManagedInfobaseMetadata(context, installedInfobasePath, {
-                displayName: path.basename(installedInfobasePath),
+                displayName: describeInfobaseConnection(installedInfobasePath),
                 addRoles: ['formExplorer'],
                 stateHint: 'ready'
             });
@@ -6136,7 +6147,7 @@ export async function handleStartFormExplorerInfobase(
     }
 
     const configuredPreferredInfobasePath = typeof preferredInfobasePath === 'string' && preferredInfobasePath.trim()
-        ? path.resolve(preferredInfobasePath.trim())
+        ? normalizeInfobaseReference(preferredInfobasePath.trim())
         : null;
     const generatedArtifactsDirectory = getFormExplorerGeneratedArtifactsDirectory();
     const workspaceRootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
@@ -6167,8 +6178,9 @@ export async function handleStartFormExplorerInfobase(
             };
         }
 
-        const targetInfobasePath = path.resolve(selectedTargetInfobasePath);
-        if (!(await pathExists(targetInfobasePath))) {
+        const targetInfobasePath = normalizeInfobaseReference(selectedTargetInfobasePath);
+        const targetInfobaseFilePath = getFileInfobasePath(targetInfobasePath);
+        if (targetInfobaseFilePath && !(await pathExists(targetInfobaseFilePath))) {
             throw new Error(t('Target infobase path does not exist: {0}', targetInfobasePath));
         }
 
@@ -6226,10 +6238,10 @@ export async function handleStartFormExplorerInfobase(
         );
 
         vscode.window.showInformationMessage(
-            t('1C infobase launch started: {0}', targetInfobasePath)
+            t('1C infobase launch started: {0}', describeInfobaseConnection(targetInfobasePath))
         );
         await updateManagedInfobaseMetadata(context, targetInfobasePath, {
-            displayName: path.basename(targetInfobasePath),
+            displayName: describeInfobaseConnection(targetInfobasePath),
             addRoles: ['formExplorer'],
             lastLaunchAt: new Date().toISOString(),
             lastLaunchKind: 'formExplorer',
@@ -6249,7 +6261,7 @@ export async function handleStartFormExplorerInfobase(
         return {
             status: 'error',
             infobasePath: typeof preferredInfobasePath === 'string' && preferredInfobasePath.trim()
-                ? path.resolve(preferredInfobasePath.trim())
+                ? normalizeInfobaseReference(preferredInfobasePath.trim())
                 : null,
             error: t('Failed to start target infobase for Form Explorer: {0}', message)
         };

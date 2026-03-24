@@ -15,7 +15,15 @@ import { findFileByName } from './navigationUtils';
 import { getFeatureNestedScenarioContextAtLine } from './featureNestedScenarioUtils';
 import { registerInfobaseInLauncher, resolveLauncherInfobaseNameByPath } from './infobasePicker';
 import { pickManagedInfobasePath, promptNewInfobaseTarget, updateManagedInfobaseMetadata } from './infobaseManager';
-import { buildFileInfobaseConnectionArgument } from './oneCInfobaseConnection';
+import {
+    buildFileInfobaseConnectionArgument,
+    buildInfobaseConnectionArgument,
+    describeInfobaseConnection,
+    getFileInfobasePath,
+    isServerInfobaseConnection,
+    normalizeInfobaseConnectionIdentity,
+    normalizeInfobaseReference
+} from './oneCInfobaseConnection';
 import { ensureSharedStartupInfobaseReady, getSharedStartupInfobaseOutputChannel } from './startupInfobase';
 import { resolveOneCDesignerExePath } from './oneCPlatform';
 
@@ -6402,6 +6410,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 openScenarioFileTitle: this.t('Open scenario file {0}', '{0}'),
                 runVanessaTopTitle: this.t('Open Vanessa'),
                 openFormExplorerTopTitle: this.t('Open KOT Form Explorer'),
+                openInfobaseManagerTopTitle: this.t('Open Infobase Manager'),
                 runScenarioFeatureTitle: this.t('Run scenario in Vanessa Automation by feature: {0}', '{0}'),
                 runScenarioJsonTitle: this.t('Run scenario in Vanessa Automation by json: {0}', '{0}'),
                 runScenarioStaleSuffix: this.t('Build is stale'),
@@ -6590,6 +6599,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 case 'openFormExplorer':
                     console.log("[PhaseSwitcherProvider] Opening KOT Form Explorer...");
                     vscode.commands.executeCommand('kotTestToolkit.openFormExplorer');
+                    return;
+                case 'openInfobaseManager':
+                    console.log("[PhaseSwitcherProvider] Opening KOT Infobase Manager...");
+                    vscode.commands.executeCommand('kotTestToolkit.openInfobaseManager');
                     return;
                 case 'createMainScenario':
                     console.log("[PhaseSwitcherProvider] Received createMainScenario command from webview.");
@@ -9990,7 +10003,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         outFilePath: string,
         outputChannel: vscode.OutputChannel
     ): Promise<void> {
-        const authCacheKey = path.resolve(targetInfobasePath).toLowerCase();
+        const authCacheKey = normalizeInfobaseConnectionIdentity(targetInfobasePath);
         let authentication = this._vanessaInfobaseAuthCache.get(authCacheKey) || null;
 
         for (;;) {
@@ -10350,33 +10363,41 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             source: VanessaInfobasePreparationPlan['source'];
             infobasePath?: string;
         }> = [];
+        const canReuseInfobaseReference = (infobaseReference: string): boolean => {
+            if (!infobaseReference.trim()) {
+                return false;
+            }
 
-        if (lastSelectedInfobasePath && fs.existsSync(lastSelectedInfobasePath)) {
+            return isServerInfobaseConnection(infobaseReference)
+                || fs.existsSync(getFileInfobasePath(infobaseReference) || infobaseReference);
+        };
+
+        if (lastSelectedInfobasePath && canReuseInfobaseReference(lastSelectedInfobasePath)) {
             quickPickItems.push({
                 label: this.t('Use last selected infobase'),
-                description: lastSelectedInfobasePath,
+                description: describeInfobaseConnection(lastSelectedInfobasePath),
                 detail: this.t('Reuse the infobase selected earlier for this scenario.'),
                 source: 'lastSelected',
-                infobasePath: lastSelectedInfobasePath
+                infobasePath: normalizeInfobaseReference(lastSelectedInfobasePath)
             });
         }
 
         if (jsonDefaultInfobasePath
-            && fs.existsSync(jsonDefaultInfobasePath)
+            && canReuseInfobaseReference(jsonDefaultInfobasePath)
             && jsonDefaultInfobasePath !== lastSelectedInfobasePath) {
             quickPickItems.push({
                 label: this.t('Use path from JSON launch settings'),
-                description: jsonDefaultInfobasePath,
+                description: describeInfobaseConnection(jsonDefaultInfobasePath),
                 detail: this.t('Reuse the infobase path already stored in the generated Vanessa JSON.'),
                 source: 'json',
-                infobasePath: jsonDefaultInfobasePath
+                infobasePath: normalizeInfobaseReference(jsonDefaultInfobasePath)
             });
         }
 
         quickPickItems.push(
             {
                 label: this.t('Choose existing infobase'),
-                detail: this.t('Pick a file infobase from 1C launcher entries or enter a path manually.'),
+                detail: this.t('Pick an existing infobase from 1C launcher entries or enter a file infobase path manually.'),
                 source: 'existing'
             },
             {
@@ -10406,7 +10427,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             if (pickedPath === undefined || pickedPath === null || !pickedPath.trim()) {
                 return null;
             }
-            targetInfobasePath = path.resolve(pickedPath.trim());
+            targetInfobasePath = normalizeInfobaseReference(pickedPath.trim());
         } else if (selection.source === 'create') {
             const createdInfobase = await this.promptNewVanessaInfobasePath(scenarioName, workspaceRootPath);
             if (!createdInfobase) {
@@ -10420,7 +10441,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return null;
         }
 
-        if (selection.source !== 'create' && !fs.existsSync(targetInfobasePath)) {
+        const targetFileInfobasePath = getFileInfobasePath(targetInfobasePath);
+        if (selection.source !== 'create' && targetFileInfobasePath && !fs.existsSync(targetFileInfobasePath)) {
             vscode.window.showErrorMessage(
                 this.t('Target infobase path does not exist: {0}', targetInfobasePath)
             );
@@ -10428,7 +10450,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         let recreateExistingInfobase = false;
-        if (selection.source !== 'create') {
+        if (selection.source !== 'create' && targetFileInfobasePath) {
             const recreateSelection = await this.promptResetExistingVanessaInfobase(scenarioName, targetInfobasePath);
             if (recreateSelection === undefined) {
                 return null;
@@ -10497,10 +10519,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const runtimeDirectory = this.resolveVanessaRuntimeDirectory(workspaceRootPath);
         const logsDirectory = path.join(runtimeDirectory, 'infobase-setup-logs');
+        const targetFileInfobasePath = getFileInfobasePath(plan.targetInfobasePath);
         await fs.promises.mkdir(logsDirectory, { recursive: true });
-        await fs.promises.mkdir(path.dirname(plan.targetInfobasePath), { recursive: true });
+        if (targetFileInfobasePath) {
+            await fs.promises.mkdir(path.dirname(targetFileInfobasePath), { recursive: true });
+        }
 
-        const safeBaseName = path.basename(plan.targetInfobasePath).replace(/[^a-zA-Z0-9._-]+/g, '_') || 'infobase';
+        const safeBaseName = describeInfobaseConnection(plan.targetInfobasePath).replace(/[^a-zA-Z0-9._-]+/g, '_') || 'infobase';
         const makeLogPath = (stepName: string) => path.join(
             logsDirectory,
             `${Date.now()}-${safeBaseName}-${stepName}.log`
@@ -10511,7 +10536,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             '/DisableStartupDialogs',
             '/DisableStartupMessages',
             '/IBConnectionString',
-            buildFileInfobaseConnectionArgument(plan.targetInfobasePath)
+            buildInfobaseConnectionArgument(plan.targetInfobasePath)
         ];
 
         const plannedSteps: Array<{ title: string; run: () => Promise<void> }> = [];
@@ -10520,7 +10545,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             plannedSteps.push({
                 title: this.t('Delete existing target infobase files'),
                 run: async () => {
-                    await this.clearInfobaseDirectoryContents(plan.targetInfobasePath);
+                    if (!targetFileInfobasePath) {
+                        throw new Error(this.t('Recreate is available only for file-based target infobases.'));
+                    }
+
+                    await this.clearInfobaseDirectoryContents(targetFileInfobasePath);
                 }
             });
         }
@@ -10529,10 +10558,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             plannedSteps.push({
                 title: this.t('Create target infobase'),
                 run: async () => {
-                    await fs.promises.mkdir(plan.targetInfobasePath, { recursive: true });
+                    if (!targetFileInfobasePath) {
+                        throw new Error(this.t('Create target infobase is available only for file-based infobases.'));
+                    }
+
+                    await fs.promises.mkdir(targetFileInfobasePath, { recursive: true });
                     await this.runVanessaDesignerCommand(
                         designerExePath,
-                        ['CREATEINFOBASE', buildFileInfobaseConnectionArgument(plan.targetInfobasePath, { trailingSemicolon: true })],
+                        ['CREATEINFOBASE', buildFileInfobaseConnectionArgument(targetFileInfobasePath, { trailingSemicolon: true })],
                         workspaceRootPath,
                         this.t('Create target infobase'),
                         makeLogPath('01-create-infobase'),
@@ -10546,7 +10579,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         );
                     }
                     await updateManagedInfobaseMetadata(this._context, plan.targetInfobasePath, {
-                        displayName: plan.launcherRegistrationName || path.basename(plan.targetInfobasePath),
+                        displayName: plan.launcherRegistrationName || describeInfobaseConnection(plan.targetInfobasePath),
                         addRoles: ['vanessa'],
                         stateHint: 'empty'
                     });
@@ -10572,7 +10605,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         outputChannel
                     );
                     await updateManagedInfobaseMetadata(this._context, plan.targetInfobasePath, {
-                        displayName: plan.launcherRegistrationName || path.basename(plan.targetInfobasePath),
+                        displayName: plan.launcherRegistrationName || describeInfobaseConnection(plan.targetInfobasePath),
                         addRoles: ['vanessa'],
                         stateHint: 'ready'
                     });
@@ -10599,7 +10632,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         outputChannel
                     );
                     await updateManagedInfobaseMetadata(this._context, plan.targetInfobasePath, {
-                        displayName: plan.launcherRegistrationName || path.basename(plan.targetInfobasePath),
+                        displayName: plan.launcherRegistrationName || describeInfobaseConnection(plan.targetInfobasePath),
                         addRoles: ['vanessa'],
                         stateHint: 'ready'
                     });
@@ -10626,7 +10659,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         outputChannel
                     );
                     await updateManagedInfobaseMetadata(this._context, plan.targetInfobasePath, {
-                        displayName: plan.launcherRegistrationName || path.basename(plan.targetInfobasePath),
+                        displayName: plan.launcherRegistrationName || describeInfobaseConnection(plan.targetInfobasePath),
                         addRoles: ['vanessa'],
                         stateHint: 'ready'
                     });

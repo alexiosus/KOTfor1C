@@ -503,7 +503,6 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             sortAlphabetical: t('Alphabetical'),
             sortLastOpened: t('Last opened'),
             sortManual: t('Manual order'),
-            manualSortHint: t('Manual mode: drag infobases to change order.'),
             noInfobases: t('No infobases discovered yet.'),
             noInfobasesHint: t('Create a new infobase or add an existing one manually to start managing it here.'),
             noSelection: t('Select an infobase to inspect it and run operations.'),
@@ -636,7 +635,6 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                             </div>
                         </div>
                     </div>
-                    <p id="sortHint" class="sort-hint hidden">${escapeHtml(loc.manualSortHint)}</p>
                 </div>
                 <div id="infobaseList" class="infobase-list"></div>
             </aside>
@@ -666,7 +664,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                             <span>${escapeHtml(loc.openDesigner)}</span>
                         </button>
                         <button class="toolbar-btn" type="button" data-command="startFormExplorer" data-requires-selection="true">
-                            <span class="codicon codicon-symbol-misc" aria-hidden="true"></span>
+                            <span class="codicon codicon-telescope" aria-hidden="true"></span>
                             <span>${escapeHtml(loc.openWithFormExplorer)}</span>
                         </button>
                         <button class="toolbar-btn" type="button" data-command="restoreDt" data-requires-selection="true">

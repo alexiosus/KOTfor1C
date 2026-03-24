@@ -12,7 +12,17 @@ import {
     unregisterInfobaseFromLauncher
 } from './infobasePicker';
 import { getTranslator, type Translator } from './localization';
-import { buildFileInfobaseConnectionArgument } from './oneCInfobaseConnection';
+import {
+    buildFileInfobaseConnectionArgument,
+    buildInfobaseConnectionArgument,
+    coerceInfobaseConnection,
+    describeInfobaseConnection,
+    getFileInfobasePath,
+    isServerInfobaseConnection,
+    normalizeInfobaseConnectionIdentity,
+    normalizeInfobaseReference,
+    type OneCInfobaseConnection
+} from './oneCInfobaseConnection';
 import { resolveOneCDesignerExePath } from './oneCPlatform';
 import { getSharedStartupInfobasePaths } from './startupInfobase';
 
@@ -22,6 +32,7 @@ const INFOBASE_MANAGER_MANUAL_ENTRIES_KEY = 'infobaseManager.manualEntries';
 const RUN_VANESSA_CUSTOM_INFOBASE_KEY = 'runVanessa.customInfobaseByScenario';
 const INFOBASE_MARKER_FILE_NAME = '1Cv8.1CD';
 
+export type ManagedInfobaseKind = OneCInfobaseConnection['kind'];
 export type ManagedInfobaseRole = 'startup' | 'vanessa' | 'formExplorer' | 'snapshot';
 export type ManagedInfobaseSource = 'launcher' | 'runtime' | 'manual' | 'snapshot' | 'workspaceState';
 export type ManagedInfobaseState = 'ready' | 'empty' | 'dirty' | 'missing';
@@ -39,7 +50,9 @@ export interface ManagedInfobaseLogTarget {
 
 export interface ManagedInfobaseRecord {
     id: string;
+    infobaseKind: ManagedInfobaseKind;
     infobasePath: string;
+    locationLabel: string;
     displayName: string;
     launcherName: string | null;
     launcherRegistered: boolean;
@@ -120,7 +133,9 @@ interface InfobaseAuthentication {
 
 interface MutableManagedInfobaseRecord {
     id: string;
+    infobaseKind: ManagedInfobaseKind;
     infobasePath: string;
+    locationLabel: string;
     launcherName: string | null;
     launcherRegistered: boolean;
     displayNameHints: Set<string>;
@@ -153,10 +168,50 @@ function getInfobaseManagerOutputChannel(): vscode.OutputChannel {
 }
 
 function normalizePathForCompare(rawPath: string): string {
-    const resolved = path.resolve(rawPath.trim());
-    return process.platform === 'win32'
-        ? resolved.toLowerCase()
-        : resolved;
+    return normalizeInfobaseConnectionIdentity(rawPath);
+}
+
+function normalizeInfobaseReferenceValue(rawValue: string): string {
+    return normalizeInfobaseReference(rawValue);
+}
+
+function getInfobaseKind(rawValue: string): ManagedInfobaseKind {
+    return coerceInfobaseConnection(rawValue).kind;
+}
+
+function getInfobaseLocationLabel(rawValue: string): string {
+    return describeInfobaseConnection(rawValue);
+}
+
+function getFileInfobaseDirectory(rawValue: string): string | null {
+    return getFileInfobasePath(rawValue);
+}
+
+function isFileInfobaseReference(rawValue: string): boolean {
+    return !isServerInfobaseConnection(rawValue);
+}
+
+function getInfobaseDisplayNameFallback(rawValue: string): string {
+    const fileInfobasePath = getFileInfobaseDirectory(rawValue);
+    if (fileInfobasePath) {
+        return path.basename(fileInfobasePath) || fileInfobasePath;
+    }
+
+    return getInfobaseLocationLabel(rawValue) || rawValue;
+}
+
+function getInfobaseFileStem(rawValue: string, displayName?: string | null): string {
+    const preferredName = sanitizeDisplayName(displayName || '');
+    const baseName = preferredName || getInfobaseDisplayNameFallback(rawValue) || 'infobase';
+    const sanitized = baseName.replace(/[^a-zA-Z0-9._-]+/g, '_');
+    return sanitized || 'infobase';
+}
+
+function getInfobaseDefaultArtifactDirectory(rawValue: string, workspaceRootPath: string): string {
+    const fileInfobasePath = getFileInfobaseDirectory(rawValue);
+    return fileInfobasePath
+        ? path.dirname(fileInfobasePath)
+        : workspaceRootPath;
 }
 
 function resolveWorkspaceRelativePath(rawPath: string, workspaceRootPath: string | null): string {
@@ -170,20 +225,6 @@ function resolveWorkspaceRelativePath(rawPath: string, workspaceRootPath: string
     }
 
     return path.resolve(workspaceRootPath, trimmedPath);
-}
-
-function parseInfobasePathFromConnectionString(value: string): string | null {
-    const match = value.match(/File\s*=\s*("([^"]+)"|([^;]+))/i);
-    if (!match) {
-        return null;
-    }
-
-    const extractedPath = (match[2] || match[3] || '').trim();
-    if (!extractedPath) {
-        return null;
-    }
-
-    return extractedPath.replace(/[\\/]+$/, '');
 }
 
 function compareTimestampIso(left: string | null, right: string | null): number {
@@ -374,7 +415,7 @@ function getStoredManagedInfobaseMetadata(
     }
 
     const metadataMap = getStoredMetadataMap(context);
-    return metadataMap[normalizePathForCompare(path.resolve(trimmedPath))] || null;
+    return metadataMap[normalizePathForCompare(trimmedPath)] || null;
 }
 
 function getConfiguredGlobalStartupParameters(): string | null {
@@ -466,8 +507,8 @@ async function moveManagedInfobaseReferences(
     currentInfobasePath: string,
     nextInfobasePath: string
 ): Promise<void> {
-    const resolvedCurrentPath = path.resolve(currentInfobasePath);
-    const resolvedNextPath = path.resolve(nextInfobasePath);
+    const resolvedCurrentPath = normalizeInfobaseReferenceValue(currentInfobasePath);
+    const resolvedNextPath = normalizeInfobaseReferenceValue(nextInfobasePath);
     const currentKey = normalizePathForCompare(resolvedCurrentPath);
     const nextKey = normalizePathForCompare(resolvedNextPath);
     if (currentKey === nextKey) {
@@ -576,7 +617,7 @@ export async function rememberManualInfobase(
         return;
     }
 
-    const normalizedPath = path.resolve(trimmedPath);
+    const normalizedPath = normalizeInfobaseReferenceValue(trimmedPath);
     const manualEntries = getStoredManualEntries(context);
     const normalizedKey = normalizePathForCompare(normalizedPath);
     const existingEntryIndex = manualEntries.findIndex(entry =>
@@ -606,7 +647,7 @@ async function updateManualInfobaseDisplayNameIfPresent(
     infobasePath: string,
     displayName?: string | null
 ): Promise<void> {
-    const normalizedPath = path.resolve(infobasePath.trim());
+    const normalizedPath = normalizeInfobaseReferenceValue(infobasePath.trim());
     const manualEntries = getStoredManualEntries(context);
     const normalizedKey = normalizePathForCompare(normalizedPath);
     const existingEntryIndex = manualEntries.findIndex(entry =>
@@ -651,7 +692,7 @@ export async function updateManagedInfobaseMetadata(
         return;
     }
 
-    const resolvedPath = path.resolve(trimmedPath);
+    const resolvedPath = normalizeInfobaseReferenceValue(trimmedPath);
     const metadataMap = getStoredMetadataMap(context);
     const metadataKey = normalizePathForCompare(resolvedPath);
     const currentEntry = metadataMap[metadataKey] || { infobasePath: resolvedPath };
@@ -794,13 +835,12 @@ async function collectSnapshotObservations(): Promise<SnapshotObservation[]> {
             const snapshotSourceInfobase = typeof parsedSnapshot.source?.infobase === 'string'
                 ? parsedSnapshot.source.infobase.trim()
                 : '';
-            const parsedInfobasePath = parseInfobasePathFromConnectionString(snapshotSourceInfobase);
-            if (!parsedInfobasePath) {
+            if (!snapshotSourceInfobase) {
                 continue;
             }
 
             observations.push({
-                infobasePath: path.resolve(parsedInfobasePath),
+                infobasePath: normalizeInfobaseReferenceValue(snapshotSourceInfobase),
                 displayName: typeof parsedSnapshot.source?.infobaseName === 'string' && parsedSnapshot.source.infobaseName.trim()
                     ? parsedSnapshot.source.infobaseName.trim()
                     : null,
@@ -857,6 +897,7 @@ function getExistingDisplayNameHint(hints: Set<string>): string | null {
 }
 
 async function buildManagedInfobaseLogTargets(
+    infobaseKind: ManagedInfobaseKind,
     infobasePath: string,
     roles: ReadonlySet<ManagedInfobaseRole>,
     lastSnapshotPath: string | null,
@@ -895,12 +936,16 @@ async function buildManagedInfobaseLogTargets(
     await addTarget('Latest snapshot', lastSnapshotPath, 'file', 'Latest Form Explorer snapshot linked to this infobase.');
 
     const startupPaths = getSharedStartupInfobasePaths();
-    if (startupPaths && normalizePathForCompare(startupPaths.infobaseDirectory) === normalizePathForCompare(infobasePath)) {
+    if (infobaseKind === 'file'
+        && startupPaths
+        && normalizePathForCompare(startupPaths.infobaseDirectory) === normalizePathForCompare(infobasePath)) {
         await addTarget('Startup infobase logs', startupPaths.logsDirectory, 'directory', 'Shared startup infobase logs.');
     }
 
     const builderPaths = getFormExplorerBuilderPaths();
-    if (builderPaths && normalizePathForCompare(builderPaths.builderInfobaseDirectory) === normalizePathForCompare(infobasePath)) {
+    if (infobaseKind === 'file'
+        && builderPaths
+        && normalizePathForCompare(builderPaths.builderInfobaseDirectory) === normalizePathForCompare(infobasePath)) {
         await addTarget('Form Explorer build logs', builderPaths.logsDirectory, 'directory', 'Form Explorer builder logs.');
     }
 
@@ -955,13 +1000,15 @@ export async function collectManagedInfobases(
             return;
         }
 
-        const resolvedPath = path.resolve(trimmedPath);
-        const recordKey = normalizePathForCompare(resolvedPath);
+        const normalizedReference = normalizeInfobaseReferenceValue(trimmedPath);
+        const recordKey = normalizePathForCompare(normalizedReference);
         let record = records.get(recordKey);
         if (!record) {
             record = {
                 id: recordKey,
-                infobasePath: resolvedPath,
+                infobaseKind: getInfobaseKind(normalizedReference),
+                infobasePath: normalizedReference,
+                locationLabel: getInfobaseLocationLabel(normalizedReference),
                 launcherName: null,
                 launcherRegistered: false,
                 displayNameHints: new Set<string>(),
@@ -1091,7 +1138,7 @@ export async function collectManagedInfobases(
 
     for (const manualEntry of manualEntries) {
         observeInfobase(manualEntry.infobasePath, {
-            displayNameHint: manualEntry.displayName || path.basename(manualEntry.infobasePath),
+            displayNameHint: manualEntry.displayName || getInfobaseDisplayNameFallback(manualEntry.infobasePath),
             addSources: ['manual']
         });
     }
@@ -1102,7 +1149,7 @@ export async function collectManagedInfobases(
         }
 
         observeInfobase(configuredInfobasePath, {
-            displayNameHint: path.basename(configuredInfobasePath),
+            displayNameHint: getInfobaseDisplayNameFallback(configuredInfobasePath),
             addSources: ['workspaceState'],
             addRoles: ['vanessa']
         });
@@ -1144,23 +1191,31 @@ export async function collectManagedInfobases(
 
     const finalizedRecords: ManagedInfobaseRecord[] = [];
     for (const record of records.values()) {
-        const exists = await directoryExists(record.infobasePath);
-        const markerExists = exists && await pathExists(path.join(record.infobasePath, INFOBASE_MARKER_FILE_NAME));
+        const fileInfobasePath = getFileInfobaseDirectory(record.infobasePath);
+        const exists = fileInfobasePath
+            ? await directoryExists(fileInfobasePath)
+            : true;
+        const markerExists = fileInfobasePath
+            ? exists && await pathExists(path.join(fileInfobasePath, INFOBASE_MARKER_FILE_NAME))
+            : false;
         let state: ManagedInfobaseState;
-        if (!exists) {
+        if (record.infobaseKind === 'server') {
+            state = record.stateHint || 'ready';
+        } else if (!exists) {
             state = 'missing';
         } else if (markerExists) {
             state = record.stateHint || 'ready';
         } else {
-            state = (await getDirectoryEntryCount(record.infobasePath)) === 0 ? 'empty' : 'dirty';
+            state = (await getDirectoryEntryCount(fileInfobasePath!)) === 0 ? 'empty' : 'dirty';
         }
 
         const displayName = record.launcherName
             || getExistingDisplayNameHint(record.displayNameHints)
-            || path.basename(record.infobasePath)
+            || record.locationLabel
             || record.infobasePath;
         const roles = sortManagedInfobaseRoles(record.roles);
         const logTargets = await buildManagedInfobaseLogTargets(
+            record.infobaseKind,
             record.infobasePath,
             record.roles,
             record.lastSnapshotPath,
@@ -1169,7 +1224,9 @@ export async function collectManagedInfobases(
 
         finalizedRecords.push({
             id: record.id,
+            infobaseKind: record.infobaseKind,
             infobasePath: record.infobasePath,
+            locationLabel: record.locationLabel,
             displayName,
             launcherName: record.launcherName,
             launcherRegistered: record.launcherRegistered,
@@ -1670,7 +1727,12 @@ async function assertInfobaseNotBusy(
     infobasePath: string,
     t: Translator
 ): Promise<void> {
-    const markerPath = path.join(infobasePath, INFOBASE_MARKER_FILE_NAME);
+    const fileInfobasePath = getFileInfobaseDirectory(infobasePath);
+    if (!fileInfobasePath) {
+        return;
+    }
+
+    const markerPath = path.join(fileInfobasePath, INFOBASE_MARKER_FILE_NAME);
     if (!(await pathExists(markerPath))) {
         return;
     }
@@ -1681,7 +1743,7 @@ async function assertInfobaseNotBusy(
         await fs.promises.rename(markerPath, probePath);
         movedMarker = true;
     } catch {
-        throw new Error(t('Infobase appears to be in use and cannot be modified right now: {0}', infobasePath));
+        throw new Error(t('Infobase appears to be in use and cannot be modified right now: {0}', fileInfobasePath));
     } finally {
         if (movedMarker) {
             try {
@@ -1691,6 +1753,19 @@ async function assertInfobaseNotBusy(
             }
         }
     }
+}
+
+function assertFileInfobaseRecord(
+    t: Translator,
+    infobase: ManagedInfobaseRecord,
+    operationTitle: string
+): string {
+    const fileInfobasePath = getFileInfobaseDirectory(infobase.infobasePath);
+    if (fileInfobasePath) {
+        return fileInfobasePath;
+    }
+
+    throw new Error(t('"{0}" is available only for file-based infobases.', operationTitle));
 }
 
 export async function createInfobaseWithLauncherRegistration(
@@ -1779,19 +1854,20 @@ export async function copyInfobaseInteractive(
     infobase: ManagedInfobaseRecord
 ): Promise<string | null> {
     const t = await getTranslator(context.extensionUri);
+    const fileInfobasePath = assertFileInfobaseRecord(t, infobase, t('Copy infobase'));
     if (!infobase.exists) {
-        throw new Error(t('Infobase directory does not exist and cannot be copied: {0}', infobase.infobasePath));
+        throw new Error(t('Infobase directory does not exist and cannot be copied: {0}', fileInfobasePath));
     }
 
     const sourceDisplayName = sanitizeDisplayName(
         infobase.launcherName
         || infobase.displayName
-        || path.basename(infobase.infobasePath)
+        || getInfobaseDisplayNameFallback(fileInfobasePath)
         || 'KOT Infobase'
     );
     const copyTarget = await promptNewInfobaseTarget(context, t, {
         defaultName: t('Copy of {0}', sourceDisplayName),
-        defaultDirectoryPath: path.dirname(infobase.infobasePath),
+        defaultDirectoryPath: path.dirname(fileInfobasePath),
         chooseFolderTitle: t('Choose folder for copied infobase'),
         launcherNameTitle: t('Enter name for copied infobase in 1C launcher')
     });
@@ -1799,7 +1875,7 @@ export async function copyInfobaseInteractive(
         return null;
     }
 
-    await assertInfobaseNotBusy(infobase.infobasePath, t);
+    await assertInfobaseNotBusy(fileInfobasePath, t);
     await vscode.window.withProgress(
         {
             location: vscode.ProgressLocation.Notification,
@@ -1809,7 +1885,7 @@ export async function copyInfobaseInteractive(
         async progress => {
             progress.report({ message: t('Copying infobase files...') });
             await ensureDirectory(path.dirname(copyTarget.infobasePath));
-            await copyDirectoryContents(infobase.infobasePath, copyTarget.infobasePath);
+            await copyDirectoryContents(fileInfobasePath, copyTarget.infobasePath);
 
             progress.report({ message: t('Registering copied infobase in 1C launcher...') });
             await registerInfobaseInLauncher(copyTarget.infobasePath, copyTarget.launcherRegistrationName);
@@ -1835,7 +1911,10 @@ export async function exportInfobaseToDtInteractive(
     const designerExePath = await resolveConfiguredOneCDesignerExePath(t);
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
-    const defaultUri = vscode.Uri.file(path.join(path.dirname(infobasePath), `${path.basename(infobasePath)}.dt`));
+    const defaultUri = vscode.Uri.file(path.join(
+        getInfobaseDefaultArtifactDirectory(infobasePath, workspaceRootPath),
+        `${getInfobaseFileStem(infobasePath)}.dt`
+    ));
     const selectedTarget = await vscode.window.showSaveDialog({
         title: t('Choose target DT file'),
         saveLabel: t('Export DT'),
@@ -1853,14 +1932,14 @@ export async function exportInfobaseToDtInteractive(
     await ensureDirectory(logsDirectory);
     const logPath = path.join(
         logsDirectory,
-        `${Date.now()}-${path.basename(infobasePath).replace(/[^a-zA-Z0-9._-]+/g, '_') || 'infobase'}-dump-dt.log`
+        `${Date.now()}-${getInfobaseFileStem(infobasePath)}-dump-dt.log`
     );
     const designerArgs = [
         'DESIGNER',
         '/DisableStartupDialogs',
         '/DisableStartupMessages',
         '/IBConnectionString',
-        buildFileInfobaseConnectionArgument(infobasePath),
+        buildInfobaseConnectionArgument(infobasePath),
         '/DumpIB',
         targetDtPath
     ];
@@ -1896,7 +1975,10 @@ export async function exportInfobaseConfigurationToCfInteractive(
     const designerExePath = await resolveConfiguredOneCDesignerExePath(t);
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
-    const defaultUri = vscode.Uri.file(path.join(path.dirname(infobasePath), `${path.basename(infobasePath)}.cf`));
+    const defaultUri = vscode.Uri.file(path.join(
+        getInfobaseDefaultArtifactDirectory(infobasePath, workspaceRootPath),
+        `${getInfobaseFileStem(infobasePath)}.cf`
+    ));
     const selectedTarget = await vscode.window.showSaveDialog({
         title: t('Choose target CF file'),
         saveLabel: t('Save CF'),
@@ -1914,14 +1996,14 @@ export async function exportInfobaseConfigurationToCfInteractive(
     await ensureDirectory(logsDirectory);
     const logPath = path.join(
         logsDirectory,
-        `${Date.now()}-${path.basename(infobasePath).replace(/[^a-zA-Z0-9._-]+/g, '_') || 'infobase'}-dump-cfg.log`
+        `${Date.now()}-${getInfobaseFileStem(infobasePath)}-dump-cfg.log`
     );
     const designerArgs = [
         'DESIGNER',
         '/DisableStartupDialogs',
         '/DisableStartupMessages',
         '/IBConnectionString',
-        buildFileInfobaseConnectionArgument(infobasePath),
+        buildInfobaseConnectionArgument(infobasePath),
         '/DumpCfg',
         targetCfPath
     ];
@@ -1954,6 +2036,7 @@ export async function recreateInfobaseInteractive(
     infobase: ManagedInfobaseRecord
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
+    const fileInfobasePath = assertFileInfobaseRecord(t, infobase, t('Recreate infobase'));
     const confirmation = await vscode.window.showWarningMessage(
         t('Recreate infobase "{0}" and delete all current files?', infobase.displayName),
         { modal: true },
@@ -1992,14 +2075,14 @@ export async function recreateInfobaseInteractive(
         return;
     }
 
-    await assertInfobaseNotBusy(infobase.infobasePath, t);
+    await assertInfobaseNotBusy(fileInfobasePath, t);
 
     const designerExePath = await resolveConfiguredOneCDesignerExePath(t);
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
     const logsDirectory = path.join(workspaceRootPath, '.vscode', 'kot-runtime', 'infobase-manager', 'logs');
     await ensureDirectory(logsDirectory);
-    const safeBaseName = path.basename(infobase.infobasePath).replace(/[^a-zA-Z0-9._-]+/g, '_') || 'infobase';
+    const safeBaseName = getInfobaseFileStem(fileInfobasePath, infobase.displayName);
     const recreateLogPath = path.join(logsDirectory, `${Date.now()}-${safeBaseName}-recreate.log`);
 
     await vscode.window.withProgress(
@@ -2010,13 +2093,13 @@ export async function recreateInfobaseInteractive(
         },
         async progress => {
             progress.report({ message: t('Deleting existing infobase files...') });
-            await clearInfobaseDirectoryContents(infobase.infobasePath);
+            await clearInfobaseDirectoryContents(fileInfobasePath);
 
             progress.report({ message: t('Creating fresh infobase...') });
-            await ensureDirectory(infobase.infobasePath);
+            await ensureDirectory(fileInfobasePath);
             await runOneCCommand(
                 designerExePath,
-                ['CREATEINFOBASE', buildFileInfobaseConnectionArgument(infobase.infobasePath, { trailingSemicolon: true })],
+                ['CREATEINFOBASE', buildFileInfobaseConnectionArgument(fileInfobasePath, { trailingSemicolon: true })],
                 workspaceRootPath,
                 t('Create infobase'),
                 recreateLogPath,
@@ -2026,7 +2109,7 @@ export async function recreateInfobaseInteractive(
 
             if (infobase.launcherName) {
                 progress.report({ message: t('Refreshing infobase registration in 1C launcher...') });
-                await registerInfobaseInLauncher(infobase.infobasePath, infobase.launcherName);
+                await registerInfobaseInLauncher(fileInfobasePath, infobase.launcherName);
             }
         }
     );
@@ -2065,14 +2148,14 @@ export async function restoreInfobaseFromDtInteractive(
     await ensureDirectory(logsDirectory);
     const logPath = path.join(
         logsDirectory,
-        `${Date.now()}-${path.basename(infobase.infobasePath).replace(/[^a-zA-Z0-9._-]+/g, '_') || 'infobase'}-restore-dt.log`
+        `${Date.now()}-${getInfobaseFileStem(infobase.infobasePath, infobase.displayName)}-restore-dt.log`
     );
     const designerArgs = [
         'DESIGNER',
         '/DisableStartupDialogs',
         '/DisableStartupMessages',
         '/IBConnectionString',
-        buildFileInfobaseConnectionArgument(infobase.infobasePath),
+        buildInfobaseConnectionArgument(infobase.infobasePath),
         '/RestoreIB',
         path.resolve(selectedFile[0].fsPath)
     ];
@@ -2128,7 +2211,7 @@ export async function updateInfobaseConfigurationInteractive(
             },
             {
                 label: t('Update from .cf file'),
-                description: infobase.infobasePath,
+                description: infobase.locationLabel,
                 detail: t('Choose a custom .cf file and load it into the infobase.'),
                 modeKey: 'cfFile' as const
             }
@@ -2186,14 +2269,14 @@ export async function updateInfobaseConfigurationInteractive(
     await ensureDirectory(logsDirectory);
     const logPath = path.join(
         logsDirectory,
-        `${Date.now()}-${path.basename(infobase.infobasePath).replace(/[^a-zA-Z0-9._-]+/g, '_') || 'infobase'}-${logSuffix}.log`
+        `${Date.now()}-${getInfobaseFileStem(infobase.infobasePath, infobase.displayName)}-${logSuffix}.log`
     );
     const designerArgs = [
         'DESIGNER',
         '/DisableStartupDialogs',
         '/DisableStartupMessages',
         '/IBConnectionString',
-        buildFileInfobaseConnectionArgument(infobase.infobasePath),
+        buildInfobaseConnectionArgument(infobase.infobasePath),
         ...commandArgs
     ];
 
@@ -2231,7 +2314,7 @@ export async function renameInfobaseInteractive(
     const t = await getTranslator(context.extensionUri);
     const nextDisplayName = await vscode.window.showInputBox({
         title: t('Rename infobase'),
-        value: infobase.launcherName || infobase.displayName || path.basename(infobase.infobasePath) || 'KOT Infobase',
+        value: infobase.launcherName || infobase.displayName || getInfobaseDisplayNameFallback(infobase.infobasePath) || 'KOT Infobase',
         ignoreFocusOut: true,
         validateInput: value => value.trim()
             ? null
@@ -2341,8 +2424,9 @@ export async function moveInfobaseInteractive(
     infobase: ManagedInfobaseRecord
 ): Promise<string | null> {
     const t = await getTranslator(context.extensionUri);
+    const fileInfobasePath = assertFileInfobaseRecord(t, infobase, t('Move or rename infobase folder'));
     if (!infobase.exists) {
-        throw new Error(t('Infobase directory does not exist and cannot be moved: {0}', infobase.infobasePath));
+        throw new Error(t('Infobase directory does not exist and cannot be moved: {0}', fileInfobasePath));
     }
 
     const selectedParentDirectory = await vscode.window.showOpenDialog({
@@ -2351,7 +2435,7 @@ export async function moveInfobaseInteractive(
         canSelectMany: false,
         title: t('Choose target parent folder for infobase'),
         openLabel: t('Use this folder'),
-        defaultUri: vscode.Uri.file(path.dirname(infobase.infobasePath))
+        defaultUri: vscode.Uri.file(path.dirname(fileInfobasePath))
     });
     if (!selectedParentDirectory || selectedParentDirectory.length === 0) {
         return null;
@@ -2360,7 +2444,7 @@ export async function moveInfobaseInteractive(
     const targetParentDirectory = path.resolve(selectedParentDirectory[0].fsPath);
     const targetFolderName = await vscode.window.showInputBox({
         title: t('Enter target folder name'),
-        value: path.basename(infobase.infobasePath),
+        value: path.basename(fileInfobasePath),
         ignoreFocusOut: true,
         validateInput: value => {
             const trimmedValue = value.trim();
@@ -2369,7 +2453,7 @@ export async function moveInfobaseInteractive(
             }
             return validateInfobaseMoveTarget(
                 t,
-                infobase.infobasePath,
+                fileInfobasePath,
                 path.join(targetParentDirectory, trimmedValue)
             );
         }
@@ -2379,12 +2463,12 @@ export async function moveInfobaseInteractive(
     }
 
     const nextInfobasePath = path.resolve(targetParentDirectory, targetFolderName.trim());
-    const validationError = validateInfobaseMoveTarget(t, infobase.infobasePath, nextInfobasePath);
+    const validationError = validateInfobaseMoveTarget(t, fileInfobasePath, nextInfobasePath);
     if (validationError) {
         throw new Error(validationError);
     }
 
-    await assertInfobaseNotBusy(infobase.infobasePath, t);
+    await assertInfobaseNotBusy(fileInfobasePath, t);
     await vscode.window.withProgress(
         {
             location: vscode.ProgressLocation.Notification,
@@ -2394,11 +2478,11 @@ export async function moveInfobaseInteractive(
         async progress => {
             progress.report({ message: t('Moving infobase files...') });
             await ensureDirectory(path.dirname(nextInfobasePath));
-            await moveDirectoryWithFallback(infobase.infobasePath, nextInfobasePath);
+            await moveDirectoryWithFallback(fileInfobasePath, nextInfobasePath);
 
             progress.report({ message: t('Updating infobase references...') });
             if (infobase.launcherRegistered || infobase.launcherName) {
-                const launcherUpdate = await updateInfobaseInLauncher(infobase.infobasePath, {
+                const launcherUpdate = await updateInfobaseInLauncher(fileInfobasePath, {
                     nextInfobasePath,
                     preferredName: infobase.launcherName || infobase.displayName
                 });
@@ -2409,7 +2493,7 @@ export async function moveInfobaseInteractive(
         }
     );
 
-    await moveManagedInfobaseReferences(context, infobase.infobasePath, nextInfobasePath);
+    await moveManagedInfobaseReferences(context, fileInfobasePath, nextInfobasePath);
     await updateManagedInfobaseMetadata(context, nextInfobasePath, {
         displayName: infobase.launcherName || infobase.displayName,
         startupParametersMode: infobase.startupParametersMode,
@@ -2428,26 +2512,27 @@ export async function reassignInfobasePathInteractive(
     infobase: ManagedInfobaseRecord
 ): Promise<string | null> {
     const t = await getTranslator(context.extensionUri);
+    const fileInfobasePath = assertFileInfobaseRecord(t, infobase, t('Reassign infobase folder'));
     const selectedDirectory = await vscode.window.showOpenDialog({
         canSelectFiles: false,
         canSelectFolders: true,
         canSelectMany: false,
         title: t('Choose existing infobase folder to assign'),
         openLabel: t('Use this folder'),
-        defaultUri: vscode.Uri.file(path.dirname(infobase.infobasePath))
+        defaultUri: vscode.Uri.file(path.dirname(fileInfobasePath))
     });
     if (!selectedDirectory || selectedDirectory.length === 0) {
         return null;
     }
 
     const nextInfobasePath = path.resolve(selectedDirectory[0].fsPath);
-    const validationError = validateExistingInfobaseReassignmentTarget(t, infobase.infobasePath, nextInfobasePath);
+    const validationError = validateExistingInfobaseReassignmentTarget(t, fileInfobasePath, nextInfobasePath);
     if (validationError) {
         throw new Error(validationError);
     }
 
     if (infobase.launcherRegistered || infobase.launcherName) {
-        const launcherUpdate = await updateInfobaseInLauncher(infobase.infobasePath, {
+        const launcherUpdate = await updateInfobaseInLauncher(fileInfobasePath, {
             nextInfobasePath,
             preferredName: infobase.launcherName || infobase.displayName
         });
@@ -2456,7 +2541,7 @@ export async function reassignInfobasePathInteractive(
         }
     }
 
-    await moveManagedInfobaseReferences(context, infobase.infobasePath, nextInfobasePath);
+    await moveManagedInfobaseReferences(context, fileInfobasePath, nextInfobasePath);
     await updateManagedInfobaseMetadata(context, nextInfobasePath, {
         displayName: infobase.launcherName || infobase.displayName,
         startupParametersMode: infobase.startupParametersMode,
@@ -2473,6 +2558,7 @@ export async function deleteInfobaseInteractive(
     infobase: ManagedInfobaseRecord
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
+    const fileInfobasePath = assertFileInfobaseRecord(t, infobase, t('Delete infobase'));
     const confirmation = await vscode.window.showWarningMessage(
         t('Delete infobase "{0}" completely (files and launcher registration)?', infobase.displayName),
         { modal: true },
@@ -2506,7 +2592,7 @@ export async function deleteInfobaseInteractive(
             return;
         }
         if (backupMode.modeKey === 'backup') {
-            backupDtPath = await exportInfobaseToDtInteractive(context, infobase.infobasePath);
+            backupDtPath = await exportInfobaseToDtInteractive(context, fileInfobasePath);
             if (!backupDtPath) {
                 return;
             }
@@ -2514,7 +2600,7 @@ export async function deleteInfobaseInteractive(
     }
 
     if (infobase.exists) {
-        await assertInfobaseNotBusy(infobase.infobasePath, t);
+        await assertInfobaseNotBusy(fileInfobasePath, t);
     }
 
     await vscode.window.withProgress(
@@ -2529,12 +2615,12 @@ export async function deleteInfobaseInteractive(
 
             if (infobase.exists) {
                 progress.report({ message: t('Deleting infobase files...') });
-                await fs.promises.rm(infobase.infobasePath, { recursive: true, force: true });
+                await fs.promises.rm(fileInfobasePath, { recursive: true, force: true });
             }
         }
     );
 
-    await purgeManagedInfobaseReferences(context, infobase.infobasePath);
+    await purgeManagedInfobaseReferences(context, fileInfobasePath);
     if (backupDtPath) {
         vscode.window.showInformationMessage(t('DT backup created before delete: {0}', backupDtPath));
     }
@@ -2545,34 +2631,43 @@ export async function editInfobaseInteractive(
     infobase: ManagedInfobaseRecord
 ): Promise<string | null> {
     const t = await getTranslator(context.extensionUri);
-    const selection = await vscode.window.showQuickPick(
-        [
+    const selectionItems: Array<{
+        label: string;
+        detail: string;
+        actionKey: 'rename' | 'move' | 'reassign' | 'startupParameters' | 'delete';
+    }> = [
             {
                 label: t('Rename infobase'),
                 detail: t('Change the display name and update launcher registration if present.'),
                 actionKey: 'rename' as const
             },
             {
+                label: t('Edit launch keys'),
+                detail: t('Set custom 1C startup parameters for this infobase or switch back to workspace defaults.'),
+                actionKey: 'startupParameters' as const
+            }
+        ];
+    if (infobase.infobaseKind === 'file') {
+        selectionItems.push(
+            {
                 label: t('Move or rename infobase folder'),
                 detail: t('Move the file infobase directory and update launcher/manual references.'),
-                actionKey: 'move' as const
+                actionKey: 'move'
             },
             {
                 label: t('Reassign infobase folder'),
                 detail: t('Keep the item, but point it to another existing file infobase directory.'),
-                actionKey: 'reassign' as const
-            },
-            {
-                label: t('Edit launch keys'),
-                detail: t('Set custom 1C startup parameters for this infobase or switch back to workspace defaults.'),
-                actionKey: 'startupParameters' as const
+                actionKey: 'reassign'
             },
             {
                 label: t('Delete infobase'),
                 detail: t('Delete files and remove the infobase from 1C launcher.'),
-                actionKey: 'delete' as const
+                actionKey: 'delete'
             }
-        ],
+        );
+    }
+    const selection = await vscode.window.showQuickPick(
+        selectionItems,
         {
             title: t('Edit "{0}"', infobase.displayName),
             ignoreFocusOut: true
@@ -2608,7 +2703,7 @@ export async function addInfobaseToLauncherInteractive(
     const t = await getTranslator(context.extensionUri);
     const launcherName = await vscode.window.showInputBox({
         title: t('Enter infobase name for 1C launcher'),
-        value: infobase.launcherName || infobase.displayName || path.basename(infobase.infobasePath) || 'KOT Infobase',
+        value: infobase.launcherName || infobase.displayName || getInfobaseDisplayNameFallback(infobase.infobasePath) || 'KOT Infobase',
         ignoreFocusOut: true,
         validateInput: value => value.trim()
             ? null
@@ -2660,7 +2755,7 @@ export async function openInfobaseInEnterprise(
         [
             'ENTERPRISE',
             '/IBConnectionString',
-            buildFileInfobaseConnectionArgument(infobase.infobasePath, { trailingSemicolon: true }),
+            buildInfobaseConnectionArgument(infobase.infobasePath, { trailingSemicolon: true }),
             ...startupArgs
         ],
         output,
@@ -2686,7 +2781,7 @@ export async function openInfobaseInDesigner(
         [
             'DESIGNER',
             '/IBConnectionString',
-            buildFileInfobaseConnectionArgument(infobase.infobasePath, { trailingSemicolon: true })
+            buildInfobaseConnectionArgument(infobase.infobasePath, { trailingSemicolon: true })
         ],
         output,
         t,
@@ -2700,7 +2795,12 @@ export async function openInfobaseInDesigner(
 }
 
 export async function revealInfobaseInOs(infobase: ManagedInfobaseRecord): Promise<void> {
-    await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(infobase.infobasePath));
+    const fileInfobasePath = getFileInfobaseDirectory(infobase.infobasePath);
+    if (!fileInfobasePath) {
+        throw new Error('Open folder is available only for file-based infobases.');
+    }
+
+    await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(fileInfobasePath));
 }
 
 export async function showInfobaseLogsInteractive(
@@ -2778,13 +2878,13 @@ export async function pickManagedInfobasePath(
         actionKey: 'manual'
     });
 
-    if (preferredInfobasePath && fs.existsSync(preferredInfobasePath)) {
+    if (preferredInfobasePath && (!isFileInfobaseReference(preferredInfobasePath) || fs.existsSync(preferredInfobasePath))) {
         quickPickItems.push({
             label: t('Use selected snapshot infobase'),
-            description: preferredInfobasePath,
+            description: getInfobaseLocationLabel(preferredInfobasePath),
             detail: t('Use infobase parsed from selected snapshot'),
             actionKey: 'managed',
-            infobasePath: path.resolve(preferredInfobasePath)
+            infobasePath: normalizeInfobaseReferenceValue(preferredInfobasePath)
         });
     }
 
@@ -2797,8 +2897,8 @@ export async function pickManagedInfobasePath(
             : t('unknown source');
         quickPickItems.push({
             label: record.displayName,
-            description: record.infobasePath,
-            detail: `${t('Roles')}: ${rolesSummary} | ${t('Sources')}: ${sourcesSummary} | ${t('State')}: ${record.state}`,
+            description: record.locationLabel,
+            detail: `${t('Kind')}: ${record.infobaseKind} | ${t('Roles')}: ${rolesSummary} | ${t('Sources')}: ${sourcesSummary} | ${t('State')}: ${record.state}`,
             actionKey: 'managed',
             infobasePath: record.infobasePath
         });

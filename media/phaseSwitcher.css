@@ -74,6 +74,39 @@ h1 {
     align-items: center;
     gap: 4px;
 }
+
+.top-action-icon-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.top-beta-badge {
+    position: absolute;
+    top: -15px;
+    right: -15px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--tm-accent) 36%, transparent);
+    background: color-mix(in srgb, var(--tm-accent) 18%, var(--tm-surface-0) 82%);
+    color: var(--vscode-descriptionForeground);
+    font-size: 9px;
+    line-height: 14px;
+    font-weight: 700;
+    opacity: 0;
+    transform: translateY(-1px) scale(0.86);
+    transition: opacity 0.14s ease, transform 0.14s ease;
+    pointer-events: none;
+}
+
+.top-action-btn-beta:hover .top-beta-badge,
+.top-action-btn-beta:focus-visible .top-beta-badge {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
 /* Стили для компактных кнопок в верхней панели (Обновить, Настройки) */
 .compact-top-btn {
     background-color: var(--tm-surface-1);
