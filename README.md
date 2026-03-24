@@ -232,7 +232,7 @@ _На скриншотах продемонстрирован интерфейс
 - Хайлайт проблемных строк с описанием проблемы - неизвестный сценарий, неправильный шаг, проблемы с параметрами вложенных сценариев;
 - Меню Quick fix с предложениями на замену:
 
-<p align="center"><img src="./docs/ErrorsDiagnostic.png" alt="Диагностика и хайлайт ошибок, меню QuickFix" width=700 style="max-width: 100%; height: auto;"/></p>
+<p align="center"><img src="./docs/ErrorsDiagnostic.png" alt="Диагностика и хайлайт ошибок, меню QuickFix" width=900 style="max-width: 100%; height: auto;"/></p>
 
 ---
 
