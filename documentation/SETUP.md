@@ -60,7 +60,24 @@
 | `kotTestToolkit.editor.showRefillMessages` | `true` | Показывать уведомления о перезаполнении секций |
 | `kotTestToolkit.editor.newScenarioLanguage` | `en` | Язык новых сценариев (`#language: en/ru`) |
 
-### 3.4 Legacy support
+### 3.4 New scenario defaults
+
+Эти настройки использует мастер создания новых сценариев.
+
+| Ключ | Default | Назначение |
+|---|---|---|
+| `kotTestToolkit.newScenarioDefaults.project` | `Drive` | Значение по умолчанию для `ДанныеСценария.Проект` |
+| `kotTestToolkit.newScenarioDefaults.systemFunctions` | `[{"name":"Drive automation testing","uid":"98999f57-13dc-11e8-aed1-005056a5c4e8"}]` | Список доступных функций системы для новых сценариев; первая запись считается значением по умолчанию |
+| `kotTestToolkit.newScenarioDefaults.allowCrossFunctionUsage` | `true` | Значение по умолчанию для `ДанныеСценария.РазрешеноИспользоватьВДругихФункциях` |
+| `kotTestToolkit.newScenarioDefaults.userProfile` | `Administrator` | Значение по умолчанию для `ДанныеСценария.ПрофильПользователя` |
+| `kotTestToolkit.newScenarioDefaults.reportLevel1` | `Drive` | Значение по умолчанию для `ДанныеСценария.УровеньОтчета1` |
+| `kotTestToolkit.newScenarioDefaults.mainReportLevel2` | `Parent` | Значение по умолчанию для `ДанныеСценария.УровеньОтчета2` у главного сценария |
+| `kotTestToolkit.newScenarioDefaults.nestedReportLevel2` | `Tests` | Значение по умолчанию для `ДанныеСценария.УровеньОтчета2` у вложенного сценария |
+
+Подробнее о том, как эти значения попадают в `scen.yaml` / `test.yaml` и какие поля шапки они заполняют:
+[`blocks/scenario-creation.md`](./blocks/scenario-creation.md)
+
+### 3.5 Legacy support
 
 | Ключ | Default | Назначение |
 |---|---|---|
@@ -68,14 +85,14 @@
 | `kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios` | `true` | Опциональная миграция legacy-тегов `# PhaseSwitcher_*` в `KOTМетаданные` только для главных сценариев (работает при включенном `autoEnsureKotMetadataForMainScenarios`) |
 | `kotTestToolkit.legacy.enableDisabledTestsDirectoryMoveOnBuild` | `false` | Опциональный legacy-режим: при `Build tests` временно переносить `test/*.yaml` выключенных сценариев в системную temp-папку и возвращать их после завершения сборки |
 
-### 3.5 Diagnostics and Steps Library
+### 3.6 Diagnostics and Steps Library
 
 | Ключ | Default | Назначение |
 |---|---|---|
 | `kotTestToolkit.steps.externalUrl` | `https://raw.githubusercontent.com/kakoytochelik/KOTfor1C/main/res/steps.htm` | Источник `steps.htm` для библиотеки шагов |
 | `kotTestToolkit.editor.checkRelatedParentScenarios` | `true` | Проверять связанные родительские сценарии вместе с активным |
 
-### 3.6 Test Assembly settings
+### 3.7 Test Assembly settings
 
 | Ключ | Default | Назначение |
 |---|---|---|
@@ -83,7 +100,7 @@
 | `kotTestToolkit.output.advancedLogging` | `false` | Расширенные технические логи |
 | `kotTestToolkit.paths.openBuildScenarioParametersManager` | `-` | Кнопка-переход к менеджеру параметров в Settings |
 
-### 3.7 Vanessa Automation Launch
+### 3.8 Vanessa Automation Launch
 
 | Ключ | Default | Назначение |
 |---|---|---|
@@ -109,18 +126,18 @@
 
 Рекомендация: в путях и строковых аргументах используйте `*Quoted` варианты, чтобы корректно обрабатывать пробелы и спецсимволы.
 
-### 3.8 1C startup parameters
+### 3.9 1C startup parameters
 
 | Ключ | Default | Назначение |
 |---|---|---|
-| `kotTestToolkit.startupParams.parameters` | `/L ru /DisableStartupMessages /DisableStartupDialogs` | Строка параметров запуска 1С |
+| `kotTestToolkit.startupParams.parameters` | `/L ru /DisableStartupMessages /DisableStartupDialogs` | Строка параметров запуска 1С (используется прежде всего для базы сборщика сценариев) |
 
 Примечание:
 
 - для отдельной базы эти параметры можно переопределить через `KOT Infobase Manager` (`Edit base` -> `Edit launch keys`);
-- если для базы override не задан, используется именно `kotTestToolkit.startupParams.parameters`.
+- если для базы переопределение не задано, ключи не используются, но можно выбрать значение из `kotTestToolkit.startupParams.parameters`.
 
-### 3.9 System paths settings
+### 3.10 System paths settings
 
 | Ключ | Default | Назначение |
 |---|---|---|
@@ -131,16 +148,15 @@
 | `kotTestToolkit.paths.fileWorkshopExe` | `C:\Program Files (x86)\1cv8fv\bin\1cv8fv.exe` | Путь к File Workshop для MXL |
 | `kotTestToolkit.paths.firstLaunchFolder` | `""` | Папка FirstLaunch (кнопка `Build FL` показывается, если включены Drive-функции, путь задан и папка существует) |
 
-### 3.10 KOT Form Explorer (beta)
+### 3.11 KOT Form Explorer (beta)
 
 | Ключ | Default | Назначение |
 |---|---|---|
 | `kotTestToolkit.formExplorer.snapshotPath` | `.vscode/kot-runtime/form-explorer/form-snapshot.json` | Путь к snapshot-файлу формы |
 | `kotTestToolkit.formExplorer.configurationSourceDirectory` | `cf` | Папка файловой выгрузки конфигурации, которая используется для static enrichment и сборки адаптера Form Explorer |
 | `kotTestToolkit.formExplorer.generatedArtifactsDirectory` | `.vscode/kot-runtime/form-explorer` | Папка generated artifacts и builder-ИБ Form Explorer |
-| `kotTestToolkit.formExplorer.extensionOutputPath` | `.vscode/kot-runtime/form-explorer/KOTFormExplorerRuntime.cfe` | Путь к итоговому `.cfe` |
 | `kotTestToolkit.formExplorer.extensionBuildCommandTemplate` | `""` | Override встроенного builder через внешний скрипт |
-| `kotTestToolkit.formExplorer.autoRefreshSeconds` | `2` | Интервал перечитывания snapshot-а в панели |
+| `kotTestToolkit.formExplorer.autoRefreshSeconds` | `1` | Интервал перечитывания snapshot-а в панели |
 | `kotTestToolkit.formExplorer.showOutputPanel` | `false` | Автопоказ Output при сборке `.cfe` и прогреве builder-ИБ Form Explorer |
 
 Важно:
@@ -164,13 +180,19 @@
 Важная логика приоритета:
 
 - для совпадающих ключей базово приоритет у значения из СППР;
-- для точечного переопределения используйте флаг приоритета в доп. параметрах.
+- для точечного переопределения используйте `Override existing value` в доп. параметрах;
+- `GlobalVars` тоже могут точечно перезаписывать существующее значение через `Override existing value`.
+
+Подробнее:
+- В репозитории есть пример файла настроек СППР для ознакомления/адаптации под свои нужды: [yaml_parameters.json](../res/yaml_parameters.json)
+- Справка по параметрам обработки `СборкаТекстовСценариев` (СППР): [Официальный портал ИТС](https://its.1c.ru/db/sppr2doc#content:124:hdoc)
 
 ## 5) Каталог команд
 
 ### 5.1 Навигация и создание
 
 - `KOT - Open scenario` (`KOT - Открыть сценарий`)
+- `KOT - Open nested scenario from feature` (`KOT - Открыть вложенный сценарий из feature`)
 - `KOT - Find references to current scenario` (`KOT - Найти вызовы текущего сценария`)
 - `KOT - Create nested scenario` (`KOT - Создать вложенный сценарий`)
 - `KOT - Create main scenario` (`KOT - Создать главный сценарий`)
@@ -204,6 +226,9 @@
 - `KOT - Open Build Scenario Parameters Manager` (`KOT - Открыть Менеджер параметров Сборки Сценариев`)
 - `KOT - Open Infobase Manager` (`KOT - Открыть Менеджер баз`)
 - `KOT - Open 1C Form Explorer` (`KOT - Открыть Исследователь форм 1С`)
+- `KOT - Generate Form Explorer extension project` (`KOT - Сгенерировать проект расширения Form Explorer`)
+- `KOT - Build Form Explorer .cfe` (`KOT - Собрать .cfe для Form Explorer`)
+- `KOT - Install Form Explorer extension into infobase` (`KOT - Установить расширение Form Explorer в базу`)
 - `KOT - Open build folder` (`KOT - Открыть папку сборки`)
 - `KOT - Create FirstLaunch archive` (`KOT - Собрать архив FirstLaunch`)
 - `KOT - Open scenario in Vanessa (manual debug)` (`KOT - Открыть сценарий в Vanessa (ручная отладка)`)

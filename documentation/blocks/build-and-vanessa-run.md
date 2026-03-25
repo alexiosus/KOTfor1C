@@ -24,10 +24,14 @@
 
 ### Способы запуска
 
-1. Иконка запуска рядом со сценарием (обычный прогон).
-2. Верхняя кнопка запуска в Test Manager (`Менеджер тестов`) (выбор режима):
-   - автоматический прогон (через выбор сценария);
-   - запуск Vanessa для ручной отладки (без автопрогона сценария).
+1. Иконка запуска рядом со сценарием.
+2. Верхняя кнопка `Open Vanessa` в Test Manager (`Менеджер тестов`) с выбором сценария.
+3. Команда `KOT - Open scenario in Vanessa (manual debug)` для ручной отладки уже собранных сценариев.
+
+В UI доступны два режима:
+
+- автоматический прогон;
+- `manual debug` — открыть Vanessa для интерактивной отладки без автозакрытия.
 
 ### Статусы запуска
 
@@ -39,8 +43,10 @@
 ### Выбор и подготовка тестовой базы
 
 - Перед built-in запуском Vanessa можно:
-  - выбрать существующую файловую ИБ из общего списка менеджера баз (`launcher`, `runtime`, `snapshot`, ручные пути);
-  - указать путь к существующей файловой ИБ вручную;
+  - переиспользовать последнюю выбранную ИБ для этого сценария;
+  - взять путь из уже собранного JSON;
+  - выбрать существующую ИБ из общего списка менеджера баз (`launcher`, `runtime`, `snapshot`, `manual`, `workspaceState`);
+  - указать существующую файловую или серверную ИБ вручную;
   - создать новую файловую ИБ.
 - Команда `KOT - Open Infobase Manager` открывает отдельную панель управления ИБ:
   - единый список обнаруженных баз;
@@ -53,7 +59,7 @@
   - обновление конфигурации из `kotTestToolkit.formExplorer.configurationSourceDirectory`;
   - обновление конфигурации из выбранного пользовательского `.cf`.
 - Последняя выбранная ИБ запоминается на сценарий и предлагается повторно.
-- При создании новой ИБ папка выбирается через системный диалог, затем запрашивается имя базы для лаунчера 1С, и после успешного создания база автоматически добавляется в launcher.
+- При создании новой ИБ папка выбирается через системный диалог, затем запрашивается имя базы для launcher 1С, и после успешного создания база автоматически добавляется в launcher.
 - Для новой ИБ и для режима пересоздания существующей ИБ обязательно нужно выбрать хотя бы один шаг подготовки (`DT` или обновление конфигурации), иначе запуск блокируется как для пустой базы.
 - Во время подготовки показывается пошаговый progress notification: создание ИБ, восстановление из `DT`, обновление конфигурации.
 
@@ -97,6 +103,7 @@
 | `kotTestToolkit.paths.buildScenarioBddEpf` | EPF обработки сборки |
 | `kotTestToolkit.runVanessa.vanessaEpfPath` | EPF Vanessa |
 | `kotTestToolkit.assembleScript.buildPath` | Папка сборки |
+| `kotTestToolkit.assembleScript.showOutputPanel` | Автопоказ Output при сборке сценариев |
 | `kotTestToolkit.runVanessa.runtimeDirectory` | Папка runtime-логов/статусов |
 | `kotTestToolkit.runVanessa.showOutputPanel` | Автопоказ Output при запуске Vanessa |
 | `kotTestToolkit.startupParams.parameters` | Параметры старта 1С |
@@ -106,6 +113,7 @@
 | `kotTestToolkit.runVanessa.checkUnsafeActionProtection` | Проверка conf.cfg перед запуском (Windows) |
 | `kotTestToolkit.runVanessa.commandTemplate` | Кастомный шаблон запуска Vanessa |
 | `kotTestToolkit.formExplorer.configurationSourceDirectory` | Каталог исходников конфигурации для опции обновления ИБ из папки перед запуском |
+| `kotTestToolkit.legacy.enableDisabledTestsDirectoryMoveOnBuild` | Legacy-режим: временно выносить `test/*.yaml` выключенных сценариев из сборки |
 
 ### Shared startup-ИБ
 
@@ -137,3 +145,5 @@
 - `${workspaceRootQuoted}`: путь к корню проекта в quoted-виде для shell.
 
 Если шаблон пустой, используется built-in launcher расширения.
+
+Команда `KOT - Open scenario in Vanessa (manual debug)` всегда использует built-in launcher и не применяет `runVanessa.commandTemplate`.
