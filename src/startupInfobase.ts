@@ -11,18 +11,40 @@ const STARTUP_INFOBASE_ROOT_RELATIVE_PATH = path.join('.vscode', 'kot-runtime', 
 const STARTUP_INFOBASE_DIRECTORY_NAME = 'ib';
 const STARTUP_INFOBASE_LOGS_DIRECTORY_NAME = 'logs';
 const STARTUP_INFOBASE_MARKER_FILE_NAME = '1Cv8.1CD';
+const STARTUP_INFOBASE_AUTH_STATE_FILE_NAME = 'template-state.json';
+const STARTUP_INFOBASE_SERVICE_USER_NAME = 'KOTStartupService';
+const STARTUP_INFOBASE_TEMPLATE_SERVICE_USER_PASSWORD = '';
+const STARTUP_INFOBASE_AUTH_STATE_SCHEMA_VERSION = 2;
+const STARTUP_INFOBASE_TEMPLATE_DT_RELATIVE_PATH = path.join('tools', 'startup-infobase', 'KOTStartupTemplate.dt');
+
+export interface SharedStartupInfobaseAuthentication {
+    username: string;
+    password: string;
+}
 
 export interface SharedStartupInfobasePaths {
     rootDirectory: string;
     infobaseDirectory: string;
     logsDirectory: string;
     markerFilePath: string;
+    authStateFilePath: string;
+}
+
+interface SharedStartupInfobaseAuthState {
+    schemaVersion: number;
+    infobaseDirectory: string;
+    username: string;
+    password: string;
+    configuredAt: string;
+    provisioningMethod: 'templateDt';
+    templateDtDescriptor: string;
 }
 
 export interface EnsureSharedStartupInfobaseResult {
     infobaseDirectory: string;
     reusedExistingInfobase: boolean;
     createdInfobase: boolean;
+    authentication: SharedStartupInfobaseAuthentication | null;
 }
 
 let outputChannel: vscode.OutputChannel | null = null;
@@ -70,6 +92,19 @@ async function pathExists(targetPath: string): Promise<boolean> {
 
 async function readUtf8File(filePath: string): Promise<string> {
     return fs.promises.readFile(filePath, 'utf8');
+}
+
+async function readJsonFile<T>(filePath: string): Promise<T | null> {
+    try {
+        return JSON.parse(await readUtf8File(filePath)) as T;
+    } catch {
+        return null;
+    }
+}
+
+async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
+    await ensureDirectory(path.dirname(filePath));
+    await fs.promises.writeFile(filePath, JSON.stringify(value, null, 2), 'utf8');
 }
 
 async function run1CCommand(
@@ -128,6 +163,95 @@ async function run1CCommand(
     });
 }
 
+function buildSharedStartupInfobaseAuthenticationState(
+    startupPaths: SharedStartupInfobasePaths,
+    authentication: SharedStartupInfobaseAuthentication
+): Omit<SharedStartupInfobaseAuthState, 'provisioningMethod' | 'templateDtDescriptor'> {
+    return {
+        schemaVersion: STARTUP_INFOBASE_AUTH_STATE_SCHEMA_VERSION,
+        infobaseDirectory: path.resolve(startupPaths.infobaseDirectory),
+        username: authentication.username,
+        password: authentication.password,
+        configuredAt: new Date().toISOString()
+    };
+}
+
+function isValidSharedStartupInfobaseAuthState(
+    startupPaths: SharedStartupInfobasePaths,
+    state: SharedStartupInfobaseAuthState | null
+): state is SharedStartupInfobaseAuthState {
+    if (!state) {
+        return false;
+    }
+
+    return state.schemaVersion === STARTUP_INFOBASE_AUTH_STATE_SCHEMA_VERSION
+        && path.resolve(state.infobaseDirectory) === path.resolve(startupPaths.infobaseDirectory)
+        && state.provisioningMethod === 'templateDt'
+        && typeof state.username === 'string'
+        && state.username.trim().length > 0
+        && typeof state.password === 'string'
+        && typeof state.templateDtDescriptor === 'string'
+        && state.templateDtDescriptor.trim().length > 0;
+}
+
+function getTemplateSharedStartupInfobaseAuthentication(): SharedStartupInfobaseAuthentication {
+    return {
+        username: STARTUP_INFOBASE_SERVICE_USER_NAME,
+        password: STARTUP_INFOBASE_TEMPLATE_SERVICE_USER_PASSWORD
+    };
+}
+
+function getStartupInfobaseTemplateDtPath(context: vscode.ExtensionContext): string {
+    return path.join(context.extensionUri.fsPath, STARTUP_INFOBASE_TEMPLATE_DT_RELATIVE_PATH);
+}
+
+async function resolveStartupInfobaseTemplateDtInfo(
+    context: vscode.ExtensionContext
+): Promise<{ templatePath: string; descriptor: string } | null> {
+    const templatePath = getStartupInfobaseTemplateDtPath(context);
+    try {
+        const stat = await fs.promises.stat(templatePath);
+        if (!stat.isFile()) {
+            return null;
+        }
+
+        return {
+            templatePath,
+            descriptor: `${templatePath}::${stat.size}::${stat.mtimeMs}`
+        };
+    } catch {
+        return null;
+    }
+}
+
+async function restoreSharedStartupInfobaseFromTemplateDt(
+    startupPaths: SharedStartupInfobasePaths,
+    templatePath: string,
+    designerExePath: string,
+    channel: vscode.OutputChannel,
+    t: Awaited<ReturnType<typeof getTranslator>>
+): Promise<void> {
+    channel.appendLine(t('Using startup infobase template DT: {0}', templatePath));
+
+    await run1CCommand(
+        designerExePath,
+        [
+            'DESIGNER',
+            '/DisableStartupDialogs',
+            '/DisableStartupMessages',
+            '/IBConnectionString',
+            buildFileInfobaseConnectionArgument(startupPaths.infobaseDirectory, { trailingSemicolon: true }),
+            '/RestoreIB',
+            templatePath
+        ],
+        startupPaths.rootDirectory,
+        t('Restore shared startup infobase from template DT'),
+        path.join(startupPaths.logsDirectory, '02-restore-startup-infobase-template.log'),
+        channel,
+        t
+    );
+}
+
 export function getSharedStartupInfobasePaths(): SharedStartupInfobasePaths | null {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
@@ -140,7 +264,8 @@ export function getSharedStartupInfobasePaths(): SharedStartupInfobasePaths | nu
         rootDirectory,
         infobaseDirectory,
         logsDirectory: path.join(rootDirectory, STARTUP_INFOBASE_LOGS_DIRECTORY_NAME),
-        markerFilePath: path.join(infobaseDirectory, STARTUP_INFOBASE_MARKER_FILE_NAME)
+        markerFilePath: path.join(infobaseDirectory, STARTUP_INFOBASE_MARKER_FILE_NAME),
+        authStateFilePath: path.join(rootDirectory, STARTUP_INFOBASE_AUTH_STATE_FILE_NAME)
     };
 }
 
@@ -150,7 +275,16 @@ export async function shouldPrepareSharedStartupInfobase(): Promise<boolean> {
         return false;
     }
 
-    return !(await pathExists(startupPaths.markerFilePath));
+    if (!(await pathExists(startupPaths.markerFilePath))) {
+        return true;
+    }
+
+    if (process.platform !== 'win32') {
+        return false;
+    }
+
+    const authState = await readJsonFile<SharedStartupInfobaseAuthState>(startupPaths.authStateFilePath);
+    return !isValidSharedStartupInfobaseAuthState(startupPaths, authState);
 }
 
 export async function ensureSharedStartupInfobaseReady(
@@ -197,21 +331,67 @@ export async function ensureSharedStartupInfobaseReady(
         await ensureDirectory(startupPaths.rootDirectory);
         await ensureDirectory(startupPaths.logsDirectory);
 
+        const storedAuthState = process.platform === 'win32'
+            ? await readJsonFile<SharedStartupInfobaseAuthState>(startupPaths.authStateFilePath)
+            : null;
+        const storedAuthentication = isValidSharedStartupInfobaseAuthState(startupPaths, storedAuthState)
+            ? {
+                username: storedAuthState.username,
+                password: storedAuthState.password
+            }
+            : null;
+        const templateDtInfo = process.platform === 'win32'
+            ? await resolveStartupInfobaseTemplateDtInfo(context)
+            : null;
         const hasExistingInfobase = !options?.forceRecreate && await pathExists(startupPaths.markerFilePath);
-        if (hasExistingInfobase) {
-            output.appendLine(t('Reusing shared startup infobase.'));
-            return {
-                infobaseDirectory: startupPaths.infobaseDirectory,
-                reusedExistingInfobase: true,
-                createdInfobase: false
-            };
+
+        if (hasExistingInfobase && (process.platform !== 'win32' || storedAuthentication)) {
+            if (process.platform === 'win32' && storedAuthentication) {
+                if (storedAuthState?.provisioningMethod === 'templateDt') {
+                    const templateDescriptorMatches = !!templateDtInfo
+                        && storedAuthState.templateDtDescriptor === templateDtInfo.descriptor;
+                    if (templateDescriptorMatches) {
+                        output.appendLine(t('Reusing shared startup infobase from template DT.'));
+                        return {
+                            infobaseDirectory: startupPaths.infobaseDirectory,
+                            reusedExistingInfobase: true,
+                            createdInfobase: false,
+                            authentication: storedAuthentication
+                        };
+                    }
+
+                    output.appendLine(t('Stored startup infobase template DT changed. Recreating startup infobase.'));
+                }
+            } else {
+                output.appendLine(t('Reusing shared startup infobase.'));
+                return {
+                    infobaseDirectory: startupPaths.infobaseDirectory,
+                    reusedExistingInfobase: true,
+                    createdInfobase: false,
+                    authentication: null
+                };
+            }
         }
 
-        output.appendLine(options?.forceRecreate
+        const recreateReason = options?.forceRecreate
             ? t('Recreating shared startup infobase.')
-            : t('Creating shared startup infobase.'));
+            : hasExistingInfobase
+                ? t('Recreating shared startup infobase because the template state is missing or invalid.')
+                : t('Creating shared startup infobase.');
+        output.appendLine(recreateReason);
+
+        if (process.platform === 'win32' && !templateDtInfo) {
+            throw new Error(
+                t(
+                    'Startup infobase template DT was not found inside the extension: {0}',
+                    getStartupInfobaseTemplateDtPath(context)
+                )
+            );
+        }
 
         await recreateDirectory(startupPaths.infobaseDirectory);
+        await fs.promises.rm(startupPaths.authStateFilePath, { force: true });
+
         await run1CCommand(
             designerExePath,
             ['CREATEINFOBASE', buildFileInfobaseConnectionArgument(startupPaths.infobaseDirectory, { trailingSemicolon: true })],
@@ -222,10 +402,31 @@ export async function ensureSharedStartupInfobaseReady(
             t
         );
 
+        let authentication: SharedStartupInfobaseAuthentication | null = null;
+        if (process.platform === 'win32') {
+            authentication = getTemplateSharedStartupInfobaseAuthentication();
+            await restoreSharedStartupInfobaseFromTemplateDt(
+                startupPaths,
+                templateDtInfo!.templatePath,
+                designerExePath,
+                output,
+                t
+            );
+            await writeJsonFile(
+                startupPaths.authStateFilePath,
+                {
+                    ...buildSharedStartupInfobaseAuthenticationState(startupPaths, authentication),
+                    provisioningMethod: 'templateDt',
+                    templateDtDescriptor: templateDtInfo!.descriptor
+                } satisfies SharedStartupInfobaseAuthState
+            );
+        }
+
         return {
             infobaseDirectory: startupPaths.infobaseDirectory,
             reusedExistingInfobase: false,
-            createdInfobase: true
+            createdInfobase: true,
+            authentication
         };
     };
 

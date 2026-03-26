@@ -24,7 +24,12 @@ import {
     normalizeInfobaseConnectionIdentity,
     normalizeInfobaseReference
 } from './oneCInfobaseConnection';
-import { ensureSharedStartupInfobaseReady, getSharedStartupInfobaseOutputChannel } from './startupInfobase';
+import {
+    ensureSharedStartupInfobaseReady,
+    getSharedStartupInfobaseOutputChannel,
+    type EnsureSharedStartupInfobaseResult,
+    type SharedStartupInfobaseAuthentication
+} from './startupInfobase';
 import { resolveOneCDesignerExePath } from './oneCPlatform';
 
 // --- Вспомогательная функция для Nonce ---
@@ -6417,11 +6422,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const startupInfobasePath = await this.ensureSharedStartupInfobaseReady(
+        const startupInfobase = await this.ensureSharedStartupInfobaseReady(
             oneCPath,
             this.t('Preparing shared startup infobase for Vanessa...')
         );
-        if (!startupInfobasePath) {
+        if (!startupInfobase) {
             return;
         }
 
@@ -6450,11 +6455,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const unsafeProtectionConfigured = await this.ensureUnsafeActionProtectionConfiguredForVanessa(oneCPath, startupInfobasePath);
-        if (!unsafeProtectionConfigured) {
-            return;
-        }
-
         const launchOverlay = await this.loadVanessaLaunchOverlayParameters();
         const launchJson: Record<string, unknown> = {};
         if (launchOverlay.additionalParameters.length > 0) {
@@ -6478,7 +6478,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         ];
         const vaCommand = `${vaCommandParts.join(';')};`;
         const args = [
-            ...this.buildStartupParams(startupInfobasePath),
+            ...this.buildStartupParams(startupInfobase.infobaseDirectory, startupInfobase.authentication),
             '/Execute',
             `"${vanessaEpfPath}"`,
             `/C"${vaCommand}"`,
@@ -6493,7 +6493,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.outputInfo(outputChannel, this.t('Opening Vanessa Automation standalone debug session...'));
         this.outputAdvanced(outputChannel, this.t('Vanessa EPF path: {0}', vanessaEpfPath));
         this.outputAdvanced(outputChannel, this.t('Vanessa JSON run settings: {0}', launchJsonPath));
-        this.outputAdvanced(outputChannel, this.t('Using startup infobase path for this run: {0}', startupInfobasePath));
+        this.outputAdvanced(outputChannel, this.t('Using startup infobase path for this run: {0}', startupInfobase.infobaseDirectory));
 
         try {
             await this.execute1CProcessDetached(
@@ -7041,14 +7041,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         oneCClientPath: string,
         progressTitle: string,
         showProgressNotification: boolean = true
-    ): Promise<string | null> {
+    ): Promise<EnsureSharedStartupInfobaseResult | null> {
         try {
-            const startupInfobaseResult = await ensureSharedStartupInfobaseReady(this._context, oneCClientPath, {
+            return await ensureSharedStartupInfobaseReady(this._context, oneCClientPath, {
                 showOutputPanel: false,
                 showProgressNotification,
                 progressTitle
             });
-            return startupInfobaseResult.infobaseDirectory;
         } catch (error: any) {
             const message = error?.message || String(error);
             const openOutput = this.t('Open Output');
@@ -7064,21 +7063,49 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    private stripSharedStartupAuthenticationArgs(args: string[]): string[] {
+        const result: string[] = [];
+        for (let index = 0; index < args.length; index += 1) {
+            const token = args[index];
+            const normalizedToken = token.trim().toLowerCase();
+            if (normalizedToken === '/n' || normalizedToken === '/p') {
+                index += 1;
+                continue;
+            }
+
+            result.push(token);
+        }
+
+        return result;
+    }
+
     /**
      * Builds 1C:Enterprise startup parameters based on configuration settings
      */
-    private buildStartupParams(startupInfobasePath: string): string[] {
+    private buildStartupParams(
+        startupInfobasePath: string,
+        authentication: SharedStartupInfobaseAuthentication | null
+    ): string[] {
         const config = vscode.workspace.getConfiguration('kotTestToolkit');
-        const startupParameters = config.get<string>('startupParams.parameters') || '/L en /DisableStartupMessages /DisableStartupDialogs';
+        const startupParameters = config.get<string>('startupParams.parameters') || '/L ru /DisableStartupMessages /DisableStartupDialogs';
 
         const params = [
             "ENTERPRISE",
             `/IBConnectionString`, buildFileInfobaseConnectionArgument(startupInfobasePath, { trailingSemicolon: true })
         ];
 
+        if (authentication?.username) {
+            params.push('/N', authentication.username);
+            if (authentication.password) {
+                params.push('/P', authentication.password);
+            }
+        }
+
         // Add custom startup parameters (split by space and filter empty strings)
         if (startupParameters.trim()) {
-            const customParams = startupParameters.trim().split(/\s+/).filter(p => p.length > 0);
+            const customParams = this.stripSharedStartupAuthenticationArgs(
+                startupParameters.trim().split(/\s+/).filter(p => p.length > 0)
+            );
             params.push(...customParams);
             console.log(`[PhaseSwitcherProvider] ${this.t('Using startup parameters: {0}', startupParameters.trim())}`);
         } else {
@@ -7483,12 +7510,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
                 const oneCExePath = oneCPath_raw;
 
-                const startupInfobasePath = await this.ensureSharedStartupInfobaseReady(
+                const startupInfobase = await this.ensureSharedStartupInfobaseReady(
                     oneCExePath,
                     this.t('Preparing shared startup infobase for test assembly...'),
                     false
                 );
-                if (!startupInfobasePath) {
+                if (!startupInfobase) {
                     sendStatus(this.t('Build error.'), true, 'assemble');
                     return;
                 }
@@ -7565,7 +7592,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const buildErrorsPathUri = await this.prepareBuildErrorsFolder(absoluteBuildPathUri, outputChannel);
 
                 const yamlBuildParams = [
-                    ...this.buildStartupParams(startupInfobasePath),
+                    ...this.buildStartupParams(startupInfobase.infobaseDirectory, startupInfobase.authentication),
                     `/Execute`, `"${buildScenarioBddEpfPath}"`,
                     this.buildBuildScenarioBddCommand(localSettingsPath.fsPath, yamlBuildResultFileUri.fsPath, yamlBuildLogFileUri.fsPath, buildErrorsPathUri.fsPath)
                 ];
@@ -8780,410 +8807,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             command = command.replace(placeholder, value);
         }
         return command;
-    }
-
-    private getRunVanessaCheckUnsafeActionProtection(): boolean {
-        const config = vscode.workspace.getConfiguration('kotTestToolkit');
-        return config.get<boolean>('runVanessa.checkUnsafeActionProtection', true);
-    }
-
-    private escapeRegExp(value: string): string {
-        return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    }
-
-    private escapePosixBasicRegExp(value: string): string {
-        // conf.cfg uses POSIX BRE for DisableUnsafeActionProtection.
-        // Escape only metacharacters that are special in BRE.
-        return value.replace(/([.\\[\]*^$])/g, '\\$1');
-    }
-
-    private buildDisableUnsafeActionProtectionPattern(emptyIbPath: string): string {
-        const normalizedPath = path.resolve(emptyIbPath).replace(/[\\/]+$/, '');
-        const pathSegments = normalizedPath
-            .split(/[\\/]+/)
-            .filter(segment => segment.length > 0)
-            .map(segment => this.escapePosixBasicRegExp(segment));
-
-        if (pathSegments.length === 0) {
-            return '.*';
-        }
-
-        const pathPattern = pathSegments.join('.*');
-        // IMPORTANT: ';' is a delimiter between patterns in DisableUnsafeActionProtection,
-        // so it must not be part of an individual regex pattern.
-        // Use POSIX BRE-compatible syntax only (no non-capturing groups / '?' quantifier).
-        return `.*File[ \t]*=[ \t]*["']*${pathPattern}.*`;
-    }
-
-    private buildUnsafeProtectionConnectionCandidates(emptyIbPath: string): string[] {
-        const candidates = new Set<string>();
-        const addPathVariants = (value: string, quoted: boolean, terminated: boolean) => {
-            const pathValue = quoted ? `"${value}"` : value;
-            const suffix = terminated ? ';' : '';
-            candidates.add(`File=${pathValue}${suffix}`);
-        };
-        const addPath = (rawPath: string) => {
-            const normalized = rawPath.replace(/[\\/]+$/, '');
-            if (!normalized) {
-                return;
-            }
-
-            const slashVariants = [
-                normalized,
-                normalized.replace(/\\/g, '/'),
-                normalized.replace(/\//g, '\\')
-            ];
-            for (const variant of slashVariants) {
-                addPathVariants(variant, false, true);
-                addPathVariants(variant, false, false);
-                addPathVariants(variant, true, true);
-                addPathVariants(variant, true, false);
-            }
-        };
-
-        addPath(emptyIbPath.trim());
-        addPath(path.resolve(emptyIbPath.trim()));
-
-        return Array.from(candidates);
-    }
-
-    private splitDisableUnsafeActionProtectionPatterns(rawValue: string): string[] {
-        return rawValue
-            .split(';')
-            .map(item => item.trim())
-            .filter(item => item.length > 0);
-    }
-
-    private normalizeUnsafePatternText(value: string): string {
-        return value.replace(/\s+/g, '').trim();
-    }
-
-    private isLikelyPosixBrePattern(pattern: string): boolean {
-        const compact = pattern.trim();
-        if (!compact) {
-            return false;
-        }
-        // Reject common PCRE/JS-only constructs that 1C POSIX BRE does not support.
-        if (compact.includes('(?:') || compact.includes('(?=') || compact.includes('(?!') || compact.includes('(?<')) {
-            return false;
-        }
-        return true;
-    }
-
-    private isPathSegmentBoundaryChar(char: string | undefined): boolean {
-        if (!char) {
-            return true;
-        }
-        return !/[0-9a-zа-яё_-]/i.test(char);
-    }
-
-    private findSegmentIndexWithBoundaries(haystack: string, segment: string, fromIndex: number): number {
-        let index = haystack.indexOf(segment, fromIndex);
-        while (index !== -1) {
-            const previousChar = index > 0 ? haystack[index - 1] : undefined;
-            const nextIndex = index + segment.length;
-            const nextChar = nextIndex < haystack.length ? haystack[nextIndex] : undefined;
-            if (this.isPathSegmentBoundaryChar(previousChar) && this.isPathSegmentBoundaryChar(nextChar)) {
-                return index;
-            }
-            index = haystack.indexOf(segment, index + 1);
-        }
-        return -1;
-    }
-
-    private hasPathSegmentsInOrder(rawText: string, normalizedPath: string): boolean {
-        const segments = normalizedPath
-            .split(/[\\/]+/)
-            .map(segment => segment.trim().toLowerCase())
-            .filter(segment => segment.length > 0);
-        if (segments.length === 0) {
-            return false;
-        }
-
-        const haystack = rawText.toLowerCase();
-        let index = 0;
-        for (const segment of segments) {
-            const foundIndex = this.findSegmentIndexWithBoundaries(haystack, segment, index);
-            if (foundIndex === -1) {
-                return false;
-            }
-            index = foundIndex + segment.length;
-        }
-        return true;
-    }
-
-    private hasDisableUnsafeActionProtectionForConnection(
-        confText: string,
-        connectionCandidates: string[],
-        emptyIbPath: string,
-        expectedPattern: string
-    ): boolean {
-        const lines = confText.split(/\r\n|\r|\n/);
-        const paramValues: string[] = [];
-        const normalizedEmptyIbPath = path.resolve(emptyIbPath).replace(/[\\/]+$/, '');
-        const normalizedExpectedPattern = this.normalizeUnsafePatternText(expectedPattern);
-
-        for (const line of lines) {
-            const trimmed = line.replace(/^\uFEFF/, '').trim();
-            if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith(';')) {
-                continue;
-            }
-
-            const match = trimmed.match(/^DisableUnsafeActionProtection\s*=\s*(.*)$/i);
-            if (!match) {
-                continue;
-            }
-            paramValues.push(match[1] || '');
-        }
-
-        if (paramValues.length === 0) {
-            return false;
-        }
-
-        for (const rawValue of paramValues) {
-            const patterns = this.splitDisableUnsafeActionProtectionPatterns(rawValue);
-            if (rawValue.trim().length > 0) {
-                patterns.push(rawValue.trim());
-            }
-            for (const pattern of patterns) {
-                if (!this.isLikelyPosixBrePattern(pattern)) {
-                    continue;
-                }
-                if (normalizedExpectedPattern && this.normalizeUnsafePatternText(pattern) === normalizedExpectedPattern) {
-                    return true;
-                }
-
-                for (const candidate of connectionCandidates) {
-                    try {
-                        const regex = new RegExp(pattern, 'i');
-                        if (regex.test(candidate)) {
-                            return true;
-                        }
-                    } catch {
-                        if (candidate.includes(pattern)) {
-                            return true;
-                        }
-                    }
-                }
-
-                // Fallback: treat parameter as configured if path segments of the shared startup infobase
-                // are present in order (works for escaped regex variants and literal paths).
-                if (normalizedEmptyIbPath && this.hasPathSegmentsInOrder(pattern, normalizedEmptyIbPath)) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private patchDisableUnsafeActionProtectionConf(
-        confText: string,
-        patternToAdd: string
-    ): { changed: boolean; content: string } {
-        const normalizedConfText = confText.replace(/^\uFEFF/, '');
-        const lineEnding = normalizedConfText.includes('\r\n') ? '\r\n' : '\n';
-        const lines = normalizedConfText.length > 0 ? normalizedConfText.split(/\r\n|\r|\n/) : [];
-        const paramLineIndex = lines.findIndex(line =>
-            /^\s*DisableUnsafeActionProtection\s*=/.test(line.trim())
-        );
-
-        if (paramLineIndex === -1) {
-            if (lines.length > 0 && lines[lines.length - 1].trim().length > 0) {
-                lines.push('');
-            }
-            lines.push(`DisableUnsafeActionProtection=${patternToAdd}`);
-            return { changed: true, content: lines.join(lineEnding) };
-        }
-
-        const line = lines[paramLineIndex];
-        const match = line.match(/^(\s*DisableUnsafeActionProtection\s*=\s*)(.*)$/i);
-        const prefix = match ? match[1] : 'DisableUnsafeActionProtection=';
-        const rawValue = match ? (match[2] || '') : '';
-        const patterns = this.splitDisableUnsafeActionProtectionPatterns(rawValue);
-        if (patterns.includes(patternToAdd)) {
-            return { changed: false, content: normalizedConfText };
-        }
-
-        const nextValue = rawValue.trim().length > 0
-            ? `${rawValue.trim()};${patternToAdd}`
-            : patternToAdd;
-        lines[paramLineIndex] = `${prefix}${nextValue}`;
-        return { changed: true, content: lines.join(lineEnding) };
-    }
-
-    private resolveConfCfgCandidates(oneCPath: string): string[] {
-        const candidates: string[] = [];
-        const seen = new Set<string>();
-        const add = (candidatePath: string) => {
-            const normalized = path.normalize(candidatePath);
-            if (seen.has(normalized)) {
-                return;
-            }
-            seen.add(normalized);
-            candidates.push(normalized);
-        };
-
-        const oneCDir = path.dirname(oneCPath);
-        add(path.join(oneCDir, 'conf', 'conf.cfg'));
-        add(path.join(oneCDir, '..', 'conf', 'conf.cfg'));
-
-        if (process.platform === 'win32') {
-            const localAppData = process.env.LOCALAPPDATA;
-            const programFiles = process.env.PROGRAMFILES;
-            const programFilesX86 = process.env['PROGRAMFILES(X86)'];
-            if (localAppData) {
-                add(path.join(localAppData, '1C', '1cv8', 'conf', 'conf.cfg'));
-            }
-            if (programFiles) {
-                add(path.join(programFiles, '1cv8', 'conf', 'conf.cfg'));
-            }
-            if (programFilesX86) {
-                add(path.join(programFilesX86, '1cv8', 'conf', 'conf.cfg'));
-            }
-        }
-
-        const queue = [...candidates];
-        while (queue.length > 0) {
-            const confCfgPath = queue.shift()!;
-            if (!fs.existsSync(confCfgPath)) {
-                continue;
-            }
-
-            let text = '';
-            try {
-                text = fs.readFileSync(confCfgPath, 'utf8');
-            } catch {
-                continue;
-            }
-
-            const lines = text.split(/\r\n|\r|\n/);
-            for (const line of lines) {
-                const trimmed = line.trim();
-                if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith(';')) {
-                    continue;
-                }
-
-                const match = trimmed.match(/^ConfLocation\s*=\s*(.*)$/i);
-                if (!match) {
-                    continue;
-                }
-
-                const rawValue = (match[1] || '').trim().replace(/^["']|["']$/g, '');
-                if (!rawValue) {
-                    continue;
-                }
-
-                const resolvedBasePath = path.isAbsolute(rawValue)
-                    ? rawValue
-                    : path.resolve(path.dirname(confCfgPath), rawValue);
-                const resolvedConfCfgPath = path.extname(resolvedBasePath).toLowerCase() === '.cfg'
-                    ? resolvedBasePath
-                    : path.join(resolvedBasePath, 'conf.cfg');
-
-                const normalized = path.normalize(resolvedConfCfgPath);
-                if (!seen.has(normalized)) {
-                    add(normalized);
-                    queue.push(normalized);
-                }
-            }
-        }
-
-        return candidates;
-    }
-
-    private async ensureUnsafeActionProtectionConfiguredForVanessa(
-        oneCPath: string,
-        startupInfobasePath: string
-    ): Promise<boolean> {
-        if (process.platform !== 'win32' || !this.getRunVanessaCheckUnsafeActionProtection()) {
-            return true;
-        }
-
-        const confCandidates = this.resolveConfCfgCandidates(oneCPath);
-        const existingConfFiles = confCandidates.filter(candidate => fs.existsSync(candidate));
-        const checkedPaths = confCandidates.slice(0, 8).join(', ');
-        const connectionCandidates = this.buildUnsafeProtectionConnectionCandidates(startupInfobasePath);
-        const expectedPattern = this.buildDisableUnsafeActionProtectionPattern(startupInfobasePath);
-
-        for (const confPath of existingConfFiles) {
-            try {
-                const confText = fs.readFileSync(confPath, 'utf8');
-                if (this.hasDisableUnsafeActionProtectionForConnection(confText, connectionCandidates, startupInfobasePath, expectedPattern)) {
-                    return true;
-                }
-            } catch {
-                // Ignore unreadable conf file and continue with next candidate.
-            }
-        }
-
-        const runAnyway = this.t('Run anyway');
-        const openAndPatch = this.t('Open and patch');
-
-        if (existingConfFiles.length === 0) {
-            const openSettingsAction = this.t('Open Settings');
-            const selection = await vscode.window.showWarningMessage(
-                this.t('conf.cfg was not found near 1C:Enterprise installation. Check DisableUnsafeActionProtection manually.'),
-                {
-                    modal: true,
-                    detail: checkedPaths
-                        ? this.t('Checked conf.cfg paths: {0}', checkedPaths)
-                        : undefined
-                },
-                openSettingsAction,
-                runAnyway
-            );
-
-            if (selection === openSettingsAction) {
-                await vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
-                return false;
-            }
-            return selection === runAnyway;
-        }
-
-        const selectedAction = await vscode.window.showWarningMessage(
-            this.t('DisableUnsafeActionProtection not found for the shared startup infobase in conf.cfg. Vanessa may show repeated security prompts.'),
-            {
-                modal: true,
-                detail: this.t('Checked conf.cfg paths: {0}', checkedPaths)
-            },
-            openAndPatch,
-            runAnyway
-        );
-
-        if (selectedAction === runAnyway) {
-            return true;
-        }
-        if (selectedAction !== openAndPatch) {
-            return false;
-        }
-
-        const targetConfPath = existingConfFiles[0];
-        const patternToAdd = expectedPattern;
-        try {
-            const targetUri = vscode.Uri.file(targetConfPath);
-            const document = await vscode.workspace.openTextDocument(targetUri);
-            const originalContent = document.getText();
-            const patchResult = this.patchDisableUnsafeActionProtectionConf(originalContent, patternToAdd);
-            if (patchResult.changed) {
-                const edit = new vscode.WorkspaceEdit();
-                const fullRange = new vscode.Range(
-                    document.positionAt(0),
-                    document.positionAt(document.getText().length)
-                );
-                edit.replace(targetUri, fullRange, patchResult.content);
-                await vscode.workspace.applyEdit(edit);
-            }
-
-            await vscode.window.showTextDocument(document, { preview: false });
-            vscode.window.showInformationMessage(
-                this.t('DisableUnsafeActionProtection entry prepared in conf.cfg. Save file with administrator rights and rerun Vanessa.')
-            );
-        } catch (error: any) {
-            vscode.window.showErrorMessage(this.t('Failed to update conf.cfg: {0}', error?.message || String(error)));
-        }
-
-        return false;
     }
 
     private resolvePathFromWorkspaceSetting(rawPath: string, workspaceRootPath: string): string {
@@ -11139,11 +10762,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return 'skipped';
         }
 
-        const startupInfobasePath = await this.ensureSharedStartupInfobaseReady(
+        const startupInfobase = await this.ensureSharedStartupInfobaseReady(
             oneCPath,
             this.t('Preparing shared startup infobase for Vanessa...')
         );
-        if (!startupInfobasePath) {
+        if (!startupInfobase) {
             return 'skipped';
         }
 
@@ -11190,7 +10813,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const launchContext = await this.prepareVanessaLaunchContext(
             scenarioName,
             jsonLaunchPath,
-            startupInfobasePath,
+            startupInfobase.infobaseDirectory,
             workspaceRootPath
         );
         if (!launchContext) {
@@ -11200,10 +10823,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const startupInfobasePathForRun = launchContext.startupInfobasePath;
         const scenarioInfobasePath = launchContext.scenarioInfobasePath;
         const launchJsonPath = launchContext.vaParamsJsonPath;
-        const unsafeProtectionConfigured = await this.ensureUnsafeActionProtectionConfiguredForVanessa(oneCPath, startupInfobasePathForRun);
-        if (!unsafeProtectionConfigured) {
-            return 'aborted';
-        }
 
         const vaCommandParts = [
             'ShowMainForm',
@@ -11227,7 +10846,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
         const vaCommand = `${vaCommandParts.join(';')};`;
         const args = [
-            ...this.buildStartupParams(startupInfobasePathForRun),
+            ...this.buildStartupParams(startupInfobasePathForRun, startupInfobase.authentication),
             '/Execute',
             `"${vanessaEpfPath}"`,
             `/C"${vaCommand}"`,

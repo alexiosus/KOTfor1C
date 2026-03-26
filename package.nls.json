@@ -56,7 +56,6 @@
   "config.runVanessa.showOutputPanel.description": "Automatically show the Output panel when starting Vanessa Automation launch.",
   "config.runVanessa.commandTemplate.description": "Shell command template for launching Vanessa Automation for a selected scenario.",
   "config.runVanessa.commandTemplate.markdownDescription": "Optional command template used by the run icon in Test Manager.\n\nAvailable placeholders:\n- `${scenarioName}` / `${scenarioNameQuoted}`\n- `${featurePath}` / `${featurePathQuoted}`\n- `${jsonPath}` / `${jsonPathQuoted}`\n- `${workspaceRoot}` / `${workspaceRootQuoted}`\n\nIf empty, the extension uses built-in Vanessa launch logic (1C + vanessa-automation.epf + StartFeaturePlayer).",
-  "config.runVanessa.checkUnsafeActionProtection.description": "Before built-in Vanessa launch, verify DisableUnsafeActionProtection in conf.cfg for the shared startup infobase and offer to patch conf.cfg if missing.",
   "config.runVanessa.liveLogRefreshSeconds.description": "Live run log refresh interval in seconds for running scenarios.",
   "config.runVanessa.autoDetectMinStartupUpdates.description": "Minimum number of fresh run-log updates required at startup before the background Vanessa auto-detection attaches tracking.",
   "config.runVanessa.autoDetectInactivityTimeoutSeconds.description": "How many seconds the auto-detected Vanessa run may stay without log updates before tracking is removed as inactive.",

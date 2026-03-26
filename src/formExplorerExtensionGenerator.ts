@@ -77,11 +77,15 @@ interface GeneratedExtensionProject {
     formsIndexPath: string;
     buildManifestPath: string;
     cfeOutputPath: string;
+    cachedCfePath: string;
+    cfeBuildStatePath: string;
     builderInfobaseDirectory: string;
     builderCacheStatePath: string;
+    snapshotPath: string;
     settingsFilePath: string;
     modeFilePath: string;
     modeRequestFilePath: string;
+    requestContextFilePath: string;
 }
 
 interface GeneratedObjectIds {
@@ -123,6 +127,13 @@ interface BuilderCacheState {
     configurationXmlHash: string;
 }
 
+interface FormExplorerCfeBuildState {
+    schemaVersion: number;
+    buildFingerprint: string;
+    cachedCfePath: string;
+    generatedAt: string;
+}
+
 interface InfobaseAuthentication {
     username: string;
     password: string;
@@ -137,6 +148,27 @@ export interface StartFormExplorerInfobaseResult {
     status: 'started' | 'cancelled' | 'error';
     infobasePath: string | null;
     error: string | null;
+}
+
+type FormExplorerInstallMode = 'cfe' | 'direct';
+
+interface FormExplorerInstallModeQuickPickItem extends vscode.QuickPickItem {
+    installMode: FormExplorerInstallMode;
+}
+
+interface FormExplorerStartActionQuickPickItem extends vscode.QuickPickItem {
+    actionKey: 'start' | 'reinstall';
+    installMode?: FormExplorerInstallMode;
+}
+
+interface FormExplorerStartActionSelection {
+    actionKey: 'start' | 'reinstall';
+    installMode?: FormExplorerInstallMode;
+}
+
+interface GenerateFormExplorerExtensionOptions {
+    targetInfobasePath?: string | null;
+    installMode?: FormExplorerInstallMode | null;
 }
 
 interface HotkeyPresetDefinition {
@@ -161,10 +193,13 @@ const DEFAULT_RUNTIME_STATE_FILE_NAME = 'adapter-runtime-state.json';
 const DEFAULT_MODE_STATE_FILE_NAME = 'adapter-mode.txt';
 const DEFAULT_MODE_REQUEST_FILE_NAME = 'adapter-mode-request.txt';
 const DEFAULT_REQUEST_CONTEXT_FILE_NAME = 'adapter-request-context.json';
+const DEFAULT_CFE_CACHE_FILE_NAME = 'KOTFormExplorerRuntime.cached.cfe';
+const DEFAULT_CFE_BUILD_STATE_FILE_NAME = 'cfe-build-state.json';
 const HOTKEY_PRESET_NONE_KEY = 'none';
 const DEFAULT_HOTKEY_PRESET_KEY = 'ctrlShiftF12';
 const DEFAULT_AUTO_SNAPSHOT_INTERVAL_SECONDS = 5;
 const DEFAULT_MODE_REQUEST_POLL_INTERVAL_SECONDS = 1;
+const FORM_EXPLORER_CFE_BUILD_STATE_SCHEMA_VERSION = 1;
 const TOGGLE_MODE_SHORTCUT = 'Ctrl+Alt+F11';
 const INFOBASE_AUTH_CACHE = new Map<string, InfobaseAuthentication>();
 const HOTKEY_PRESETS: HotkeyPresetDefinition[] = [
@@ -326,6 +361,11 @@ function hashText(text: string): string {
     return crypto.createHash('sha1').update(text).digest('hex');
 }
 
+async function hashFileContents(filePath: string): Promise<string> {
+    const contents = await fs.promises.readFile(filePath);
+    return crypto.createHash('sha256').update(contents).digest('hex');
+}
+
 function formatCommandForOutput(exePath: string, args: string[]): string {
     return [quoteForShell(exePath), ...args.map(arg => quoteForShell(arg))].join(' ');
 }
@@ -411,36 +451,145 @@ async function promptInfobaseAuthentication(
     };
 }
 
+async function showQuickPickWithDefaultSelection<T extends vscode.QuickPickItem>(
+    items: readonly T[],
+    options: {
+        title: string;
+        placeHolder: string;
+        activeItem: T;
+    }
+): Promise<T | undefined> {
+    return await new Promise<T | undefined>(resolve => {
+        const quickPick = vscode.window.createQuickPick<T>();
+        let settled = false;
+        const finalize = (value: T | undefined, shouldHide: boolean) => {
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+            if (shouldHide) {
+                quickPick.hide();
+            }
+            quickPick.dispose();
+            resolve(value);
+        };
+
+        quickPick.title = options.title;
+        quickPick.placeHolder = options.placeHolder;
+        quickPick.ignoreFocusOut = true;
+        quickPick.matchOnDescription = true;
+        quickPick.matchOnDetail = true;
+        quickPick.items = items.slice();
+        quickPick.activeItems = [options.activeItem];
+        quickPick.onDidAccept(() => {
+            finalize(quickPick.selectedItems[0], true);
+        });
+        quickPick.onDidHide(() => finalize(undefined, false));
+        quickPick.show();
+    });
+}
+
+function getDirectInstallModeDetail(
+    t: Awaited<ReturnType<typeof getTranslator>>,
+): string {
+    return t(
+        'Fastest option. Strictly recommended only when the target infobase matches the current branch configuration or differs only slightly. Loads the generated extension sources directly into the selected infobase.'
+    );
+}
+
+function getCfeInstallModeDetail(
+    t: Awaited<ReturnType<typeof getTranslator>>
+): string {
+    return t(
+        'Safer compatibility mode. Reuses or builds a cached .cfe in a builder infobase based on configurationSourceDirectory, then installs that package into the selected infobase.'
+    );
+}
+
+async function pickFormExplorerInstallMode(
+    t: Awaited<ReturnType<typeof getTranslator>>,
+    targetInfobasePath: string
+): Promise<FormExplorerInstallMode | undefined> {
+    const infobaseLabel = describeInfobaseConnection(targetInfobasePath);
+    const directItem: FormExplorerInstallModeQuickPickItem = {
+        label: t('Direct install (Recommended)'),
+        description: infobaseLabel,
+        detail: getDirectInstallModeDetail(t),
+        installMode: 'direct'
+    };
+    const cfeItem: FormExplorerInstallModeQuickPickItem = {
+        label: t('Build/install via .cfe'),
+        description: infobaseLabel,
+        detail: getCfeInstallModeDetail(t),
+        installMode: 'cfe'
+    };
+    const selection = await showQuickPickWithDefaultSelection(
+        [directItem, cfeItem],
+        {
+            title: t('Choose how to install Form Explorer into the selected infobase'),
+            placeHolder: t(
+                'Direct mode is the default. Use it only when the target infobase matches the current branch configuration or at least does not differ too much.'
+            ),
+            activeItem: directItem
+        }
+    );
+
+    return selection?.installMode;
+}
+
 async function pickStartInfobaseAction(
     t: Awaited<ReturnType<typeof getTranslator>>,
     targetInfobasePath: string,
     extensionInstalled: boolean
-): Promise<'start' | 'reinstall' | undefined> {
+): Promise<FormExplorerStartActionSelection | undefined> {
     const infobaseLabel = describeInfobaseConnection(targetInfobasePath);
-    if (!extensionInstalled) {
-        return 'reinstall';
+    const directItem: FormExplorerStartActionQuickPickItem = {
+        label: extensionInstalled
+            ? t('Direct reinstall and start (Recommended)')
+            : t('Direct install and start (Recommended)'),
+        description: infobaseLabel,
+        detail: getDirectInstallModeDetail(t),
+        actionKey: 'reinstall',
+        installMode: 'direct'
+    };
+    const cfeItem: FormExplorerStartActionQuickPickItem = {
+        label: extensionInstalled
+            ? t('Build/reinstall via .cfe and start')
+            : t('Build/install via .cfe and start'),
+        description: infobaseLabel,
+        detail: getCfeInstallModeDetail(t),
+        actionKey: 'reinstall',
+        installMode: 'cfe'
+    };
+    const items: FormExplorerStartActionQuickPickItem[] = extensionInstalled
+        ? [
+            {
+                label: t('Start with installed extension'),
+                description: infobaseLabel,
+                detail: t('Use the already installed Form Explorer extension as-is. Choose this only if you know the installed adapter is already current.'),
+                actionKey: 'start'
+            },
+            directItem,
+            cfeItem
+        ]
+        : [directItem, cfeItem];
+    const selection = await showQuickPickWithDefaultSelection(
+        items,
+        {
+            title: t('Choose how to start the selected infobase'),
+            placeHolder: t(
+                'Direct mode is the default. Use it only when the target infobase matches the current branch configuration or at least does not differ too much.'
+            ),
+            activeItem: directItem
+        }
+    );
+    if (!selection) {
+        return undefined;
     }
 
-    const selection = await vscode.window.showQuickPick([
-        {
-            label: t('Start infobase'),
-            description: infobaseLabel,
-            detail: t('Use the already installed Form Explorer extension.'),
-            actionKey: 'start' as const
-        },
-        {
-            label: t('Reinstall extension and start'),
-            description: infobaseLabel,
-            detail: t('Rebuild the runtime extension, reinstall it into the selected infobase, then start 1C.'),
-            actionKey: 'reinstall' as const
-        }
-    ], {
-        title: t('Form Explorer extension is already installed'),
-        placeHolder: t('Choose how to start the selected infobase'),
-        ignoreFocusOut: true
-    });
-
-    return selection?.actionKey;
+    return selection.actionKey === 'start'
+        ? { actionKey: 'start' }
+        : { actionKey: 'reinstall', installMode: selection.installMode };
 }
 
 async function pickCfeOutputPath(
@@ -478,6 +627,11 @@ async function ensureDirectory(directoryPath: string): Promise<void> {
 async function recreateDirectory(directoryPath: string): Promise<void> {
     await fs.promises.rm(directoryPath, { recursive: true, force: true });
     await ensureDirectory(directoryPath);
+}
+
+async function copyFileEnsuringDirectory(sourcePath: string, destinationPath: string): Promise<void> {
+    await ensureDirectory(path.dirname(destinationPath));
+    await fs.promises.copyFile(sourcePath, destinationPath);
 }
 
 async function writeTextFile(filePath: string, content: string): Promise<void> {
@@ -824,7 +978,109 @@ async function collectFilesRecursively(rootDirectory: string): Promise<string[]>
     };
 
     await walk(rootDirectory);
-    return results;
+    return results.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
+}
+
+async function hashDirectoryContents(rootDirectory: string): Promise<string> {
+    const hash = crypto.createHash('sha256');
+    hash.update(`root:${path.resolve(rootDirectory)}\n`);
+
+    const files = await collectFilesRecursively(rootDirectory);
+    for (const absolutePath of files) {
+        const relativePath = path.relative(rootDirectory, absolutePath).split(path.sep).join('/');
+        hash.update(`file:${relativePath}\n`);
+        hash.update(await fs.promises.readFile(absolutePath));
+        hash.update('\n');
+    }
+
+    return hash.digest('hex');
+}
+
+function tryParseFormExplorerInstallMode(value: unknown): FormExplorerInstallMode | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+        return null;
+    }
+
+    if (normalized === 'direct' || normalized === 'directload' || normalized === 'direct-load') {
+        return 'direct';
+    }
+
+    if (normalized === 'cfe') {
+        return 'cfe';
+    }
+
+    return null;
+}
+
+async function computeFormExplorerCfeBuildFingerprint(
+    context: vscode.ExtensionContext,
+    configurationSourceDirectory: string,
+    project: GeneratedExtensionProject,
+    oneCDesignerExePath: string
+): Promise<string> {
+    const adapterBslPath = path.join(
+        context.extensionUri.fsPath,
+        'res',
+        'formExplorer',
+        'adapter',
+        'KOTFormExplorerAdapterClient.bsl'
+    );
+    const hash = crypto.createHash('sha256');
+    hash.update(`schema:${FORM_EXPLORER_CFE_BUILD_STATE_SCHEMA_VERSION}\n`);
+    hash.update(`configuration:${await hashDirectoryContents(configurationSourceDirectory)}\n`);
+    hash.update(`adapter:${await hashFileContents(adapterBslPath)}\n`);
+    hash.update(`generator:${await hashFileContents(__filename)}\n`);
+
+    const pathInputs = [
+        path.resolve(configurationSourceDirectory),
+        path.resolve(project.snapshotPath),
+        path.resolve(project.settingsFilePath),
+        path.resolve(project.modeFilePath),
+        path.resolve(project.modeRequestFilePath),
+        path.resolve(project.requestContextFilePath)
+    ];
+    for (const pathInput of pathInputs) {
+        hash.update(`path:${pathInput}\n`);
+    }
+
+    const designerStat = await fs.promises.stat(oneCDesignerExePath);
+    hash.update(
+        `designer:${path.resolve(oneCDesignerExePath)}:${designerStat.size}:${designerStat.mtimeMs}\n`
+    );
+
+    return hash.digest('hex');
+}
+
+function isReusableFormExplorerCfeBuildState(
+    state: FormExplorerCfeBuildState | null,
+    expectedFingerprint: string,
+    expectedCachedCfePath: string
+): boolean {
+    return Boolean(
+        state
+        && state.schemaVersion === FORM_EXPLORER_CFE_BUILD_STATE_SCHEMA_VERSION
+        && state.buildFingerprint === expectedFingerprint
+        && path.resolve(state.cachedCfePath) === path.resolve(expectedCachedCfePath)
+    );
+}
+
+async function writeFormExplorerCfeBuildState(
+    statePath: string,
+    buildFingerprint: string,
+    cachedCfePath: string
+): Promise<void> {
+    const state: FormExplorerCfeBuildState = {
+        schemaVersion: FORM_EXPLORER_CFE_BUILD_STATE_SCHEMA_VERSION,
+        buildFingerprint,
+        cachedCfePath,
+        generatedAt: new Date().toISOString()
+    };
+    await writeTextFile(statePath, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 async function parseBaseConfigurationInfo(configurationSourceDirectory: string): Promise<BaseConfigurationInfo> {
@@ -4723,6 +4979,8 @@ Artifacts:
 - Adapter settings file: ${project.settingsFilePath}
 - Adapter mode state file: ${project.modeFilePath}
 - Adapter mode request file: ${project.modeRequestFilePath}
+- Cached .cfe path: ${project.cachedCfePath}
+- CFE build state: ${project.cfeBuildStatePath}
 - Expected .cfe output: ${project.cfeOutputPath}
 
 Windows built-in build:
@@ -4734,10 +4992,13 @@ Windows built-in build:
 - The generated runtime extension is lightweight: it does not adopt application forms.
 - Runtime refresh is exposed through the \`KOT Form Explorer\` subsystem and uses best-effort
   active-window detection.
+- Built-in \`.cfe\` exports are cached by a fingerprint of the effective Form Explorer build inputs.
 - Adapter settings are stored locally next to generated artifacts and can enable auto snapshot
   with a configurable interval and predefined shortcut presets.
 - Runtime mode (\`manual\` / \`auto\`) is mirrored to a dedicated mode file so the VS Code panel can
   show the live adapter mode without parsing 1C data.
+- Target install mode can either use the cached/built \`.cfe\` or load the generated extension
+  project directly into a matching infobase.
 - Auto snapshot is optimized to avoid rebuilding the full JSON when form focus and the active
   element value have not changed since the last timer tick.
 
@@ -4939,9 +5200,12 @@ async function generateExtensionProjectFiles(
     const buildManifestPath = path.join(generatedArtifactsDirectory, 'build-manifest.json');
     const builderInfobaseDirectory = path.join(generatedArtifactsDirectory, BUILDER_INFOBASE_DIRECTORY_NAME);
     const builderCacheStatePath = path.join(generatedArtifactsDirectory, 'builder-base-state.json');
+    const cachedCfePath = path.join(generatedArtifactsDirectory, DEFAULT_CFE_CACHE_FILE_NAME);
+    const cfeBuildStatePath = path.join(generatedArtifactsDirectory, DEFAULT_CFE_BUILD_STATE_FILE_NAME);
     const settingsFilePath = path.join(generatedArtifactsDirectory, DEFAULT_SETTINGS_FILE_NAME);
     const modeFilePath = path.join(generatedArtifactsDirectory, DEFAULT_MODE_STATE_FILE_NAME);
     const modeRequestFilePath = path.join(generatedArtifactsDirectory, DEFAULT_MODE_REQUEST_FILE_NAME);
+    const requestContextFilePath = path.join(generatedArtifactsDirectory, DEFAULT_REQUEST_CONTEXT_FILE_NAME);
 
     await recreateDirectory(extensionSourceDirectory);
 
@@ -5200,11 +5464,15 @@ async function generateExtensionProjectFiles(
         formsIndexPath,
         buildManifestPath,
         cfeOutputPath,
+        cachedCfePath,
+        cfeBuildStatePath,
         builderInfobaseDirectory,
         builderCacheStatePath,
+        snapshotPath,
         settingsFilePath,
         modeFilePath,
-        modeRequestFilePath
+        modeRequestFilePath,
+        requestContextFilePath
     };
 
     const formsIndex = {
@@ -5232,11 +5500,14 @@ async function generateExtensionProjectFiles(
             generatedArtifactsDir: generatedArtifactsDirectory,
             extensionSourceDir: extensionSourceDirectory,
             cfePath: cfeOutputPath,
+            cachedCfePath,
             oneCExePath: vscode.workspace.getConfiguration('kotTestToolkit').get<string>('paths.oneCEnterpriseExe') || '',
             snapshotPath,
             settingsFilePath,
             modeFilePath,
-            modeRequestFilePath
+            modeRequestFilePath,
+            requestContextFilePath,
+            cfeBuildStatePath
         },
         builtInWindowsBuilder: {
             builderInfobaseDirectory,
@@ -5457,6 +5728,43 @@ async function runBuiltInWindowsInstallToInfobase(
     );
 }
 
+async function runBuiltInWindowsDirectInstallToInfobase(
+    oneCExePath: string,
+    project: GeneratedExtensionProject,
+    targetInfobasePath: string,
+    authentication: InfobaseAuthentication | null,
+    generatedArtifactsDirectory: string,
+    logsDirectory: string,
+    outputChannel: vscode.OutputChannel,
+    t: Awaited<ReturnType<typeof getTranslator>>
+): Promise<void> {
+    const installArgs = appendInfobaseAuthenticationArgs(
+        [
+            'DESIGNER',
+            '/DisableStartupDialogs',
+            '/DisableStartupMessages',
+            '/IBConnectionString',
+            buildInfobaseConnectionArgument(targetInfobasePath),
+            '/LoadConfigFromFiles',
+            project.extensionSourceDirectory,
+            '-Extension',
+            GENERATED_EXTENSION_NAME,
+            '/UpdateDBCfg'
+        ],
+        authentication
+    );
+
+    await run1CCommand(
+        oneCExePath,
+        installArgs,
+        generatedArtifactsDirectory,
+        t('Install Form Explorer extension into target infobase'),
+        path.join(logsDirectory, '05-direct-install-extension-into-target-infobase.log'),
+        outputChannel,
+        t
+    );
+}
+
 async function runBuiltInWindowsProbeExtensionInInfobase(
     oneCExePath: string,
     targetInfobasePath: string,
@@ -5580,6 +5888,59 @@ async function runBuiltInWindowsInstallToInfobaseWithAuthRetry(
     for (;;) {
         try {
             await runBuiltInWindowsInstallToInfobase(
+                oneCExePath,
+                project,
+                targetInfobasePath,
+                authentication,
+                generatedArtifactsDirectory,
+                logsDirectory,
+                outputChannel,
+                t
+            );
+            if (authentication) {
+                INFOBASE_AUTH_CACHE.set(authCacheKey, authentication);
+            } else {
+                INFOBASE_AUTH_CACHE.delete(authCacheKey);
+            }
+            return;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!isInfobaseAuthenticationError(message)) {
+                throw error;
+            }
+
+            outputChannel.appendLine(t('Infobase authentication is required for extension install. Requesting credentials.'));
+            INFOBASE_AUTH_CACHE.delete(authCacheKey);
+            const providedAuthentication = await promptInfobaseAuthentication(t, authentication, authentication !== null);
+            if (!providedAuthentication) {
+                throw new Error(
+                    t('Install into target infobase was cancelled because infobase authentication credentials were not provided.')
+                );
+            }
+
+            authentication = providedAuthentication;
+            outputChannel.appendLine(
+                t('Retrying extension install into infobase using user "{0}".', authentication.username)
+            );
+        }
+    }
+}
+
+async function runBuiltInWindowsDirectInstallToInfobaseWithAuthRetry(
+    oneCExePath: string,
+    project: GeneratedExtensionProject,
+    targetInfobasePath: string,
+    generatedArtifactsDirectory: string,
+    logsDirectory: string,
+    outputChannel: vscode.OutputChannel,
+    t: Awaited<ReturnType<typeof getTranslator>>
+): Promise<void> {
+    const authCacheKey = normalizeInfobaseConnectionIdentity(targetInfobasePath);
+    let authentication: InfobaseAuthentication | null = INFOBASE_AUTH_CACHE.get(authCacheKey) || null;
+
+    for (;;) {
+        try {
+            await runBuiltInWindowsDirectInstallToInfobase(
                 oneCExePath,
                 project,
                 targetInfobasePath,
@@ -5751,9 +6112,28 @@ async function runBuiltInWindowsBuild(
     const oneCClientExePath = (vscode.workspace.getConfiguration('kotTestToolkit').get<string>('paths.oneCEnterpriseExe') || '').trim();
     const oneCDesignerExePath = await resolveConfiguredOneCDesignerExePath(t);
     const logsDirectory = path.join(generatedArtifactsDirectory, 'build-logs');
+    const buildFingerprint = await computeFormExplorerCfeBuildFingerprint(
+        context,
+        configurationSourceDirectory,
+        project,
+        oneCDesignerExePath
+    );
+    const cachedBuildState = await readJsonFile<FormExplorerCfeBuildState>(project.cfeBuildStatePath);
 
     await ensureDirectory(generatedArtifactsDirectory);
     await ensureDirectory(path.dirname(project.cfeOutputPath));
+
+    if (
+        isReusableFormExplorerCfeBuildState(cachedBuildState, buildFingerprint, project.cachedCfePath)
+        && (await pathExists(project.cachedCfePath))
+    ) {
+        outputChannel.appendLine(t('Reusing cached Form Explorer .cfe.'));
+        if (path.resolve(project.cachedCfePath) !== path.resolve(project.cfeOutputPath)) {
+            await copyFileEnsuringDirectory(project.cachedCfePath, project.cfeOutputPath);
+        }
+        return oneCDesignerExePath;
+    }
+
     await fs.promises.rm(project.cfeOutputPath, { force: true });
 
     const ensureResult = await ensureFormExplorerBuilderInfobaseReady(
@@ -5802,6 +6182,11 @@ async function runBuiltInWindowsBuild(
         );
     }
 
+    if (path.resolve(project.cachedCfePath) !== path.resolve(project.cfeOutputPath)) {
+        await copyFileEnsuringDirectory(project.cfeOutputPath, project.cachedCfePath);
+    }
+    await writeFormExplorerCfeBuildState(project.cfeBuildStatePath, buildFingerprint, project.cachedCfePath);
+
     return oneCDesignerExePath;
 }
 
@@ -5810,7 +6195,7 @@ type FormExplorerExtensionRunMode = 'build' | 'install';
 async function handleGenerateFormExplorerExtensionCore(
     context: vscode.ExtensionContext,
     runMode: FormExplorerExtensionRunMode,
-    options?: { targetInfobasePath?: string | null }
+    options?: GenerateFormExplorerExtensionOptions
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     const configurationSourceDirectory = getFormExplorerConfigurationSourceDirectory();
@@ -5889,6 +6274,13 @@ async function handleGenerateFormExplorerExtensionCore(
     const targetInfobaseFilePath = targetInfobasePath
         ? getFileInfobasePath(targetInfobasePath)
         : null;
+    const requestedInstallMode = tryParseFormExplorerInstallMode(options?.installMode);
+    const effectiveInstallMode = runMode === 'install' && targetInfobasePath
+        ? (requestedInstallMode || await pickFormExplorerInstallMode(t, targetInfobasePath))
+        : null;
+    if (runMode === 'install' && targetInfobasePath && !effectiveInstallMode) {
+        return;
+    }
 
     const configurationXmlPath = path.join(configurationSourceDirectory, 'Configuration.xml');
     if (!(await pathExists(configurationXmlPath))) {
@@ -5937,8 +6329,13 @@ async function handleGenerateFormExplorerExtensionCore(
 
                 outputChannel.appendLine(t('Form Explorer extension project generated at: {0}', project.extensionSourceDirectory));
                 outputChannel.appendLine(t('Managed forms index written to: {0}', project.formsIndexPath));
+                const shouldDirectInstallIntoTarget = Boolean(targetInfobasePath) && effectiveInstallMode === 'direct';
+                let oneCDesignerExePath: string | null = null;
+                if (effectiveInstallMode) {
+                    outputChannel.appendLine(t('Selected Form Explorer install mode: {0}', effectiveInstallMode));
+                }
 
-                if (buildCommandTemplate) {
+                if (buildCommandTemplate && !shouldDirectInstallIntoTarget) {
                     progress.report({ message: t('Running external .cfe build...') });
                     await runBuildCommand(
                         buildCommandTemplate,
@@ -5950,52 +6347,12 @@ async function handleGenerateFormExplorerExtensionCore(
                         t
                     );
                     buildExecuted = true;
-
-                    if (targetInfobasePath) {
-                        if (process.platform !== 'win32') {
-                            throw new Error(
-                                t('Automatic install into selected infobase is supported only on Windows where 1C Designer is available.')
-                            );
-                        }
-
-                        if (targetInfobaseFilePath && !(await pathExists(targetInfobaseFilePath))) {
-                            throw new Error(t('Target infobase path does not exist: {0}', targetInfobasePath));
-                        }
-
-                        progress.report({ message: t('Installing .cfe into selected infobase...') });
-                        outputChannel.appendLine(t('Installing Form Explorer extension into infobase: {0}', targetInfobasePath));
-                        const oneCDesignerExePath = await resolveConfiguredOneCDesignerExePath(t);
-                        const logsDirectory = path.join(generatedArtifactsDirectory, 'build-logs');
-                        await ensureDirectory(logsDirectory);
-                        const installProbeResult = await probeExtensionInstalledInInfobaseWithAuthRetry(
-                            oneCDesignerExePath,
-                            targetInfobasePath,
-                            generatedArtifactsDirectory,
-                            logsDirectory,
-                            outputChannel,
-                            t
-                        );
-                        outputChannel.appendLine(
-                            installProbeResult.installed
-                                ? t('Detected existing Form Explorer extension in target infobase. Reinstalling.')
-                                : t('Form Explorer extension was not found in target infobase. Performing initial install.')
-                        );
-                        await runBuiltInWindowsInstallToInfobaseWithAuthRetry(
-                            oneCDesignerExePath,
-                            project,
-                            targetInfobasePath,
-                            generatedArtifactsDirectory,
-                            logsDirectory,
-                            outputChannel,
-                            t
-                        );
-                        installExecuted = true;
-                        installedInfobasePath = targetInfobasePath;
-                    }
-                    return;
+                    oneCDesignerExePath = targetInfobasePath
+                        ? await resolveConfiguredOneCDesignerExePath(t)
+                        : null;
                 }
 
-                if (process.platform !== 'win32') {
+                if (!buildExecuted && !shouldDirectInstallIntoTarget && process.platform !== 'win32') {
                     const openSettingsAction = t('Open Settings');
                     const revealAction = t('Reveal Output');
                     vscode.window.showInformationMessage(
@@ -6012,27 +6369,46 @@ async function handleGenerateFormExplorerExtensionCore(
                     return;
                 }
 
-                progress.report({ message: t('Building .cfe...') });
-                outputChannel.appendLine(t('Using built-in Windows 1C builder for Form Explorer .cfe.'));
-                const oneCDesignerExePath = await runBuiltInWindowsBuild(
-                    context,
-                    project,
-                    configurationSourceDirectory,
-                    generatedArtifactsDirectory,
-                    outputChannel,
-                    t
-                );
-                buildExecuted = true;
+                if (!buildExecuted && !shouldDirectInstallIntoTarget) {
+                    progress.report({ message: t('Building .cfe...') });
+                    outputChannel.appendLine(t('Using built-in Windows 1C builder for Form Explorer .cfe.'));
+                    oneCDesignerExePath = await runBuiltInWindowsBuild(
+                        context,
+                        project,
+                        configurationSourceDirectory,
+                        generatedArtifactsDirectory,
+                        outputChannel,
+                        t
+                    );
+                    buildExecuted = true;
+                }
 
                 if (targetInfobasePath) {
                     if (targetInfobaseFilePath && !(await pathExists(targetInfobaseFilePath))) {
                         throw new Error(t('Target infobase path does not exist: {0}', targetInfobasePath));
                     }
 
-                    progress.report({ message: t('Installing .cfe into selected infobase...') });
+                    if (process.platform !== 'win32') {
+                        throw new Error(
+                            t('Automatic install into selected infobase is supported only on Windows where 1C Designer is available.')
+                        );
+                    }
+
+                    if (!oneCDesignerExePath) {
+                        oneCDesignerExePath = await resolveConfiguredOneCDesignerExePath(t);
+                    }
+
+                    progress.report({
+                        message: shouldDirectInstallIntoTarget
+                            ? t('Installing generated extension directly into selected infobase...')
+                            : t('Installing .cfe into selected infobase...')
+                    });
                     outputChannel.appendLine(t('Installing Form Explorer extension into infobase: {0}', targetInfobasePath));
                     const logsDirectory = path.join(generatedArtifactsDirectory, 'build-logs');
                     await ensureDirectory(logsDirectory);
+                    if (shouldDirectInstallIntoTarget) {
+                        outputChannel.appendLine(t('Using direct install mode for Form Explorer target infobase.'));
+                    }
                     const installProbeResult = await probeExtensionInstalledInInfobaseWithAuthRetry(
                         oneCDesignerExePath,
                         targetInfobasePath,
@@ -6046,22 +6422,34 @@ async function handleGenerateFormExplorerExtensionCore(
                             ? t('Detected existing Form Explorer extension in target infobase. Reinstalling.')
                             : t('Form Explorer extension was not found in target infobase. Performing initial install.')
                     );
-                    await runBuiltInWindowsInstallToInfobaseWithAuthRetry(
-                        oneCDesignerExePath,
-                        project,
-                        targetInfobasePath,
-                        generatedArtifactsDirectory,
-                        logsDirectory,
-                        outputChannel,
-                        t
-                    );
+                    if (shouldDirectInstallIntoTarget) {
+                        await runBuiltInWindowsDirectInstallToInfobaseWithAuthRetry(
+                            oneCDesignerExePath,
+                            project,
+                            targetInfobasePath,
+                            generatedArtifactsDirectory,
+                            logsDirectory,
+                            outputChannel,
+                            t
+                        );
+                    } else {
+                        await runBuiltInWindowsInstallToInfobaseWithAuthRetry(
+                            oneCDesignerExePath,
+                            project,
+                            targetInfobasePath,
+                            generatedArtifactsDirectory,
+                            logsDirectory,
+                            outputChannel,
+                            t
+                        );
+                    }
                     installExecuted = true;
                     installedInfobasePath = targetInfobasePath;
                 }
             }
         );
 
-        if (!builtProject || !buildExecuted) {
+        if (!builtProject || (!buildExecuted && !installExecuted)) {
             return;
         }
 
@@ -6073,7 +6461,7 @@ async function handleGenerateFormExplorerExtensionCore(
             });
         }
 
-        if (await pathExists(builtProject.cfeOutputPath)) {
+        if (buildExecuted && await pathExists(builtProject.cfeOutputPath)) {
             outputChannel.appendLine(t('Form Explorer .cfe build completed: {0}', builtProject.cfeOutputPath));
             if (installExecuted && installedInfobasePath) {
                 outputChannel.appendLine(t('Form Explorer extension installed into infobase: {0}', installedInfobasePath));
@@ -6105,6 +6493,17 @@ async function handleGenerateFormExplorerExtensionCore(
                     }
                 });
             }
+        } else if (installExecuted && installedInfobasePath) {
+            outputChannel.appendLine(t('Form Explorer extension installed into infobase: {0}', installedInfobasePath));
+            const openOutputAction = t('Open Output');
+            vscode.window.showInformationMessage(
+                t('Form Explorer extension installed into infobase: {0}', installedInfobasePath),
+                openOutputAction
+            ).then(selection => {
+                if (selection === openOutputAction) {
+                    outputChannel.show(true);
+                }
+            });
         } else {
             outputChannel.appendLine(t('Build finished, but the expected .cfe file was not found: {0}', builtProject.cfeOutputPath));
             vscode.window.showWarningMessage(
@@ -6211,8 +6610,11 @@ export async function handleStartFormExplorerInfobase(
             };
         }
 
-        if (startAction === 'reinstall') {
-            await handleGenerateFormExplorerExtensionCore(context, 'install', { targetInfobasePath });
+        if (startAction.actionKey === 'reinstall') {
+            await handleGenerateFormExplorerExtensionCore(context, 'install', {
+                targetInfobasePath,
+                installMode: startAction.installMode || null
+            });
             probeResult = await probeExtensionInstalledInInfobaseWithAuthRetry(
                 oneCDesignerExePath,
                 targetInfobasePath,

@@ -110,7 +110,6 @@
 | `kotTestToolkit.runVanessa.liveLogRefreshSeconds` | Интервал live-обновления лога |
 | `kotTestToolkit.runVanessa.autoDetectMinStartupUpdates` | Сколько стартовых обновлений лога нужно для автоподхвата |
 | `kotTestToolkit.runVanessa.autoDetectInactivityTimeoutSeconds` | Через сколько секунд неактивности снимать авто-трекинг |
-| `kotTestToolkit.runVanessa.checkUnsafeActionProtection` | Проверка conf.cfg перед запуском (Windows) |
 | `kotTestToolkit.runVanessa.commandTemplate` | Кастомный шаблон запуска Vanessa |
 | `kotTestToolkit.formExplorer.configurationSourceDirectory` | Каталог исходников конфигурации для опции обновления ИБ из папки перед запуском |
 | `kotTestToolkit.legacy.enableDisabledTestsDirectoryMoveOnBuild` | Legacy-режим: временно выносить `test/*.yaml` выключенных сценариев из сборки |
@@ -121,7 +120,9 @@
 
 - она прогревается расширением автоматически;
 - переиспользуется между `СборкаТекстовСценариев` и Vanessa;
-- не требует отдельной legacy-настройки пути к пустой ИБ.
+- не требует отдельной legacy-настройки пути к пустой ИБ;
+- на Windows KOT восстанавливает startup-ИБ из `KOTStartupTemplate.dt`, поставляемого в расширении, чтобы избежать security warning при первом запуске;
+- запуск не требует прав администратора Windows, если есть обычные права записи в рабочий каталог проекта.
 
 `KOT Form Explorer` использует отдельную builder-ИБ и не влияет на легкость startup-окружения для запуска тестов.
 

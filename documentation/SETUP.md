@@ -108,7 +108,6 @@
 | `kotTestToolkit.runVanessa.runtimeDirectory` | `.vscode/kot-runtime/vanessa` | Папка runtime-файлов (логи/статусы) |
 | `kotTestToolkit.runVanessa.showOutputPanel` | `false` | Автооткрытие Output при запуске Vanessa |
 | `kotTestToolkit.runVanessa.commandTemplate` | `""` | Кастомный shell-шаблон запуска (optional override) |
-| `kotTestToolkit.runVanessa.checkUnsafeActionProtection` | `true` | Проверка `conf.cfg` (Windows) перед запуском Vanessa |
 | `kotTestToolkit.runVanessa.liveLogRefreshSeconds` | `2` | Интервал обновления live-лога |
 | `kotTestToolkit.runVanessa.autoDetectMinStartupUpdates` | `2` | Сколько свежих обновлений run-лога нужно на старте, чтобы фоновый монитор посчитал прогон реальным |
 | `kotTestToolkit.runVanessa.autoDetectInactivityTimeoutSeconds` | `20` | Через сколько секунд без обновлений run-лога автоопределенный трекинг снимается как неактивный |
@@ -157,15 +156,15 @@
 | `kotTestToolkit.formExplorer.generatedArtifactsDirectory` | `.vscode/kot-runtime/form-explorer` | Папка generated artifacts и builder-ИБ Form Explorer |
 | `kotTestToolkit.formExplorer.extensionBuildCommandTemplate` | `""` | Override встроенного builder через внешний скрипт |
 | `kotTestToolkit.formExplorer.autoRefreshSeconds` | `1` | Интервал перечитывания snapshot-а в панели |
-| `kotTestToolkit.formExplorer.showOutputPanel` | `false` | Автопоказ Output при сборке `.cfe` и прогреве builder-ИБ Form Explorer |
+| `kotTestToolkit.formExplorer.showOutputPanel` | `false` | Автопоказ Output при сборке `.cfe` и установке Form Explorer |
 
 Важно:
 
-- пустая ИБ больше не настраивается отдельно;
-- `СборкаТекстовСценариев` и Vanessa используют общую lightweight startup-ИБ;
-- `KOT Form Explorer` использует отдельную builder-ИБ;
+- `KOT Form Explorer` использует отдельную builder-ИБ только для сценариев установки через `.cfe`;
 - при установке/запуске Form Explorer в выбранной базе источник сборки адаптера всё равно берется из `configurationSourceDirectory`;
-- обе служебные ИБ создаются автоматически в фоне, если KOT смог определить путь к `1cv8c.exe`.
+- при `Start infobase`, `Open with Form Explorer` и ручной установке расширения KOT спрашивает режим установки:
+  `direct` выбран по умолчанию и строго рекомендуется только когда база соответствует текущей ветке или хотя бы не сильно отличается от нее;
+  `cfe` медленнее, зато безопаснее по совместимости, потому что использует отдельную builder-ИБ и пакет `.cfe`.
 
 ## 4) Менеджер параметров: как работает
 

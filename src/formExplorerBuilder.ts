@@ -20,10 +20,12 @@ const DEFAULT_MODE_REQUEST_FILE_NAME = 'adapter-mode-request.txt';
 const DEFAULT_REQUEST_CONTEXT_FILE_NAME = 'adapter-request-context.json';
 const DEFAULT_HOTKEY_PRESET_KEY = 'ctrlShiftF12';
 const DEFAULT_AUTO_SNAPSHOT_INTERVAL_SECONDS = 5;
+const FORM_EXPLORER_BUILDER_CACHE_SCHEMA_VERSION = 2;
 
 interface BuilderCacheState {
+    schemaVersion: number;
     configurationSourceDirectory: string;
-    configurationXmlHash: string;
+    configurationTreeHash: string;
 }
 
 export interface FormExplorerBuilderPaths {
@@ -100,10 +102,53 @@ async function hashFileContents(filePath: string): Promise<string> {
     return crypto.createHash('sha256').update(contents).digest('hex');
 }
 
+async function collectFilesRecursively(rootDirectory: string): Promise<string[]> {
+    const results: string[] = [];
+
+    const walk = async (currentDirectory: string): Promise<void> => {
+        const entries = await fs.promises.readdir(currentDirectory, { withFileTypes: true });
+        for (const entry of entries) {
+            if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.DS_Store') {
+                continue;
+            }
+
+            const absolutePath = path.join(currentDirectory, entry.name);
+            if (entry.isDirectory()) {
+                await walk(absolutePath);
+                continue;
+            }
+
+            if (entry.isFile()) {
+                results.push(absolutePath);
+            }
+        }
+    };
+
+    await walk(rootDirectory);
+    results.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
+    return results;
+}
+
+async function hashDirectoryContents(rootDirectory: string): Promise<string> {
+    const hash = crypto.createHash('sha256');
+    hash.update(`root:${path.resolve(rootDirectory)}\n`);
+
+    const files = await collectFilesRecursively(rootDirectory);
+    for (const absolutePath of files) {
+        const relativePath = path.relative(rootDirectory, absolutePath).split(path.sep).join('/');
+        hash.update(`file:${relativePath}\n`);
+        hash.update(await fs.promises.readFile(absolutePath));
+        hash.update('\n');
+    }
+
+    return hash.digest('hex');
+}
+
 async function getBuilderCacheState(configurationSourceDirectory: string): Promise<BuilderCacheState> {
     return {
-        configurationSourceDirectory,
-        configurationXmlHash: await hashFileContents(path.join(configurationSourceDirectory, 'Configuration.xml'))
+        schemaVersion: FORM_EXPLORER_BUILDER_CACHE_SCHEMA_VERSION,
+        configurationSourceDirectory: path.resolve(configurationSourceDirectory),
+        configurationTreeHash: await hashDirectoryContents(configurationSourceDirectory)
     };
 }
 
@@ -112,8 +157,15 @@ function isSameBuilderCacheState(expected: BuilderCacheState, actual: BuilderCac
         return false;
     }
 
-    return expected.configurationSourceDirectory === actual.configurationSourceDirectory
-        && expected.configurationXmlHash === actual.configurationXmlHash;
+    return expected.schemaVersion === actual.schemaVersion
+        && expected.configurationSourceDirectory === actual.configurationSourceDirectory
+        && expected.configurationTreeHash === actual.configurationTreeHash;
+}
+
+function shouldSkipBuilderWarmup(): boolean {
+    const formExplorerConfiguration = vscode.workspace.getConfiguration('kotTestToolkit.formExplorer');
+    const buildCommandTemplate = (formExplorerConfiguration.get<string>('extensionBuildCommandTemplate') || '').trim();
+    return buildCommandTemplate.length > 0;
 }
 
 function formatCommandForOutput(exePath: string, args: string[]): string {
@@ -251,6 +303,10 @@ export async function initializeFormExplorerRuntimeSidecars(): Promise<void> {
 export async function shouldPrepareFormExplorerBuilderInfobase(): Promise<boolean> {
     const builderPaths = getFormExplorerBuilderPaths();
     if (!builderPaths) {
+        return false;
+    }
+
+    if (shouldSkipBuilderWarmup()) {
         return false;
     }
 

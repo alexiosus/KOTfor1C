@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/KOTfor1C",
-  "version": "2.5.1",
+  "version": "2.6.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -296,19 +296,13 @@
             "markdownDescription": "%config.runVanessa.commandTemplate.markdownDescription%",
             "order": 4
           },
-          "kotTestToolkit.runVanessa.checkUnsafeActionProtection": {
-            "type": "boolean",
-            "default": true,
-            "description": "%config.runVanessa.checkUnsafeActionProtection.description%",
-            "order": 5
-          },
           "kotTestToolkit.runVanessa.liveLogRefreshSeconds": {
             "type": "number",
             "default": 2,
             "minimum": 1,
             "maximum": 60,
             "description": "%config.runVanessa.liveLogRefreshSeconds.description%",
-            "order": 6
+            "order": 5
           },
           "kotTestToolkit.runVanessa.autoDetectMinStartupUpdates": {
             "type": "number",
@@ -316,7 +310,7 @@
             "minimum": 1,
             "maximum": 10,
             "description": "%config.runVanessa.autoDetectMinStartupUpdates.description%",
-            "order": 7
+            "order": 6
           },
           "kotTestToolkit.runVanessa.autoDetectInactivityTimeoutSeconds": {
             "type": "number",
@@ -324,7 +318,7 @@
             "minimum": 5,
             "maximum": 3600,
             "description": "%config.runVanessa.autoDetectInactivityTimeoutSeconds.description%",
-            "order": 8
+            "order": 7
           }
         }
       },
