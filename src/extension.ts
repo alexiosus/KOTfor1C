@@ -12,6 +12,7 @@ import {
     openMxlFileFromExplorerHandler,
     revealFileInExplorerHandler, 
     revealFileInOSHandler,
+    openCurrentScenarioFilesFolderHandler,
     openSubscenarioHandler,
     openNestedScenarioFromFeatureHandler,
     openScenarioByNameHandler,
@@ -768,6 +769,9 @@ export function activate(context: vscode.ExtensionContext) {
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         'kotTestToolkit.revealFileInOS', (editor, edit) => revealFileInOSHandler(editor, edit, phaseSwitcherProvider)
+    ));
+    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+        'kotTestToolkit.openCurrentScenarioFilesFolder', editor => openCurrentScenarioFilesFolderHandler(editor)
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openBuildFolder', (folderPath: string) => {

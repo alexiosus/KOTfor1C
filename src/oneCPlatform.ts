@@ -90,6 +90,15 @@ export function resolveOneCDesignerExePath(oneCClientExePath: string): string {
     return path.join(path.dirname(trimmedPath), '1cv8.exe');
 }
 
+export function resolveOneCIBCmdExePath(oneCClientExePath: string): string {
+    const trimmedPath = oneCClientExePath.trim();
+    if (!trimmedPath) {
+        return trimmedPath;
+    }
+
+    return path.join(path.dirname(trimmedPath), process.platform === 'win32' ? 'ibcmd.exe' : 'ibcmd');
+}
+
 export function resolveOneCClientExePath(oneCConfiguredPath: string): string {
     return oneCConfiguredPath.trim();
 }

@@ -153,18 +153,19 @@
 |---|---|---|
 | `kotTestToolkit.formExplorer.snapshotPath` | `.vscode/kot-runtime/form-explorer/form-snapshot.json` | Путь к snapshot-файлу формы |
 | `kotTestToolkit.formExplorer.configurationSourceDirectory` | `cf` | Папка файловой выгрузки конфигурации, которая используется для static enrichment и сборки адаптера Form Explorer |
-| `kotTestToolkit.formExplorer.generatedArtifactsDirectory` | `.vscode/kot-runtime/form-explorer` | Папка generated artifacts и builder-ИБ Form Explorer |
+| `kotTestToolkit.formExplorer.generatedArtifactsDirectory` | `.vscode/kot-runtime/form-explorer` | Папка сгенерированных артефактов и builder-ИБ Form Explorer |
 | `kotTestToolkit.formExplorer.extensionBuildCommandTemplate` | `""` | Override встроенного builder через внешний скрипт |
 | `kotTestToolkit.formExplorer.autoRefreshSeconds` | `1` | Интервал перечитывания snapshot-а в панели |
 | `kotTestToolkit.formExplorer.showOutputPanel` | `false` | Автопоказ Output при сборке `.cfe` и установке Form Explorer |
 
 Важно:
 
-- `KOT Form Explorer` использует отдельную builder-ИБ только для сценариев установки через `.cfe`;
-- при установке/запуске Form Explorer в выбранной базе источник сборки адаптера всё равно берется из `configurationSourceDirectory`;
+- `configurationSourceDirectory` используется для static enrichment всегда, а также как источник сборки runtime в режимах `direct` и `cfe`;
+- отдельная builder-ИБ используется только для сценария `cfe`;
 - при `Start infobase`, `Open with Form Explorer` и ручной установке расширения KOT спрашивает режим установки:
   `direct` выбран по умолчанию и строго рекомендуется только когда база соответствует текущей ветке или хотя бы не сильно отличается от нее;
-  `cfe` медленнее, зато безопаснее по совместимости, потому что использует отдельную builder-ИБ и пакет `.cfe`.
+  `cfe` - промежуточный режим через builder-ИБ и пакет `.cfe`;
+  `target` - самый медленный, но самый точный режим: KOT сначала выгружает конфигурацию самой выбранной базы, а для файловых ИБ пытается ускорить этот шаг через `ibcmd`.
 
 ## 4) Менеджер параметров: как работает
 

@@ -506,6 +506,11 @@
         "category": "%cmd.category%"
       },
       {
+        "command": "kotTestToolkit.openCurrentScenarioFilesFolder",
+        "title": "%cmd.openCurrentScenarioFilesFolder.title%",
+        "category": "%cmd.category%"
+      },
+      {
         "command": "kotTestToolkit.openBuildFolder",
         "title": "%cmd.openBuildFolder.title%",
         "category": "%cmd.category%"
@@ -759,19 +764,24 @@
       ],
       "kotTestToolkit.editorContext.workWithFiles": [
         {
-          "command": "kotTestToolkit.openMxlFile",
-          "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
+          "command": "kotTestToolkit.openCurrentScenarioFilesFolder",
+          "when": "editorTextFocus && resourceExtname == .yaml",
           "group": "00_workWithFiles@0"
         },
         {
-          "command": "kotTestToolkit.revealFileInExplorer",
+          "command": "kotTestToolkit.openMxlFile",
           "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
           "group": "00_workWithFiles@1"
         },
         {
-          "command": "kotTestToolkit.revealFileInOS",
+          "command": "kotTestToolkit.revealFileInExplorer",
           "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
           "group": "00_workWithFiles@2"
+        },
+        {
+          "command": "kotTestToolkit.revealFileInOS",
+          "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
+          "group": "00_workWithFiles@3"
         }
       ],
       "kotTestToolkit.editorContext.create": [

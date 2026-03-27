@@ -6,7 +6,7 @@
 
 | Файл | Роль |
 |---|---|
-| `src/extension.ts` | Точка входа: регистрация providers/команд, save-pipeline, интеграция между подсистемами |
+| `src/extension.ts` | Точка входа: регистрация providers/команд, конвейер сохранения, интеграция между подсистемами |
 | `src/phaseSwitcher.ts` | Backend Test Manager (`Менеджер тестов`): webview-мост, кеш сценариев, сборка, запуск Vanessa, статусы запуска |
 | `src/workspaceScanner.ts` | Полный скан `yamlSourceDirectory`, построение `TestInfo` |
 | `src/completionProvider.ts` | IntelliSense шагов и вызовов вложенных сценариев |
@@ -19,9 +19,9 @@
 | `src/yamlParametersManager.ts` | Webview менеджера параметров (СППР/VA/GlobalVars) |
 | `src/formExplorerPanel.ts` | Webview-панель исследования открытой формы 1С через JSON snapshot |
 | `src/formExplorerPaths.ts` | Разрешение настроек путей Form Explorer: snapshot, исходники конфигурации, каталог генерации |
-| `src/formExplorerExtensionGenerator.ts` | Генерация source tree расширения Form Explorer, индекса форм и сборка `.cfe` (встроенный Windows builder через `1cv8c.exe` + sibling `1cv8.exe` или внешний override) |
-| `src/formExplorerBuilder.ts` | Builder-ИБ Form Explorer: sidecar-файлы адаптера, прогрев builder-ИБ, build output |
-| `src/startupInfobase.ts` | Lightweight startup-ИБ для Vanessa и `СборкаТекстовСценариев`: автосоздание, output и background warmup |
+| `src/formExplorerExtensionGenerator.ts` | Генерация дерева исходников расширения Form Explorer, индекса форм и сборка `.cfe` (встроенный Windows builder через `1cv8c.exe` + sibling `1cv8.exe` или внешнее переопределение) |
+| `src/formExplorerBuilder.ts` | Builder-ИБ Form Explorer: вспомогательные файлы адаптера, прогрев builder-ИБ, результаты сборки |
+| `src/startupInfobase.ts` | Легковесная startup-ИБ для Vanessa и `СборкаТекстовСценариев`: автосоздание, output и фоновый прогрев |
 | `src/oneCPlatform.ts` | Автоопределение установленной платформы 1С и разрешение путей `1cv8c.exe` / `1cv8.exe` |
 | `src/formExplorerEnrichment.ts` | Обогащение runtime snapshot-а данными из `Form.xml` и metadata выгрузки конфигурации |
 | `src/formExplorerTypes.ts` | Контракт и нормализация snapshot JSON для Form Explorer |
@@ -31,7 +31,7 @@
 | `media/yamlParameters.*` | UI менеджера параметров |
 | `media/formExplorer.*` | UI панели Form Explorer |
 | `res/formExplorer/adapter/KOTFormExplorerAdapterClient.bsl` | Базовый source template runtime-модуля, который генератор дополняет support-кодом |
-| `tools/form-explorer/build-cfe.*` | Внешние helper-скрипты для optional override сборки `.cfe` |
+| `tools/form-explorer/build-cfe.*` | Внешние вспомогательные скрипты для необязательного переопределения сборки `.cfe` |
 
 ## 2) Основной runtime-поток
 
@@ -41,7 +41,7 @@
 4. Регистрируются команды `kotTestToolkit.*`.
 5. На события редактора (`open/change/save/close`) срабатывают локальные обработчики.
 
-## 3) Save pipeline (ключевая логика)
+## 3) Конвейер сохранения (ключевая логика)
 
 На сохранение сценария может выполняться цепочка:
 
@@ -137,7 +137,7 @@
 Функциональные части:
 
 - СППР-параметры (для `yaml_parameters.json`);
-- дополнительные VA-параметры (runtime overlay);
+- дополнительные VA-параметры (runtime-переопределение);
 - `GlobalVars`.
 
 Хранение:
@@ -148,7 +148,7 @@
 
 Поток Form Explorer:
 
-1. `src/formExplorerExtensionGenerator.ts` сканирует `cf`, строит `forms-index.json` и генерирует runtime `.cfe`.
+1. `src/formExplorerExtensionGenerator.ts` сканирует источник конфигурации, строит `forms-index.json` и генерирует runtime-расширение; в режиме `cfe` оно дополнительно собирается в пакет `.cfe`.
 2. Generated runtime инициализируется на старте 1С через `ManagedApplicationModule`.
 3. Runtime пишет:
    - `form-snapshot.json`
@@ -156,11 +156,11 @@
    - `adapter-mode.txt`
    - `adapter-mode-request.txt`
 4. `src/formExplorerPanel.ts` читает snapshot и mode-state, а `src/formExplorerEnrichment.ts` обогащает данные из `Form.xml`.
-5. `media/formExplorer.*` показывает UI-inspector и умеет переключать `manual/auto` режим.
+5. `media/formExplorer.*` показывает UI-инспектор и умеет переключать `manual/auto` режим.
 
 Особенности:
 
-- runtime intentionally lightweight: без заимствования прикладных форм;
+- runtime намеренно сделан легковесным: без заимствования прикладных форм;
 - builder на Windows кэширует file infobase и не перезагружает базовую конфигурацию без необходимости;
 - `auto snapshot` оптимизирован: полный snapshot строится не на каждом тике, а только если изменился cheap-signature активной формы.
 
@@ -202,7 +202,7 @@
 2. Проверить в VS Code:
    - completion/hover;
    - diagnostics + quick fix;
-   - save-pipeline;
+   - конвейер сохранения;
    - Test Manager (чекбоксы -> build filter, build/run/statuses);
    - менеджер параметров (все вкладки, импорт/экспорт);
    - Form Explorer webview.

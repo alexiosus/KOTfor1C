@@ -100,6 +100,7 @@
   "cmd.openMxlFile.title": "KOT - Open MXL file in editor",
   "cmd.revealFileInExplorer.title": "KOT - Reveal file in VS Code Explorer",
   "cmd.revealFileInOS.title": "KOT - Reveal file in OS file manager",
+  "cmd.openCurrentScenarioFilesFolder.title": "KOT - Open current scenario files folder",
   "cmd.openBuildFolder.title": "KOT - Open build folder",
   "cmd.createFirstLaunchZip.title": "KOT - Create FirstLaunch archive",
   "cmd.openYamlParametersManager.title": "KOT - Open Build Scenario Parameters Manager",

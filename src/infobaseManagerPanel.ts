@@ -496,7 +496,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             refresh: t('Refresh'),
             createInfobase: t('Create infobase'),
             addInfobasePath: t('Add path'),
-            searchPlaceholder: t('Filter by name, path or state'),
+            searchPlaceholder: t('Search bases'),
             sortLabel: t('Sort'),
             sortAlphabetical: t('Alphabetical'),
             sortLastOpened: t('Last opened'),

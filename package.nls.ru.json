@@ -100,6 +100,7 @@
   "cmd.openMxlFile.title": "KOT - Открыть MXL файл в редакторе",
   "cmd.revealFileInExplorer.title": "KOT - Показать файл в проводнике VS Code",
   "cmd.revealFileInOS.title": "KOT - Показать файл в системном проводнике",
+  "cmd.openCurrentScenarioFilesFolder.title": "KOT - Открыть папку files текущего сценария",
   "cmd.openBuildFolder.title": "KOT - Открыть папку сборки",
   "cmd.createFirstLaunchZip.title": "KOT - Собрать архив FirstLaunch",
   "cmd.openYamlParametersManager.title": "KOT - Открыть Менеджер параметров Сборки Сценариев",

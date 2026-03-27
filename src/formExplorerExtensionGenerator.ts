@@ -27,7 +27,7 @@ import {
     normalizeInfobaseConnectionIdentity,
     normalizeInfobaseReference
 } from './oneCInfobaseConnection';
-import { resolveOneCDesignerExePath } from './oneCPlatform';
+import { resolveOneCDesignerExePath, resolveOneCIBCmdExePath } from './oneCPlatform';
 
 interface BaseConfigurationInfo {
     name: string;
@@ -150,7 +150,7 @@ export interface StartFormExplorerInfobaseResult {
     error: string | null;
 }
 
-type FormExplorerInstallMode = 'cfe' | 'direct';
+type FormExplorerInstallMode = 'cfe' | 'direct' | 'target';
 
 interface FormExplorerInstallModeQuickPickItem extends vscode.QuickPickItem {
     installMode: FormExplorerInstallMode;
@@ -195,6 +195,8 @@ const DEFAULT_MODE_REQUEST_FILE_NAME = 'adapter-mode-request.txt';
 const DEFAULT_REQUEST_CONTEXT_FILE_NAME = 'adapter-request-context.json';
 const DEFAULT_CFE_CACHE_FILE_NAME = 'KOTFormExplorerRuntime.cached.cfe';
 const DEFAULT_CFE_BUILD_STATE_FILE_NAME = 'cfe-build-state.json';
+const TARGET_INFOBASE_CONFIGURATION_EXPORT_DIRECTORY_NAME = 'target-infobase-config-source';
+const IBCMD_TARGET_EXPORT_THREADS = 4;
 const HOTKEY_PRESET_NONE_KEY = 'none';
 const DEFAULT_HOTKEY_PRESET_KEY = 'ctrlShiftF12';
 const DEFAULT_AUTO_SNAPSHOT_INTERVAL_SECONDS = 5;
@@ -494,7 +496,7 @@ function getDirectInstallModeDetail(
     t: Awaited<ReturnType<typeof getTranslator>>,
 ): string {
     return t(
-        'Fastest option. Strictly recommended only when the target infobase matches the current branch configuration or differs only slightly. Loads the generated extension sources directly into the selected infobase.'
+        'Fastest. Use only when the base matches the branch.'
     );
 }
 
@@ -502,33 +504,46 @@ function getCfeInstallModeDetail(
     t: Awaited<ReturnType<typeof getTranslator>>
 ): string {
     return t(
-        'Safer compatibility mode. Reuses or builds a cached .cfe in a builder infobase based on configurationSourceDirectory, then installs that package into the selected infobase.'
+        'Middle path. Uses the branch config and installs via .cfe.'
+    );
+}
+
+function getTargetInfobaseInstallModeDetail(
+    t: Awaited<ReturnType<typeof getTranslator>>
+): string {
+    return t(
+        'Slowest. Exports the selected base config and builds from it.'
     );
 }
 
 async function pickFormExplorerInstallMode(
     t: Awaited<ReturnType<typeof getTranslator>>,
-    targetInfobasePath: string
+    _targetInfobasePath: string
 ): Promise<FormExplorerInstallMode | undefined> {
-    const infobaseLabel = describeInfobaseConnection(targetInfobasePath);
     const directItem: FormExplorerInstallModeQuickPickItem = {
-        label: t('Direct install (Recommended)'),
-        description: infobaseLabel,
+        label: t('Direct (Recommended)'),
+        description: t('Install directly'),
         detail: getDirectInstallModeDetail(t),
         installMode: 'direct'
     };
     const cfeItem: FormExplorerInstallModeQuickPickItem = {
-        label: t('Build/install via .cfe'),
-        description: infobaseLabel,
+        label: t('Via .cfe'),
+        description: t('Build/install'),
         detail: getCfeInstallModeDetail(t),
         installMode: 'cfe'
     };
+    const targetItem: FormExplorerInstallModeQuickPickItem = {
+        label: t('From target infobase'),
+        description: t('Export/build/install'),
+        detail: getTargetInfobaseInstallModeDetail(t),
+        installMode: 'target'
+    };
     const selection = await showQuickPickWithDefaultSelection(
-        [directItem, cfeItem],
+        [directItem, cfeItem, targetItem],
         {
             title: t('Choose how to install Form Explorer into the selected infobase'),
             placeHolder: t(
-                'Direct mode is the default. Use it only when the target infobase matches the current branch configuration or at least does not differ too much.'
+                'Direct is fastest, .cfe is the middle path, target infobase is slowest but most accurate.'
             ),
             activeItem: directItem
         }
@@ -539,46 +554,55 @@ async function pickFormExplorerInstallMode(
 
 async function pickStartInfobaseAction(
     t: Awaited<ReturnType<typeof getTranslator>>,
-    targetInfobasePath: string,
+    _targetInfobasePath: string,
     extensionInstalled: boolean
 ): Promise<FormExplorerStartActionSelection | undefined> {
-    const infobaseLabel = describeInfobaseConnection(targetInfobasePath);
     const directItem: FormExplorerStartActionQuickPickItem = {
-        label: extensionInstalled
-            ? t('Direct reinstall and start (Recommended)')
-            : t('Direct install and start (Recommended)'),
-        description: infobaseLabel,
+        label: t('Direct (Recommended)'),
+        description: extensionInstalled
+            ? t('Reinstall and start')
+            : t('Install and start'),
         detail: getDirectInstallModeDetail(t),
         actionKey: 'reinstall',
         installMode: 'direct'
     };
     const cfeItem: FormExplorerStartActionQuickPickItem = {
-        label: extensionInstalled
-            ? t('Build/reinstall via .cfe and start')
-            : t('Build/install via .cfe and start'),
-        description: infobaseLabel,
+        label: t('Via .cfe'),
+        description: extensionInstalled
+            ? t('Build/reinstall and start')
+            : t('Build/install and start'),
         detail: getCfeInstallModeDetail(t),
         actionKey: 'reinstall',
         installMode: 'cfe'
     };
+    const targetItem: FormExplorerStartActionQuickPickItem = {
+        label: t('From target infobase'),
+        description: extensionInstalled
+            ? t('Export/build/reinstall/start')
+            : t('Export/build/install/start'),
+        detail: getTargetInfobaseInstallModeDetail(t),
+        actionKey: 'reinstall',
+        installMode: 'target'
+    };
     const items: FormExplorerStartActionQuickPickItem[] = extensionInstalled
         ? [
             {
-                label: t('Start with installed extension'),
-                description: infobaseLabel,
-                detail: t('Use the already installed Form Explorer extension as-is. Choose this only if you know the installed adapter is already current.'),
+                label: t('Use installed extension'),
+                description: t('Start as is'),
+                detail: t('No reinstall. Use only if the installed adapter is already current.'),
                 actionKey: 'start'
             },
             directItem,
-            cfeItem
+            cfeItem,
+            targetItem
         ]
-        : [directItem, cfeItem];
+        : [directItem, cfeItem, targetItem];
     const selection = await showQuickPickWithDefaultSelection(
         items,
         {
             title: t('Choose how to start the selected infobase'),
             placeHolder: t(
-                'Direct mode is the default. Use it only when the target infobase matches the current branch configuration or at least does not differ too much.'
+                'Direct is fastest, .cfe is the middle path, target infobase is slowest but most accurate.'
             ),
             activeItem: directItem
         }
@@ -1012,6 +1036,19 @@ function tryParseFormExplorerInstallMode(value: unknown): FormExplorerInstallMod
 
     if (normalized === 'cfe') {
         return 'cfe';
+    }
+
+    if (
+        normalized === 'target'
+        || normalized === 'targetinfobase'
+        || normalized === 'target-infobase'
+        || normalized === 'targetexport'
+        || normalized === 'target-export'
+        || normalized === 'fromtarget'
+        || normalized === 'from-target'
+        || normalized === 'exact'
+    ) {
+        return 'target';
     }
 
     return null;
@@ -4997,8 +5034,9 @@ Windows built-in build:
   with a configurable interval and predefined shortcut presets.
 - Runtime mode (\`manual\` / \`auto\`) is mirrored to a dedicated mode file so the VS Code panel can
   show the live adapter mode without parsing 1C data.
-- Target install mode can either use the cached/built \`.cfe\` or load the generated extension
-  project directly into a matching infobase.
+- Target install mode can either load the generated extension directly into a matching infobase,
+  build/install through a cached \`.cfe\`, or first export the selected infobase configuration and
+  then build the extension from that exact export.
 - Auto snapshot is optimized to avoid rebuilding the full JSON when form focus and the active
   element value have not changed since the last timer tick.
 
@@ -5641,6 +5679,61 @@ async function run1CCommand(
     });
 }
 
+async function runProcessCommand(
+    exePath: string,
+    args: string[],
+    cwd: string,
+    stepTitle: string,
+    outFilePath: string,
+    outputChannel: vscode.OutputChannel,
+    t: Awaited<ReturnType<typeof getTranslator>>
+): Promise<void> {
+    outputChannel.appendLine(t('Form Explorer build step: {0}', stepTitle));
+    outputChannel.appendLine(t('Resolved command: {0}', formatCommandForOutput(exePath, args)));
+
+    await new Promise<void>((resolve, reject) => {
+        let stdout = '';
+        let stderr = '';
+
+        const child = cp.spawn(exePath, args, {
+            cwd,
+            shell: false,
+            windowsHide: true
+        });
+
+        child.stdout?.on('data', data => {
+            const chunk = data.toString();
+            stdout += chunk;
+            outputChannel.append(chunk);
+        });
+
+        child.stderr?.on('data', data => {
+            const chunk = data.toString();
+            stderr += chunk;
+            outputChannel.append(chunk);
+        });
+
+        child.on('error', error => reject(error));
+        child.on('close', async code => {
+            const combinedOutput = `${stdout}${stdout && stderr ? '\n' : ''}${stderr}`;
+            try {
+                await ensureDirectory(path.dirname(outFilePath));
+                await fs.promises.writeFile(outFilePath, combinedOutput, 'utf8');
+            } catch {
+                // Ignore log write failures and surface the process result instead.
+            }
+
+            if (code === 0) {
+                resolve();
+                return;
+            }
+
+            const details = getOutputTail(combinedOutput) || t('<empty output>');
+            reject(new Error(t('Command for "{0}" exited with code {1}. Output tail: {2}', stepTitle, String(code ?? 'unknown'), details)));
+        });
+    });
+}
+
 async function runBuiltInWindowsExtensionExport(
     oneCExePath: string,
     project: GeneratedExtensionProject,
@@ -5765,6 +5858,80 @@ async function runBuiltInWindowsDirectInstallToInfobase(
     );
 }
 
+async function runBuiltInWindowsDumpConfigurationFromInfobase(
+    oneCExePath: string,
+    targetInfobasePath: string,
+    exportDirectory: string,
+    authentication: InfobaseAuthentication | null,
+    generatedArtifactsDirectory: string,
+    logsDirectory: string,
+    outputChannel: vscode.OutputChannel,
+    t: Awaited<ReturnType<typeof getTranslator>>
+): Promise<void> {
+    await recreateDirectory(exportDirectory);
+    const dumpArgs = appendInfobaseAuthenticationArgs(
+        [
+            'DESIGNER',
+            '/DisableStartupDialogs',
+            '/DisableStartupMessages',
+            '/IBConnectionString',
+            buildInfobaseConnectionArgument(targetInfobasePath),
+            '/DumpConfigToFiles',
+            exportDirectory,
+            '-Format',
+            'Hierarchical'
+        ],
+        authentication
+    );
+
+    await run1CCommand(
+        oneCExePath,
+        dumpArgs,
+        generatedArtifactsDirectory,
+        t('Export target infobase configuration to files'),
+        path.join(logsDirectory, '03-dump-target-infobase-configuration.log'),
+        outputChannel,
+        t
+    );
+}
+
+async function runBuiltInWindowsDumpConfigurationFromFileInfobaseUsingIBCmd(
+    ibcmdExePath: string,
+    targetInfobaseFilePath: string,
+    exportDirectory: string,
+    authentication: InfobaseAuthentication | null,
+    generatedArtifactsDirectory: string,
+    logsDirectory: string,
+    outputChannel: vscode.OutputChannel,
+    t: Awaited<ReturnType<typeof getTranslator>>
+): Promise<void> {
+    await recreateDirectory(exportDirectory);
+    const dumpArgs = [
+        'infobase',
+        'config',
+        'export',
+        `--threads=${IBCMD_TARGET_EXPORT_THREADS}`,
+        `--db-path=${targetInfobaseFilePath}`,
+        ...((authentication?.username || '').trim()
+            ? [
+                `--user=${authentication!.username}`,
+                `--password=${authentication!.password || ''}`
+            ]
+            : []),
+        exportDirectory
+    ];
+
+    await runProcessCommand(
+        ibcmdExePath,
+        dumpArgs,
+        generatedArtifactsDirectory,
+        t('Export target infobase configuration to files via ibcmd'),
+        path.join(logsDirectory, '03-dump-target-infobase-configuration-ibcmd.log'),
+        outputChannel,
+        t
+    );
+}
+
 async function runBuiltInWindowsProbeExtensionInInfobase(
     oneCExePath: string,
     targetInfobasePath: string,
@@ -5868,6 +6035,117 @@ async function probeExtensionInstalledInInfobaseWithAuthRetry(
             authentication = providedAuthentication;
             outputChannel.appendLine(
                 t('Retrying extension check in infobase using user "{0}".', authentication.username)
+            );
+        }
+    }
+}
+
+async function runBuiltInWindowsDumpConfigurationFromInfobaseWithAuthRetry(
+    oneCExePath: string,
+    targetInfobasePath: string,
+    exportDirectory: string,
+    generatedArtifactsDirectory: string,
+    logsDirectory: string,
+    outputChannel: vscode.OutputChannel,
+    t: Awaited<ReturnType<typeof getTranslator>>
+): Promise<void> {
+    const authCacheKey = normalizeInfobaseConnectionIdentity(targetInfobasePath);
+    let authentication: InfobaseAuthentication | null = INFOBASE_AUTH_CACHE.get(authCacheKey) || null;
+
+    for (;;) {
+        try {
+            await runBuiltInWindowsDumpConfigurationFromInfobase(
+                oneCExePath,
+                targetInfobasePath,
+                exportDirectory,
+                authentication,
+                generatedArtifactsDirectory,
+                logsDirectory,
+                outputChannel,
+                t
+            );
+            if (authentication) {
+                INFOBASE_AUTH_CACHE.set(authCacheKey, authentication);
+            } else {
+                INFOBASE_AUTH_CACHE.delete(authCacheKey);
+            }
+            return;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!isInfobaseAuthenticationError(message)) {
+                throw error;
+            }
+
+            outputChannel.appendLine(
+                t('Infobase authentication is required to export the current configuration. Requesting credentials.')
+            );
+            INFOBASE_AUTH_CACHE.delete(authCacheKey);
+            const providedAuthentication = await promptInfobaseAuthentication(t, authentication, authentication !== null);
+            if (!providedAuthentication) {
+                throw new Error(
+                    t('Export from target infobase was cancelled because infobase authentication credentials were not provided.')
+                );
+            }
+
+            authentication = providedAuthentication;
+            outputChannel.appendLine(
+                t('Retrying target configuration export using user "{0}".', authentication.username)
+            );
+        }
+    }
+}
+
+async function runBuiltInWindowsDumpConfigurationFromFileInfobaseUsingIBCmdWithAuthRetry(
+    ibcmdExePath: string,
+    targetInfobasePath: string,
+    targetInfobaseFilePath: string,
+    exportDirectory: string,
+    generatedArtifactsDirectory: string,
+    logsDirectory: string,
+    outputChannel: vscode.OutputChannel,
+    t: Awaited<ReturnType<typeof getTranslator>>
+): Promise<void> {
+    const authCacheKey = normalizeInfobaseConnectionIdentity(targetInfobasePath);
+    let authentication: InfobaseAuthentication | null = INFOBASE_AUTH_CACHE.get(authCacheKey) || null;
+
+    for (;;) {
+        try {
+            await runBuiltInWindowsDumpConfigurationFromFileInfobaseUsingIBCmd(
+                ibcmdExePath,
+                targetInfobaseFilePath,
+                exportDirectory,
+                authentication,
+                generatedArtifactsDirectory,
+                logsDirectory,
+                outputChannel,
+                t
+            );
+            if (authentication) {
+                INFOBASE_AUTH_CACHE.set(authCacheKey, authentication);
+            } else {
+                INFOBASE_AUTH_CACHE.delete(authCacheKey);
+            }
+            return;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!isInfobaseAuthenticationError(message)) {
+                throw error;
+            }
+
+            outputChannel.appendLine(
+                t('Infobase authentication is required to export the current configuration. Requesting credentials.')
+            );
+            INFOBASE_AUTH_CACHE.delete(authCacheKey);
+            const providedAuthentication = await promptInfobaseAuthentication(t, authentication, authentication !== null);
+            if (!providedAuthentication) {
+                throw new Error(
+                    t('Export from target infobase was cancelled because infobase authentication credentials were not provided.')
+                );
+            }
+
+            authentication = providedAuthentication;
+            outputChannel.appendLine(
+                t('Retrying target configuration export using user "{0}".', authentication.username)
             );
         }
     }
@@ -6041,6 +6319,18 @@ async function resolveConfiguredOneCDesignerExePath(
     return oneCDesignerExePath;
 }
 
+async function tryResolveConfiguredOneCIBCmdExePath(): Promise<string | null> {
+    const oneCClientExePath = (vscode.workspace.getConfiguration('kotTestToolkit').get<string>('paths.oneCEnterpriseExe') || '').trim();
+    if (!oneCClientExePath) {
+        return null;
+    }
+
+    const ibcmdExePath = resolveOneCIBCmdExePath(oneCClientExePath);
+    return (await pathExists(ibcmdExePath))
+        ? ibcmdExePath
+        : null;
+}
+
 async function writeFormExplorerModeRequest(
     modeRequestCode: string,
     outputChannel: vscode.OutputChannel,
@@ -6198,7 +6488,7 @@ async function handleGenerateFormExplorerExtensionCore(
     options?: GenerateFormExplorerExtensionOptions
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
-    const configurationSourceDirectory = getFormExplorerConfigurationSourceDirectory();
+    const configuredConfigurationSourceDirectory = getFormExplorerConfigurationSourceDirectory();
     const generatedArtifactsDirectory = getFormExplorerGeneratedArtifactsDirectory();
     const snapshotPath = getFormExplorerSnapshotPath();
     const buildCommandTemplate = (
@@ -6206,19 +6496,6 @@ async function handleGenerateFormExplorerExtensionCore(
         || ''
     ).trim();
     const showOutputPanel = vscode.workspace.getConfiguration('kotTestToolkit.formExplorer').get<boolean>('showOutputPanel', false);
-
-    if (!configurationSourceDirectory) {
-        const action = t('Open Settings');
-        vscode.window.showErrorMessage(
-            t('Form Explorer configuration source directory is not configured. Set kotTestToolkit.formExplorer.configurationSourceDirectory.'),
-            action
-        ).then(selection => {
-            if (selection === action) {
-                void vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.formExplorer.configurationSourceDirectory');
-            }
-        });
-        return;
-    }
 
     if (!generatedArtifactsDirectory) {
         const action = t('Open Settings');
@@ -6282,12 +6559,29 @@ async function handleGenerateFormExplorerExtensionCore(
         return;
     }
 
-    const configurationXmlPath = path.join(configurationSourceDirectory, 'Configuration.xml');
-    if (!(await pathExists(configurationXmlPath))) {
+    const requiresConfiguredConfigurationSourceDirectory = runMode === 'build'
+        || effectiveInstallMode !== 'target';
+    if (requiresConfiguredConfigurationSourceDirectory && !configuredConfigurationSourceDirectory) {
+        const action = t('Open Settings');
         vscode.window.showErrorMessage(
-            t('Could not find Configuration.xml in {0}.', configurationSourceDirectory)
-        );
+            t('Form Explorer configuration source directory is not configured. Set kotTestToolkit.formExplorer.configurationSourceDirectory.'),
+            action
+        ).then(selection => {
+            if (selection === action) {
+                void vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.formExplorer.configurationSourceDirectory');
+            }
+        });
         return;
+    }
+
+    if (requiresConfiguredConfigurationSourceDirectory && configuredConfigurationSourceDirectory) {
+        const configurationXmlPath = path.join(configuredConfigurationSourceDirectory, 'Configuration.xml');
+        if (!(await pathExists(configurationXmlPath))) {
+            vscode.window.showErrorMessage(
+                t('Could not find Configuration.xml in {0}.', configuredConfigurationSourceDirectory)
+            );
+            return;
+        }
     }
 
     const outputChannel = getFormExplorerBuilderOutputChannel();
@@ -6310,9 +6604,93 @@ async function handleGenerateFormExplorerExtensionCore(
                 cancellable: false
             },
             async progress => {
+                const shouldUseTargetInfobaseExport = Boolean(targetInfobasePath) && effectiveInstallMode === 'target';
+                const shouldDirectInstallIntoTarget = Boolean(targetInfobasePath)
+                    && (effectiveInstallMode === 'direct' || effectiveInstallMode === 'target');
+                let effectiveConfigurationSourceDirectory = configuredConfigurationSourceDirectory || '';
+                let oneCDesignerExePath: string | null = null;
+
+                if (shouldUseTargetInfobaseExport) {
+                    if (!targetInfobasePath) {
+                        throw new Error(t('Target infobase path is not specified.'));
+                    }
+
+                    if (process.platform !== 'win32') {
+                        throw new Error(
+                            t('Automatic install into selected infobase is supported only on Windows where 1C Designer is available.')
+                        );
+                    }
+
+                    const targetConfigurationExportDirectory = path.join(
+                        generatedArtifactsDirectory,
+                        TARGET_INFOBASE_CONFIGURATION_EXPORT_DIRECTORY_NAME
+                    );
+                    const logsDirectory = path.join(generatedArtifactsDirectory, 'build-logs');
+                    await ensureDirectory(logsDirectory);
+
+                    progress.report({ message: t('Exporting target infobase configuration to files...') });
+                    outputChannel.appendLine(
+                        t('Using target infobase export mode for Form Explorer target infobase.')
+                    );
+                    outputChannel.appendLine(
+                        t('Exporting current target infobase configuration from: {0}', targetInfobasePath)
+                    );
+                    let exportedWithIBCmd = false;
+                    if (targetInfobaseFilePath) {
+                        const ibcmdExePath = await tryResolveConfiguredOneCIBCmdExePath();
+                        if (ibcmdExePath) {
+                            outputChannel.appendLine(
+                                t('Trying ibcmd export for file infobase: {0}', targetInfobaseFilePath)
+                            );
+                            try {
+                                await runBuiltInWindowsDumpConfigurationFromFileInfobaseUsingIBCmdWithAuthRetry(
+                                    ibcmdExePath,
+                                    targetInfobasePath,
+                                    targetInfobaseFilePath,
+                                    targetConfigurationExportDirectory,
+                                    generatedArtifactsDirectory,
+                                    logsDirectory,
+                                    outputChannel,
+                                    t
+                                );
+                                exportedWithIBCmd = true;
+                            } catch (error) {
+                                const message = error instanceof Error ? error.message : String(error);
+                                outputChannel.appendLine(
+                                    t('ibcmd export failed. Falling back to 1C Designer export. Details: {0}', message)
+                                );
+                            }
+                        } else {
+                            outputChannel.appendLine(
+                                t('ibcmd.exe was not found next to the configured 1C platform binaries. Falling back to 1C Designer export.')
+                            );
+                        }
+                    }
+                    if (!exportedWithIBCmd) {
+                        oneCDesignerExePath = await resolveConfiguredOneCDesignerExePath(t);
+                        await runBuiltInWindowsDumpConfigurationFromInfobaseWithAuthRetry(
+                            oneCDesignerExePath,
+                            targetInfobasePath,
+                            targetConfigurationExportDirectory,
+                            generatedArtifactsDirectory,
+                            logsDirectory,
+                            outputChannel,
+                            t
+                        );
+                    }
+                    effectiveConfigurationSourceDirectory = targetConfigurationExportDirectory;
+                }
+
+                const effectiveConfigurationXmlPath = path.join(effectiveConfigurationSourceDirectory, 'Configuration.xml');
+                if (!(await pathExists(effectiveConfigurationXmlPath))) {
+                    throw new Error(
+                        t('Could not find Configuration.xml in {0}.', effectiveConfigurationSourceDirectory)
+                    );
+                }
+
                 progress.report({ message: t('Scanning configuration forms...') });
-                outputChannel.appendLine(t('Scanning 1C configuration forms in {0}...', configurationSourceDirectory));
-                const scanResult = await scanConfigurationSource(configurationSourceDirectory);
+                outputChannel.appendLine(t('Scanning 1C configuration forms in {0}...', effectiveConfigurationSourceDirectory));
+                const scanResult = await scanConfigurationSource(effectiveConfigurationSourceDirectory);
                 outputChannel.appendLine(t('Discovered {0} managed forms.', String(scanResult.forms.length)));
 
                 progress.report({ message: t('Generating extension project...') });
@@ -6320,7 +6698,7 @@ async function handleGenerateFormExplorerExtensionCore(
                 const project = await generateExtensionProjectFiles(
                     context,
                     scanResult,
-                    configurationSourceDirectory,
+                    effectiveConfigurationSourceDirectory,
                     generatedArtifactsDirectory,
                     snapshotPath,
                     cfeOutputPath
@@ -6329,8 +6707,6 @@ async function handleGenerateFormExplorerExtensionCore(
 
                 outputChannel.appendLine(t('Form Explorer extension project generated at: {0}', project.extensionSourceDirectory));
                 outputChannel.appendLine(t('Managed forms index written to: {0}', project.formsIndexPath));
-                const shouldDirectInstallIntoTarget = Boolean(targetInfobasePath) && effectiveInstallMode === 'direct';
-                let oneCDesignerExePath: string | null = null;
                 if (effectiveInstallMode) {
                     outputChannel.appendLine(t('Selected Form Explorer install mode: {0}', effectiveInstallMode));
                 }
@@ -6340,7 +6716,7 @@ async function handleGenerateFormExplorerExtensionCore(
                     await runBuildCommand(
                         buildCommandTemplate,
                         project,
-                        configurationSourceDirectory,
+                        effectiveConfigurationSourceDirectory,
                         generatedArtifactsDirectory,
                         snapshotPath,
                         outputChannel,
@@ -6375,7 +6751,7 @@ async function handleGenerateFormExplorerExtensionCore(
                     oneCDesignerExePath = await runBuiltInWindowsBuild(
                         context,
                         project,
-                        configurationSourceDirectory,
+                        effectiveConfigurationSourceDirectory,
                         generatedArtifactsDirectory,
                         outputChannel,
                         t
@@ -6406,8 +6782,12 @@ async function handleGenerateFormExplorerExtensionCore(
                     outputChannel.appendLine(t('Installing Form Explorer extension into infobase: {0}', targetInfobasePath));
                     const logsDirectory = path.join(generatedArtifactsDirectory, 'build-logs');
                     await ensureDirectory(logsDirectory);
-                    if (shouldDirectInstallIntoTarget) {
+                    if (effectiveInstallMode === 'direct') {
                         outputChannel.appendLine(t('Using direct install mode for Form Explorer target infobase.'));
+                    } else if (effectiveInstallMode === 'target') {
+                        outputChannel.appendLine(
+                            t('Using target infobase export mode for Form Explorer target infobase.')
+                        );
                     }
                     const installProbeResult = await probeExtensionInstalledInInfobaseWithAuthRetry(
                         oneCDesignerExePath,
