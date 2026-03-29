@@ -56,6 +56,7 @@ import { isScenarioYamlFile } from './yamlValidator';
 import { ScenarioHeaderInlayHintsProvider } from './scenarioHeaderInlayHintsProvider';
 import { FormExplorerPanel } from './formExplorerPanel';
 import { InfobaseManagerPanel } from './infobaseManagerPanel';
+import { handleGenerateScenarioDescriptionWithAi } from './scenarioAiDescription';
 import {
     type BuildFormExplorerExtensionCommandOptions,
     handleBuildFormExplorerExtensionCfe,
@@ -720,6 +721,10 @@ export function activate(context: vscode.ExtensionContext) {
     // --- Регистрация Команд ---
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         'kotTestToolkit.openSubscenario', (editor, edit) => openSubscenarioHandler(editor, edit, phaseSwitcherProvider)
+    ));
+    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
+        'kotTestToolkit.generateScenarioDescriptionWithAi',
+        editor => void handleGenerateScenarioDescriptionWithAi(editor)
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         'kotTestToolkit.openNestedScenarioFromFeature',

@@ -108,6 +108,16 @@
 Подробно (включая многоуровневую передачу, дефолты, правила и подсказки переменных):  
 [`blocks/scenario-parameters.md`](./blocks/scenario-parameters.md)
 
+### 5.1) AI-описание `KOTМетаданные.Описание` (опционально)
+
+Если хотите быстро получить описание сценария для шапки YAML:
+
+1. Настройте секцию `AI` в Settings.
+2. Откройте сценарий с блоком `KOTМетаданные -> Описание`.
+3. Нажмите `Описать с помощью ИИ` на строке `Описание:` или вызовите команду `KOT - Generate KOT metadata description with AI`.
+
+Подробности по настройке и поведению генерации: [`blocks/ai-description.md`](./blocks/ai-description.md)
+
 ## 6) Первый build
 
 1. В Test Manager (`Менеджер тестов`) отметьте нужные главные сценарии.
@@ -227,6 +237,7 @@
 - `KOT - Change nested scenario code` (`KOT - Изменить код вложенного сценария`) — для вложенных сценариев
 - `KOT - Fill NestedScenarios section` (`KOT - Заполнить секцию ВложенныеСценарии`)
 - `KOT - Fill ScenarioParameters section` (`KOT - Заполнить секцию ПараметрыСценария`)
+- `KOT - Generate KOT metadata description with AI` (`KOT - Сгенерировать описание KOTМетаданные через AI`)
 
 ## 12) Частые вопросы
 

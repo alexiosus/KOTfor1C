@@ -6,6 +6,7 @@ export interface ScenarioHeaderFieldLines {
     codeLine: number | null;
     systemFunctionLine: number | null;
     systemFunctionUidLine: number | null;
+    kotDescriptionLine: number | null;
 }
 
 export interface TestSettingsFieldLines {
@@ -126,8 +127,21 @@ export function findScenarioHeaderFieldLines(document: vscode.TextDocument): Sce
     const lines = Array.from({ length: document.lineCount }, (_, index) => document.lineAt(index).text);
     const fileTypeLine = lines.findIndex(line => getYamlIndent(line) === 0 && /^\s*ТипФайла:\s*.+$/.test(line));
     const sectionStart = findYamlSectionStart(lines, 'ДанныеСценария');
+    const kotMetadataStart = findYamlSectionStart(lines, 'KOTМетаданные');
+    const kotMetadataEnd = kotMetadataStart === -1 ? -1 : findYamlSectionEnd(lines, kotMetadataStart, getYamlIndent(lines[kotMetadataStart]));
+    const kotDescriptionLine = kotMetadataStart === -1
+        ? null
+        : findFieldLine(lines, kotMetadataStart, kotMetadataEnd, getYamlIndent(lines[kotMetadataStart]), 'Описание');
+
     if (sectionStart === -1) {
-        return { fileTypeLine: fileTypeLine >= 0 ? fileTypeLine : null, nameLine: null, codeLine: null, systemFunctionLine: null, systemFunctionUidLine: null };
+        return {
+            fileTypeLine: fileTypeLine >= 0 ? fileTypeLine : null,
+            nameLine: null,
+            codeLine: null,
+            systemFunctionLine: null,
+            systemFunctionUidLine: null,
+            kotDescriptionLine
+        };
     }
 
     const sectionIndent = getYamlIndent(lines[sectionStart]);
@@ -137,7 +151,8 @@ export function findScenarioHeaderFieldLines(document: vscode.TextDocument): Sce
         nameLine: findFieldLine(lines, sectionStart, sectionEnd, sectionIndent, 'Имя'),
         codeLine: findFieldLine(lines, sectionStart, sectionEnd, sectionIndent, 'Код'),
         systemFunctionLine: findFieldLine(lines, sectionStart, sectionEnd, sectionIndent, 'ФункцияСистемы'),
-        systemFunctionUidLine: findFieldLine(lines, sectionStart, sectionEnd, sectionIndent, 'UIDФункцияСистемы')
+        systemFunctionUidLine: findFieldLine(lines, sectionStart, sectionEnd, sectionIndent, 'UIDФункцияСистемы'),
+        kotDescriptionLine
     };
 }
 

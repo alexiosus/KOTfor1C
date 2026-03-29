@@ -82,6 +82,16 @@ export class ScenarioHeaderInlayHintsProvider implements vscode.InlayHintsProvid
                 ));
             }
 
+            if (fieldLines.kotDescriptionLine !== null) {
+                hints.push(createActionHint(
+                    document,
+                    fieldLines.kotDescriptionLine,
+                    'kotTestToolkit.generateScenarioDescriptionWithAi',
+                    vscode.l10n.t('Describe with AI'),
+                    ` ${vscode.l10n.t('Describe with AI')} `
+                ));
+            }
+
             return hints;
         }
 
