@@ -143,7 +143,31 @@
 | `kotTestToolkit.platforms.catalog` | `[]` | Каталог платформ 1С для запусков; если пуст, KOT пытается заполнить его автоматически найденными установленными версиями |
 | `kotTestToolkit.platforms.promptForLaunches` | `true` | Спрашивать платформу при запуске баз, Form Explorer и встроенной Vanessa |
 
-### 3.10 1C startup parameters
+### 3.10 AI settings
+
+Настройки этой секции используются для генерации `KOTМетаданные.Описание` через внешнюю или локальную LLM.
+
+| Ключ | Default | Назначение |
+|---|---|---|
+| `kotTestToolkit.ai.apiFormat` | `chatCompletions` | Формат API запроса: `chatCompletions` для OpenAI-compatible `/chat/completions` или `responses` для OpenAI Responses API |
+| `kotTestToolkit.ai.baseUrl` | `http://localhost:1234/v1` | Базовый URL AI-сервера без хвоста `/chat/completions` или `/responses` |
+| `kotTestToolkit.ai.apiKey` | `local` | API-ключ; для локальных серверов можно оставить фиктивное значение, если сервер его игнорирует |
+| `kotTestToolkit.ai.model` | `qwen3:4b` | Точный идентификатор модели, который ожидает выбранный AI-сервер |
+| `kotTestToolkit.ai.outputLanguage` | `ru` | Язык генерируемого описания (`ru` / `en`) |
+| `kotTestToolkit.ai.maxLineLength` | `100` | Максимальная длина строки при записи `KOTМетаданные.Описание` перед переносом |
+| `kotTestToolkit.ai.timeoutSeconds` | `180` | Таймаут AI-запроса в секундах |
+| `kotTestToolkit.ai.systemPrompt` | `""` | Пользовательский system prompt; если заполнен, полностью заменяет встроенный prompt расширения |
+
+Кратко:
+
+- дефолтный `baseUrl` ориентирован на локальный сервер LM Studio;
+- для Ollama обычно достаточно поменять `baseUrl` на `http://localhost:11434/v1` и указать точный тег модели;
+- `apiKey` лучше не оставлять пустым, если провайдер ожидает стандартный `Authorization` header;
+- если провайдер поддерживает только один формат API, явно выберите правильный `apiFormat`.
+
+Поведение генерации, формат результата и практические сценарии использования описаны отдельно: [`blocks/ai-description.md`](./blocks/ai-description.md)
+
+### 3.11 1C startup parameters
 
 | Ключ | Default | Назначение |
 |---|---|---|
@@ -154,7 +178,7 @@
 - для отдельной базы эти параметры можно переопределить через `KOT Infobase Manager` (`Edit base` -> `Edit launch keys`);
 - если для базы переопределение не задано, ключи не используются, но можно выбрать значение из `kotTestToolkit.startupParams.parameters`.
 
-### 3.11 System paths settings
+### 3.12 System paths settings
 
 | Ключ | Default | Назначение |
 |---|---|---|
@@ -162,7 +186,7 @@
 | `kotTestToolkit.paths.fileWorkshopExe` | `C:\Program Files (x86)\1cv8fv\bin\1cv8fv.exe` | Путь к File Workshop для MXL |
 | `kotTestToolkit.paths.firstLaunchFolder` | `""` | Папка FirstLaunch (кнопка `Build FL` показывается, если включены Drive-функции, путь задан и папка существует) |
 
-### 3.12 Legacy support
+### 3.13 Legacy support
 
 | Ключ | Default | Назначение |
 |---|---|---|
@@ -234,6 +258,7 @@ KOT показывает этот минимум прямо во вкладке 
 - `KOT - Change nested scenario code` (`KOT - Изменить код вложенного сценария`)
 - `KOT - Fill NestedScenarios section` (`KOT - Заполнить секцию ВложенныеСценарии`)
 - `KOT - Fill ScenarioParameters section` (`KOT - Заполнить секцию ПараметрыСценария`)
+- `KOT - Generate KOT metadata description with AI` (`KOT - Сгенерировать описание KOTМетаданные через AI`)
 - `KOT - Replace tabs with spaces` (`KOT - Заменить табы на пробелы`)
 - `KOT - Scan workspace diagnostics` (`KOT - Выполнить сканирование диагностики по проекту`)
 - `KOT - Refresh steps library` (`KOT - Обновить библиотеку шагов`)

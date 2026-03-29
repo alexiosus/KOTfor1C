@@ -390,6 +390,83 @@
         }
       },
       {
+        "title": "%config.aiSettings.title%",
+        "properties": {
+          "kotTestToolkit.ai.apiFormat": {
+            "type": "string",
+            "default": "chatCompletions",
+            "enum": [
+              "responses",
+              "chatCompletions"
+            ],
+            "enumDescriptions": [
+              "%config.ai.apiFormat.responses.desc%",
+              "%config.ai.apiFormat.chatCompletions.desc%"
+            ],
+            "description": "%config.ai.apiFormat.description%",
+            "order": 1
+          },
+          "kotTestToolkit.ai.baseUrl": {
+            "type": "string",
+            "default": "http://localhost:1234/v1",
+            "description": "%config.ai.baseUrl.description%",
+            "markdownDescription": "%config.ai.baseUrl.markdownDescription%",
+            "order": 2
+          },
+          "kotTestToolkit.ai.apiKey": {
+            "type": "string",
+            "default": "local",
+            "description": "%config.ai.apiKey.description%",
+            "markdownDescription": "%config.ai.apiKey.markdownDescription%",
+            "order": 3
+          },
+          "kotTestToolkit.ai.model": {
+            "type": "string",
+            "default": "qwen3:4b",
+            "description": "%config.ai.model.description%",
+            "markdownDescription": "%config.ai.model.markdownDescription%",
+            "order": 4
+          },
+          "kotTestToolkit.ai.outputLanguage": {
+            "type": "string",
+            "default": "ru",
+            "enum": [
+              "ru",
+              "en"
+            ],
+            "enumDescriptions": [
+              "%config.ai.outputLanguage.ru.desc%",
+              "%config.ai.outputLanguage.en.desc%"
+            ],
+            "description": "%config.ai.outputLanguage.description%",
+            "order": 5
+          },
+          "kotTestToolkit.ai.maxLineLength": {
+            "type": "number",
+            "default": 100,
+            "minimum": 40,
+            "maximum": 240,
+            "description": "%config.ai.maxLineLength.description%",
+            "order": 6
+          },
+          "kotTestToolkit.ai.timeoutSeconds": {
+            "type": "number",
+            "default": 180,
+            "minimum": 5,
+            "maximum": 600,
+            "description": "%config.ai.timeoutSeconds.description%",
+            "order": 7
+          },
+          "kotTestToolkit.ai.systemPrompt": {
+            "type": "string",
+            "default": "",
+            "description": "%config.ai.systemPrompt.description%",
+            "markdownDescription": "%config.ai.systemPrompt.markdownDescription%",
+            "order": 8
+          }
+        }
+      },
+      {
         "title": "%config.startupParameters.title%",
         "properties": {
           "kotTestToolkit.startupParams.parameters": {
@@ -654,6 +731,11 @@
         "category": "%cmd.category%"
       },
       {
+        "command": "kotTestToolkit.generateScenarioDescriptionWithAi",
+        "title": "%cmd.generateScenarioDescriptionWithAi.title%",
+        "category": "%cmd.category%"
+      },
+      {
         "command": "kotTestToolkit.trackScenarioRunByFeatureLog",
         "title": "%cmd.trackScenarioRunByFeatureLog.title%",
         "category": "%cmd.category%"
@@ -859,6 +941,11 @@
           "command": "kotTestToolkit.checkAndFillScriptParameters",
           "when": "editorTextFocus && resourceExtname == .yaml",
           "group": "01_fill@1"
+        },
+        {
+          "command": "kotTestToolkit.generateScenarioDescriptionWithAi",
+          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
+          "group": "01_fill@2"
         }
       ],
       "commandPalette": [
@@ -956,6 +1043,10 @@
         },
         {
           "command": "kotTestToolkit.changeNestedScenarioName",
+          "when": "true"
+        },
+        {
+          "command": "kotTestToolkit.generateScenarioDescriptionWithAi",
           "when": "true"
         },
         {
