@@ -50,6 +50,9 @@
                         <a href="#" id="openYamlParamsFromDropdownBtn" class="dropdown-item menu-item" title="${loc.openYamlParametersManagerTitle}">
                             <span class="codicon codicon-json"></span> ${loc.openYamlParametersManagerTitle}
                         </a>
+                        <a href="#" id="openPlatformManagerFromDropdownBtn" class="dropdown-item menu-item" title="${loc.openPlatformManagerTitle}">
+                            <span class="codicon codicon-layers"></span> ${loc.openPlatformManagerTitle}
+                        </a>
                         <a href="#" id="openSettingsFromDropdownBtn" class="dropdown-item menu-item" title="${loc.openSettingsTitle}">
                             <span class="codicon codicon-settings-gear"></span> ${loc.openSettingsTitle}
                         </a>
@@ -155,9 +158,13 @@
                                 <span class="codicon codicon-chevron-down"></span>
                             </button>
                             <div id="assembleDropdownContent" class="dropdown-content menu-popover split-dropdown-content">
-                                <div id="driveAccountingModeRow" class="dropdown-control-row" title="${loc.recordGLSelectTitle}">
+                                <div id="yamlProfileRow" class="dropdown-control-row assemble-option-group" title="${loc.profile}">
+                                    <label for="yamlProfileSelect" class="drive-accounting-label section-label">${loc.profile}</label>
+                                    <select id="yamlProfileSelect" class="surface-select assemble-profile-select" aria-label="${loc.profile}" title="${loc.profile}"></select>
+                                </div>
+                                <div id="driveAccountingModeRow" class="dropdown-control-row assemble-option-group" title="${loc.recordGLSelectTitle}">
                                     <span class="drive-accounting-label section-label">${loc.accountingMode}</span>
-                                    <div id="recordGLModeList" class="record-gl-options-list" role="radiogroup" aria-label="${loc.accountingMode}">
+                                    <div id="recordGLModeList" class="record-gl-options-list record-gl-options-inline" role="radiogroup" aria-label="${loc.accountingMode}">
                                         <button type="button" class="record-gl-option-btn" data-value="0" role="radio" aria-checked="false">
                                             <span class="record-gl-option-label">GL-</span>
                                             <span class="codicon codicon-check record-gl-option-check"></span>

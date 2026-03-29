@@ -5,7 +5,7 @@
     "application": "1C:Enterprise",
     "infobase": "Srvr=\"localhost\";Ref=\"Demo\";",
     "platformVersion": "8.3.26.1540",
-    "configurationVersion": "2.5.1",
+    "configurationVersion": "2.6.0",
     "user": "Admin",
     "sessionId": "TestClient-01",
     "host": "qa-host",

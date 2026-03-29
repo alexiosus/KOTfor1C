@@ -266,6 +266,34 @@ export async function revealFileInOSHandler(textEditor: vscode.TextEditor, edit:
     });
 }
 
+/**
+ * Открывает папку `files` текущего сценария в системном проводнике.
+ */
+export async function openCurrentScenarioFilesFolderHandler(textEditor: vscode.TextEditor): Promise<void> {
+    const t = await getTranslator(getExtensionUri());
+    const document = textEditor.document;
+    const { isScenarioYamlFile } = await import('./yamlValidator.js');
+
+    if (!isScenarioYamlFile(document)) {
+        return;
+    }
+
+    const filesFolderPath = path.join(path.dirname(document.uri.fsPath), 'files');
+
+    try {
+        const folderStats = await fs.promises.stat(filesFolderPath);
+        if (!folderStats.isDirectory()) {
+            vscode.window.showInformationMessage(t('Files folder for current scenario was not found: {0}', filesFolderPath));
+            return;
+        }
+    } catch {
+        vscode.window.showInformationMessage(t('Files folder for current scenario was not found: {0}', filesFolderPath));
+        return;
+    }
+
+    await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(filesFolderPath));
+}
+
 
 /**
  * Обработчик команды открытия вложенного сценария.

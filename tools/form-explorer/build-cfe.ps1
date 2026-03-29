@@ -21,6 +21,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$BuilderStateSchemaVersion = 2
 
 function Ensure-Directory {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -52,13 +53,40 @@ function Get-BaseConfigState {
         throw "Configuration.xml not found at: $configurationXmlPath"
     }
 
-    $configurationXml = Get-Item -LiteralPath $configurationXmlPath
+    $resolvedBaseConfigDir = Get-CanonicalPath -Path $BaseConfigDir
     return [pscustomobject]@{
-        configurationSourceDir = (Get-CanonicalPath -Path $BaseConfigDir)
-        configurationXmlPath   = (Get-CanonicalPath -Path $configurationXmlPath)
-        configurationXmlLength = $configurationXml.Length
-        configurationXmlMtime  = $configurationXml.LastWriteTimeUtc.ToString("o")
+        schemaVersion          = $BuilderStateSchemaVersion
+        configurationSourceDir = $resolvedBaseConfigDir
+        configurationTreeHash  = Get-DirectoryContentHash -RootPath $resolvedBaseConfigDir
     }
+}
+
+function Get-DirectoryContentHash {
+    param([Parameter(Mandatory = $true)][string]$RootPath)
+
+    $resolvedRootPath = Get-CanonicalPath -Path $RootPath
+    $files = Get-ChildItem -LiteralPath $resolvedRootPath -Recurse -File -Force |
+        Where-Object {
+            $_.Name -ne '.DS_Store' `
+            -and $_.FullName -notmatch '[\\/]\.git([\\/]|$)' `
+            -and $_.FullName -notmatch '[\\/]node_modules([\\/]|$)'
+        } |
+        Sort-Object FullName
+
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.AppendLine("root:$resolvedRootPath")
+    foreach ($file in $files) {
+        $relativePath = [System.IO.Path]::GetRelativePath($resolvedRootPath, $file.FullName).Replace('\', '/')
+        $fileHash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        [void]$builder.AppendLine("file:$relativePath")
+        [void]$builder.AppendLine($fileHash)
+    }
+
+    $hashBytes = [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+        [System.Text.Encoding]::UTF8.GetBytes($builder.ToString())
+    )
+
+    return ($hashBytes | ForEach-Object { $_.ToString('x2') }) -join ''
 }
 
 function Test-BaseConfigState {
@@ -78,10 +106,9 @@ function Test-BaseConfigState {
     }
 
     return (
-        $storedState.configurationSourceDir -eq $ExpectedState.configurationSourceDir `
-        -and $storedState.configurationXmlPath -eq $ExpectedState.configurationXmlPath `
-        -and [string]$storedState.configurationXmlLength -eq [string]$ExpectedState.configurationXmlLength `
-        -and $storedState.configurationXmlMtime -eq $ExpectedState.configurationXmlMtime
+        [string]$storedState.schemaVersion -eq [string]$ExpectedState.schemaVersion `
+        -and $storedState.configurationSourceDir -eq $ExpectedState.configurationSourceDir `
+        -and $storedState.configurationTreeHash -eq $ExpectedState.configurationTreeHash
     )
 }
 

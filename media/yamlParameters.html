@@ -14,6 +14,30 @@
     data-param-value-placeholder="${loc.parameterValuePlaceholder}"
     data-remove-parameter="${loc.removeParameter}"
     data-override-title="${loc.overrideExistingValue}"
+    data-fixed-build-parameter-hint="${loc.fixedBuildParameterHint}"
+    data-reset-build-parameter-value="${loc.resetBuildParameterValue}"
+    data-generic-build-parameter-description="${loc.genericBuildParameterDescription}"
+    data-add-build-parameter="${loc.addBuildParameter}"
+    data-no-matching-build-parameters="${loc.noMatchingBuildParameters}"
+    data-custom-build-parameter-description="${loc.customBuildParameterDescription}"
+    data-add-custom-build-parameter="${loc.addCustomBuildParameter}"
+    data-profile-name-prompt="${loc.profileNamePrompt}"
+    data-create-profile-title="${loc.createProfileTitle}"
+    data-duplicate-profile-title="${loc.duplicateProfileTitle}"
+    data-rename-profile-title="${loc.renameProfileTitle}"
+    data-delete-profile-confirmation="${loc.deleteProfileConfirmation}"
+    data-delete-profile-blocked="${loc.deleteProfileBlocked}"
+    data-autosave-enabled="${loc.autosaveEnabled}"
+    data-saving="${loc.saving}"
+    data-saved="${loc.saved}"
+    data-saved-with-issues="${loc.savedWithIssues}"
+    data-autosave-error="${loc.autosaveError}"
+    data-updated-at="${loc.updatedAt}"
+    data-never-saved="${loc.neverSaved}"
+    data-select-profile="${loc.selectProfile}"
+    data-cancel="${loc.cancel}"
+    data-ok="${loc.ok}"
+    data-duplicate-profile-default-name="${loc.duplicateProfileDefaultName}"
 >
     <div class="app-shell yaml-parameters-shell">
         <header class="topbar parameters-topbar">
@@ -23,9 +47,6 @@
                 </div>
             </div>
             <div class="toolbar parameters-toolbar">
-                <button id="saveBtn" class="button-with-icon toolbar-btn primary">
-                    <span class="codicon codicon-save"></span> ${loc.save}
-                </button>
                 <div class="help-container">
                     <button id="helpBtn" class="help-button ghost-btn icon-only" title="${loc.help}">
                         <span class="codicon codicon-question"></span>
@@ -47,12 +68,23 @@
                         </div>
                     </div>
                 </div>
+                <button id="profilePickerBtn" class="meta-chip compact interactive-chip profile-picker-chip" type="button" aria-label="${loc.selectProfile}">
+                    <span class="meta-chip-label">${loc.profile}</span>
+                    <span id="profilePickerBtnLabel" class="meta-chip-value"></span>
+                </button>
+                <div id="updatedAtChip" class="meta-chip compact updated-at-chip" data-pending="false" data-state="idle" aria-live="polite">
+                    <span id="updatedAtLabel" class="meta-chip-label">${loc.updatedAt}</span>
+                    <span id="updatedAtValue" class="meta-chip-value">${loc.neverSaved}</span>
+                </div>
                 <div class="dropdown-container">
                     <button id="moreActionsBtn" class="button-with-icon toolbar-btn" title="${loc.moreActions}">
                         <span class="codicon codicon-ellipsis"></span> ${loc.moreActions}
                     </button>
                     <div id="moreActionsDropdown" class="dropdown-content menu-popover">
                         <div class="dropdown-section-title">${loc.buildMoreActionsLabel}</div>
+                        <a href="#" id="openGeneratedYamlBtn" class="dropdown-item menu-item">
+                            <span class="codicon codicon-go-to-file"></span> ${loc.openGeneratedYamlParameters}
+                        </a>
                         <a href="#" id="createBuildFileBtn" class="dropdown-item menu-item">
                             <span class="codicon codicon-file-code"></span> ${loc.createFile}
                         </a>
@@ -130,9 +162,32 @@
                 </div>
                 <div class="section-content">
                     <div class="section-toolbar">
-                        <button id="addBuildRowBtn" class="button-with-icon ghost-btn">
-                            <span class="codicon codicon-add"></span> ${loc.addBuildParameter}
-                        </button>
+                        <div id="buildParameterCatalogPicker" class="catalog-picker dropdown-container">
+                            <button
+                                id="buildParameterCatalogTrigger"
+                                class="button-with-icon ghost-btn"
+                                type="button"
+                                aria-haspopup="listbox"
+                                aria-expanded="false"
+                                aria-label="${loc.addBuildParameter}"
+                            >
+                                <span class="codicon codicon-add"></span> ${loc.addBuildParameter}
+                            </button>
+                            <div id="buildParameterCatalogDropdown" class="catalog-picker-dropdown menu-popover" role="dialog" aria-label="${loc.buildParameterSelectLabel}">
+                                <div class="catalog-picker-search">
+                                    <span class="codicon codicon-search search-icon" aria-hidden="true"></span>
+                                    <input
+                                        id="buildParameterCatalogSearchInput"
+                                        class="search-input catalog-picker-search-input"
+                                        type="text"
+                                        placeholder="${loc.searchByParameterName}"
+                                        title="${loc.searchByParameterName}"
+                                        aria-label="${loc.searchByParameterName}"
+                                    >
+                                </div>
+                                <div id="buildParameterCatalogList" class="catalog-picker-list" role="listbox"></div>
+                            </div>
+                        </div>
                         <div class="search-box search-frame">
                             <span class="codicon codicon-search search-icon" aria-hidden="true"></span>
                             <input
@@ -155,6 +210,9 @@
                         </div>
                     </div>
                     <div class="table-container">
+                        <datalist id="buildParameterSuggestions">
+                            ${buildParameterSuggestionOptions}
+                        </datalist>
                         <table id="buildParametersTable">
                             <thead>
                                 <tr>
@@ -274,7 +332,11 @@
         window.__buildParameters = ${buildParametersJson};
         window.__additionalParameters = ${additionalParametersJson};
         window.__globalVanessaVariables = ${globalVanessaVariablesJson};
+        window.__profiles = ${profilesJson};
+        window.__activeProfileId = ${activeProfileIdJson};
         window.__defaultBuildParameters = ${defaultBuildParametersJson};
+        window.__buildParameterDefinitions = ${buildParameterDefinitionsJson};
+        window.__fixedBuildParameterKeys = ${fixedBuildParameterKeysJson};
     </script>
     <script type="application/javascript" nonce="${nonce}" src="${scriptUri}"></script>
 </body>

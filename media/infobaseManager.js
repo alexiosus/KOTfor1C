@@ -3,17 +3,20 @@
     const loc = window.__infobaseManagerLoc || {};
     let state = window.__initialInfobaseManagerState || {
         infobases: [],
+        platforms: [],
         selectedInfobasePath: null,
         pendingAction: null,
         lastError: null,
-        sortMode: 'lastOpened'
+        sortMode: 'lastOpened',
+        showHidden: false
     };
     const persistedUiState = vscode.getState() || {};
     const uiState = {
         searchQuery: typeof persistedUiState.searchQuery === 'string' ? persistedUiState.searchQuery : '',
         technicalExpanded: Boolean(persistedUiState.technicalExpanded),
         moreActionsOpen: false,
-        sortMenuOpen: false
+        sortMenuOpen: false,
+        launchPlatformMenuOpen: false
     };
     const dragState = {
         draggedPath: '',
@@ -24,6 +27,7 @@
         lastInfobasePath: '',
         lastTimestamp: 0
     };
+    const autoScrollAnimations = new WeakMap();
 
     const refs = {
         infobaseCountValue: document.getElementById('infobaseCountValue'),
@@ -32,6 +36,7 @@
         refreshBtn: document.getElementById('refreshBtn'),
         createBtn: document.getElementById('createBtn'),
         addManualBtn: document.getElementById('addManualBtn'),
+        manageEtalonBasesBtn: document.getElementById('manageEtalonBasesBtn'),
         searchInput: document.getElementById('searchInput'),
         sortMenuBtn: document.getElementById('sortMenuBtn'),
         sortMenu: document.getElementById('sortMenu'),
@@ -56,11 +61,16 @@
         technicalBody: document.getElementById('technicalBody'),
         errorPanel: document.getElementById('errorPanel'),
         errorValue: document.getElementById('errorValue'),
+        launchPlatformBtn: document.getElementById('launchPlatformBtn'),
+        launchPlatformLabel: document.getElementById('launchPlatformLabel'),
+        launchPlatformMenu: document.getElementById('launchPlatformMenu'),
         moreActionsBtn: document.getElementById('moreActionsBtn'),
         moreActionsMenu: document.getElementById('moreActionsMenu'),
         addToLauncherAction: document.getElementById('addToLauncherAction'),
         removeFromLauncherAction: document.getElementById('removeFromLauncherAction'),
-        forgetManualAction: document.getElementById('forgetManualAction')
+        forgetManualAction: document.getElementById('forgetManualAction'),
+        toggleHiddenAction: document.getElementById('toggleHiddenAction'),
+        toggleHiddenActionLabel: document.getElementById('toggleHiddenActionLabel')
     };
 
     function persistUiState() {
@@ -105,6 +115,126 @@
         }
 
         return (state.infobases || []).find(item => item.infobasePath === selectedPath) || null;
+    }
+
+    function getVisibleInfobases() {
+        return (state.infobases || []).filter(record => state.showHidden || !record.hidden);
+    }
+
+    function normalizePlatformPath(rawPath) {
+        const source = String(rawPath || '').trim();
+        if (!source) {
+            return '';
+        }
+
+        const normalized = source.replace(/[\\/]+/g, '/');
+        return normalized.toLowerCase();
+    }
+
+    function getConfiguredPlatforms() {
+        return Array.isArray(state.platforms) ? state.platforms : [];
+    }
+
+    function getDefaultPlatform() {
+        return getConfiguredPlatforms()[0] || null;
+    }
+
+    function resolveEffectiveLaunchPlatform(record) {
+        const platforms = getConfiguredPlatforms();
+        if (!platforms.length) {
+            return null;
+        }
+
+        const preferredPlatformPath = normalizePlatformPath(record?.preferredPlatformClientExePath || '');
+        if (preferredPlatformPath) {
+            const preferredPlatform = platforms.find(platform =>
+                normalizePlatformPath(platform?.clientExePath || '') === preferredPlatformPath
+            );
+            if (preferredPlatform) {
+                return preferredPlatform;
+            }
+        }
+
+        return getDefaultPlatform();
+    }
+
+    function getEffectiveLaunchPlatformClientExePath(record) {
+        return resolveEffectiveLaunchPlatform(record)?.clientExePath || null;
+    }
+
+    function formatPlatformButtonLabel(platform) {
+        if (!platform) {
+            return loc.launchPlatform || loc.platform || 'Platform';
+        }
+
+        const platformName = String(platform?.name || '').trim();
+        const versionMatch = platformName.match(/(\d+(?:\.\d+)+)\s*$/);
+        if (versionMatch?.[1]) {
+            return versionMatch[1];
+        }
+
+        return platformName || String(platform?.clientExePath || '').trim() || (loc.launchPlatform || loc.platform || 'Platform');
+    }
+
+    function syncAutoScrollText(root, selector) {
+        if (!(root instanceof HTMLElement)) {
+            return;
+        }
+
+        root.querySelectorAll(selector).forEach(node => {
+            if (!(node instanceof HTMLElement)) {
+                return;
+            }
+
+            const originalText = node.dataset.autoScrollSource ?? node.textContent ?? '';
+            node.dataset.autoScrollSource = originalText;
+            node.classList.add('auto-scroll-text');
+
+            let track = node.firstElementChild;
+            if (!(track instanceof HTMLElement) || !track.classList.contains('auto-scroll-track')) {
+                node.textContent = '';
+                track = document.createElement('span');
+                track.className = 'auto-scroll-track';
+                track.textContent = originalText;
+                node.appendChild(track);
+            } else if (track.textContent !== originalText) {
+                track.textContent = originalText;
+            }
+
+            const runningAnimation = autoScrollAnimations.get(node);
+            if (runningAnimation) {
+                runningAnimation.cancel();
+                autoScrollAnimations.delete(node);
+            }
+
+            track.style.transform = 'translateX(0)';
+            const overflowWidth = Math.ceil(track.scrollWidth - node.clientWidth);
+            if (overflowWidth <= 6) {
+                return;
+            }
+
+            const edgePauseDuration = 560;
+            const travelDuration = Math.min(Math.max(overflowWidth * 55, 2400), 9000);
+            const totalDuration = travelDuration * 2 + edgePauseDuration * 2;
+            const startHoldOffset = edgePauseDuration / totalDuration;
+            const endReachOffset = (edgePauseDuration + travelDuration) / totalDuration;
+            const endHoldOffset = (edgePauseDuration + travelDuration + edgePauseDuration) / totalDuration;
+            const animation = track.animate(
+                [
+                    { transform: 'translateX(0)', offset: 0 },
+                    { transform: 'translateX(0)', offset: startHoldOffset },
+                    { transform: `translateX(${-overflowWidth}px)`, offset: endReachOffset },
+                    { transform: `translateX(${-overflowWidth}px)`, offset: endHoldOffset },
+                    { transform: 'translateX(0)', offset: 1 }
+                ],
+                {
+                    duration: totalDuration,
+                    easing: 'linear',
+                    iterations: Infinity
+                }
+            );
+            autoScrollAnimations.set(node, animation);
+        });
     }
 
     function supportsFileOperations(record) {
@@ -303,10 +433,10 @@
             return;
         }
 
-        const visibleInfobases = (state.infobases || []).filter(matchesSearch);
+        const visibleInfobases = getVisibleInfobases().filter(matchesSearch);
         const manualDragEnabled = isManualDragEnabled();
         if (refs.infobaseCountValue instanceof HTMLElement) {
-            refs.infobaseCountValue.textContent = String(state.infobases?.length || 0);
+            refs.infobaseCountValue.textContent = String(visibleInfobases.length || 0);
         }
 
         if (!visibleInfobases.length) {
@@ -326,7 +456,7 @@
                 ? (loc.launcherRegistered || 'Registered in 1C launcher')
                 : (loc.launcherNotRegistered || 'Not registered in 1C launcher');
             return `
-                <button class="infobase-item${isSelected ? ' is-selected' : ''}${manualDragEnabled ? ' is-draggable' : ''}" type="button" data-path="${escapeHtml(record.infobasePath)}" draggable="${manualDragEnabled ? 'true' : 'false'}">
+                <button class="infobase-item${isSelected ? ' is-selected' : ''}${manualDragEnabled ? ' is-draggable' : ''}${record.hidden ? ' is-hidden-infobase' : ''}" type="button" data-path="${escapeHtml(record.infobasePath)}" draggable="${manualDragEnabled ? 'true' : 'false'}">
                     <div class="infobase-item-head">
                         <div class="infobase-item-title-row">
                             ${manualDragEnabled ? '<span class="codicon codicon-gripper item-grip" aria-hidden="true"></span>' : ''}
@@ -337,6 +467,7 @@
                     <div class="infobase-item-path">${escapeHtml(record.locationLabel || record.infobasePath)}</div>
                     <div class="infobase-item-meta">
                         <span>${escapeHtml(launcherState)}</span>
+                        ${record.hidden ? `<span class="hidden-chip">${escapeHtml(loc.hidden || 'Hidden')}</span>` : ''}
                     </div>
                     <div class="infobase-item-activity">
                         <span>${escapeHtml(loc.lastActivity || 'Last activity')}: ${escapeHtml(lastActivity ? formatDate(lastActivity) : (loc.none || 'None'))}</span>
@@ -344,6 +475,10 @@
                 </button>
             `;
         }).join('');
+        syncAutoScrollText(
+            refs.infobaseList,
+            '.infobase-item-title, .infobase-item-path, .infobase-item-activity'
+        );
     }
 
     function measureSectionBodyHeight(body) {
@@ -405,6 +540,7 @@
         uiState.sortMenuOpen = open;
         if (open) {
             uiState.moreActionsOpen = false;
+            uiState.launchPlatformMenuOpen = false;
         }
         if (refs.sortMenuBtn instanceof HTMLElement) {
             refs.sortMenuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -419,6 +555,12 @@
             if (refs.moreActionsMenu instanceof HTMLElement) {
                 refs.moreActionsMenu.classList.remove('is-open');
             }
+            if (refs.launchPlatformBtn instanceof HTMLElement) {
+                refs.launchPlatformBtn.setAttribute('aria-expanded', 'false');
+            }
+            if (refs.launchPlatformMenu instanceof HTMLElement) {
+                refs.launchPlatformMenu.classList.remove('is-open');
+            }
         }
     }
 
@@ -426,6 +568,7 @@
         uiState.moreActionsOpen = open;
         if (open) {
             toggleSortMenu(false);
+            toggleLaunchPlatformMenu(false);
         }
         if (refs.moreActionsBtn instanceof HTMLElement) {
             refs.moreActionsBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -433,6 +576,69 @@
         if (refs.moreActionsMenu instanceof HTMLElement) {
             refs.moreActionsMenu.classList.toggle('is-open', open);
         }
+    }
+
+    function toggleLaunchPlatformMenu(open) {
+        uiState.launchPlatformMenuOpen = open;
+        if (open) {
+            toggleSortMenu(false);
+            toggleMoreActions(false);
+        }
+        if (refs.launchPlatformBtn instanceof HTMLElement) {
+            refs.launchPlatformBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+        if (refs.launchPlatformMenu instanceof HTMLElement) {
+            refs.launchPlatformMenu.classList.toggle('is-open', open);
+        }
+    }
+
+    function renderLaunchPlatformMenu(selectedInfobase) {
+        if (!(refs.launchPlatformMenu instanceof HTMLElement)) {
+            return;
+        }
+
+        const configuredPlatforms = getConfiguredPlatforms();
+        const effectivePlatform = resolveEffectiveLaunchPlatform(selectedInfobase);
+        refs.launchPlatformMenu.classList.toggle('is-open', uiState.launchPlatformMenuOpen);
+        if (!uiState.launchPlatformMenuOpen) {
+            refs.launchPlatformMenu.innerHTML = '';
+            return;
+        }
+
+        if (!selectedInfobase || !configuredPlatforms.length) {
+            refs.launchPlatformMenu.innerHTML = `
+                <div class="menu-item platform-menu-empty" role="presentation">
+                    <span>${escapeHtml(loc.none || 'None')}</span>
+                </div>
+            `;
+            return;
+        }
+
+        const defaultPlatformPath = normalizePlatformPath(getDefaultPlatform()?.clientExePath || '');
+        refs.launchPlatformMenu.innerHTML = configuredPlatforms.map(platform => {
+            const clientExePath = String(platform?.clientExePath || '');
+            const isSelected = normalizePlatformPath(clientExePath) === normalizePlatformPath(effectivePlatform?.clientExePath || '');
+            const isDefault = normalizePlatformPath(clientExePath) === defaultPlatformPath;
+            const detailParts = [];
+            if (isDefault) {
+                detailParts.push(loc.defaultLabel || 'Default');
+            }
+            detailParts.push(clientExePath);
+            return `
+                <button
+                    class="menu-item platform-menu-item${isSelected ? ' is-selected' : ''}"
+                    type="button"
+                    data-platform-path="${escapeHtml(clientExePath)}"
+                    title="${escapeHtml(clientExePath)}"
+                >
+                    <span class="codicon codicon-check sort-menu-check" aria-hidden="true"></span>
+                    <span class="platform-menu-copy">
+                        <span class="platform-menu-title">${escapeHtml(String(platform?.name || clientExePath))}</span>
+                        <span class="platform-menu-detail">${escapeHtml(detailParts.join(' • '))}</span>
+                    </span>
+                </button>
+            `;
+        }).join('');
     }
 
     function renderDetails() {
@@ -455,6 +661,10 @@
 
         if (!selected) {
             toggleMoreActions(false);
+            toggleLaunchPlatformMenu(false);
+            if (refs.launchPlatformLabel instanceof HTMLElement) {
+                refs.launchPlatformLabel.textContent = loc.launchPlatform || loc.platform || 'Platform';
+            }
             return;
         }
 
@@ -507,6 +717,11 @@
         if (refs.forgetManualAction instanceof HTMLElement) {
             refs.forgetManualAction.classList.toggle('hidden', !(selected.sources || []).includes('manual'));
         }
+        if (refs.toggleHiddenActionLabel instanceof HTMLElement) {
+            refs.toggleHiddenActionLabel.textContent = selected.hidden
+                ? (loc.unhideInfobase || 'Unhide infobase')
+                : (loc.hideInfobase || 'Hide infobase');
+        }
 
         const showLogsAction = document.querySelector('[data-command="showLogs"]');
         if (showLogsAction instanceof HTMLButtonElement) {
@@ -552,6 +767,17 @@
         if (updateConfigAction instanceof HTMLButtonElement) {
             updateConfigAction.disabled = !supportsDesignerOperations(selected) || Boolean(state.pendingAction);
         }
+        const effectivePlatform = resolveEffectiveLaunchPlatform(selected);
+        const launchPlatformLabel = formatPlatformButtonLabel(effectivePlatform);
+        if (refs.launchPlatformBtn instanceof HTMLButtonElement) {
+            refs.launchPlatformBtn.disabled = Boolean(state.pendingAction) || getConfiguredPlatforms().length === 0;
+            refs.launchPlatformBtn.title = effectivePlatform?.clientExePath || launchPlatformLabel;
+        }
+        if (refs.launchPlatformLabel instanceof HTMLElement) {
+            refs.launchPlatformLabel.textContent = launchPlatformLabel;
+            refs.launchPlatformLabel.title = effectivePlatform?.clientExePath || launchPlatformLabel;
+        }
+        renderLaunchPlatformMenu(selected);
 
         syncTechnicalSection();
     }
@@ -593,6 +819,12 @@
                 }
                 item.classList.toggle('is-selected', item.dataset.sortMode === state.sortMode);
             });
+            refs.sortMenu.querySelectorAll('[data-toggle-show-hidden]').forEach(item => {
+                if (!(item instanceof HTMLElement)) {
+                    return;
+                }
+                item.classList.toggle('is-selected', Boolean(state.showHidden));
+            });
         }
 
         renderList();
@@ -610,6 +842,10 @@
 
     refs.addManualBtn?.addEventListener('click', () => {
         vscode.postMessage({ command: 'addManual' });
+    });
+
+    refs.manageEtalonBasesBtn?.addEventListener('click', () => {
+        vscode.postMessage({ command: 'manageEtalonBases' });
     });
 
     refs.searchInput?.addEventListener('input', event => {
@@ -634,6 +870,16 @@
         event.preventDefault();
         event.stopPropagation();
         toggleMoreActions(!uiState.moreActionsOpen);
+    });
+
+    refs.launchPlatformBtn?.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (state.pendingAction || !getConfiguredPlatforms().length) {
+            return;
+        }
+        toggleLaunchPlatformMenu(!uiState.launchPlatformMenuOpen);
+        renderLaunchPlatformMenu(getSelectedInfobase());
     });
 
     refs.infobaseList?.addEventListener('click', event => {
@@ -664,7 +910,11 @@
         render();
         vscode.postMessage({ command: 'select', infobasePath: targetPath });
         if (isDoubleClick && !state.pendingAction) {
-            vscode.postMessage({ command: 'openEnterprise', infobasePath: targetPath });
+            vscode.postMessage({
+                command: 'openEnterprise',
+                infobasePath: targetPath,
+                platformClientExePath: getEffectiveLaunchPlatformClientExePath(targetRecord)
+            });
         }
     });
 
@@ -755,12 +1005,31 @@
             const selected = getSelectedInfobase();
             if (command && selected) {
                 toggleMoreActions(false);
+                toggleLaunchPlatformMenu(false);
                 vscode.postMessage({
                     command,
-                    infobasePath: selected.infobasePath
+                    infobasePath: selected.infobasePath,
+                    platformClientExePath: getEffectiveLaunchPlatformClientExePath(selected)
                 });
                 return;
             }
+        }
+
+        const platformTarget = event.target instanceof HTMLElement
+            ? event.target.closest('[data-platform-path]')
+            : null;
+        if (platformTarget instanceof HTMLElement) {
+            const selected = getSelectedInfobase();
+            const platformClientExePath = platformTarget.dataset.platformPath || '';
+            if (selected && platformClientExePath) {
+                toggleLaunchPlatformMenu(false);
+                vscode.postMessage({
+                    command: 'setPreferredPlatform',
+                    infobasePath: selected.infobasePath,
+                    platformClientExePath
+                });
+            }
+            return;
         }
 
         const sortTarget = event.target instanceof HTMLElement
@@ -775,9 +1044,18 @@
             }
         }
 
+        const toggleHiddenTarget = event.target instanceof HTMLElement
+            ? event.target.closest('[data-toggle-show-hidden]')
+            : null;
+        if (toggleHiddenTarget instanceof HTMLElement) {
+            vscode.postMessage({ command: 'setShowHidden', showHidden: !state.showHidden });
+            return;
+        }
+
         if (!(event.target instanceof HTMLElement) || !event.target.closest('.menu-shell')) {
             toggleMoreActions(false);
             toggleSortMenu(false);
+            toggleLaunchPlatformMenu(false);
         }
     });
 
@@ -785,7 +1063,15 @@
         if (event.key === 'Escape') {
             toggleMoreActions(false);
             toggleSortMenu(false);
+            toggleLaunchPlatformMenu(false);
         }
+    });
+
+    window.addEventListener('resize', () => {
+        syncAutoScrollText(
+            refs.infobaseList instanceof HTMLElement ? refs.infobaseList : document.body,
+            '.infobase-item-title, .infobase-item-path, .infobase-item-activity'
+        );
     });
 
     window.addEventListener('message', event => {

@@ -129,6 +129,14 @@ input {
     justify-content: center;
 }
 
+.topbar .toolbar > .toolbar-btn,
+.topbar .toolbar > .menu-shell > .toolbar-btn,
+.topbar .toolbar > .platform-selector-shell > .toolbar-btn {
+    min-height: 52px;
+    height: 52px;
+    box-sizing: border-box;
+}
+
 .toolbar .meta-chip-label,
 .toolbar .meta-chip-value {
     white-space: nowrap;
@@ -352,6 +360,10 @@ input {
     opacity: 0.62;
 }
 
+.infobase-item.is-hidden-infobase {
+    opacity: 0.72;
+}
+
 .infobase-item.is-drop-before {
     box-shadow: inset 0 2px 0 color-mix(in srgb, var(--ib-accent) 72%, transparent);
 }
@@ -375,6 +387,7 @@ input {
 }
 
 .infobase-item-title {
+    min-width: 0;
     font-size: 20px;
     font-weight: 700;
     line-height: 1.35;
@@ -395,9 +408,26 @@ input {
 }
 
 .infobase-item-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
     color: var(--ib-muted);
     font-size: 12px;
     line-height: 1.35;
+}
+
+.hidden-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 18px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--ib-border-strong) 70%, transparent);
+    background: color-mix(in srgb, var(--ib-surface-1) 90%, transparent);
+    color: inherit;
+    font-size: 11px;
+    font-weight: 600;
 }
 
 .infobase-item-activity {
@@ -439,9 +469,22 @@ input {
 
 .details-hero {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 12px;
     align-items: start;
+}
+
+.details-hero-platform-shell {
+    z-index: 30;
+}
+
+.details-hero-platform-shell > .toolbar-btn {
+    min-width: min(140px, 34vw);
+    max-width: 360px;
+}
+
+.details-hero-platform-shell .platform-menu {
+    z-index: 50;
 }
 
 .details-copy h2 {
@@ -477,7 +520,17 @@ input {
     padding: 4px 9px;
 }
 
+#stateBadge {
+    min-height: 40px;
+    height: 40px;
+    box-sizing: border-box;
+    padding: 8px 12px;
+    align-self: stretch;
+}
+
 .action-grid {
+    position: relative;
+    z-index: 1;
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
@@ -491,6 +544,32 @@ input {
 .action-grid > .toolbar-btn,
 .action-grid > .menu-shell > .toolbar-btn {
     width: 100%;
+}
+
+.platform-selector-btn {
+    justify-content: space-between;
+}
+
+.platform-selector-label {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.auto-scroll-text {
+    min-width: 0;
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.auto-scroll-track {
+    display: inline-block;
+    min-width: max-content;
+    padding-right: 18px;
+    will-change: transform;
 }
 
 .state-pill.is-ready {
@@ -562,6 +641,46 @@ input {
 
 .sort-menu {
     min-width: 220px;
+}
+
+.platform-menu {
+    min-width: 280px;
+}
+
+.platform-menu-item {
+    justify-content: flex-start;
+    align-items: flex-start;
+}
+
+.platform-menu-item .sort-menu-check {
+    opacity: 0;
+}
+
+.platform-menu-item.is-selected .sort-menu-check {
+    opacity: 1;
+}
+
+.platform-menu-copy {
+    min-width: 0;
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.platform-menu-title {
+    font-size: 12px;
+    line-height: 1.3;
+    font-weight: 600;
+}
+
+.platform-menu-detail,
+.platform-menu-empty {
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--ib-muted);
+    white-space: normal;
+    word-break: break-word;
 }
 
 .sort-menu-check {
@@ -703,7 +822,7 @@ input {
     color: var(--vscode-errorForeground);
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 980px) {
     .manager-workspace {
         grid-template-columns: 1fr;
         grid-template-rows: minmax(220px, 36vh) minmax(0, 1fr);
@@ -725,6 +844,12 @@ input {
 
     .details-hero {
         grid-template-columns: 1fr;
+    }
+
+    .details-hero-platform-shell > .toolbar-btn {
+        min-width: 0;
+        width: 100%;
+        max-width: none;
     }
 
     .action-grid {

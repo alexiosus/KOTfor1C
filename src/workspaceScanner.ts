@@ -6,6 +6,7 @@ import { getTranslator } from './localization';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
 import { parseKotScenarioDescription } from './kotMetadataDescription';
+import { getScenarioScanRootPath, resolveScenarioScanRootFsPath } from './scenarioScanRoot';
 
 function buildWorkspaceUriFromFsPath(workspaceRootUri: vscode.Uri, targetFsPath: string): vscode.Uri {
     const relativePath = path.relative(workspaceRootUri.fsPath, targetFsPath);
@@ -21,8 +22,7 @@ async function collectFilesFromScanDirectory(
     fileMatcher: (fileName: string) => boolean,
     token?: vscode.CancellationToken
 ): Promise<vscode.Uri[]> {
-    const scanDirRelativePath = getScanDirRelativePath();
-    const scanDirFsPath = path.join(workspaceRootUri.fsPath, scanDirRelativePath);
+    const scanDirFsPath = resolveScenarioScanRootFsPath(workspaceRootUri);
     const results: vscode.Uri[] = [];
 
     try {
@@ -106,10 +106,19 @@ export async function findYamlFilesUnderScanDir(
     return collectFilesFromScanDirectory(workspaceRootUri, fileName => fileName.toLowerCase().endsWith('.yaml'), token);
 }
 
-// Function to get the scan directory path from configuration
+// Function to get the configured scan directory path from configuration.
+// The value may be either relative to the workspace root or absolute.
+export function getConfiguredScanDirPath(): string {
+    return getScenarioScanRootPath();
+}
+
+// Backward-compatible alias retained for existing callers.
 export function getScanDirRelativePath(): string {
-    const config = vscode.workspace.getConfiguration('kotTestToolkit');
-    return config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml';
+    return getConfiguredScanDirPath();
+}
+
+export function resolveScanDirFsPath(workspaceRootUri: vscode.Uri): string {
+    return resolveScenarioScanRootFsPath(workspaceRootUri);
 }
 
 // Паттерн для поиска файлов сценариев внутри SCAN_DIR_RELATIVE_PATH
@@ -147,8 +156,7 @@ function parseNestedScenarioNamesFromText(documentText: string): string[] {
 export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?: vscode.CancellationToken): Promise<Map<string, TestInfo> | null> {
     console.log("[scanWorkspaceForTests] Starting scan...");
     const discoveredTests = new Map<string, TestInfo>();
-    const scanDirRelativePath = getScanDirRelativePath();
-    const scanDirUri = vscode.Uri.joinPath(workspaceRootUri, scanDirRelativePath);
+    const scanDirUri = vscode.Uri.file(resolveScanDirFsPath(workspaceRootUri));
     console.log(`[scanWorkspaceForTests] Scanning directory: ${scanDirUri.fsPath} for pattern ${SCAN_GLOB_PATTERN}`);
 
     try {

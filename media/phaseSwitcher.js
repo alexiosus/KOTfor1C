@@ -31,6 +31,7 @@
     let areAllPhasesCurrentlyExpanded = false; 
     let activeRunModeMenu = null;
     let activeContextMenu = null;
+    let activeContextSubmenu = null;
     const FAVORITE_SCENARIO_DROP_MIME = 'application/x-kot-favorite-scenario-uri';
 
     // === Получение ссылок на элементы DOM ===
@@ -55,6 +56,7 @@
     const openFormExplorerFromDropdownBtn = document.getElementById('openFormExplorerFromDropdownBtn');
     const openInfobaseManagerTopBtn = document.getElementById('openInfobaseManagerTopBtn');
     const openYamlParamsFromDropdownBtn = document.getElementById('openYamlParamsFromDropdownBtn');
+    const openPlatformManagerFromDropdownBtn = document.getElementById('openPlatformManagerFromDropdownBtn');
     const openSettingsFromDropdownBtn = document.getElementById('openSettingsFromDropdownBtn');
     const testsTabBtn = document.getElementById('testsTabBtn');
     const favoritesTabBtn = document.getElementById('favoritesTabBtn');
@@ -74,6 +76,8 @@
     const selectAllBtn = document.getElementById('selectAllBtn');
     const selectDefaultsBtn = document.getElementById('selectDefaultsBtn');
 
+    const yamlProfileRow = document.getElementById('yamlProfileRow');
+    const yamlProfileSelect = document.getElementById('yamlProfileSelect');
     const driveAccountingModeRow = document.getElementById('driveAccountingModeRow');
     const recordGLModeList = document.getElementById('recordGLModeList');
     const recordGLOptionButtons = Array.from(document.querySelectorAll('.record-gl-option-btn'));
@@ -82,6 +86,8 @@
     const assembleBtn = document.getElementById('assembleTestsBtn');
     const cancelAssembleBtn = document.getElementById('cancelAssembleBtn');
     let currentRecordGLValue = '2';
+    let yamlParameterProfiles = [];
+    let activeYamlParameterProfileId = '';
     let mainStatusText = '';
     let selectionSummaryText = '';
 
@@ -364,6 +370,12 @@
             window.__loc?.openYamlParametersManagerTitle || 'Open Build Scenario Parameters Manager'
         );
         setDropdownItemDisabledState(
+            openPlatformManagerFromDropdownBtn,
+            false,
+            '',
+            window.__loc?.openPlatformManagerTitle || 'Manage platforms'
+        );
+        setDropdownItemDisabledState(
             openSettingsFromDropdownBtn,
             !canOpenSettings,
             '',
@@ -531,6 +543,7 @@
          const showCancelButton = isAssemblerVisible && isBuildInProgress;
          const driveFeaturesVisible = settings.driveFeaturesEnabled !== false;
          const firstLaunchVisible = driveFeaturesVisible && !!settings.firstLaunchFolderExists;
+         const canSwitchYamlProfile = effectiveEnable && yamlParameterProfiles.length > 1;
 
          if (assembleSplitContainer instanceof HTMLElement) {
              assembleSplitContainer.style.display = isAssemblerVisible ? (showCancelButton ? 'none' : 'inline-flex') : 'none';
@@ -539,12 +552,18 @@
              assembleBtn.disabled = !effectiveEnable;
          }
          if (assembleMenuBtn instanceof HTMLButtonElement) {
-             assembleMenuBtn.style.display = driveFeaturesVisible ? 'inline-flex' : 'none';
+             assembleMenuBtn.style.display = isAssemblerVisible ? 'inline-flex' : 'none';
              assembleMenuBtn.disabled = !effectiveEnable;
          }
          if (cancelAssembleBtn instanceof HTMLButtonElement) {
              cancelAssembleBtn.style.display = (isAssemblerVisible && showCancelButton) ? 'inline-flex' : 'none';
              cancelAssembleBtn.disabled = !showCancelButton;
+         }
+         if (yamlProfileRow instanceof HTMLElement) {
+             yamlProfileRow.style.display = isAssemblerVisible ? 'flex' : 'none';
+         }
+         if (yamlProfileSelect instanceof HTMLSelectElement) {
+             yamlProfileSelect.disabled = !canSwitchYamlProfile;
          }
          if (recordGLModeList instanceof HTMLElement) {
              recordGLModeList.classList.toggle('is-disabled', !effectiveEnable);
@@ -659,6 +678,60 @@
             button.classList.toggle('is-selected', isSelected);
             button.setAttribute('aria-checked', isSelected ? 'true' : 'false');
         });
+    }
+
+    function normalizeYamlParametersProfilesState(value) {
+        const rawProfiles = Array.isArray(value?.profiles) ? value.profiles : [];
+        const profiles = rawProfiles
+            .map(profile => ({
+                id: typeof profile?.id === 'string' ? profile.id.trim() : '',
+                name: typeof profile?.name === 'string' ? profile.name.trim() : ''
+            }))
+            .filter(profile => profile.id.length > 0);
+        const requestedActiveProfileId = typeof value?.activeProfileId === 'string'
+            ? value.activeProfileId.trim()
+            : '';
+        const activeProfileId = profiles.some(profile => profile.id === requestedActiveProfileId)
+            ? requestedActiveProfileId
+            : (profiles[0]?.id || '');
+
+        return { activeProfileId, profiles };
+    }
+
+    function renderYamlParametersProfileSelect() {
+        if (!(yamlProfileSelect instanceof HTMLSelectElement)) {
+            return;
+        }
+
+        yamlProfileSelect.textContent = '';
+        if (yamlParameterProfiles.length === 0) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = window.__loc?.selectProfile || 'Select profile';
+            yamlProfileSelect.appendChild(option);
+            yamlProfileSelect.value = '';
+            return;
+        }
+
+        yamlParameterProfiles.forEach(profile => {
+            const option = document.createElement('option');
+            option.value = profile.id;
+            option.textContent = profile.name || profile.id;
+            yamlProfileSelect.appendChild(option);
+        });
+
+        const resolvedActiveProfileId = yamlParameterProfiles.some(profile => profile.id === activeYamlParameterProfileId)
+            ? activeYamlParameterProfileId
+            : yamlParameterProfiles[0].id;
+        activeYamlParameterProfileId = resolvedActiveProfileId;
+        yamlProfileSelect.value = resolvedActiveProfileId;
+    }
+
+    function applyYamlParametersProfilesState(value) {
+        const normalizedState = normalizeYamlParametersProfilesState(value);
+        yamlParameterProfiles = normalizedState.profiles;
+        activeYamlParameterProfileId = normalizedState.activeProfileId;
+        renderYamlParametersProfileSelect();
     }
 
     /**
@@ -1772,9 +1845,73 @@
     }
 
     function closeContextMenu() {
+        if (activeContextSubmenu) {
+            activeContextSubmenu.remove();
+            activeContextSubmenu = null;
+        }
         if (!activeContextMenu) return;
         activeContextMenu.remove();
         activeContextMenu = null;
+    }
+
+    function closeContextSubmenu() {
+        if (!activeContextSubmenu) {
+            return;
+        }
+        activeContextSubmenu.remove();
+        activeContextSubmenu = null;
+    }
+
+    function showContextSubmenuForItem(parentItem, actions, scopeKey = '') {
+        if (!(parentItem instanceof HTMLElement) || !Array.isArray(actions) || actions.length === 0) {
+            return;
+        }
+
+        closeContextSubmenu();
+
+        const menu = document.createElement('div');
+        menu.className = 'run-mode-menu phase-context-menu phase-context-submenu';
+        menu.setAttribute('data-scope', scopeKey);
+
+        actions.forEach(action => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'run-mode-menu-item';
+            item.innerHTML = `<span class="codicon ${escapeHtmlAttr(action.icon || 'codicon-file-code')}"></span><span>${escapeHtmlAttr(action.label || '')}</span>`;
+            if (typeof action.title === 'string' && action.title.trim()) {
+                item.title = action.title;
+            }
+            if (action.disabled === true) {
+                item.disabled = true;
+                item.classList.add('run-mode-menu-item-disabled');
+            }
+            item.addEventListener('click', event => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (item.disabled) {
+                    return;
+                }
+                closeContextMenu();
+                action.onClick?.();
+            });
+            menu.appendChild(item);
+        });
+
+        document.body.appendChild(menu);
+
+        const parentRect = parentItem.getBoundingClientRect();
+        const menuRect = menu.getBoundingClientRect();
+        const placeLeft = parentRect.right + menuRect.width + 8 > window.innerWidth
+            && parentRect.left - menuRect.width - 4 >= 8;
+        const preferredLeft = placeLeft
+            ? parentRect.left - menuRect.width - 4
+            : parentRect.right + 4;
+        const left = Math.max(8, Math.min(preferredLeft, window.innerWidth - menuRect.width - 8));
+        const top = Math.max(8, Math.min(parentRect.top, window.innerHeight - menuRect.height - 8));
+        menu.style.left = `${left}px`;
+        menu.style.top = `${top}px`;
+
+        activeContextSubmenu = menu;
     }
 
     function showContextMenuAt(positionX, positionY, actions, scopeKey = '') {
@@ -1797,10 +1934,20 @@
         menu.setAttribute('data-scope', scopeKey);
 
         actions.forEach(action => {
+            if (action?.separator) {
+                const separator = document.createElement('div');
+                separator.className = 'run-mode-menu-separator';
+                separator.setAttribute('role', 'separator');
+                menu.appendChild(separator);
+                return;
+            }
             const item = document.createElement('button');
             item.type = 'button';
             item.className = 'run-mode-menu-item';
-            item.innerHTML = `<span class="codicon ${escapeHtmlAttr(action.icon || 'codicon-edit')}"></span><span>${escapeHtmlAttr(action.label || '')}</span>`;
+            const hasChildren = Array.isArray(action.children) && action.children.length > 0;
+            item.innerHTML = hasChildren
+                ? `<span class="codicon ${escapeHtmlAttr(action.icon || 'codicon-edit')}"></span><span>${escapeHtmlAttr(action.label || '')}</span><span class="codicon codicon-chevron-right run-mode-menu-item-submenu-arrow"></span>`
+                : `<span class="codicon ${escapeHtmlAttr(action.icon || 'codicon-edit')}"></span><span>${escapeHtmlAttr(action.label || '')}</span>`;
             if (typeof action.title === 'string' && action.title.trim()) {
                 item.title = action.title;
             }
@@ -1812,6 +1959,10 @@
                 event.preventDefault();
                 event.stopPropagation();
                 if (item.disabled) {
+                    return;
+                }
+                if (hasChildren) {
+                    showContextSubmenuForItem(item, action.children, `${scopeKey}:${action.label || 'submenu'}`);
                     return;
                 }
                 closeContextMenu();
@@ -1857,6 +2008,8 @@
         const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
         const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
         const hasFeatureArtifact = !!(runInfo && runInfo.featurePath);
+        const hasOriginalJsonArtifact = !!(runInfo && runInfo.jsonPath);
+        const hasCombinedJsonArtifact = !!(runInfo && (runInfo.combinedJsonPath || runInfo.jsonPath));
         const canOpenRunLog = !!runInfo?.canOpenRunLog;
         const isRunInProgress = runInfo?.runStatus === 'running';
         const isBlockingRunInProgress = isRunInProgress && runInfo?.blocksControls !== false;
@@ -1874,6 +2027,13 @@
         const watchLiveOutputLabel = window.__loc?.runScenarioWatchLiveOutput || 'Watch live log output';
         const watchLiveOutputHint = window.__loc?.runScenarioWatchLiveOutputHint || 'Open live run log output panel for this scenario.';
         const watchLiveOutputUnavailable = window.__loc?.runScenarioWatchLiveOutputUnavailable || 'Scenario is not running. Live log output is unavailable.';
+        const openJsonMenuLabel = window.__loc?.openScenarioJsonMenuTitle || 'Open JSON';
+        const openBuiltJsonLabel = window.__loc?.openScenarioBuiltJsonTitle || 'Open built JSON';
+        const openBuiltJsonHint = window.__loc?.openScenarioBuiltJsonHint || 'Open original JSON artifact produced by SPPR for this scenario.';
+        const openBuiltJsonUnavailable = window.__loc?.openScenarioBuiltJsonUnavailable || 'Built JSON artifact is not available for this scenario.';
+        const openCombinedJsonLabel = window.__loc?.openScenarioCombinedJsonTitle || 'Open combined JSON';
+        const openCombinedJsonHint = window.__loc?.openScenarioCombinedJsonHint || 'Open combined JSON artifact with Additional VA params and GlobalVars applied.';
+        const openCombinedJsonUnavailable = window.__loc?.openScenarioCombinedJsonUnavailable || 'Combined JSON artifact is not available for this scenario.';
 
         showContextMenuAt(event.clientX, event.clientY, [
             {
@@ -1882,14 +2042,17 @@
                 onClick: () => vscode.postMessage({ command: 'openScenario', name })
             },
             {
-                icon: 'codicon-file',
+                icon: 'codicon-settings-gear',
                 label: window.__loc?.openTestSettingsTitle || 'Open test settings',
                 onClick: () => vscode.postMessage({ command: 'openMainScenarioTestSettings', name })
             },
+            { separator: true },
             {
-                icon: 'codicon-rename',
-                label: window.__loc?.renameScenarioTitle || 'Rename scenario',
-                onClick: () => vscode.postMessage({ command: 'renameScenario', name })
+                icon: 'codicon-play-circle',
+                label: runLabel,
+                title: runDisabled ? runUnavailable : runHint,
+                disabled: runDisabled,
+                onClick: () => vscode.postMessage({ command: 'runScenarioInVanessa', name })
             },
             {
                 icon: 'codicon-go-to-file',
@@ -1897,6 +2060,27 @@
                 title: hasFeatureArtifact ? openFeatureHint : openFeatureUnavailable,
                 disabled: !hasFeatureArtifact,
                 onClick: () => vscode.postMessage({ command: 'openScenarioFeatureInEditor', name })
+            },
+            {
+                icon: 'codicon-file-code',
+                label: openJsonMenuLabel,
+                disabled: !hasOriginalJsonArtifact && !hasCombinedJsonArtifact,
+                children: [
+                    {
+                        icon: 'codicon-file-code',
+                        label: openBuiltJsonLabel,
+                        title: hasOriginalJsonArtifact ? openBuiltJsonHint : openBuiltJsonUnavailable,
+                        disabled: !hasOriginalJsonArtifact,
+                        onClick: () => vscode.postMessage({ command: 'openScenarioJsonArtifactInEditor', name, variant: 'original' })
+                    },
+                    {
+                        icon: 'codicon-file-code',
+                        label: openCombinedJsonLabel,
+                        title: hasCombinedJsonArtifact ? openCombinedJsonHint : openCombinedJsonUnavailable,
+                        disabled: !hasCombinedJsonArtifact,
+                        onClick: () => vscode.postMessage({ command: 'openScenarioJsonArtifactInEditor', name, variant: 'combined' })
+                    }
+                ]
             },
             {
                 icon: 'codicon-output',
@@ -1913,11 +2097,12 @@
                 onClick: () => vscode.postMessage({ command: 'watchRunScenarioLog', name })
             },
             {
-                icon: 'codicon-play-circle',
-                label: runLabel,
-                title: runDisabled ? runUnavailable : runHint,
-                disabled: runDisabled,
-                onClick: () => vscode.postMessage({ command: 'runScenarioInVanessa', name })
+                separator: true
+            },
+            {
+                icon: 'codicon-rename',
+                label: window.__loc?.renameScenarioTitle || 'Rename scenario',
+                onClick: () => vscode.postMessage({ command: 'renameScenario', name })
             },
             {
                 icon: 'codicon-trash',
@@ -2325,6 +2510,7 @@
                      closeRunModeMenu();
                      closeAssembleOptionsMenu();
                      closeContextMenu();
+                     applyYamlParametersProfilesState(undefined);
                      runArtifacts = {};
                      const errorTemplate = window.__loc?.errorWithDetails || 'Error: {0}';
                      updateStatus(errorTemplate.replace('{0}', message.error), 'main');
@@ -2340,6 +2526,7 @@
                     favoriteScenarios = Array.isArray(message.favorites) ? message.favorites : [];
                     favoriteSortMode = normalizeFavoriteSortMode(message.favoriteSortMode || favoriteSortMode);
                     affectedMainScenarioNames = normalizeAffectedMainScenarioNames(message.affectedMainScenarioNames);
+                    applyYamlParametersProfilesState(message.yamlParametersProfiles);
                     rebuildTestInfoIndex();
                     settings = message.settings || {
                         assemblerEnabled: true,
@@ -2408,7 +2595,7 @@
                         driveActionsRow.style.display = firstLaunchVisible ? 'flex' : 'none';
                     }
                     if (assembleMenuBtn instanceof HTMLButtonElement) {
-                        assembleMenuBtn.style.display = driveFeaturesVisible ? 'inline-flex' : 'none';
+                        assembleMenuBtn.style.display = assemblerVisible ? 'inline-flex' : 'none';
                     }
 
                     if (phaseSwitcherVisible) {
@@ -2988,6 +3175,18 @@
             });
         }
 
+        if (openPlatformManagerFromDropdownBtn) {
+            openPlatformManagerFromDropdownBtn.addEventListener('click', event => {
+                event.preventDefault();
+                if (openPlatformManagerFromDropdownBtn.classList.contains('is-disabled')) {
+                    return;
+                }
+                closeScenarioRepairDropdownMenu();
+                log('Open platform manager from actions menu clicked.');
+                vscode.postMessage({ command: 'openPlatformManager' });
+            });
+        }
+
         if (openSettingsFromDropdownBtn) {
             openSettingsFromDropdownBtn.addEventListener('click', event => {
                 event.preventDefault();
@@ -3100,6 +3299,22 @@
         });
     }
 
+    if (yamlProfileSelect instanceof HTMLSelectElement) {
+        yamlProfileSelect.addEventListener('change', () => {
+            const nextProfileId = typeof yamlProfileSelect.value === 'string'
+                ? yamlProfileSelect.value.trim()
+                : '';
+            if (!nextProfileId || nextProfileId === activeYamlParameterProfileId || yamlProfileSelect.disabled) {
+                return;
+            }
+
+            activeYamlParameterProfileId = nextProfileId;
+            yamlProfileSelect.disabled = true;
+            log(`Switching active build profile to: ${nextProfileId}`);
+            vscode.postMessage({ command: 'setYamlParametersProfile', profileId: nextProfileId });
+        });
+    }
+
     if (createFirstLaunchBtn instanceof HTMLButtonElement) {
         createFirstLaunchBtn.addEventListener('click', event => {
             event.preventDefault();
@@ -3135,7 +3350,12 @@
         if (activeRunModeMenu && event.target instanceof Node && !activeRunModeMenu.contains(event.target)) {
             closeRunModeMenu();
         }
-        if (activeContextMenu && event.target instanceof Node && !activeContextMenu.contains(event.target)) {
+        if (
+            activeContextMenu
+            && event.target instanceof Node
+            && !activeContextMenu.contains(event.target)
+            && !(activeContextSubmenu && activeContextSubmenu.contains(event.target))
+        ) {
             closeContextMenu();
         }
     });

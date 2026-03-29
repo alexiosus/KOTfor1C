@@ -6,11 +6,12 @@
     let copiedResetTimer = null;
     let overflowMenuOpen = false;
     let filterMenuOpen = false;
-    let snapshotMenuOpen = false;
+    let launchPlatformMenuOpen = false;
     let lastSelectionPosted = '';
     let focusAfterLocatorPending = false;
     let locatorFocusBaseline = '';
     const suggestedStepsCache = new Map();
+    const autoScrollAnimations = new WeakMap();
 
     const uiState = {
         selectedElementPath: typeof persistedState.selectedElementPath === 'string' ? persistedState.selectedElementPath : '',
@@ -56,10 +57,11 @@
         generatedAtChip: document.getElementById('generatedAtChip'),
         generatedAtLabel: document.getElementById('generatedAtLabel'),
         generatedAtValue: document.getElementById('generatedAtValue'),
-        snapshotPickerBtn: document.getElementById('snapshotPickerBtn'),
-        snapshotMenu: document.getElementById('snapshotMenu'),
         startInfobaseBtn: document.getElementById('startInfobaseBtn'),
         startInfobaseLabel: document.getElementById('startInfobaseLabel'),
+        launchPlatformBtn: document.getElementById('launchPlatformBtn'),
+        launchPlatformLabel: document.getElementById('launchPlatformLabel'),
+        launchPlatformMenu: document.getElementById('launchPlatformMenu'),
         formTitleValue: document.getElementById('formTitleValue'),
         formMetaLine: document.getElementById('formMetaLine'),
         elementCountValue: document.getElementById('elementCountValue'),
@@ -78,6 +80,121 @@
     const tabPanels = Array.from(document.querySelectorAll('[data-tab-panel]'));
 
     initialize();
+
+    function normalizePlatformPath(rawPath) {
+        const source = String(rawPath || '').trim();
+        if (!source) {
+            return '';
+        }
+
+        return source.replace(/[\\/]+/g, '/').toLowerCase();
+    }
+
+    function getConfiguredPlatforms() {
+        return Array.isArray(viewState.platforms) ? viewState.platforms : [];
+    }
+
+    function getDefaultPlatform() {
+        return getConfiguredPlatforms()[0] || null;
+    }
+
+    function resolveCurrentLaunchPlatform() {
+        const configuredPlatforms = getConfiguredPlatforms();
+        if (!configuredPlatforms.length) {
+            return null;
+        }
+
+        const preferredPlatformPath = normalizePlatformPath(viewState.launchPlatformClientExePath || '');
+        if (preferredPlatformPath) {
+            const preferredPlatform = configuredPlatforms.find(platform =>
+                normalizePlatformPath(platform?.clientExePath || '') === preferredPlatformPath
+            );
+            if (preferredPlatform) {
+                return preferredPlatform;
+            }
+        }
+
+        return getDefaultPlatform();
+    }
+
+    function getCurrentLaunchPlatformClientExePath() {
+        return resolveCurrentLaunchPlatform()?.clientExePath || null;
+    }
+
+    function formatPlatformButtonLabel(platform) {
+        if (!platform) {
+            return t('launchPlatform', 'Platform');
+        }
+
+        const platformName = String(platform?.name || '').trim();
+        const versionMatch = platformName.match(/(\d+(?:\.\d+)+)\s*$/);
+        if (versionMatch?.[1]) {
+            return versionMatch[1];
+        }
+
+        return platformName || String(platform?.clientExePath || '').trim() || t('launchPlatform', 'Platform');
+    }
+
+    function syncAutoScrollText(root, selector) {
+        if (!(root instanceof HTMLElement)) {
+            return;
+        }
+
+        root.querySelectorAll(selector).forEach(node => {
+            if (!(node instanceof HTMLElement)) {
+                return;
+            }
+
+            const originalText = node.dataset.autoScrollSource ?? node.textContent ?? '';
+            node.dataset.autoScrollSource = originalText;
+            node.classList.add('auto-scroll-text');
+
+            let track = node.firstElementChild;
+            if (!(track instanceof HTMLElement) || !track.classList.contains('auto-scroll-track')) {
+                node.textContent = '';
+                track = document.createElement('span');
+                track.className = 'auto-scroll-track';
+                track.textContent = originalText;
+                node.appendChild(track);
+            } else if (track.textContent !== originalText) {
+                track.textContent = originalText;
+            }
+
+            const runningAnimation = autoScrollAnimations.get(node);
+            if (runningAnimation) {
+                runningAnimation.cancel();
+                autoScrollAnimations.delete(node);
+            }
+
+            track.style.transform = 'translateX(0)';
+            const overflowWidth = Math.ceil(track.scrollWidth - node.clientWidth);
+            if (overflowWidth <= 6) {
+                return;
+            }
+
+            const edgePauseDuration = 560;
+            const travelDuration = Math.min(Math.max(overflowWidth * 55, 2400), 9000);
+            const totalDuration = travelDuration * 2 + edgePauseDuration * 2;
+            const startHoldOffset = edgePauseDuration / totalDuration;
+            const endReachOffset = (edgePauseDuration + travelDuration) / totalDuration;
+            const endHoldOffset = (edgePauseDuration + travelDuration + edgePauseDuration) / totalDuration;
+            const animation = track.animate(
+                [
+                    { transform: 'translateX(0)', offset: 0 },
+                    { transform: 'translateX(0)', offset: startHoldOffset },
+                    { transform: `translateX(${-overflowWidth}px)`, offset: endReachOffset },
+                    { transform: `translateX(${-overflowWidth}px)`, offset: endHoldOffset },
+                    { transform: 'translateX(0)', offset: 1 }
+                ],
+                {
+                    duration: totalDuration,
+                    easing: 'linear',
+                    iterations: Infinity
+                }
+            );
+            autoScrollAnimations.set(node, animation);
+        });
+    }
 
     function initialize() {
         bindStaticEvents();
@@ -130,44 +247,50 @@
             event.preventDefault();
             event.stopPropagation();
             filterMenuOpen = false;
-            snapshotMenuOpen = false;
+            launchPlatformMenuOpen = false;
             overflowMenuOpen = !overflowMenuOpen;
             renderOverflowMenu();
             renderFilterMenu();
-            renderSnapshotMenu();
+            renderLaunchPlatformMenu();
         });
         bindClick(refs.filterMenuBtn, event => {
             event.preventDefault();
             event.stopPropagation();
             overflowMenuOpen = false;
-            snapshotMenuOpen = false;
+            launchPlatformMenuOpen = false;
             filterMenuOpen = !filterMenuOpen;
             renderFilterMenu();
             renderOverflowMenu();
-            renderSnapshotMenu();
+            renderLaunchPlatformMenu();
         });
         bindClick(refs.modeChip, event => {
             event.preventDefault();
             event.stopPropagation();
             overflowMenuOpen = false;
             filterMenuOpen = false;
-            snapshotMenuOpen = false;
+            launchPlatformMenuOpen = false;
             renderOverflowMenu();
             renderFilterMenu();
-            renderSnapshotMenu();
+            renderLaunchPlatformMenu();
             post('toggleAdapterMode');
         });
-        bindClick(refs.snapshotPickerBtn, event => {
+        bindClick(refs.launchPlatformBtn, event => {
             event.preventDefault();
             event.stopPropagation();
             overflowMenuOpen = false;
             filterMenuOpen = false;
-            snapshotMenuOpen = !snapshotMenuOpen;
+            launchPlatformMenuOpen = !launchPlatformMenuOpen;
             renderOverflowMenu();
             renderFilterMenu();
-            renderSnapshotMenu();
+            renderLaunchPlatformMenu();
         });
-        bindClick(refs.startInfobaseBtn, () => post('startInfobase'));
+        bindClick(refs.startInfobaseBtn, () => {
+            launchPlatformMenuOpen = false;
+            renderLaunchPlatformMenu();
+            post('startInfobase', {
+                platformClientExePath: getCurrentLaunchPlatformClientExePath()
+            });
+        });
         bindClick(refs.manualRefreshBtn, () => post('requestAdapterRefresh'));
         bindClick(refs.locatorBtn, () => {
             focusAfterLocatorPending = true;
@@ -294,8 +417,10 @@
             if (action === 'copy') {
                 overflowMenuOpen = false;
                 filterMenuOpen = false;
+                launchPlatformMenuOpen = false;
                 renderOverflowMenu();
                 renderFilterMenu();
+                renderLaunchPlatformMenu();
                 post('copyToClipboard', { value: String(target.dataset.value || '') });
                 flashCopied(target);
                 return;
@@ -304,10 +429,10 @@
             if (action === 'copy-gherkin-inline') {
                 overflowMenuOpen = false;
                 filterMenuOpen = false;
-                snapshotMenuOpen = false;
+                launchPlatformMenuOpen = false;
                 renderOverflowMenu();
                 renderFilterMenu();
-                renderSnapshotMenu();
+                renderLaunchPlatformMenu();
                 const codeNode = target.querySelector('code');
                 const value = codeNode?.textContent || '';
                 post('copyToClipboard', { value });
@@ -322,7 +447,9 @@
 
             if (action === 'refresh-snapshot') {
                 overflowMenuOpen = false;
+                launchPlatformMenuOpen = false;
                 renderOverflowMenu();
+                renderLaunchPlatformMenu();
                 if (String(viewState.adapterMode || '') === 'manual') {
                     post('requestAdapterRefresh');
                 } else {
@@ -333,37 +460,33 @@
 
             if (action === 'build-extension') {
                 overflowMenuOpen = false;
+                launchPlatformMenuOpen = false;
                 renderOverflowMenu();
-                post('buildExtension');
+                renderLaunchPlatformMenu();
+                post('buildExtension', {
+                    platformClientExePath: getCurrentLaunchPlatformClientExePath()
+                });
                 return;
             }
 
             if (action === 'install-extension') {
                 overflowMenuOpen = false;
+                launchPlatformMenuOpen = false;
                 renderOverflowMenu();
-                post('installExtension');
-                return;
-            }
-
-            if (action === 'choose-snapshot-file') {
-                overflowMenuOpen = false;
-                renderOverflowMenu();
-                post('chooseSnapshotFile');
-                return;
-            }
-
-            if (action === 'use-configured-path') {
-                overflowMenuOpen = false;
-                renderOverflowMenu();
-                post('useConfiguredSnapshotPath');
+                renderLaunchPlatformMenu();
+                post('installExtension', {
+                    platformClientExePath: getCurrentLaunchPlatformClientExePath()
+                });
                 return;
             }
 
             if (action === 'open-source') {
                 overflowMenuOpen = false;
                 filterMenuOpen = false;
+                launchPlatformMenuOpen = false;
                 renderOverflowMenu();
                 renderFilterMenu();
+                renderLaunchPlatformMenu();
                 const sourcePath = String(target.dataset.path || '');
                 if (!sourcePath) {
                     return;
@@ -377,40 +500,31 @@
                 });
             }
 
-            if (action === 'select-snapshot-path') {
-                const nextPath = String(target.dataset.path || '');
-                snapshotMenuOpen = false;
-                renderSnapshotMenu();
-                post('selectSnapshotPath', { value: nextPath });
-                return;
-            }
-
-            if (action === 'delete-snapshot-path') {
-                event.preventDefault();
-                event.stopPropagation();
-                const targetPath = String(target.dataset.path || '');
-                if (!targetPath) {
-                    return;
-                }
-                post('deleteSnapshotPath', { value: targetPath });
+            if (action === 'select-launch-platform') {
+                const platformClientExePath = String(target.dataset.platformPath || '');
+                launchPlatformMenuOpen = false;
+                renderLaunchPlatformMenu();
+                post('setPreferredStartPlatform', {
+                    platformClientExePath
+                });
                 return;
             }
         });
 
         document.addEventListener('click', event => {
-            if (!overflowMenuOpen && !filterMenuOpen && !snapshotMenuOpen) {
+            if (!overflowMenuOpen && !filterMenuOpen && !launchPlatformMenuOpen) {
                 return;
             }
             const target = event.target instanceof Element ? event.target : null;
-            if (target?.closest('.menu-shell') || target?.closest('.filter-shell') || target?.closest('.snapshot-picker-controls')) {
+            if (target?.closest('.menu-shell') || target?.closest('.filter-shell')) {
                 return;
             }
             overflowMenuOpen = false;
             filterMenuOpen = false;
-            snapshotMenuOpen = false;
+            launchPlatformMenuOpen = false;
             renderOverflowMenu();
             renderFilterMenu();
-            renderSnapshotMenu();
+            renderLaunchPlatformMenu();
         });
     }
 
@@ -493,6 +607,10 @@
         renderTabs();
         scrollPendingSelectionIntoView();
         notifySelectionChanged();
+        syncAutoScrollText(
+            document.body,
+            '.outline-title, .outline-subtitle'
+        );
     }
 
     function renderStaticFrame() {
@@ -502,6 +620,8 @@
         const pendingOperation = String(viewState.pendingOperation || '');
         const isPending = Boolean(pendingOperation);
         const isStartingInfobase = pendingOperation === 'start';
+        const isStartedInfobaseClientRunning = Boolean(viewState.startedInfobaseClientRunning);
+        const isStartLocked = isStartingInfobase || isStartedInfobaseClientRunning;
         setText(
             refs.modeValue,
             adapterMode === 'auto'
@@ -550,9 +670,11 @@
             refs.locatorBtn.disabled = adapterMode !== 'manual' || Boolean(pendingOperation);
         }
         if (refs.startInfobaseBtn instanceof HTMLButtonElement) {
-            refs.startInfobaseBtn.disabled = isStartingInfobase;
+            refs.startInfobaseBtn.disabled = isStartLocked;
             refs.startInfobaseBtn.title = isStartingInfobase
                 ? t('launchingInfobase', 'Launching infobase')
+                : isStartedInfobaseClientRunning
+                    ? t('infobaseClientRunning', '1C client is still running')
                 : t('startInfobase', 'Start infobase');
         }
         setText(
@@ -561,7 +683,19 @@
                 ? t('starting', 'Starting...')
                 : t('startInfobase', 'Start infobase')
         );
-        renderSnapshotPicker();
+        const currentLaunchPlatform = resolveCurrentLaunchPlatform();
+        const launchPlatformLabel = currentLaunchPlatform
+            ? formatPlatformButtonLabel(currentLaunchPlatform)
+            : (getConfiguredPlatforms().length ? t('launchPlatform', 'Platform') : t('none', 'None'));
+        setText(refs.launchPlatformLabel, launchPlatformLabel);
+        if (refs.launchPlatformLabel instanceof HTMLElement) {
+            refs.launchPlatformLabel.title = currentLaunchPlatform?.clientExePath || currentLaunchPlatform?.name || launchPlatformLabel;
+        }
+        if (refs.launchPlatformBtn instanceof HTMLButtonElement) {
+            refs.launchPlatformBtn.disabled = isStartLocked || !getConfiguredPlatforms().length;
+            refs.launchPlatformBtn.title = currentLaunchPlatform?.clientExePath || currentLaunchPlatform?.name || t('launchPlatform', 'Platform');
+        }
+        renderLaunchPlatformMenu();
 
         if (refs.openSnapshotFileBtn instanceof HTMLButtonElement) {
             refs.openSnapshotFileBtn.disabled = !viewState.snapshotPath;
@@ -585,134 +719,55 @@
         renderFilterMenu();
     }
 
-    function renderSnapshotPicker() {
-        const snapshotCandidates = Array.isArray(viewState.snapshotCandidates)
-            ? viewState.snapshotCandidates
-            : [];
-        const selectedSnapshotPath = firstDefined(
-            typeof viewState.selectedSnapshotPath === 'string' ? viewState.selectedSnapshotPath : '',
-            typeof viewState.snapshotPath === 'string' ? viewState.snapshotPath : ''
-        );
-        const waitingForTrackedSnapshot = !selectedSnapshotPath;
-        const hasSelectedOption = snapshotCandidates.some(candidate => String(candidate.path || '') === selectedSnapshotPath);
-        const effectiveSelectedPath = hasSelectedOption || waitingForTrackedSnapshot
-            ? selectedSnapshotPath
-            : String(snapshotCandidates[0]?.path || '');
-        const selectedCandidate = snapshotCandidates.find(candidate => String(candidate.path || '') === effectiveSelectedPath) || null;
+    function renderLaunchPlatformMenu() {
+        if (!(refs.launchPlatformMenu instanceof HTMLElement)) {
+            return;
+        }
 
-        if (refs.snapshotPickerBtn instanceof HTMLButtonElement) {
-            if (!selectedCandidate || waitingForTrackedSnapshot) {
-                refs.snapshotPickerBtn.textContent = t('waitingForSnapshot', 'Waiting for snapshot');
-                refs.snapshotPickerBtn.disabled = true;
-            } else {
-                refs.snapshotPickerBtn.textContent = formatSnapshotCandidateLabel(selectedCandidate);
-                refs.snapshotPickerBtn.disabled = false;
+        if (refs.launchPlatformBtn instanceof HTMLButtonElement) {
+            refs.launchPlatformBtn.setAttribute('aria-expanded', launchPlatformMenuOpen ? 'true' : 'false');
+        }
+        refs.launchPlatformMenu.classList.toggle('is-open', launchPlatformMenuOpen);
+
+        if (!launchPlatformMenuOpen) {
+            refs.launchPlatformMenu.innerHTML = '';
+            return;
+        }
+
+        const configuredPlatforms = getConfiguredPlatforms();
+        if (!configuredPlatforms.length) {
+            refs.launchPlatformMenu.innerHTML = `<div class="menu-item platform-menu-empty" role="presentation">${escapeHtml(t('none', 'None'))}</div>`;
+            return;
+        }
+
+        const defaultPlatformPath = normalizePlatformPath(getDefaultPlatform()?.clientExePath || '');
+        const currentPlatformPath = normalizePlatformPath(getCurrentLaunchPlatformClientExePath() || '');
+        refs.launchPlatformMenu.innerHTML = configuredPlatforms.map(platform => {
+            const clientExePath = String(platform?.clientExePath || '');
+            const normalizedClientExePath = normalizePlatformPath(clientExePath);
+            const isSelected = normalizedClientExePath === currentPlatformPath;
+            const isDefault = normalizedClientExePath === defaultPlatformPath;
+            const detailParts = [];
+            if (isDefault) {
+                detailParts.push(t('defaultLabel', 'Default'));
             }
-            refs.snapshotPickerBtn.title = selectedCandidate?.path || '';
-        }
-
-        renderSnapshotMenu(snapshotCandidates, effectiveSelectedPath);
-    }
-
-    function formatSnapshotCandidateLabel(candidate) {
-        const infobaseDisplayName = String(candidate?.infobaseDisplayName || '').trim();
-        if (infobaseDisplayName) {
-            return infobaseDisplayName;
-        }
-        const infobase = formatInfobaseCandidateLabel(candidate?.infobase);
-        if (infobase) {
-            return infobase;
-        }
-        return t('unknownValue', 'n/a');
-    }
-
-    function renderSnapshotMenu(snapshotCandidates, selectedSnapshotPath) {
-        const effectiveCandidates = Array.isArray(snapshotCandidates)
-            ? snapshotCandidates
-            : (Array.isArray(viewState.snapshotCandidates) ? viewState.snapshotCandidates : []);
-        const effectiveSelectedPath = typeof selectedSnapshotPath === 'string' && selectedSnapshotPath
-            ? selectedSnapshotPath
-            : firstDefined(
-                typeof viewState.selectedSnapshotPath === 'string' ? viewState.selectedSnapshotPath : '',
-                typeof viewState.snapshotPath === 'string' ? viewState.snapshotPath : ''
-            );
-
-        if (!(refs.snapshotMenu instanceof HTMLElement)) {
-            return;
-        }
-
-        refs.snapshotMenu.classList.toggle('is-open', snapshotMenuOpen);
-        if (refs.snapshotPickerBtn instanceof HTMLButtonElement) {
-            refs.snapshotPickerBtn.setAttribute('aria-expanded', snapshotMenuOpen ? 'true' : 'false');
-        }
-
-        if (!snapshotMenuOpen) {
-            refs.snapshotMenu.innerHTML = '';
-            return;
-        }
-
-        if (effectiveCandidates.length === 0) {
-            refs.snapshotMenu.innerHTML = `<div class="snapshot-menu-empty">${escapeHtml(t('waitingForSnapshot', 'Waiting for snapshot'))}</div>`;
-            return;
-        }
-
-        refs.snapshotMenu.innerHTML = effectiveCandidates.map(candidate => {
-            const candidatePath = String(candidate?.path || '');
-            const normalizedPath = candidatePath.replace(/\\/g, '/');
-            const isSelected = candidatePath === effectiveSelectedPath;
-            const candidateLabel = formatSnapshotCandidateLabel(candidate);
-            const candidateMtime = firstDefined(candidate?.mtime);
-            const candidateMtimeLabel = candidateMtime ? formatDateTime(candidateMtime) : t('unknownValue', 'n/a');
+            detailParts.push(clientExePath);
             return `
-                <div class="snapshot-option${isSelected ? ' is-selected' : ''}">
-                    <button class="snapshot-option-main" type="button" role="menuitemradio" aria-checked="${isSelected ? 'true' : 'false'}" data-action="select-snapshot-path" data-path="${escapeHtml(candidatePath)}" title="${escapeHtml(normalizedPath || candidatePath)}">
-                        <span class="snapshot-option-title">${escapeHtml(candidateLabel)}</span>
-                        <span class="snapshot-option-subtitle">${escapeHtml(candidateMtimeLabel)}</span>
-                    </button>
-                    <button class="snapshot-option-delete" type="button" aria-label="${escapeHtml(t('deleteSnapshot', 'Delete snapshot'))}" data-action="delete-snapshot-path" data-path="${escapeHtml(candidatePath)}" ${candidate.exists ? '' : 'disabled'}>
-                        <span class="codicon codicon-trash"></span>
-                    </button>
-                </div>
+                <button
+                    class="menu-item platform-menu-item${isSelected ? ' is-selected' : ''}"
+                    type="button"
+                    data-action="select-launch-platform"
+                    data-platform-path="${escapeHtml(clientExePath)}"
+                    title="${escapeHtml(clientExePath)}"
+                >
+                    <span class="codicon codicon-check sort-menu-check" aria-hidden="true"></span>
+                    <span class="platform-menu-copy">
+                        <span class="platform-menu-title">${escapeHtml(String(platform?.name || clientExePath))}</span>
+                        <span class="platform-menu-detail">${escapeHtml(detailParts.join(' • '))}</span>
+                    </span>
+                </button>
             `;
         }).join('');
-    }
-
-    function getSnapshotFileName(candidatePath) {
-        const rawPath = String(candidatePath || '');
-        if (!rawPath) {
-            return '';
-        }
-
-        const normalizedPath = rawPath.replace(/\\/g, '/');
-        return normalizedPath.split('/').pop() || rawPath;
-    }
-
-    function formatInfobaseCandidateLabel(rawInfobase) {
-        const infobaseText = String(rawInfobase || '').trim();
-        if (!infobaseText) {
-            return '';
-        }
-
-        const refMatch = infobaseText.match(/\bRef\s*=\s*"([^"]+)"/i);
-        if (refMatch?.[1]) {
-            return refMatch[1].trim();
-        }
-
-        const fileMatch = infobaseText.match(/\bFile\s*=\s*("([^"]+)"|([^;]+))/i);
-        if (fileMatch?.[2] || fileMatch?.[3]) {
-            const fullPath = (fileMatch[2] || fileMatch[3] || '').trim().replace(/[\\/]+$/, '');
-            if (fullPath) {
-                const normalizedPath = fullPath.replace(/\\/g, '/');
-                const tail = normalizedPath.split('/').pop() || fullPath;
-                return tail || fullPath;
-            }
-        }
-
-        const compact = infobaseText.replace(/[\\r\\n]+/g, ' ').trim();
-        if (!compact) {
-            return '';
-        }
-        return compact.length > 48 ? `${compact.slice(0, 47)}…` : compact;
     }
 
     function renderBanner() {
@@ -2485,6 +2540,13 @@
     function t(key, fallback) {
         return loc[key] || fallback;
     }
+
+    window.addEventListener('resize', () => {
+        syncAutoScrollText(
+            document.body,
+            '.outline-title, .outline-subtitle'
+        );
+    });
 
     function isKnownTab(value) {
         return value === 'selected'

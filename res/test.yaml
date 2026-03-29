@@ -4,10 +4,10 @@
     Код: "Name_Placeholder"
     UIDСценария: "UID_Placeholder"
     Имя: "Name_Placeholder"
-    ЭталоннаяБазаИмя: "ModelDBib_Placeholder"
+    ЭталоннаяБазаИмя: "ModelDBName_Placeholder"
     ПрофильПользователя: "UserProfile_Placeholder"
     СценарийНаименование: "Name_Placeholder"
-    ИдентификаторБазы: "ModelDBib_Placeholder"
+    ИдентификаторБазы: "ModelDBId_Placeholder"
     ПараметрыЗапуска: ""
 
 ПараметрыТеста:

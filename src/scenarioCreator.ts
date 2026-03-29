@@ -1,11 +1,30 @@
 ﻿import * as vscode from 'vscode';
+import * as path from 'path';
 import { getTranslator } from './localization';
 import { v4 as uuidv4 } from 'uuid';
 import { YamlParametersManager } from './yamlParametersManager';
 import { scanWorkspaceForTests } from './workspaceScanner';
 import { applyPreferredStepKeyword, getConfiguredScenarioLanguage, ScenarioLanguage } from './gherkinLanguage';
-import { isScenarioYamlFile } from './yamlValidator';
-import { findScenarioHeaderFieldLines } from './scenarioHeaderInlayHintsProvider';
+import { isScenarioYamlFile, isTestSettingsYamlFile } from './yamlValidator';
+import { getScenarioScanRootPath } from './scenarioScanRoot';
+import {
+    canUseEtalonBaseDtFileAsDefaultUri,
+    EtalonBaseDefinition,
+    EtalonBaseUserProfile,
+    findEtalonBaseByIdOrName,
+    getConfiguredModelDbSettingsValue,
+    getDefaultModelDbSettingsValue,
+    loadEtalonBasesFromFile,
+    resolveEtalonBasesFilePath,
+    saveEtalonBasesToFile
+} from './etalonBases';
+import {
+    buildYamlHeaderFieldLine,
+    findScenarioHeaderFieldLines,
+    findTestSettingsFieldLines,
+    parseYamlSectionFieldValues
+} from './yamlHeaderFields';
+import { isScenarioYamlUri } from './yamlValidator';
 
 type ScenarioIndex = {
     names: Set<string>;
@@ -47,6 +66,19 @@ type ScenarioHeaderValues = {
 type PromptForSystemFunctionOptions = {
     forcePicker?: boolean;
     placeHolder?: string;
+};
+
+type SelectedEtalonBaseValues = {
+    baseName: string;
+    baseId: string;
+    userProfile: string;
+};
+
+type ResolvedEtalonBasesState = {
+    workspaceRootPath: string;
+    configuredPath: string;
+    resolvedPath: string;
+    bases: EtalonBaseDefinition[];
 };
 
 const SCENARIO_INDEX_CACHE_TTL_MS = 60_000;
@@ -110,7 +142,9 @@ function replaceAllLiteral(text: string, search: string, replacement: string): s
 
 function applyTemplateReplacements(templateContent: string, replacements: Record<string, string>): string {
     let result = templateContent;
-    for (const [placeholder, replacement] of Object.entries(replacements)) {
+    const orderedReplacements = Object.entries(replacements)
+        .sort(([leftPlaceholder], [rightPlaceholder]) => rightPlaceholder.length - leftPlaceholder.length);
+    for (const [placeholder, replacement] of orderedReplacements) {
         result = replaceAllLiteral(result, placeholder, replacement);
     }
     return result;
@@ -419,33 +453,305 @@ function generateUniqueSystemFunctionUid(systemFunctions: ConfiguredSystemFuncti
     return generatedUid;
 }
 
-function buildYamlHeaderFieldLine(existingLine: string, fieldName: string, value: string): string {
-    const indentMatch = existingLine.match(/^(\s*)/);
-    const indent = indentMatch ? indentMatch[1] : '';
-    return `${indent}${fieldName}: "${escapeYamlDoubleQuotedString(value)}"`;
+function getWorkspaceRootPathOrThrow(t: (message: string, ...args: string[]) => string): string {
+    const workspaceRootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRootPath) {
+        throw new Error(t('No workspace folder is open.'));
+    }
+
+    return workspaceRootPath;
 }
 
-async function getDefaultModelDbId(context: vscode.ExtensionContext): Promise<string> {
+async function loadResolvedEtalonBasesState(
+    context: vscode.ExtensionContext,
+    t: (message: string, ...args: string[]) => string
+): Promise<ResolvedEtalonBasesState> {
+    const workspaceRootPath = getWorkspaceRootPathOrThrow(t);
     const yamlParametersManager = YamlParametersManager.getInstance(context);
     const parameters = await yamlParametersManager.loadParameters();
-    const modelDBidParam = parameters.find(parameter => parameter.key === 'ModelDBid');
-    const configuredValue = typeof modelDBidParam?.value === 'string'
-        ? modelDBidParam.value.trim()
-        : '';
-    return configuredValue || 'EtalonDrive';
+    const configuredPath = getConfiguredModelDbSettingsValue(parameters);
+    const resolvedPath = resolveEtalonBasesFilePath(workspaceRootPath, configuredPath);
+    const bases = await loadEtalonBasesFromFile(resolvedPath);
+
+    return {
+        workspaceRootPath,
+        configuredPath,
+        resolvedPath,
+        bases
+    };
 }
 
-async function promptForModelDbId(
+async function promptForEtalonBaseName(
     t: (message: string, ...args: string[]) => string,
-    context: vscode.ExtensionContext
+    initialValue: string
 ): Promise<string | undefined> {
-    const defaultModelDbId = await getDefaultModelDbId(context);
     return promptForRequiredString(
-        t('Enter ModelDBid for test.yaml'),
-        defaultModelDbId,
-        t('ModelDBid cannot be empty'),
-        t('Will be written to ЭталоннаяБазаИмя and ИдентификаторБазы')
+        t('Enter etalon base name'),
+        initialValue,
+        t('Etalon base name cannot be empty')
     );
+}
+
+async function promptForEtalonBaseId(
+    t: (message: string, ...args: string[]) => string,
+    initialValue: string
+): Promise<string | undefined> {
+    return promptForRequiredString(
+        t('Enter etalon base identifier'),
+        initialValue,
+        t('Etalon base identifier cannot be empty')
+    );
+}
+
+async function promptForEtalonBaseUserProfile(
+    t: (message: string, ...args: string[]) => string,
+    initialValue: string
+): Promise<string | undefined> {
+    return promptForRequiredString(
+        t('Enter user profile for the test'),
+        initialValue,
+        t('User profile cannot be empty')
+    );
+}
+
+async function pickEtalonBase(
+    t: (message: string, ...args: string[]) => string,
+    bases: EtalonBaseDefinition[],
+    placeHolder: string,
+    preferredIdentifierOrName?: string
+): Promise<EtalonBaseDefinition | undefined> {
+    if (bases.length === 0) {
+        return undefined;
+    }
+
+    const normalizedPreferredValue = String(preferredIdentifierOrName ?? '').trim().toLocaleLowerCase();
+    const sortedBases = normalizedPreferredValue
+        ? [
+            ...bases.filter(base =>
+                base.databaseId.trim().toLocaleLowerCase() === normalizedPreferredValue
+                || base.name.trim().toLocaleLowerCase() === normalizedPreferredValue
+            ),
+            ...bases.filter(base =>
+                base.databaseId.trim().toLocaleLowerCase() !== normalizedPreferredValue
+                && base.name.trim().toLocaleLowerCase() !== normalizedPreferredValue
+            )
+        ]
+        : bases;
+
+    const pickedBase = await vscode.window.showQuickPick(
+        sortedBases.map(base => ({
+            label: base.name || base.databaseId,
+            description: base.databaseId,
+            detail: base.dtFilePath || undefined,
+            base
+        })),
+        {
+            title: t('Etalon base'),
+            placeHolder,
+            ignoreFocusOut: true
+        }
+    );
+
+    return pickedBase?.base;
+}
+
+async function pickEtalonBaseUserProfile(
+    t: (message: string, ...args: string[]) => string,
+    base: EtalonBaseDefinition,
+    defaultProfileName: string,
+    placeHolder: string
+): Promise<string | undefined> {
+    if (base.userProfiles.length === 0) {
+        return promptForEtalonBaseUserProfile(t, defaultProfileName);
+    }
+
+    const normalizedDefaultProfileName = defaultProfileName.trim().toLocaleLowerCase();
+    const sortedProfiles = [
+        ...base.userProfiles.filter(profile => profile.profileName.trim().toLocaleLowerCase() === normalizedDefaultProfileName),
+        ...base.userProfiles.filter(profile => profile.profileName.trim().toLocaleLowerCase() !== normalizedDefaultProfileName)
+    ];
+    const pickedProfile = await vscode.window.showQuickPick(
+        sortedProfiles.map(profile => ({
+            label: profile.profileName,
+            description: profile.login || undefined,
+            detail: profile.profileName.trim().toLocaleLowerCase() === normalizedDefaultProfileName
+                ? t('Default')
+                : undefined,
+            profile
+        })),
+        {
+            title: t('Test user profile'),
+            placeHolder,
+            ignoreFocusOut: true
+        }
+    );
+
+    if (pickedProfile) {
+        return pickedProfile.profile.profileName;
+    }
+
+    return undefined;
+}
+
+async function promptForSelectedEtalonBaseValues(
+    t: (message: string, ...args: string[]) => string,
+    context: vscode.ExtensionContext,
+    defaultUserProfile: string
+): Promise<SelectedEtalonBaseValues | undefined> {
+    let etalonBasesState = await loadResolvedEtalonBasesState(context, t);
+    while (true) {
+        if (etalonBasesState.bases.length > 0) {
+            const selectedBase = await pickEtalonBase(
+                t,
+                etalonBasesState.bases,
+                t('Select etalon base for test.yaml')
+            );
+            if (!selectedBase) {
+                return undefined;
+            }
+
+            const selectedProfileName = await pickEtalonBaseUserProfile(
+                t,
+                selectedBase,
+                defaultUserProfile,
+                t('Select user profile for etalon base "{0}"', selectedBase.name || selectedBase.databaseId)
+            );
+            if (selectedProfileName === undefined) {
+                return undefined;
+            }
+
+            return {
+                baseName: selectedBase.name || selectedBase.databaseId,
+                baseId: selectedBase.databaseId,
+                userProfile: selectedProfileName
+            };
+        }
+
+        const fallbackAction = await vscode.window.showQuickPick(
+            [
+                {
+                    label: t('Manage etalon bases'),
+                    detail: t('Create or import bases.yaml entries first.'),
+                    action: 'manage' as const
+                },
+                {
+                    label: t('Enter manually'),
+                    detail: t('Fill ЭталоннаяБазаИмя, ИдентификаторБазы and ПрофильПользователя manually.'),
+                    action: 'manual' as const
+                }
+            ],
+            {
+                title: t('Etalon bases'),
+                placeHolder: t('ModelDBSettings file "{0}" does not contain etalon bases yet.', etalonBasesState.configuredPath || getDefaultModelDbSettingsValue()),
+                ignoreFocusOut: true
+            }
+        );
+
+        if (!fallbackAction) {
+            return undefined;
+        }
+
+        if (fallbackAction.action === 'manage') {
+            await handleManageEtalonBases(context);
+            etalonBasesState = await loadResolvedEtalonBasesState(context, t);
+            continue;
+        }
+
+        const baseName = await promptForEtalonBaseName(t, 'EtalonDrive');
+        if (baseName === undefined) {
+            return undefined;
+        }
+
+        const baseId = await promptForEtalonBaseId(t, baseName);
+        if (baseId === undefined) {
+            return undefined;
+        }
+
+        const userProfile = await promptForEtalonBaseUserProfile(t, defaultUserProfile);
+        if (userProfile === undefined) {
+            return undefined;
+        }
+
+        return {
+            baseName,
+            baseId,
+            userProfile
+        };
+    }
+}
+
+async function promptForEtalonBaseChoice(
+    t: (message: string, ...args: string[]) => string,
+    context: vscode.ExtensionContext,
+    currentBaseName: string,
+    currentBaseId: string
+): Promise<Pick<SelectedEtalonBaseValues, 'baseName' | 'baseId'> | undefined> {
+    let etalonBasesState = await loadResolvedEtalonBasesState(context, t);
+    const preferredBaseKey = currentBaseId.trim() || currentBaseName.trim();
+
+    while (true) {
+        if (etalonBasesState.bases.length > 0) {
+            const selectedBase = await pickEtalonBase(
+                t,
+                etalonBasesState.bases,
+                t('Select etalon base for test.yaml'),
+                preferredBaseKey
+            );
+            if (!selectedBase) {
+                return undefined;
+            }
+
+            return {
+                baseName: selectedBase.name || selectedBase.databaseId,
+                baseId: selectedBase.databaseId
+            };
+        }
+
+        const fallbackAction = await vscode.window.showQuickPick(
+            [
+                {
+                    label: t('Manage etalon bases'),
+                    detail: t('Create or import bases.yaml entries first.'),
+                    action: 'manage' as const
+                },
+                {
+                    label: t('Enter manually'),
+                    detail: t('Fill ЭталоннаяБазаИмя and ИдентификаторБазы manually.'),
+                    action: 'manual' as const
+                }
+            ],
+            {
+                title: t('Etalon bases'),
+                placeHolder: t('ModelDBSettings file "{0}" does not contain etalon bases yet.', etalonBasesState.configuredPath || getDefaultModelDbSettingsValue()),
+                ignoreFocusOut: true
+            }
+        );
+
+        if (!fallbackAction) {
+            return undefined;
+        }
+
+        if (fallbackAction.action === 'manage') {
+            await handleManageEtalonBases(context);
+            etalonBasesState = await loadResolvedEtalonBasesState(context, t);
+            continue;
+        }
+
+        const baseName = await promptForEtalonBaseName(t, currentBaseName || 'EtalonDrive');
+        if (baseName === undefined) {
+            return undefined;
+        }
+
+        const baseId = await promptForEtalonBaseId(t, currentBaseId || baseName);
+        if (baseId === undefined) {
+            return undefined;
+        }
+
+        return {
+            baseName,
+            baseId
+        };
+    }
 }
 
 export async function handleChangeScenarioSystemFunctionFromEditor(context: vscode.ExtensionContext): Promise<void> {
@@ -497,6 +803,459 @@ export async function handleChangeScenarioSystemFunctionFromEditor(context: vsco
     if (!updated) {
         vscode.window.showWarningMessage(t('Failed to update scenario system function.'));
     }
+}
+
+function resolveMainScenarioUriFromTestSettingsDocument(document: vscode.TextDocument): vscode.Uri {
+    const testDirectory = path.dirname(document.uri.fsPath);
+    const scenarioDirectory = path.dirname(testDirectory);
+    return vscode.Uri.file(path.join(scenarioDirectory, 'scen.yaml'));
+}
+
+async function resolveSiblingScenarioUriFromTestSettingsDocument(
+    document: vscode.TextDocument
+): Promise<vscode.Uri | null> {
+    const testDirectory = path.dirname(document.uri.fsPath);
+    const scenarioDirectory = path.dirname(testDirectory);
+    const preferredCandidates = ['scen.yaml', 'main.yaml']
+        .map(fileName => vscode.Uri.file(path.join(scenarioDirectory, fileName)));
+
+    for (const candidateUri of preferredCandidates) {
+        if (await isScenarioYamlUri(candidateUri)) {
+            return candidateUri;
+        }
+    }
+
+    try {
+        const entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(scenarioDirectory));
+        for (const [entryName, entryType] of entries) {
+            if (entryType !== vscode.FileType.File || !entryName.toLowerCase().endsWith('.yaml')) {
+                continue;
+            }
+
+            const candidateUri = vscode.Uri.file(path.join(scenarioDirectory, entryName));
+            if (candidateUri.fsPath === document.uri.fsPath) {
+                continue;
+            }
+
+            if (await isScenarioYamlUri(candidateUri)) {
+                return candidateUri;
+            }
+        }
+    } catch {
+        return null;
+    }
+
+    return null;
+}
+
+async function selectScenarioForTestSettingsLink(
+    context: vscode.ExtensionContext,
+    t: (message: string, ...args: string[]) => string,
+    excludeUri?: vscode.Uri
+): Promise<{ uid: string; name: string; code: string; yamlFileUri: vscode.Uri } | undefined> {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+        vscode.window.showWarningMessage(t('No workspace folder is open.'));
+        return undefined;
+    }
+
+    const discoveredTests = await scanWorkspaceForTests(workspaceFolder.uri);
+    if (!discoveredTests || discoveredTests.size === 0) {
+        vscode.window.showWarningMessage(t('No scenarios found in workspace.'));
+        return undefined;
+    }
+
+    const items = Array.from(discoveredTests.values())
+        .filter(item => !excludeUri || item.yamlFileUri.fsPath !== excludeUri.fsPath)
+        .map(item => ({
+            label: item.name,
+            description: item.scenarioCode || item.uid || '',
+            detail: item.yamlFileUri.fsPath,
+            scenarioInfo: item
+        }))
+        .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }));
+
+    const pickedItem = await vscode.window.showQuickPick(items, {
+        title: t('Select scenario for test settings'),
+        placeHolder: t('Choose the scenario linked to this test settings file'),
+        ignoreFocusOut: true,
+        matchOnDescription: true,
+        matchOnDetail: true
+    });
+    if (!pickedItem) {
+        return undefined;
+    }
+
+    const scenarioInfo = pickedItem.scenarioInfo;
+    const parsedScenarioValues = parseYamlSectionFieldValues(
+        Buffer.from(await vscode.workspace.fs.readFile(scenarioInfo.yamlFileUri)).toString('utf-8'),
+        'ДанныеСценария',
+        ['UID', 'Имя', 'Код']
+    );
+    const uid = parsedScenarioValues.UID || scenarioInfo.uid || '';
+    const name = parsedScenarioValues.Имя || scenarioInfo.name || '';
+    const code = parsedScenarioValues.Код || scenarioInfo.scenarioCode || name;
+    if (!uid || !name) {
+        vscode.window.showWarningMessage(t('Selected scenario does not contain required UID/Имя fields.'));
+        return undefined;
+    }
+
+    return {
+        uid,
+        name,
+        code,
+        yamlFileUri: scenarioInfo.yamlFileUri
+    };
+}
+
+async function getActiveTestSettingsEditor(
+    context: vscode.ExtensionContext
+): Promise<{ t: (message: string, ...args: string[]) => string; editor: vscode.TextEditor; fieldLines: ReturnType<typeof findTestSettingsFieldLines>; }> {
+    const t = await getTranslator(context.extensionUri);
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        throw new Error(t('No active editor.'));
+    }
+
+    if (!isTestSettingsYamlFile(editor.document)) {
+        throw new Error(t('Open a test settings YAML file to use this command.'));
+    }
+
+    return {
+        t,
+        editor,
+        fieldLines: findTestSettingsFieldLines(editor.document)
+    };
+}
+
+async function applyTestSettingsFieldUpdates(
+    editor: vscode.TextEditor,
+    fieldLines: ReturnType<typeof findTestSettingsFieldLines>,
+    updates: Partial<Record<keyof ReturnType<typeof findTestSettingsFieldLines>, { fieldName: string; value: string }>>
+): Promise<boolean> {
+    return editor.edit(editBuilder => {
+        for (const [fieldKey, nextValue] of Object.entries(updates) as Array<[keyof typeof updates, { fieldName: string; value: string } | undefined]>) {
+            if (!nextValue) {
+                continue;
+            }
+
+            const lineIndex = fieldLines[fieldKey as keyof ReturnType<typeof findTestSettingsFieldLines>];
+            if (lineIndex === null || lineIndex === undefined) {
+                continue;
+            }
+
+            const line = editor.document.lineAt(lineIndex);
+            editBuilder.replace(
+                line.range,
+                buildYamlHeaderFieldLine(line.text, nextValue.fieldName, nextValue.value)
+            );
+        }
+    });
+}
+
+export async function handleChangeTestSettingsEtalonBaseFromEditor(context: vscode.ExtensionContext): Promise<void> {
+    let resolvedEditor: Awaited<ReturnType<typeof getActiveTestSettingsEditor>>;
+    try {
+        resolvedEditor = await getActiveTestSettingsEditor(context);
+    } catch (error) {
+        const t = await getTranslator(context.extensionUri);
+        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open test settings editor context.'));
+        return;
+    }
+
+    const { t, editor, fieldLines } = resolvedEditor;
+    if (fieldLines.etalonBaseNameLine === null || fieldLines.modelDbIdLine === null) {
+        vscode.window.showWarningMessage(t('Etalon base fields were not found in ДанныеТеста.'));
+        return;
+    }
+
+    const currentValues = parseYamlSectionFieldValues(
+        editor.document.getText(),
+        'ДанныеТеста',
+        ['ЭталоннаяБазаИмя', 'ИдентификаторБазы']
+    );
+    const selectedBase = await promptForEtalonBaseChoice(
+        t,
+        context,
+        currentValues.ЭталоннаяБазаИмя || '',
+        currentValues.ИдентификаторБазы || ''
+    );
+    if (!selectedBase) {
+        return;
+    }
+
+    const updated = await applyTestSettingsFieldUpdates(editor, fieldLines, {
+        etalonBaseNameLine: {
+            fieldName: 'ЭталоннаяБазаИмя',
+            value: selectedBase.baseName
+        },
+        modelDbIdLine: {
+            fieldName: 'ИдентификаторБазы',
+            value: selectedBase.baseId
+        }
+    });
+    if (!updated) {
+        vscode.window.showWarningMessage(t('Failed to update etalon base fields.'));
+    }
+}
+
+export async function handleChangeTestSettingsScenarioFromEditor(context: vscode.ExtensionContext): Promise<void> {
+    let resolvedEditor: Awaited<ReturnType<typeof getActiveTestSettingsEditor>>;
+    try {
+        resolvedEditor = await getActiveTestSettingsEditor(context);
+    } catch (error) {
+        const t = await getTranslator(context.extensionUri);
+        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open test settings editor context.'));
+        return;
+    }
+
+    const { t, editor, fieldLines } = resolvedEditor;
+    const siblingScenarioUri = await resolveSiblingScenarioUriFromTestSettingsDocument(editor.document);
+    const quickPickItems: Array<{
+        label: string;
+        detail: string;
+        action: 'rename' | 'relink' | 'sync';
+    }> = [];
+
+    if (siblingScenarioUri) {
+        quickPickItems.push(
+            {
+                label: t('Rename linked scenario'),
+                detail: siblingScenarioUri.fsPath,
+                action: 'rename'
+            },
+            {
+                label: t('Sync from linked scenario'),
+                detail: siblingScenarioUri.fsPath,
+                action: 'sync'
+            }
+        );
+    }
+
+    quickPickItems.push({
+        label: t('Link to another scenario'),
+        detail: t('Select another scenario in the workspace and update Код, UIDСценария, Имя, СценарийНаименование.'),
+        action: 'relink'
+    });
+
+    const pickedAction = await vscode.window.showQuickPick(quickPickItems, {
+        title: t('Change linked scenario'),
+        placeHolder: t('Choose how to update the scenario reference in this test settings file'),
+        ignoreFocusOut: true
+    });
+    if (!pickedAction) {
+        return;
+    }
+
+    if (pickedAction.action === 'rename') {
+        if (!siblingScenarioUri) {
+            vscode.window.showWarningMessage(t('Sibling scenario YAML was not found.'));
+            return;
+        }
+
+        const scenarioDocument = await vscode.workspace.openTextDocument(siblingScenarioUri);
+        await vscode.window.showTextDocument(scenarioDocument, { preview: false });
+        await vscode.commands.executeCommand('kotTestToolkit.renameScenarioFromEditor');
+        return;
+    }
+
+    if (pickedAction.action === 'sync') {
+        await handleSyncTestSettingsFromScenario(context);
+        return;
+    }
+
+    const selectedScenario = await selectScenarioForTestSettingsLink(context, t, siblingScenarioUri || undefined);
+    if (!selectedScenario) {
+        return;
+    }
+
+    const updated = await applyTestSettingsFieldUpdates(editor, fieldLines, {
+        codeLine: {
+            fieldName: 'Код',
+            value: selectedScenario.code
+        },
+        nameLine: {
+            fieldName: 'Имя',
+            value: selectedScenario.name
+        },
+        scenarioUidLine: {
+            fieldName: 'UIDСценария',
+            value: selectedScenario.uid
+        },
+        scenarioNameLine: {
+            fieldName: 'СценарийНаименование',
+            value: selectedScenario.name
+        }
+    });
+    if (!updated) {
+        vscode.window.showWarningMessage(t('Failed to update linked scenario fields in test settings.'));
+        return;
+    }
+
+    vscode.window.showInformationMessage(t('Test settings linked to scenario "{0}".', selectedScenario.name));
+}
+
+export async function handleChangeTestSettingsUserProfileFromEditor(context: vscode.ExtensionContext): Promise<void> {
+    let resolvedEditor: Awaited<ReturnType<typeof getActiveTestSettingsEditor>>;
+    try {
+        resolvedEditor = await getActiveTestSettingsEditor(context);
+    } catch (error) {
+        const t = await getTranslator(context.extensionUri);
+        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open test settings editor context.'));
+        return;
+    }
+
+    const { t, editor, fieldLines } = resolvedEditor;
+    if (fieldLines.userProfileLine === null) {
+        vscode.window.showWarningMessage(t('ПрофильПользователя was not found in ДанныеТеста.'));
+        return;
+    }
+
+    const currentValues = parseYamlSectionFieldValues(
+        editor.document.getText(),
+        'ДанныеТеста',
+        ['ЭталоннаяБазаИмя', 'ИдентификаторБазы', 'ПрофильПользователя']
+    );
+    const etalonBasesState = await loadResolvedEtalonBasesState(context, t);
+    let selectedBase = findEtalonBaseByIdOrName(
+        etalonBasesState.bases,
+        currentValues.ИдентификаторБазы || currentValues.ЭталоннаяБазаИмя || ''
+    );
+    let selectedBaseValues: Pick<SelectedEtalonBaseValues, 'baseName' | 'baseId'> | undefined;
+    if (!selectedBase) {
+        selectedBaseValues = await promptForEtalonBaseChoice(
+            t,
+            context,
+            currentValues.ЭталоннаяБазаИмя || '',
+            currentValues.ИдентификаторБазы || ''
+        );
+        if (!selectedBaseValues) {
+            return;
+        }
+        selectedBase = findEtalonBaseByIdOrName(
+            (await loadResolvedEtalonBasesState(context, t)).bases,
+            selectedBaseValues.baseId || selectedBaseValues.baseName
+        );
+    }
+
+    const config = vscode.workspace.getConfiguration('kotTestToolkit');
+    const defaultProfile = currentValues.ПрофильПользователя
+        || getNewScenarioDefaults(config).userProfile;
+
+    const nextProfileName = selectedBase
+        ? await pickEtalonBaseUserProfile(
+            t,
+            selectedBase,
+            defaultProfile,
+            t('Select user profile for test settings')
+        )
+        : await promptForEtalonBaseUserProfile(t, defaultProfile);
+    if (nextProfileName === undefined) {
+        return;
+    }
+
+    const updated = await applyTestSettingsFieldUpdates(editor, fieldLines, {
+        etalonBaseNameLine: selectedBaseValues
+            ? {
+                fieldName: 'ЭталоннаяБазаИмя',
+                value: selectedBaseValues.baseName
+            }
+            : undefined,
+        modelDbIdLine: selectedBaseValues
+            ? {
+                fieldName: 'ИдентификаторБазы',
+                value: selectedBaseValues.baseId
+            }
+            : undefined,
+        userProfileLine: {
+            fieldName: 'ПрофильПользователя',
+            value: nextProfileName
+        }
+    });
+    if (!updated) {
+        vscode.window.showWarningMessage(t('Failed to update test user profile.'));
+    }
+}
+
+export async function handleSyncTestSettingsFromScenario(context: vscode.ExtensionContext): Promise<void> {
+    let resolvedEditor: Awaited<ReturnType<typeof getActiveTestSettingsEditor>>;
+    try {
+        resolvedEditor = await getActiveTestSettingsEditor(context);
+    } catch (error) {
+        const t = await getTranslator(context.extensionUri);
+        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open test settings editor context.'));
+        return;
+    }
+
+    const { t, editor, fieldLines } = resolvedEditor;
+    const fallbackScenarioUri = resolveMainScenarioUriFromTestSettingsDocument(editor.document);
+    const scenarioUri = await resolveSiblingScenarioUriFromTestSettingsDocument(editor.document) || fallbackScenarioUri;
+    let scenarioText: string;
+
+    try {
+        scenarioText = Buffer.from(await vscode.workspace.fs.readFile(scenarioUri)).toString('utf-8');
+    } catch (error) {
+        vscode.window.showErrorMessage(t('Failed to read sibling scenario YAML near test settings: {0}', String(error)));
+        return;
+    }
+
+    const scenarioValues = parseYamlSectionFieldValues(
+        scenarioText,
+        'ДанныеСценария',
+        ['UID', 'Имя', 'Код']
+    );
+    const currentTestSettingsValues = parseYamlSectionFieldValues(
+        editor.document.getText(),
+        'ДанныеТеста',
+        ['Код', 'Имя', 'UIDСценария', 'СценарийНаименование']
+    );
+    const nextCode = scenarioValues.Код || scenarioValues.Имя;
+    const nextName = scenarioValues.Имя;
+    const nextUid = scenarioValues.UID;
+    if (!nextUid && !nextName && !nextCode) {
+        vscode.window.showWarningMessage(t('No synchronizable fields were found in the sibling scenario YAML.'));
+        return;
+    }
+
+    const pendingUpdates: Partial<Record<keyof ReturnType<typeof findTestSettingsFieldLines>, { fieldName: string; value: string }>> = {};
+    if (nextCode && currentTestSettingsValues.Код !== nextCode) {
+        pendingUpdates.codeLine = {
+            fieldName: 'Код',
+            value: nextCode
+        };
+    }
+    if (nextName && currentTestSettingsValues.Имя !== nextName) {
+        pendingUpdates.nameLine = {
+            fieldName: 'Имя',
+            value: nextName
+        };
+    }
+    if (nextUid && currentTestSettingsValues.UIDСценария !== nextUid) {
+        pendingUpdates.scenarioUidLine = {
+            fieldName: 'UIDСценария',
+            value: nextUid
+        };
+    }
+    if (nextName && currentTestSettingsValues.СценарийНаименование !== nextName) {
+        pendingUpdates.scenarioNameLine = {
+            fieldName: 'СценарийНаименование',
+            value: nextName
+        };
+    }
+
+    if (Object.keys(pendingUpdates).length === 0) {
+        vscode.window.showInformationMessage(t('Test settings are already synchronized with the sibling scenario YAML.'));
+        return;
+    }
+
+    const updated = await applyTestSettingsFieldUpdates(editor, fieldLines, pendingUpdates);
+
+    if (!updated) {
+        vscode.window.showWarningMessage(t('Failed to synchronize test settings from the sibling scenario YAML.'));
+        return;
+    }
+
+    vscode.window.showInformationMessage(t('Test settings synchronized from the sibling scenario YAML.'));
 }
 
 export async function handleManageSystemFunctions(context: vscode.ExtensionContext): Promise<void> {
@@ -641,6 +1400,456 @@ export async function handleManageSystemFunctions(context: vscode.ExtensionConte
     }
 }
 
+async function promptForEtalonBaseDtPath(
+    t: (message: string, ...args: string[]) => string,
+    workspaceRootPath: string,
+    initialValue: string
+): Promise<string | undefined> {
+    const dtPathMode = await vscode.window.showQuickPick(
+        [
+            {
+                label: t('Choose .dt file'),
+                detail: t('Pick a DT file from the file system.'),
+                action: 'pickFile' as const
+            },
+            {
+                label: t('Enter path manually'),
+                detail: initialValue || t('Type a relative or absolute path to the DT file.'),
+                action: 'manual' as const
+            },
+            {
+                label: t('Clear DT path'),
+                detail: t('Keep the etalon base without a default DT file.'),
+                action: 'clear' as const
+            }
+        ],
+        {
+            title: t('Etalon base DT file'),
+            placeHolder: t('Choose how to set ПутьКФайлуВыгрузки'),
+            ignoreFocusOut: true
+        }
+    );
+
+    if (!dtPathMode) {
+        return undefined;
+    }
+
+    if (dtPathMode.action === 'clear') {
+        return '';
+    }
+
+    if (dtPathMode.action === 'manual') {
+        const manualValue = await vscode.window.showInputBox({
+            prompt: t('Enter DT file path'),
+            value: initialValue,
+            ignoreFocusOut: true
+        });
+        return manualValue === undefined ? undefined : manualValue.trim();
+    }
+
+    const defaultUri = initialValue.trim() && canUseEtalonBaseDtFileAsDefaultUri(initialValue.trim())
+        ? vscode.Uri.file(initialValue.trim())
+        : vscode.Uri.file(workspaceRootPath);
+    const pickedFile = await vscode.window.showOpenDialog({
+        canSelectFiles: true,
+        canSelectFolders: false,
+        canSelectMany: false,
+        title: t('Choose DT file'),
+        openLabel: t('Use this DT file'),
+        filters: {
+            [t('1C DT files (*.dt)')]: ['dt']
+        },
+        defaultUri
+    });
+    if (!pickedFile || pickedFile.length === 0) {
+        return undefined;
+    }
+
+    return pickedFile[0].fsPath;
+}
+
+async function promptForEtalonBaseProfileValues(
+    t: (message: string, ...args: string[]) => string,
+    initialProfile?: Partial<EtalonBaseUserProfile>
+): Promise<EtalonBaseUserProfile | undefined> {
+    const profileName = await promptForRequiredString(
+        t('Enter profile name'),
+        initialProfile?.profileName || '',
+        t('Profile name cannot be empty')
+    );
+    if (profileName === undefined) {
+        return undefined;
+    }
+
+    const login = await vscode.window.showInputBox({
+        prompt: t('Enter login for profile "{0}"', profileName),
+        value: initialProfile?.login || profileName,
+        ignoreFocusOut: true
+    });
+    if (login === undefined) {
+        return undefined;
+    }
+
+    const password = await vscode.window.showInputBox({
+        prompt: t('Enter password for profile "{0}"', profileName),
+        value: initialProfile?.password || '',
+        password: true,
+        ignoreFocusOut: true
+    });
+    if (password === undefined) {
+        return undefined;
+    }
+
+    return {
+        profileName,
+        login: login.trim(),
+        password
+    };
+}
+
+async function manageEtalonBaseProfiles(
+    t: (message: string, ...args: string[]) => string,
+    base: EtalonBaseDefinition
+): Promise<EtalonBaseDefinition | undefined> {
+    let nextBase = {
+        ...base,
+        userProfiles: [...base.userProfiles]
+    };
+
+    while (true) {
+        const pickedItem = await vscode.window.showQuickPick(
+            [
+                ...nextBase.userProfiles.map(profile => ({
+                    label: profile.profileName,
+                    description: profile.login || undefined,
+                    detail: profile.password ? t('Password is set') : t('Password is empty'),
+                    kind: 'profile' as const,
+                    profileName: profile.profileName
+                })),
+                {
+                    label: t('Add user profile'),
+                    detail: t('Create a new profile for this etalon base.'),
+                    kind: 'add' as const
+                }
+            ],
+            {
+                title: t('User profiles for "{0}"', base.name || base.databaseId),
+                placeHolder: t('Choose a profile to edit or add a new one'),
+                ignoreFocusOut: true
+            }
+        );
+
+        if (!pickedItem) {
+            return nextBase;
+        }
+
+        if (pickedItem.kind === 'add') {
+            const newProfile = await promptForEtalonBaseProfileValues(t);
+            if (!newProfile) {
+                continue;
+            }
+
+            nextBase = {
+                ...nextBase,
+                userProfiles: [...nextBase.userProfiles, newProfile]
+            };
+            continue;
+        }
+
+        const currentIndex = nextBase.userProfiles.findIndex(profile => profile.profileName === pickedItem.profileName);
+        if (currentIndex === -1) {
+            continue;
+        }
+
+        const currentProfile = nextBase.userProfiles[currentIndex];
+        const action = await vscode.window.showQuickPick(
+            [
+                {
+                    label: t('Edit profile'),
+                    detail: t('Change profile name, login and password.'),
+                    action: 'edit' as const
+                },
+                {
+                    label: t('Delete profile'),
+                    detail: t('Remove this profile from the etalon base.'),
+                    action: 'delete' as const
+                }
+            ],
+            {
+                title: t('User profile "{0}"', currentProfile.profileName),
+                ignoreFocusOut: true
+            }
+        );
+
+        if (!action) {
+            continue;
+        }
+
+        if (action.action === 'edit') {
+            const updatedProfile = await promptForEtalonBaseProfileValues(t, currentProfile);
+            if (!updatedProfile) {
+                continue;
+            }
+
+            nextBase = {
+                ...nextBase,
+                userProfiles: nextBase.userProfiles.map((profile, index) =>
+                    index === currentIndex
+                        ? updatedProfile
+                        : profile
+                )
+            };
+            continue;
+        }
+
+        nextBase = {
+            ...nextBase,
+            userProfiles: nextBase.userProfiles.filter((_, index) => index !== currentIndex)
+        };
+    }
+}
+
+async function promptForEtalonBaseValues(
+    t: (message: string, ...args: string[]) => string,
+    workspaceRootPath: string,
+    initialBase?: Partial<EtalonBaseDefinition>
+): Promise<EtalonBaseDefinition | undefined> {
+    const name = await promptForEtalonBaseName(t, initialBase?.name || 'EtalonDrive');
+    if (name === undefined) {
+        return undefined;
+    }
+
+    const databaseId = await promptForEtalonBaseId(t, initialBase?.databaseId || name);
+    if (databaseId === undefined) {
+        return undefined;
+    }
+
+    const dtFilePath = await promptForEtalonBaseDtPath(
+        t,
+        workspaceRootPath,
+        initialBase?.dtFilePath || ''
+    );
+    if (dtFilePath === undefined) {
+        return undefined;
+    }
+
+    return {
+        name,
+        databaseId,
+        dtFilePath,
+        userProfiles: initialBase?.userProfiles ? [...initialBase.userProfiles] : []
+    };
+}
+
+async function openEtalonBasesDocument(filePath: string): Promise<void> {
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+    await vscode.window.showTextDocument(document, { preview: false });
+}
+
+export async function handleManageEtalonBases(context: vscode.ExtensionContext): Promise<void> {
+    const t = await getTranslator(context.extensionUri);
+    let etalonBasesState = await loadResolvedEtalonBasesState(context, t);
+
+    while (true) {
+        const pickedItem = await vscode.window.showQuickPick(
+            [
+                ...etalonBasesState.bases.map(base => ({
+                    label: base.name || base.databaseId,
+                    description: base.databaseId,
+                    detail: base.dtFilePath
+                        ? t('DT: {0} · Profiles: {1}', base.dtFilePath, String(base.userProfiles.length))
+                        : t('Profiles: {0}', String(base.userProfiles.length)),
+                    kind: 'base' as const,
+                    databaseId: base.databaseId
+                })),
+                {
+                    label: t('Add etalon base'),
+                    detail: t('Create a new etalon base entry in bases.yaml.'),
+                    kind: 'add' as const
+                },
+                {
+                    label: t('Import bases.yaml from file'),
+                    detail: t('Load etalon bases from an external YAML file into the current ModelDBSettings path.'),
+                    kind: 'import' as const
+                },
+                {
+                    label: t('Export bases.yaml to file'),
+                    detail: t('Save the current etalon bases to an external YAML file.'),
+                    kind: 'export' as const
+                },
+                {
+                    label: t('Open current bases.yaml'),
+                    detail: etalonBasesState.configuredPath || getDefaultModelDbSettingsValue(),
+                    kind: 'openCurrent' as const
+                }
+            ],
+            {
+                title: t('Etalon bases'),
+                placeHolder: t('ModelDBSettings: {0}', etalonBasesState.configuredPath || getDefaultModelDbSettingsValue()),
+                ignoreFocusOut: true
+            }
+        );
+
+        if (!pickedItem) {
+            return;
+        }
+
+        if (pickedItem.kind === 'add') {
+            const nextBase = await promptForEtalonBaseValues(t, etalonBasesState.workspaceRootPath);
+            if (!nextBase) {
+                continue;
+            }
+
+            const managedBase = await manageEtalonBaseProfiles(t, nextBase);
+            if (!managedBase) {
+                continue;
+            }
+
+            etalonBasesState = {
+                ...etalonBasesState,
+                bases: [...etalonBasesState.bases, managedBase]
+            };
+            await saveEtalonBasesToFile(etalonBasesState.resolvedPath, etalonBasesState.bases);
+            continue;
+        }
+
+        if (pickedItem.kind === 'import') {
+            const selectedFile = await vscode.window.showOpenDialog({
+                canSelectFiles: true,
+                canSelectFolders: false,
+                canSelectMany: false,
+                title: t('Import bases.yaml'),
+                openLabel: t('Import'),
+                filters: {
+                    [t('YAML files (*.yaml)')]: ['yaml', 'yml']
+                }
+            });
+            if (!selectedFile || selectedFile.length === 0) {
+                continue;
+            }
+
+            const importedBases = await loadEtalonBasesFromFile(selectedFile[0].fsPath);
+            etalonBasesState = {
+                ...etalonBasesState,
+                bases: importedBases
+            };
+            await saveEtalonBasesToFile(etalonBasesState.resolvedPath, etalonBasesState.bases);
+            vscode.window.showInformationMessage(
+                t('Imported {0} etalon bases into {1}.', String(importedBases.length), etalonBasesState.configuredPath || getDefaultModelDbSettingsValue())
+            );
+            continue;
+        }
+
+        if (pickedItem.kind === 'export') {
+            const selectedTarget = await vscode.window.showSaveDialog({
+                title: t('Export bases.yaml'),
+                saveLabel: t('Export'),
+                defaultUri: vscode.Uri.file(path.join(etalonBasesState.workspaceRootPath, 'bases.yaml')),
+                filters: {
+                    [t('YAML files (*.yaml)')]: ['yaml']
+                }
+            });
+            if (!selectedTarget) {
+                continue;
+            }
+
+            await saveEtalonBasesToFile(selectedTarget.fsPath, etalonBasesState.bases);
+            vscode.window.showInformationMessage(t('Exported etalon bases to {0}.', selectedTarget.fsPath));
+            continue;
+        }
+
+        if (pickedItem.kind === 'openCurrent') {
+            await saveEtalonBasesToFile(etalonBasesState.resolvedPath, etalonBasesState.bases);
+            await openEtalonBasesDocument(etalonBasesState.resolvedPath);
+            continue;
+        }
+
+        const currentBaseIndex = etalonBasesState.bases.findIndex(base => base.databaseId === pickedItem.databaseId);
+        if (currentBaseIndex === -1) {
+            continue;
+        }
+
+        const currentBase = etalonBasesState.bases[currentBaseIndex];
+        const action = await vscode.window.showQuickPick(
+            [
+                {
+                    label: t('Edit base'),
+                    detail: t('Change name, identifier and DT path.'),
+                    action: 'edit' as const
+                },
+                {
+                    label: t('Manage user profiles'),
+                    detail: t('Add, edit or delete user profiles for this etalon base.'),
+                    action: 'profiles' as const
+                },
+                {
+                    label: t('Delete'),
+                    detail: t('Remove this etalon base from bases.yaml.'),
+                    action: 'delete' as const
+                }
+            ],
+            {
+                title: t('Etalon base "{0}"', currentBase.name || currentBase.databaseId),
+                ignoreFocusOut: true
+            }
+        );
+
+        if (!action) {
+            continue;
+        }
+
+        if (action.action === 'edit') {
+            const updatedBase = await promptForEtalonBaseValues(t, etalonBasesState.workspaceRootPath, currentBase);
+            if (!updatedBase) {
+                continue;
+            }
+
+            const updatedProfiles = await manageEtalonBaseProfiles(t, {
+                ...updatedBase,
+                userProfiles: [...currentBase.userProfiles]
+            });
+            if (!updatedProfiles) {
+                continue;
+            }
+
+            etalonBasesState = {
+                ...etalonBasesState,
+                bases: etalonBasesState.bases.map((base, index) =>
+                    index === currentBaseIndex
+                        ? updatedProfiles
+                        : base
+                )
+            };
+            await saveEtalonBasesToFile(etalonBasesState.resolvedPath, etalonBasesState.bases);
+            continue;
+        }
+
+        if (action.action === 'profiles') {
+            const updatedBase = await manageEtalonBaseProfiles(t, currentBase);
+            if (!updatedBase) {
+                continue;
+            }
+
+            etalonBasesState = {
+                ...etalonBasesState,
+                bases: etalonBasesState.bases.map((base, index) =>
+                    index === currentBaseIndex
+                        ? updatedBase
+                        : base
+                )
+            };
+            await saveEtalonBasesToFile(etalonBasesState.resolvedPath, etalonBasesState.bases);
+            continue;
+        }
+
+        etalonBasesState = {
+            ...etalonBasesState,
+            bases: etalonBasesState.bases.filter((_, index) => index !== currentBaseIndex)
+        };
+        await saveEtalonBasesToFile(etalonBasesState.resolvedPath, etalonBasesState.bases);
+    }
+}
+
 function createScenarioHeaderValues(
     defaults: NewScenarioDefaults,
     systemFunction: ConfiguredSystemFunction,
@@ -776,6 +1985,20 @@ async function isExistingDirectory(uri: vscode.Uri): Promise<boolean> {
     }
 }
 
+function resolveConfiguredYamlSourceDirectoryUri(
+    workspaceRootUri: vscode.Uri,
+    configuredYamlSourceDirectory: string
+): vscode.Uri {
+    const trimmedPath = configuredYamlSourceDirectory.trim();
+    if (!trimmedPath) {
+        return workspaceRootUri;
+    }
+
+    return path.isAbsolute(trimmedPath)
+        ? vscode.Uri.file(trimmedPath)
+        : vscode.Uri.joinPath(workspaceRootUri, trimmedPath);
+}
+
 async function getDefaultMainScenarioDirectory(
     config: vscode.WorkspaceConfiguration
 ): Promise<vscode.Uri | undefined> {
@@ -784,8 +2007,8 @@ async function getDefaultMainScenarioDirectory(
         return undefined;
     }
 
-    const configuredYamlSourceDirectory = config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml';
-    const yamlSourceDirectoryUri = vscode.Uri.joinPath(workspaceRootUri, configuredYamlSourceDirectory);
+    const configuredYamlSourceDirectory = getScenarioScanRootPath();
+    const yamlSourceDirectoryUri = resolveConfiguredYamlSourceDirectoryUri(workspaceRootUri, configuredYamlSourceDirectory);
     const candidateDirectories = [
         vscode.Uri.joinPath(yamlSourceDirectoryUri, 'Drive', 'Parent scenarios'),
         vscode.Uri.joinPath(yamlSourceDirectoryUri, 'Parent scenarios'),
@@ -1023,9 +2246,9 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
     if (workspaceFolders?.length) { // Проверяем, что воркспейс открыт
         const workspaceRootUri = workspaceFolders[0].uri;
         // Путь по умолчанию из настроек
-        const defaultSubPath = config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml';
+        const defaultSubPath = getScenarioScanRootPath();
         try {
-            defaultDialogUri = vscode.Uri.joinPath(workspaceRootUri, defaultSubPath);
+            defaultDialogUri = resolveConfiguredYamlSourceDirectoryUri(workspaceRootUri, defaultSubPath);
             // console.log(`[Cmd:createNestedScenario] Default dialog path set to: ${defaultDialogUri.fsPath}`);
         } catch (error) {
             console.error(`[Cmd:createNestedScenario] Error constructing default path URI: ${error}`);
@@ -1216,7 +2439,7 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
         return;
     }
 
-    const scenarioHeaderValues = await promptForScenarioHeaderValues(
+    let scenarioHeaderValues = await promptForScenarioHeaderValues(
         t,
         newScenarioDefaults,
         selectedSystemFunction,
@@ -1228,11 +2451,19 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
         return;
     }
 
-    const modelDBid = await promptForModelDbId(t, context);
-    if (modelDBid === undefined) {
-        console.log("[Cmd:createMainScenario] Cancelled at ModelDBid prompt.");
+    const selectedEtalonBaseValues = await promptForSelectedEtalonBaseValues(
+        t,
+        context,
+        scenarioHeaderValues.userProfile
+    );
+    if (!selectedEtalonBaseValues) {
+        console.log("[Cmd:createMainScenario] Cancelled at etalon base prompt.");
         return;
     }
+    scenarioHeaderValues = {
+        ...scenarioHeaderValues,
+        userProfile: selectedEtalonBaseValues.userProfile
+    };
 
     // 4. Подготовка путей и UID
     const mainUid = uuidv4();
@@ -1261,11 +2492,12 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
             Name_Placeholder: escapeYamlDoubleQuotedString(trimmedName),
             UID_Placeholder: escapeYamlDoubleQuotedString(mainUid),
             Random_UID: escapeYamlDoubleQuotedString(testRandomUid),
-            ModelDBib_Placeholder: escapeYamlDoubleQuotedString(`${modelDBid}`),
+            ModelDBName_Placeholder: escapeYamlDoubleQuotedString(selectedEtalonBaseValues.baseName),
+            ModelDBId_Placeholder: escapeYamlDoubleQuotedString(selectedEtalonBaseValues.baseId),
             UserProfile_Placeholder: escapeYamlDoubleQuotedString(scenarioHeaderValues.userProfile)
         });
         await vscode.workspace.fs.writeFile(testTargetFileUri, Buffer.from(testFinalContent, 'utf-8'));
-        console.log(`[Cmd:createMainScenario] Created test file: ${testTargetFileUri.fsPath} with ModelDBid: ${modelDBid}`);
+        console.log(`[Cmd:createMainScenario] Created test file: ${testTargetFileUri.fsPath} with etalon base: ${selectedEtalonBaseValues.baseId}`);
 
 
         // --- Создаем основной файл сценария ---

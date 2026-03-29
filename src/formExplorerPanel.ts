@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as cp from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
@@ -10,14 +11,27 @@ import {
 import { getFormExplorerGeneratedArtifactsDirectory, getFormExplorerSnapshotPath } from './formExplorerPaths';
 import { getTranslator } from './localization';
 import { enrichFormExplorerSnapshot } from './formExplorerEnrichment';
-import { resolveLauncherInfobaseNameByPath } from './infobasePicker';
+import {
+    getManagedInfobasePreferredPlatformClientExePath,
+    setManagedInfobasePreferredPlatformClientExePath
+} from './infobaseManager';
 import {
     FormExplorerSuggestedStep,
     suggestFormExplorerSteps
 } from './formExplorerStepSuggestions';
 import { getConfiguredScenarioLanguage, ScenarioLanguage } from './gherkinLanguage';
 import type { StartFormExplorerInfobaseResult } from './formExplorerExtensionGenerator';
-import { normalizeInfobaseConnectionIdentity, normalizeInfobaseReference } from './oneCInfobaseConnection';
+import type {
+    BuildFormExplorerExtensionCommandOptions,
+    InstallFormExplorerExtensionCommandOptions,
+    StartFormExplorerInfobaseCommandOptions
+} from './formExplorerExtensionGenerator';
+import { normalizeInfobaseReference } from './oneCInfobaseConnection';
+import {
+    type ConfiguredOneCPlatform,
+    ensureOneCPlatformsCatalogInitialized,
+    normalizeOneCClientExePath
+} from './oneCPlatform';
 
 type AdapterMode = 'auto' | 'manual' | 'unknown';
 type PendingOperationKind = 'refresh' | 'table' | 'locator' | 'start';
@@ -28,21 +42,14 @@ interface PendingOperationState {
     baselineFingerprint: string | null;
 }
 
-interface FormExplorerSnapshotCandidate {
-    path: string;
-    mtime: string | null;
-    exists: boolean;
-    infobase: string | null;
-    infobaseDisplayName: string | null;
-}
-
 interface FormExplorerWebviewState {
     snapshotPath: string | null;
-    usingCustomSnapshotPath: boolean;
     snapshotExists: boolean;
     snapshotMtime: string | null;
-    snapshotCandidates: FormExplorerSnapshotCandidate[];
-    selectedSnapshotPath: string | null;
+    platforms: ConfiguredOneCPlatform[];
+    launchInfobasePath: string | null;
+    launchPlatformClientExePath: string | null;
+    startedInfobaseClientRunning: boolean;
     adapterMode: AdapterMode;
     adapterModeStatePath: string | null;
     lastError: string | null;
@@ -58,6 +65,7 @@ interface FormExplorerWebviewState {
 interface FormExplorerWebviewMessage {
     command?: string;
     value?: string;
+    platformClientExePath?: string | null;
     source?: FormExplorerSourceLocation;
 }
 
@@ -80,6 +88,7 @@ function escapeHtml(text: string): string {
 }
 
 const DEFAULT_ADAPTER_SETTINGS_FILE_NAME = 'adapter-settings.json';
+const DEFAULT_ADAPTER_RUNTIME_STATE_FILE_NAME = 'adapter-runtime-state.json';
 const DEFAULT_ADAPTER_MODE_FILE_NAME = 'adapter-mode.txt';
 const DEFAULT_ADAPTER_MODE_REQUEST_FILE_NAME = 'adapter-mode-request.txt';
 const DEFAULT_ADAPTER_REQUEST_CONTEXT_FILE_NAME = 'adapter-request-context.json';
@@ -91,21 +100,13 @@ export class FormExplorerPanel implements vscode.Disposable {
     private readonly disposables: vscode.Disposable[] = [];
     private panelDisposables: vscode.Disposable[] = [];
     private refreshTimer: NodeJS.Timeout | null = null;
-    private customSnapshotPath: string | null = null;
     private latestSnapshot: FormExplorerSnapshot | null = null;
     private lastError: string | null = null;
     private snapshotExists = false;
     private snapshotMtime: string | null = null;
-    private snapshotCandidates: FormExplorerSnapshotCandidate[] = [];
-    private readonly snapshotCandidateMetadataCache = new Map<string, {
-        fingerprint: string;
-        infobase: string | null;
-        infobaseDisplayName: string | null;
-    }>();
-    private selectedSnapshotPath: string | null = null;
-    private pendingSnapshotInfobasePath: string | null = null;
     private adapterMode: AdapterMode = 'unknown';
     private adapterModeStatePath: string | null = null;
+    private resolvedSnapshotPath: string | null = null;
     private lastSnapshotFingerprint: string | null = null;
     private selectedElementPath: string | null = null;
     private suggestedSteps: FormExplorerSuggestedStep[] = [];
@@ -113,22 +114,30 @@ export class FormExplorerPanel implements vscode.Disposable {
     private suggestedStepsError: string | null = null;
     private lastSuggestedStepsFingerprint: string | null = null;
     private pendingOperation: PendingOperationState | null = null;
+    private availablePlatforms: ConfiguredOneCPlatform[] = [];
+    private preferredStartInfobasePath: string | null = null;
+    private preferredStartOneCClientExePath: string | null = null;
+    private startedInfobaseProcessId: number | null = null;
 
     constructor(private readonly context: vscode.ExtensionContext) {
         this.disposables.push(
-            vscode.workspace.onDidChangeConfiguration(event => {
+            vscode.workspace.onDidChangeConfiguration(async event => {
                 const affectsSnapshotPath = event.affectsConfiguration('kotTestToolkit.formExplorer.snapshotPath');
                 const affectsRefreshSeconds = event.affectsConfiguration('kotTestToolkit.formExplorer.autoRefreshSeconds');
                 const affectsScenarioLanguage = event.affectsConfiguration('kotTestToolkit.editor.newScenarioLanguage');
-                if (affectsSnapshotPath || affectsRefreshSeconds || affectsScenarioLanguage) {
+                const affectsPlatformCatalog = event.affectsConfiguration('kotTestToolkit.platforms.catalog');
+                if (affectsSnapshotPath || affectsRefreshSeconds || affectsScenarioLanguage || affectsPlatformCatalog) {
                     if (affectsSnapshotPath || affectsRefreshSeconds) {
                         this.restartRefreshTimer();
                     }
                     if (affectsScenarioLanguage) {
                         this.lastSuggestedStepsFingerprint = null;
                     }
+                    if (affectsPlatformCatalog) {
+                        await this.refreshAvailablePlatforms();
+                    }
                     this.lastSnapshotFingerprint = null;
-                    void this.refreshSnapshot(true);
+                    await this.refreshSnapshot(true);
                 }
             })
         );
@@ -136,6 +145,7 @@ export class FormExplorerPanel implements vscode.Disposable {
 
     public async open(): Promise<void> {
         const t = await getTranslator(this.context.extensionUri);
+        await this.refreshAvailablePlatforms();
         if (this.panel) {
             this.panel.title = t('KOT Form Explorer');
             this.panel.reveal(vscode.ViewColumn.One);
@@ -185,9 +195,20 @@ export class FormExplorerPanel implements vscode.Disposable {
         await this.refreshSnapshot(true);
     }
 
-    public async openAndStart(preferredInfobasePath?: string): Promise<void> {
+    public async openAndStart(options?: string | StartFormExplorerInfobaseCommandOptions): Promise<void> {
+        const commandOptions = typeof options === 'string'
+            ? { preferredInfobasePath: options }
+            : (options || {});
+        this.preferredStartInfobasePath = typeof commandOptions.preferredInfobasePath === 'string' && commandOptions.preferredInfobasePath.trim()
+            ? normalizeInfobaseReference(commandOptions.preferredInfobasePath.trim())
+            : null;
+        this.preferredStartOneCClientExePath = normalizeOneCClientExePath(commandOptions.oneCClientExePath || '') || null;
         await this.open();
-        await this.startInfobase(preferredInfobasePath);
+        await this.startInfobase(commandOptions);
+    }
+
+    private async refreshAvailablePlatforms(): Promise<void> {
+        this.availablePlatforms = await ensureOneCPlatformsCatalogInitialized();
     }
 
     private async clearSnapshotsOnPanelOpen(): Promise<void> {
@@ -225,17 +246,13 @@ export class FormExplorerPanel implements vscode.Disposable {
             } catch {
                 // Ignore cleanup errors and let normal refresh surface any remaining stale file.
             }
-            this.snapshotCandidateMetadataCache.delete(snapshotPath);
         }
 
-        this.customSnapshotPath = null;
-        this.selectedSnapshotPath = null;
-        this.pendingSnapshotInfobasePath = null;
         this.latestSnapshot = null;
         this.lastError = null;
         this.snapshotExists = false;
         this.snapshotMtime = null;
-        this.snapshotCandidates = [];
+        this.resolvedSnapshotPath = null;
         this.lastSnapshotFingerprint = null;
         this.selectedElementPath = null;
         this.suggestedSteps = [];
@@ -243,6 +260,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         this.suggestedStepsError = null;
         this.lastSuggestedStepsFingerprint = null;
         this.pendingOperation = null;
+        this.startedInfobaseProcessId = null;
     }
 
     public dispose(): void {
@@ -263,29 +281,42 @@ export class FormExplorerPanel implements vscode.Disposable {
             case 'refreshSnapshot':
                 await this.refreshSnapshot(true);
                 break;
-            case 'chooseSnapshotFile':
-                await this.chooseSnapshotFile();
-                break;
-            case 'useConfiguredSnapshotPath':
-                this.customSnapshotPath = null;
-                this.selectedSnapshotPath = null;
-                this.lastSnapshotFingerprint = null;
-                await this.refreshSnapshot(true);
-                break;
-            case 'selectSnapshotPath':
-                await this.selectSnapshotPath(message.value);
-                break;
-            case 'deleteSnapshotPath':
-                await this.deleteSnapshotPath(message.value);
+            case 'setPreferredStartPlatform':
+                await this.setPreferredStartPlatform(message.platformClientExePath || null);
                 break;
             case 'buildExtension':
-                await vscode.commands.executeCommand('kotTestToolkit.buildFormExplorerExtensionCfe');
+                await vscode.commands.executeCommand(
+                    'kotTestToolkit.buildFormExplorerExtensionCfe',
+                    {
+                        oneCClientExePath: normalizeOneCClientExePath(
+                            message.platformClientExePath
+                            || this.resolveEffectiveLaunchPlatformClientExePath()
+                            || ''
+                        ) || null
+                    } as BuildFormExplorerExtensionCommandOptions
+                );
                 break;
             case 'installExtension':
-                await vscode.commands.executeCommand('kotTestToolkit.installFormExplorerExtension');
+                await vscode.commands.executeCommand(
+                    'kotTestToolkit.installFormExplorerExtension',
+                    {
+                        targetInfobasePath: this.resolveCurrentLaunchInfobasePath(),
+                        oneCClientExePath: normalizeOneCClientExePath(
+                            message.platformClientExePath
+                            || this.resolveEffectiveLaunchPlatformClientExePath()
+                            || ''
+                        ) || null
+                    } as InstallFormExplorerExtensionCommandOptions
+                );
                 break;
             case 'startInfobase':
-                await this.startInfobase();
+                await this.startInfobase({
+                    oneCClientExePath: normalizeOneCClientExePath(
+                        message.platformClientExePath
+                        || this.resolveEffectiveLaunchPlatformClientExePath()
+                        || ''
+                    ) || null
+                });
                 break;
             case 'openSettings':
                 await vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.formExplorer.snapshotPath');
@@ -324,262 +355,6 @@ export class FormExplorerPanel implements vscode.Disposable {
         }
     }
 
-    private async chooseSnapshotFile(): Promise<void> {
-        const t = await getTranslator(this.context.extensionUri);
-        const defaultPath = this.getEffectiveSnapshotPath();
-        const defaultUri = defaultPath ? vscode.Uri.file(defaultPath) : undefined;
-        const selection = await vscode.window.showOpenDialog({
-            title: t('Choose Form Explorer snapshot JSON file'),
-            defaultUri,
-            canSelectFiles: true,
-            canSelectFolders: false,
-            canSelectMany: false,
-            filters: {
-                [t('JSON Files')]: ['json']
-            }
-        });
-        if (!selection || selection.length === 0) {
-            return;
-        }
-
-        this.customSnapshotPath = selection[0].fsPath;
-        this.selectedSnapshotPath = this.customSnapshotPath;
-        this.lastSnapshotFingerprint = null;
-        await this.refreshSnapshot(true);
-    }
-
-    private async selectSnapshotPath(rawPath: string | undefined): Promise<void> {
-        const selectedPath = typeof rawPath === 'string' ? rawPath.trim() : '';
-        if (!selectedPath) {
-            this.customSnapshotPath = null;
-            this.selectedSnapshotPath = null;
-            this.lastSnapshotFingerprint = null;
-            await this.refreshSnapshot(true);
-            return;
-        }
-
-        const normalizedPath = path.resolve(selectedPath);
-        this.customSnapshotPath = null;
-        this.selectedSnapshotPath = normalizedPath;
-        this.lastSnapshotFingerprint = null;
-        await this.refreshSnapshot(true);
-    }
-
-    private async deleteSnapshotPath(rawPath: string | undefined): Promise<void> {
-        const targetPath = typeof rawPath === 'string' ? rawPath.trim() : '';
-        if (!targetPath) {
-            return;
-        }
-
-        const normalizedPath = path.resolve(targetPath);
-        const t = await getTranslator(this.context.extensionUri);
-        try {
-            await fs.promises.rm(normalizedPath, { force: true });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(t('Failed to delete snapshot file: {0}', message));
-            return;
-        }
-
-        if (this.customSnapshotPath === normalizedPath) {
-            this.customSnapshotPath = null;
-        }
-        if (this.selectedSnapshotPath === normalizedPath) {
-            this.selectedSnapshotPath = null;
-        }
-        this.snapshotCandidateMetadataCache.delete(normalizedPath);
-        this.lastSnapshotFingerprint = null;
-        await this.refreshSnapshot(true);
-    }
-
-    private async collectSnapshotCandidates(): Promise<FormExplorerSnapshotCandidate[]> {
-        const candidates = new Map<string, FormExplorerSnapshotCandidate>();
-
-        const addCandidate = async (candidatePath: string | null | undefined): Promise<void> => {
-            if (!candidatePath) {
-                return;
-            }
-            const normalizedPath = path.resolve(candidatePath);
-            if (candidates.has(normalizedPath)) {
-                return;
-            }
-
-            try {
-                const stat = await fs.promises.stat(normalizedPath);
-                const metadata = await this.readSnapshotCandidateMetadata(normalizedPath, stat);
-                candidates.set(normalizedPath, {
-                    path: normalizedPath,
-                    mtime: stat.mtime.toISOString(),
-                    exists: true,
-                    infobase: metadata.infobase,
-                    infobaseDisplayName: metadata.infobaseDisplayName
-                });
-            } catch {
-                candidates.set(normalizedPath, {
-                    path: normalizedPath,
-                    mtime: null,
-                    exists: false,
-                    infobase: null,
-                    infobaseDisplayName: null
-                });
-            }
-        };
-
-        if (this.customSnapshotPath) {
-            await addCandidate(this.customSnapshotPath);
-        }
-
-        const configuredPath = this.getConfiguredSnapshotPath();
-        if (configuredPath) {
-            const normalizedConfiguredPath = path.resolve(configuredPath);
-            await addCandidate(normalizedConfiguredPath);
-
-            const configuredDirectory = path.dirname(normalizedConfiguredPath);
-            const configuredFileName = path.basename(normalizedConfiguredPath);
-            const configuredPrefix = `${configuredFileName}.`;
-
-            try {
-                const directoryEntries = await fs.promises.readdir(configuredDirectory, { withFileTypes: true });
-                for (const entry of directoryEntries) {
-                    if (!entry.isFile()) {
-                        continue;
-                    }
-
-                    if (entry.name !== configuredFileName && !entry.name.startsWith(configuredPrefix)) {
-                        continue;
-                    }
-
-                    await addCandidate(path.join(configuredDirectory, entry.name));
-                }
-            } catch {
-                // Ignore directory scan errors and keep explicit candidates only.
-            }
-        }
-
-        const result = Array.from(candidates.values());
-        const candidatePaths = new Set(result.map(candidate => candidate.path));
-        for (const cachedPath of this.snapshotCandidateMetadataCache.keys()) {
-            if (!candidatePaths.has(cachedPath)) {
-                this.snapshotCandidateMetadataCache.delete(cachedPath);
-            }
-        }
-        result.sort((left, right) => {
-            const leftMtime = left.mtime ? Date.parse(left.mtime) : 0;
-            const rightMtime = right.mtime ? Date.parse(right.mtime) : 0;
-            if (rightMtime !== leftMtime) {
-                return rightMtime - leftMtime;
-            }
-            if (left.exists !== right.exists) {
-                return left.exists ? -1 : 1;
-            }
-            return left.path.localeCompare(right.path, undefined, { sensitivity: 'base' });
-        });
-
-        return result;
-    }
-
-    private async readSnapshotCandidateMetadata(
-        snapshotPath: string,
-        stat: fs.Stats
-    ): Promise<{ infobase: string | null; infobaseDisplayName: string | null }> {
-        const fingerprint = `${stat.mtimeMs}:${stat.size}`;
-        const cached = this.snapshotCandidateMetadataCache.get(snapshotPath);
-        if (cached && cached.fingerprint === fingerprint) {
-            return {
-                infobase: cached.infobase,
-                infobaseDisplayName: cached.infobaseDisplayName
-            };
-        }
-
-        let infobase: string | null = null;
-        let infobaseDisplayName: string | null = null;
-        try {
-            const rawText = await fs.promises.readFile(snapshotPath, 'utf8');
-            const parsedSnapshot = parseFormExplorerSnapshotText(rawText);
-            const normalizedInfobase = typeof parsedSnapshot.source?.infobase === 'string'
-                ? parsedSnapshot.source.infobase.trim()
-                : '';
-            infobase = normalizedInfobase || null;
-            const snapshotDisplayName = typeof parsedSnapshot.source?.infobaseName === 'string'
-                ? parsedSnapshot.source.infobaseName.trim()
-                : '';
-            if (snapshotDisplayName) {
-                infobaseDisplayName = snapshotDisplayName;
-            } else if (infobase) {
-                const parsedInfobasePath = this.parseInfobasePathFromMarker(infobase);
-                if (parsedInfobasePath) {
-                    infobaseDisplayName = await resolveLauncherInfobaseNameByPath(parsedInfobasePath);
-                }
-            }
-        } catch {
-            infobase = null;
-            infobaseDisplayName = null;
-        }
-
-        this.snapshotCandidateMetadataCache.set(snapshotPath, {
-            fingerprint,
-            infobase,
-            infobaseDisplayName
-        });
-
-        return {
-            infobase,
-            infobaseDisplayName
-        };
-    }
-
-    private resolveSnapshotPathFromCandidates(candidates: FormExplorerSnapshotCandidate[]): string | null {
-        if (this.pendingSnapshotInfobasePath) {
-            const targetInfobasePath = this.normalizePathForCompare(this.pendingSnapshotInfobasePath);
-            const matchedCandidate = candidates.find(candidate => {
-                if (!candidate.exists || !candidate.infobase) {
-                    return false;
-                }
-                const parsedInfobasePath = this.parseInfobasePathFromMarker(candidate.infobase);
-                if (!parsedInfobasePath) {
-                    return false;
-                }
-                return this.normalizePathForCompare(parsedInfobasePath) === targetInfobasePath;
-            });
-            if (matchedCandidate) {
-                this.pendingSnapshotInfobasePath = null;
-                this.customSnapshotPath = null;
-                this.selectedSnapshotPath = matchedCandidate.path;
-                return matchedCandidate.path;
-            }
-
-            this.selectedSnapshotPath = null;
-            return null;
-        }
-
-        if (this.customSnapshotPath) {
-            return this.customSnapshotPath;
-        }
-
-        if (this.selectedSnapshotPath) {
-            const selectedEntry = candidates.find(candidate => candidate.path === this.selectedSnapshotPath);
-            if (selectedEntry) {
-                return selectedEntry.path;
-            }
-        }
-
-        const firstExistingCandidate = candidates.find(candidate => candidate.exists);
-        if (firstExistingCandidate) {
-            this.selectedSnapshotPath = firstExistingCandidate.path;
-            return firstExistingCandidate.path;
-        }
-
-        const configuredPath = this.getConfiguredSnapshotPath();
-        if (configuredPath) {
-            const normalizedConfiguredPath = path.resolve(configuredPath);
-            this.selectedSnapshotPath = normalizedConfiguredPath;
-            return normalizedConfiguredPath;
-        }
-
-        this.selectedSnapshotPath = null;
-        return null;
-    }
-
     private parseInfobasePathFromMarker(value: string): string | null {
         const trimmedValue = value.trim();
         if (!trimmedValue) {
@@ -589,24 +364,72 @@ export class FormExplorerPanel implements vscode.Disposable {
         return normalizeInfobaseReference(trimmedValue);
     }
 
-    private normalizePathForCompare(value: string): string {
-        return normalizeInfobaseConnectionIdentity(value.trim());
+    private resolveSnapshotInfobasePath(): string | null {
+        const infobaseMarker = typeof this.latestSnapshot?.source?.infobase === 'string'
+            ? this.latestSnapshot.source.infobase.trim()
+            : '';
+        if (!infobaseMarker) {
+            return null;
+        }
+
+        return this.parseInfobasePathFromMarker(infobaseMarker);
     }
 
-    private resolvePreferredStartInfobasePath(): string | undefined {
-        const selectedSnapshotPath = this.getEffectiveSnapshotPath();
-        if (!selectedSnapshotPath) {
-            return undefined;
+    private resolveCurrentLaunchInfobasePath(): string | null {
+        const snapshotInfobasePath = this.resolveSnapshotInfobasePath();
+        if (snapshotInfobasePath?.trim()) {
+            return normalizeInfobaseReference(snapshotInfobasePath.trim());
         }
 
-        const selectedCandidate = this.snapshotCandidates.find(candidate => candidate.path === selectedSnapshotPath);
-        const infobaseMarker = (selectedCandidate?.infobase || '').trim();
-        if (!infobaseMarker) {
-            return undefined;
+        return typeof this.preferredStartInfobasePath === 'string' && this.preferredStartInfobasePath.trim()
+            ? normalizeInfobaseReference(this.preferredStartInfobasePath.trim())
+            : null;
+    }
+
+    private resolveConfiguredPlatformByClientPath(clientExePath: string | null): ConfiguredOneCPlatform | null {
+        const normalizedClientPath = normalizeOneCClientExePath(clientExePath || '');
+        if (!normalizedClientPath) {
+            return null;
         }
 
-        const parsedPath = this.parseInfobasePathFromMarker(infobaseMarker);
-        return parsedPath || undefined;
+        return this.availablePlatforms.find(platform =>
+            normalizeOneCClientExePath(platform.clientExePath) === normalizedClientPath
+        ) || null;
+    }
+
+    private resolveEffectiveLaunchPlatformClientExePath(): string | null {
+        const explicitClientPath = normalizeOneCClientExePath(this.preferredStartOneCClientExePath || '');
+        if (explicitClientPath) {
+            return explicitClientPath;
+        }
+
+        const currentLaunchInfobasePath = this.resolveCurrentLaunchInfobasePath();
+        if (currentLaunchInfobasePath) {
+            const storedClientPath = getManagedInfobasePreferredPlatformClientExePath(this.context, currentLaunchInfobasePath);
+            const resolvedStoredPlatform = this.resolveConfiguredPlatformByClientPath(storedClientPath);
+            if (resolvedStoredPlatform) {
+                return resolvedStoredPlatform.clientExePath;
+            }
+        }
+
+        return this.availablePlatforms[0]?.clientExePath || null;
+    }
+
+    private async setPreferredStartPlatform(clientExePath: string | null): Promise<void> {
+        const normalizedClientExePath = normalizeOneCClientExePath(clientExePath || '');
+        const currentLaunchInfobasePath = this.resolveCurrentLaunchInfobasePath();
+        if (currentLaunchInfobasePath) {
+            await setManagedInfobasePreferredPlatformClientExePath(
+                this.context,
+                currentLaunchInfobasePath,
+                normalizedClientExePath || null
+            );
+            this.preferredStartOneCClientExePath = null;
+        } else {
+            this.preferredStartOneCClientExePath = normalizedClientExePath || null;
+        }
+
+        await this.postState();
     }
 
     private async openSnapshotFile(): Promise<void> {
@@ -787,6 +610,15 @@ export class FormExplorerPanel implements vscode.Disposable {
         return path.join(generatedArtifactsDirectory, DEFAULT_ADAPTER_SETTINGS_FILE_NAME);
     }
 
+    private getAdapterRuntimeStatePath(): string | null {
+        const generatedArtifactsDirectory = this.getGeneratedArtifactsDirectory();
+        if (!generatedArtifactsDirectory) {
+            return null;
+        }
+
+        return path.join(generatedArtifactsDirectory, DEFAULT_ADAPTER_RUNTIME_STATE_FILE_NAME);
+    }
+
     private getAdapterModeStatePath(): string | null {
         const generatedArtifactsDirectory = this.getGeneratedArtifactsDirectory();
         if (!generatedArtifactsDirectory) {
@@ -812,6 +644,135 @@ export class FormExplorerPanel implements vscode.Disposable {
         }
 
         return path.join(generatedArtifactsDirectory, DEFAULT_ADAPTER_REQUEST_CONTEXT_FILE_NAME);
+    }
+
+    private async isProcessRunning(processId: number): Promise<boolean> {
+        if (!Number.isInteger(processId) || processId <= 0) {
+            return false;
+        }
+
+        if (process.platform === 'win32') {
+            return await new Promise<boolean>(resolve => {
+                cp.execFile(
+                    'tasklist',
+                    ['/FI', `PID eq ${processId}`, '/FO', 'CSV', '/NH'],
+                    { windowsHide: true },
+                    (error, stdout) => {
+                        if (error) {
+                            resolve(false);
+                            return;
+                        }
+
+                        const output = String(stdout || '').trim();
+                        resolve(Boolean(output) && !/^"?INFO:/i.test(output));
+                    }
+                );
+            });
+        }
+
+        try {
+            process.kill(processId, 0);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    private async refreshStartedInfobaseProcessState(): Promise<boolean> {
+        const previousProcessId = this.startedInfobaseProcessId;
+        if (!previousProcessId) {
+            return false;
+        }
+
+        const isRunning = await this.isProcessRunning(previousProcessId);
+        if (isRunning) {
+            return false;
+        }
+
+        this.startedInfobaseProcessId = null;
+        if (this.pendingOperation?.kind === 'start') {
+            this.pendingOperation = null;
+        }
+        return true;
+    }
+
+    private async resolveActualSnapshotPath(): Promise<string | null> {
+        const configuredSnapshotPath = this.getConfiguredSnapshotPath();
+        const candidatePaths = new Set<string>();
+        if (configuredSnapshotPath) {
+            const normalizedConfiguredPath = path.resolve(configuredSnapshotPath);
+            candidatePaths.add(normalizedConfiguredPath);
+
+            const configuredDirectory = path.dirname(normalizedConfiguredPath);
+            const configuredFileName = path.basename(normalizedConfiguredPath);
+            const configuredPrefix = `${configuredFileName}.`;
+            try {
+                const directoryEntries = await fs.promises.readdir(configuredDirectory, { withFileTypes: true });
+                for (const entry of directoryEntries) {
+                    if (!entry.isFile()) {
+                        continue;
+                    }
+                    if (entry.name !== configuredFileName && !entry.name.startsWith(configuredPrefix)) {
+                        continue;
+                    }
+                    candidatePaths.add(path.join(configuredDirectory, entry.name));
+                }
+            } catch {
+                // Ignore directory scan errors and fall back to known explicit paths.
+            }
+        }
+
+        const runtimeStatePath = this.getAdapterRuntimeStatePath();
+        let runtimeSnapshotPath: string | null = null;
+        if (runtimeStatePath) {
+            try {
+                const rawText = await fs.promises.readFile(runtimeStatePath, 'utf8');
+                const parsed = JSON.parse(rawText) as { snapshotPath?: unknown } | null;
+                runtimeSnapshotPath = typeof parsed?.snapshotPath === 'string'
+                    ? parsed.snapshotPath.trim()
+                    : '';
+                if (runtimeSnapshotPath) {
+                    candidatePaths.add(path.resolve(runtimeSnapshotPath));
+                }
+            } catch {
+                // Ignore runtime-state read errors and fall back to configured snapshot path.
+            }
+        }
+
+        const existingCandidates = await Promise.all(
+            Array.from(candidatePaths).map(async candidatePath => {
+                try {
+                    const stat = await fs.promises.stat(candidatePath);
+                    return {
+                        path: path.resolve(candidatePath),
+                        mtimeMs: stat.mtimeMs
+                    };
+                } catch {
+                    return null;
+                }
+            })
+        );
+        const resolvedExistingCandidates = existingCandidates
+            .filter((candidate): candidate is { path: string; mtimeMs: number } => candidate !== null)
+            .sort((left, right) => right.mtimeMs - left.mtimeMs);
+
+        const normalizedRuntimeSnapshotPath = runtimeSnapshotPath ? path.resolve(runtimeSnapshotPath) : null;
+        if (normalizedRuntimeSnapshotPath) {
+            const runtimeCandidate = resolvedExistingCandidates.find(candidate => candidate.path === normalizedRuntimeSnapshotPath);
+            if (runtimeCandidate) {
+                return runtimeCandidate.path;
+            }
+        }
+
+        if (resolvedExistingCandidates.length > 0) {
+            return resolvedExistingCandidates[0].path;
+        }
+
+        if (normalizedRuntimeSnapshotPath) {
+            return normalizedRuntimeSnapshotPath;
+        }
+
+        return configuredSnapshotPath ? path.resolve(configuredSnapshotPath) : null;
     }
 
     private beginPendingOperation(kind: PendingOperationKind): void {
@@ -986,7 +947,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         await this.refreshSnapshot(true);
     }
 
-    private async startInfobase(preferredInfobasePath?: string): Promise<void> {
+    private async startInfobase(options?: string | StartFormExplorerInfobaseCommandOptions): Promise<void> {
         const t = await getTranslator(this.context.extensionUri);
         const previousError = this.lastError;
         this.lastError = null;
@@ -994,36 +955,54 @@ export class FormExplorerPanel implements vscode.Disposable {
         await this.postState();
 
         try {
+            const commandOptions = typeof options === 'string'
+                ? { preferredInfobasePath: options }
+                : (options || {});
+            const resolvedPreferredInfobasePath = typeof commandOptions.preferredInfobasePath === 'string' && commandOptions.preferredInfobasePath.trim()
+                ? normalizeInfobaseReference(commandOptions.preferredInfobasePath.trim())
+                : undefined;
+            const resolvedPreferredPlatformClientExePath = normalizeOneCClientExePath(
+                commandOptions.oneCClientExePath
+                || this.resolveEffectiveLaunchPlatformClientExePath()
+                || ''
+            ) || null;
             const startResult = await vscode.commands.executeCommand<StartFormExplorerInfobaseResult | string | null>(
                 'kotTestToolkit.startFormExplorerInfobase',
-                preferredInfobasePath?.trim() || this.resolvePreferredStartInfobasePath()
+                {
+                    preferredInfobasePath: resolvedPreferredInfobasePath || null,
+                    oneCClientExePath: resolvedPreferredPlatformClientExePath
+                } as StartFormExplorerInfobaseCommandOptions
             );
 
             if (typeof startResult === 'string' && startResult.trim()) {
-                this.pendingSnapshotInfobasePath = normalizeInfobaseReference(startResult.trim());
-                this.selectedSnapshotPath = null;
-                this.customSnapshotPath = null;
+                this.preferredStartInfobasePath = normalizeInfobaseReference(startResult.trim());
+                this.preferredStartOneCClientExePath = null;
+                this.startedInfobaseProcessId = null;
                 this.lastSnapshotFingerprint = null;
                 await this.refreshSnapshot(true);
                 return;
             }
 
             if (startResult && typeof startResult !== 'string' && startResult.status === 'started' && startResult.infobasePath?.trim()) {
-                this.pendingSnapshotInfobasePath = normalizeInfobaseReference(startResult.infobasePath.trim());
-                this.selectedSnapshotPath = null;
-                this.customSnapshotPath = null;
+                this.preferredStartInfobasePath = normalizeInfobaseReference(startResult.infobasePath.trim());
+                this.preferredStartOneCClientExePath = null;
+                this.startedInfobaseProcessId = typeof startResult.processId === 'number' && startResult.processId > 0
+                    ? startResult.processId
+                    : null;
                 this.lastSnapshotFingerprint = null;
                 await this.refreshSnapshot(true);
                 return;
             }
 
             this.pendingOperation = null;
+            this.startedInfobaseProcessId = null;
             this.lastError = startResult && typeof startResult !== 'string' && startResult.status === 'error'
                 ? startResult.error || t('Failed to start target infobase for Form Explorer.')
                 : previousError;
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.pendingOperation = null;
+            this.startedInfobaseProcessId = null;
             this.lastError = t('Failed to start target infobase for Form Explorer: {0}', message);
         }
 
@@ -1031,11 +1010,7 @@ export class FormExplorerPanel implements vscode.Disposable {
     }
 
     private getEffectiveSnapshotPath(): string | null {
-        if (this.pendingSnapshotInfobasePath) {
-            return null;
-        }
-
-        return this.customSnapshotPath || this.selectedSnapshotPath || this.getConfiguredSnapshotPath();
+        return this.resolvedSnapshotPath || this.getConfiguredSnapshotPath();
     }
 
     private getRefreshIntervalMs(): number {
@@ -1070,11 +1045,12 @@ export class FormExplorerPanel implements vscode.Disposable {
 
     private async refreshSnapshot(force: boolean): Promise<void> {
         const t = await getTranslator(this.context.extensionUri);
+        const startProcessStateChanged = await this.refreshStartedInfobaseProcessState();
         const modeState = await this.readAdapterModeState();
         this.adapterMode = modeState.mode;
         this.adapterModeStatePath = modeState.statePath;
-        this.snapshotCandidates = await this.collectSnapshotCandidates();
-        const snapshotPath = this.resolveSnapshotPathFromCandidates(this.snapshotCandidates);
+        const snapshotPath = await this.resolveActualSnapshotPath();
+        this.resolvedSnapshotPath = snapshotPath;
 
         if (!snapshotPath) {
             this.snapshotExists = false;
@@ -1084,7 +1060,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             this.suggestedStepsForPath = null;
             this.suggestedStepsError = null;
             this.lastSuggestedStepsFingerprint = null;
-            if (this.pendingSnapshotInfobasePath) {
+            if (this.pendingOperation?.kind === 'start') {
                 this.lastError = null;
                 this.lastSnapshotFingerprint = 'waiting-for-started-infobase-snapshot';
                 await this.postState();
@@ -1092,10 +1068,13 @@ export class FormExplorerPanel implements vscode.Disposable {
             }
             const missingPathFingerprint = `missing-snapshot-path|${modeState.fingerprint || ''}`;
             if (!force && missingPathFingerprint === this.lastSnapshotFingerprint) {
+                if (startProcessStateChanged) {
+                    await this.postState();
+                }
                 return;
             }
             this.lastError = t(
-                'Form Explorer snapshot path is not configured. Set kotTestToolkit.formExplorer.snapshotPath or choose a file manually.'
+                'Form Explorer snapshot path is not configured. Set kotTestToolkit.formExplorer.snapshotPath.'
             );
             this.lastSnapshotFingerprint = missingPathFingerprint;
             await this.postState();
@@ -1115,8 +1094,17 @@ export class FormExplorerPanel implements vscode.Disposable {
             this.suggestedStepsForPath = null;
             this.suggestedStepsError = null;
             this.lastSuggestedStepsFingerprint = null;
+            if (this.pendingOperation?.kind === 'start') {
+                this.lastError = null;
+                this.lastSnapshotFingerprint = 'waiting-for-started-infobase-snapshot';
+                await this.postState();
+                return;
+            }
             const missingFileFingerprint = `missing-snapshot-file:${snapshotPath}|${modeState.fingerprint || ''}`;
             if (!force && missingFileFingerprint === this.lastSnapshotFingerprint) {
+                if (startProcessStateChanged) {
+                    await this.postState();
+                }
                 return;
             }
             this.lastError = t('Snapshot file not found: {0}', snapshotPath);
@@ -1127,6 +1115,9 @@ export class FormExplorerPanel implements vscode.Disposable {
 
         const fingerprint = `${snapshotPath}:${stat.mtimeMs}:${stat.size}|${modeState.fingerprint || ''}`;
         if (!force && fingerprint === this.lastSnapshotFingerprint) {
+            if (startProcessStateChanged) {
+                await this.postState();
+            }
             return;
         }
 
@@ -1178,11 +1169,12 @@ export class FormExplorerPanel implements vscode.Disposable {
     private buildState(): FormExplorerWebviewState {
         return {
             snapshotPath: this.getEffectiveSnapshotPath(),
-            usingCustomSnapshotPath: !!this.customSnapshotPath,
             snapshotExists: this.snapshotExists,
             snapshotMtime: this.snapshotMtime,
-            snapshotCandidates: this.snapshotCandidates,
-            selectedSnapshotPath: this.getEffectiveSnapshotPath(),
+            platforms: this.availablePlatforms,
+            launchInfobasePath: this.resolveCurrentLaunchInfobasePath(),
+            launchPlatformClientExePath: this.resolveEffectiveLaunchPlatformClientExePath(),
+            startedInfobaseClientRunning: this.startedInfobaseProcessId !== null,
             adapterMode: this.adapterMode,
             adapterModeStatePath: this.adapterModeStatePath,
             lastError: this.lastError,
@@ -1211,8 +1203,9 @@ export class FormExplorerPanel implements vscode.Disposable {
             buildExtension: t('Build .cfe'),
             installExtension: t('Install to infobase'),
             startInfobase: t('Start infobase'),
-            chooseSnapshotFile: t('Choose snapshot file'),
-            useConfiguredPath: t('Use configured path'),
+            infobaseClientRunning: t('1C client is still running'),
+            launchPlatform: t('Platform'),
+            defaultLabel: t('Default'),
             moreActions: t('More actions'),
             openSettings: t('Open settings'),
             toggleMode: t('Toggle mode'),
@@ -1257,9 +1250,6 @@ export class FormExplorerPanel implements vscode.Disposable {
             loadingTables: t('Loading tables into snapshot...'),
             locatingElement: t('Waiting for locator update...'),
             snapshotPath: t('Snapshot path'),
-            snapshots: t('Snapshots'),
-            deleteSnapshot: t('Delete snapshot'),
-            selectSnapshot: t('Select snapshot'),
             showTechnicalItems: t('Show technical items'),
             hideTechnicalItems: t('Hide technical items'),
             showGroups: t('Show form groups'),
@@ -1324,7 +1314,8 @@ export class FormExplorerPanel implements vscode.Disposable {
             tableRowsTotal: t('Rows total'),
             tableRowsTruncated: t('Table is truncated in snapshot.'),
             copied: t('Copied'),
-            activeElementNotDetected: t('Active element is not reported in snapshot.')
+            activeElementNotDetected: t('Active element is not reported in snapshot.'),
+            none: t('None')
         };
 
         const initialStateJson = JSON.stringify(this.buildState());
@@ -1359,17 +1350,27 @@ export class FormExplorerPanel implements vscode.Disposable {
                     <span id="generatedAtLabel" class="meta-chip-label">${escapeHtml(loc.generatedAt)}</span>
                     <span id="generatedAtValue" class="meta-chip-value"></span>
                 </div>
-                <div class="meta-chip compact snapshot-picker">
-                    <span class="meta-chip-label">${escapeHtml(loc.snapshots)}</span>
-                    <div class="snapshot-picker-controls">
-                        <button id="snapshotPickerBtn" class="snapshot-picker-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeHtml(loc.selectSnapshot)}"></button>
-                        <div id="snapshotMenu" class="snapshot-menu" role="menu" aria-label="${escapeHtml(loc.snapshots)}"></div>
+                <div class="menu-shell launch-split-shell">
+                    <div class="split-btn-group">
+                        <button id="startInfobaseBtn" class="toolbar-btn" type="button" aria-label="${escapeHtml(loc.startInfobase)}">
+                            <span class="codicon codicon-play"></span>
+                            <span id="startInfobaseLabel">${escapeHtml(loc.startInfobase)}</span>
+                        </button>
+                        <button
+                            id="launchPlatformBtn"
+                            class="toolbar-btn split-menu-btn launch-platform-btn"
+                            type="button"
+                            aria-haspopup="menu"
+                            aria-expanded="false"
+                            aria-label="${escapeHtml(loc.launchPlatform)}"
+                            title="${escapeHtml(loc.launchPlatform)}"
+                        >
+                            <span id="launchPlatformLabel" class="platform-selector-label">${escapeHtml(loc.launchPlatform)}</span>
+                            <span class="codicon codicon-chevron-down" aria-hidden="true"></span>
+                        </button>
                     </div>
+                    <div id="launchPlatformMenu" class="menu-popover platform-menu" role="menu" aria-label="${escapeHtml(loc.launchPlatform)}"></div>
                 </div>
-                <button id="startInfobaseBtn" class="toolbar-btn" type="button" aria-label="${escapeHtml(loc.startInfobase)}">
-                    <span class="codicon codicon-play"></span>
-                    <span id="startInfobaseLabel">${escapeHtml(loc.startInfobase)}</span>
-                </button>
                 <div class="menu-shell">
                     <button id="moreActionsBtn" class="toolbar-btn icon-only" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeHtml(loc.moreActions)}">
                         <span class="codicon codicon-ellipsis"></span>
@@ -1389,13 +1390,6 @@ export class FormExplorerPanel implements vscode.Disposable {
                         </button>
                         <button class="menu-item" type="button" data-action="install-extension" role="menuitem">
                             <span class="codicon codicon-cloud-upload"></span> ${escapeHtml(loc.installExtension)}
-                        </button>
-                        <div class="dropdown-separator menu-separator" role="separator"></div>
-                        <button class="menu-item" type="button" data-action="choose-snapshot-file" role="menuitem">
-                            <span class="codicon codicon-folder-opened"></span> ${escapeHtml(loc.chooseSnapshotFile)}
-                        </button>
-                        <button class="menu-item" type="button" data-action="use-configured-path" role="menuitem">
-                            <span class="codicon codicon-debug-restart"></span> ${escapeHtml(loc.useConfiguredPath)}
                         </button>
                     </div>
                 </div>
