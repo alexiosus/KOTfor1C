@@ -17,29 +17,37 @@ import {
     removeInfobaseFromLauncherInteractive,
     restoreInfobaseFromDtInteractive,
     revealInfobaseInOs,
+    setManagedInfobaseHidden,
+    setManagedInfobasePreferredPlatformClientExePath,
     showInfobaseLogsInteractive,
     updateInfobaseConfigurationInteractive
 } from './infobaseManager';
 import { getTranslator } from './localization';
 import { normalizeInfobaseConnectionIdentity } from './oneCInfobaseConnection';
+import { type ConfiguredOneCPlatform, ensureOneCPlatformsCatalogInitialized } from './oneCPlatform';
 
 type InfobaseManagerSortMode = 'alphabetical' | 'lastOpened' | 'manual';
 
 const INFOBASE_MANAGER_SORT_MODE_KEY = 'infobaseManager.sortMode';
 const INFOBASE_MANAGER_MANUAL_ORDER_KEY = 'infobaseManager.manualOrder';
+const INFOBASE_MANAGER_SHOW_HIDDEN_KEY = 'infobaseManager.showHidden';
 
 interface InfobaseManagerWebviewState {
     infobases: ManagedInfobaseRecord[];
+    platforms: ConfiguredOneCPlatform[];
     selectedInfobasePath: string | null;
     pendingAction: string | null;
     lastError: string | null;
     sortMode: InfobaseManagerSortMode;
+    showHidden: boolean;
 }
 
 interface InfobaseManagerWebviewMessage {
     command?: string;
     infobasePath?: string;
+    platformClientExePath?: string | null;
     sortMode?: string;
+    showHidden?: boolean;
     movedInfobasePath?: string;
     targetInfobasePath?: string;
     dropPlacement?: string;
@@ -70,11 +78,20 @@ export class InfobaseManagerPanel implements vscode.Disposable {
     private readonly disposables: vscode.Disposable[] = [];
     private panelDisposables: vscode.Disposable[] = [];
     private infobases: ManagedInfobaseRecord[] = [];
+    private platforms: ConfiguredOneCPlatform[] = [];
     private selectedInfobasePath: string | null = null;
     private pendingAction: string | null = null;
     private lastError: string | null = null;
 
-    constructor(private readonly context: vscode.ExtensionContext) {}
+    constructor(private readonly context: vscode.ExtensionContext) {
+        this.disposables.push(
+            vscode.workspace.onDidChangeConfiguration(event => {
+                if (event.affectsConfiguration('kotTestToolkit.platforms.catalog')) {
+                    void this.refreshState();
+                }
+            })
+        );
+    }
 
     public dispose(): void {
         this.panelDisposables.forEach(disposable => disposable.dispose());
@@ -125,17 +142,23 @@ export class InfobaseManagerPanel implements vscode.Disposable {
     }
 
     private async refreshState(): Promise<void> {
-        this.infobases = await this.sortInfobasesForDisplay(await collectManagedInfobases(this.context));
+        const [infobases, platforms] = await Promise.all([
+            collectManagedInfobases(this.context),
+            ensureOneCPlatformsCatalogInitialized()
+        ]);
+        this.infobases = await this.sortInfobasesForDisplay(infobases);
+        this.platforms = platforms;
+        const visibleInfobases = this.getVisibleInfobases();
         if (this.selectedInfobasePath) {
             const selectedKey = this.normalizePathForCompare(this.selectedInfobasePath);
-            const hasSelected = this.infobases.some(infobase => this.normalizePathForCompare(infobase.infobasePath) === selectedKey);
+            const hasSelected = visibleInfobases.some(infobase => this.normalizePathForCompare(infobase.infobasePath) === selectedKey);
             if (!hasSelected) {
                 this.selectedInfobasePath = null;
             }
         }
 
-        if (!this.selectedInfobasePath && this.infobases.length > 0) {
-            this.selectedInfobasePath = this.infobases[0].infobasePath;
+        if (!this.selectedInfobasePath && visibleInfobases.length > 0) {
+            this.selectedInfobasePath = visibleInfobases[0].infobasePath;
         }
 
         await this.postState();
@@ -155,10 +178,12 @@ export class InfobaseManagerPanel implements vscode.Disposable {
     private buildState(): InfobaseManagerWebviewState {
         return {
             infobases: this.infobases,
+            platforms: this.platforms,
             selectedInfobasePath: this.selectedInfobasePath,
             pendingAction: this.pendingAction,
             lastError: this.lastError,
-            sortMode: this.getSortMode()
+            sortMode: this.getSortMode(),
+            showHidden: this.getShowHidden()
         };
     }
 
@@ -167,6 +192,22 @@ export class InfobaseManagerPanel implements vscode.Disposable {
         return storedValue === 'alphabetical' || storedValue === 'lastOpened' || storedValue === 'manual'
             ? storedValue
             : 'lastOpened';
+    }
+
+    private getShowHidden(): boolean {
+        return Boolean(this.context.workspaceState.get<boolean>(INFOBASE_MANAGER_SHOW_HIDDEN_KEY, false));
+    }
+
+    private async setShowHidden(showHidden: boolean): Promise<void> {
+        await this.context.workspaceState.update(INFOBASE_MANAGER_SHOW_HIDDEN_KEY, showHidden);
+    }
+
+    private getVisibleInfobases(): ManagedInfobaseRecord[] {
+        if (this.getShowHidden()) {
+            return this.infobases;
+        }
+
+        return this.infobases.filter(record => !record.hidden);
     }
 
     private async setSortMode(sortMode: InfobaseManagerSortMode): Promise<void> {
@@ -329,6 +370,9 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                     // State refresh happens in finally.
                 });
                 return;
+            case 'manageEtalonBases':
+                await vscode.commands.executeCommand('kotTestToolkit.manageEtalonBases');
+                return;
             case 'select':
                 this.selectedInfobasePath = message.infobasePath?.trim() || null;
                 await this.postState();
@@ -353,6 +397,10 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                 await this.refreshState();
                 return;
             }
+            case 'setShowHidden':
+                await this.setShowHidden(Boolean(message.showHidden));
+                await this.refreshState();
+                return;
             case 'reorderManual':
                 await this.executePanelAction(t('Updating infobase order...'), async () => {
                     await this.reorderManualInfobases(message.movedInfobasePath, message.targetInfobasePath, message.dropPlacement);
@@ -376,6 +424,20 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                     this.selectedInfobasePath = selectedPath;
                 });
                 return;
+            case 'setPreferredPlatform':
+                await this.executePanelAction(t('Updating launch platform...'), async () => {
+                    const selectedInfobase = this.findInfobaseRecord(message.infobasePath);
+                    if (!selectedInfobase) {
+                        throw new Error(t('Select an infobase first.'));
+                    }
+
+                    await setManagedInfobasePreferredPlatformClientExePath(
+                        this.context,
+                        selectedInfobase.infobasePath,
+                        message.platformClientExePath || null
+                    );
+                });
+                return;
             default:
                 break;
         }
@@ -390,19 +452,26 @@ export class InfobaseManagerPanel implements vscode.Disposable {
         switch (message.command) {
             case 'openEnterprise':
                 await this.executePanelAction(t('Opening infobase in 1C:Enterprise...'), async () => {
-                    await openInfobaseInEnterprise(this.context, selectedInfobase);
+                    await openInfobaseInEnterprise(this.context, selectedInfobase, {
+                        preferredOneCClientExePath: message.platformClientExePath || null
+                    });
                 });
                 return;
             case 'openDesigner':
                 await this.executePanelAction(t('Opening infobase in Designer...'), async () => {
-                    await openInfobaseInDesigner(this.context, selectedInfobase);
+                    await openInfobaseInDesigner(this.context, selectedInfobase, {
+                        preferredOneCClientExePath: message.platformClientExePath || null
+                    });
                 });
                 return;
             case 'startFormExplorer':
                 await this.executePanelAction(t('Opening Form Explorer for infobase...'), async () => {
                     await vscode.commands.executeCommand(
                         'kotTestToolkit.openFormExplorerForInfobase',
-                        selectedInfobase.infobasePath
+                        {
+                            preferredInfobasePath: selectedInfobase.infobasePath,
+                            oneCClientExePath: message.platformClientExePath || null
+                        }
                     );
                 });
                 return;
@@ -477,6 +546,16 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                     await forgetManagedInfobase(this.context, selectedInfobase.infobasePath);
                 });
                 return;
+            case 'toggleHidden':
+                await this.executePanelAction(
+                    selectedInfobase.hidden
+                        ? t('Unhiding infobase...')
+                        : t('Hiding infobase...'),
+                    async () => {
+                        await setManagedInfobaseHidden(this.context, selectedInfobase.infobasePath, !selectedInfobase.hidden);
+                    }
+                );
+                return;
             default:
                 return;
         }
@@ -496,11 +575,13 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             refresh: t('Refresh'),
             createInfobase: t('Create infobase'),
             addInfobasePath: t('Add path'),
+            manageEtalonBases: t('Etalon bases'),
             searchPlaceholder: t('Search bases'),
             sortLabel: t('Sort'),
             sortAlphabetical: t('Alphabetical'),
             sortLastOpened: t('Last opened'),
             sortManual: t('Manual order'),
+            showHidden: t('Show hidden'),
             noInfobases: t('No infobases discovered yet.'),
             noInfobasesHint: t('Create a new infobase or add an existing one manually to start managing it here.'),
             noSelection: t('Select an infobase to inspect it and run operations.'),
@@ -531,6 +612,8 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             updateConfig: t('Update configuration'),
             recreate: t('Recreate'),
             editBase: t('Edit base'),
+            launchPlatform: t('Platform'),
+            defaultLabel: t('Default'),
             moreActions: t('More actions'),
             copyBase: t('Copy infobase'),
             revealFolder: t('Open folder'),
@@ -538,6 +621,8 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             addToLauncher: t('Add to launcher'),
             removeFromLauncher: t('Remove from launcher'),
             forgetManual: t('Forget manual path'),
+            hideInfobase: t('Hide infobase'),
+            unhideInfobase: t('Unhide infobase'),
             lastError: t('Last error'),
             ready: t('Ready'),
             empty: t('Empty'),
@@ -596,6 +681,10 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                     <span class="codicon codicon-folder-opened" aria-hidden="true"></span>
                     <span>${escapeHtml(loc.addInfobasePath)}</span>
                 </button>
+                <button id="manageEtalonBasesBtn" class="toolbar-btn" type="button">
+                    <span class="codicon codicon-database" aria-hidden="true"></span>
+                    <span>${escapeHtml(loc.manageEtalonBases)}</span>
+                </button>
             </div>
         </header>
 
@@ -630,6 +719,11 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                                     <span class="codicon codicon-check sort-menu-check" aria-hidden="true"></span>
                                     <span>${escapeHtml(loc.sortManual)}</span>
                                 </button>
+                                <div class="dropdown-separator menu-separator" role="separator"></div>
+                                <button class="menu-item sort-menu-item" type="button" data-toggle-show-hidden="true">
+                                    <span class="codicon codicon-check sort-menu-check" aria-hidden="true"></span>
+                                    <span>${escapeHtml(loc.showHidden)}</span>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -648,6 +742,23 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                         <div class="details-copy">
                             <h2 id="infobaseTitle"></h2>
                             <p id="infobasePath" class="details-path"></p>
+                        </div>
+                        <div class="menu-shell details-hero-platform-shell">
+                            <button
+                                id="launchPlatformBtn"
+                                class="toolbar-btn platform-selector-btn"
+                                type="button"
+                                aria-haspopup="menu"
+                                aria-expanded="false"
+                                aria-label="${escapeHtml(loc.launchPlatform)}"
+                                title="${escapeHtml(loc.launchPlatform)}"
+                                data-requires-selection="true"
+                            >
+                                <span class="codicon codicon-versions" aria-hidden="true"></span>
+                                <span id="launchPlatformLabel" class="platform-selector-label">${escapeHtml(loc.launchPlatform)}</span>
+                                <span class="codicon codicon-chevron-down" aria-hidden="true"></span>
+                            </button>
+                            <div id="launchPlatformMenu" class="menu-popover platform-menu" role="menu" aria-label="${escapeHtml(loc.launchPlatform)}"></div>
                         </div>
                         <div id="stateBadge" class="state-pill compact"></div>
                     </div>
@@ -719,6 +830,10 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                                 <button id="forgetManualAction" class="menu-item hidden" type="button" data-command="forgetManual" data-requires-selection="true">
                                     <span class="codicon codicon-close" aria-hidden="true"></span>
                                     <span>${escapeHtml(loc.forgetManual)}</span>
+                                </button>
+                                <button id="toggleHiddenAction" class="menu-item" type="button" data-command="toggleHidden" data-requires-selection="true">
+                                    <span class="codicon codicon-eye-closed" aria-hidden="true"></span>
+                                    <span id="toggleHiddenActionLabel">${escapeHtml(loc.hideInfobase)}</span>
                                 </button>
                             </div>
                         </div>

@@ -14,6 +14,7 @@ import {
     getFormExplorerSnapshotPath
 } from './formExplorerPaths';
 import {
+    getManagedInfobasePreferredPlatformClientExePath,
     getManagedInfobaseStartupParameterArgs,
     pickManagedInfobasePath,
     updateManagedInfobaseMetadata
@@ -27,7 +28,13 @@ import {
     normalizeInfobaseConnectionIdentity,
     normalizeInfobaseReference
 } from './oneCInfobaseConnection';
-import { resolveOneCDesignerExePath, resolveOneCIBCmdExePath } from './oneCPlatform';
+import {
+    ensureOneCPlatformsCatalogInitialized,
+    normalizeOneCClientExePath,
+    resolveOneCDesignerExePath,
+    resolveOneCIBCmdExePath,
+    resolveOneCPlatformForLaunch
+} from './oneCPlatform';
 
 interface BaseConfigurationInfo {
     name: string;
@@ -148,6 +155,19 @@ export interface StartFormExplorerInfobaseResult {
     status: 'started' | 'cancelled' | 'error';
     infobasePath: string | null;
     error: string | null;
+    processId: number | null;
+}
+
+export interface BuildFormExplorerExtensionCommandOptions {
+    oneCClientExePath?: string | null;
+}
+
+export interface InstallFormExplorerExtensionCommandOptions extends BuildFormExplorerExtensionCommandOptions {
+    targetInfobasePath?: string | null;
+}
+
+export interface StartFormExplorerInfobaseCommandOptions extends BuildFormExplorerExtensionCommandOptions {
+    preferredInfobasePath?: string | null;
 }
 
 type FormExplorerInstallMode = 'cfe' | 'direct' | 'target';
@@ -166,9 +186,15 @@ interface FormExplorerStartActionSelection {
     installMode?: FormExplorerInstallMode;
 }
 
+interface FormExplorerLaunchAuthenticationQuickPickItem extends vscode.QuickPickItem {
+    action: 'cached' | 'prompt' | 'dialog';
+    authentication?: InfobaseAuthentication | null;
+}
+
 interface GenerateFormExplorerExtensionOptions {
     targetInfobasePath?: string | null;
     installMode?: FormExplorerInstallMode | null;
+    oneCClientExePath?: string | null;
 }
 
 interface HotkeyPresetDefinition {
@@ -204,6 +230,7 @@ const DEFAULT_MODE_REQUEST_POLL_INTERVAL_SECONDS = 1;
 const FORM_EXPLORER_CFE_BUILD_STATE_SCHEMA_VERSION = 1;
 const TOGGLE_MODE_SHORTCUT = 'Ctrl+Alt+F11';
 const INFOBASE_AUTH_CACHE = new Map<string, InfobaseAuthentication>();
+const INFOBASE_LAUNCH_AUTH_CACHE = new Map<string, InfobaseAuthentication>();
 const HOTKEY_PRESETS: HotkeyPresetDefinition[] = [
     {
         key: 'ctrlShiftF12',
@@ -451,6 +478,102 @@ async function promptInfobaseAuthentication(
         username: username.trim() || 'Administrator',
         password
     };
+}
+
+function areInfobaseAuthenticationsEqual(
+    left: InfobaseAuthentication | null | undefined,
+    right: InfobaseAuthentication | null | undefined
+): boolean {
+    if (!left && !right) {
+        return true;
+    }
+
+    if (!left || !right) {
+        return false;
+    }
+
+    return left.username === right.username
+        && left.password === right.password;
+}
+
+async function pickFormExplorerLaunchAuthentication(
+    t: Awaited<ReturnType<typeof getTranslator>>,
+    targetInfobasePath: string,
+    probeAuthentication: InfobaseAuthentication | null
+): Promise<InfobaseAuthentication | null | undefined> {
+    const authCacheKey = normalizeInfobaseConnectionIdentity(targetInfobasePath);
+    const lastLaunchAuthentication = INFOBASE_LAUNCH_AUTH_CACHE.get(authCacheKey) || null;
+    const items: FormExplorerLaunchAuthenticationQuickPickItem[] = [];
+
+    if (lastLaunchAuthentication) {
+        items.push({
+            label: t('Use last launch user "{0}"', lastLaunchAuthentication.username),
+            description: t('Start 1C with the same infobase user used in the previous Form Explorer launch.'),
+            action: 'cached',
+            authentication: lastLaunchAuthentication
+        });
+    }
+
+    if (
+        probeAuthentication
+        && !areInfobaseAuthenticationsEqual(probeAuthentication, lastLaunchAuthentication)
+    ) {
+        items.push({
+            label: t('Use extension install user "{0}"', probeAuthentication.username),
+            description: t('Start 1C with the infobase user used to check or install the Form Explorer extension.'),
+            action: 'cached',
+            authentication: probeAuthentication
+        });
+    }
+
+    items.push(
+        {
+            label: t('Enter another infobase user'),
+            description: t('Specify another 1C infobase user for this launch.'),
+            action: 'prompt'
+        },
+        {
+            label: t('Show standard 1C login dialog'),
+            description: t('Start 1C without injected /N and /P so the client asks for credentials itself.'),
+            action: 'dialog',
+            authentication: null
+        }
+    );
+
+    const activeItem = lastLaunchAuthentication || probeAuthentication
+        ? items[0]
+        : (items.find(item => item.action === 'dialog') || items[0]);
+    const selectedItem = await showQuickPickWithDefaultSelection(items, {
+        title: t('Choose Form Explorer launch user'),
+        placeHolder: t('Select how Form Explorer should authenticate when starting the target infobase'),
+        activeItem
+    });
+    if (!selectedItem) {
+        return undefined;
+    }
+
+    if (selectedItem.action === 'dialog') {
+        return null;
+    }
+
+    if (selectedItem.action === 'cached') {
+        const selectedAuthentication = selectedItem.authentication || null;
+        if (selectedAuthentication) {
+            INFOBASE_LAUNCH_AUTH_CACHE.set(authCacheKey, selectedAuthentication);
+        } else {
+            INFOBASE_LAUNCH_AUTH_CACHE.delete(authCacheKey);
+        }
+        return selectedAuthentication;
+    }
+
+    const promptSeedAuthentication = lastLaunchAuthentication || probeAuthentication || null;
+    const providedAuthentication = await promptInfobaseAuthentication(t, promptSeedAuthentication, false);
+    if (!providedAuthentication) {
+        return undefined;
+    }
+
+    INFOBASE_LAUNCH_AUTH_CACHE.set(authCacheKey, providedAuthentication);
+    return providedAuthentication;
 }
 
 async function showQuickPickWithDefaultSelection<T extends vscode.QuickPickItem>(
@@ -1178,7 +1301,10 @@ async function parseBaseConfigurationInfo(configurationSourceDirectory: string):
         name: extractFirstTagValue(configurationXml, 'Name') || 'Configuration',
         synonym: extractFirstSynonymText(configurationXml),
         version: extractFirstTagValue(configurationXml, 'Version'),
-        compatibilityMode: extractFirstTagValue(configurationXml, 'ConfigurationExtensionCompatibilityMode') || DEFAULT_COMPATIBILITY_MODE,
+        // The extension compatibility mode must not exceed the main configuration mode.
+        compatibilityMode: extractFirstTagValue(configurationXml, 'CompatibilityMode')
+            || extractFirstTagValue(configurationXml, 'ConfigurationExtensionCompatibilityMode')
+            || DEFAULT_COMPATIBILITY_MODE,
         xmlVersion: extractMetadataXmlVersion(configurationXml),
         scriptVariant,
         internalInfoClassIds: extractContainedObjectClassIds(configurationXml),
@@ -2344,8 +2470,8 @@ function buildAdapterSupportTextRussian(
     Настройки = KOTFormExplorer_ReadAdapterSettings();
     Настройки.Вставить("autoSnapshotEnabled", Ложь);
     KOTFormExplorer_SaveAdapterSettings(Настройки);
-    KOTFormExplorer_ClearModeRequest();
     KOTFormExplorer_ApplyAutoSnapshotSettings(Истина);
+    KOTFormExplorer_ApplyPendingModeRequest();
 
 КонецПроцедуры
 
@@ -3458,8 +3584,8 @@ Procedure KOTFormExplorer_InitializeSessionMode() Export
     Settings = KOTFormExplorer_ReadAdapterSettings();
     Settings.Insert("autoSnapshotEnabled", False);
     KOTFormExplorer_SaveAdapterSettings(Settings);
-    KOTFormExplorer_ClearModeRequest();
     KOTFormExplorer_ApplyAutoSnapshotSettings(True);
+    KOTFormExplorer_ApplyPendingModeRequest();
 
 EndProcedure
 
@@ -5023,7 +5149,7 @@ Artifacts:
 Windows built-in build:
 
 - If \`kotTestToolkit.formExplorer.extensionBuildCommandTemplate\` is empty and
-  \`kotTestToolkit.paths.oneCEnterpriseExe\` points to \`1cv8c.exe\`, KOT derives the sibling
+  the default platform from \`kotTestToolkit.platforms.catalog\` points to \`1cv8c.exe\`, KOT derives the sibling
   designer executable and builds the \`.cfe\` automatically using a cached file infobase inside
   the generated artifacts directory.
 - The generated runtime extension is lightweight: it does not adopt application forms.
@@ -5528,6 +5654,7 @@ async function generateExtensionProjectFiles(
         managedForms: scanResult.forms
     };
 
+    const defaultOneCExePath = (await ensureOneCPlatformsCatalogInitialized())[0]?.clientExePath || '';
     const buildManifest = {
         generatedAt: new Date().toISOString(),
         project,
@@ -5539,7 +5666,7 @@ async function generateExtensionProjectFiles(
             extensionSourceDir: extensionSourceDirectory,
             cfePath: cfeOutputPath,
             cachedCfePath,
-            oneCExePath: vscode.workspace.getConfiguration('kotTestToolkit').get<string>('paths.oneCEnterpriseExe') || '',
+            oneCExePath: defaultOneCExePath,
             snapshotPath,
             settingsFilePath,
             modeFilePath,
@@ -5571,10 +5698,13 @@ async function runBuildCommand(
     generatedArtifactsDirectory: string,
     snapshotPath: string,
     outputChannel: vscode.OutputChannel,
-    t: Awaited<ReturnType<typeof getTranslator>>
+    t: Awaited<ReturnType<typeof getTranslator>>,
+    preferredOneCClientExePath?: string | null
 ): Promise<void> {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
-    const oneCExePath = (vscode.workspace.getConfiguration('kotTestToolkit').get<string>('paths.oneCEnterpriseExe') || '').trim();
+    const oneCExePath = normalizeOneCClientExePath(preferredOneCClientExePath || '')
+        || (await ensureOneCPlatformsCatalogInitialized())[0]?.clientExePath
+        || '';
     const command = applyCommandTemplate(commandTemplate, {
         workspaceRoot,
         workspaceRootQuoted: quoteForShell(workspaceRoot),
@@ -6258,21 +6388,24 @@ async function runBuiltInWindowsDirectInstallToInfobaseWithAuthRetry(
 }
 
 async function resolveConfiguredOneCClientExePath(
-    t: Awaited<ReturnType<typeof getTranslator>>
+    t: Awaited<ReturnType<typeof getTranslator>>,
+    preferredOneCClientExePath?: string | null
 ): Promise<string> {
-    const oneCClientExePath = (vscode.workspace.getConfiguration('kotTestToolkit').get<string>('paths.oneCEnterpriseExe') || '').trim();
+    const oneCClientExePath = normalizeOneCClientExePath(preferredOneCClientExePath || '')
+        || (await ensureOneCPlatformsCatalogInitialized())[0]?.clientExePath
+        || '';
 
     if (!oneCClientExePath) {
         const action = t('Open Settings');
         vscode.window.showErrorMessage(
-            t('Path to 1C:Enterprise client (1cv8c.exe) is not specified in settings.'),
+            t('No 1C platforms are configured. Configure them in settings or open the platform manager.'),
             action
         ).then(selection => {
             if (selection === action) {
-                void vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
+                void vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.platforms.catalog');
             }
         });
-        const error = new Error(t('Path to 1C:Enterprise client (1cv8c.exe) is not specified in settings.')) as Error & { alreadyShownToUser?: boolean };
+        const error = new Error(t('No 1C platforms are configured. Configure them in settings or open the platform manager.')) as Error & { alreadyShownToUser?: boolean };
         error.alreadyShownToUser = true;
         throw error;
     }
@@ -6284,7 +6417,7 @@ async function resolveConfiguredOneCClientExePath(
             action
         ).then(selection => {
             if (selection === action) {
-                void vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
+                void vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.platforms.catalog');
             }
         });
         const error = new Error(t('1C:Enterprise client file not found at path: {0}', oneCClientExePath)) as Error & { alreadyShownToUser?: boolean };
@@ -6296,9 +6429,10 @@ async function resolveConfiguredOneCClientExePath(
 }
 
 async function resolveConfiguredOneCDesignerExePath(
-    t: Awaited<ReturnType<typeof getTranslator>>
+    t: Awaited<ReturnType<typeof getTranslator>>,
+    preferredOneCClientExePath?: string | null
 ): Promise<string> {
-    const oneCClientExePath = await resolveConfiguredOneCClientExePath(t);
+    const oneCClientExePath = await resolveConfiguredOneCClientExePath(t, preferredOneCClientExePath);
     const oneCDesignerExePath = resolveOneCDesignerExePath(oneCClientExePath);
 
     if (!(await pathExists(oneCDesignerExePath))) {
@@ -6308,7 +6442,7 @@ async function resolveConfiguredOneCDesignerExePath(
             action
         ).then(selection => {
             if (selection === action) {
-                void vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
+                void vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.platforms.catalog');
             }
         });
         const error = new Error(t('1C:Enterprise Designer file not found at path: {0}', oneCDesignerExePath)) as Error & { alreadyShownToUser?: boolean };
@@ -6319,8 +6453,10 @@ async function resolveConfiguredOneCDesignerExePath(
     return oneCDesignerExePath;
 }
 
-async function tryResolveConfiguredOneCIBCmdExePath(): Promise<string | null> {
-    const oneCClientExePath = (vscode.workspace.getConfiguration('kotTestToolkit').get<string>('paths.oneCEnterpriseExe') || '').trim();
+async function tryResolveConfiguredOneCIBCmdExePath(preferredOneCClientExePath?: string | null): Promise<string | null> {
+    const oneCClientExePath = normalizeOneCClientExePath(preferredOneCClientExePath || '')
+        || (await ensureOneCPlatformsCatalogInitialized())[0]?.clientExePath
+        || '';
     if (!oneCClientExePath) {
         return null;
     }
@@ -6357,7 +6493,7 @@ async function launchInfobaseClientDetached(
     startupArgs: string[],
     outputChannel: vscode.OutputChannel,
     t: Awaited<ReturnType<typeof getTranslator>>
-): Promise<void> {
+): Promise<number | null> {
     const launchArgs = appendInfobaseAuthenticationArgs(
         [
             'ENTERPRISE',
@@ -6373,7 +6509,7 @@ async function launchInfobaseClientDetached(
     outputChannel.appendLine(t('Launching 1C:Enterprise client for infobase: {0}', targetInfobasePath));
     outputChannel.appendLine(t('Resolved 1C command: {0}', formatCommandForOutput(oneCClientExePath, launchArgs)));
 
-    await new Promise<void>((resolve, reject) => {
+    return await new Promise<number | null>((resolve, reject) => {
         try {
             const child = cp.spawn(oneCClientExePath, launchArgs, {
                 cwd: workspaceRootPath,
@@ -6384,7 +6520,7 @@ async function launchInfobaseClientDetached(
             });
             child.on('error', error => reject(error));
             child.unref();
-            resolve();
+            resolve(typeof child.pid === 'number' && child.pid > 0 ? child.pid : null);
         } catch (error) {
             reject(error);
         }
@@ -6397,10 +6533,13 @@ async function runBuiltInWindowsBuild(
     configurationSourceDirectory: string,
     generatedArtifactsDirectory: string,
     outputChannel: vscode.OutputChannel,
-    t: Awaited<ReturnType<typeof getTranslator>>
+    t: Awaited<ReturnType<typeof getTranslator>>,
+    preferredOneCClientExePath?: string | null
 ): Promise<string> {
-    const oneCClientExePath = (vscode.workspace.getConfiguration('kotTestToolkit').get<string>('paths.oneCEnterpriseExe') || '').trim();
-    const oneCDesignerExePath = await resolveConfiguredOneCDesignerExePath(t);
+    const oneCClientExePath = normalizeOneCClientExePath(preferredOneCClientExePath || '')
+        || (await ensureOneCPlatformsCatalogInitialized())[0]?.clientExePath
+        || '';
+    const oneCDesignerExePath = await resolveConfiguredOneCDesignerExePath(t, preferredOneCClientExePath);
     const logsDirectory = path.join(generatedArtifactsDirectory, 'build-logs');
     const buildFingerprint = await computeFormExplorerCfeBuildFingerprint(
         context,
@@ -6496,6 +6635,7 @@ async function handleGenerateFormExplorerExtensionCore(
         || ''
     ).trim();
     const showOutputPanel = vscode.workspace.getConfiguration('kotTestToolkit.formExplorer').get<boolean>('showOutputPanel', false);
+    const preferredOneCClientExePath = normalizeOneCClientExePath(options?.oneCClientExePath || '');
 
     if (!generatedArtifactsDirectory) {
         const action = t('Open Settings');
@@ -6637,7 +6777,7 @@ async function handleGenerateFormExplorerExtensionCore(
                     );
                     let exportedWithIBCmd = false;
                     if (targetInfobaseFilePath) {
-                        const ibcmdExePath = await tryResolveConfiguredOneCIBCmdExePath();
+                        const ibcmdExePath = await tryResolveConfiguredOneCIBCmdExePath(preferredOneCClientExePath);
                         if (ibcmdExePath) {
                             outputChannel.appendLine(
                                 t('Trying ibcmd export for file infobase: {0}', targetInfobaseFilePath)
@@ -6667,7 +6807,7 @@ async function handleGenerateFormExplorerExtensionCore(
                         }
                     }
                     if (!exportedWithIBCmd) {
-                        oneCDesignerExePath = await resolveConfiguredOneCDesignerExePath(t);
+                        oneCDesignerExePath = await resolveConfiguredOneCDesignerExePath(t, preferredOneCClientExePath);
                         await runBuiltInWindowsDumpConfigurationFromInfobaseWithAuthRetry(
                             oneCDesignerExePath,
                             targetInfobasePath,
@@ -6720,11 +6860,12 @@ async function handleGenerateFormExplorerExtensionCore(
                         generatedArtifactsDirectory,
                         snapshotPath,
                         outputChannel,
-                        t
+                        t,
+                        preferredOneCClientExePath
                     );
                     buildExecuted = true;
                     oneCDesignerExePath = targetInfobasePath
-                        ? await resolveConfiguredOneCDesignerExePath(t)
+                        ? await resolveConfiguredOneCDesignerExePath(t, preferredOneCClientExePath)
                         : null;
                 }
 
@@ -6754,7 +6895,8 @@ async function handleGenerateFormExplorerExtensionCore(
                         effectiveConfigurationSourceDirectory,
                         generatedArtifactsDirectory,
                         outputChannel,
-                        t
+                        t,
+                        preferredOneCClientExePath
                     );
                     buildExecuted = true;
                 }
@@ -6771,7 +6913,7 @@ async function handleGenerateFormExplorerExtensionCore(
                     }
 
                     if (!oneCDesignerExePath) {
-                        oneCDesignerExePath = await resolveConfiguredOneCDesignerExePath(t);
+                        oneCDesignerExePath = await resolveConfiguredOneCDesignerExePath(t, preferredOneCClientExePath);
                     }
 
                     progress.report({
@@ -6903,17 +7045,52 @@ export async function handleGenerateFormExplorerExtension(context: vscode.Extens
     await handleGenerateFormExplorerExtensionCore(context, 'build');
 }
 
-export async function handleBuildFormExplorerExtensionCfe(context: vscode.ExtensionContext): Promise<void> {
-    await handleGenerateFormExplorerExtensionCore(context, 'build');
+async function resolveFormExplorerPreferredPlatformMetadataPatchValue(
+    oneCClientExePath: string
+): Promise<string | null> {
+    const normalizedClientPath = normalizeOneCClientExePath(oneCClientExePath || '').trim();
+    if (!normalizedClientPath) {
+        return null;
+    }
+
+    const defaultClientPath = (await ensureOneCPlatformsCatalogInitialized())[0]?.clientExePath || '';
+    const normalizedDefaultPath = normalizeOneCClientExePath(defaultClientPath).trim();
+    const normalizedLookupPath = path.normalize(normalizedClientPath);
+    const normalizedDefaultLookupPath = path.normalize(normalizedDefaultPath);
+    const leftValue = process.platform === 'win32'
+        ? normalizedLookupPath.toLowerCase()
+        : normalizedLookupPath;
+    const rightValue = process.platform === 'win32'
+        ? normalizedDefaultLookupPath.toLowerCase()
+        : normalizedDefaultLookupPath;
+
+    return leftValue === rightValue
+        ? null
+        : normalizedClientPath;
 }
 
-export async function handleInstallFormExplorerExtension(context: vscode.ExtensionContext): Promise<void> {
-    await handleGenerateFormExplorerExtensionCore(context, 'install');
+export async function handleBuildFormExplorerExtensionCfe(
+    context: vscode.ExtensionContext,
+    options?: BuildFormExplorerExtensionCommandOptions
+): Promise<void> {
+    await handleGenerateFormExplorerExtensionCore(context, 'build', {
+        oneCClientExePath: options?.oneCClientExePath || null
+    });
+}
+
+export async function handleInstallFormExplorerExtension(
+    context: vscode.ExtensionContext,
+    options?: InstallFormExplorerExtensionCommandOptions
+): Promise<void> {
+    await handleGenerateFormExplorerExtensionCore(context, 'install', {
+        targetInfobasePath: options?.targetInfobasePath || null,
+        oneCClientExePath: options?.oneCClientExePath || null
+    });
 }
 
 export async function handleStartFormExplorerInfobase(
     context: vscode.ExtensionContext,
-    preferredInfobasePath?: string
+    options?: string | StartFormExplorerInfobaseCommandOptions
 ): Promise<StartFormExplorerInfobaseResult> {
     const t = await getTranslator(context.extensionUri);
     if (process.platform !== 'win32') {
@@ -6923,12 +7100,16 @@ export async function handleStartFormExplorerInfobase(
         return {
             status: 'error',
             infobasePath: null,
-            error: t('Starting target infobase is supported only on Windows where 1C client is available.')
+            error: t('Starting target infobase is supported only on Windows where 1C client is available.'),
+            processId: null
         };
     }
 
-    const configuredPreferredInfobasePath = typeof preferredInfobasePath === 'string' && preferredInfobasePath.trim()
-        ? normalizeInfobaseReference(preferredInfobasePath.trim())
+    const commandOptions = typeof options === 'string'
+        ? { preferredInfobasePath: options }
+        : (options || {});
+    const configuredPreferredInfobasePath = typeof commandOptions.preferredInfobasePath === 'string' && commandOptions.preferredInfobasePath.trim()
+        ? normalizeInfobaseReference(commandOptions.preferredInfobasePath.trim())
         : null;
     const generatedArtifactsDirectory = getFormExplorerGeneratedArtifactsDirectory();
     const workspaceRootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
@@ -6940,8 +7121,6 @@ export async function handleStartFormExplorerInfobase(
     }
 
     try {
-        const oneCClientExePath = await resolveConfiguredOneCClientExePath(t);
-        const oneCDesignerExePath = await resolveConfiguredOneCDesignerExePath(t);
         let selectedTargetInfobasePath = configuredPreferredInfobasePath;
         if (!selectedTargetInfobasePath) {
             selectedTargetInfobasePath = await pickManagedInfobasePath(context, t, {
@@ -6955,7 +7134,8 @@ export async function handleStartFormExplorerInfobase(
                 return {
                     status: 'cancelled',
                     infobasePath: null,
-                    error: null
+                    error: null,
+                    processId: null
                 };
             };
         }
@@ -6967,6 +7147,36 @@ export async function handleStartFormExplorerInfobase(
         const targetInfobaseFilePath = getFileInfobasePath(targetInfobasePath);
         if (targetInfobaseFilePath && !(await pathExists(targetInfobaseFilePath))) {
             throw new Error(t('Target infobase path does not exist: {0}', targetInfobasePath));
+        }
+
+        const preferredOneCClientExePath = normalizeOneCClientExePath(
+            commandOptions.oneCClientExePath
+            || getManagedInfobasePreferredPlatformClientExePath(context, targetInfobasePath)
+            || ''
+        );
+        let oneCClientExePath = preferredOneCClientExePath;
+        if (!oneCClientExePath) {
+            const selectedPlatform = await resolveOneCPlatformForLaunch(t, {
+                placeHolder: t('Select 1C platform for Form Explorer launch')
+            });
+            if (!selectedPlatform) {
+                return {
+                    status: 'cancelled',
+                    infobasePath: targetInfobasePath,
+                    error: null,
+                    processId: null
+                };
+            }
+            oneCClientExePath = selectedPlatform.clientExePath;
+        }
+
+        if (!(await pathExists(oneCClientExePath))) {
+            throw new Error(t('1C:Enterprise client file not found at path: {0}', oneCClientExePath));
+        }
+
+        const oneCDesignerExePath = resolveOneCDesignerExePath(oneCClientExePath);
+        if (!(await pathExists(oneCDesignerExePath))) {
+            throw new Error(t('1C Designer executable was not found next to client path: {0}', oneCClientExePath));
         }
 
         await ensureDirectory(runtimeDirectory);
@@ -6986,14 +7196,16 @@ export async function handleStartFormExplorerInfobase(
             return {
                 status: 'cancelled',
                 infobasePath: targetInfobasePath,
-                error: null
+                error: null,
+                processId: null
             };
         }
 
         if (startAction.actionKey === 'reinstall') {
             await handleGenerateFormExplorerExtensionCore(context, 'install', {
                 targetInfobasePath,
-                installMode: startAction.installMode || null
+                installMode: startAction.installMode || null,
+                oneCClientExePath
             });
             probeResult = await probeExtensionInstalledInInfobaseWithAuthRetry(
                 oneCDesignerExePath,
@@ -7012,14 +7224,28 @@ export async function handleStartFormExplorerInfobase(
             }
         }
 
+        const launchAuthentication = await pickFormExplorerLaunchAuthentication(
+            t,
+            targetInfobasePath,
+            probeResult.authentication
+        );
+        if (launchAuthentication === undefined) {
+            return {
+                status: 'cancelled',
+                infobasePath: targetInfobasePath,
+                error: null,
+                processId: null
+            };
+        }
+
         await writeFormExplorerModeRequest('refresh', outputChannel, t);
         const startupArgs = getManagedInfobaseStartupParameterArgs(context, targetInfobasePath, {
-            allowDialogSuppression: probeResult.authentication !== null
+            allowDialogSuppression: launchAuthentication !== null
         });
-        await launchInfobaseClientDetached(
+        const processId = await launchInfobaseClientDetached(
             oneCClientExePath,
             targetInfobasePath,
-            probeResult.authentication,
+            launchAuthentication,
             startupArgs,
             outputChannel,
             t
@@ -7033,12 +7259,14 @@ export async function handleStartFormExplorerInfobase(
             addRoles: ['formExplorer'],
             lastLaunchAt: new Date().toISOString(),
             lastLaunchKind: 'formExplorer',
+            preferredPlatformClientExePath: await resolveFormExplorerPreferredPlatformMetadataPatchValue(oneCClientExePath),
             stateHint: 'ready'
         });
         return {
             status: 'started',
             infobasePath: targetInfobasePath,
-            error: null
+            error: null,
+            processId
         };
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -7051,7 +7279,8 @@ export async function handleStartFormExplorerInfobase(
             infobasePath: typeof preferredInfobasePath === 'string' && preferredInfobasePath.trim()
                 ? normalizeInfobaseReference(preferredInfobasePath.trim())
                 : null,
-            error: t('Failed to start target infobase for Form Explorer: {0}', message)
+            error: t('Failed to start target infobase for Form Explorer: {0}', message),
+            processId: null
         };
     }
 }

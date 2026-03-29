@@ -46,29 +46,6 @@
         }
       },
       {
-        "title": "%config.phaseSwitcherSettings.title%",
-        "properties": {
-          "kotTestToolkit.assembleScript.showDriveFeatures": {
-            "type": "boolean",
-            "default": false,
-            "description": "%config.assembleScript.showDriveFeatures.description%",
-            "order": 1
-          },
-          "kotTestToolkit.phaseSwitcher.highlightAffectedMainScenarios": {
-            "type": "boolean",
-            "default": true,
-            "description": "%config.phaseSwitcher.highlightAffectedMainScenarios.description%",
-            "order": 2
-          },
-          "kotTestToolkit.phaseSwitcher.autoAddNewScenariosToFavorites": {
-            "type": "boolean",
-            "default": true,
-            "description": "%config.phaseSwitcher.autoAddNewScenariosToFavorites.description%",
-            "order": 3
-          }
-        }
-      },
-      {
         "title": "%config.editorSettings.title%",
         "properties": {
           "kotTestToolkit.editor.autoCollapseOnOpen": {
@@ -77,42 +54,53 @@
             "description": "%config.autoCollapseOnOpen.description%",
             "order": 1
           },
+          "kotTestToolkit.editor.useFeatureLanguageModeForScenarioYaml": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.editor.useFeatureLanguageModeForScenarioYaml.description%",
+            "order": 2
+          },
           "kotTestToolkit.editor.autoReplaceTabsWithSpacesOnSave": {
             "type": "boolean",
             "default": true,
             "description": "%config.autoReplaceTabsWithSpacesOnSave.description%",
-            "order": 2
+            "order": 3
           },
           "kotTestToolkit.editor.autoAlignNestedScenarioParametersOnSave": {
             "type": "boolean",
             "default": true,
             "description": "%config.autoAlignNestedScenarioParametersOnSave.description%",
-            "order": 3
+            "order": 4
           },
           "kotTestToolkit.editor.autoAlignGherkinTablesOnSave": {
             "type": "boolean",
             "default": true,
             "description": "%config.autoAlignGherkinTablesOnSave.description%",
-            "order": 4
+            "order": 5
           },
           "kotTestToolkit.editor.autoFillNestedScenariosOnSave": {
             "type": "boolean",
             "default": true,
             "description": "%config.autoFillNestedScenariosOnSave.description%",
-            "order": 5
+            "order": 6
           },
           "kotTestToolkit.editor.autoFillScenarioParametersOnSave": {
             "type": "boolean",
             "default": true,
             "description": "%config.autoFillScenarioParametersOnSave.description%",
-            "order": 6
+            "order": 7
           },
           "kotTestToolkit.editor.showRefillMessages": {
             "type": "boolean",
             "default": true,
             "description": "%config.showRefillMessages.description%",
-            "order": 7
-          },
+            "order": 8
+          }
+        }
+      },
+      {
+        "title": "%config.newScenarioDefaults.title%",
+        "properties": {
           "kotTestToolkit.editor.newScenarioLanguage": {
             "type": "string",
             "default": "en",
@@ -125,19 +113,14 @@
               "%config.editor.newScenarioLanguage.ru.desc%"
             ],
             "description": "%config.editor.newScenarioLanguage.description%",
-            "order": 8
-          }
-        }
-      },
-      {
-        "title": "%config.newScenarioDefaults.title%",
-        "properties": {
+            "order": 1
+          },
           "kotTestToolkit.newScenarioDefaults.project": {
             "type": "string",
             "default": "Drive",
             "description": "%config.newScenarioDefaults.project.description%",
             "markdownDescription": "%config.newScenarioDefaults.project.markdownDescription%",
-            "order": 1
+            "order": 2
           },
           "kotTestToolkit.newScenarioDefaults.systemFunctions": {
             "type": "array",
@@ -165,65 +148,42 @@
             },
             "description": "%config.newScenarioDefaults.systemFunctions.description%",
             "markdownDescription": "%config.newScenarioDefaults.systemFunctions.markdownDescription%",
-            "order": 2
+            "order": 3
           },
           "kotTestToolkit.newScenarioDefaults.allowCrossFunctionUsage": {
             "type": "boolean",
             "default": true,
             "description": "%config.newScenarioDefaults.allowCrossFunctionUsage.description%",
             "markdownDescription": "%config.newScenarioDefaults.allowCrossFunctionUsage.markdownDescription%",
-            "order": 3
+            "order": 4
           },
           "kotTestToolkit.newScenarioDefaults.userProfile": {
             "type": "string",
             "default": "Administrator",
             "description": "%config.newScenarioDefaults.userProfile.description%",
             "markdownDescription": "%config.newScenarioDefaults.userProfile.markdownDescription%",
-            "order": 4
+            "order": 5
           },
           "kotTestToolkit.newScenarioDefaults.reportLevel1": {
             "type": "string",
             "default": "Drive",
             "description": "%config.newScenarioDefaults.reportLevel1.description%",
             "markdownDescription": "%config.newScenarioDefaults.reportLevel1.markdownDescription%",
-            "order": 5
+            "order": 6
           },
           "kotTestToolkit.newScenarioDefaults.mainReportLevel2": {
             "type": "string",
             "default": "Parent",
             "description": "%config.newScenarioDefaults.mainReportLevel2.description%",
             "markdownDescription": "%config.newScenarioDefaults.mainReportLevel2.markdownDescription%",
-            "order": 6
+            "order": 7
           },
           "kotTestToolkit.newScenarioDefaults.nestedReportLevel2": {
             "type": "string",
             "default": "Tests",
             "description": "%config.newScenarioDefaults.nestedReportLevel2.description%",
             "markdownDescription": "%config.newScenarioDefaults.nestedReportLevel2.markdownDescription%",
-            "order": 7
-          }
-        }
-      },
-      {
-        "title": "%config.legacySupportSettings.title%",
-        "properties": {
-          "kotTestToolkit.editor.autoEnsureKotMetadataForMainScenarios": {
-            "type": "boolean",
-            "default": true,
-            "description": "%config.editor.autoEnsureKotMetadataForMainScenarios.description%",
-            "order": 1
-          },
-          "kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios": {
-            "type": "boolean",
-            "default": true,
-            "description": "%config.editor.enableLegacyMetadataMigrationForMainScenarios.description%",
-            "order": 2
-          },
-          "kotTestToolkit.legacy.enableDisabledTestsDirectoryMoveOnBuild": {
-            "type": "boolean",
-            "default": false,
-            "description": "%config.legacy.enableDisabledTestsDirectoryMoveOnBuild.description%",
-            "order": 3
+            "order": 8
           }
         }
       },
@@ -245,26 +205,55 @@
         }
       },
       {
+        "title": "%config.phaseSwitcherSettings.title%",
+        "properties": {
+          "kotTestToolkit.phaseSwitcher.highlightAffectedMainScenarios": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.phaseSwitcher.highlightAffectedMainScenarios.description%",
+            "order": 1
+          },
+          "kotTestToolkit.phaseSwitcher.autoAddNewScenariosToFavorites": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.phaseSwitcher.autoAddNewScenariosToFavorites.description%",
+            "order": 2
+          }
+        }
+      },
+      {
         "title": "%config.assemblySettings.title%",
         "properties": {
+          "kotTestToolkit.paths.buildScenarioBddEpf": {
+            "type": "string",
+            "default": "build/BuildScenarioBDD.epf",
+            "description": "%config.paths.buildScenarioBddEpf.description%",
+            "order": 1
+          },
+          "kotTestToolkit.assembleScript.showDriveFeatures": {
+            "type": "boolean",
+            "default": false,
+            "description": "%config.assembleScript.showDriveFeatures.description%",
+            "order": 2
+          },
           "kotTestToolkit.assembleScript.showOutputPanel": {
             "type": "boolean",
             "default": false,
             "description": "%config.showOutputPanel.description%",
-            "order": 1
+            "order": 3
           },
           "kotTestToolkit.output.advancedLogging": {
             "type": "boolean",
             "default": false,
             "description": "%config.output.advancedLogging.description%",
-            "order": 2
+            "order": 4
           },
           "kotTestToolkit.paths.openBuildScenarioParametersManager": {
             "type": "null",
             "default": null,
             "description": "%config.paths.openBuildScenarioParametersManager.description%",
             "markdownDescription": "%config.paths.openBuildScenarioParametersManager.markdownDescription%",
-            "order": 3
+            "order": 5
           }
         }
       },
@@ -367,6 +356,40 @@
         }
       },
       {
+        "title": "%config.platformSettings.title%",
+        "properties": {
+          "kotTestToolkit.platforms.catalog": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "clientExePath"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "clientExePath": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "description": "%config.platforms.catalog.description%",
+            "markdownDescription": "%config.platforms.catalog.markdownDescription%",
+            "order": 1
+          },
+          "kotTestToolkit.platforms.promptForLaunches": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.platforms.promptForLaunches.description%",
+            "order": 2
+          }
+        }
+      },
+      {
         "title": "%config.startupParameters.title%",
         "properties": {
           "kotTestToolkit.startupParams.parameters": {
@@ -380,41 +403,46 @@
       {
         "title": "%config.pathsSettings.title%",
         "properties": {
-          "kotTestToolkit.paths.yamlSourceDirectory": {
+          "kotTestToolkit.runtime.directory": {
             "type": "string",
-            "default": "tests/RegressionTests/yaml",
-            "description": "%config.paths.yamlSourceDirectory.description%",
+            "default": ".vscode/kot-runtime",
+            "description": "%config.runtimeDirectory.description%",
             "order": 1
-          },
-          "kotTestToolkit.paths.buildScenarioBddEpf": {
-            "type": "string",
-            "default": "build/BuildScenarioBDD.epf",
-            "description": "%config.paths.buildScenarioBddEpf.description%",
-            "order": 2
-          },
-          "kotTestToolkit.assembleScript.buildPath": {
-            "type": "string",
-            "default": "C:\\EtalonDrive\\",
-            "description": "%config.buildPath.description%",
-            "order": 3
-          },
-          "kotTestToolkit.paths.oneCEnterpriseExe": {
-            "type": "string",
-            "default": "",
-            "description": "%config.oneCEnterpriseExe.description%",
-            "order": 4
           },
           "kotTestToolkit.paths.fileWorkshopExe": {
             "type": "string",
             "default": "C:\\Program Files (x86)\\1cv8fv\\bin\\1cv8fv.exe",
             "description": "%config.fileWorkshopExe.description%",
-            "order": 5
+            "order": 2
           },
           "kotTestToolkit.paths.firstLaunchFolder": {
             "type": "string",
             "default": "",
             "description": "%config.paths.firstLaunchFolder.description%",
-            "order": 6
+            "order": 3
+          }
+        }
+      },
+      {
+        "title": "%config.legacySupportSettings.title%",
+        "properties": {
+          "kotTestToolkit.editor.autoEnsureKotMetadataForMainScenarios": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.editor.autoEnsureKotMetadataForMainScenarios.description%",
+            "order": 1
+          },
+          "kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.editor.enableLegacyMetadataMigrationForMainScenarios.description%",
+            "order": 2
+          },
+          "kotTestToolkit.legacy.enableDisabledTestsDirectoryMoveOnBuild": {
+            "type": "boolean",
+            "default": false,
+            "description": "%config.legacy.enableDisabledTestsDirectoryMoveOnBuild.description%",
+            "order": 3
           }
         }
       }
@@ -448,6 +476,16 @@
       {
         "command": "kotTestToolkit.manageSystemFunctions",
         "title": "%cmd.manageSystemFunctions.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.manageEtalonBases",
+        "title": "%cmd.manageEtalonBases.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.managePlatforms",
+        "title": "%cmd.managePlatforms.title%",
         "category": "%cmd.category%"
       },
       {

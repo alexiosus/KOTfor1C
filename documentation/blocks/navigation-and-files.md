@@ -47,7 +47,7 @@
 | Настройка | Назначение |
 |---|---|
 | `kotTestToolkit.paths.fileWorkshopExe` | Путь к `1cv8fv.exe` для MXL-команд |
-| `kotTestToolkit.paths.yamlSourceDirectory` | Область поиска сценариев |
+| Внутренний корень сканирования сценариев (синхронизируется из `ScenarioFolder`) | Область поиска сценариев |
 | `kotTestToolkit.phaseSwitcher.highlightAffectedMainScenarios` | Подсветка связанных групп и главных сценариев для открытого файла |
 
 ## Ограничения

@@ -37,11 +37,17 @@ import {
 } from './commandHandlers';
 import { getTranslator } from './localization';
 import { setExtensionUri } from './appContext';
+import { getScenarioScanRootPath, initializeScenarioScanRoot, onDidChangeScenarioScanRoot } from './scenarioScanRoot';
 import {
     handleCreateNestedScenario,
     handleCreateMainScenario,
     handleManageSystemFunctions,
-    handleChangeScenarioSystemFunctionFromEditor
+    handleChangeScenarioSystemFunctionFromEditor,
+    handleChangeTestSettingsScenarioFromEditor,
+    handleChangeTestSettingsEtalonBaseFromEditor,
+    handleChangeTestSettingsUserProfileFromEditor,
+    handleManageEtalonBases,
+    handleSyncTestSettingsFromScenario
 } from './scenarioCreator';
 import { TestInfo } from './types'; // Импортируем TestInfo
 import { SettingsProvider } from './settingsProvider';
@@ -51,9 +57,12 @@ import { ScenarioHeaderInlayHintsProvider } from './scenarioHeaderInlayHintsProv
 import { FormExplorerPanel } from './formExplorerPanel';
 import { InfobaseManagerPanel } from './infobaseManagerPanel';
 import {
+    type BuildFormExplorerExtensionCommandOptions,
     handleBuildFormExplorerExtensionCfe,
     handleGenerateFormExplorerExtension,
+    type InstallFormExplorerExtensionCommandOptions,
     handleInstallFormExplorerExtension,
+    type StartFormExplorerInfobaseCommandOptions,
     handleStartFormExplorerInfobase
 } from './formExplorerExtensionGenerator';
 import {
@@ -61,7 +70,10 @@ import {
     initializeFormExplorerRuntimeSidecars,
     shouldPrepareFormExplorerBuilderInfobase
 } from './formExplorerBuilder';
-import { detectInstalledOneCClientExePath } from './oneCPlatform';
+import {
+    ensureOneCPlatformsCatalogInitialized,
+    handleManagePlatforms
+} from './oneCPlatform';
 import {
     ensureSharedStartupInfobaseReady,
     getSharedStartupInfobaseOutputChannel,
@@ -107,65 +119,77 @@ const internallyTriggeredSaves = new Set<string>();
 const pendingBackgroundScenarioFiles = new Set<string>();
 const kotDescriptionBlockLineRegex = /^Описание:\s*[|>][-+0-9]*\s*$/;
 const FAVORITE_SCENARIO_DROP_MIME = 'application/x-kot-favorite-scenario-uri';
+const SCENARIO_HIGHLIGHT_LANGUAGE_CANDIDATES = ['feature', 'gherkin', 'cucumber'];
 const execFileAsync = promisify(execFile);
 let builderWarmupInFlight: Promise<void> | null = null;
 let startupInfobaseWarmupInFlight: Promise<void> | null = null;
+let preferredScenarioHighlightLanguagePromise: Promise<string | null> | null = null;
 
 function escapeRegexLiteral(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function getConfigurationTarget(): vscode.ConfigurationTarget {
-    return vscode.workspace.workspaceFolders?.length
-        ? vscode.ConfigurationTarget.Workspace
-        : vscode.ConfigurationTarget.Global;
+function shouldUseFeatureLanguageModeForScenarioYaml(document: vscode.TextDocument): boolean {
+    return vscode.workspace
+        .getConfiguration('kotTestToolkit', document.uri)
+        .get<boolean>('editor.useFeatureLanguageModeForScenarioYaml', true);
 }
 
-function getConfiguredOneCClientPath(): string {
-    return (vscode.workspace.getConfiguration('kotTestToolkit').get<string>('paths.oneCEnterpriseExe') || '').trim();
-}
+async function getPreferredScenarioHighlightLanguageId(): Promise<string | null> {
+    if (!preferredScenarioHighlightLanguagePromise) {
+        preferredScenarioHighlightLanguagePromise = vscode.languages.getLanguages()
+            .then(languages => {
+                const normalized = new Set(languages.map(language => language.toLowerCase()));
+                for (const candidate of SCENARIO_HIGHLIGHT_LANGUAGE_CANDIDATES) {
+                    if (normalized.has(candidate)) {
+                        return candidate;
+                    }
+                }
 
-function normalizePreferredOneCClientPath(configuredPath: string): string {
-    const trimmedPath = configuredPath.trim();
-    if (!trimmedPath) {
-        return '';
+                return null;
+            })
+            .catch(error => {
+                console.warn('[Extension] Failed to resolve Feature/Gherkin language for scenario YAML highlighting.', error);
+                return null;
+            });
     }
 
-    const lowerFileName = path.basename(trimmedPath).toLowerCase();
-    if (lowerFileName === '1cv8.exe') {
-        const siblingClientPath = path.join(path.dirname(trimmedPath), '1cv8c.exe');
-        if (fs.existsSync(siblingClientPath)) {
-            return siblingClientPath;
+    return preferredScenarioHighlightLanguagePromise;
+}
+
+async function ensureScenarioYamlHighlighting(document: vscode.TextDocument): Promise<void> {
+    if (document.isUntitled || !isScenarioYamlFile(document)) {
+        return;
+    }
+
+    const useFeatureLanguageMode = shouldUseFeatureLanguageModeForScenarioYaml(document);
+    if (!useFeatureLanguageMode) {
+        if (document.languageId !== 'yaml') {
+            try {
+                await vscode.languages.setTextDocumentLanguage(document, 'yaml');
+            } catch (error) {
+                console.warn(`[Extension] Failed to switch scenario YAML back to yaml mode for ${document.uri.fsPath}:`, error);
+            }
         }
+        return;
     }
 
-    return trimmedPath;
+    const targetLanguageId = await getPreferredScenarioHighlightLanguageId();
+    if (!targetLanguageId || document.languageId === targetLanguageId) {
+        return;
+    }
+
+    try {
+        await vscode.languages.setTextDocumentLanguage(document, targetLanguageId);
+    } catch (error) {
+        console.warn(`[Extension] Failed to switch scenario YAML to ${targetLanguageId} mode for ${document.uri.fsPath}:`, error);
+    }
 }
 
 async function ensureOneCClientPathConfigured(context: vscode.ExtensionContext): Promise<string | null> {
-    const config = vscode.workspace.getConfiguration('kotTestToolkit');
-    const configuredPath = getConfiguredOneCClientPath();
-    const preferredConfiguredPath = normalizePreferredOneCClientPath(configuredPath);
-
-    if (preferredConfiguredPath && preferredConfiguredPath !== configuredPath) {
-        await config.update('paths.oneCEnterpriseExe', preferredConfiguredPath, getConfigurationTarget());
-        return preferredConfiguredPath;
-    }
-
-    if (preferredConfiguredPath && fs.existsSync(preferredConfiguredPath)) {
-        return preferredConfiguredPath;
-    }
-
-    const detectedPath = await detectInstalledOneCClientExePath();
-    if (!detectedPath) {
-        return preferredConfiguredPath || null;
-    }
-
-    if (detectedPath !== configuredPath) {
-        await config.update('paths.oneCEnterpriseExe', detectedPath, getConfigurationTarget());
-    }
-
-    return detectedPath;
+    void context;
+    const platforms = await ensureOneCPlatformsCatalogInitialized();
+    return platforms[0]?.clientExePath || null;
 }
 
 async function warmUpFormExplorerBuilder(
@@ -178,7 +202,7 @@ async function warmUpFormExplorerBuilder(
 
     builderWarmupInFlight = (async () => {
         await initializeFormExplorerRuntimeSidecars();
-        const oneCClientPath = getConfiguredOneCClientPath();
+        const oneCClientPath = (await ensureOneCPlatformsCatalogInitialized())[0]?.clientExePath || '';
         if (!oneCClientPath || !fs.existsSync(oneCClientPath)) {
             return;
         }
@@ -227,7 +251,7 @@ async function warmUpSharedStartupInfobase(
     }
 
     startupInfobaseWarmupInFlight = (async () => {
-        const oneCClientPath = getConfiguredOneCClientPath();
+        const oneCClientPath = (await ensureOneCPlatformsCatalogInitialized())[0]?.clientExePath || '';
         if (!oneCClientPath || !fs.existsSync(oneCClientPath)) {
             return;
         }
@@ -387,8 +411,7 @@ async function collectAllYamlSourceDirectoryScenarioUris(): Promise<vscode.Uri[]
 
     const excludePattern = '**/{node_modules,.git,out,dist,.vscode/kot-runtime}/**';
     const uriByKey = new Map<string, vscode.Uri>();
-    const config = vscode.workspace.getConfiguration('kotTestToolkit');
-    const configuredYamlSourceDirectory = (config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml').trim();
+    const configuredYamlSourceDirectory = getScenarioScanRootPath().trim();
 
     for (const workspaceFolder of workspaceFolders) {
         const yamlSourceDirectoryPath = path.isAbsolute(configuredYamlSourceDirectory)
@@ -490,6 +513,7 @@ const EXTERNAL_STEPS_URL_CONFIG_KEY = 'kotTestToolkit.steps.externalUrl'; // К�
 export function activate(context: vscode.ExtensionContext) {
     console.log('Extension "kotTestToolkit" activated.');
     setExtensionUri(context.extensionUri);
+    initializeScenarioScanRoot(context);
     const formExplorerPanel = new FormExplorerPanel(context);
     const infobaseManagerPanel = new InfobaseManagerPanel(context);
     context.subscriptions.push(formExplorerPanel);
@@ -504,6 +528,11 @@ export function activate(context: vscode.ExtensionContext) {
 
     // --- Регистрация Провайдера для Webview (Test Manager) ---
     const phaseSwitcherProvider = new PhaseSwitcherProvider(context.extensionUri, context);
+    context.subscriptions.push(
+        onDidChangeScenarioScanRoot(() => {
+            phaseSwitcherProvider.handleScenarioScanRootChanged();
+        })
+    );
     let batchProcessingInProgress = false;
     let scenarioRepairCancellationSource: vscode.CancellationTokenSource | null = null;
     const updateActiveScenarioContext = async (editor?: vscode.TextEditor) => {
@@ -648,6 +677,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!document.isUntitled && isScenarioYamlFile(document)) {
             setScenarioSnapshotAsSaved(document);
             updateScenarioMetadataBlockSessionCache(document);
+            void ensureScenarioYamlHighlighting(document);
         }
     });
     updateKotDescriptionDecorationsForVisibleEditors(kotDescriptionTextDecorationType);
@@ -657,6 +687,7 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 
+        void ensureScenarioYamlHighlighting(document);
         setScenarioSnapshotAsSaved(document);
         updateScenarioMetadataBlockSessionCache(document);
         updateKotDescriptionDecorationsForDocument(document, kotDescriptionTextDecorationType);
@@ -728,12 +759,54 @@ export function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.createMainScenario', () => handleCreateMainScenario(context)
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.refreshPhaseSwitcher',
+        async (options?: { refreshCache?: boolean }) => {
+            await phaseSwitcherProvider.refreshFromExternalStateChange({
+                refreshCache: options?.refreshCache === true
+            });
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.manageSystemFunctions', () => handleManageSystemFunctions(context)
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.manageEtalonBases', () => handleManageEtalonBases(context)
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.managePlatforms', () => handleManagePlatforms(context)
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.changeScenarioSystemFunctionFromEditor',
         async () => {
             await handleChangeScenarioSystemFunctionFromEditor(context);
+            await updateActiveScenarioContext(vscode.window.activeTextEditor);
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.changeTestSettingsScenarioFromEditor',
+        async () => {
+            await handleChangeTestSettingsScenarioFromEditor(context);
+            await updateActiveScenarioContext(vscode.window.activeTextEditor);
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.changeTestSettingsEtalonBaseFromEditor',
+        async () => {
+            await handleChangeTestSettingsEtalonBaseFromEditor(context);
+            await updateActiveScenarioContext(vscode.window.activeTextEditor);
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.changeTestSettingsUserProfileFromEditor',
+        async () => {
+            await handleChangeTestSettingsUserProfileFromEditor(context);
+            await updateActiveScenarioContext(vscode.window.activeTextEditor);
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.syncTestSettingsFromScenario',
+        async () => {
+            await handleSyncTestSettingsFromScenario(context);
             await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
     ));
@@ -790,6 +863,11 @@ export function activate(context: vscode.ExtensionContext) {
             await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
     ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.refreshCombinedRunJsonArtifacts', async () => {
+            await phaseSwitcherProvider.refreshCombinedScenarioJsonArtifacts();
+        }
+    ));
 
     const refreshGherkinStepsCommand = async () => {
         const t = await getTranslator(context.extensionUri);
@@ -824,11 +902,13 @@ export function activate(context: vscode.ExtensionContext) {
             phaseSwitcherProvider.handleActiveEditorChanged(editor);
             void updateActiveScenarioContext(editor);
             if (editor) {
+                void ensureScenarioYamlHighlighting(editor.document);
                 updateKotDescriptionDecorationForEditor(editor, kotDescriptionTextDecorationType);
             }
         })
     );
     if (vscode.window.activeTextEditor) {
+        void ensureScenarioYamlHighlighting(vscode.window.activeTextEditor.document);
         foldSectionsInEditor(vscode.window.activeTextEditor);
         phaseSwitcherProvider.handleActiveEditorChanged(vscode.window.activeTextEditor);
         void updateActiveScenarioContext(vscode.window.activeTextEditor);
@@ -861,23 +941,21 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
 
+        if (event.affectsConfiguration('kotTestToolkit.editor.useFeatureLanguageModeForScenarioYaml')) {
+            const openScenarioDocuments = vscode.workspace.textDocuments.filter(document => !document.isUntitled && isScenarioYamlFile(document));
+            await Promise.all(openScenarioDocuments.map(document => ensureScenarioYamlHighlighting(document)));
+        }
+
         if (
-            event.affectsConfiguration('kotTestToolkit.paths.oneCEnterpriseExe')
+            event.affectsConfiguration('kotTestToolkit.platforms.catalog')
             || event.affectsConfiguration('kotTestToolkit.formExplorer.configurationSourceDirectory')
             || event.affectsConfiguration('kotTestToolkit.formExplorer.generatedArtifactsDirectory')
             || event.affectsConfiguration('kotTestToolkit.formExplorer.snapshotPath')
         ) {
             try {
                 await initializeFormExplorerRuntimeSidecars();
-                if (event.affectsConfiguration('kotTestToolkit.paths.oneCEnterpriseExe')) {
-                    const configuredPath = getConfiguredOneCClientPath();
-                    const preferredPath = normalizePreferredOneCClientPath(configuredPath);
-                    if (preferredPath && preferredPath !== configuredPath) {
-                        await vscode.workspace
-                            .getConfiguration('kotTestToolkit')
-                            .update('paths.oneCEnterpriseExe', preferredPath, getConfigurationTarget());
-                        return;
-                    }
+                if (event.affectsConfiguration('kotTestToolkit.platforms.catalog')) {
+                    await ensureOneCPlatformsCatalogInitialized();
                 }
 
                 await Promise.all([
@@ -915,8 +993,8 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openFormExplorerForInfobase',
-        async (preferredInfobasePath?: string) => {
-            await formExplorerPanel.openAndStart(preferredInfobasePath);
+        async (options?: string | StartFormExplorerInfobaseCommandOptions) => {
+            await formExplorerPanel.openAndStart(options);
         }
     ));
 
@@ -929,22 +1007,22 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.buildFormExplorerExtensionCfe',
-        async () => {
-            await handleBuildFormExplorerExtensionCfe(context);
+        async (options?: BuildFormExplorerExtensionCommandOptions) => {
+            await handleBuildFormExplorerExtensionCfe(context, options);
         }
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.installFormExplorerExtension',
-        async () => {
-            await handleInstallFormExplorerExtension(context);
+        async (options?: InstallFormExplorerExtensionCommandOptions) => {
+            await handleInstallFormExplorerExtension(context, options);
         }
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.startFormExplorerInfobase',
-        async (preferredInfobasePath?: string) => {
-            return await handleStartFormExplorerInfobase(context, preferredInfobasePath);
+        async (options?: string | StartFormExplorerInfobaseCommandOptions) => {
+            return await handleStartFormExplorerInfobase(context, options);
         }
     ));
 
@@ -1064,6 +1142,14 @@ export function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.renameScenarioFromEditor',
         async () => {
             await phaseSwitcherProvider.renameScenarioForActiveEditor();
+            await updateActiveScenarioContext(vscode.window.activeTextEditor);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.openMainScenarioTestSettingsFromEditor',
+        async () => {
+            await phaseSwitcherProvider.openMainScenarioTestSettingsForActiveEditor();
             await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
     ));

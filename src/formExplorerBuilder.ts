@@ -20,12 +20,13 @@ const DEFAULT_MODE_REQUEST_FILE_NAME = 'adapter-mode-request.txt';
 const DEFAULT_REQUEST_CONTEXT_FILE_NAME = 'adapter-request-context.json';
 const DEFAULT_HOTKEY_PRESET_KEY = 'ctrlShiftF12';
 const DEFAULT_AUTO_SNAPSHOT_INTERVAL_SECONDS = 5;
-const FORM_EXPLORER_BUILDER_CACHE_SCHEMA_VERSION = 2;
+const FORM_EXPLORER_BUILDER_CACHE_SCHEMA_VERSION = 3;
 
 interface BuilderCacheState {
     schemaVersion: number;
     configurationSourceDirectory: string;
     configurationTreeHash: string;
+    oneCClientExePath: string;
 }
 
 export interface FormExplorerBuilderPaths {
@@ -144,11 +145,15 @@ async function hashDirectoryContents(rootDirectory: string): Promise<string> {
     return hash.digest('hex');
 }
 
-async function getBuilderCacheState(configurationSourceDirectory: string): Promise<BuilderCacheState> {
+async function getBuilderCacheState(
+    configurationSourceDirectory: string,
+    oneCClientExePath: string
+): Promise<BuilderCacheState> {
     return {
         schemaVersion: FORM_EXPLORER_BUILDER_CACHE_SCHEMA_VERSION,
         configurationSourceDirectory: path.resolve(configurationSourceDirectory),
-        configurationTreeHash: await hashDirectoryContents(configurationSourceDirectory)
+        configurationTreeHash: await hashDirectoryContents(configurationSourceDirectory),
+        oneCClientExePath: path.resolve(oneCClientExePath)
     };
 }
 
@@ -159,7 +164,8 @@ function isSameBuilderCacheState(expected: BuilderCacheState, actual: BuilderCac
 
     return expected.schemaVersion === actual.schemaVersion
         && expected.configurationSourceDirectory === actual.configurationSourceDirectory
-        && expected.configurationTreeHash === actual.configurationTreeHash;
+        && expected.configurationTreeHash === actual.configurationTreeHash
+        && expected.oneCClientExePath === actual.oneCClientExePath;
 }
 
 function shouldSkipBuilderWarmup(): boolean {
@@ -315,7 +321,7 @@ export async function shouldPrepareFormExplorerBuilderInfobase(): Promise<boolea
         return false;
     }
 
-    const expectedState = await getBuilderCacheState(builderPaths.configurationSourceDirectory);
+    const expectedState = await getBuilderCacheState(builderPaths.configurationSourceDirectory, oneCClientExePath);
     const actualState = await readJsonFile<BuilderCacheState>(builderPaths.builderCacheStatePath);
     return !(await pathExists(builderPaths.builderInfobaseDirectory))
         || !isSameBuilderCacheState(expectedState, actualState);
@@ -347,7 +353,7 @@ async function ensureBuilderInfobaseCore(
     await ensureDirectory(builderPaths.generatedArtifactsDirectory);
     await initializeAdapterRuntimeFiles(builderPaths);
 
-    const expectedState = await getBuilderCacheState(builderPaths.configurationSourceDirectory);
+    const expectedState = await getBuilderCacheState(builderPaths.configurationSourceDirectory, oneCClientExePath);
     const actualState = await readJsonFile<BuilderCacheState>(builderPaths.builderCacheStatePath);
     const canReuseBuilder = !forceRebuild
         && (await pathExists(builderPaths.builderInfobaseDirectory))

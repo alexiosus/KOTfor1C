@@ -8,7 +8,7 @@
 |---|---|
 | `src/extension.ts` | Точка входа: регистрация providers/команд, конвейер сохранения, интеграция между подсистемами |
 | `src/phaseSwitcher.ts` | Backend Test Manager (`Менеджер тестов`): webview-мост, кеш сценариев, сборка, запуск Vanessa, статусы запуска |
-| `src/workspaceScanner.ts` | Полный скан `yamlSourceDirectory`, построение `TestInfo` |
+| `src/workspaceScanner.ts` | Полный скан текущего корня сценариев, построение `TestInfo` |
 | `src/completionProvider.ts` | IntelliSense шагов и вызовов вложенных сценариев |
 | `src/hoverProvider.ts` | Hover по шагам и вызовам |
 | `src/scenarioHeaderInlayHintsProvider.ts` | Inlay-иконки (карандаш) у полей `ДанныеСценария.Имя` / `ДанныеСценария.Код` для быстрых команд переименования/смены кода |
@@ -36,7 +36,7 @@
 ## 2) Основной runtime-поток
 
 1. Extension активируется (`onStartupFinished`).
-2. Инициализируется кеш сценариев на основе `yamlSourceDirectory`.
+2. Инициализируется кеш сценариев на основе текущего корня сценариев.
 3. Подключаются completion/hover/diagnostics.
 4. Регистрируются команды `kotTestToolkit.*`.
 5. На события редактора (`open/change/save/close`) срабатывают локальные обработчики.

@@ -7,6 +7,7 @@ import { isScenarioYamlFile } from './yamlValidator';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
 import { parseBlockKeyword } from './blockKeywordParser';
+import { getScenarioScanRootPath } from './scenarioScanRoot';
 
 const DIAGNOSTIC_SOURCE = 'KOT for 1C';
 const CODE_UNCLOSED_IF = 'kotTestToolkit.unclosedIf';
@@ -1261,8 +1262,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             return [];
         }
 
-        const config = vscode.workspace.getConfiguration('kotTestToolkit');
-        const configuredScanDirectory = (config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml').trim();
+        const configuredScanDirectory = getScenarioScanRootPath().trim();
         const scanDirectoryPath = path.isAbsolute(configuredScanDirectory)
             ? configuredScanDirectory
             : path.join(workspaceFolder.uri.fsPath, configuredScanDirectory);

@@ -177,6 +177,276 @@ body {
     flex-direction: column;
 }
 
+.catalog-picker {
+    position: relative;
+    width: auto;
+    flex: 0 0 auto;
+}
+
+.catalog-picker-trigger {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid var(--yp-border);
+    border-radius: 12px;
+    background-color: color-mix(in srgb, var(--vscode-input-background) 84%, var(--yp-surface-1) 16%);
+    color: var(--vscode-input-foreground);
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.catalog-picker-trigger:hover {
+    border-color: var(--yp-border-strong);
+    background-color: color-mix(in srgb, var(--vscode-input-background) 72%, var(--yp-surface-2) 28%);
+}
+
+.catalog-picker-trigger:focus-visible {
+    outline: none;
+    border-color: var(--vscode-focusBorder);
+    box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+}
+
+.catalog-picker-trigger:disabled {
+    cursor: default;
+    opacity: 0.72;
+}
+
+.catalog-picker-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: auto;
+    width: min(520px, calc(100vw - 48px));
+    min-width: min(520px, calc(100vw - 48px));
+    background-color: var(--yp-surface-0);
+    border: 1px solid var(--yp-border);
+    border-radius: 14px;
+    box-shadow: var(--yp-shadow);
+    z-index: 1100;
+    padding: 8px;
+}
+
+.catalog-picker.show .catalog-picker-dropdown {
+    display: block;
+}
+
+.catalog-picker-search {
+    position: relative;
+    margin-bottom: 8px;
+}
+
+.catalog-picker-search-input {
+    padding-left: 30px;
+}
+
+.catalog-picker-list {
+    max-height: 280px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.catalog-picker-option {
+    width: 100%;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--vscode-editor-foreground);
+    border-radius: 10px;
+    padding: 8px 10px;
+    text-align: left;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.catalog-picker-option:hover {
+    background-color: var(--yp-surface-2);
+}
+
+.catalog-picker-option.is-selected {
+    border-color: var(--yp-border-strong);
+    background: color-mix(in srgb, var(--vscode-focusBorder) 12%, var(--yp-surface-1) 88%);
+}
+
+.catalog-picker-option-key {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--vscode-editor-foreground);
+}
+
+.catalog-picker-option-description {
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--vscode-descriptionForeground);
+}
+
+.catalog-picker-empty {
+    padding: 10px;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+    text-align: center;
+}
+
+.param-key-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.meta-chip {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 6px 8px;
+    border-radius: 12px;
+    border: 1px solid var(--yp-border);
+    background: var(--yp-surface-1);
+}
+
+.meta-chip.compact {
+    min-width: 120px;
+}
+
+.parameters-toolbar .meta-chip.compact {
+    min-height: 52px;
+    height: 52px;
+    box-sizing: border-box;
+    justify-content: center;
+}
+
+.parameters-toolbar > .toolbar-btn,
+.parameters-toolbar > .dropdown-container > .toolbar-btn,
+.parameters-toolbar > .help-container > .help-button {
+    min-height: 52px;
+    height: 52px;
+    box-sizing: border-box;
+}
+
+.parameters-toolbar .meta-chip-label,
+.parameters-toolbar .meta-chip-value {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.meta-chip-label {
+    font-size: 11px;
+    line-height: 1.3;
+    color: var(--yp-muted);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.meta-chip-value {
+    font-size: 11px;
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+.interactive-chip {
+    appearance: none;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.interactive-chip:hover {
+    border-color: var(--yp-border-strong);
+}
+
+.interactive-chip:focus-visible {
+    outline: 1px solid var(--yp-accent);
+    outline-offset: 1px;
+}
+
+.updated-at-chip[data-pending="true"] {
+    border-color: color-mix(in srgb, var(--yp-accent) 58%, transparent);
+    background: color-mix(in srgb, var(--yp-accent) 10%, var(--yp-surface-1) 90%);
+}
+
+.updated-at-chip {
+    min-width: 180px;
+}
+
+.updated-at-chip[data-state="warning"] {
+    border-color: color-mix(in srgb, var(--kot-warning) 58%, transparent);
+}
+
+.updated-at-chip[data-state="error"] {
+    border-color: color-mix(in srgb, var(--vscode-errorForeground) 58%, transparent);
+}
+
+.profile-picker-chip {
+    width: min(150px, 30vw);
+    min-width: 150px;
+    max-width: 260px;
+}
+
+.param-key-select-wrap {
+    display: flex;
+    align-items: center;
+    width: 100%;
+}
+
+.param-hint {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    cursor: help;
+    color: var(--vscode-descriptionForeground);
+    background: transparent;
+    border: none;
+    flex: 0 0 auto;
+    font-size: 16px;
+    line-height: 1;
+    opacity: 0.9;
+}
+
+.param-hint:hover {
+    color: var(--vscode-editor-foreground);
+    opacity: 1;
+}
+
+input.param-key.is-catalog[readonly] {
+    opacity: 0.88;
+    background-color: color-mix(in srgb, var(--vscode-input-background) 72%, var(--yp-surface-2) 28%);
+}
+
+.param-bool-select {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 32px;
+    padding: 7px 5px;
+    border: 1px solid var(--yp-border);
+    background-color: color-mix(in srgb, var(--vscode-input-background) 84%, var(--yp-surface-1) 16%);
+    color: var(--vscode-input-foreground);
+    border-radius: 10px;
+    font-size: 13px;
+}
+
+.param-bool-select:focus {
+    outline: none;
+    border-color: var(--vscode-focusBorder);
+    box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+}
+
+.remove-row-btn.is-disabled[disabled] {
+    cursor: default;
+    opacity: 0.7;
+}
+
 .section-toolbar {
     margin-bottom: 10px;
     display: flex;
@@ -255,7 +525,7 @@ body {
     background-color: transparent;
     color: var(--vscode-icon-foreground);
     border: none;
-    padding: 4px 6px;
+    padding: 0 8px;
     border-radius: 3px;
     cursor: pointer;
     display: inline-flex;
@@ -365,6 +635,17 @@ body {
     cursor: not-allowed;
 }
 
+.danger-btn {
+    border-color: color-mix(in srgb, var(--vscode-errorForeground) 42%, transparent);
+    background: color-mix(in srgb, var(--vscode-errorForeground) 18%, var(--yp-surface-1) 82%);
+    color: var(--vscode-errorForeground);
+}
+
+.danger-btn:hover {
+    border-color: color-mix(in srgb, var(--vscode-errorForeground) 58%, transparent);
+    background: color-mix(in srgb, var(--vscode-errorForeground) 24%, var(--yp-surface-2) 76%);
+}
+
 .table-container {
     border: 1px solid var(--yp-border);
     border-radius: 14px;
@@ -437,6 +718,16 @@ body {
     outline: none;
     border-color: var(--vscode-focusBorder);
     box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+}
+
+.param-value.is-required-missing {
+    border-color: var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
+    box-shadow: inset 0 0 0 1px var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
+    background-color: color-mix(in srgb, var(--vscode-input-background) 88%, var(--vscode-errorForeground) 12%);
+}
+
+#buildParametersTable tbody tr[data-required-missing="true"] {
+    background-color: color-mix(in srgb, var(--yp-surface-0) 92%, var(--vscode-errorForeground) 8%);
 }
 
 .param-key {
@@ -809,6 +1100,27 @@ body {
 .remove-row-btn:hover {
     background: color-mix(in srgb, var(--vscode-errorForeground) 24%, var(--yp-surface-2) 76%) !important;
     opacity: 1;
+}
+
+.reset-row-btn {
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    min-height: 28px !important;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto;
+    border-radius: 10px !important;
+    border: 1px solid color-mix(in srgb, var(--yp-border) 72%, transparent) !important;
+    background: var(--yp-surface-1) !important;
+    color: var(--vscode-editor-foreground) !important;
+    padding: 0 !important;
+}
+
+.reset-row-btn:hover {
+    border-color: var(--yp-border-strong) !important;
+    background: var(--yp-surface-2) !important;
 }
 
 .dropdown-container.show > .menu-popover {

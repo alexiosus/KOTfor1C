@@ -12,13 +12,26 @@
 - По выбранным чекбоксам автоматически формирует `Exceptscenario` или `Scenariofilter`.
 - Запускает `СборкаТекстовСценариев.epf`.
 - Генерирует `.feature` и `.json` артефакты для запуска.
+- Дополнительно формирует соседний `*.combined.json`, куда KOT мержит `Additional Vanessa parameters`, `GlobalVars` и свои runtime-пути.
 - Показывает уведомления о результате и дает быстрые действия (открыть файл/папку).
+
+Разделение путей:
+
+- `FeatureFolder` из параметров СППР отвечает именно за выходные `feature/json` артефакты;
+- `kotTestToolkit.runtime.directory` отвечает за служебный runtime KOT: `yaml_parameters.json`, build log, result file и временные папки;
+- если runtime-путь KOT попадает внутрь `FeatureFolder`, KOT автоматически уводит свои служебные файлы в соседнюю безопасную папку `*.kot-runtime`, чтобы не конфликтовать с очисткой каталога со стороны СППР.
 
 ### Важные действия в UI
 
-- `Build tests` (`Собрать тесты`)
+- `Build tests` (`Собрать тесты`) как split-button:
+  - основное нажатие сразу запускает сборку;
+  - в выпадающем меню можно переключать активный профиль Менеджера параметров;
+  - `Accounting mode` показывается там только при включенных 1C:Drive-элементах UI.
 - `Cancel build` (`Отменить сборку`)
 - `Open feature file(s)` / `Open folder` (`Открыть feature-файл(ы)` / `Открыть папку`) после сборки
+- `Open JSON` в контекстном меню теста:
+  - `Open built JSON` — исходный JSON от СППР;
+  - `Open combined JSON` — итоговый JSON, который KOT использует для built-in запуска Vanessa.
 
 ## Запуск Vanessa
 
@@ -48,6 +61,10 @@
   - выбрать существующую ИБ из общего списка менеджера баз (`launcher`, `runtime`, `snapshot`, `manual`, `workspaceState`);
   - указать существующую файловую или серверную ИБ вручную;
   - создать новую файловую ИБ.
+- В picker-е выбора ИБ KOT скрывает базы, помеченные как hidden в `KOT Infobase Manager`, поэтому служебные runtime-базы не мешают в обычных сценариях запуска.
+- Для generated JSON KOT ожидает, что launch-база уже была задана в параметрах СППР (`LaunchDBFolder` / `TestClientDBPath` / `InfobasePath` / `TestClientDB`):
+  - KOT не создает пустой блок `КлиентыТестирования`, если СППР сам его не собрал;
+  - если launch-настройки отсутствуют, правильный путь — заполнить параметр в Менеджере параметров и пересобрать тесты.
 - Команда `KOT - Open Infobase Manager` открывает отдельную панель управления ИБ:
   - единый список обнаруженных баз;
   - создание, пересоздание, восстановление/выгрузка `DT`, обновление конфигурации, регистрация в launcher и быстрый переход к логам;
@@ -58,9 +75,14 @@
   - восстановление из `DT`;
   - обновление конфигурации из `kotTestToolkit.formExplorer.configurationSourceDirectory`;
   - обновление конфигурации из выбранного пользовательского `.cf`.
+- Диалог восстановления `DT` теперь устроен так:
+  - `No DT restore`;
+  - `Restore from etalon DT` — если в `test.yaml` указана эталонная база и для нее найден `DT` в `ModelDBSettings` / `bases.yaml`;
+  - `Restore from another DT`.
 - Последняя выбранная ИБ запоминается на сценарий и предлагается повторно.
 - При создании новой ИБ папка выбирается через системный диалог, затем запрашивается имя базы для launcher 1С, и после успешного создания база автоматически добавляется в launcher.
 - Для новой ИБ и для режима пересоздания существующей ИБ обязательно нужно выбрать хотя бы один шаг подготовки (`DT` или обновление конфигурации), иначе запуск блокируется как для пустой базы.
+- Если выбрано `Keep current infobase contents`, KOT пропускает вопрос про `DT` и сразу предлагает обновление конфигурации поверх текущей базы.
 - Во время подготовки показывается пошаговый progress notification: создание ИБ, восстановление из `DT`, обновление конфигурации.
 
 ### Логи
@@ -99,10 +121,11 @@
 
 | Настройка | Назначение |
 |---|---|
-| `kotTestToolkit.paths.oneCEnterpriseExe` | Путь к `1cv8c.exe` тонкого клиента 1С |
+| `kotTestToolkit.platforms.catalog` | Каталог платформ 1С для запуска сборки и Vanessa; первая запись используется по умолчанию |
+| `kotTestToolkit.platforms.promptForLaunches` | Спрашивать платформу при запуске встроенной Vanessa |
 | `kotTestToolkit.paths.buildScenarioBddEpf` | EPF обработки сборки |
 | `kotTestToolkit.runVanessa.vanessaEpfPath` | EPF Vanessa |
-| `kotTestToolkit.assembleScript.buildPath` | Папка сборки |
+| `kotTestToolkit.runtime.directory` | Служебная runtime-папка KOT для `yaml_parameters.json`, логов и временных build-артефактов |
 | `kotTestToolkit.assembleScript.showOutputPanel` | Автопоказ Output при сборке сценариев |
 | `kotTestToolkit.runVanessa.runtimeDirectory` | Папка runtime-логов/статусов |
 | `kotTestToolkit.runVanessa.showOutputPanel` | Автопоказ Output при запуске Vanessa |
@@ -140,7 +163,7 @@
 - `${scenarioNameQuoted}`: имя сценария в quoted-виде для shell.
 - `${featurePath}`: абсолютный путь к `.feature` выбранного сценария из результатов последней сборки.
 - `${featurePathQuoted}`: путь к `.feature` в quoted-виде для shell.
-- `${jsonPath}`: абсолютный путь к `.json` выбранного сценария. Может стать временным overlay JSON при добавлении runtime VA-параметров.
+- `${jsonPath}`: абсолютный путь к JSON, который будет использоваться для запуска. Для built-in launcher это обычно `*.combined.json`, если он доступен.
 - `${jsonPathQuoted}`: путь к `.json` в quoted-виде для shell.
 - `${workspaceRoot}`: абсолютный путь к корню открытого проекта в VS Code.
 - `${workspaceRootQuoted}`: путь к корню проекта в quoted-виде для shell.

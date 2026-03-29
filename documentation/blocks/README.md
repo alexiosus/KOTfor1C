@@ -13,5 +13,7 @@
 7. [`scenario-creation.md`](./scenario-creation.md) — создание главных и вложенных сценариев, `test.yaml`, defaults и служебные поля шапки.
 8. [`metadata-and-cache.md`](./metadata-and-cache.md) — `KOTМетаданные`, кеш сценариев, stale-логика.
 9. [`navigation-and-files.md`](./navigation-and-files.md) — навигация по сценариям и работа с MXL/файлами.
-10. [`form-explorer.md`](./form-explorer.md) — KOT Form Explorer (beta): runtime-расширение, режимы `direct` / `cfe` / `target`, snapshot текущей формы, auto/manual режим и static enrichment из `cf`.
-11. [`infobase-manager.md`](./infobase-manager.md) — единый менеджер ИБ: список установленных баз, подготовка баз, ключи запуска, редактирование баз и связь с Vanessa/Form Explorer.
+10. [`platform-manager.md`](./platform-manager.md) — каталог платформ 1С, платформа по умолчанию, автообнаружение и выбор платформы при запуске.
+11. [`form-explorer.md`](./form-explorer.md) — KOT Form Explorer (beta): runtime-расширение, режимы `direct` / `cfe` / `target`, snapshot текущей формы, auto/manual режим и static enrichment из `cf`.
+12. [`infobase-manager.md`](./infobase-manager.md) — единый менеджер ИБ: список установленных баз, подготовка баз, ключи запуска, платформа конкретной базы, редактирование баз и связь с Vanessa/Form Explorer.
+13. [`etalon-bases.md`](./etalon-bases.md) — каталог `bases.yaml`, эталонные базы, `DT`, профили пользователей и связь с `test.yaml` / `ModelDBSettings`.
