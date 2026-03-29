@@ -4,12 +4,22 @@ This software incorporates components from the following third-party software.
 
 ## Microsoft Visual Studio Code Codicons
 
-This project utilizes the Microsoft Visual Studio Code Codicons icon font.
+This project vendors selected assets from `@vscode/codicons` version `0.0.44`.
 
-- **Copyright:** (c) Microsoft Corporation
-- **License:** MIT License
-- **Source:** https://github.com/microsoft/vscode-codicons
+- **Included files:** `media/codicon.css`, `media/codicon.ttf`
+- **Source package:** https://www.npmjs.com/package/@vscode/codicons
+- **Source repository:** https://github.com/microsoft/vscode-codicons
 
+Upstream publishes mixed legal notices for this package:
+
+- Repository legal notices state that code is licensed under the MIT License.
+- The npm package metadata for `@vscode/codicons` `0.0.44` declares `CC-BY-4.0`.
+
+This repository copies the upstream `dist/codicon.css` and `dist/codicon.ttf` files without modification and provides attribution here for the included Codicons assets.
+
+### MIT-licensed Codicons CSS
+
+The file `media/codicon.css` is copied from the upstream Codicons distribution and retains the upstream MIT license header.
 
     MIT License
 
@@ -31,4 +41,13 @@ This project utilizes the Microsoft Visual Studio Code Codicons icon font.
     AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE
+    SOFTWARE.
+
+### Codicons font attribution
+
+The file `media/codicon.ttf` is distributed with attribution to Microsoft under the package's published `CC-BY-4.0` notice.
+
+- **Copyright:** (c) Microsoft Corporation
+- **License:** Creative Commons Attribution 4.0 International
+- **License URL:** https://creativecommons.org/licenses/by/4.0/
+- **Changes:** None. The file is copied verbatim from the upstream package.

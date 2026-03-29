@@ -18,11 +18,19 @@ import {
     coerceInfobaseConnection,
     describeInfobaseConnection,
     getFileInfobasePath,
+    isHostAccessibleFileInfobasePath,
+    isWindowsAbsolutePath,
     normalizeInfobaseConnectionIdentity,
     normalizeInfobaseReference,
     type OneCInfobaseConnection
 } from './oneCInfobaseConnection';
-import { resolveOneCDesignerExePath } from './oneCPlatform';
+import {
+    ConfiguredOneCPlatform,
+    ensureOneCPlatformsCatalogInitialized,
+    normalizeOneCClientExePath,
+    resolveOneCDesignerExePath,
+    resolveOneCPlatformForLaunch
+} from './oneCPlatform';
 import { getSharedStartupInfobasePaths } from './startupInfobase';
 
 const INFOBASE_MANAGER_OUTPUT_CHANNEL_NAME = 'KOT Infobase Manager';
@@ -68,7 +76,9 @@ export interface ManagedInfobaseRecord {
     lastRunLogAt: string | null;
     startupParametersMode: ManagedInfobaseStartupParametersMode;
     startupParameters: string | null;
+    preferredPlatformClientExePath: string | null;
     logTargets: ManagedInfobaseLogTarget[];
+    hidden: boolean;
 }
 
 export interface ManagedInfobaseSelectionOptions {
@@ -94,8 +104,10 @@ export interface ManagedInfobaseMetadataPatch {
     lastRunLogAt?: string | null;
     startupParametersMode?: ManagedInfobaseStartupParametersMode | null;
     startupParameters?: string | null;
+    preferredPlatformClientExePath?: string | null;
     addRoles?: ManagedInfobaseRole[];
     stateHint?: ManagedInfobaseStateHint | null;
+    hidden?: boolean | null;
 }
 
 interface StoredManagedInfobaseMetadata {
@@ -109,8 +121,10 @@ interface StoredManagedInfobaseMetadata {
     lastRunLogAt?: string;
     startupParametersMode?: ManagedInfobaseStartupParametersMode;
     startupParameters?: string;
+    preferredPlatformClientExePath?: string;
     roles?: ManagedInfobaseRole[];
     stateHint?: ManagedInfobaseStateHint;
+    hidden?: boolean;
 }
 
 interface StoredManualInfobaseEntry {
@@ -131,6 +145,10 @@ interface InfobaseAuthentication {
     password: string;
 }
 
+interface ManagedInfobaseLaunchOptions {
+    preferredOneCClientExePath?: string | null;
+}
+
 interface MutableManagedInfobaseRecord {
     id: string;
     infobaseKind: ManagedInfobaseKind;
@@ -149,7 +167,9 @@ interface MutableManagedInfobaseRecord {
     lastRunLogAt: string | null;
     startupParametersMode: ManagedInfobaseStartupParametersMode;
     startupParameters: string | null;
+    preferredPlatformClientExePath: string | null;
     stateHint: ManagedInfobaseStateHint | null;
+    hiddenOverride: boolean | null;
 }
 
 let outputChannel: vscode.OutputChannel | null = null;
@@ -169,6 +189,31 @@ function getInfobaseManagerOutputChannel(): vscode.OutputChannel {
 
 function normalizePathForCompare(rawPath: string): string {
     return normalizeInfobaseConnectionIdentity(rawPath);
+}
+
+function normalizePlatformPathForCompare(rawPath: string): string {
+    const normalizedPath = path.normalize(rawPath.trim());
+    return process.platform === 'win32'
+        ? normalizedPath.toLowerCase()
+        : normalizedPath;
+}
+
+function normalizePreferredPlatformClientExePath(rawPath: string | null | undefined): string | null {
+    const normalizedPath = normalizeOneCClientExePath(rawPath || '').trim();
+    return normalizedPath || null;
+}
+
+function resolveConfiguredPlatformByClientPath(
+    platforms: readonly ConfiguredOneCPlatform[],
+    clientExePath: string | null | undefined
+): ConfiguredOneCPlatform | null {
+    const normalizedLookupPath = normalizePreferredPlatformClientExePath(clientExePath);
+    if (!normalizedLookupPath) {
+        return null;
+    }
+
+    const lookupKey = normalizePlatformPathForCompare(normalizedLookupPath);
+    return platforms.find(platform => normalizePlatformPathForCompare(platform.clientExePath) === lookupKey) || null;
 }
 
 function normalizeInfobaseReferenceValue(rawValue: string): string {
@@ -194,7 +239,10 @@ function isFileInfobaseReference(rawValue: string): boolean {
 function getInfobaseDisplayNameFallback(rawValue: string): string {
     const fileInfobasePath = getFileInfobaseDirectory(rawValue);
     if (fileInfobasePath) {
-        return path.basename(fileInfobasePath) || fileInfobasePath;
+        const baseName = isWindowsAbsolutePath(fileInfobasePath)
+            ? path.win32.basename(fileInfobasePath)
+            : path.basename(fileInfobasePath);
+        return baseName || fileInfobasePath;
     }
 
     return getInfobaseLocationLabel(rawValue) || rawValue;
@@ -218,6 +266,10 @@ function resolveWorkspaceRelativePath(rawPath: string, workspaceRootPath: string
     const trimmedPath = rawPath.trim();
     if (!trimmedPath) {
         return trimmedPath;
+    }
+
+    if (isWindowsAbsolutePath(trimmedPath)) {
+        return path.win32.normalize(trimmedPath);
     }
 
     if (path.isAbsolute(trimmedPath) || !workspaceRootPath) {
@@ -454,6 +506,29 @@ export function getManagedInfobaseStartupParametersMode(
     );
 }
 
+export function getManagedInfobasePreferredPlatformClientExePath(
+    context: vscode.ExtensionContext,
+    infobasePath: string
+): string | null {
+    const storedMetadata = getStoredManagedInfobaseMetadata(context, infobasePath);
+    return normalizePreferredPlatformClientExePath(storedMetadata?.preferredPlatformClientExePath || null);
+}
+
+export async function getManagedInfobasePreferredPlatform(
+    context: vscode.ExtensionContext,
+    infobasePath: string
+): Promise<ConfiguredOneCPlatform | null> {
+    const configuredPlatforms = await ensureOneCPlatformsCatalogInitialized();
+    if (configuredPlatforms.length === 0) {
+        return null;
+    }
+
+    const preferredClientPath = getManagedInfobasePreferredPlatformClientExePath(context, infobasePath);
+    return resolveConfiguredPlatformByClientPath(configuredPlatforms, preferredClientPath)
+        || configuredPlatforms[0]
+        || null;
+}
+
 export function getManagedInfobaseStartupParameterArgs(
     context: vscode.ExtensionContext,
     infobasePath: string,
@@ -463,6 +538,18 @@ export function getManagedInfobaseStartupParameterArgs(
     return options?.allowDialogSuppression === false
         ? stripDialogSuppressionArgs(startupArgs)
         : startupArgs;
+}
+
+export async function setManagedInfobasePreferredPlatformClientExePath(
+    context: vscode.ExtensionContext,
+    infobasePath: string,
+    clientExePath: string | null
+): Promise<void> {
+    await updateManagedInfobaseMetadata(context, infobasePath, {
+        preferredPlatformClientExePath: clientExePath
+            ? await resolvePreferredPlatformMetadataPatchValue(clientExePath)
+            : null
+    });
 }
 
 async function removeManagedInfobaseMetadata(
@@ -499,6 +586,11 @@ function mergeMetadataEntries(
     mergedEntry.startupParameters = sanitizeStartupParameters(nextEntry.startupParameters)
         || sanitizeStartupParameters(currentEntry?.startupParameters)
         || undefined;
+    mergedEntry.preferredPlatformClientExePath = normalizePreferredPlatformClientExePath(
+        nextEntry.preferredPlatformClientExePath
+            || currentEntry?.preferredPlatformClientExePath
+            || null
+    ) || undefined;
     return mergedEntry;
 }
 
@@ -774,6 +866,17 @@ export async function updateManagedInfobaseMetadata(
         }
     }
 
+    if (patch.preferredPlatformClientExePath !== undefined) {
+        const normalizedPreferredPlatformPath = normalizePreferredPlatformClientExePath(
+            patch.preferredPlatformClientExePath
+        );
+        if (normalizedPreferredPlatformPath) {
+            nextEntry.preferredPlatformClientExePath = normalizedPreferredPlatformPath;
+        } else {
+            delete nextEntry.preferredPlatformClientExePath;
+        }
+    }
+
     nextEntry.startupParametersMode = normalizeStartupParametersMode(
         nextEntry.startupParametersMode,
         nextEntry.startupParameters
@@ -791,8 +894,24 @@ export async function updateManagedInfobaseMetadata(
         }
     }
 
+    if (patch.hidden !== undefined) {
+        if (typeof patch.hidden === 'boolean') {
+            nextEntry.hidden = patch.hidden;
+        } else {
+            delete nextEntry.hidden;
+        }
+    }
+
     metadataMap[metadataKey] = nextEntry;
     await saveStoredMetadataMap(context, metadataMap);
+}
+
+export async function setManagedInfobaseHidden(
+    context: vscode.ExtensionContext,
+    infobasePath: string,
+    hidden: boolean
+): Promise<void> {
+    await updateManagedInfobaseMetadata(context, infobasePath, { hidden });
 }
 
 async function collectSnapshotObservations(): Promise<SnapshotObservation[]> {
@@ -884,6 +1003,23 @@ function sortManagedInfobaseSources(sources: Iterable<ManagedInfobaseSource>): M
     const order: ManagedInfobaseSource[] = ['launcher', 'runtime', 'manual', 'snapshot', 'workspaceState'];
     const sourceSet = new Set<ManagedInfobaseSource>(sources);
     return order.filter(source => sourceSet.has(source));
+}
+
+function shouldHideManagedInfobaseByDefault(
+    roles: ReadonlySet<ManagedInfobaseRole>,
+    sources: ReadonlySet<ManagedInfobaseSource>
+): boolean {
+    if (roles.has('startup')) {
+        return true;
+    }
+
+    if (!sources.has('runtime')) {
+        return false;
+    }
+
+    return !sources.has('launcher')
+        && !sources.has('manual')
+        && !sources.has('snapshot');
 }
 
 function getExistingDisplayNameHint(hints: Set<string>): string | null {
@@ -993,7 +1129,9 @@ export async function collectManagedInfobases(
         lastRunLogAt?: string | null;
         startupParametersMode?: ManagedInfobaseStartupParametersMode | null;
         startupParameters?: string | null;
+        preferredPlatformClientExePath?: string | null;
         stateHint?: ManagedInfobaseStateHint | null;
+        hidden?: boolean | null;
     }): void => {
         const trimmedPath = infobasePath.trim();
         if (!trimmedPath) {
@@ -1022,7 +1160,9 @@ export async function collectManagedInfobases(
                 lastRunLogAt: null,
                 startupParametersMode: 'none',
                 startupParameters: null,
-                stateHint: null
+                preferredPlatformClientExePath: null,
+                stateHint: null,
+                hiddenOverride: null
             };
             records.set(recordKey, record);
         }
@@ -1082,8 +1222,20 @@ export async function collectManagedInfobases(
             );
         }
 
+        if (options?.preferredPlatformClientExePath !== undefined) {
+            record.preferredPlatformClientExePath = normalizePreferredPlatformClientExePath(
+                options.preferredPlatformClientExePath
+            );
+        }
+
         if (options?.stateHint) {
             record.stateHint = options.stateHint;
+        }
+
+        if (options?.hidden !== undefined) {
+            record.hiddenOverride = typeof options.hidden === 'boolean'
+                ? options.hidden
+                : null;
         }
     };
 
@@ -1185,7 +1337,9 @@ export async function collectManagedInfobases(
                 metadata.startupParameters || null
             ),
             startupParameters: metadata.startupParameters || null,
-            stateHint: metadata.stateHint || null
+            preferredPlatformClientExePath: metadata.preferredPlatformClientExePath || null,
+            stateHint: metadata.stateHint || null,
+            hidden: typeof metadata.hidden === 'boolean' ? metadata.hidden : null
         });
     }
 
@@ -1243,7 +1397,9 @@ export async function collectManagedInfobases(
             lastRunLogAt: record.lastRunLogAt,
             startupParametersMode: record.startupParametersMode,
             startupParameters: record.startupParameters,
-            logTargets
+            preferredPlatformClientExePath: record.preferredPlatformClientExePath,
+            logTargets,
+            hidden: record.hiddenOverride ?? shouldHideManagedInfobaseByDefault(record.roles, record.sources)
         });
     }
 
@@ -1281,6 +1437,10 @@ export function validateNewInfobasePath(t: Translator, targetPath: string): stri
     const trimmedPath = targetPath.trim();
     if (!trimmedPath) {
         return t('Infobase path cannot be empty.');
+    }
+
+    if (!isHostAccessibleFileInfobasePath(trimmedPath)) {
+        return null;
     }
 
     const resolvedPath = path.resolve(trimmedPath);
@@ -1456,18 +1616,18 @@ async function promptInfobaseAuthentication(
 }
 
 async function resolveConfiguredOneCDesignerExePath(
-    t: Translator
+    t: Translator,
+    preferredOneCClientExePath?: string | null
 ): Promise<string> {
     if (process.platform !== 'win32') {
         throw new Error(t('1C Designer operations are supported only on Windows.'));
     }
 
-    const configuredClientPath = (
-        vscode.workspace.getConfiguration('kotTestToolkit').get<string>('paths.oneCEnterpriseExe')
-        || ''
-    ).trim();
+    const configuredClientPath = normalizePreferredPlatformClientExePath(preferredOneCClientExePath)
+        || (await ensureOneCPlatformsCatalogInitialized())[0]?.clientExePath
+        || '';
     if (!configuredClientPath) {
-        throw new Error(t('Path to 1C:Enterprise client (1cv8c.exe) is not specified in settings.'));
+        throw new Error(t('No 1C platforms are configured. Configure them in settings or open the platform manager.'));
     }
     if (!fs.existsSync(configuredClientPath)) {
         throw new Error(t('1C:Enterprise client file not found at path: {0}', configuredClientPath));
@@ -1482,24 +1642,31 @@ async function resolveConfiguredOneCDesignerExePath(
 }
 
 async function resolveConfiguredOneCClientExePath(
-    t: Translator
+    t: Translator,
+    preferredOneCClientExePath?: string | null
 ): Promise<string> {
     if (process.platform !== 'win32') {
         throw new Error(t('1C client launch is supported only on Windows.'));
     }
 
-    const configuredClientPath = (
-        vscode.workspace.getConfiguration('kotTestToolkit').get<string>('paths.oneCEnterpriseExe')
-        || ''
-    ).trim();
+    const configuredClientPath = normalizePreferredPlatformClientExePath(preferredOneCClientExePath)
+        || (await ensureOneCPlatformsCatalogInitialized())[0]?.clientExePath
+        || '';
     if (!configuredClientPath) {
-        throw new Error(t('Path to 1C:Enterprise client (1cv8c.exe) is not specified in settings.'));
+        throw new Error(t('No 1C platforms are configured. Configure them in settings or open the platform manager.'));
     }
     if (!fs.existsSync(configuredClientPath)) {
         throw new Error(t('1C:Enterprise client file not found at path: {0}', configuredClientPath));
     }
 
     return configuredClientPath;
+}
+
+function getManagedInfobaseConfiguredPlatformClientExePath(
+    context: vscode.ExtensionContext,
+    infobasePath: string
+): string | null {
+    return getManagedInfobasePreferredPlatformClientExePath(context, infobasePath);
 }
 
 async function runOneCCommand(
@@ -1927,7 +2094,10 @@ export async function exportInfobaseToDtInteractive(
 ): Promise<string | null> {
     const t = await getTranslator(context.extensionUri);
     assertNonWebInfobaseReference(t, infobasePath, t('Export DT'));
-    const designerExePath = await resolveConfiguredOneCDesignerExePath(t);
+    const designerExePath = await resolveConfiguredOneCDesignerExePath(
+        t,
+        getManagedInfobaseConfiguredPlatformClientExePath(context, infobasePath)
+    );
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
     const defaultUri = vscode.Uri.file(path.join(
@@ -1992,7 +2162,10 @@ export async function exportInfobaseConfigurationToCfInteractive(
 ): Promise<string | null> {
     const t = await getTranslator(context.extensionUri);
     assertNonWebInfobaseReference(t, infobasePath, t('Save CF'));
-    const designerExePath = await resolveConfiguredOneCDesignerExePath(t);
+    const designerExePath = await resolveConfiguredOneCDesignerExePath(
+        t,
+        getManagedInfobaseConfiguredPlatformClientExePath(context, infobasePath)
+    );
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
     const defaultUri = vscode.Uri.file(path.join(
@@ -2097,7 +2270,10 @@ export async function recreateInfobaseInteractive(
 
     await assertInfobaseNotBusy(fileInfobasePath, t);
 
-    const designerExePath = await resolveConfiguredOneCDesignerExePath(t);
+    const designerExePath = await resolveConfiguredOneCDesignerExePath(
+        t,
+        getManagedInfobaseConfiguredPlatformClientExePath(context, infobase.infobasePath)
+    );
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
     const logsDirectory = path.join(workspaceRootPath, '.vscode', 'kot-runtime', 'infobase-manager', 'logs');
@@ -2162,7 +2338,10 @@ export async function restoreInfobaseFromDtInteractive(
     }
 
     await assertInfobaseNotBusy(infobase.infobasePath, t);
-    const designerExePath = await resolveConfiguredOneCDesignerExePath(t);
+    const designerExePath = await resolveConfiguredOneCDesignerExePath(
+        t,
+        getManagedInfobaseConfiguredPlatformClientExePath(context, infobase.infobasePath)
+    );
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
     const logsDirectory = path.join(workspaceRootPath, '.vscode', 'kot-runtime', 'infobase-manager', 'logs');
@@ -2285,7 +2464,10 @@ export async function updateInfobaseConfigurationInteractive(
     }
 
     await assertInfobaseNotBusy(infobase.infobasePath, t);
-    const designerExePath = await resolveConfiguredOneCDesignerExePath(t);
+    const designerExePath = await resolveConfiguredOneCDesignerExePath(
+        t,
+        getManagedInfobaseConfiguredPlatformClientExePath(context, infobase.infobasePath)
+    );
     const output = getInfobaseManagerOutputChannel();
     const logsDirectory = path.join(workspaceRootPath, '.vscode', 'kot-runtime', 'infobase-manager', 'logs');
     await ensureDirectory(logsDirectory);
@@ -2762,12 +2944,84 @@ export async function removeInfobaseFromLauncherInteractive(
     });
 }
 
+async function resolveManagedInfobaseLaunchPlatform(
+    context: vscode.ExtensionContext,
+    infobasePath: string,
+    t: Translator,
+    placeHolder: string,
+    options?: ManagedInfobaseLaunchOptions
+): Promise<{ platform: ConfiguredOneCPlatform; persistSelection: boolean } | null> {
+    const configuredPlatforms = await ensureOneCPlatformsCatalogInitialized();
+    const explicitClientPath = normalizePreferredPlatformClientExePath(options?.preferredOneCClientExePath || null);
+    if (explicitClientPath) {
+        return {
+            platform: resolveConfiguredPlatformByClientPath(configuredPlatforms, explicitClientPath) || {
+                name: path.basename(explicitClientPath),
+                clientExePath: explicitClientPath
+            },
+            persistSelection: true
+        };
+    }
+
+    const storedClientPath = getManagedInfobasePreferredPlatformClientExePath(context, infobasePath);
+    if (storedClientPath) {
+        return {
+            platform: resolveConfiguredPlatformByClientPath(configuredPlatforms, storedClientPath) || {
+                name: path.basename(storedClientPath),
+                clientExePath: storedClientPath
+            },
+            persistSelection: false
+        };
+    }
+
+    const selectedPlatform = await resolveOneCPlatformForLaunch(t, {
+        placeHolder
+    });
+    if (!selectedPlatform) {
+        return null;
+    }
+
+    return {
+        platform: selectedPlatform,
+        persistSelection: true
+    };
+}
+
+async function resolvePreferredPlatformMetadataPatchValue(clientExePath: string): Promise<string | null> {
+    const normalizedClientPath = normalizePreferredPlatformClientExePath(clientExePath);
+    if (!normalizedClientPath) {
+        return null;
+    }
+
+    const defaultClientPath = (await ensureOneCPlatformsCatalogInitialized())[0]?.clientExePath || '';
+    return normalizePlatformPathForCompare(normalizedClientPath) === normalizePlatformPathForCompare(defaultClientPath)
+        ? null
+        : normalizedClientPath;
+}
+
 export async function openInfobaseInEnterprise(
     context: vscode.ExtensionContext,
-    infobase: ManagedInfobaseRecord
+    infobase: ManagedInfobaseRecord,
+    options?: ManagedInfobaseLaunchOptions
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
-    const clientExePath = await resolveConfiguredOneCClientExePath(t);
+    const resolvedPlatform = await resolveManagedInfobaseLaunchPlatform(
+        context,
+        infobase.infobasePath,
+        t,
+        t('Select 1C platform for infobase launch'),
+        options
+    );
+    if (!resolvedPlatform) {
+        return;
+    }
+
+    const { platform: selectedPlatform, persistSelection } = resolvedPlatform;
+    const clientExePath = selectedPlatform.clientExePath;
+    if (!fs.existsSync(clientExePath)) {
+        throw new Error(t('1C:Enterprise client file not found at path: {0}', clientExePath));
+    }
+
     const output = getInfobaseManagerOutputChannel();
     const startupArgs = getManagedInfobaseStartupParameterArgs(context, infobase.infobasePath, {
         allowDialogSuppression: false
@@ -2787,17 +3041,41 @@ export async function openInfobaseInEnterprise(
     await updateManagedInfobaseMetadata(context, infobase.infobasePath, {
         displayName: infobase.launcherName || infobase.displayName,
         lastLaunchAt: new Date().toISOString(),
-        lastLaunchKind: 'enterprise'
+        lastLaunchKind: 'enterprise',
+        preferredPlatformClientExePath: persistSelection
+            ? await resolvePreferredPlatformMetadataPatchValue(clientExePath)
+            : undefined
     });
 }
 
 export async function openInfobaseInDesigner(
     context: vscode.ExtensionContext,
-    infobase: ManagedInfobaseRecord
+    infobase: ManagedInfobaseRecord,
+    options?: ManagedInfobaseLaunchOptions
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     assertNonWebInfobaseRecord(t, infobase, t('Open in Designer'));
-    const designerExePath = await resolveConfiguredOneCDesignerExePath(t);
+    const resolvedPlatform = await resolveManagedInfobaseLaunchPlatform(
+        context,
+        infobase.infobasePath,
+        t,
+        t('Select 1C platform for Designer launch'),
+        options
+    );
+    if (!resolvedPlatform) {
+        return;
+    }
+
+    const { platform: selectedPlatform, persistSelection } = resolvedPlatform;
+    if (!fs.existsSync(selectedPlatform.clientExePath)) {
+        throw new Error(t('1C:Enterprise client file not found at path: {0}', selectedPlatform.clientExePath));
+    }
+
+    const designerExePath = resolveOneCDesignerExePath(selectedPlatform.clientExePath);
+    if (!designerExePath || !fs.existsSync(designerExePath)) {
+        throw new Error(t('1C Designer executable was not found next to client path: {0}', selectedPlatform.clientExePath));
+    }
+
     const output = getInfobaseManagerOutputChannel();
     await launchOneCDetached(
         designerExePath,
@@ -2813,7 +3091,10 @@ export async function openInfobaseInDesigner(
     await updateManagedInfobaseMetadata(context, infobase.infobasePath, {
         displayName: infobase.launcherName || infobase.displayName,
         lastLaunchAt: new Date().toISOString(),
-        lastLaunchKind: 'designer'
+        lastLaunchKind: 'designer',
+        preferredPlatformClientExePath: persistSelection
+            ? await resolvePreferredPlatformMetadataPatchValue(selectedPlatform.clientExePath)
+            : undefined
     });
 }
 
@@ -2873,7 +3154,8 @@ export async function pickManagedInfobasePath(
     );
     const allowsFileInfobases = allowedKinds.has('file');
     const records = (await collectManagedInfobases(context))
-        .filter(record => allowedKinds.has(record.infobaseKind));
+        .filter(record => allowedKinds.has(record.infobaseKind))
+        .filter(record => !record.hidden);
 
     const quickPickItems: Array<vscode.QuickPickItem & {
         actionKey: 'none' | 'manual' | 'managed' | 'create' | 'manager';
@@ -2913,7 +3195,9 @@ export async function pickManagedInfobasePath(
     if (
         preferredInfobasePath
         && allowedKinds.has(getInfobaseKind(preferredInfobasePath))
-        && (!isFileInfobaseReference(preferredInfobasePath) || fs.existsSync(preferredInfobasePath))
+        && (!isFileInfobaseReference(preferredInfobasePath)
+            || !isHostAccessibleFileInfobasePath(preferredInfobasePath)
+            || fs.existsSync(preferredInfobasePath))
     ) {
         quickPickItems.push({
             label: t('Use selected snapshot infobase'),

@@ -3,7 +3,7 @@ import * as cp from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs'; 
 import * as os from 'os';
-import { scanWorkspaceForTests, getScanDirRelativePath } from './workspaceScanner';
+import { scanWorkspaceForTests, resolveScanDirFsPath } from './workspaceScanner';
 import { TestInfo } from './types';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { migrateLegacyPhaseSwitcherMetadata, parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
@@ -20,12 +20,28 @@ import {
     buildInfobaseConnectionArgument,
     describeInfobaseConnection,
     getFileInfobasePath,
+    isHostAccessibleFileInfobasePath,
     isServerInfobaseConnection,
+    isWindowsAbsolutePath,
     normalizeInfobaseConnectionIdentity,
     normalizeInfobaseReference
 } from './oneCInfobaseConnection';
-import { ensureSharedStartupInfobaseReady, getSharedStartupInfobaseOutputChannel } from './startupInfobase';
-import { resolveOneCDesignerExePath } from './oneCPlatform';
+import {
+    canUseEtalonBaseDtFileAsDefaultUri,
+    findEtalonBaseByIdOrName,
+    loadEtalonBasesFromFile,
+    resolveEtalonBaseDtFilePath,
+    resolveModelDbSettingsFilePathFromParameters
+} from './etalonBases';
+import {
+    ensureSharedStartupInfobaseReady,
+    getSharedStartupInfobaseOutputChannel,
+    type EnsureSharedStartupInfobaseResult,
+    type SharedStartupInfobaseAuthentication
+} from './startupInfobase';
+import { resolveOneCDesignerExePath, resolveOneCPlatformForLaunch } from './oneCPlatform';
+import { getScenarioScanRootPath } from './scenarioScanRoot';
+import { parseYamlSectionFieldValues } from './yamlHeaderFields';
 
 // --- Вспомогательная функция для Nonce ---
 function getNonce(): string {
@@ -62,12 +78,14 @@ interface ScenarioBuildArtifact {
     sourceUri: vscode.Uri;
     featurePath?: string;
     jsonPath?: string;
+    combinedJsonPath?: string;
     builtAt: number;
 }
 
 interface ScenarioRunState {
     featurePath?: string;
     jsonPath?: string;
+    combinedJsonPath?: string;
     stale: boolean;
     runStatus: 'idle' | 'running' | 'passed' | 'failed';
     runMessage?: string;
@@ -283,6 +301,12 @@ interface AdditionalLaunchVanessaParameter {
 interface VanessaLaunchOverlayParameters {
     additionalParameters: AdditionalLaunchVanessaParameter[];
     globalVariables: AdditionalLaunchVanessaParameter[];
+}
+
+interface VanessaTestClientDefaults {
+    clientType: string;
+    computerName: string;
+    port: string;
 }
 
 const VANESSA_PARAM_ALIAS_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
@@ -528,13 +552,27 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    public handleScenarioScanRootChanged(): void {
+        void this.refreshFromExternalStateChange({ refreshCache: true });
+    }
+
+    public async refreshFromExternalStateChange(options?: { refreshCache?: boolean }): Promise<void> {
+        if (options?.refreshCache) {
+            this._testCache = null;
+            this._cacheDirty = true;
+        }
+
+        if (this._view?.visible) {
+            await this._sendInitialState(this._view.webview);
+        }
+    }
+
     private getScanDirAbsolutePath(): string | null {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders || workspaceFolders.length === 0) {
             return null;
         }
-        const workspaceRootPath = workspaceFolders[0].uri.fsPath;
-        return path.resolve(path.join(workspaceRootPath, getScanDirRelativePath()));
+        return path.resolve(resolveScanDirFsPath(workspaceFolders[0].uri));
     }
 
     private isPathInside(parentPath: string, candidatePath: string): boolean {
@@ -1363,8 +1401,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return path.dirname(fileUri.fsPath);
         }
 
-        const workspaceRootPath = workspaceFolders[0].uri.fsPath;
-        const scanDirPath = path.join(workspaceRootPath, getScanDirRelativePath());
+        const scanDirPath = resolveScanDirFsPath(workspaceFolders[0].uri);
         const parentDirPath = path.dirname(fileUri.fsPath);
 
         if (parentDirPath.startsWith(scanDirPath)) {
@@ -1650,7 +1687,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
 
         context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration('kotTestToolkit.assembleScript.buildPath')) {
+            if (e.affectsConfiguration('kotTestToolkit.runtime.directory')) {
                 this._startupArtifactsRestoreAttempted = false;
                 this._scenarioBuildArtifacts.clear();
                 this._staleBuiltScenarioNames.clear();
@@ -5648,6 +5685,34 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         await this.renameScenario(scenarioInfo.name);
     }
 
+    public async openMainScenarioTestSettingsForActiveEditor(): Promise<void> {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showWarningMessage(this.t('No active editor.'));
+            return;
+        }
+
+        const document = editor.document;
+        if (!isScenarioYamlFile(document)) {
+            vscode.window.showWarningMessage(this.t('Open a scenario YAML file to open test settings.'));
+            return;
+        }
+
+        await this.ensureFreshTestCache();
+        if (!this._testCache || this._testCache.size === 0) {
+            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
+            return;
+        }
+
+        const scenarioInfo = this.findScenarioByUriInCache(document.uri);
+        if (!scenarioInfo) {
+            vscode.window.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
+            return;
+        }
+
+        await this.openMainScenarioTestSettings(scenarioInfo.name);
+    }
+
     private async renameGroup(groupName: string): Promise<void> {
         const trimmedGroupName = groupName.trim();
         if (!trimmedGroupName) {
@@ -6251,6 +6316,22 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    public async refreshCombinedScenarioJsonArtifacts(): Promise<void> {
+        const workspaceRootUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+        if (!workspaceRootUri) {
+            return;
+        }
+
+        await this.ensureFreshTestCache();
+        await this.restoreScenarioBuildArtifactsFromDiskIfNeeded(workspaceRootUri);
+        if (this._scenarioBuildArtifacts.size === 0) {
+            return;
+        }
+
+        await this.ensureCombinedScenarioJsonArtifacts(workspaceRootUri.fsPath);
+        this.sendRunArtifactsStateToWebview();
+    }
+
     public async openScenarioInVanessaManualFromCommandPalette(): Promise<void> {
         if (this._isBuildInProgress) {
             vscode.window.showWarningMessage(this.t('Please wait for the current build to finish.'));
@@ -6385,7 +6466,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder) {
             vscode.window.showErrorMessage(this.t('Project folder must be opened.'));
@@ -6393,38 +6473,30 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const workspaceRootPath = workspaceFolder.uri.fsPath;
-        const oneCPath = (config.get<string>('paths.oneCEnterpriseExe') || '').trim();
-        if (!oneCPath) {
-            vscode.window.showErrorMessage(
-                this.t('Path to 1C:Enterprise client (1cv8c.exe) is not specified in settings.'),
-                this.t('Open Settings')
-            ).then(selection => {
-                if (selection === this.t('Open Settings')) {
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
-                }
-            });
-            return;
-        }
-        if (!fs.existsSync(oneCPath)) {
-            vscode.window.showErrorMessage(
-                this.t('1C:Enterprise client file not found at path: {0}', oneCPath),
-                this.t('Open Settings')
-            ).then(selection => {
-                if (selection === this.t('Open Settings')) {
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
-                }
-            });
+        const selectedPlatform = await resolveOneCPlatformForLaunch(this.t.bind(this), {
+            placeHolder: this.t('Select 1C platform for Vanessa launch')
+        });
+        if (!selectedPlatform) {
             return;
         }
 
-        const startupInfobasePath = await this.ensureSharedStartupInfobaseReady(
+        const oneCPath = selectedPlatform.clientExePath;
+        if (!fs.existsSync(oneCPath)) {
+            vscode.window.showErrorMessage(
+                this.t('1C:Enterprise client file not found at path: {0}', oneCPath)
+            );
+            return;
+        }
+
+        const startupInfobase = await this.ensureSharedStartupInfobaseReady(
             oneCPath,
             this.t('Preparing shared startup infobase for Vanessa...')
         );
-        if (!startupInfobasePath) {
+        if (!startupInfobase) {
             return;
         }
 
+        const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const vanessaEpfSetting = (config.get<string>('runVanessa.vanessaEpfPath') || '').trim();
         if (!vanessaEpfSetting) {
             vscode.window.showErrorMessage(
@@ -6447,11 +6519,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.runVanessa.vanessaEpfPath');
                 }
             });
-            return;
-        }
-
-        const unsafeProtectionConfigured = await this.ensureUnsafeActionProtectionConfiguredForVanessa(oneCPath, startupInfobasePath);
-        if (!unsafeProtectionConfigured) {
             return;
         }
 
@@ -6478,7 +6545,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         ];
         const vaCommand = `${vaCommandParts.join(';')};`;
         const args = [
-            ...this.buildStartupParams(startupInfobasePath),
+            ...this.buildStartupParams(startupInfobase.infobaseDirectory, startupInfobase.authentication),
             '/Execute',
             `"${vanessaEpfPath}"`,
             `/C"${vaCommand}"`,
@@ -6493,7 +6560,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.outputInfo(outputChannel, this.t('Opening Vanessa Automation standalone debug session...'));
         this.outputAdvanced(outputChannel, this.t('Vanessa EPF path: {0}', vanessaEpfPath));
         this.outputAdvanced(outputChannel, this.t('Vanessa JSON run settings: {0}', launchJsonPath));
-        this.outputAdvanced(outputChannel, this.t('Using startup infobase path for this run: {0}', startupInfobasePath));
+        this.outputAdvanced(outputChannel, this.t('Using startup infobase path for this run: {0}', startupInfobase.infobaseDirectory));
 
         try {
             await this.execute1CProcessDetached(
@@ -6603,6 +6670,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 buildFL: this.t('Build FL'),
                 buildTests: this.t('Build tests'),
                 buildOptionsTitle: this.t('Build options'),
+                profile: this.t('Profile'),
+                selectProfile: this.t('Select profile'),
                 cancelBuild: this.t('Cancel build'),
                 cancelBuildTitle: this.t('Cancel running build'),
                 recordGLSelectTitle: this.t('Record GL Accounts (0=No, 1=Yes, 2=Templates)'),
@@ -6622,6 +6691,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 runVanessaTopTitle: this.t('Open Vanessa'),
                 openFormExplorerTopTitle: this.t('Open KOT Form Explorer'),
                 openInfobaseManagerTopTitle: this.t('Open Infobase Manager'),
+                openPlatformManagerTitle: this.t('Manage platforms'),
                 runScenarioFeatureTitle: this.t('Run scenario in Vanessa Automation by feature: {0}', '{0}'),
                 runScenarioJsonTitle: this.t('Run scenario in Vanessa Automation by json: {0}', '{0}'),
                 runScenarioStaleSuffix: this.t('Build is stale'),
@@ -6650,6 +6720,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 runScenarioModeOpenFeature: this.t('Open feature in editor'),
                 runScenarioModeOpenFeatureHint: this.t('Opens built feature file for this scenario in editor.'),
                 runScenarioNoFeatureArtifact: this.t('Feature artifact is not available for this scenario.'),
+                openScenarioJsonMenuTitle: this.t('Open JSON'),
+                openScenarioBuiltJsonTitle: this.t('Open built JSON'),
+                openScenarioBuiltJsonHint: this.t('Open original JSON artifact produced by SPPR for this scenario.'),
+                openScenarioBuiltJsonUnavailable: this.t('Built JSON artifact is not available for this scenario.'),
+                openScenarioCombinedJsonTitle: this.t('Open combined JSON'),
+                openScenarioCombinedJsonHint: this.t('Open combined JSON artifact with Additional VA params and GlobalVars applied.'),
+                openScenarioCombinedJsonUnavailable: this.t('Combined JSON artifact is not available for this scenario.'),
                 statusLoadingShort: this.t('Loading...'),
                 statusRequestingData: this.t('Requesting data...'),
                 statusStartingAssembly: this.t('Starting assembly...'),
@@ -6718,6 +6795,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     const recordGL = typeof params.recordGL === 'string' ? params.recordGL : 'No';
                     await this._handleRunAssembleScriptTypeScript(recordGL);
                     return;
+                case 'setYamlParametersProfile':
+                    if (typeof message.profileId === 'string' && message.profileId.trim().length > 0) {
+                        const { YamlParametersManager } = await import('./yamlParametersManager.js');
+                        const yamlParametersManager = YamlParametersManager.getInstance(this._context);
+                        const changed = await yamlParametersManager.setActiveProfile(message.profileId.trim());
+                        if (changed) {
+                            await this._sendInitialState(webviewView.webview);
+                        }
+                    }
+                    return;
                 case 'cancelAssembleScript':
                     await this.requestBuildCancellation();
                     return;
@@ -6763,6 +6850,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 case 'openScenarioFeatureInEditor':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
                         await this.openScenarioFeatureInEditor(message.name.trim());
+                    }
+                    return;
+                case 'openScenarioJsonArtifactInEditor':
+                    if (typeof message.name === 'string'
+                        && message.name.trim().length > 0
+                        && (message.variant === 'original' || message.variant === 'combined')) {
+                        await this.openScenarioJsonArtifactInEditor(message.name.trim(), message.variant);
                     }
                     return;
                 case 'renameGroup':
@@ -6826,6 +6920,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 case 'openInfobaseManager':
                     console.log("[PhaseSwitcherProvider] Opening KOT Infobase Manager...");
                     vscode.commands.executeCommand('kotTestToolkit.openInfobaseManager');
+                    return;
+                case 'openPlatformManager':
+                    console.log("[PhaseSwitcherProvider] Opening 1C platform manager...");
+                    vscode.commands.executeCommand('kotTestToolkit.managePlatforms');
                     return;
                 case 'createMainScenario':
                     console.log("[PhaseSwitcherProvider] Received createMainScenario command from webview.");
@@ -6969,6 +7067,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const affectedMainScenarioNames = this.getAffectedMainScenarioNamesForActiveEditor();
         const favoriteEntries = this.sortFavoriteEntries(this.getFavoriteEntries());
         const favoriteSortMode = this.getFavoriteSortMode();
+        const { YamlParametersManager } = await import('./yamlParametersManager.js');
+        const yamlParametersManager = YamlParametersManager.getInstance(this._context);
+        const yamlParametersProfiles = await yamlParametersManager.getProfilesSummary();
         this._lastHighlightedMainScenarioNames = new Set(affectedMainScenarioNames);
 
         webview.postMessage({
@@ -6979,6 +7080,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             affectedMainScenarioNames,
             favorites: favoriteEntries,
             favoriteSortMode,
+            yamlParametersProfiles,
             settings: {
                 assemblerEnabled: assemblerEnabled,
                 switcherEnabled: switcherEnabled,
@@ -7041,14 +7143,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         oneCClientPath: string,
         progressTitle: string,
         showProgressNotification: boolean = true
-    ): Promise<string | null> {
+    ): Promise<EnsureSharedStartupInfobaseResult | null> {
         try {
-            const startupInfobaseResult = await ensureSharedStartupInfobaseReady(this._context, oneCClientPath, {
+            return await ensureSharedStartupInfobaseReady(this._context, oneCClientPath, {
                 showOutputPanel: false,
                 showProgressNotification,
                 progressTitle
             });
-            return startupInfobaseResult.infobaseDirectory;
         } catch (error: any) {
             const message = error?.message || String(error);
             const openOutput = this.t('Open Output');
@@ -7064,21 +7165,49 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    private stripSharedStartupAuthenticationArgs(args: string[]): string[] {
+        const result: string[] = [];
+        for (let index = 0; index < args.length; index += 1) {
+            const token = args[index];
+            const normalizedToken = token.trim().toLowerCase();
+            if (normalizedToken === '/n' || normalizedToken === '/p') {
+                index += 1;
+                continue;
+            }
+
+            result.push(token);
+        }
+
+        return result;
+    }
+
     /**
      * Builds 1C:Enterprise startup parameters based on configuration settings
      */
-    private buildStartupParams(startupInfobasePath: string): string[] {
+    private buildStartupParams(
+        startupInfobasePath: string,
+        authentication: SharedStartupInfobaseAuthentication | null
+    ): string[] {
         const config = vscode.workspace.getConfiguration('kotTestToolkit');
-        const startupParameters = config.get<string>('startupParams.parameters') || '/L en /DisableStartupMessages /DisableStartupDialogs';
+        const startupParameters = config.get<string>('startupParams.parameters') || '/L ru /DisableStartupMessages /DisableStartupDialogs';
 
         const params = [
             "ENTERPRISE",
             `/IBConnectionString`, buildFileInfobaseConnectionArgument(startupInfobasePath, { trailingSemicolon: true })
         ];
 
+        if (authentication?.username) {
+            params.push('/N', authentication.username);
+            if (authentication.password) {
+                params.push('/P', authentication.password);
+            }
+        }
+
         // Add custom startup parameters (split by space and filter empty strings)
         if (startupParameters.trim()) {
-            const customParams = startupParameters.trim().split(/\s+/).filter(p => p.length > 0);
+            const customParams = this.stripSharedStartupAuthenticationArgs(
+                startupParameters.trim().split(/\s+/).filter(p => p.length > 0)
+            );
             params.push(...customParams);
             console.log(`[PhaseSwitcherProvider] ${this.t('Using startup parameters: {0}', startupParameters.trim())}`);
         } else {
@@ -7102,22 +7231,108 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         return {
             buildScenarioBddEpf: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.buildScenarioBddEpf') || 'build/BuildScenarioBDD.epf'),
-            yamlSourceDirectory: path.join(workspaceRootUri.fsPath, config.get<string>('paths.yamlSourceDirectory') || 'tests/RegressionTests/yaml'),
-            firstLaunchFolder,
-            etalonDriveDirectory: 'tests'
+            yamlSourceDirectory: path.isAbsolute(getScenarioScanRootPath())
+                ? getScenarioScanRootPath()
+                : path.join(workspaceRootUri.fsPath, getScenarioScanRootPath()),
+            firstLaunchFolder
         };
+    }
+
+    private normalizeBuildParameterKey(key: string): string {
+        return String(key).trim().toLowerCase().replace(/[_\-\s]/g, '');
+    }
+
+    private getBuildParameterValue(parameters: Array<{ key: string; value: string }>, ...aliases: string[]): string {
+        const normalizedAliases = aliases.map(alias => this.normalizeBuildParameterKey(alias));
+        for (const parameter of parameters) {
+            const normalizedKey = this.normalizeBuildParameterKey(parameter.key);
+            if (!normalizedAliases.includes(normalizedKey)) {
+                continue;
+            }
+            const value = String(parameter.value ?? '').trim();
+            if (value) {
+                return value;
+            }
+        }
+        return '';
+    }
+
+    private resolveFeatureFolderUriFromBuildParameters(
+        workspaceRootUri: vscode.Uri,
+        buildParameters: Array<{ key: string; value: string }>
+    ): vscode.Uri | null {
+        const rawFeatureFolder = this.getBuildParameterValue(buildParameters, 'FeatureFolder');
+        if (!rawFeatureFolder) {
+            return null;
+        }
+
+        const resolvedPath = path.isAbsolute(rawFeatureFolder)
+            ? rawFeatureFolder
+            : path.join(workspaceRootUri.fsPath, rawFeatureFolder);
+
+        return vscode.Uri.file(path.normalize(resolvedPath));
+    }
+
+    private resolveFeatureArtifactsRootUri(
+        workspaceRootUri: vscode.Uri,
+        buildParameters: Array<{ key: string; value: string }>
+    ): vscode.Uri | null {
+        const featureFolderUri = this.resolveFeatureFolderUriFromBuildParameters(workspaceRootUri, buildParameters);
+        if (!featureFolderUri) {
+            return null;
+        }
+
+        const modelDbId = this.getBuildParameterValue(buildParameters, 'ModelDBid');
+        return modelDbId ? vscode.Uri.joinPath(featureFolderUri, modelDbId) : featureFolderUri;
+    }
+
+    private isSameOrNestedPath(candidatePath: string, basePath: string): boolean {
+        const normalize = (value: string) => {
+            const resolved = path.resolve(value);
+            return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+        };
+
+        const candidate = normalize(candidatePath);
+        const base = normalize(basePath);
+        if (candidate === base) {
+            return true;
+        }
+
+        const relative = path.relative(base, candidate);
+        return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
     }
 
     private resolveBuildPathUri(workspaceRootUri: vscode.Uri): vscode.Uri {
         const config = vscode.workspace.getConfiguration('kotTestToolkit');
-        const buildPathSetting = (config.get<string>('assembleScript.buildPath') || '').trim();
+        const buildPathSetting = (config.get<string>('runtime.directory') || '').trim();
 
         if (buildPathSetting && path.isAbsolute(buildPathSetting)) {
             return vscode.Uri.file(buildPathSetting);
         }
 
-        const relativeBuildPath = buildPathSetting || '.vscode/1cdrive_build';
+        const relativeBuildPath = buildPathSetting || '.vscode/kot-runtime';
         return vscode.Uri.joinPath(workspaceRootUri, relativeBuildPath);
+    }
+
+    private resolveBuildRuntimeRootUri(
+        workspaceRootUri: vscode.Uri,
+        buildParameters: Array<{ key: string; value: string }>
+    ): vscode.Uri {
+        const configuredBuildRootUri = this.resolveBuildPathUri(workspaceRootUri);
+        const featureFolderUri = this.resolveFeatureFolderUriFromBuildParameters(workspaceRootUri, buildParameters);
+        if (!featureFolderUri) {
+            return configuredBuildRootUri;
+        }
+
+        if (this.isSameOrNestedPath(configuredBuildRootUri.fsPath, featureFolderUri.fsPath)) {
+            const safeRuntimePath = path.join(
+                path.dirname(featureFolderUri.fsPath),
+                `${path.basename(featureFolderUri.fsPath)}.kot-runtime`
+            );
+            return vscode.Uri.file(safeRuntimePath);
+        }
+
+        return configuredBuildRootUri;
     }
 
     private async restoreScenarioBuildArtifactsFromDiskIfNeeded(workspaceRootUri: vscode.Uri): Promise<void> {
@@ -7132,7 +7347,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
         this._startupArtifactsRestoreAttempted = true;
 
-        const buildRootUri = this.resolveBuildPathUri(workspaceRootUri);
+        const { YamlParametersManager } = await import('./yamlParametersManager.js');
+        const yamlParametersManager = YamlParametersManager.getInstance(this._context);
+        const buildParameters = await yamlParametersManager.loadParameters();
+        const buildRootUri = this.resolveFeatureArtifactsRootUri(workspaceRootUri, buildParameters);
+        if (!buildRootUri) {
+            return;
+        }
         try {
             await vscode.workspace.fs.stat(buildRootUri);
         } catch {
@@ -7153,6 +7374,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         await this.updateScenarioBuildArtifacts(featureFiles, buildRootUri);
+        await this.ensureCombinedScenarioJsonArtifacts(workspaceRootUri.fsPath);
         if (this._scenarioBuildArtifacts.size === 0) {
             return;
         }
@@ -7456,53 +7678,32 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const workspaceRootUri = workspaceFolders[0].uri;
                 const workspaceRootPath = workspaceRootUri.fsPath;
 
-                const oneCPath_raw = config.get<string>('paths.oneCEnterpriseExe');
-                if (!oneCPath_raw) {
+                const selectedPlatform = await resolveOneCPlatformForLaunch(this.t.bind(this), {
+                    promptUser: false
+                });
+                if (!selectedPlatform) {
                     sendStatus(this.t('Build error.'), true, 'assemble');
-                    vscode.window.showErrorMessage(
-                        this.t('Path to 1C:Enterprise client (1cv8c.exe) is not specified in settings.'),
-                        this.t('Open Settings')
-                    ).then(selection => {
-                        if (selection === this.t('Open Settings')) {
-                            vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
-                        }
-                    });
                     return;
                 }
-                if (!fs.existsSync(oneCPath_raw)) {
+                if (!fs.existsSync(selectedPlatform.clientExePath)) {
                     sendStatus(this.t('Build error.'), true, 'assemble');
                     vscode.window.showErrorMessage(
-                        this.t('1C:Enterprise client file not found at path: {0}', oneCPath_raw),
-                        this.t('Open Settings')
-                    ).then(selection => {
-                        if (selection === this.t('Open Settings')) {
-                            vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
-                        }
-                    });
+                        this.t('1C:Enterprise client file not found at path: {0}', selectedPlatform.clientExePath)
+                    );
                     return;
                 }
-                const oneCExePath = oneCPath_raw;
+                const oneCExePath = selectedPlatform.clientExePath;
 
-                const startupInfobasePath = await this.ensureSharedStartupInfobaseReady(
+                const startupInfobase = await this.ensureSharedStartupInfobaseReady(
                     oneCExePath,
                     this.t('Preparing shared startup infobase for test assembly...'),
                     false
                 );
-                if (!startupInfobasePath) {
+                if (!startupInfobase) {
                     sendStatus(this.t('Build error.'), true, 'assemble');
                     return;
                 }
                 
-                const absoluteBuildPathUri = this.resolveBuildPathUri(workspaceRootUri);
-                const absoluteBuildPath = absoluteBuildPathUri.fsPath;
-                
-                await vscode.workspace.fs.createDirectory(absoluteBuildPathUri);
-                this.outputAdvanced(outputChannel, this.t('Build directory ensured: {0}', absoluteBuildPath));
-
-                progress.report({ increment: 10, message: this.t('Preparing parameters...') });
-                const localSettingsPath = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_parameters.json');
-                
-                // Генерируем yaml_parameters.json из сохранённых параметров через Build Scenario Parameters Manager
                 const { YamlParametersManager } = await import('./yamlParametersManager.js');
                 const yamlParametersManager = YamlParametersManager.getInstance(this._context);
                 await this.ensureFreshTestCache();
@@ -7510,6 +7711,24 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const selectionSnapshot = await this.getMainScenarioSelectionSnapshotForBuild();
                 const filterDecision = this.buildScenarioFilterDecision(selectionSnapshot);
                 const effectiveBuildParameters = this.applyScenarioFilterToBuildParameters(baseBuildParameters, filterDecision);
+
+                const absoluteBuildPathUri = this.resolveBuildRuntimeRootUri(workspaceRootUri, effectiveBuildParameters);
+                const absoluteBuildPath = absoluteBuildPathUri.fsPath;
+                const featureArtifactsRootUri = this.resolveFeatureArtifactsRootUri(workspaceRootUri, effectiveBuildParameters);
+                
+                await vscode.workspace.fs.createDirectory(absoluteBuildPathUri);
+                this.outputAdvanced(outputChannel, this.t('Build directory ensured: {0}', absoluteBuildPath));
+                if (featureArtifactsRootUri && this.isSameOrNestedPath(absoluteBuildPathUri.fsPath, featureArtifactsRootUri.fsPath)) {
+                    this.outputInfo(
+                        outputChannel,
+                        this.t('Build runtime path overlaps with FeatureFolder. Using isolated runtime folder: {0}', absoluteBuildPathUri.fsPath)
+                    );
+                }
+
+                progress.report({ increment: 10, message: this.t('Preparing parameters...') });
+                const localSettingsPath = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_parameters.json');
+                
+                // Генерируем yaml_parameters.json из сохранённых параметров через Build Scenario Parameters Manager
                 await yamlParametersManager.createYamlParametersFile(localSettingsPath.fsPath, effectiveBuildParameters);
                 this.outputInfo(
                     outputChannel,
@@ -7565,7 +7784,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const buildErrorsPathUri = await this.prepareBuildErrorsFolder(absoluteBuildPathUri, outputChannel);
 
                 const yamlBuildParams = [
-                    ...this.buildStartupParams(startupInfobasePath),
+                    ...this.buildStartupParams(startupInfobase.infobaseDirectory, startupInfobase.authentication),
                     `/Execute`, `"${buildScenarioBddEpfPath}"`,
                     this.buildBuildScenarioBddCommand(localSettingsPath.fsPath, yamlBuildResultFileUri.fsPath, yamlBuildLogFileUri.fsPath, buildErrorsPathUri.fsPath)
                 ];
@@ -7599,21 +7818,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 await vscode.workspace.fs.createDirectory(vanessaErrorLogsDir);
 
                 this.outputInfo(outputChannel, this.t('Writing parameters from pipeline into tests...'));
-                
-                // Получаем ModelDBid из параметров YAML для определения правильного пути к сценариям
-                const parameters = await yamlParametersManager.loadParameters();
-                const modelDBidParam = parameters.find(p => p.key === "ModelDBid");
-                const modelDBid = modelDBidParam ? modelDBidParam.value : "EtalonDrive"; // Значение по умолчанию
-                
-                // Определяем путь к сценариям с учетом ModelDBid
-                // Если ModelDBid указан и не пустой, добавляем его к пути
-                const etalonDrivePath = modelDBid && modelDBid.trim() !== ""
-                    ? path.join(projectPaths.etalonDriveDirectory, modelDBid)
-                    : projectPaths.etalonDriveDirectory;
-                
-                this.outputAdvanced(outputChannel, this.t('Using ModelDBid: {0}, etalonDrivePath: {1}', modelDBid, etalonDrivePath));
-                
-                featureFileDirUri = vscode.Uri.joinPath(absoluteBuildPathUri, etalonDrivePath);
+                featureFileDirUri = featureArtifactsRootUri ?? absoluteBuildPathUri;
                 const featureFilesPattern = new vscode.RelativePattern(featureFileDirUri, '**/*.feature');
                 const featureFiles = await vscode.workspace.findFiles(featureFilesPattern);
                 
@@ -7631,8 +7836,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
 
                 ensureBuildNotCancelled();
-                await this.updateScenarioBuildArtifacts(featureFiles, absoluteBuildPathUri);
+                await this.updateScenarioBuildArtifacts(featureFiles, featureFileDirUri);
                 await this.ensureUniqueVanessaRuntimePathsForArtifacts(outputChannel, workspaceRootPath);
+                await this.ensureCombinedScenarioJsonArtifacts(workspaceRootPath, outputChannel);
                 this.sendRunArtifactsStateToWebview();
 
 
@@ -8403,6 +8609,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             state[scenarioName] = {
                 featurePath: artifact?.featurePath,
                 jsonPath: artifact?.jsonPath,
+                combinedJsonPath: artifact?.combinedJsonPath,
                 stale: isStale,
                 runStatus,
                 runMessage: displayedRunState.message,
@@ -8467,7 +8674,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     ): { targetKind: 'feature' | 'json'; targetPath: string } | null {
         const primaryKind = preferredKind || this.getRunVanessaLaunchMode();
         let targetKind: 'feature' | 'json' = primaryKind;
-        let targetPath = primaryKind === 'json' ? artifact.jsonPath : artifact.featurePath;
+        let targetPath = primaryKind === 'json'
+            ? (artifact.combinedJsonPath || artifact.jsonPath)
+            : artifact.featurePath;
 
         if (!targetPath) {
             if (primaryKind === 'json' && artifact.featurePath) {
@@ -8478,9 +8687,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         this.t('JSON artifact for "{0}" was not found. Falling back to feature file.', scenarioName)
                     );
                 }
-            } else if (primaryKind === 'feature' && artifact.jsonPath) {
+            } else if (primaryKind === 'feature' && (artifact.combinedJsonPath || artifact.jsonPath)) {
                 targetKind = 'json';
-                targetPath = artifact.jsonPath;
+                targetPath = artifact.combinedJsonPath || artifact.jsonPath;
                 if (showWarnings) {
                     vscode.window.showWarningMessage(
                         this.t('Feature artifact for "{0}" was not found. Falling back to json file.', scenarioName)
@@ -8706,7 +8915,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         for (const jsonFileUri of jsonFiles) {
             const jsonFileName = path.basename(jsonFileUri.fsPath, '.json');
-            if (jsonFileName.toLowerCase() === 'yaml_parameters') {
+            if (jsonFileName.toLowerCase() === 'yaml_parameters' || this.isCombinedScenarioJsonArtifactPath(jsonFileUri.fsPath)) {
                 continue;
             }
 
@@ -8730,6 +8939,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             };
             existingArtifact.jsonPath = jsonFileUri.fsPath;
             nextArtifacts.set(scenarioName, existingArtifact);
+        }
+
+        for (const artifact of nextArtifacts.values()) {
+            const sourceJsonPath = artifact.jsonPath?.trim();
+            if (!sourceJsonPath) {
+                continue;
+            }
+            const combinedJsonPath = this.getCombinedScenarioJsonArtifactPath(sourceJsonPath);
+            if (fs.existsSync(combinedJsonPath)) {
+                artifact.combinedJsonPath = combinedJsonPath;
+            }
         }
 
         const rebuiltScenarioNames = new Set<string>();
@@ -8782,410 +9002,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return command;
     }
 
-    private getRunVanessaCheckUnsafeActionProtection(): boolean {
-        const config = vscode.workspace.getConfiguration('kotTestToolkit');
-        return config.get<boolean>('runVanessa.checkUnsafeActionProtection', true);
-    }
-
-    private escapeRegExp(value: string): string {
-        return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    }
-
-    private escapePosixBasicRegExp(value: string): string {
-        // conf.cfg uses POSIX BRE for DisableUnsafeActionProtection.
-        // Escape only metacharacters that are special in BRE.
-        return value.replace(/([.\\[\]*^$])/g, '\\$1');
-    }
-
-    private buildDisableUnsafeActionProtectionPattern(emptyIbPath: string): string {
-        const normalizedPath = path.resolve(emptyIbPath).replace(/[\\/]+$/, '');
-        const pathSegments = normalizedPath
-            .split(/[\\/]+/)
-            .filter(segment => segment.length > 0)
-            .map(segment => this.escapePosixBasicRegExp(segment));
-
-        if (pathSegments.length === 0) {
-            return '.*';
-        }
-
-        const pathPattern = pathSegments.join('.*');
-        // IMPORTANT: ';' is a delimiter between patterns in DisableUnsafeActionProtection,
-        // so it must not be part of an individual regex pattern.
-        // Use POSIX BRE-compatible syntax only (no non-capturing groups / '?' quantifier).
-        return `.*File[ \t]*=[ \t]*["']*${pathPattern}.*`;
-    }
-
-    private buildUnsafeProtectionConnectionCandidates(emptyIbPath: string): string[] {
-        const candidates = new Set<string>();
-        const addPathVariants = (value: string, quoted: boolean, terminated: boolean) => {
-            const pathValue = quoted ? `"${value}"` : value;
-            const suffix = terminated ? ';' : '';
-            candidates.add(`File=${pathValue}${suffix}`);
-        };
-        const addPath = (rawPath: string) => {
-            const normalized = rawPath.replace(/[\\/]+$/, '');
-            if (!normalized) {
-                return;
-            }
-
-            const slashVariants = [
-                normalized,
-                normalized.replace(/\\/g, '/'),
-                normalized.replace(/\//g, '\\')
-            ];
-            for (const variant of slashVariants) {
-                addPathVariants(variant, false, true);
-                addPathVariants(variant, false, false);
-                addPathVariants(variant, true, true);
-                addPathVariants(variant, true, false);
-            }
-        };
-
-        addPath(emptyIbPath.trim());
-        addPath(path.resolve(emptyIbPath.trim()));
-
-        return Array.from(candidates);
-    }
-
-    private splitDisableUnsafeActionProtectionPatterns(rawValue: string): string[] {
-        return rawValue
-            .split(';')
-            .map(item => item.trim())
-            .filter(item => item.length > 0);
-    }
-
-    private normalizeUnsafePatternText(value: string): string {
-        return value.replace(/\s+/g, '').trim();
-    }
-
-    private isLikelyPosixBrePattern(pattern: string): boolean {
-        const compact = pattern.trim();
-        if (!compact) {
-            return false;
-        }
-        // Reject common PCRE/JS-only constructs that 1C POSIX BRE does not support.
-        if (compact.includes('(?:') || compact.includes('(?=') || compact.includes('(?!') || compact.includes('(?<')) {
-            return false;
-        }
-        return true;
-    }
-
-    private isPathSegmentBoundaryChar(char: string | undefined): boolean {
-        if (!char) {
-            return true;
-        }
-        return !/[0-9a-zа-яё_-]/i.test(char);
-    }
-
-    private findSegmentIndexWithBoundaries(haystack: string, segment: string, fromIndex: number): number {
-        let index = haystack.indexOf(segment, fromIndex);
-        while (index !== -1) {
-            const previousChar = index > 0 ? haystack[index - 1] : undefined;
-            const nextIndex = index + segment.length;
-            const nextChar = nextIndex < haystack.length ? haystack[nextIndex] : undefined;
-            if (this.isPathSegmentBoundaryChar(previousChar) && this.isPathSegmentBoundaryChar(nextChar)) {
-                return index;
-            }
-            index = haystack.indexOf(segment, index + 1);
-        }
-        return -1;
-    }
-
-    private hasPathSegmentsInOrder(rawText: string, normalizedPath: string): boolean {
-        const segments = normalizedPath
-            .split(/[\\/]+/)
-            .map(segment => segment.trim().toLowerCase())
-            .filter(segment => segment.length > 0);
-        if (segments.length === 0) {
-            return false;
-        }
-
-        const haystack = rawText.toLowerCase();
-        let index = 0;
-        for (const segment of segments) {
-            const foundIndex = this.findSegmentIndexWithBoundaries(haystack, segment, index);
-            if (foundIndex === -1) {
-                return false;
-            }
-            index = foundIndex + segment.length;
-        }
-        return true;
-    }
-
-    private hasDisableUnsafeActionProtectionForConnection(
-        confText: string,
-        connectionCandidates: string[],
-        emptyIbPath: string,
-        expectedPattern: string
-    ): boolean {
-        const lines = confText.split(/\r\n|\r|\n/);
-        const paramValues: string[] = [];
-        const normalizedEmptyIbPath = path.resolve(emptyIbPath).replace(/[\\/]+$/, '');
-        const normalizedExpectedPattern = this.normalizeUnsafePatternText(expectedPattern);
-
-        for (const line of lines) {
-            const trimmed = line.replace(/^\uFEFF/, '').trim();
-            if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith(';')) {
-                continue;
-            }
-
-            const match = trimmed.match(/^DisableUnsafeActionProtection\s*=\s*(.*)$/i);
-            if (!match) {
-                continue;
-            }
-            paramValues.push(match[1] || '');
-        }
-
-        if (paramValues.length === 0) {
-            return false;
-        }
-
-        for (const rawValue of paramValues) {
-            const patterns = this.splitDisableUnsafeActionProtectionPatterns(rawValue);
-            if (rawValue.trim().length > 0) {
-                patterns.push(rawValue.trim());
-            }
-            for (const pattern of patterns) {
-                if (!this.isLikelyPosixBrePattern(pattern)) {
-                    continue;
-                }
-                if (normalizedExpectedPattern && this.normalizeUnsafePatternText(pattern) === normalizedExpectedPattern) {
-                    return true;
-                }
-
-                for (const candidate of connectionCandidates) {
-                    try {
-                        const regex = new RegExp(pattern, 'i');
-                        if (regex.test(candidate)) {
-                            return true;
-                        }
-                    } catch {
-                        if (candidate.includes(pattern)) {
-                            return true;
-                        }
-                    }
-                }
-
-                // Fallback: treat parameter as configured if path segments of the shared startup infobase
-                // are present in order (works for escaped regex variants and literal paths).
-                if (normalizedEmptyIbPath && this.hasPathSegmentsInOrder(pattern, normalizedEmptyIbPath)) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private patchDisableUnsafeActionProtectionConf(
-        confText: string,
-        patternToAdd: string
-    ): { changed: boolean; content: string } {
-        const normalizedConfText = confText.replace(/^\uFEFF/, '');
-        const lineEnding = normalizedConfText.includes('\r\n') ? '\r\n' : '\n';
-        const lines = normalizedConfText.length > 0 ? normalizedConfText.split(/\r\n|\r|\n/) : [];
-        const paramLineIndex = lines.findIndex(line =>
-            /^\s*DisableUnsafeActionProtection\s*=/.test(line.trim())
-        );
-
-        if (paramLineIndex === -1) {
-            if (lines.length > 0 && lines[lines.length - 1].trim().length > 0) {
-                lines.push('');
-            }
-            lines.push(`DisableUnsafeActionProtection=${patternToAdd}`);
-            return { changed: true, content: lines.join(lineEnding) };
-        }
-
-        const line = lines[paramLineIndex];
-        const match = line.match(/^(\s*DisableUnsafeActionProtection\s*=\s*)(.*)$/i);
-        const prefix = match ? match[1] : 'DisableUnsafeActionProtection=';
-        const rawValue = match ? (match[2] || '') : '';
-        const patterns = this.splitDisableUnsafeActionProtectionPatterns(rawValue);
-        if (patterns.includes(patternToAdd)) {
-            return { changed: false, content: normalizedConfText };
-        }
-
-        const nextValue = rawValue.trim().length > 0
-            ? `${rawValue.trim()};${patternToAdd}`
-            : patternToAdd;
-        lines[paramLineIndex] = `${prefix}${nextValue}`;
-        return { changed: true, content: lines.join(lineEnding) };
-    }
-
-    private resolveConfCfgCandidates(oneCPath: string): string[] {
-        const candidates: string[] = [];
-        const seen = new Set<string>();
-        const add = (candidatePath: string) => {
-            const normalized = path.normalize(candidatePath);
-            if (seen.has(normalized)) {
-                return;
-            }
-            seen.add(normalized);
-            candidates.push(normalized);
-        };
-
-        const oneCDir = path.dirname(oneCPath);
-        add(path.join(oneCDir, 'conf', 'conf.cfg'));
-        add(path.join(oneCDir, '..', 'conf', 'conf.cfg'));
-
-        if (process.platform === 'win32') {
-            const localAppData = process.env.LOCALAPPDATA;
-            const programFiles = process.env.PROGRAMFILES;
-            const programFilesX86 = process.env['PROGRAMFILES(X86)'];
-            if (localAppData) {
-                add(path.join(localAppData, '1C', '1cv8', 'conf', 'conf.cfg'));
-            }
-            if (programFiles) {
-                add(path.join(programFiles, '1cv8', 'conf', 'conf.cfg'));
-            }
-            if (programFilesX86) {
-                add(path.join(programFilesX86, '1cv8', 'conf', 'conf.cfg'));
-            }
-        }
-
-        const queue = [...candidates];
-        while (queue.length > 0) {
-            const confCfgPath = queue.shift()!;
-            if (!fs.existsSync(confCfgPath)) {
-                continue;
-            }
-
-            let text = '';
-            try {
-                text = fs.readFileSync(confCfgPath, 'utf8');
-            } catch {
-                continue;
-            }
-
-            const lines = text.split(/\r\n|\r|\n/);
-            for (const line of lines) {
-                const trimmed = line.trim();
-                if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith(';')) {
-                    continue;
-                }
-
-                const match = trimmed.match(/^ConfLocation\s*=\s*(.*)$/i);
-                if (!match) {
-                    continue;
-                }
-
-                const rawValue = (match[1] || '').trim().replace(/^["']|["']$/g, '');
-                if (!rawValue) {
-                    continue;
-                }
-
-                const resolvedBasePath = path.isAbsolute(rawValue)
-                    ? rawValue
-                    : path.resolve(path.dirname(confCfgPath), rawValue);
-                const resolvedConfCfgPath = path.extname(resolvedBasePath).toLowerCase() === '.cfg'
-                    ? resolvedBasePath
-                    : path.join(resolvedBasePath, 'conf.cfg');
-
-                const normalized = path.normalize(resolvedConfCfgPath);
-                if (!seen.has(normalized)) {
-                    add(normalized);
-                    queue.push(normalized);
-                }
-            }
-        }
-
-        return candidates;
-    }
-
-    private async ensureUnsafeActionProtectionConfiguredForVanessa(
-        oneCPath: string,
-        startupInfobasePath: string
-    ): Promise<boolean> {
-        if (process.platform !== 'win32' || !this.getRunVanessaCheckUnsafeActionProtection()) {
-            return true;
-        }
-
-        const confCandidates = this.resolveConfCfgCandidates(oneCPath);
-        const existingConfFiles = confCandidates.filter(candidate => fs.existsSync(candidate));
-        const checkedPaths = confCandidates.slice(0, 8).join(', ');
-        const connectionCandidates = this.buildUnsafeProtectionConnectionCandidates(startupInfobasePath);
-        const expectedPattern = this.buildDisableUnsafeActionProtectionPattern(startupInfobasePath);
-
-        for (const confPath of existingConfFiles) {
-            try {
-                const confText = fs.readFileSync(confPath, 'utf8');
-                if (this.hasDisableUnsafeActionProtectionForConnection(confText, connectionCandidates, startupInfobasePath, expectedPattern)) {
-                    return true;
-                }
-            } catch {
-                // Ignore unreadable conf file and continue with next candidate.
-            }
-        }
-
-        const runAnyway = this.t('Run anyway');
-        const openAndPatch = this.t('Open and patch');
-
-        if (existingConfFiles.length === 0) {
-            const openSettingsAction = this.t('Open Settings');
-            const selection = await vscode.window.showWarningMessage(
-                this.t('conf.cfg was not found near 1C:Enterprise installation. Check DisableUnsafeActionProtection manually.'),
-                {
-                    modal: true,
-                    detail: checkedPaths
-                        ? this.t('Checked conf.cfg paths: {0}', checkedPaths)
-                        : undefined
-                },
-                openSettingsAction,
-                runAnyway
-            );
-
-            if (selection === openSettingsAction) {
-                await vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
-                return false;
-            }
-            return selection === runAnyway;
-        }
-
-        const selectedAction = await vscode.window.showWarningMessage(
-            this.t('DisableUnsafeActionProtection not found for the shared startup infobase in conf.cfg. Vanessa may show repeated security prompts.'),
-            {
-                modal: true,
-                detail: this.t('Checked conf.cfg paths: {0}', checkedPaths)
-            },
-            openAndPatch,
-            runAnyway
-        );
-
-        if (selectedAction === runAnyway) {
-            return true;
-        }
-        if (selectedAction !== openAndPatch) {
-            return false;
-        }
-
-        const targetConfPath = existingConfFiles[0];
-        const patternToAdd = expectedPattern;
-        try {
-            const targetUri = vscode.Uri.file(targetConfPath);
-            const document = await vscode.workspace.openTextDocument(targetUri);
-            const originalContent = document.getText();
-            const patchResult = this.patchDisableUnsafeActionProtectionConf(originalContent, patternToAdd);
-            if (patchResult.changed) {
-                const edit = new vscode.WorkspaceEdit();
-                const fullRange = new vscode.Range(
-                    document.positionAt(0),
-                    document.positionAt(document.getText().length)
-                );
-                edit.replace(targetUri, fullRange, patchResult.content);
-                await vscode.workspace.applyEdit(edit);
-            }
-
-            await vscode.window.showTextDocument(document, { preview: false });
-            vscode.window.showInformationMessage(
-                this.t('DisableUnsafeActionProtection entry prepared in conf.cfg. Save file with administrator rights and rerun Vanessa.')
-            );
-        } catch (error: any) {
-            vscode.window.showErrorMessage(this.t('Failed to update conf.cfg: {0}', error?.message || String(error)));
-        }
-
-        return false;
-    }
-
     private resolvePathFromWorkspaceSetting(rawPath: string, workspaceRootPath: string): string {
         if (path.isAbsolute(rawPath)) {
             return rawPath;
@@ -9230,6 +9046,91 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const lastSegment = pointer[pointer.length - 1];
         if (current !== null && current !== undefined) {
             current[lastSegment as any] = value;
+        }
+    }
+
+    private isCombinedScenarioJsonArtifactPath(filePath: string): boolean {
+        return path.basename(filePath).toLowerCase().endsWith('.combined.json');
+    }
+
+    private getCombinedScenarioJsonArtifactPath(jsonPath: string): string {
+        const ext = path.extname(jsonPath) || '.json';
+        const baseName = path.basename(jsonPath, ext);
+        return path.join(path.dirname(jsonPath), `${baseName}.combined${ext}`);
+    }
+
+    private async createCombinedScenarioJsonArtifact(
+        scenarioName: string,
+        sourceJsonPath: string,
+        workspaceRootPath: string
+    ): Promise<string | null> {
+        if (!sourceJsonPath || !fs.existsSync(sourceJsonPath)) {
+            return null;
+        }
+
+        const combinedJsonPath = this.getCombinedScenarioJsonArtifactPath(sourceJsonPath);
+        const overlay = await this.loadVanessaLaunchOverlayParameters();
+        const sourceJsonRaw = await fs.promises.readFile(sourceJsonPath, 'utf8');
+
+        let nextJsonText = sourceJsonRaw;
+        try {
+            const parsedJson = JSON.parse(sourceJsonRaw);
+            if (parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson)) {
+                this.applyAdditionalVanessaParameters(parsedJson, overlay.additionalParameters);
+                this.applyGlobalVanessaVariables(parsedJson, overlay.globalVariables);
+                nextJsonText = JSON.stringify(parsedJson, null, 2);
+            }
+        } catch {
+            // Keep raw JSON text if parsing failed; original artifact remains the source of truth.
+        }
+
+        await fs.promises.writeFile(combinedJsonPath, nextJsonText, 'utf8');
+        await this.ensureUniqueVanessaRuntimePathsInJson(combinedJsonPath, scenarioName, workspaceRootPath);
+        return combinedJsonPath;
+    }
+
+    private async ensureCombinedScenarioJsonArtifacts(
+        workspaceRootPath: string,
+        outputChannel?: vscode.OutputChannel
+    ): Promise<void> {
+        let updatedCount = 0;
+        for (const [scenarioName, artifact] of this._scenarioBuildArtifacts.entries()) {
+            const sourceJsonPath = artifact.jsonPath?.trim();
+            if (!sourceJsonPath || !fs.existsSync(sourceJsonPath)) {
+                artifact.combinedJsonPath = undefined;
+                continue;
+            }
+
+            try {
+                const combinedJsonPath = await this.createCombinedScenarioJsonArtifact(
+                    scenarioName,
+                    sourceJsonPath,
+                    workspaceRootPath
+                );
+                if (combinedJsonPath) {
+                    artifact.combinedJsonPath = combinedJsonPath;
+                    updatedCount += 1;
+                }
+            } catch (error: any) {
+                artifact.combinedJsonPath = undefined;
+                if (outputChannel) {
+                    this.outputAdvanced(
+                        outputChannel,
+                        this.t(
+                            'Failed to generate combined Vanessa JSON for scenario "{0}": {1}',
+                            scenarioName,
+                            error?.message || String(error)
+                        )
+                    );
+                }
+            }
+        }
+
+        if (updatedCount > 0 && outputChannel) {
+            this.outputInfo(
+                outputChannel,
+                this.t('Generated combined Vanessa JSON for {0} scenario(s).', String(updatedCount))
+            );
         }
     }
 
@@ -9294,6 +9195,181 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 return `${prefix}${quoted ? `"${nextPath}"` : nextPath}`;
             }
         );
+    }
+
+    private async loadVanessaTestClientDefaults(): Promise<VanessaTestClientDefaults> {
+        let portValue = '48000';
+        let clientTypeValue = 'Тонкий';
+
+        try {
+            const { YamlParametersManager } = await import('./yamlParametersManager.js');
+            const manager = YamlParametersManager.getInstance(this._context);
+            const buildParameters = await manager.loadParameters();
+            const getValue = (...aliases: string[]) => {
+                const normalizedAliases = aliases.map(alias => alias.trim().toLowerCase().replace(/[_\-\s]/g, ''));
+                for (const parameter of buildParameters) {
+                    const normalizedKey = String(parameter.key || '').trim().toLowerCase().replace(/[_\-\s]/g, '');
+                    if (!normalizedAliases.includes(normalizedKey)) {
+                        continue;
+                    }
+                    const trimmedValue = String(parameter.value || '').trim();
+                    if (trimmedValue) {
+                        return trimmedValue;
+                    }
+                }
+                return '';
+            };
+
+            portValue = getValue('TestClientPort', 'PortTestClient') || portValue;
+            clientTypeValue = getValue('TestClientType', 'ClientType') || clientTypeValue;
+        } catch {
+            // Use built-in defaults when manager state cannot be read.
+        }
+
+        return {
+            clientType: clientTypeValue,
+            computerName: 'localhost',
+            port: portValue
+        };
+    }
+
+    private resolveVanessaProfileNameFromJson(root: Record<string, unknown>): string {
+        const testProfileKey = this.findObjectKeyByAlias(root, 'ПрофильПользователяНастройкаТеста');
+        if (testProfileKey) {
+            const testProfileValue = String(root[testProfileKey] || '').trim();
+            if (testProfileValue) {
+                return testProfileValue;
+            }
+        }
+
+        const scenarioProfileKey = this.findObjectKeyByAlias(root, 'ПрофильПользователяСценарий');
+        if (scenarioProfileKey) {
+            return String(root[scenarioProfileKey] || '').trim();
+        }
+
+        return '';
+    }
+
+    private ensureVanessaRootInfobasePath(root: Record<string, unknown>, connectionArgument: string): boolean {
+        const existingKey = this.findObjectKeyByAlias(root, 'ПутьКИнфобазе') ?? 'ПутьКИнфобазе';
+        const currentValue = typeof root[existingKey] === 'string'
+            ? String(root[existingKey] || '')
+            : '';
+        if (currentValue === connectionArgument) {
+            return false;
+        }
+        root[existingKey] = connectionArgument;
+        return true;
+    }
+
+    private buildDefaultVanessaTestClientEntry(
+        connectionArgument: string,
+        defaults: VanessaTestClientDefaults,
+        profileName: string
+    ): Record<string, unknown> {
+        return {
+            Имя: profileName,
+            ПутьКИнфобазе: connectionArgument,
+            ТипКлиента: defaults.clientType,
+            ИмяКомпьютера: defaults.computerName,
+            ПортЗапускаТестКлиента: defaults.port
+        };
+    }
+
+    private ensureVanessaTestClientEntryFields(
+        clientEntry: Record<string, unknown>,
+        connectionArgument: string,
+        defaults: VanessaTestClientDefaults,
+        profileName: string
+    ): boolean {
+        let changed = false;
+        const ensureField = (alias: string, nextValue: string) => {
+            const key = this.findObjectKeyByAlias(clientEntry, alias) ?? alias;
+            const currentValue = typeof clientEntry[key] === 'string'
+                ? String(clientEntry[key] || '')
+                : '';
+            if (currentValue === nextValue) {
+                return;
+            }
+            clientEntry[key] = nextValue;
+            changed = true;
+        };
+
+        ensureField('ПутьКИнфобазе', connectionArgument);
+        if (!this.findObjectKeyByAlias(clientEntry, 'Имя')) {
+            clientEntry.Имя = profileName;
+            changed = true;
+        }
+        if (!this.findObjectKeyByAlias(clientEntry, 'ТипКлиента')) {
+            clientEntry.ТипКлиента = defaults.clientType;
+            changed = true;
+        }
+        if (!this.findObjectKeyByAlias(clientEntry, 'ИмяКомпьютера')) {
+            clientEntry.ИмяКомпьютера = defaults.computerName;
+            changed = true;
+        }
+        if (!this.findObjectKeyByAlias(clientEntry, 'ПортЗапускаТестКлиента')) {
+            clientEntry.ПортЗапускаТестКлиента = defaults.port;
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private ensureVanessaTestClientsCollection(
+        root: Record<string, unknown>,
+        connectionArgument: string,
+        defaults: VanessaTestClientDefaults
+    ): boolean {
+        let changed = false;
+        const profileName = this.resolveVanessaProfileNameFromJson(root);
+        const collectionKey = this.findObjectKeyByAlias(root, 'КлиентыТестирования')
+            ?? this.findObjectKeyByAlias(root, 'ДанныеКлиентовТестирования')
+            ?? 'КлиентыТестирования';
+
+        let clientsCollection = root[collectionKey];
+        if (!Array.isArray(clientsCollection)) {
+            clientsCollection = [];
+            root[collectionKey] = clientsCollection;
+            changed = true;
+        }
+
+        if (clientsCollection.length === 0) {
+            clientsCollection.push(this.buildDefaultVanessaTestClientEntry(connectionArgument, defaults, profileName));
+            return true;
+        }
+
+        for (const item of clientsCollection) {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) {
+                continue;
+            }
+            if (this.ensureVanessaTestClientEntryFields(item as Record<string, unknown>, connectionArgument, defaults, profileName)) {
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    private async ensureVanessaInfobaseBindingsInJson(
+        root: Record<string, unknown>,
+        targetInfobasePath: string
+    ): Promise<boolean> {
+        const connectionArgument = buildInfobaseConnectionArgument(targetInfobasePath, {
+            trailingSemicolon: true,
+            forceQuotedFilePath: true
+        });
+        const defaults = await this.loadVanessaTestClientDefaults();
+        let changed = false;
+
+        if (this.ensureVanessaRootInfobasePath(root, connectionArgument)) {
+            changed = true;
+        }
+        if (this.ensureVanessaTestClientsCollection(root, connectionArgument, defaults)) {
+            changed = true;
+        }
+
+        return changed;
     }
 
     private parseAdditionalParameterPointer(rawKey: string): Array<string | number> | null {
@@ -10268,48 +10344,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async resolveConfiguredOneCDesignerExePathForVanessa(): Promise<string | null> {
-        const config = vscode.workspace.getConfiguration('kotTestToolkit');
-        const oneCPath = (config.get<string>('paths.oneCEnterpriseExe') || '').trim();
-        if (!oneCPath) {
-            vscode.window.showErrorMessage(
-                this.t('Path to 1C:Enterprise client (1cv8c.exe) is not specified in settings.'),
-                this.t('Open Settings')
-            ).then(selection => {
-                if (selection === this.t('Open Settings')) {
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
-                }
-            });
-            return null;
-        }
-        if (!fs.existsSync(oneCPath)) {
-            vscode.window.showErrorMessage(
-                this.t('1C:Enterprise client file not found at path: {0}', oneCPath),
-                this.t('Open Settings')
-            ).then(selection => {
-                if (selection === this.t('Open Settings')) {
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
-                }
-            });
-            return null;
-        }
-
-        const designerPath = resolveOneCDesignerExePath(oneCPath);
-        if (!designerPath || !fs.existsSync(designerPath)) {
-            vscode.window.showErrorMessage(
-                this.t('1C Designer executable was not found next to client path: {0}', oneCPath),
-                this.t('Open Settings')
-            ).then(selection => {
-                if (selection === this.t('Open Settings')) {
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
-                }
-            });
-            return null;
-        }
-
-        return designerPath;
-    }
-
     private resolveConfiguredFormExplorerConfigurationSourceDirectory(workspaceRootPath: string): string | null {
         const configuredPath = (vscode.workspace.getConfiguration('kotTestToolkit').get<string>('formExplorer.configurationSourceDirectory') || '').trim();
         if (!configuredPath) {
@@ -10327,6 +10361,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const trimmed = targetPath.trim();
         if (!trimmed) {
             return this.t('Infobase path cannot be empty.');
+        }
+
+        if (!isHostAccessibleFileInfobasePath(trimmed)) {
+            return null;
         }
 
         const resolvedPath = path.resolve(trimmed);
@@ -10356,7 +10394,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private async promptNewVanessaInfobaseLauncherName(scenarioName: string, targetInfobasePath: string): Promise<string | null> {
-        const defaultName = scenarioName.trim() || path.basename(targetInfobasePath) || 'KOT Infobase';
+        const defaultBaseName = isWindowsAbsolutePath(targetInfobasePath)
+            ? path.win32.basename(targetInfobasePath)
+            : path.basename(targetInfobasePath);
+        const defaultName = scenarioName.trim() || defaultBaseName || 'KOT Infobase';
         const input = await vscode.window.showInputBox({
             title: this.t('Enter name for new infobase in 1C launcher'),
             value: defaultName,
@@ -10445,37 +10486,115 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return selection.actionKey === 'reset';
     }
 
+    private async resolveModelDbSettingsFilePathForLaunch(workspaceRootPath: string): Promise<string | null> {
+        try {
+            const { YamlParametersManager } = await import('./yamlParametersManager.js');
+            const manager = YamlParametersManager.getInstance(this._context);
+            const buildParameters = await manager.loadParameters();
+            return resolveModelDbSettingsFilePathFromParameters(workspaceRootPath, buildParameters);
+        } catch {
+            return null;
+        }
+    }
+
+    private async resolvePreferredRestoreDtPathForScenario(
+        scenarioName: string,
+        workspaceRootPath: string
+    ): Promise<string | null> {
+        try {
+            await this.ensureFreshTestCache();
+            const scenarioInfo = this._testCache?.get(scenarioName);
+            if (!scenarioInfo || !this.isMainScenario(scenarioInfo)) {
+                return null;
+            }
+
+            const testConfigUri = this.resolveMainScenarioTestConfigUri(scenarioInfo);
+            if (!testConfigUri) {
+                return null;
+            }
+
+            const testSettingsText = Buffer.from(await vscode.workspace.fs.readFile(testConfigUri)).toString('utf-8');
+            const testSettingsValues = parseYamlSectionFieldValues(
+                testSettingsText,
+                'ДанныеТеста',
+                ['ИдентификаторБазы', 'ЭталоннаяБазаИмя']
+            );
+            const etalonBaseLookupValue = testSettingsValues.ИдентификаторБазы || testSettingsValues.ЭталоннаяБазаИмя;
+            if (!etalonBaseLookupValue) {
+                return null;
+            }
+
+            const modelDbSettingsFilePath = await this.resolveModelDbSettingsFilePathForLaunch(workspaceRootPath);
+            if (!modelDbSettingsFilePath) {
+                return null;
+            }
+
+            const etalonBases = await loadEtalonBasesFromFile(modelDbSettingsFilePath);
+            const etalonBase = findEtalonBaseByIdOrName(etalonBases, etalonBaseLookupValue);
+            if (!etalonBase?.dtFilePath?.trim()) {
+                return null;
+            }
+
+            return resolveEtalonBaseDtFilePath(modelDbSettingsFilePath, etalonBase.dtFilePath);
+        } catch {
+            return null;
+        }
+    }
+
     private async promptVanessaRestoreDtPath(
         scenarioName: string,
-        targetInfobasePath: string
+        targetInfobasePath: string,
+        workspaceRootPath: string
     ): Promise<string | null | undefined> {
-        const selection = await vscode.window.showQuickPick(
-            [
-                {
-                    label: this.t('No DT restore'),
-                    description: targetInfobasePath,
-                    detail: this.t('Use the selected infobase without restoring from DT.'),
-                    actionKey: 'skip' as const
-                },
-                {
-                    label: this.t('Restore from DT'),
-                    description: targetInfobasePath,
-                    detail: this.t('Choose a .dt file and restore it before Vanessa launch.'),
-                    actionKey: 'restore' as const
-                }
-            ],
+        const preferredDtPath = await this.resolvePreferredRestoreDtPathForScenario(scenarioName, workspaceRootPath);
+        const quickPickItems: Array<{
+            label: string;
+            description: string;
+            detail: string;
+            actionKey: 'skip' | 'restoreEtalon' | 'restoreAnother';
+        }> = [
             {
-                title: this.t('Restore infobase from DT for "{0}"?', scenarioName),
-                placeHolder: this.t('Choose whether to restore the selected infobase from DT before launch.'),
-                ignoreFocusOut: true
+                label: this.t('No DT restore'),
+                description: targetInfobasePath,
+                detail: this.t('Use the selected infobase without restoring from DT.'),
+                actionKey: 'skip'
             }
-        );
+        ];
+
+        if (preferredDtPath) {
+            quickPickItems.push({
+                label: this.t('Restore from etalon DT'),
+                description: preferredDtPath,
+                detail: this.t('Restore the selected infobase from the DT file resolved through ModelDBSettings and test.yaml.'),
+                actionKey: 'restoreEtalon'
+            });
+        }
+
+        quickPickItems.push({
+            label: this.t('Restore from another DT'),
+            description: targetInfobasePath,
+            detail: this.t('Choose any .dt file and restore it before Vanessa launch.'),
+            actionKey: 'restoreAnother'
+        });
+
+        const selection = await vscode.window.showQuickPick(quickPickItems, {
+            title: this.t('Restore infobase from DT for "{0}"?', scenarioName),
+            placeHolder: this.t('Choose whether to restore the selected infobase from DT before launch.'),
+            ignoreFocusOut: true
+        });
         if (!selection) {
             return undefined;
         }
         if (selection.actionKey === 'skip') {
             return null;
         }
+        if (selection.actionKey === 'restoreEtalon') {
+            return preferredDtPath || undefined;
+        }
+
+        const defaultUri = preferredDtPath && canUseEtalonBaseDtFileAsDefaultUri(preferredDtPath)
+            ? vscode.Uri.file(preferredDtPath)
+            : vscode.workspace.workspaceFolders?.[0]?.uri;
 
         const pickedFile = await vscode.window.showOpenDialog({
             canSelectFiles: true,
@@ -10486,7 +10605,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             filters: {
                 [this.t('1C DT files (*.dt)')]: ['dt']
             },
-            defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri
+            defaultUri
         });
         if (!pickedFile || pickedFile.length === 0) {
             return undefined;
@@ -10591,29 +10710,40 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 return false;
             }
 
-            return isServerInfobaseConnection(infobaseReference)
-                || fs.existsSync(getFileInfobasePath(infobaseReference) || infobaseReference);
+            if (isServerInfobaseConnection(infobaseReference)) {
+                return true;
+            }
+
+            const fileInfobasePath = getFileInfobasePath(infobaseReference) || infobaseReference;
+            if (!isHostAccessibleFileInfobasePath(fileInfobasePath)) {
+                return true;
+            }
+
+            return fs.existsSync(fileInfobasePath);
         };
 
-        if (lastSelectedInfobasePath && canReuseInfobaseReference(lastSelectedInfobasePath)) {
-            quickPickItems.push({
-                label: this.t('Use last selected infobase'),
-                description: describeInfobaseConnection(lastSelectedInfobasePath),
-                detail: this.t('Reuse the infobase selected earlier for this scenario.'),
-                source: 'lastSelected',
-                infobasePath: normalizeInfobaseReference(lastSelectedInfobasePath)
-            });
-        }
-
         if (jsonDefaultInfobasePath
-            && canReuseInfobaseReference(jsonDefaultInfobasePath)
-            && jsonDefaultInfobasePath !== lastSelectedInfobasePath) {
+            && canReuseInfobaseReference(jsonDefaultInfobasePath)) {
             quickPickItems.push({
                 label: this.t('Use path from JSON launch settings'),
                 description: describeInfobaseConnection(jsonDefaultInfobasePath),
                 detail: this.t('Reuse the infobase path already stored in the generated Vanessa JSON.'),
                 source: 'json',
                 infobasePath: normalizeInfobaseReference(jsonDefaultInfobasePath)
+            });
+        }
+
+        const hasDistinctLastSelectedInfobase = lastSelectedInfobasePath
+            && canReuseInfobaseReference(lastSelectedInfobasePath)
+            && (!jsonDefaultInfobasePath
+                || normalizeInfobaseConnectionIdentity(lastSelectedInfobasePath) !== normalizeInfobaseConnectionIdentity(jsonDefaultInfobasePath));
+        if (hasDistinctLastSelectedInfobase) {
+            quickPickItems.push({
+                label: this.t('Use last selected infobase'),
+                description: describeInfobaseConnection(lastSelectedInfobasePath),
+                detail: this.t('Reuse the infobase selected earlier for this scenario.'),
+                source: 'lastSelected',
+                infobasePath: normalizeInfobaseReference(lastSelectedInfobasePath)
             });
         }
 
@@ -10666,7 +10796,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const targetFileInfobasePath = getFileInfobasePath(targetInfobasePath);
-        if (selection.source !== 'create' && targetFileInfobasePath && !fs.existsSync(targetFileInfobasePath)) {
+        const hostCanAccessTargetFileInfobase = !!(targetFileInfobasePath && isHostAccessibleFileInfobasePath(targetFileInfobasePath));
+        if (selection.source !== 'create' && targetFileInfobasePath && hostCanAccessTargetFileInfobase && !fs.existsSync(targetFileInfobasePath)) {
             vscode.window.showErrorMessage(
                 this.t('Target infobase path does not exist: {0}', targetInfobasePath)
             );
@@ -10694,9 +10825,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        const restoreDtPath = await this.promptVanessaRestoreDtPath(scenarioName, targetInfobasePath);
-        if (restoreDtPath === undefined) {
-            return null;
+        let restoreDtPath: string | null | undefined = null;
+        const shouldPromptRestoreDt = selection.source === 'create' || recreateExistingInfobase;
+        if (shouldPromptRestoreDt) {
+            restoreDtPath = await this.promptVanessaRestoreDtPath(scenarioName, targetInfobasePath, workspaceRootPath);
+            if (restoreDtPath === undefined) {
+                return null;
+            }
         }
         const updateConfiguration = await this.promptVanessaConfigurationUpdate(
             scenarioName,
@@ -10730,22 +10865,19 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private async prepareTargetInfobaseForVanessa(
         plan: VanessaInfobasePreparationPlan,
         workspaceRootPath: string,
-        outputChannel: vscode.OutputChannel
+        outputChannel: vscode.OutputChannel,
+        designerExePath: string
     ): Promise<void> {
         if (!plan.createNewInfobase && !plan.recreateExistingInfobase && !plan.restoreDtPath && !plan.updateConfiguration) {
             return;
         }
 
-        const designerExePath = await this.resolveConfiguredOneCDesignerExePathForVanessa();
-        if (!designerExePath) {
-            throw new Error(this.t('1C Designer executable path is not available for target infobase preparation.'));
-        }
-
         const runtimeDirectory = this.resolveVanessaRuntimeDirectory(workspaceRootPath);
         const logsDirectory = path.join(runtimeDirectory, 'infobase-setup-logs');
         const targetFileInfobasePath = getFileInfobasePath(plan.targetInfobasePath);
+        const hostCanAccessTargetFileInfobase = !!(targetFileInfobasePath && isHostAccessibleFileInfobasePath(targetFileInfobasePath));
         await fs.promises.mkdir(logsDirectory, { recursive: true });
-        if (targetFileInfobasePath) {
+        if (targetFileInfobasePath && hostCanAccessTargetFileInfobase) {
             await fs.promises.mkdir(path.dirname(targetFileInfobasePath), { recursive: true });
         }
 
@@ -10772,6 +10904,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     if (!targetFileInfobasePath) {
                         throw new Error(this.t('Recreate is available only for file-based target infobases.'));
                     }
+                    if (!hostCanAccessTargetFileInfobase) {
+                        throw new Error(this.t('Recreate is not supported for Windows file infobase paths when the extension runs outside Windows.'));
+                    }
 
                     await this.clearInfobaseDirectoryContents(targetFileInfobasePath);
                 }
@@ -10786,7 +10921,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         throw new Error(this.t('Create target infobase is available only for file-based infobases.'));
                     }
 
-                    await fs.promises.mkdir(targetFileInfobasePath, { recursive: true });
+                    if (hostCanAccessTargetFileInfobase) {
+                        await fs.promises.mkdir(targetFileInfobasePath, { recursive: true });
+                    }
                     await this.runVanessaDesignerCommand(
                         designerExePath,
                         ['CREATEINFOBASE', buildFileInfobaseConnectionArgument(targetFileInfobasePath, { trailingSemicolon: true })],
@@ -10982,7 +11119,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         scenarioName: string,
         jsonLaunchPath: string,
         startupInfobasePath: string,
-        workspaceRootPath: string
+        workspaceRootPath: string,
+        designerExePath: string
     ): Promise<VanessaLaunchContext | null> {
         let rawJson = '';
         let parsedJson: any = null;
@@ -10999,9 +11137,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const candidates = parsedJson
             ? this.collectVanessaInfobaseCandidates(parsedJson)
             : [];
-        const launchOverlay = await this.loadVanessaLaunchOverlayParameters();
-        const additionalVanessaParams = launchOverlay.additionalParameters;
-        const globalVanessaVariables = launchOverlay.globalVariables;
+        if (candidates.length === 0) {
+            vscode.window.showErrorMessage(
+                this.t('Vanessa launch JSON for "{0}" does not contain launch infobase settings. Fill LaunchDBFolder, TestClientDBPath, InfobasePath or TestClientDB in the build parameters and rebuild tests.', scenarioName)
+            );
+            return null;
+        }
+
         const jsonDefaultInfobase = candidates.length > 0
             ? candidates[0].extractedPath
             : '';
@@ -11017,10 +11159,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const chosenScenarioInfobasePath = plan.targetInfobasePath;
         const shouldPatchInfobase = !jsonDefaultInfobase
             || chosenScenarioInfobasePath !== jsonDefaultInfobase;
-        const shouldPatchAdditionalParams = additionalVanessaParams.length > 0;
-        const shouldPatchGlobalVars = globalVanessaVariables.length > 0;
+        const needsTargetInfobasePreparation = Boolean(
+            plan.createNewInfobase
+            || plan.recreateExistingInfobase
+            || plan.restoreDtPath
+            || plan.updateConfiguration
+        );
 
-        if (!shouldPatchInfobase && !shouldPatchAdditionalParams && !shouldPatchGlobalVars) {
+        if (!shouldPatchInfobase && !needsTargetInfobasePreparation) {
             await this.saveScenarioCustomInfobasePath(scenarioName, chosenScenarioInfobasePath);
             return {
                 startupInfobasePath,
@@ -11037,16 +11183,18 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return null;
         }
 
-        if (shouldPatchInfobase && !candidates.length) {
-            vscode.window.showWarningMessage(
-                this.t('Could not detect target infobase field in JSON. Built-in Vanessa launch cannot apply the selected infobase.')
-            );
-            return null;
-        }
-
         const outputChannel = this.getRunOutputChannel();
-        await this.prepareTargetInfobaseForVanessa(plan, workspaceRootPath, outputChannel);
+        await this.prepareTargetInfobaseForVanessa(plan, workspaceRootPath, outputChannel, designerExePath);
         await this.saveScenarioCustomInfobasePath(scenarioName, chosenScenarioInfobasePath);
+
+        if (!shouldPatchInfobase) {
+            return {
+                startupInfobasePath,
+                scenarioInfobasePath: chosenScenarioInfobasePath,
+                vaParamsJsonPath: jsonLaunchPath,
+                jsonWasPatched: false
+            };
+        }
 
         const patchedJson = JSON.parse(rawJson);
         let infobaseChanged = false;
@@ -11067,14 +11215,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        const additionalChanged = shouldPatchAdditionalParams
-            ? this.applyAdditionalVanessaParameters(patchedJson, additionalVanessaParams) > 0
-            : false;
-        const globalVarsChanged = shouldPatchGlobalVars
-            ? this.applyGlobalVanessaVariables(patchedJson, globalVanessaVariables) > 0
-            : false;
-
-        if (!infobaseChanged && !additionalChanged && !globalVarsChanged) {
+        if (!infobaseChanged) {
             return {
                 startupInfobasePath,
                 scenarioInfobasePath: chosenScenarioInfobasePath,
@@ -11107,7 +11248,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     ): Promise<'started' | 'skipped' | 'aborted'> {
         const manualDebug = !!options?.manualDebug;
-        const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder) {
             vscode.window.showErrorMessage(this.t('Project folder must be opened.'));
@@ -11115,38 +11255,38 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const workspaceRootPath = workspaceFolder.uri.fsPath;
-        const oneCPath = (config.get<string>('paths.oneCEnterpriseExe') || '').trim();
-        if (!oneCPath) {
-            vscode.window.showErrorMessage(
-                this.t('Path to 1C:Enterprise client (1cv8c.exe) is not specified in settings.'),
-                this.t('Open Settings')
-            ).then(selection => {
-                if (selection === this.t('Open Settings')) {
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
-                }
-            });
-            return 'skipped';
+        const selectedPlatform = await resolveOneCPlatformForLaunch(this.t.bind(this), {
+            placeHolder: this.t('Select 1C platform for Vanessa launch')
+        });
+        if (!selectedPlatform) {
+            return 'aborted';
         }
+
+        const oneCPath = selectedPlatform.clientExePath;
         if (!fs.existsSync(oneCPath)) {
             vscode.window.showErrorMessage(
-                this.t('1C:Enterprise client file not found at path: {0}', oneCPath),
-                this.t('Open Settings')
-            ).then(selection => {
-                if (selection === this.t('Open Settings')) {
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit.paths.oneCEnterpriseExe');
-                }
-            });
+                this.t('1C:Enterprise client file not found at path: {0}', oneCPath)
+            );
             return 'skipped';
         }
 
-        const startupInfobasePath = await this.ensureSharedStartupInfobaseReady(
+        const oneCDesignerPath = resolveOneCDesignerExePath(oneCPath);
+        if (!oneCDesignerPath || !fs.existsSync(oneCDesignerPath)) {
+            vscode.window.showErrorMessage(
+                this.t('1C Designer executable was not found next to client path: {0}', oneCPath)
+            );
+            return 'skipped';
+        }
+
+        const startupInfobase = await this.ensureSharedStartupInfobaseReady(
             oneCPath,
             this.t('Preparing shared startup infobase for Vanessa...')
         );
-        if (!startupInfobasePath) {
+        if (!startupInfobase) {
             return 'skipped';
         }
 
+        const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const vanessaEpfSetting = (config.get<string>('runVanessa.vanessaEpfPath') || '').trim();
         if (!vanessaEpfSetting) {
             vscode.window.showErrorMessage(
@@ -11172,7 +11312,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return 'skipped';
         }
 
-        const jsonLaunchPath = artifact.jsonPath
+        const jsonLaunchPath = artifact.combinedJsonPath || artifact.jsonPath
             || (targetKind === 'json' ? targetPath : '');
         if (!jsonLaunchPath) {
             vscode.window.showWarningMessage(
@@ -11190,8 +11330,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const launchContext = await this.prepareVanessaLaunchContext(
             scenarioName,
             jsonLaunchPath,
-            startupInfobasePath,
-            workspaceRootPath
+            startupInfobase.infobaseDirectory,
+            workspaceRootPath,
+            oneCDesignerPath
         );
         if (!launchContext) {
             return 'aborted';
@@ -11200,10 +11341,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const startupInfobasePathForRun = launchContext.startupInfobasePath;
         const scenarioInfobasePath = launchContext.scenarioInfobasePath;
         const launchJsonPath = launchContext.vaParamsJsonPath;
-        const unsafeProtectionConfigured = await this.ensureUnsafeActionProtectionConfiguredForVanessa(oneCPath, startupInfobasePathForRun);
-        if (!unsafeProtectionConfigured) {
-            return 'aborted';
-        }
 
         const vaCommandParts = [
             'ShowMainForm',
@@ -11227,7 +11364,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
         const vaCommand = `${vaCommandParts.join(';')};`;
         const args = [
-            ...this.buildStartupParams(startupInfobasePathForRun),
+            ...this.buildStartupParams(startupInfobasePathForRun, startupInfobase.authentication),
             '/Execute',
             `"${vanessaEpfPath}"`,
             `/C"${vaCommand}"`,
@@ -11296,59 +11433,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         }
         return 'started';
-    }
-
-    private async prepareLaunchJsonWithAdditionalVanessaParams(
-        scenarioName: string,
-        jsonLaunchPath: string
-    ): Promise<{ jsonPath: string; jsonWasPatched: boolean }> {
-        if (!jsonLaunchPath || !fs.existsSync(jsonLaunchPath)) {
-            return { jsonPath: jsonLaunchPath, jsonWasPatched: false };
-        }
-
-        const launchOverlay = await this.loadVanessaLaunchOverlayParameters();
-        const additionalVanessaParams = launchOverlay.additionalParameters;
-        const globalVanessaVariables = launchOverlay.globalVariables;
-        if (additionalVanessaParams.length === 0 && globalVanessaVariables.length === 0) {
-            return { jsonPath: jsonLaunchPath, jsonWasPatched: false };
-        }
-        const parseFailureMessage = additionalVanessaParams.length > 0
-            ? this.t('Could not apply additional Vanessa parameters because launch JSON could not be parsed.')
-            : this.t('Could not apply GlobalVars because launch JSON could not be parsed.');
-
-        let rawJson = '';
-        let parsedJson: any;
-        try {
-            rawJson = fs.readFileSync(jsonLaunchPath, 'utf8');
-            parsedJson = JSON.parse(rawJson);
-        } catch {
-            vscode.window.showWarningMessage(parseFailureMessage);
-            return { jsonPath: jsonLaunchPath, jsonWasPatched: false };
-        }
-
-        if (!parsedJson || typeof parsedJson !== 'object' || Array.isArray(parsedJson)) {
-            vscode.window.showWarningMessage(parseFailureMessage);
-            return { jsonPath: jsonLaunchPath, jsonWasPatched: false };
-        }
-
-        const patchedJson = JSON.parse(rawJson);
-        const additionalChanged = additionalVanessaParams.length > 0
-            ? this.applyAdditionalVanessaParameters(patchedJson, additionalVanessaParams) > 0
-            : false;
-        const globalVarsChanged = globalVanessaVariables.length > 0
-            ? this.applyGlobalVanessaVariables(patchedJson, globalVanessaVariables) > 0
-            : false;
-        if (!additionalChanged && !globalVarsChanged) {
-            return { jsonPath: jsonLaunchPath, jsonWasPatched: false };
-        }
-
-        const tempDir = path.join(os.tmpdir(), 'kot-test-toolkit', 'vanessa');
-        await fs.promises.mkdir(tempDir, { recursive: true });
-        const safeScenarioName = scenarioName.replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 64) || 'scenario';
-        const tempJsonPath = path.join(tempDir, `${safeScenarioName}_${Date.now()}_extra.json`);
-        await fs.promises.writeFile(tempJsonPath, JSON.stringify(patchedJson, null, 2), 'utf8');
-
-        return { jsonPath: tempJsonPath, jsonWasPatched: true };
     }
 
     private async openScenarioInVanessaManual(scenarioName: string): Promise<void> {
@@ -12200,6 +12284,59 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         await this.openFeatureAtLineInEditor(featurePath, 1);
     }
 
+    private async openScenarioJsonArtifactInEditor(
+        scenarioName: string,
+        variant: 'original' | 'combined'
+    ): Promise<void> {
+        this.pruneScenarioBuildArtifactsByCache();
+
+        const artifact = this._scenarioBuildArtifacts.get(scenarioName);
+        if (!artifact?.jsonPath) {
+            vscode.window.showWarningMessage(
+                this.t('JSON artifact is not available for scenario "{0}". Build tests first.', scenarioName)
+            );
+            return;
+        }
+
+        let jsonPath = variant === 'combined'
+            ? artifact.combinedJsonPath?.trim()
+            : artifact.jsonPath.trim();
+
+        if (variant === 'combined' && !jsonPath) {
+            const workspaceRootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+            jsonPath = await this.createCombinedScenarioJsonArtifact(
+                scenarioName,
+                artifact.jsonPath,
+                workspaceRootPath
+            ) || '';
+            artifact.combinedJsonPath = jsonPath || undefined;
+            this.sendRunArtifactsStateToWebview();
+        }
+
+        if (!jsonPath) {
+            vscode.window.showWarningMessage(
+                this.t('Combined JSON artifact is not available for scenario "{0}". Rebuild tests first.', scenarioName)
+            );
+            return;
+        }
+
+        if (!fs.existsSync(jsonPath)) {
+            vscode.window.showWarningMessage(
+                this.t('JSON file not found at path: {0}', jsonPath)
+            );
+            return;
+        }
+
+        try {
+            const document = await vscode.workspace.openTextDocument(vscode.Uri.file(jsonPath));
+            await vscode.window.showTextDocument(document, { preview: false });
+        } catch (error: any) {
+            vscode.window.showErrorMessage(
+                this.t('Failed to open JSON file "{0}": {1}', jsonPath, error?.message || String(error))
+            );
+        }
+    }
+
     private async openScenarioByNameFromCache(scenarioName: string): Promise<boolean> {
         const normalizedName = scenarioName.trim();
         if (!normalizedName) {
@@ -12364,7 +12501,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const commandTemplate = (config.get<string>('runVanessa.commandTemplate') || '').trim();
         const workspaceRootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
         const featurePath = artifact.featurePath || '';
-        const jsonPath = artifact.jsonPath || '';
+        const jsonPath = artifact.combinedJsonPath || artifact.jsonPath || '';
         const outputChannel = this.getRunOutputChannel();
         const launchModeUsed: 'builtIn' | 'template' = commandTemplate ? 'template' : 'builtIn';
         const runLogPath = jsonPath && fs.existsSync(jsonPath)
@@ -12411,11 +12548,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const templateJsonContext = await this.prepareLaunchJsonWithAdditionalVanessaParams(
-            scenarioName,
-            jsonPath
-        );
-        const jsonPathForTemplate = templateJsonContext.jsonPath || jsonPath;
+        const jsonPathForTemplate = jsonPath;
         const command = this.applyCommandTemplate(commandTemplate, {
             scenarioName,
             scenarioNameQuoted: this.quoteForShell(scenarioName),
@@ -12487,14 +12620,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this.outputError(outputChannel, this.t('Scenario run failed: "{0}" -> {1}', scenarioName, errorMessage));
             this.appendScenarioRunLogReference(outputChannel, scenarioName, effectiveRunLogPath);
             await this.showRunFailureMessageWithActions(scenarioName, errorMessage, effectiveRunLogPath);
-        } finally {
-            if (templateJsonContext.jsonWasPatched && jsonPathForTemplate) {
-                try {
-                    await fs.promises.unlink(jsonPathForTemplate);
-                } catch {
-                    // Ignore cleanup errors for temporary launch json.
-                }
-            }
         }
     }
 

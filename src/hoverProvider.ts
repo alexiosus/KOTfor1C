@@ -853,21 +853,24 @@ export class DriveHoverProvider implements vscode.HoverProvider {
     private parseYamlKeyLine(
         lineText: string
     ): { indent: number; key: string; keyStartCharacter: number; keyEndCharacter: number } | null {
-        const match = lineText.match(/^(\s*)([^:#][^:]*?):(?:\s.*)?$/);
+        const match = lineText.match(/^(\s*)(-\s+)?([^:#][^:]*?):(?:\s.*)?$/);
         if (!match) {
             return null;
         }
 
-        const key = match[2].trim();
-        if (!key || key.startsWith('-')) {
+        const key = match[3].trim();
+        if (!key) {
             return null;
         }
 
+        const baseIndent = match[1].replace(/\t/g, '    ').length;
+        const listPrefix = match[2] || '';
+
         return {
-            indent: match[1].replace(/\t/g, '    ').length,
+            indent: baseIndent + listPrefix.length,
             key,
-            keyStartCharacter: match[1].length,
-            keyEndCharacter: match[1].length + match[2].length
+            keyStartCharacter: match[1].length + listPrefix.length,
+            keyEndCharacter: match[1].length + listPrefix.length + match[3].length
         };
     }
 
@@ -914,7 +917,9 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         fieldPath: string,
         t: (message: string, ...args: string[]) => string
     ): string | null {
-        switch (fieldPath) {
+        const normalizedFieldPath = this.normalizeYamlFieldPath(fieldPath);
+
+        switch (normalizedFieldPath) {
             case 'ТипФайла':
                 return t('Identifies how the YAML file should be treated. `СборкаТекстовСценариев` uses this field to distinguish scenario files from test-setting files.');
             case 'ДанныеСценария':
@@ -941,16 +946,60 @@ export class DriveHoverProvider implements vscode.HoverProvider {
                 return t('Used for the generated `#report.story` header in the assembled feature file.');
             case 'ПараметрыСценария':
                 return t('Declares input and output parameters of the scenario.');
+            case 'ПараметрыСценария.НомерСтроки':
+                return t('Visual order of the scenario parameter in the header. Mainly used for stable editing and synchronization.');
+            case 'ПараметрыСценария.Имя':
+                return t('Scenario parameter name used in nested calls and substitutions like `[ParameterName]`.');
+            case 'ПараметрыСценария.Значение':
+                return t('Default parameter value used when the caller does not pass an explicit value.');
+            case 'ПараметрыСценария.ТипПараметра':
+                return t('Expected parameter type. KOT uses it in snippets and validations; SPPR stores it in the parameter table.');
+            case 'ПараметрыСценария.ИсходящийПараметр':
+                return t('Marks the parameter as output. Used when the scenario returns a value to the caller.');
+            case 'ПараметрыСценария.НесколькоЗначений':
+                return t('Marks that the parameter contains multiple values. SPPR can expand such values into several launch combinations.');
             case 'ВложенныеСценарии':
                 return t('Stores references to called nested scenarios and their parameter mapping.');
+            case 'ВложенныеСценарии.UIDВложенныйСценарий':
+                return t('UID of the nested scenario referenced from this scenario header.');
+            case 'ВложенныеСценарии.ИмяСценария':
+                return t('Human-readable name of the nested scenario. Used by KOT for navigation and synchronization.');
             case 'ТекстСценария':
                 return t('Main Gherkin body of the scenario.');
             case 'ДанныеТеста':
                 return t('Service header of the test setting. Links the test configuration to a scenario and a target infobase.');
+            case 'ДанныеТеста.UID':
+                return t('Unique identifier of the test setting file.');
+            case 'ДанныеТеста.Код':
+                return t('Code of the test setting. Usually kept in sync with the main scenario code/name.');
+            case 'ДанныеТеста.Имя':
+                return t('Human-readable test setting name. Usually matches the main scenario name.');
             case 'ДанныеТеста.UIDСценария':
                 return t('Links the test setting to the scenario by the scenario UID.');
+            case 'ДанныеТеста.СценарийНаименование':
+                return t('Stores the linked scenario name for convenience. KOT can synchronize it with `scen.yaml`.');
+            case 'ДанныеТеста.ЭталоннаяБазаИмя':
+                return t('Display name of the etalon base. Useful for UI and manual reading, while SPPR lookup relies primarily on `ИдентификаторБазы`.');
+            case 'ДанныеТеста.ИдентификаторБазы':
+                return t('Identifier of the etalon base in `bases.yaml`. SPPR uses it to resolve DT path, login and password for the selected profile.');
             case 'ДанныеТеста.ПрофильПользователя':
                 return t('Overrides scenario `ПрофильПользователя` for this test setting. Has priority over the scenario value during build.');
+            case 'ДанныеТеста.ПараметрыЗапуска':
+                return t('Additional startup parameters for the test client. SPPR appends them to generated `ДопПараметры` in launch JSON.');
+            case 'ПараметрыТеста':
+                return t('Per-test parameter values and variations. They override or supplement `ПараметрыСценария` for this test setting.');
+            case 'ПараметрыТеста.НомерСтроки':
+                return t('Visual order of the test parameter row.');
+            case 'ПараметрыТеста.Имя':
+                return t('Name of the scenario parameter overridden by this test setting.');
+            case 'ПараметрыТеста.Значение':
+                return t('Concrete value or semicolon-separated set of values for this test run.');
+            case 'ПараметрыТеста.ТипПараметра':
+                return t('Declared parameter type for this test-specific value.');
+            case 'ПараметрыТеста.ИсходящийПараметр':
+                return t('Marks the test parameter as output if the scenario writes back into it.');
+            case 'ПараметрыТеста.НесколькоЗначений':
+                return t('Marks that this test parameter contains several values that should produce multiple combinations.');
             case 'KOTМетаданные':
                 return t('KOT-specific metadata used by the extension UI. Not used by `СборкаТекстовСценариев`.');
             case 'KOTМетаданные.Описание':
@@ -966,6 +1015,51 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             default:
                 return null;
         }
+    }
+
+    private normalizeYamlFieldPath(fieldPath: string): string {
+        const segments = fieldPath.split('.');
+        if (segments.length < 2) {
+            return fieldPath;
+        }
+
+        const collapseIndexedItemSegment = (
+            rootName: string,
+            knownChildFields: string[]
+        ): string | null => {
+            if (segments[0] !== rootName) {
+                return null;
+            }
+
+            if (segments.length >= 3) {
+                const secondSegment = segments[1];
+                const thirdSegment = segments[2];
+                if (knownChildFields.includes(thirdSegment) && !knownChildFields.includes(secondSegment)) {
+                    return [rootName, ...segments.slice(2)].join('.');
+                }
+            }
+
+            return fieldPath;
+        };
+
+        return collapseIndexedItemSegment('ПараметрыСценария', [
+            'НомерСтроки',
+            'Имя',
+            'Значение',
+            'ТипПараметра',
+            'ИсходящийПараметр',
+            'НесколькоЗначений'
+        ]) ?? collapseIndexedItemSegment('ПараметрыТеста', [
+            'НомерСтроки',
+            'Имя',
+            'Значение',
+            'ТипПараметра',
+            'ИсходящийПараметр',
+            'НесколькоЗначений'
+        ]) ?? collapseIndexedItemSegment('ВложенныеСценарии', [
+            'UIDВложенныйСценарий',
+            'ИмяСценария'
+        ]) ?? fieldPath;
     }
 
     private async provideYamlFieldHover(
@@ -986,13 +1080,14 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         }
 
         const t = await this.getHoverTranslator();
-        const description = this.getYamlFieldHoverDescription(keyPathInfo.path, t);
+        const normalizedPath = this.normalizeYamlFieldPath(keyPathInfo.path);
+        const description = this.getYamlFieldHoverDescription(normalizedPath, t);
         if (!description) {
             return null;
         }
 
         const content = new vscode.MarkdownString();
-        content.appendMarkdown(`**\`${keyPathInfo.path}\`**\n\n`);
+        content.appendMarkdown(`**\`${normalizedPath}\`**\n\n`);
         content.appendMarkdown(description);
 
         return new vscode.Hover(content, keyPathInfo.range);

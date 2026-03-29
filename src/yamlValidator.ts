@@ -1,25 +1,30 @@
 import * as vscode from 'vscode';
 
+function isYamlFileDocument(document: vscode.TextDocument): boolean {
+    return document.languageId === 'yaml' || document.fileName.toLowerCase().endsWith('.yaml');
+}
+
+function matchesFileType(content: string, typeName: string): boolean {
+    const escapedTypeName = typeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const patterns = [
+        new RegExp(`ТипФайла:\\s*["']${escapedTypeName}["']`),
+        new RegExp(`ТипФайла:\\s*${escapedTypeName}`),
+        new RegExp(`типфайла:\\s*["']${escapedTypeName.toLowerCase()}["']`),
+        new RegExp(`типфайла:\\s*${escapedTypeName.toLowerCase()}`)
+    ];
+
+    return patterns.some(pattern => pattern.test(content));
+}
+
 /**
  * Проверяет, является ли YAML файл сценарием (содержит строку "ТипФайла: Сценарий")
  */
 export function isScenarioYamlFile(document: vscode.TextDocument): boolean {
-    // Проверяем, что это YAML файл
-    if (document.languageId !== 'yaml' && !document.fileName.toLowerCase().endsWith('.yaml')) {
+    if (!isYamlFileDocument(document)) {
         return false;
     }
 
-    const content = document.getText();
-    
-    // Ищем строку "ТипФайла: Сценарий" (с учетом различных вариантов кавычек и пробелов)
-    const scenarioPatterns = [
-        /ТипФайла:\s*["']Сценарий["']/,
-        /ТипФайла:\s*Сценарий/,
-        /типфайла:\s*["']сценарий["']/,
-        /типфайла:\s*сценарий/
-    ];
-
-    return scenarioPatterns.some(pattern => pattern.test(content));
+    return matchesFileType(document.getText(), 'Сценарий');
 }
 
 /**
@@ -27,23 +32,34 @@ export function isScenarioYamlFile(document: vscode.TextDocument): boolean {
  */
 export async function isScenarioYamlUri(uri: vscode.Uri): Promise<boolean> {
     try {
-        // Проверяем расширение файла
         if (!uri.fsPath.toLowerCase().endsWith('.yaml')) {
             return false;
         }
 
-        // Читаем содержимое файла
         const content = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf-8');
-        
-        // Ищем строку "ТипФайла: Сценарий"
-        const scenarioPatterns = [
-            /ТипФайла:\s*["']Сценарий["']/,
-            /ТипФайла:\s*Сценарий/,
-            /типфайла:\s*["']сценарий["']/,
-            /типфайла:\s*сценарий/
-        ];
+        return matchesFileType(content, 'Сценарий');
+    } catch (error) {
+        console.warn(`[YamlValidator] Error checking file ${uri.fsPath}:`, error);
+        return false;
+    }
+}
 
-        return scenarioPatterns.some(pattern => pattern.test(content));
+export function isTestSettingsYamlFile(document: vscode.TextDocument): boolean {
+    if (!isYamlFileDocument(document)) {
+        return false;
+    }
+
+    return matchesFileType(document.getText(), 'НастройкаТеста');
+}
+
+export async function isTestSettingsYamlUri(uri: vscode.Uri): Promise<boolean> {
+    try {
+        if (!uri.fsPath.toLowerCase().endsWith('.yaml')) {
+            return false;
+        }
+
+        const content = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf-8');
+        return matchesFileType(content, 'НастройкаТеста');
     } catch (error) {
         console.warn(`[YamlValidator] Error checking file ${uri.fsPath}:`, error);
         return false;

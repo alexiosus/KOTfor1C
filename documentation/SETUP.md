@@ -25,13 +25,14 @@
 
 | Настройка | Обязательно |
 |---|---|
-| `kotTestToolkit.paths.yamlSourceDirectory` | Да |
-| `kotTestToolkit.paths.oneCEnterpriseExe` | Да, если KOT не определил путь автоматически |
+| `kotTestToolkit.platforms.catalog` | Нет, если KOT сам нашел установленные платформы; иначе добавьте нужную вручную |
 | `kotTestToolkit.paths.buildScenarioBddEpf` | Да |
 | `kotTestToolkit.runVanessa.vanessaEpfPath` | Для запуска Vanessa |
-| `kotTestToolkit.assembleScript.buildPath` | Да |
+| `kotTestToolkit.runtime.directory` | Нет, если устраивает default `.vscode/kot-runtime`; иначе задайте свой runtime-путь для служебных build-файлов |
 
 ## 3) Все настройки расширения
+
+Порядок ниже соответствует текущему порядку секций в Settings VS Code.
 
 ### 3.1 General settings
 
@@ -39,33 +40,26 @@
 |---|---|---|
 | `kotTestToolkit.localization.languageOverride` | `System` | Язык UI расширения (`System` / `English` / `Русский`) |
 
-### 3.2 Test Manager and UI (Менеджер тестов и UI)
-
-| Ключ | Default | Назначение |
-|---|---|---|
-| `kotTestToolkit.assembleScript.showDriveFeatures` | `false` | Показывать/скрывать 1C:Drive-специфичные элементы UI (`Build FL`, режим учета в меню `Build tests`) |
-| `kotTestToolkit.phaseSwitcher.highlightAffectedMainScenarios` | `true` | Подсвечивать главные сценарии, затронутые текущим открытым файлом |
-| `kotTestToolkit.phaseSwitcher.autoAddNewScenariosToFavorites` | `true` | Автодобавление новых сценариев в избранное |
-
-### 3.3 Editor settings
+### 3.2 Editor settings
 
 | Ключ | Default | Назначение |
 |---|---|---|
 | `kotTestToolkit.editor.autoCollapseOnOpen` | `true` | Автосворачивание служебных секций при открытии файла |
+| `kotTestToolkit.editor.useFeatureLanguageModeForScenarioYaml` | `true` | Автопереключение `scen.yaml` в language mode `Feature/Gherkin` для подсветки синтаксиса |
 | `kotTestToolkit.editor.autoReplaceTabsWithSpacesOnSave` | `true` | Замена табов пробелами при сохранении |
 | `kotTestToolkit.editor.autoAlignNestedScenarioParametersOnSave` | `true` | Выравнивание параметров вызова сценариев по `=` |
 | `kotTestToolkit.editor.autoAlignGherkinTablesOnSave` | `true` | Выравнивание таблиц Gherkin |
 | `kotTestToolkit.editor.autoFillNestedScenariosOnSave` | `true` | Автоподдержка секции `ВложенныеСценарии` |
 | `kotTestToolkit.editor.autoFillScenarioParametersOnSave` | `true` | Автоподдержка секции `ПараметрыСценария` |
 | `kotTestToolkit.editor.showRefillMessages` | `true` | Показывать уведомления о перезаполнении секций |
-| `kotTestToolkit.editor.newScenarioLanguage` | `en` | Язык новых сценариев (`#language: en/ru`) |
 
-### 3.4 New scenario defaults
+### 3.3 New scenario defaults
 
 Эти настройки использует мастер создания новых сценариев.
 
 | Ключ | Default | Назначение |
 |---|---|---|
+| `kotTestToolkit.editor.newScenarioLanguage` | `en` | Язык новых сценариев (`#language: en/ru`) |
 | `kotTestToolkit.newScenarioDefaults.project` | `Drive` | Значение по умолчанию для `ДанныеСценария.Проект` |
 | `kotTestToolkit.newScenarioDefaults.systemFunctions` | `[{"name":"Drive automation testing","uid":"98999f57-13dc-11e8-aed1-005056a5c4e8"}]` | Список доступных функций системы для новых сценариев; первая запись считается значением по умолчанию |
 | `kotTestToolkit.newScenarioDefaults.allowCrossFunctionUsage` | `true` | Значение по умолчанию для `ДанныеСценария.РазрешеноИспользоватьВДругихФункциях` |
@@ -77,30 +71,31 @@
 Подробнее о том, как эти значения попадают в `scen.yaml` / `test.yaml` и какие поля шапки они заполняют:
 [`blocks/scenario-creation.md`](./blocks/scenario-creation.md)
 
-### 3.5 Legacy support
-
-| Ключ | Default | Назначение |
-|---|---|---|
-| `kotTestToolkit.editor.autoEnsureKotMetadataForMainScenarios` | `true` | Автодобавление/восстановление `KOTМетаданные` для всех типов сценариев при save/repair |
-| `kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios` | `true` | Опциональная миграция legacy-тегов `# PhaseSwitcher_*` в `KOTМетаданные` только для главных сценариев (работает при включенном `autoEnsureKotMetadataForMainScenarios`) |
-| `kotTestToolkit.legacy.enableDisabledTestsDirectoryMoveOnBuild` | `false` | Опциональный legacy-режим: при `Build tests` временно переносить `test/*.yaml` выключенных сценариев в системную temp-папку и возвращать их после завершения сборки |
-
-### 3.6 Diagnostics and Steps Library
+### 3.4 Diagnostics and Steps Library
 
 | Ключ | Default | Назначение |
 |---|---|---|
 | `kotTestToolkit.steps.externalUrl` | `https://raw.githubusercontent.com/kakoytochelik/KOTfor1C/main/res/steps.htm` | Источник `steps.htm` для библиотеки шагов |
 | `kotTestToolkit.editor.checkRelatedParentScenarios` | `true` | Проверять связанные родительские сценарии вместе с активным |
 
-### 3.7 Test Assembly settings
+### 3.5 Test Manager and UI (Менеджер тестов и UI)
 
 | Ключ | Default | Назначение |
 |---|---|---|
+| `kotTestToolkit.phaseSwitcher.highlightAffectedMainScenarios` | `true` | Подсвечивать главные сценарии, затронутые текущим открытым файлом |
+| `kotTestToolkit.phaseSwitcher.autoAddNewScenariosToFavorites` | `true` | Автодобавление новых сценариев в избранное |
+
+### 3.6 Test Assembly settings
+
+| Ключ | Default | Назначение |
+|---|---|---|
+| `kotTestToolkit.paths.buildScenarioBddEpf` | `build/BuildScenarioBDD.epf` | Путь к EPF сборки `СборкаТекстовСценариев` |
+| `kotTestToolkit.assembleScript.showDriveFeatures` | `false` | Показывать/скрывать 1C:Drive-специфичные элементы UI (`Build FL`, `Accounting mode` в выпадающем меню `Build tests`) |
 | `kotTestToolkit.assembleScript.showOutputPanel` | `false` | Автооткрытие Output при сборке |
 | `kotTestToolkit.output.advancedLogging` | `false` | Расширенные технические логи |
 | `kotTestToolkit.paths.openBuildScenarioParametersManager` | `-` | Кнопка-переход к менеджеру параметров в Settings |
 
-### 3.8 Vanessa Automation Launch
+### 3.7 Vanessa Automation Launch
 
 | Ключ | Default | Назначение |
 |---|---|---|
@@ -108,25 +103,71 @@
 | `kotTestToolkit.runVanessa.runtimeDirectory` | `.vscode/kot-runtime/vanessa` | Папка runtime-файлов (логи/статусы) |
 | `kotTestToolkit.runVanessa.showOutputPanel` | `false` | Автооткрытие Output при запуске Vanessa |
 | `kotTestToolkit.runVanessa.commandTemplate` | `""` | Кастомный shell-шаблон запуска (optional override) |
-| `kotTestToolkit.runVanessa.checkUnsafeActionProtection` | `true` | Проверка `conf.cfg` (Windows) перед запуском Vanessa |
 | `kotTestToolkit.runVanessa.liveLogRefreshSeconds` | `2` | Интервал обновления live-лога |
 | `kotTestToolkit.runVanessa.autoDetectMinStartupUpdates` | `2` | Сколько свежих обновлений run-лога нужно на старте, чтобы фоновый монитор посчитал прогон реальным |
 | `kotTestToolkit.runVanessa.autoDetectInactivityTimeoutSeconds` | `20` | Через сколько секунд без обновлений run-лога автоопределенный трекинг снимается как неактивный |
 
-Плейсхолдеры для `runVanessa.commandTemplate` (если необходимо открывать Vanessa Automation своим способом):
+Плейсхолдеры для `runVanessa.commandTemplate`:
 
-- `${scenarioName}`: имя запускаемого сценария (из `ДанныеСценария.Имя` выбранного теста).
-- `${scenarioNameQuoted}`: то же имя, но уже экранированное/заключенное в кавычки для shell.
-- `${featurePath}`: абсолютный путь к `.feature` артефакту выбранного сценария (из результатов последней сборки).
-- `${featurePathQuoted}`: тот же путь к `.feature`, но в безопасном quoted-виде для shell.
-- `${jsonPath}`: абсолютный путь к `.json` артефакту выбранного сценария. Если включены дополнительные VA-параметры/GlobalVars, может указывать на временный overlay JSON.
-- `${jsonPathQuoted}`: тот же путь к `.json`, но в безопасном quoted-виде для shell.
-- `${workspaceRoot}`: абсолютный путь к корню открытого в VS Code проекта.
-- `${workspaceRootQuoted}`: тот же путь к корню проекта, но в safe quoted-виде для shell.
+- `${scenarioName}` / `${scenarioNameQuoted}`
+- `${featurePath}` / `${featurePathQuoted}`
+- `${jsonPath}` / `${jsonPathQuoted}`
+- `${workspaceRoot}` / `${workspaceRootQuoted}`
 
 Рекомендация: в путях и строковых аргументах используйте `*Quoted` варианты, чтобы корректно обрабатывать пробелы и спецсимволы.
 
-### 3.9 1C startup parameters
+### 3.8 KOT Form Explorer (beta)
+
+| Ключ | Default | Назначение |
+|---|---|---|
+| `kotTestToolkit.formExplorer.snapshotPath` | `.vscode/kot-runtime/form-explorer/form-snapshot.json` | Базовый путь к snapshot-файлу формы; KOT сам резолвит актуальный session-specific snapshot runtime-адаптера |
+| `kotTestToolkit.formExplorer.configurationSourceDirectory` | `cf` | Папка файловой выгрузки конфигурации, которая используется для static enrichment и сборки адаптера Form Explorer |
+| `kotTestToolkit.formExplorer.generatedArtifactsDirectory` | `.vscode/kot-runtime/form-explorer` | Папка сгенерированных артефактов и builder-ИБ Form Explorer |
+| `kotTestToolkit.formExplorer.extensionBuildCommandTemplate` | `""` | Override встроенного builder через внешний скрипт |
+| `kotTestToolkit.formExplorer.autoRefreshSeconds` | `1` | Интервал перечитывания snapshot-а в панели |
+| `kotTestToolkit.formExplorer.showOutputPanel` | `false` | Автопоказ Output при сборке `.cfe` и установке Form Explorer |
+
+Важно:
+
+- `configurationSourceDirectory` используется для static enrichment всегда, а также как источник сборки runtime в режимах `direct` и `cfe`;
+- отдельная builder-ИБ используется только для сценария `cfe`;
+- при `Start infobase`, `Open with Form Explorer` и ручной установке расширения KOT спрашивает режим установки:
+  `direct` выбран по умолчанию и строго рекомендуется только когда база соответствует текущей ветке или хотя бы не сильно отличается от нее;
+  `cfe` - промежуточный режим через builder-ИБ и пакет `.cfe`;
+  `target` - самый медленный, но самый точный режим: KOT сначала выгружает конфигурацию самой выбранной базы, а для файловых ИБ пытается ускорить этот шаг через `ibcmd`.
+
+### 3.9 1C platform settings
+
+| Ключ | Default | Назначение |
+|---|---|---|
+| `kotTestToolkit.platforms.catalog` | `[]` | Каталог платформ 1С для запусков; если пуст, KOT пытается заполнить его автоматически найденными установленными версиями |
+| `kotTestToolkit.platforms.promptForLaunches` | `true` | Спрашивать платформу при запуске баз, Form Explorer и встроенной Vanessa |
+
+### 3.10 AI settings
+
+Настройки этой секции используются для генерации `KOTМетаданные.Описание` через внешнюю или локальную LLM.
+
+| Ключ | Default | Назначение |
+|---|---|---|
+| `kotTestToolkit.ai.apiFormat` | `chatCompletions` | Формат API запроса: `chatCompletions` для OpenAI-compatible `/chat/completions` или `responses` для OpenAI Responses API |
+| `kotTestToolkit.ai.baseUrl` | `http://localhost:1234/v1` | Базовый URL AI-сервера без хвоста `/chat/completions` или `/responses` |
+| `kotTestToolkit.ai.apiKey` | `local` | API-ключ; для локальных серверов можно оставить фиктивное значение, если сервер его игнорирует |
+| `kotTestToolkit.ai.model` | `qwen3:4b` | Точный идентификатор модели, который ожидает выбранный AI-сервер |
+| `kotTestToolkit.ai.outputLanguage` | `ru` | Язык генерируемого описания (`ru` / `en`) |
+| `kotTestToolkit.ai.maxLineLength` | `100` | Максимальная длина строки при записи `KOTМетаданные.Описание` перед переносом |
+| `kotTestToolkit.ai.timeoutSeconds` | `180` | Таймаут AI-запроса в секундах |
+| `kotTestToolkit.ai.systemPrompt` | `""` | Пользовательский system prompt; если заполнен, полностью заменяет встроенный prompt расширения |
+
+Кратко:
+
+- дефолтный `baseUrl` ориентирован на локальный сервер LM Studio;
+- для Ollama обычно достаточно поменять `baseUrl` на `http://localhost:11434/v1` и указать точный тег модели;
+- `apiKey` лучше не оставлять пустым, если провайдер ожидает стандартный `Authorization` header;
+- если провайдер поддерживает только один формат API, явно выберите правильный `apiFormat`.
+
+Поведение генерации, формат результата и практические сценарии использования описаны отдельно: [`blocks/ai-description.md`](./blocks/ai-description.md)
+
+### 3.11 1C startup parameters
 
 | Ключ | Default | Назначение |
 |---|---|---|
@@ -137,35 +178,21 @@
 - для отдельной базы эти параметры можно переопределить через `KOT Infobase Manager` (`Edit base` -> `Edit launch keys`);
 - если для базы переопределение не задано, ключи не используются, но можно выбрать значение из `kotTestToolkit.startupParams.parameters`.
 
-### 3.10 System paths settings
+### 3.12 System paths settings
 
 | Ключ | Default | Назначение |
 |---|---|---|
-| `kotTestToolkit.paths.yamlSourceDirectory` | `tests/RegressionTests/yaml` | Корень YAML-сценариев |
-| `kotTestToolkit.paths.buildScenarioBddEpf` | `build/BuildScenarioBDD.epf` | Путь к EPF сборки |
-| `kotTestToolkit.assembleScript.buildPath` | `C:\EtalonDrive\` | Папка артефактов сборки |
-| `kotTestToolkit.paths.oneCEnterpriseExe` | `""` | Путь к `1cv8c.exe`; если пусто, KOT пытается определить последнюю установленную платформу автоматически |
+| `kotTestToolkit.runtime.directory` | `.vscode/kot-runtime` | Служебная runtime-папка KOT для `yaml_parameters.json`, логов и временных build-артефактов; не совпадает по смыслу с СППР `FeatureFolder` |
 | `kotTestToolkit.paths.fileWorkshopExe` | `C:\Program Files (x86)\1cv8fv\bin\1cv8fv.exe` | Путь к File Workshop для MXL |
 | `kotTestToolkit.paths.firstLaunchFolder` | `""` | Папка FirstLaunch (кнопка `Build FL` показывается, если включены Drive-функции, путь задан и папка существует) |
 
-### 3.11 KOT Form Explorer (beta)
+### 3.13 Legacy support
 
 | Ключ | Default | Назначение |
 |---|---|---|
-| `kotTestToolkit.formExplorer.snapshotPath` | `.vscode/kot-runtime/form-explorer/form-snapshot.json` | Путь к snapshot-файлу формы |
-| `kotTestToolkit.formExplorer.configurationSourceDirectory` | `cf` | Папка файловой выгрузки конфигурации, которая используется для static enrichment и сборки адаптера Form Explorer |
-| `kotTestToolkit.formExplorer.generatedArtifactsDirectory` | `.vscode/kot-runtime/form-explorer` | Папка generated artifacts и builder-ИБ Form Explorer |
-| `kotTestToolkit.formExplorer.extensionBuildCommandTemplate` | `""` | Override встроенного builder через внешний скрипт |
-| `kotTestToolkit.formExplorer.autoRefreshSeconds` | `1` | Интервал перечитывания snapshot-а в панели |
-| `kotTestToolkit.formExplorer.showOutputPanel` | `false` | Автопоказ Output при сборке `.cfe` и прогреве builder-ИБ Form Explorer |
-
-Важно:
-
-- пустая ИБ больше не настраивается отдельно;
-- `СборкаТекстовСценариев` и Vanessa используют общую lightweight startup-ИБ;
-- `KOT Form Explorer` использует отдельную builder-ИБ;
-- при установке/запуске Form Explorer в выбранной базе источник сборки адаптера всё равно берется из `configurationSourceDirectory`;
-- обе служебные ИБ создаются автоматически в фоне, если KOT смог определить путь к `1cv8c.exe`.
+| `kotTestToolkit.editor.autoEnsureKotMetadataForMainScenarios` | `true` | Автодобавление/восстановление `KOTМетаданные` для всех типов сценариев при save/repair |
+| `kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios` | `true` | Опциональная миграция legacy-тегов `# PhaseSwitcher_*` в `KOTМетаданные` только для главных сценариев (работает при включенном `autoEnsureKotMetadataForMainScenarios`) |
+| `kotTestToolkit.legacy.enableDisabledTestsDirectoryMoveOnBuild` | `false` | Опциональный legacy-режим: при `Build tests` временно переносить `test/*.yaml` выключенных сценариев в системную temp-папку и возвращать их после завершения сборки |
 
 ## 4) Менеджер параметров: как работает
 
@@ -182,6 +209,27 @@
 - для совпадающих ключей базово приоритет у значения из СППР;
 - для точечного переопределения используйте `Override existing value` в доп. параметрах;
 - `GlobalVars` тоже могут точечно перезаписывать существующее значение через `Override existing value`.
+
+Минимум для рабочей сборки feature:
+
+- `ScenarioFolder` или `TestFolder`;
+- `FeatureFolder`;
+- `VanessaFolder`;
+- один launch-путь: `LaunchDBFolder` / `TestClientDBPath` / `InfobasePath` / `TestClientDB`;
+- `ModelDBSettings`, если включен `AuthCompile=true`.
+
+KOT показывает этот минимум прямо во вкладке `СППР` и валидирует его при автосохранении и перед предпросмотром `yaml_parameters.json`.
+
+Дополнительно во вкладке `СППР`:
+
+- строки `ScenarioFolder`, `FeatureFolder`, `VanessaFolder`, `ModelDBSettings`, `AuthCompile` и launch-база закреплены и не удаляются;
+- `AuthCompile` трактуется как строгая проверка наличия auth-данных, а не как источник логинов/паролей;
+- если загружен JSON с `TestFolder`, в UI он нормализуется в `ScenarioFolder`;
+- остальные поддерживаемые ключи СППР можно добавлять из встроенного каталога с описанием;
+- для модифицированной обработки можно добавлять свои custom-строки;
+- менеджер параметров поддерживает профили наборов параметров с быстрым переключением;
+- сохранение идет автоматически, а в шапке показывается `Updated at`;
+- при автосохранении KOT синхронизирует внутренний корень сканирования из `ScenarioFolder` и запускает пересканирование Test Manager.
 
 Подробнее:
 - В репозитории есть пример файла настроек СППР для ознакомления/адаптации под свои нужды: [yaml_parameters.json](../res/yaml_parameters.json)
@@ -210,6 +258,7 @@
 - `KOT - Change nested scenario code` (`KOT - Изменить код вложенного сценария`)
 - `KOT - Fill NestedScenarios section` (`KOT - Заполнить секцию ВложенныеСценарии`)
 - `KOT - Fill ScenarioParameters section` (`KOT - Заполнить секцию ПараметрыСценария`)
+- `KOT - Generate KOT metadata description with AI` (`KOT - Сгенерировать описание KOTМетаданные через AI`)
 - `KOT - Replace tabs with spaces` (`KOT - Заменить табы на пробелы`)
 - `KOT - Scan workspace diagnostics` (`KOT - Выполнить сканирование диагностики по проекту`)
 - `KOT - Refresh steps library` (`KOT - Обновить библиотеку шагов`)
@@ -225,6 +274,7 @@
 
 - `KOT - Open Build Scenario Parameters Manager` (`KOT - Открыть Менеджер параметров Сборки Сценариев`)
 - `KOT - Open Infobase Manager` (`KOT - Открыть Менеджер баз`)
+- `KOT - Manage platforms` (`KOT - Управление платформами`)
 - `KOT - Open 1C Form Explorer` (`KOT - Открыть Исследователь форм 1С`)
 - `KOT - Generate Form Explorer extension project` (`KOT - Сгенерировать проект расширения Form Explorer`)
 - `KOT - Build Form Explorer .cfe` (`KOT - Собрать .cfe для Form Explorer`)

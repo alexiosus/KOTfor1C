@@ -15,9 +15,9 @@ export type OneCInfobaseConnection =
         url: string;
     };
 
-function quoteConnectionValue(value: string): string {
+function quoteConnectionValue(value: string, forceQuotes = false): string {
     const escapedValue = value.replace(/"/g, '""');
-    return /[\s;"]/.test(value)
+    return forceQuotes || /[\s;"]/.test(value)
         ? `"${escapedValue}"`
         : escapedValue;
 }
@@ -32,6 +32,35 @@ function normalizeWebPart(value: string): string {
     return value
         .replace(/""/g, '"')
         .trim();
+}
+
+export function isWindowsAbsolutePath(value: string): boolean {
+    const trimmedValue = String(value ?? '').trim();
+    return /^[a-zA-Z]:[\\/]/.test(trimmedValue)
+        || /^(\\\\|\/\/)[^\\/]+[\\/][^\\/]+/.test(trimmedValue);
+}
+
+export function isHostAccessibleFileInfobasePath(value: string): boolean {
+    return process.platform === 'win32' || !isWindowsAbsolutePath(value);
+}
+
+function normalizeFileInfobasePath(value: string): string {
+    const trimmedValue = String(value ?? '')
+        .replace(/""/g, '"')
+        .trim();
+    if (!trimmedValue) {
+        return '';
+    }
+
+    if (isWindowsAbsolutePath(trimmedValue)) {
+        return path.win32.normalize(trimmedValue);
+    }
+
+    if (path.posix.isAbsolute(trimmedValue)) {
+        return path.posix.normalize(trimmedValue);
+    }
+
+    return path.resolve(trimmedValue);
 }
 
 export function parseInfobaseConnectionString(value: string): OneCInfobaseConnection | null {
@@ -49,7 +78,7 @@ export function parseInfobaseConnectionString(value: string): OneCInfobaseConnec
 
         return {
             kind: 'file',
-            filePath: path.resolve(rawPath.replace(/""/g, '"'))
+            filePath: normalizeFileInfobasePath(rawPath)
         };
     }
 
@@ -90,7 +119,7 @@ export function coerceInfobaseConnection(value: string | OneCInfobaseConnection)
         return value.kind === 'file'
             ? {
                 kind: 'file',
-                filePath: path.resolve(value.filePath.trim())
+                filePath: normalizeFileInfobasePath(value.filePath)
             }
             : value.kind === 'server'
                 ? {
@@ -111,7 +140,7 @@ export function coerceInfobaseConnection(value: string | OneCInfobaseConnection)
 
     return {
         kind: 'file',
-        filePath: path.resolve(value.trim())
+        filePath: normalizeFileInfobasePath(value)
     };
 }
 
@@ -134,13 +163,14 @@ export function buildInfobaseConnectionArgument(
     value: string | OneCInfobaseConnection,
     options?: {
         trailingSemicolon?: boolean;
+        forceQuotedFilePath?: boolean;
     }
 ): string {
     const connection = coerceInfobaseConnection(value);
     const suffix = options?.trailingSemicolon ? ';' : '';
 
     if (connection.kind === 'file') {
-        return `File=${quoteConnectionValue(connection.filePath)}${suffix}`;
+        return `File=${quoteConnectionValue(connection.filePath, options?.forceQuotedFilePath === true)}${suffix}`;
     }
 
     if (connection.kind === 'server') {
@@ -154,6 +184,7 @@ export function buildFileInfobaseConnectionArgument(
     infobasePath: string,
     options?: {
         trailingSemicolon?: boolean;
+        forceQuotedFilePath?: boolean;
     }
 ): string {
     return buildInfobaseConnectionArgument({
@@ -179,8 +210,8 @@ export function buildServerInfobaseConnectionArgument(
 export function normalizeInfobaseConnectionIdentity(value: string | OneCInfobaseConnection): string {
     const connection = coerceInfobaseConnection(value);
     if (connection.kind === 'file') {
-        const normalizedPath = path.resolve(connection.filePath.trim());
-        return process.platform === 'win32'
+        const normalizedPath = normalizeFileInfobasePath(connection.filePath);
+        return process.platform === 'win32' || isWindowsAbsolutePath(normalizedPath)
             ? normalizedPath.toLowerCase()
             : normalizedPath;
     }
