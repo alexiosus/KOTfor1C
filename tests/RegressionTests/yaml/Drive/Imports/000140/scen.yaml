@@ -1,0 +1,48 @@
+ТипФайла: "Сценарий"
+ДанныеСценария:
+    UID: "8b30cfed-bf31-4bc9-8724-847ed664bc9c"
+    Имя: "I import demo items from file"
+    Код: "000140"
+    Проект: "Drive"
+    ФункцияСистемы: "Drive automation testing"
+    РазрешеноИспользоватьВДругихФункциях: "Yes"
+    UIDФункцияСистемы: "98999f57-13dc-11e8-aed1-005056a5c4e8"
+    ПрофильПользователя: "Administrator"
+    УровеньОтчета1: "Drive"
+    УровеньОтчета2: "Demo"
+
+KOTМетаданные:
+    Описание: |
+        - Demonstrates a file-based flow with a parameterized source path.
+        - The import file path has a default value so parent scenarios can omit it.
+
+ПараметрыСценария:
+    - ПараметрыСценария1:
+        НомерСтроки: "1"
+        Имя: "ImportFile"
+        Значение: "$КаталогПроекта$/demo-items.csv"
+        ТипПараметра: "Строка"
+        ИсходящийПараметр: "No"
+
+ВложенныеСценарии:
+
+ТекстСценария: |
+
+    #language: en
+    # KOT demo:
+    # - Open files/demo-items.csv to verify that dependency highlighting also works from files/*.
+    # - You can use "Open current scenario files folder" to open catalog of attachments in Explorer.
+
+    Given I open hyperlink "e1cib/list/Catalog.Items"
+    Then "Items" window is opened
+    And I click "Import data from an external source" button
+    And I wait "Import data from external sources" window opening in 10 seconds
+
+    If [ImportFile] Exists then
+        And I select external file [ImportFile]
+    EndIf
+
+    And I click "import data from external file" hyperlink of "You can import data from external file (xlsx, mxl, csv) or copy and paste data into spreadsheet template." field
+    And I wait "R1C1" cell in "SpreadsheetDocument" spreadsheet document becomes equal to "Do not import" for "10" seconds
+    And I click "Next >" button
+    And I click "Import data to application" button

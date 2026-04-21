@@ -20,12 +20,10 @@ import {
     suggestFormExplorerSteps
 } from './formExplorerStepSuggestions';
 import { getConfiguredScenarioLanguage, ScenarioLanguage } from './gherkinLanguage';
-import type { StartFormExplorerInfobaseResult } from './formExplorerExtensionGenerator';
 import type {
-    BuildFormExplorerExtensionCommandOptions,
-    InstallFormExplorerExtensionCommandOptions,
-    StartFormExplorerInfobaseCommandOptions
-} from './formExplorerExtensionGenerator';
+    StartFormExplorerBridgeCommandOptions,
+    StartFormExplorerBridgeResult
+} from './formExplorerBridgeGenerator';
 import { normalizeInfobaseReference } from './oneCInfobaseConnection';
 import {
     type ConfiguredOneCPlatform,
@@ -65,6 +63,7 @@ interface FormExplorerWebviewState {
 interface FormExplorerWebviewMessage {
     command?: string;
     value?: string;
+    elementPath?: string;
     platformClientExePath?: string | null;
     source?: FormExplorerSourceLocation;
 }
@@ -118,6 +117,9 @@ export class FormExplorerPanel implements vscode.Disposable {
     private preferredStartInfobasePath: string | null = null;
     private preferredStartOneCClientExePath: string | null = null;
     private startedInfobaseProcessId: number | null = null;
+    private startedBridgeProcessId: number | null = null;
+    private processMonitorTimer: NodeJS.Timeout | null = null;
+    private processStateRefreshPromise: Promise<boolean> | null = null;
 
     constructor(private readonly context: vscode.ExtensionContext) {
         this.disposables.push(
@@ -195,7 +197,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         await this.refreshSnapshot(true);
     }
 
-    public async openAndStart(options?: string | StartFormExplorerInfobaseCommandOptions): Promise<void> {
+    public async openAndStart(options?: string | StartFormExplorerBridgeCommandOptions): Promise<void> {
         const commandOptions = typeof options === 'string'
             ? { preferredInfobasePath: options }
             : (options || {});
@@ -204,14 +206,24 @@ export class FormExplorerPanel implements vscode.Disposable {
             : null;
         this.preferredStartOneCClientExePath = normalizeOneCClientExePath(commandOptions.oneCClientExePath || '') || null;
         await this.open();
-        await this.startInfobase(commandOptions);
+        await this.startBridge(commandOptions);
     }
 
-    private async refreshAvailablePlatforms(): Promise<void> {
-        this.availablePlatforms = await ensureOneCPlatformsCatalogInitialized();
+    private resetLoadedSnapshotState(): void {
+        this.latestSnapshot = null;
+        this.lastError = null;
+        this.snapshotExists = false;
+        this.snapshotMtime = null;
+        this.resolvedSnapshotPath = null;
+        this.lastSnapshotFingerprint = null;
+        this.selectedElementPath = null;
+        this.suggestedSteps = [];
+        this.suggestedStepsForPath = null;
+        this.suggestedStepsError = null;
+        this.lastSuggestedStepsFingerprint = null;
     }
 
-    private async clearSnapshotsOnPanelOpen(): Promise<void> {
+    private async deleteKnownSnapshotFiles(): Promise<void> {
         const configuredPath = this.getConfiguredSnapshotPath();
         if (!configuredPath) {
             return;
@@ -247,24 +259,28 @@ export class FormExplorerPanel implements vscode.Disposable {
                 // Ignore cleanup errors and let normal refresh surface any remaining stale file.
             }
         }
+    }
 
-        this.latestSnapshot = null;
-        this.lastError = null;
-        this.snapshotExists = false;
-        this.snapshotMtime = null;
-        this.resolvedSnapshotPath = null;
-        this.lastSnapshotFingerprint = null;
-        this.selectedElementPath = null;
-        this.suggestedSteps = [];
-        this.suggestedStepsForPath = null;
-        this.suggestedStepsError = null;
-        this.lastSuggestedStepsFingerprint = null;
+    private async refreshAvailablePlatforms(): Promise<void> {
+        this.availablePlatforms = await ensureOneCPlatformsCatalogInitialized();
+    }
+
+    private async clearSnapshotsOnPanelOpen(): Promise<void> {
+        if (this.hasTrackedFormExplorerProcesses()) {
+            return;
+        }
+
+        await this.deleteKnownSnapshotFiles();
+        this.resetLoadedSnapshotState();
         this.pendingOperation = null;
         this.startedInfobaseProcessId = null;
+        this.startedBridgeProcessId = null;
+        this.stopProcessMonitorTimer();
     }
 
     public dispose(): void {
         this.stopRefreshTimer();
+        this.stopProcessMonitorTimer();
         this.panelDisposables.forEach(disposable => disposable.dispose());
         this.panelDisposables = [];
         this.disposables.forEach(disposable => disposable.dispose());
@@ -284,33 +300,17 @@ export class FormExplorerPanel implements vscode.Disposable {
             case 'setPreferredStartPlatform':
                 await this.setPreferredStartPlatform(message.platformClientExePath || null);
                 break;
-            case 'buildExtension':
-                await vscode.commands.executeCommand(
-                    'kotTestToolkit.buildFormExplorerExtensionCfe',
-                    {
-                        oneCClientExePath: normalizeOneCClientExePath(
-                            message.platformClientExePath
-                            || this.resolveEffectiveLaunchPlatformClientExePath()
-                            || ''
-                        ) || null
-                    } as BuildFormExplorerExtensionCommandOptions
-                );
-                break;
-            case 'installExtension':
-                await vscode.commands.executeCommand(
-                    'kotTestToolkit.installFormExplorerExtension',
-                    {
-                        targetInfobasePath: this.resolveCurrentLaunchInfobasePath(),
-                        oneCClientExePath: normalizeOneCClientExePath(
-                            message.platformClientExePath
-                            || this.resolveEffectiveLaunchPlatformClientExePath()
-                            || ''
-                        ) || null
-                    } as InstallFormExplorerExtensionCommandOptions
-                );
-                break;
             case 'startInfobase':
-                await this.startInfobase({
+                await this.startBridge({
+                    oneCClientExePath: normalizeOneCClientExePath(
+                        message.platformClientExePath
+                        || this.resolveEffectiveLaunchPlatformClientExePath()
+                        || ''
+                    ) || null
+                });
+                break;
+            case 'startBridge':
+                await this.startBridge({
                     oneCClientExePath: normalizeOneCClientExePath(
                         message.platformClientExePath
                         || this.resolveEffectiveLaunchPlatformClientExePath()
@@ -342,7 +342,7 @@ export class FormExplorerPanel implements vscode.Disposable {
                 await this.requestAdapterLocator();
                 break;
             case 'requestTableSnapshotRefresh':
-                await this.requestTableSnapshotRefresh();
+                await this.requestTableSnapshotRefresh(message.elementPath);
                 break;
             case 'selectElementPath':
                 await this.handleElementSelectionChanged(message.value);
@@ -678,22 +678,186 @@ export class FormExplorerPanel implements vscode.Disposable {
         }
     }
 
-    private async refreshStartedInfobaseProcessState(): Promise<boolean> {
-        const previousProcessId = this.startedInfobaseProcessId;
-        if (!previousProcessId) {
+    private hasTrackedFormExplorerProcesses(): boolean {
+        return this.startedInfobaseProcessId !== null || this.startedBridgeProcessId !== null;
+    }
+
+    private setTrackedFormExplorerProcesses(
+        infobaseProcessId: number | null,
+        bridgeProcessId: number | null
+    ): void {
+        this.startedInfobaseProcessId = Number.isInteger(infobaseProcessId) && (infobaseProcessId ?? 0) > 0
+            ? infobaseProcessId
+            : null;
+        this.startedBridgeProcessId = Number.isInteger(bridgeProcessId) && (bridgeProcessId ?? 0) > 0
+            ? bridgeProcessId
+            : null;
+
+        if (this.hasTrackedFormExplorerProcesses()) {
+            this.startProcessMonitorTimer();
+            return;
+        }
+
+        this.stopProcessMonitorTimer();
+    }
+
+    private startProcessMonitorTimer(): void {
+        if (this.processMonitorTimer) {
+            return;
+        }
+
+        this.processMonitorTimer = setInterval(() => {
+            void this.pollTrackedFormExplorerProcesses();
+        }, 1000);
+    }
+
+    private stopProcessMonitorTimer(): void {
+        if (this.processMonitorTimer) {
+            clearInterval(this.processMonitorTimer);
+            this.processMonitorTimer = null;
+        }
+    }
+
+    private async pollTrackedFormExplorerProcesses(): Promise<void> {
+        const stateChanged = await this.refreshStartedInfobaseProcessState();
+        if (stateChanged) {
+            await this.postState();
+        }
+    }
+
+    private async terminateProcessTree(processId: number): Promise<void> {
+        if (!(await this.isProcessRunning(processId))) {
+            return;
+        }
+
+        if (process.platform === 'win32') {
+            await new Promise<void>((resolve, reject) => {
+                const killer = cp.spawn('taskkill', ['/PID', String(processId), '/T', '/F'], {
+                    windowsHide: true,
+                    shell: false
+                });
+                let stdoutText = '';
+                let stderrText = '';
+
+                killer.stdout?.on('data', data => {
+                    stdoutText += data.toString();
+                });
+                killer.stderr?.on('data', data => {
+                    stderrText += data.toString();
+                });
+                killer.on('error', reject);
+                killer.on('close', code => {
+                    const combinedOutput = `${stdoutText}\n${stderrText}`.toLowerCase();
+                    if (
+                        code === 0
+                        || combinedOutput.includes('there is no running instance')
+                        || combinedOutput.includes('not found')
+                    ) {
+                        resolve();
+                        return;
+                    }
+
+                    reject(new Error(stderrText.trim() || stdoutText.trim() || `taskkill exited with code ${String(code)}`));
+                });
+            });
+            return;
+        }
+
+        try {
+            process.kill(processId, 'SIGTERM');
+        } catch (error: any) {
+            if (error?.code !== 'ESRCH') {
+                throw error;
+            }
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 350));
+
+        if (await this.isProcessRunning(processId)) {
+            try {
+                process.kill(processId, 'SIGKILL');
+            } catch (error: any) {
+                if (error?.code !== 'ESRCH') {
+                    throw error;
+                }
+            }
+        }
+    }
+
+    private async doRefreshStartedInfobaseProcessState(): Promise<boolean> {
+        const previousInfobaseProcessId = this.startedInfobaseProcessId;
+        const previousBridgeProcessId = this.startedBridgeProcessId;
+        if (!previousInfobaseProcessId && !previousBridgeProcessId) {
+            this.stopProcessMonitorTimer();
             return false;
         }
 
-        const isRunning = await this.isProcessRunning(previousProcessId);
-        if (isRunning) {
+        const infobaseRunning = previousInfobaseProcessId
+            ? await this.isProcessRunning(previousInfobaseProcessId)
+            : false;
+        const bridgeRunning = previousBridgeProcessId
+            ? await this.isProcessRunning(previousBridgeProcessId)
+            : false;
+
+        let nextInfobaseProcessId = infobaseRunning ? previousInfobaseProcessId : null;
+        let nextBridgeProcessId = bridgeRunning ? previousBridgeProcessId : null;
+
+        if (previousInfobaseProcessId && !infobaseRunning && previousBridgeProcessId && bridgeRunning) {
+            try {
+                await this.terminateProcessTree(previousBridgeProcessId);
+            } catch {
+                // Keep tracking the bridge PID if it could not be terminated.
+            }
+            nextBridgeProcessId = await this.isProcessRunning(previousBridgeProcessId)
+                ? previousBridgeProcessId
+                : null;
+        } else if (previousBridgeProcessId && !bridgeRunning && previousInfobaseProcessId && infobaseRunning) {
+            try {
+                await this.terminateProcessTree(previousInfobaseProcessId);
+            } catch {
+                // Keep tracking the infobase PID if it could not be terminated.
+            }
+            nextInfobaseProcessId = await this.isProcessRunning(previousInfobaseProcessId)
+                ? previousInfobaseProcessId
+                : null;
+        }
+
+        const stateChanged = nextInfobaseProcessId !== previousInfobaseProcessId
+            || nextBridgeProcessId !== previousBridgeProcessId;
+
+        if (!stateChanged) {
             return false;
         }
 
-        this.startedInfobaseProcessId = null;
-        if (this.pendingOperation?.kind === 'start') {
+        this.setTrackedFormExplorerProcesses(nextInfobaseProcessId, nextBridgeProcessId);
+        if (!this.hasTrackedFormExplorerProcesses() && this.pendingOperation?.kind === 'start') {
             this.pendingOperation = null;
         }
+        if (!this.hasTrackedFormExplorerProcesses()) {
+            await this.deleteKnownSnapshotFiles();
+            this.resetLoadedSnapshotState();
+            this.pendingOperation = null;
+            this.adapterMode = 'unknown';
+            this.adapterModeStatePath = null;
+            this.preferredStartInfobasePath = null;
+        }
         return true;
+    }
+
+    private async refreshStartedInfobaseProcessState(): Promise<boolean> {
+        if (this.processStateRefreshPromise) {
+            return await this.processStateRefreshPromise;
+        }
+
+        const refreshPromise = this.doRefreshStartedInfobaseProcessState();
+        this.processStateRefreshPromise = refreshPromise;
+        try {
+            return await refreshPromise;
+        } finally {
+            if (this.processStateRefreshPromise === refreshPromise) {
+                this.processStateRefreshPromise = null;
+            }
+        }
     }
 
     private async resolveActualSnapshotPath(): Promise<string | null> {
@@ -921,9 +1085,16 @@ export class FormExplorerPanel implements vscode.Disposable {
         }
     }
 
-    private async requestTableSnapshotRefresh(): Promise<void> {
+    private async requestTableSnapshotRefresh(elementPath?: string): Promise<void> {
+        const normalizedElementPath = typeof elementPath === 'string' && elementPath.trim()
+            ? elementPath.trim()
+            : (this.selectedElementPath || '');
+        if (normalizedElementPath) {
+            this.selectedElementPath = normalizedElementPath;
+        }
+
         const applied = await this.writeAdapterModeRequest('table', {
-            elementPath: this.selectedElementPath || ''
+            elementPath: normalizedElementPath
         });
         if (!applied) {
             return;
@@ -947,63 +1118,66 @@ export class FormExplorerPanel implements vscode.Disposable {
         await this.refreshSnapshot(true);
     }
 
-    private async startInfobase(options?: string | StartFormExplorerInfobaseCommandOptions): Promise<void> {
+    private async startBridge(options?: StartFormExplorerBridgeCommandOptions): Promise<void> {
         const t = await getTranslator(this.context.extensionUri);
         const previousError = this.lastError;
+        const explicitPreferredInfobasePath = typeof options?.preferredInfobasePath === 'string' && options.preferredInfobasePath.trim()
+            ? normalizeInfobaseReference(options.preferredInfobasePath.trim())
+            : null;
+        await this.refreshStartedInfobaseProcessState();
+        if (this.hasTrackedFormExplorerProcesses()) {
+            this.pendingOperation = null;
+            this.lastError = previousError;
+            await this.postState();
+            vscode.window.showWarningMessage(
+                t('Form Explorer session is still running. Close the current 1C windows first.')
+            );
+            return;
+        }
+
         this.lastError = null;
         this.beginPendingOperation('start');
         await this.postState();
 
         try {
-            const commandOptions = typeof options === 'string'
-                ? { preferredInfobasePath: options }
-                : (options || {});
-            const resolvedPreferredInfobasePath = typeof commandOptions.preferredInfobasePath === 'string' && commandOptions.preferredInfobasePath.trim()
-                ? normalizeInfobaseReference(commandOptions.preferredInfobasePath.trim())
-                : undefined;
-            const resolvedPreferredPlatformClientExePath = normalizeOneCClientExePath(
-                commandOptions.oneCClientExePath
-                || this.resolveEffectiveLaunchPlatformClientExePath()
-                || ''
-            ) || null;
-            const startResult = await vscode.commands.executeCommand<StartFormExplorerInfobaseResult | string | null>(
-                'kotTestToolkit.startFormExplorerInfobase',
+            const bridgeResult = await vscode.commands.executeCommand<StartFormExplorerBridgeResult | null>(
+                'kotTestToolkit.startFormExplorerBridge',
                 {
-                    preferredInfobasePath: resolvedPreferredInfobasePath || null,
-                    oneCClientExePath: resolvedPreferredPlatformClientExePath
-                } as StartFormExplorerInfobaseCommandOptions
+                    preferredInfobasePath: explicitPreferredInfobasePath,
+                    oneCClientExePath: normalizeOneCClientExePath(
+                        options?.oneCClientExePath
+                        || this.resolveEffectiveLaunchPlatformClientExePath()
+                        || ''
+                    ) || null
+                } as StartFormExplorerBridgeCommandOptions
             );
 
-            if (typeof startResult === 'string' && startResult.trim()) {
-                this.preferredStartInfobasePath = normalizeInfobaseReference(startResult.trim());
+            if (bridgeResult && bridgeResult.status === 'started' && bridgeResult.targetInfobasePath?.trim()) {
+                this.preferredStartInfobasePath = normalizeInfobaseReference(bridgeResult.targetInfobasePath.trim());
                 this.preferredStartOneCClientExePath = null;
-                this.startedInfobaseProcessId = null;
-                this.lastSnapshotFingerprint = null;
-                await this.refreshSnapshot(true);
-                return;
-            }
-
-            if (startResult && typeof startResult !== 'string' && startResult.status === 'started' && startResult.infobasePath?.trim()) {
-                this.preferredStartInfobasePath = normalizeInfobaseReference(startResult.infobasePath.trim());
-                this.preferredStartOneCClientExePath = null;
-                this.startedInfobaseProcessId = typeof startResult.processId === 'number' && startResult.processId > 0
-                    ? startResult.processId
-                    : null;
+                this.setTrackedFormExplorerProcesses(
+                    typeof bridgeResult.workingProcessId === 'number' && bridgeResult.workingProcessId > 0
+                        ? bridgeResult.workingProcessId
+                        : null,
+                    typeof bridgeResult.startupProcessId === 'number' && bridgeResult.startupProcessId > 0
+                        ? bridgeResult.startupProcessId
+                        : null
+                );
                 this.lastSnapshotFingerprint = null;
                 await this.refreshSnapshot(true);
                 return;
             }
 
             this.pendingOperation = null;
-            this.startedInfobaseProcessId = null;
-            this.lastError = startResult && typeof startResult !== 'string' && startResult.status === 'error'
-                ? startResult.error || t('Failed to start target infobase for Form Explorer.')
+            this.setTrackedFormExplorerProcesses(null, null);
+            this.lastError = bridgeResult?.status === 'error'
+                ? bridgeResult.error || t('Failed to start Form Explorer Bridge.')
                 : previousError;
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.pendingOperation = null;
-            this.startedInfobaseProcessId = null;
-            this.lastError = t('Failed to start target infobase for Form Explorer: {0}', message);
+            this.setTrackedFormExplorerProcesses(null, null);
+            this.lastError = t('Failed to start Form Explorer Bridge: {0}', message);
         }
 
         await this.postState();
@@ -1089,14 +1263,18 @@ export class FormExplorerPanel implements vscode.Disposable {
         } catch {
             this.snapshotExists = false;
             this.snapshotMtime = null;
-            this.latestSnapshot = null;
-            this.suggestedSteps = [];
-            this.suggestedStepsForPath = null;
-            this.suggestedStepsError = null;
-            this.lastSuggestedStepsFingerprint = null;
+            this.resetLoadedSnapshotState();
             if (this.pendingOperation?.kind === 'start') {
                 this.lastError = null;
                 this.lastSnapshotFingerprint = 'waiting-for-started-infobase-snapshot';
+                await this.postState();
+                return;
+            }
+            if (!this.hasTrackedFormExplorerProcesses()) {
+                this.lastError = null;
+                this.adapterMode = 'unknown';
+                this.adapterModeStatePath = null;
+                this.lastSnapshotFingerprint = `idle-without-snapshot:${snapshotPath}`;
                 await this.postState();
                 return;
             }
@@ -1174,7 +1352,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             platforms: this.availablePlatforms,
             launchInfobasePath: this.resolveCurrentLaunchInfobasePath(),
             launchPlatformClientExePath: this.resolveEffectiveLaunchPlatformClientExePath(),
-            startedInfobaseClientRunning: this.startedInfobaseProcessId !== null,
+            startedInfobaseClientRunning: this.hasTrackedFormExplorerProcesses(),
             adapterMode: this.adapterMode,
             adapterModeStatePath: this.adapterModeStatePath,
             lastError: this.lastError,
@@ -1200,10 +1378,8 @@ export class FormExplorerPanel implements vscode.Disposable {
             refresh: t('Refresh'),
             getTables: t('Get tables'),
             locator: t('Locator'),
-            buildExtension: t('Build .cfe'),
-            installExtension: t('Install to infobase'),
             startInfobase: t('Start infobase'),
-            infobaseClientRunning: t('1C client is still running'),
+            infobaseClientRunning: t('Form Explorer session is still running'),
             launchPlatform: t('Platform'),
             defaultLabel: t('Default'),
             moreActions: t('More actions'),
@@ -1221,7 +1397,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             searchPlaceholder: t('Search elements'),
             searchTablesPlaceholder: t('Search tables'),
             waitingForSnapshot: t('Waiting for snapshot'),
-            noSnapshotHint: t('The panel reads a universal JSON snapshot file produced by a 1C-side adapter in the current client session.'),
+            noSnapshotHint: t('The panel reads a universal JSON snapshot file produced by the Form Explorer bridge in the current client session.'),
             noElements: t('No form elements in snapshot.'),
             noMatchingElements: t('No elements match the current filter.'),
             noAttributes: t('No form attributes in snapshot.'),
@@ -1253,6 +1429,13 @@ export class FormExplorerPanel implements vscode.Disposable {
             showTechnicalItems: t('Show technical items'),
             hideTechnicalItems: t('Hide technical items'),
             showGroups: t('Show form groups'),
+            showInvisibleElements: t('Show invisible elements'),
+            filterByType: t('Filter by type'),
+            showButtons: t('Show buttons'),
+            showFields: t('Show fields'),
+            showTables: t('Show tables'),
+            showDecorations: t('Show decorations'),
+            showOtherItems: t('Show other items'),
             technicalInfo: t('Technical info'),
             filters: t('Filters'),
             focusActive: t('Focus active'),
@@ -1269,7 +1452,6 @@ export class FormExplorerPanel implements vscode.Disposable {
             sessionId: t('Session'),
             host: t('Host'),
             application: t('Application'),
-            adapter: t('Adapter'),
             origin: t('Origin'),
             project: t('Project'),
             viewKind: t('View'),
@@ -1384,13 +1566,6 @@ export class FormExplorerPanel implements vscode.Disposable {
                             <input id="showTechnicalTabsInput" type="checkbox">
                             <span>${escapeHtml(loc.technicalInfo)}</span>
                         </label>
-                        <div class="dropdown-separator menu-separator" role="separator"></div>
-                        <button class="menu-item" type="button" data-action="build-extension" role="menuitem">
-                            <span class="codicon codicon-tools"></span> ${escapeHtml(loc.buildExtension)}
-                        </button>
-                        <button class="menu-item" type="button" data-action="install-extension" role="menuitem">
-                            <span class="codicon codicon-cloud-upload"></span> ${escapeHtml(loc.installExtension)}
-                        </button>
                     </div>
                 </div>
             </div>
@@ -1460,6 +1635,32 @@ export class FormExplorerPanel implements vscode.Disposable {
                             <label class="menu-check" for="showGroupsInput">
                                 <input id="showGroupsInput" type="checkbox">
                                 <span>${escapeHtml(loc.showGroups)}</span>
+                            </label>
+                            <label class="menu-check" for="showInvisibleInput">
+                                <input id="showInvisibleInput" type="checkbox">
+                                <span>${escapeHtml(loc.showInvisibleElements)}</span>
+                            </label>
+                            <div class="dropdown-separator menu-separator" role="separator"></div>
+                            <div class="menu-section-title">${escapeHtml(loc.filterByType)}</div>
+                            <label class="menu-check" for="showButtonsInput">
+                                <input id="showButtonsInput" type="checkbox">
+                                <span>${escapeHtml(loc.showButtons)}</span>
+                            </label>
+                            <label class="menu-check" for="showFieldsInput">
+                                <input id="showFieldsInput" type="checkbox">
+                                <span>${escapeHtml(loc.showFields)}</span>
+                            </label>
+                            <label class="menu-check" for="showTablesInput">
+                                <input id="showTablesInput" type="checkbox">
+                                <span>${escapeHtml(loc.showTables)}</span>
+                            </label>
+                            <label class="menu-check" for="showDecorationsInput">
+                                <input id="showDecorationsInput" type="checkbox">
+                                <span>${escapeHtml(loc.showDecorations)}</span>
+                            </label>
+                            <label class="menu-check" for="showOtherItemsInput">
+                                <input id="showOtherItemsInput" type="checkbox">
+                                <span>${escapeHtml(loc.showOtherItems)}</span>
                             </label>
                         </div>
                     </div>

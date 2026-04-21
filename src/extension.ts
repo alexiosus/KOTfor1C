@@ -7,10 +7,10 @@ import { promisify } from 'node:util';
 import { DriveCompletionProvider } from './completionProvider';
 import { DriveHoverProvider } from './hoverProvider';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
-import { 
-    openMxlFileFromTextHandler, 
+import {
+    openMxlFileFromTextHandler,
     openMxlFileFromExplorerHandler,
-    revealFileInExplorerHandler, 
+    revealFileInExplorerHandler,
     revealFileInOSHandler,
     openCurrentScenarioFilesFolderHandler,
     openSubscenarioHandler,
@@ -52,20 +52,29 @@ import {
 import { TestInfo } from './types'; // Импортируем TestInfo
 import { SettingsProvider } from './settingsProvider';
 import { ScenarioDiagnosticsProvider } from './scenarioDiagnostics';
+import {
+    collectScenarioBracketParameterRanges,
+    collectScenarioPlainTextRanges,
+    ScenarioSyntaxHighlightProvider
+} from './scenarioSyntaxHighlightProvider';
 import { isScenarioYamlFile } from './yamlValidator';
 import { ScenarioHeaderInlayHintsProvider } from './scenarioHeaderInlayHintsProvider';
 import { FormExplorerPanel } from './formExplorerPanel';
 import { InfobaseManagerPanel } from './infobaseManagerPanel';
+import { handleGenerateConfigurationDiffImpactReport } from './configurationDiffAiReport';
 import { handleGenerateScenarioDescriptionWithAi } from './scenarioAiDescription';
+import { handleReviewChangedTestsWithAi } from './testReviewAiReport';
 import {
     type BuildFormExplorerExtensionCommandOptions,
     handleBuildFormExplorerExtensionCfe,
     handleGenerateFormExplorerExtension,
     type InstallFormExplorerExtensionCommandOptions,
-    handleInstallFormExplorerExtension,
-    type StartFormExplorerInfobaseCommandOptions,
-    handleStartFormExplorerInfobase
+    handleInstallFormExplorerExtension
 } from './formExplorerExtensionGenerator';
+import {
+    type StartFormExplorerBridgeCommandOptions,
+    handleStartFormExplorerBridge
+} from './formExplorerBridgeGenerator';
 import {
     ensureFormExplorerBuilderInfobaseReady,
     initializeFormExplorerRuntimeSidecars,
@@ -86,6 +95,10 @@ import {
     parsePhaseSwitcherMetadata,
     shouldKeepCachedKotMetadataBlock
 } from './phaseSwitcherMetadata';
+import {
+    normalizeScenarioCallParameterValue,
+    parseScenarioParameterDefinitions
+} from './scenarioParameterUtils';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -120,70 +133,164 @@ const internallyTriggeredSaves = new Set<string>();
 const pendingBackgroundScenarioFiles = new Set<string>();
 const kotDescriptionBlockLineRegex = /^Описание:\s*[|>][-+0-9]*\s*$/;
 const FAVORITE_SCENARIO_DROP_MIME = 'application/x-kot-favorite-scenario-uri';
-const SCENARIO_HIGHLIGHT_LANGUAGE_CANDIDATES = ['feature', 'gherkin', 'cucumber'];
 const execFileAsync = promisify(execFile);
 let builderWarmupInFlight: Promise<void> | null = null;
 let startupInfobaseWarmupInFlight: Promise<void> | null = null;
-let preferredScenarioHighlightLanguagePromise: Promise<string | null> | null = null;
+const GHERKIN_STEP_LINE_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\b/i;
+const FEATURE_SCENARIO_HEADER_REGEX = /^(?:Scenario|Сценарий|Scenario Outline|Структура сценария|Background|Предыстория)\s*:/i;
+const FEATURE_SCENARIO_BLOCK_BREAK_REGEX = /^(?:Feature|Функционал|Rule|Правило|Examples|Примеры)\s*:?/i;
+const FEATURE_NON_STEP_LINE_REGEX = /^(?:Feature|Функционал|Rule|Правило|Scenario|Сценарий|Scenario Outline|Структура сценария|Examples|Примеры|Scenarios|Сценарии)\s*:/i;
+const FORM_EXPLORER_SUGGEST_RELEVANT_LINE_REGEX = /(window|окн(?:о|а|у|е|ом)?|form|форм(?:а|ы|у|е|ой)?|table|таблиц|grid|spreadsheet\s+document|табличн(?:ый|ого)?\s+документ|field|поле|attribute|атрибут|реквизит|checkbox|флаг|radio\s*button|переключател|drop-?down|dropdown|выпадающ|html\s+(?:document\s+)?field|form\s+item\s+addition|дополнени(?:е|я)\s+формы|button|кнопк|hyperlink|link|гиперссыл|submenu|подменю|element|элемент(?:\s+формы)?|group|групп)/i;
 
 function escapeRegexLiteral(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function shouldUseFeatureLanguageModeForScenarioYaml(document: vscode.TextDocument): boolean {
-    return vscode.workspace
-        .getConfiguration('kotTestToolkit', document.uri)
-        .get<boolean>('editor.useFeatureLanguageModeForScenarioYaml', true);
+function isFeatureDocument(document: vscode.TextDocument): boolean {
+    return document.fileName.toLowerCase().endsWith('.feature');
 }
 
-async function getPreferredScenarioHighlightLanguageId(): Promise<string | null> {
-    if (!preferredScenarioHighlightLanguagePromise) {
-        preferredScenarioHighlightLanguagePromise = vscode.languages.getLanguages()
-            .then(languages => {
-                const normalized = new Set(languages.map(language => language.toLowerCase()));
-                for (const candidate of SCENARIO_HIGHLIGHT_LANGUAGE_CANDIDATES) {
-                    if (normalized.has(candidate)) {
-                        return candidate;
-                    }
-                }
+function isInScenarioTextBlockForAutoSuggest(document: vscode.TextDocument, position: vscode.Position): boolean {
+    if (isFeatureDocument(document)) {
+        const currentLine = document.lineAt(position.line).text.trim();
+        if (!currentLine || currentLine.startsWith('#') || currentLine.startsWith('@') || currentLine.startsWith('|') || currentLine.startsWith('"""')) {
+            return false;
+        }
+        if (FEATURE_NON_STEP_LINE_REGEX.test(currentLine)) {
+            return false;
+        }
 
-                return null;
-            })
-            .catch(error => {
-                console.warn('[Extension] Failed to resolve Feature/Gherkin language for scenario YAML highlighting.', error);
-                return null;
-            });
+        for (let lineIndex = position.line; lineIndex >= 0; lineIndex -= 1) {
+            const trimmed = document.lineAt(lineIndex).text.trim();
+            if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('@')) {
+                continue;
+            }
+
+            if (FEATURE_SCENARIO_HEADER_REGEX.test(trimmed)) {
+                return true;
+            }
+
+            if (FEATURE_SCENARIO_BLOCK_BREAK_REGEX.test(trimmed)) {
+                return false;
+            }
+        }
+
+        return false;
     }
 
-    return preferredScenarioHighlightLanguagePromise;
+    if (!isScenarioYamlFile(document)) {
+        return false;
+    }
+
+    const textUpToPosition = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
+    const scenarioBlockStartRegex = /ТекстСценария:\s*\|?\s*(\r\n|\r|\n)/gm;
+    let lastScenarioBlockStartOffset = -1;
+    let match: RegExpExecArray | null;
+    while ((match = scenarioBlockStartRegex.exec(textUpToPosition)) !== null) {
+        lastScenarioBlockStartOffset = match.index + match[0].length;
+    }
+
+    if (lastScenarioBlockStartOffset < 0) {
+        return false;
+    }
+
+    const textAfterLastBlockStart = textUpToPosition.substring(lastScenarioBlockStartOffset);
+    for (const line of textAfterLastBlockStart.split(/\r\n|\r|\n/)) {
+        const trimmedLine = line.trim();
+        if (!trimmedLine || trimmedLine.startsWith('#')) {
+            continue;
+        }
+
+        if (!line.startsWith(' ') && !line.startsWith('\t') && trimmedLine.includes(':') && !trimmedLine.startsWith('|')) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
-async function ensureScenarioYamlHighlighting(document: vscode.TextDocument): Promise<void> {
+function getQuotedTextContextForAutoSuggest(
+    lineText: string,
+    character: number
+): { beforeQuote: string; afterQuote: string } | null {
+    const safeCharacter = Math.max(0, Math.min(character, lineText.length));
+    let activeQuote: '"' | "'" | null = null;
+    let activeQuoteStart = -1;
+
+    for (let index = 0; index < safeCharacter; index += 1) {
+        const symbol = lineText[index];
+        if (symbol !== '"' && symbol !== '\'') {
+            continue;
+        }
+
+        if (!activeQuote) {
+            activeQuote = symbol;
+            activeQuoteStart = index;
+            continue;
+        }
+
+        if (symbol === activeQuote) {
+            activeQuote = null;
+            activeQuoteStart = -1;
+        }
+    }
+
+    if (!activeQuote || activeQuoteStart < 0 || safeCharacter < activeQuoteStart + 1) {
+        return null;
+    }
+
+    let endCharacter = lineText.length;
+    for (let index = safeCharacter; index < lineText.length; index += 1) {
+        if (lineText[index] === activeQuote) {
+            endCharacter = index;
+            break;
+        }
+    }
+
+    const afterQuote = endCharacter < lineText.length && lineText[endCharacter] === activeQuote
+        ? lineText.slice(endCharacter + 1)
+        : lineText.slice(endCharacter);
+    return {
+        beforeQuote: lineText.slice(0, activeQuoteStart),
+        afterQuote
+    };
+}
+
+function shouldAutoTriggerFormExplorerQuotedSuggest(
+    document: vscode.TextDocument,
+    position: vscode.Position
+): boolean {
+    if (!isInScenarioTextBlockForAutoSuggest(document, position)) {
+        return false;
+    }
+
+    const lineText = document.lineAt(position.line).text;
+    const quotedContext = getQuotedTextContextForAutoSuggest(lineText, position.character);
+    if (!quotedContext) {
+        return false;
+    }
+
+    const trimmedLine = lineText.trim();
+    if (!GHERKIN_STEP_LINE_REGEX.test(trimmedLine)) {
+        return false;
+    }
+
+    return FORM_EXPLORER_SUGGEST_RELEVANT_LINE_REGEX.test(`${quotedContext.beforeQuote} ${quotedContext.afterQuote}`);
+}
+
+async function ensureScenarioYamlLanguage(document: vscode.TextDocument): Promise<void> {
     if (document.isUntitled || !isScenarioYamlFile(document)) {
         return;
     }
 
-    const useFeatureLanguageMode = shouldUseFeatureLanguageModeForScenarioYaml(document);
-    if (!useFeatureLanguageMode) {
-        if (document.languageId !== 'yaml') {
-            try {
-                await vscode.languages.setTextDocumentLanguage(document, 'yaml');
-            } catch (error) {
-                console.warn(`[Extension] Failed to switch scenario YAML back to yaml mode for ${document.uri.fsPath}:`, error);
-            }
-        }
-        return;
-    }
-
-    const targetLanguageId = await getPreferredScenarioHighlightLanguageId();
-    if (!targetLanguageId || document.languageId === targetLanguageId) {
+    if (document.languageId === 'yaml') {
         return;
     }
 
     try {
-        await vscode.languages.setTextDocumentLanguage(document, targetLanguageId);
+        await vscode.languages.setTextDocumentLanguage(document, 'yaml');
     } catch (error) {
-        console.warn(`[Extension] Failed to switch scenario YAML to ${targetLanguageId} mode for ${document.uri.fsPath}:`, error);
+        console.warn(`[Extension] Failed to switch scenario YAML to yaml mode for ${document.uri.fsPath}:`, error);
     }
 }
 
@@ -506,6 +613,35 @@ function updateScenarioMetadataBlockSessionCache(document: vscode.TextDocument):
 
 const EXTERNAL_STEPS_URL_CONFIG_KEY = 'kotTestToolkit.steps.externalUrl'; // Ключ для отслеживания изменений
 
+async function notifyIfUpdated(context: vscode.ExtensionContext): Promise<void> {
+    const currentVersion = context.extension.packageJSON.version as string | undefined;
+    if (!currentVersion) {
+        return;
+    }
+
+    const stateKey = 'kotTestToolkit.lastActivatedVersion';
+    const lastVersion = context.globalState.get<string>(stateKey);
+    if (lastVersion === currentVersion) {
+        return;
+    }
+
+    if (!lastVersion) {
+        await context.globalState.update(stateKey, currentVersion);
+        return;
+    }
+
+    const t = await getTranslator(context.extensionUri);
+    const restartAction = t('Restart VS Code');
+    const selection = await vscode.window.showInformationMessage(
+        t('KOT for 1C updated to {0}. Restart VS Code to apply the update.', currentVersion),
+        restartAction
+    );
+    await context.globalState.update(stateKey, currentVersion);
+    if (selection === restartAction) {
+        await vscode.commands.executeCommand('workbench.action.reloadWindow');
+    }
+}
+
 /**
  * Функция активации расширения. Вызывается VS Code при первом запуске команды расширения
  * или при наступлении activationEvents, указанных в package.json.
@@ -514,6 +650,7 @@ const EXTERNAL_STEPS_URL_CONFIG_KEY = 'kotTestToolkit.steps.externalUrl'; // К�
 export function activate(context: vscode.ExtensionContext) {
     console.log('Extension "kotTestToolkit" activated.');
     setExtensionUri(context.extensionUri);
+    notifyIfUpdated(context).catch(e => console.error('[Extension] notifyIfUpdated error:', e));
     initializeScenarioScanRoot(context);
     const formExplorerPanel = new FormExplorerPanel(context);
     const infobaseManagerPanel = new InfobaseManagerPanel(context);
@@ -571,12 +708,12 @@ export function activate(context: vscode.ExtensionContext) {
         { pattern: '**/*.yaml', scheme: 'file' },
         { pattern: '**/*.feature', scheme: 'file' }
     ];
-    
+
     context.subscriptions.push(
         vscode.languages.registerCompletionItemProvider(
             completionAndHoverSelector,
             completionProvider,
-            ' ', '.', ',', ':', ';', '(', ')', '"', "'", '$', '!',
+            ' ', '.', ',', ':', ';', '(', ')', '"', "'", '$', '!', '[', '@',
             // Добавляем буквы для триггера автодополнения
             'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
             'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
@@ -646,7 +783,7 @@ export function activate(context: vscode.ExtensionContext) {
                 completionProvider.updateScenarioCompletions(testCache);
                 console.log('[Extension] Scenario completions updated based on PhaseSwitcher cache.');
             } else {
-                completionProvider.updateScenarioCompletions(new Map()); 
+                completionProvider.updateScenarioCompletions(new Map());
                 console.log('[Extension] Scenario completions cleared due to null PhaseSwitcher cache.');
             }
         })
@@ -667,31 +804,58 @@ export function activate(context: vscode.ExtensionContext) {
             new ScenarioHeaderInlayHintsProvider()
         )
     );
+    const scenarioSyntaxHighlightProvider = new ScenarioSyntaxHighlightProvider();
+    context.subscriptions.push(scenarioSyntaxHighlightProvider);
+    context.subscriptions.push(
+        vscode.languages.registerDocumentSemanticTokensProvider(
+            { pattern: '**/*.yaml', scheme: 'file' },
+            scenarioSyntaxHighlightProvider,
+            ScenarioSyntaxHighlightProvider.legend
+        )
+    );
 
     const kotDescriptionTextDecorationType = vscode.window.createTextEditorDecorationType({
         color: new vscode.ThemeColor('editorInfo.foreground')
     });
     context.subscriptions.push(kotDescriptionTextDecorationType);
+    const scenarioPlainTextDecorationType = vscode.window.createTextEditorDecorationType({
+        color: new vscode.ThemeColor('editor.foreground')
+    });
+    context.subscriptions.push(scenarioPlainTextDecorationType);
+    const scenarioBracketParameterDecorationType = vscode.window.createTextEditorDecorationType({
+        color: '#d19a66',
+        dark: {
+            color: '#e5c07b'
+        },
+        light: {
+            color: '#9c6500'
+        }
+    });
+    context.subscriptions.push(scenarioBracketParameterDecorationType);
 
     // Seed per-file session caches for currently open scenario documents.
     vscode.workspace.textDocuments.forEach(document => {
         if (!document.isUntitled && isScenarioYamlFile(document)) {
             setScenarioSnapshotAsSaved(document);
             updateScenarioMetadataBlockSessionCache(document);
-            void ensureScenarioYamlHighlighting(document);
+            void ensureScenarioYamlLanguage(document);
         }
     });
     updateKotDescriptionDecorationsForVisibleEditors(kotDescriptionTextDecorationType);
+    updateScenarioPlainTextDecorationsForVisibleEditors(scenarioPlainTextDecorationType);
+    updateScenarioBracketParameterDecorationsForVisibleEditors(scenarioBracketParameterDecorationType);
 
     context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(document => {
         if (document.isUntitled || !isScenarioYamlFile(document)) {
             return;
         }
 
-        void ensureScenarioYamlHighlighting(document);
+        void ensureScenarioYamlLanguage(document);
         setScenarioSnapshotAsSaved(document);
         updateScenarioMetadataBlockSessionCache(document);
         updateKotDescriptionDecorationsForDocument(document, kotDescriptionTextDecorationType);
+        updateScenarioPlainTextDecorationsForDocument(document, scenarioPlainTextDecorationType);
+        updateScenarioBracketParameterDecorationsForDocument(document, scenarioBracketParameterDecorationType);
         if (vscode.window.activeTextEditor?.document.uri.toString() === document.uri.toString()) {
             void updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
@@ -704,6 +868,8 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         updateKotDescriptionDecorationsForDocument(document, kotDescriptionTextDecorationType);
+        updateScenarioPlainTextDecorationsForDocument(document, scenarioPlainTextDecorationType);
+        updateScenarioBracketParameterDecorationsForDocument(document, scenarioBracketParameterDecorationType);
         const fileKey = document.uri.toString();
         const currentSnapshot = buildScenarioSaveSnapshot(document);
         const lastSavedSnapshot = lastSavedScenarioSnapshots.get(fileKey);
@@ -715,16 +881,119 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.window.onDidChangeVisibleTextEditors(() => {
         updateKotDescriptionDecorationsForVisibleEditors(kotDescriptionTextDecorationType);
+        updateScenarioPlainTextDecorationsForVisibleEditors(scenarioPlainTextDecorationType);
+        updateScenarioBracketParameterDecorationsForVisibleEditors(scenarioBracketParameterDecorationType);
+    }));
+
+    let lastAutoQuotedSuggestKey: string | null = null;
+    context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(event => {
+        const editor = event.textEditor;
+        if (vscode.window.activeTextEditor !== editor) {
+            return;
+        }
+
+        if (event.selections.length !== 1 || !event.selections[0].isEmpty) {
+            lastAutoQuotedSuggestKey = null;
+            return;
+        }
+
+        const position = event.selections[0].active;
+        if (!shouldAutoTriggerFormExplorerQuotedSuggest(editor.document, position)) {
+            lastAutoQuotedSuggestKey = null;
+            return;
+        }
+
+        const triggerKey = [
+            editor.document.uri.toString(),
+            editor.document.version,
+            position.line,
+            position.character
+        ].join(':');
+        if (lastAutoQuotedSuggestKey === triggerKey) {
+            return;
+        }
+        lastAutoQuotedSuggestKey = triggerKey;
+
+        setTimeout(() => {
+            const activeEditor = vscode.window.activeTextEditor;
+            if (!activeEditor || activeEditor.document.uri.toString() !== editor.document.uri.toString()) {
+                return;
+            }
+
+            const activePosition = activeEditor.selection.active;
+            const activeKey = [
+                activeEditor.document.uri.toString(),
+                activeEditor.document.version,
+                activePosition.line,
+                activePosition.character
+            ].join(':');
+            if (activeKey !== triggerKey) {
+                return;
+            }
+
+            void vscode.commands.executeCommand('editor.action.triggerSuggest');
+        }, 0);
     }));
 
 
     // --- Регистрация Команд ---
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.completion.advanceFormExplorerArgument',
+        async () => {
+            const activeEditor = vscode.window.activeTextEditor;
+            if (!activeEditor) {
+                return;
+            }
+
+            const beforeSelectionKey = activeEditor.selections
+                .map(selection => [
+                    selection.start.line,
+                    selection.start.character,
+                    selection.end.line,
+                    selection.end.character
+                ].join(':'))
+                .join('|');
+
+            try {
+                await vscode.commands.executeCommand('jumpToNextSnippetPlaceholder');
+            } catch {
+                return;
+            }
+
+            const updatedEditor = vscode.window.activeTextEditor;
+            if (!updatedEditor || updatedEditor.document.uri.toString() !== activeEditor.document.uri.toString()) {
+                return;
+            }
+
+            const afterSelectionKey = updatedEditor.selections
+                .map(selection => [
+                    selection.start.line,
+                    selection.start.character,
+                    selection.end.line,
+                    selection.end.character
+                ].join(':'))
+                .join('|');
+            if (afterSelectionKey === beforeSelectionKey) {
+                return;
+            }
+
+            await vscode.commands.executeCommand('editor.action.triggerSuggest');
+        }
+    ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         'kotTestToolkit.openSubscenario', (editor, edit) => openSubscenarioHandler(editor, edit, phaseSwitcherProvider)
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         'kotTestToolkit.generateScenarioDescriptionWithAi',
         editor => void handleGenerateScenarioDescriptionWithAi(editor)
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.generateConfigurationDiffImpactReportWithAi',
+        () => void handleGenerateConfigurationDiffImpactReport()
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.reviewChangedTestsWithAi',
+        () => void handleReviewChangedTestsWithAi()
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         'kotTestToolkit.openNestedScenarioFromFeature',
@@ -737,6 +1006,72 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
             await openScenarioByNameHandler(scenarioName, phaseSwitcherProvider);
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.editScenarioParameterDefaultValue',
+        async (documentUriValue: unknown, parameterNameValue: unknown) => {
+            if (typeof documentUriValue !== 'string' || typeof parameterNameValue !== 'string') {
+                return;
+            }
+
+            const parameterName = parameterNameValue.trim();
+            if (!parameterName) {
+                return;
+            }
+
+            const t = await getTranslator(context.extensionUri);
+            let document: vscode.TextDocument;
+            try {
+                document = await vscode.workspace.openTextDocument(vscode.Uri.parse(documentUriValue));
+            } catch {
+                return;
+            }
+
+            if (!isScenarioYamlFile(document)) {
+                return;
+            }
+
+            const definition = parseScenarioParameterDefinitions(document.getText()).get(parameterName);
+            if (!definition) {
+                vscode.window.showWarningMessage(t('Scenario parameter "{0}" was not found in the document.', parameterName));
+                return;
+            }
+
+            if (!definition.valueRange) {
+                vscode.window.showWarningMessage(t('Default value is not defined in the parameter block.'));
+                return;
+            }
+
+            const nextValue = await vscode.window.showInputBox({
+                title: t('Edit default value'),
+                prompt: t('Enter default value for scenario parameter "{0}". You can use plain text, quoted text or [AnotherParameter].', parameterName),
+                value: definition.rawDefaultValue ?? '',
+                ignoreFocusOut: true
+            });
+            if (nextValue === undefined) {
+                return;
+            }
+
+            const normalizedValue = nextValue.trim().length > 0
+                ? normalizeScenarioCallParameterValue(nextValue, parameterName)
+                : '""';
+            const edit = new vscode.WorkspaceEdit();
+            edit.replace(
+                document.uri,
+                new vscode.Range(
+                    document.positionAt(definition.valueRange.startOffset),
+                    document.positionAt(definition.valueRange.endOffset)
+                ),
+                normalizedValue
+            );
+
+            const applied = await vscode.workspace.applyEdit(edit);
+            if (!applied) {
+                return;
+            }
+
+            await vscode.window.showTextDocument(document, { preview: false });
         }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
@@ -860,6 +1195,17 @@ export function activate(context: vscode.ExtensionContext) {
     ));
 
 
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.enableDemoMode', () => {
+            phaseSwitcherProvider.sendDemoModeToWebview();
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.setDemoStateForScenario', () => {
+            void phaseSwitcherProvider.showDemoStatePickerForScenario();
+        }
+    ));
+
     // Команда для обновления Test Manager (вызывается из scenarioCreator)
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.refreshPhaseSwitcherFromCreate', async () => {
@@ -887,7 +1233,7 @@ export function activate(context: vscode.ExtensionContext) {
                 progress.report({ increment: 50, message: t('Gherkin autocompletion update completed.') });
                 await hoverProvider.refreshSteps();
                 progress.report({ increment: 100, message: t('Gherkin hints update completed.') });
-                
+
                 // Для обновления автодополнения сценариев, мы полагаемся на событие от PhaseSwitcherProvider,
                 // которое должно сработать, если пользователь нажмет "Обновить" в панели Test Manager.
                 // Если нужно принудительное обновление сценариев здесь, то нужно будет вызвать
@@ -907,24 +1253,28 @@ export function activate(context: vscode.ExtensionContext) {
             phaseSwitcherProvider.handleActiveEditorChanged(editor);
             void updateActiveScenarioContext(editor);
             if (editor) {
-                void ensureScenarioYamlHighlighting(editor.document);
+                void ensureScenarioYamlLanguage(editor.document);
                 updateKotDescriptionDecorationForEditor(editor, kotDescriptionTextDecorationType);
+                updateScenarioPlainTextDecorationForEditor(editor, scenarioPlainTextDecorationType);
+                updateScenarioBracketParameterDecorationForEditor(editor, scenarioBracketParameterDecorationType);
             }
         })
     );
     if (vscode.window.activeTextEditor) {
-        void ensureScenarioYamlHighlighting(vscode.window.activeTextEditor.document);
+        void ensureScenarioYamlLanguage(vscode.window.activeTextEditor.document);
         foldSectionsInEditor(vscode.window.activeTextEditor);
         phaseSwitcherProvider.handleActiveEditorChanged(vscode.window.activeTextEditor);
         void updateActiveScenarioContext(vscode.window.activeTextEditor);
         updateKotDescriptionDecorationForEditor(vscode.window.activeTextEditor, kotDescriptionTextDecorationType);
+        updateScenarioPlainTextDecorationForEditor(vscode.window.activeTextEditor, scenarioPlainTextDecorationType);
+        updateScenarioBracketParameterDecorationForEditor(vscode.window.activeTextEditor, scenarioBracketParameterDecorationType);
     } else {
         phaseSwitcherProvider.handleActiveEditorChanged(undefined);
         void updateActiveScenarioContext(undefined);
     }
 
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.refreshGherkinSteps', 
+        'kotTestToolkit.refreshGherkinSteps',
         refreshGherkinStepsCommand
     ));
 
@@ -932,7 +1282,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async (event) => {
         if (event.affectsConfiguration(EXTERNAL_STEPS_URL_CONFIG_KEY)) {
             console.log(`[Extension] Configuration for '${EXTERNAL_STEPS_URL_CONFIG_KEY}' changed. Refreshing Gherkin steps.`);
-            await refreshGherkinStepsCommand(); 
+            await refreshGherkinStepsCommand();
         }
 
         if (event.affectsConfiguration('kotTestToolkit.localization.languageOverride')) {
@@ -947,8 +1297,9 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         if (event.affectsConfiguration('kotTestToolkit.editor.useFeatureLanguageModeForScenarioYaml')) {
-            const openScenarioDocuments = vscode.workspace.textDocuments.filter(document => !document.isUntitled && isScenarioYamlFile(document));
-            await Promise.all(openScenarioDocuments.map(document => ensureScenarioYamlHighlighting(document)));
+            scenarioSyntaxHighlightProvider.refresh();
+            updateScenarioPlainTextDecorationsForVisibleEditors(scenarioPlainTextDecorationType);
+            updateScenarioBracketParameterDecorationsForVisibleEditors(scenarioBracketParameterDecorationType);
         }
 
         if (
@@ -973,12 +1324,12 @@ export function activate(context: vscode.ExtensionContext) {
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.createFirstLaunchZip', 
+        'kotTestToolkit.createFirstLaunchZip',
         () => handleCreateFirstLaunchZip(context)
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.openYamlParametersManager', 
+        'kotTestToolkit.openYamlParametersManager',
         () => handleOpenYamlParametersManager(context)
     ));
 
@@ -998,7 +1349,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openFormExplorerForInfobase',
-        async (options?: string | StartFormExplorerInfobaseCommandOptions) => {
+        async (options?: string | StartFormExplorerBridgeCommandOptions) => {
             await formExplorerPanel.openAndStart(options);
         }
     ));
@@ -1026,8 +1377,15 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.startFormExplorerInfobase',
-        async (options?: string | StartFormExplorerInfobaseCommandOptions) => {
-            return await handleStartFormExplorerInfobase(context, options);
+        async (options?: string | StartFormExplorerBridgeCommandOptions) => {
+            return await handleStartFormExplorerBridge(context, options);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.startFormExplorerBridge',
+        async (options?: string | StartFormExplorerBridgeCommandOptions) => {
+            return await handleStartFormExplorerBridge(context, options);
         }
     ));
 
@@ -1856,14 +2214,14 @@ export function activate(context: vscode.ExtensionContext) {
 
                 // Проверяем, какие операции нужно выполнить
                 const enabledOperations: string[] = [];
-                
+
                 const tabsEnabled = config.get<boolean>('editor.autoReplaceTabsWithSpacesOnSave', true);
                 const alignTablesEnabled = config.get<boolean>('editor.autoAlignGherkinTablesOnSave', true);
                 const alignNestedCallParamsEnabled = config.get<boolean>('editor.autoAlignNestedScenarioParametersOnSave', true);
                 const nestedEnabled = config.get<boolean>('editor.autoFillNestedScenariosOnSave', true);
                 const paramsEnabled = config.get<boolean>('editor.autoFillScenarioParametersOnSave', true);
                 const showRefillMessages = config.get<boolean>('editor.showRefillMessages', true);
-                
+
                 if (tabsEnabled && document.getText().includes('\t')) {
                     enabledOperations.push('tabs');
                 }
@@ -1898,7 +2256,7 @@ export function activate(context: vscode.ExtensionContext) {
                 // Если есть операции для выполнения, показываем единый прогресс
                 if (enabledOperations.length > 0) {
                     const t = await getTranslator(context.extensionUri);
-                    
+
                     await vscode.window.withProgress({
                         location: vscode.ProgressLocation.Notification,
                         title: t('Processing file after save...'),
@@ -1907,15 +2265,15 @@ export function activate(context: vscode.ExtensionContext) {
                         const totalSteps = enabledOperations.length;
                         const completedOperations: string[] = [];
                         let testCache = phaseSwitcherProvider.getTestCache();
-                        
+
                         try {
                             // 1. Замена табов на пробелы
                             if (enabledOperations.includes('tabs')) {
-                                progress.report({ 
-                                    increment: (100 / totalSteps), 
-                                    message: t('Replacing tabs with spaces...') 
+                                progress.report({
+                                    increment: (100 / totalSteps),
+                                    message: t('Replacing tabs with spaces...')
                                 });
-                                
+
                                 const fullText = document.getText();
                                 const newText = fullText.replace(/^\t+/gm, (match) => '    '.repeat(match.length));
                                 if (newText !== fullText) {
@@ -1958,9 +2316,9 @@ export function activate(context: vscode.ExtensionContext) {
 
                             // 4. Заполнение NestedScenarios
                             if (enabledOperations.includes('nested')) {
-                                progress.report({ 
-                                    increment: (100 / totalSteps), 
-                                    message: t('Filling nested scenarios...') 
+                                progress.report({
+                                    increment: (100 / totalSteps),
+                                    message: t('Filling nested scenarios...')
                                 });
 
                                 if (shouldUpsertScenarioCache) {
@@ -1979,11 +2337,11 @@ export function activate(context: vscode.ExtensionContext) {
 
                             // 5. Заполнение ScenarioParameters
                             if (enabledOperations.includes('params')) {
-                                progress.report({ 
-                                    increment: (100 / totalSteps), 
-                                    message: t('Filling scenario parameters...') 
+                                progress.report({
+                                    increment: (100 / totalSteps),
+                                    message: t('Filling scenario parameters...')
                                 });
-                                
+
                                 const result = await clearAndFillScenarioParameters(document, true);
                                 if (result) {
                                     completedOperations.push('params');
@@ -2000,7 +2358,7 @@ export function activate(context: vscode.ExtensionContext) {
                                 if (showRefillMessages) {
                                     vscode.window.showInformationMessage(message);
                                 }
-                                
+
                                 // Save the file after processing to prevent user from seeing unsaved changes
                                 // Extend debounce protection to cover the auto-save
                                 setTimeout(async () => {
@@ -2068,7 +2426,7 @@ export function activate(context: vscode.ExtensionContext) {
  */
 async function buildCompletionMessage(completedOperations: string[], t: (key: string, ...args: string[]) => string, showRefillMessages: boolean): Promise<string> {
     const messages: string[] = [];
-    
+
     if (completedOperations.includes('tabs')) {
         messages.push(t('tabs replaced'));
     }
@@ -2084,7 +2442,7 @@ async function buildCompletionMessage(completedOperations: string[], t: (key: st
     if (completedOperations.includes('params')) {
         messages.push(t('scenario parameters filled'));
     }
-    
+
     if (messages.length === 1) {
         return t('Save completed: {0}.', messages[0]);
     } else if (messages.length === 2) {
@@ -2093,7 +2451,7 @@ async function buildCompletionMessage(completedOperations: string[], t: (key: st
         const lastMessage = messages.pop()!;
         return t('Save completed: {0}, and {1}.', messages.join(', '), lastMessage);
     }
-    
+
     return t('Save completed.');
 }
 
@@ -2222,6 +2580,74 @@ function updateKotDescriptionDecorationsForVisibleEditors(
     }
 }
 
+function updateScenarioPlainTextDecorationForEditor(
+    editor: vscode.TextEditor,
+    decorationType: vscode.TextEditorDecorationType
+): void {
+    const document = editor.document;
+    if (!isScenarioYamlFile(document)) {
+        editor.setDecorations(decorationType, []);
+        return;
+    }
+
+    const ranges = collectScenarioPlainTextRanges(document);
+    editor.setDecorations(decorationType, ranges);
+}
+
+function updateScenarioPlainTextDecorationsForDocument(
+    document: vscode.TextDocument,
+    decorationType: vscode.TextEditorDecorationType
+): void {
+    const uriString = document.uri.toString();
+    for (const editor of vscode.window.visibleTextEditors) {
+        if (editor.document.uri.toString() === uriString) {
+            updateScenarioPlainTextDecorationForEditor(editor, decorationType);
+        }
+    }
+}
+
+function updateScenarioPlainTextDecorationsForVisibleEditors(
+    decorationType: vscode.TextEditorDecorationType
+): void {
+    for (const editor of vscode.window.visibleTextEditors) {
+        updateScenarioPlainTextDecorationForEditor(editor, decorationType);
+    }
+}
+
+function updateScenarioBracketParameterDecorationForEditor(
+    editor: vscode.TextEditor,
+    decorationType: vscode.TextEditorDecorationType
+): void {
+    const document = editor.document;
+    if (!isScenarioYamlFile(document)) {
+        editor.setDecorations(decorationType, []);
+        return;
+    }
+
+    const ranges = collectScenarioBracketParameterRanges(document);
+    editor.setDecorations(decorationType, ranges);
+}
+
+function updateScenarioBracketParameterDecorationsForDocument(
+    document: vscode.TextDocument,
+    decorationType: vscode.TextEditorDecorationType
+): void {
+    const uriString = document.uri.toString();
+    for (const editor of vscode.window.visibleTextEditors) {
+        if (editor.document.uri.toString() === uriString) {
+            updateScenarioBracketParameterDecorationForEditor(editor, decorationType);
+        }
+    }
+}
+
+function updateScenarioBracketParameterDecorationsForVisibleEditors(
+    decorationType: vscode.TextEditorDecorationType
+): void {
+    for (const editor of vscode.window.visibleTextEditors) {
+        updateScenarioBracketParameterDecorationForEditor(editor, decorationType);
+    }
+}
+
 async function foldSectionsInEditor(editor: vscode.TextEditor | undefined) {
     if (!editor) {
         return;
@@ -2289,5 +2715,5 @@ async function foldSectionsInEditor(editor: vscode.TextEditor | undefined) {
  * Используется для освобождения ресурсов.
  */
 export function deactivate() {
-     console.log('kotTestToolkit extension deactivated.');
+    console.log('kotTestToolkit extension deactivated.');
 }

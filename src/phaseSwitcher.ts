@@ -24,7 +24,8 @@ import {
     isServerInfobaseConnection,
     isWindowsAbsolutePath,
     normalizeInfobaseConnectionIdentity,
-    normalizeInfobaseReference
+    normalizeInfobaseReference,
+    parseInfobaseConnectionString
 } from './oneCInfobaseConnection';
 import {
     canUseEtalonBaseDtFileAsDefaultUri,
@@ -42,6 +43,16 @@ import {
 import { resolveOneCDesignerExePath, resolveOneCPlatformForLaunch } from './oneCPlatform';
 import { getScenarioScanRootPath } from './scenarioScanRoot';
 import { parseYamlSectionFieldValues } from './yamlHeaderFields';
+import {
+    getConfigurationDiffImpactReportState,
+    handleGenerateConfigurationDiffImpactReport,
+    openSavedConfigurationDiffImpactReport
+} from './configurationDiffAiReport';
+import {
+    handleReviewChangedTestsWithAi,
+    getTestReviewReportState,
+    openSavedTestReviewReport
+} from './testReviewAiReport';
 
 // --- Вспомогательная функция для Nonce ---
 function getNonce(): string {
@@ -433,6 +444,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _cacheDirty: boolean = false;
     private _cacheRefreshPromise: Promise<void> | null = null;
     private _cacheRefreshTimer: NodeJS.Timeout | null = null;
+    private _aiReportStateRefreshTimer: NodeJS.Timeout | null = null;
     private _isBuildInProgress: boolean = false;
     private _isScenarioRepairInProgress: boolean = false;
     private _isScenarioRepairCancelling: boolean = false;
@@ -562,6 +574,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._cacheDirty = true;
         }
 
+        // After a scan-root change the active editor may now qualify (or stop qualifying)
+        // for highlighting — re-evaluate without waiting for a new editor-change event.
+        this.handleActiveEditorChanged(vscode.window.activeTextEditor);
+
         if (this._view?.visible) {
             await this._sendInitialState(this._view.webview);
         }
@@ -572,18 +588,29 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (!workspaceFolders || workspaceFolders.length === 0) {
             return null;
         }
-        return path.resolve(resolveScanDirFsPath(workspaceFolders[0].uri));
+        return this.normalizeFsPathForComparison(resolveScanDirFsPath(workspaceFolders[0].uri));
+    }
+
+    private normalizeFsPathForComparison(targetPath: string): string {
+        const resolvedPath = path.resolve(targetPath);
+        try {
+            const realpathNative = fs.realpathSync.native;
+            const canonicalPath = typeof realpathNative === 'function'
+                ? realpathNative(resolvedPath)
+                : fs.realpathSync(resolvedPath);
+            return process.platform === 'win32'
+                ? canonicalPath.toLowerCase()
+                : canonicalPath;
+        } catch {
+            return process.platform === 'win32'
+                ? resolvedPath.toLowerCase()
+                : resolvedPath;
+        }
     }
 
     private isPathInside(parentPath: string, candidatePath: string): boolean {
-        const normalizedParent = path.resolve(parentPath);
-        const normalizedCandidate = path.resolve(candidatePath);
-        const parentForCompare = process.platform === 'win32'
-            ? normalizedParent.toLowerCase()
-            : normalizedParent;
-        const candidateForCompare = process.platform === 'win32'
-            ? normalizedCandidate.toLowerCase()
-            : normalizedCandidate;
+        const parentForCompare = this.normalizeFsPathForComparison(parentPath);
+        const candidateForCompare = this.normalizeFsPathForComparison(candidatePath);
 
         if (parentForCompare === candidateForCompare) {
             return true;
@@ -593,12 +620,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private areUrisEqual(left: vscode.Uri, right: vscode.Uri): boolean {
         if (left.scheme === 'file' && right.scheme === 'file') {
-            const leftPath = path.resolve(left.fsPath);
-            const rightPath = path.resolve(right.fsPath);
-            if (process.platform === 'win32') {
-                return leftPath.toLowerCase() === rightPath.toLowerCase();
-            }
-            return leftPath === rightPath;
+            return this.normalizeFsPathForComparison(left.fsPath) === this.normalizeFsPathForComparison(right.fsPath);
         }
         return left.toString() === right.toString();
     }
@@ -1262,7 +1284,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     public handleActiveEditorChanged(editor: vscode.TextEditor | undefined): void {
         const candidateUri = editor?.document?.uri;
-        const shouldHighlight = !!(candidateUri && this.shouldTrackUriForCache(candidateUri));
+        const shouldHighlight = !!(candidateUri && this.shouldUseUriForAffectedScenarioHighlight(candidateUri));
         const nextUri = shouldHighlight ? candidateUri! : null;
 
         if (this.areOptionalUrisEqual(this._activeScenarioUriForHighlight, nextUri)) {
@@ -1271,6 +1293,19 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         this._activeScenarioUriForHighlight = nextUri;
         this.sendAffectedMainScenariosToWebview();
+    }
+
+    private shouldUseUriForAffectedScenarioHighlight(uri: vscode.Uri): boolean {
+        if (uri.scheme !== 'file') {
+            return false;
+        }
+
+        const normalizedScanDirPath = this.getScanDirAbsolutePath();
+        if (!normalizedScanDirPath) {
+            return false;
+        }
+
+        return this.isPathInside(normalizedScanDirPath, path.resolve(uri.fsPath));
     }
 
     private shouldTrackUriForCache(uri: vscode.Uri): boolean {
@@ -1401,10 +1436,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return path.dirname(fileUri.fsPath);
         }
 
-        const scanDirPath = resolveScanDirFsPath(workspaceFolders[0].uri);
-        const parentDirPath = path.dirname(fileUri.fsPath);
+        const scanDirPath = this.normalizeFsPathForComparison(resolveScanDirFsPath(workspaceFolders[0].uri));
+        const parentDirPath = this.normalizeFsPathForComparison(path.dirname(fileUri.fsPath));
 
-        if (parentDirPath.startsWith(scanDirPath)) {
+        if (this.isPathInside(scanDirPath, parentDirPath)) {
             return path.relative(scanDirPath, parentDirPath).replace(/\\/g, '/');
         }
 
@@ -1845,7 +1880,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
 
                 if (changed) {
-                    this._activeScenarioUriForHighlight = remappedUri && this.shouldTrackUriForCache(remappedUri)
+                    this._activeScenarioUriForHighlight = remappedUri && this.shouldUseUriForAffectedScenarioHighlight(remappedUri)
                         ? remappedUri
                         : null;
                     this.sendAffectedMainScenariosToWebview(true);
@@ -1872,11 +1907,33 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this.handleActiveEditorChanged(vscode.window.activeTextEditor);
         }));
 
+        const gitHeadWatcher = vscode.workspace.createFileSystemWatcher('**/.git/HEAD');
+        const onGitBranchChanged = (): void => {
+            this.markCacheDirtyAndScheduleRefresh('gitBranchChanged');
+            if (this._aiReportStateRefreshTimer) {
+                clearTimeout(this._aiReportStateRefreshTimer);
+            }
+            this._aiReportStateRefreshTimer = setTimeout(() => {
+                this._aiReportStateRefreshTimer = null;
+                void Promise.all([
+                    this.sendConfigurationDiffReportStateToWebview(),
+                    this.sendTestReviewReportStateToWebview()
+                ]);
+            }, 300);
+        };
+        gitHeadWatcher.onDidChange(onGitBranchChanged);
+        gitHeadWatcher.onDidCreate(onGitBranchChanged);
+        context.subscriptions.push(gitHeadWatcher);
+
         context.subscriptions.push({
             dispose: () => {
                 if (this._cacheRefreshTimer) {
                     clearTimeout(this._cacheRefreshTimer);
                     this._cacheRefreshTimer = null;
+                }
+                if (this._aiReportStateRefreshTimer) {
+                    clearTimeout(this._aiReportStateRefreshTimer);
+                    this._aiReportStateRefreshTimer = null;
                 }
                 this.stopVanessaRuntimeLogMonitor();
                 this.stopAllFeatureStepTrackers();
@@ -6691,6 +6748,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 runVanessaTopTitle: this.t('Open Vanessa'),
                 openFormExplorerTopTitle: this.t('Open KOT Form Explorer'),
                 openInfobaseManagerTopTitle: this.t('Open Infobase Manager'),
+                thinkingMenuTitle: this.t('Thinking menu'),
+                generateConfigurationDiffReportTitle: this.t('Generate AI diff report'),
+                generateConfigurationDiffReportHint: this.t('Generate an AI report on what changed in behavior relative to the main branch.'),
+                openConfigurationDiffReportTitle: this.t('Open AI diff report'),
+                openConfigurationDiffReportHint: this.t('Open the saved AI report for the current branch.'),
+                configurationDiffReportMissing: this.t('Generate AI diff report first.'),
+                reviewChangedTestsWithAiTitle: this.t('Review changed tests with AI'),
+                reviewChangedTestsWithAiHint: this.t('Review changed tests against the test diff, configuration diff, and optional UserStory.'),
+                openTestReviewReportTitle: this.t('Open AI test review'),
+                openTestReviewReportHint: this.t('Open the saved AI test review for the current branch.'),
+                testReviewReportMissing: this.t('Run AI test review first.'),
                 openPlatformManagerTitle: this.t('Manage platforms'),
                 runScenarioFeatureTitle: this.t('Run scenario in Vanessa Automation by feature: {0}', '{0}'),
                 runScenarioJsonTitle: this.t('Run scenario in Vanessa Automation by json: {0}', '{0}'),
@@ -6921,6 +6989,26 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     console.log("[PhaseSwitcherProvider] Opening KOT Infobase Manager...");
                     vscode.commands.executeCommand('kotTestToolkit.openInfobaseManager');
                     return;
+                case 'openConfigurationDiffReport':
+                    await openSavedConfigurationDiffImpactReport();
+                    await this.sendConfigurationDiffReportStateToWebview();
+                    return;
+                case 'refreshConfigurationDiffReportState':
+                    await this.sendConfigurationDiffReportStateToWebview();
+                    return;
+                case 'generateConfigurationDiffReport':
+                    await handleGenerateConfigurationDiffImpactReport();
+                    await this.sendConfigurationDiffReportStateToWebview();
+                    return;
+                case 'reviewChangedTestsWithAi':
+                    await handleReviewChangedTestsWithAi();
+                    await this.sendConfigurationDiffReportStateToWebview();
+                    await this.sendTestReviewReportStateToWebview();
+                    return;
+                case 'openTestReviewReport':
+                    await openSavedTestReviewReport();
+                    await this.sendTestReviewReportStateToWebview();
+                    return;
                 case 'openPlatformManager':
                     console.log("[PhaseSwitcherProvider] Opening 1C platform manager...");
                     vscode.commands.executeCommand('kotTestToolkit.managePlatforms');
@@ -7064,12 +7152,29 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         console.log(`[PhaseSwitcherProvider:_sendInitialState] State check complete. Status: ${status}`);
         this.pruneScenarioBuildArtifactsByCache();
         const runArtifacts = this.buildRunArtifactsState();
+
+        // Re-evaluate active editor against the current (possibly just-updated) scan root.
+        // _activeScenarioUriForHighlight may be stale if the scan root changed after the
+        // last onDidChangeActiveTextEditor event (e.g. after saving yaml params with an
+        // external absolute ScenarioFolder path).
+        const currentActiveUri = vscode.window.activeTextEditor?.document?.uri;
+        if (currentActiveUri?.scheme === 'file') {
+            const qualifies = this.shouldUseUriForAffectedScenarioHighlight(currentActiveUri);
+            if (qualifies) {
+                this._activeScenarioUriForHighlight = currentActiveUri;
+            } else {
+                this._activeScenarioUriForHighlight = null;
+            }
+        }
+
         const affectedMainScenarioNames = this.getAffectedMainScenarioNamesForActiveEditor();
         const favoriteEntries = this.sortFavoriteEntries(this.getFavoriteEntries());
         const favoriteSortMode = this.getFavoriteSortMode();
         const { YamlParametersManager } = await import('./yamlParametersManager.js');
         const yamlParametersManager = YamlParametersManager.getInstance(this._context);
         const yamlParametersProfiles = await yamlParametersManager.getProfilesSummary();
+        const configurationDiffReport = await this.buildConfigurationDiffReportWebviewState();
+        const testReviewReport = await this.buildTestReviewReportWebviewState();
         this._lastHighlightedMainScenarioNames = new Set(affectedMainScenarioNames);
 
         webview.postMessage({
@@ -7081,6 +7186,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             favorites: favoriteEntries,
             favoriteSortMode,
             yamlParametersProfiles,
+            configurationDiffReport,
+            testReviewReport,
             settings: {
                 assemblerEnabled: assemblerEnabled,
                 switcherEnabled: switcherEnabled,
@@ -8322,14 +8429,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return Array.from(names);
         }
 
-        const scanDir = this.getScanDirAbsolutePath();
-        if (!scanDir) {
-            return Array.from(names);
-        }
-
         const normalizedUriPath = path.resolve(uri.fsPath);
         for (const [scenarioName, info] of this._testCache.entries()) {
-            const scenarioDir = path.resolve(path.join(scanDir, info.relativePath || ''));
+            if (info.yamlFileUri.scheme !== 'file') {
+                continue;
+            }
+            const scenarioDir = path.dirname(info.yamlFileUri.fsPath);
             if (this.isPathInside(scenarioDir, normalizedUriPath)) {
                 names.add(scenarioName);
             }
@@ -8711,6 +8816,50 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         };
     }
 
+    public sendDemoModeToWebview(): void {
+        if (!this._view?.webview) {
+            return;
+        }
+        this._view.webview.postMessage({ command: 'enableDemoMode' });
+    }
+
+    public async showDemoStatePickerForScenario(): Promise<void> {
+        if (!this._view?.webview) {
+            return;
+        }
+        const names = this._testCache ? [...this._testCache.keys()].sort() : [];
+        if (names.length === 0) {
+            vscode.window.showWarningMessage('No scenarios loaded in Test Manager');
+            return;
+        }
+        const scenarioPick = await vscode.window.showQuickPick(names, {
+            placeHolder: 'Select scenario'
+        });
+        if (!scenarioPick) {
+            return;
+        }
+        const stateItems: vscode.QuickPickItem[] = [
+            { label: 'passed',           description: 'Green run button' },
+            { label: 'passed-stale',     description: 'Yellow run button (stale build)' },
+            { label: 'failed',           description: 'Error run button' },
+            { label: 'running-internal', description: 'Spinner only, no run button' },
+            { label: 'running-tracked',  description: 'Spinner + run button (external log)' },
+            { label: 'idle-ready',       description: 'Run button, no status (built, not run)' },
+            { label: 'idle-no-button',   description: 'No run button (not built)' },
+        ];
+        const statePick = await vscode.window.showQuickPick(stateItems, {
+            placeHolder: 'Select demo state for: ' + scenarioPick
+        });
+        if (!statePick) {
+            return;
+        }
+        this._view.webview.postMessage({
+            command: 'setDemoState',
+            name: scenarioPick,
+            stateKey: statePick.label
+        });
+    }
+
     private sendRunArtifactsStateToWebview(): void {
         if (!this._view?.webview) {
             return;
@@ -8719,6 +8868,60 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this._view.webview.postMessage({
             command: 'updateRunArtifactsState',
             runArtifacts: this.buildRunArtifactsState()
+        });
+    }
+
+    private async buildConfigurationDiffReportWebviewState(): Promise<{
+        available: boolean;
+        branchName: string;
+        hasSavedReport: boolean;
+        reportPath: string;
+    }> {
+        const state = await getConfigurationDiffImpactReportState();
+        return {
+            available: state.available,
+            branchName: state.branchName || '',
+            hasSavedReport: state.hasSavedReport,
+            reportPath: state.reportUri?.fsPath || ''
+        };
+    }
+
+    private async sendConfigurationDiffReportStateToWebview(): Promise<void> {
+        if (!this._view?.webview) {
+            return;
+        }
+
+        const configurationDiffReport = await this.buildConfigurationDiffReportWebviewState();
+        this._view.webview.postMessage({
+            command: 'updateConfigurationDiffReportState',
+            configurationDiffReport
+        });
+    }
+
+    private async buildTestReviewReportWebviewState(): Promise<{
+        available: boolean;
+        branchName: string;
+        hasSavedReport: boolean;
+        reportPath: string;
+    }> {
+        const state = await getTestReviewReportState();
+        return {
+            available: state.available,
+            branchName: state.branchName || '',
+            hasSavedReport: state.hasSavedReport,
+            reportPath: state.reportUri?.fsPath || ''
+        };
+    }
+
+    private async sendTestReviewReportStateToWebview(): Promise<void> {
+        if (!this._view?.webview) {
+            return;
+        }
+
+        const testReviewReport = await this.buildTestReviewReportWebviewState();
+        this._view.webview.postMessage({
+            command: 'updateTestReviewReportState',
+            testReviewReport
         });
     }
 
@@ -9153,12 +9356,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         for (const [key, value] of Object.entries(node)) {
             const nextPointer = [...pointer, key];
             if (typeof value === 'string') {
-                const connectionPath = this.parseInfobasePathFromConnectionString(value);
-                if (connectionPath) {
+                const parsedConnection = parseInfobaseConnectionString(value);
+                if (parsedConnection) {
+                    const extractedPath = parsedConnection.kind === 'file'
+                        ? parsedConnection.filePath
+                        : buildInfobaseConnectionArgument(parsedConnection, { trailingSemicolon: true });
                     result.push({
                         pointer: nextPointer,
                         value,
-                        extractedPath: connectionPath,
+                        extractedPath,
                         isConnectionString: true
                     });
                 } else {
@@ -9188,13 +9394,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private patchConnectionStringFilePath(rawValue: string, nextPath: string): string {
-        return rawValue.replace(
+        const patched = rawValue.replace(
             /(File\s*=\s*)("([^"]+)"|([^;]+))/i,
             (_full, prefix, captured) => {
                 const quoted = String(captured || '').trim().startsWith('"');
                 return `${prefix}${quoted ? `"${nextPath}"` : nextPath}`;
             }
         );
+        // If the regex didn't match (e.g. server or web connection string),
+        // replace the whole value with the new connection string.
+        return patched !== rawValue ? patched : nextPath;
     }
 
     private async loadVanessaTestClientDefaults(): Promise<VanessaTestClientDefaults> {

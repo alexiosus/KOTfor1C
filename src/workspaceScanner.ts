@@ -9,12 +9,42 @@ import { parseKotScenarioDescription } from './kotMetadataDescription';
 import { getScenarioScanRootPath, resolveScenarioScanRootFsPath } from './scenarioScanRoot';
 
 function buildWorkspaceUriFromFsPath(workspaceRootUri: vscode.Uri, targetFsPath: string): vscode.Uri {
+    if (workspaceRootUri.scheme === 'file') {
+        return vscode.Uri.file(targetFsPath);
+    }
+
     const relativePath = path.relative(workspaceRootUri.fsPath, targetFsPath);
     if (!relativePath || relativePath === '.') {
         return workspaceRootUri;
     }
     const segments = relativePath.split(path.sep).filter(Boolean);
     return vscode.Uri.joinPath(workspaceRootUri, ...segments);
+}
+
+function normalizeFsPathForComparison(targetFsPath: string): string {
+    const resolvedPath = path.resolve(targetFsPath);
+    try {
+        const realpathNative = fs.realpathSync.native;
+        const canonicalPath = typeof realpathNative === 'function'
+            ? realpathNative(resolvedPath)
+            : fs.realpathSync(resolvedPath);
+        return process.platform === 'win32'
+            ? canonicalPath.toLowerCase()
+            : canonicalPath;
+    } catch {
+        return process.platform === 'win32'
+            ? resolvedPath.toLowerCase()
+            : resolvedPath;
+    }
+}
+
+function isPathInside(parentPath: string, candidatePath: string): boolean {
+    const normalizedParent = normalizeFsPathForComparison(parentPath);
+    const normalizedCandidate = normalizeFsPathForComparison(candidatePath);
+    if (normalizedParent === normalizedCandidate) {
+        return true;
+    }
+    return normalizedCandidate.startsWith(`${normalizedParent}${path.sep}`);
 }
 
 async function collectFilesFromScanDirectory(
@@ -313,7 +343,7 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                     const parentDirFsPath = path.dirname(fileUri.fsPath);
                     const scanDirFsPath = scanDirUri.fsPath;
                     let relativePathValue = '';
-                    if (parentDirFsPath.startsWith(scanDirFsPath)) {
+                    if (isPathInside(scanDirFsPath, parentDirFsPath)) {
                          relativePathValue = path.relative(scanDirFsPath, parentDirFsPath).replace(/\\/g, '/');
                     } else {
                          relativePathValue = vscode.workspace.asRelativePath(parentDirFsPath, false);
