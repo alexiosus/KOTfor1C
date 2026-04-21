@@ -8,20 +8,26 @@
     let filterMenuOpen = false;
     let launchPlatformMenuOpen = false;
     let lastSelectionPosted = '';
+    let lastAutoTableRequestKey = '';
     let focusAfterLocatorPending = false;
     let locatorFocusBaseline = '';
     const suggestedStepsCache = new Map();
     const autoScrollAnimations = new WeakMap();
+    const ELEMENT_TYPE_FILTERS = ['button', 'field', 'table', 'group', 'decoration', 'other'];
 
     const uiState = {
         selectedElementPath: typeof persistedState.selectedElementPath === 'string' ? persistedState.selectedElementPath : '',
         searchQuery: typeof persistedState.searchQuery === 'string' ? persistedState.searchQuery : '',
         showTechnical: Boolean(persistedState.showTechnical),
         showGroups: Boolean(persistedState.showGroups),
+        showInvisible: Boolean(persistedState.showInvisible),
+        elementTypeFilters: sanitizeElementTypeFilters(persistedState.elementTypeFilters),
         showTechnicalInfo: typeof persistedState.showTechnicalInfo === 'boolean'
             ? persistedState.showTechnicalInfo
             : false,
-        followActive: persistedState.followActive !== false,
+        followActive: typeof persistedState.followActive === 'boolean'
+            ? persistedState.followActive
+            : true,
         detailsExpanded: typeof persistedState.detailsExpanded === 'boolean'
             ? persistedState.detailsExpanded
             : false,
@@ -49,6 +55,12 @@
         showTechnicalTabsInput: document.getElementById('showTechnicalTabsInput'),
         showTechnicalInput: document.getElementById('showTechnicalInput'),
         showGroupsInput: document.getElementById('showGroupsInput'),
+        showInvisibleInput: document.getElementById('showInvisibleInput'),
+        showButtonsInput: document.getElementById('showButtonsInput'),
+        showFieldsInput: document.getElementById('showFieldsInput'),
+        showTablesInput: document.getElementById('showTablesInput'),
+        showDecorationsInput: document.getElementById('showDecorationsInput'),
+        showOtherItemsInput: document.getElementById('showOtherItemsInput'),
         searchInput: document.getElementById('searchInput'),
         alertBanner: document.getElementById('alertBanner'),
         alertText: document.getElementById('alertText'),
@@ -88,6 +100,67 @@
         }
 
         return source.replace(/[\\/]+/g, '/').toLowerCase();
+    }
+
+    function isKnownElementTypeFilter(value) {
+        return ELEMENT_TYPE_FILTERS.includes(String(value || ''));
+    }
+
+    function sanitizeElementTypeFilters(value) {
+        const selected = Array.isArray(value)
+            ? value.filter(item => isKnownElementTypeFilter(item))
+            : [];
+        const unique = [];
+        for (const item of selected) {
+            if (!unique.includes(item)) {
+                unique.push(item);
+            }
+        }
+        return unique.length > 0
+            ? unique
+            : ELEMENT_TYPE_FILTERS.slice();
+    }
+
+    function isElementTypeFilterEnabled(filterKey) {
+        return uiState.elementTypeFilters.includes(filterKey);
+    }
+
+    function areAllElementTypeFiltersEnabled() {
+        return ELEMENT_TYPE_FILTERS.every(filterKey => isElementTypeFilterEnabled(filterKey));
+    }
+
+    function hasActiveElementFilters() {
+        return uiState.showTechnical
+            || uiState.showGroups
+            || uiState.showInvisible
+            || !areAllElementTypeFiltersEnabled();
+    }
+
+    function setElementTypeFilterEnabled(filterKey, enabled) {
+        if (!isKnownElementTypeFilter(filterKey)) {
+            return;
+        }
+
+        const nextFilters = uiState.elementTypeFilters.filter(item => item !== filterKey);
+        if (enabled) {
+            nextFilters.push(filterKey);
+        }
+
+        uiState.elementTypeFilters = sanitizeElementTypeFilters(nextFilters);
+        pendingScrollReset = true;
+        persistUiState();
+        render();
+    }
+
+    function bindElementTypeToggle(input, filterKey) {
+        if (!(input instanceof HTMLInputElement)) {
+            return;
+        }
+
+        input.checked = isElementTypeFilterEnabled(filterKey);
+        input.addEventListener('change', () => {
+            setElementTypeFilterEnabled(filterKey, input.checked);
+        });
     }
 
     function getConfiguredPlatforms() {
@@ -205,7 +278,9 @@
         window.addEventListener('message', event => {
             const message = event.data || {};
             if (message.command === 'setState') {
+                const previousSnapshotScrollStamp = getSnapshotScrollStamp(viewState);
                 viewState = message.state || {};
+                const nextSnapshotScrollStamp = getSnapshotScrollStamp(viewState);
                 const suggestedPath = typeof viewState.suggestedStepsForPath === 'string'
                     ? viewState.suggestedStepsForPath
                     : '';
@@ -217,6 +292,12 @@
                         : '';
                     if (selectedPath && Array.isArray(viewState.suggestedSteps) && viewState.suggestedSteps.length > 0) {
                         suggestedStepsCache.set(selectedPath, viewState.suggestedSteps.slice());
+                    }
+                }
+                if (nextSnapshotScrollStamp && nextSnapshotScrollStamp !== previousSnapshotScrollStamp) {
+                    const activePath = viewState?.snapshot?.form?.activeElementPath || findActiveElementPath(viewState?.snapshot?.elements || []);
+                    if (uiState.followActive && activePath) {
+                        pendingScrollPath = activePath;
                     }
                 }
                 if (focusAfterLocatorPending) {
@@ -240,6 +321,16 @@
             }
         });
         vscode.postMessage({ command: 'ready' });
+    }
+
+    function getSnapshotScrollStamp(state) {
+        const snapshotPath = String(state?.snapshotPath || '');
+        const snapshotMtime = String(state?.snapshotMtime || '');
+        const generatedAt = String(state?.snapshot?.generatedAt || '');
+        if (!snapshotPath && !snapshotMtime && !generatedAt) {
+            return '';
+        }
+        return `${snapshotPath}|${snapshotMtime}|${generatedAt}`;
     }
 
     function bindStaticEvents() {
@@ -313,7 +404,19 @@
                 }
             });
         });
-        bindClick(refs.focusActiveBtn, () => focusActiveElement());
+        bindClick(refs.focusActiveBtn, () => {
+            uiState.followActive = !uiState.followActive;
+            if (uiState.followActive) {
+                const snapshot = viewState.snapshot;
+                const activePath = snapshot?.form?.activeElementPath || findActiveElementPath(snapshot?.elements || []);
+                if (activePath) {
+                    uiState.selectedElementPath = activePath;
+                    pendingScrollPath = activePath;
+                }
+            }
+            persistUiState();
+            render();
+        });
         if (refs.showTechnicalTabsInput instanceof HTMLInputElement) {
             refs.showTechnicalTabsInput.checked = uiState.showTechnicalInfo;
             refs.showTechnicalTabsInput.addEventListener('change', () => {
@@ -343,6 +446,20 @@
                 render();
             });
         }
+        if (refs.showInvisibleInput instanceof HTMLInputElement) {
+            refs.showInvisibleInput.checked = uiState.showInvisible;
+            refs.showInvisibleInput.addEventListener('change', () => {
+                uiState.showInvisible = refs.showInvisibleInput.checked;
+                pendingScrollReset = true;
+                persistUiState();
+                render();
+            });
+        }
+        bindElementTypeToggle(refs.showButtonsInput, 'button');
+        bindElementTypeToggle(refs.showFieldsInput, 'field');
+        bindElementTypeToggle(refs.showTablesInput, 'table');
+        bindElementTypeToggle(refs.showDecorationsInput, 'decoration');
+        bindElementTypeToggle(refs.showOtherItemsInput, 'other');
 
         if (refs.searchInput instanceof HTMLInputElement) {
             refs.searchInput.addEventListener('input', () => {
@@ -375,7 +492,6 @@
                 overflowMenuOpen = false;
                 renderOverflowMenu();
                 uiState.selectedElementPath = String(target.dataset.path || '');
-                uiState.followActive = false;
                 pendingScrollPath = uiState.selectedElementPath;
                 persistUiState();
                 render();
@@ -441,7 +557,9 @@
             }
 
             if (action === 'refresh-table-snapshot') {
-                post('requestTableSnapshotRefresh');
+                post('requestTableSnapshotRefresh', {
+                    elementPath: uiState.selectedElementPath || ''
+                });
                 return;
             }
 
@@ -455,28 +573,6 @@
                 } else {
                     post('refreshSnapshot');
                 }
-                return;
-            }
-
-            if (action === 'build-extension') {
-                overflowMenuOpen = false;
-                launchPlatformMenuOpen = false;
-                renderOverflowMenu();
-                renderLaunchPlatformMenu();
-                post('buildExtension', {
-                    platformClientExePath: getCurrentLaunchPlatformClientExePath()
-                });
-                return;
-            }
-
-            if (action === 'install-extension') {
-                overflowMenuOpen = false;
-                launchPlatformMenuOpen = false;
-                renderOverflowMenu();
-                renderLaunchPlatformMenu();
-                post('installExtension', {
-                    platformClientExePath: getCurrentLaunchPlatformClientExePath()
-                });
                 return;
             }
 
@@ -567,13 +663,13 @@
 
         if (!uiState.selectedElementPath && typeof viewState.selectedElementPath === 'string' && viewState.selectedElementPath) {
             uiState.selectedElementPath = viewState.selectedElementPath;
-            pendingScrollPath = uiState.selectedElementPath;
+            // No pendingScrollPath — silent sync from backend, preserves user scroll position
             persistUiState();
         }
 
         if (uiState.followActive && activePath && activePath !== uiState.selectedElementPath) {
             uiState.selectedElementPath = activePath;
-            pendingScrollPath = activePath;
+            // No pendingScrollPath — followActive silently tracks selection; scroll only on explicit button click
             persistUiState();
         }
 
@@ -583,7 +679,7 @@
                 : flatElements[0]?.element.path || '';
             if (fallbackPath !== uiState.selectedElementPath) {
                 uiState.selectedElementPath = fallbackPath;
-                pendingScrollPath = fallbackPath;
+                // No pendingScrollPath here — silent fallback, user scroll position preserved
                 persistUiState();
             }
         }
@@ -595,6 +691,7 @@
             ? findElementByPath(rawElements, activePath)
             : null;
 
+        maybeRequestAutoTableSnapshot(snapshot, selectedElement);
         renderSidebar(snapshot, flatElements, activeElement);
         renderElementTree(flatElements, activePath, attributesByPath);
         renderSelectedElementHeader(selectedElement, activeElement, snapshot, attributesByPath);
@@ -674,8 +771,8 @@
             refs.startInfobaseBtn.title = isStartingInfobase
                 ? t('launchingInfobase', 'Launching infobase')
                 : isStartedInfobaseClientRunning
-                    ? t('infobaseClientRunning', '1C client is still running')
-                : t('startInfobase', 'Start infobase');
+                    ? t('infobaseClientRunning', 'Form Explorer session is still running')
+                    : t('startInfobase', 'Start infobase');
         }
         setText(
             refs.startInfobaseLabel,
@@ -711,6 +808,24 @@
         }
         if (refs.showTechnicalInput instanceof HTMLInputElement) {
             refs.showTechnicalInput.checked = uiState.showTechnical;
+        }
+        if (refs.showInvisibleInput instanceof HTMLInputElement) {
+            refs.showInvisibleInput.checked = uiState.showInvisible;
+        }
+        if (refs.showButtonsInput instanceof HTMLInputElement) {
+            refs.showButtonsInput.checked = isElementTypeFilterEnabled('button');
+        }
+        if (refs.showFieldsInput instanceof HTMLInputElement) {
+            refs.showFieldsInput.checked = isElementTypeFilterEnabled('field');
+        }
+        if (refs.showTablesInput instanceof HTMLInputElement) {
+            refs.showTablesInput.checked = isElementTypeFilterEnabled('table');
+        }
+        if (refs.showDecorationsInput instanceof HTMLInputElement) {
+            refs.showDecorationsInput.checked = isElementTypeFilterEnabled('decoration');
+        }
+        if (refs.showOtherItemsInput instanceof HTMLInputElement) {
+            refs.showOtherItemsInput.checked = isElementTypeFilterEnabled('other');
         }
         if (refs.showTechnicalTabsInput instanceof HTMLInputElement) {
             refs.showTechnicalTabsInput.checked = uiState.showTechnicalInfo;
@@ -794,7 +909,8 @@
             delete refs.currentFormOpenSourceBtn.dataset.column;
         }
         if (refs.focusActiveBtn instanceof HTMLButtonElement) {
-            refs.focusActiveBtn.disabled = true;
+            refs.focusActiveBtn.disabled = false;
+            refs.focusActiveBtn.classList.toggle('is-active', uiState.followActive);
         }
         if (refs.elementTree) {
             refs.elementTree.innerHTML = renderEmptyState(
@@ -845,7 +961,8 @@
         }
 
         if (refs.focusActiveBtn instanceof HTMLButtonElement) {
-            refs.focusActiveBtn.disabled = !activeElement;
+            refs.focusActiveBtn.disabled = false;
+            refs.focusActiveBtn.classList.toggle('is-active', uiState.followActive);
         }
         if (refs.currentFormOpenSourceBtn instanceof HTMLButtonElement) {
             const source = snapshot.form?.source;
@@ -870,6 +987,9 @@
         const preservedScrollTop = refs.elementTree.scrollTop;
         const shouldResetScroll = pendingScrollReset;
         const shouldPreserveScroll = !pendingScrollPath && !shouldResetScroll;
+        const preservedScrollAnchor = shouldPreserveScroll
+            ? captureOutlineScrollAnchor(refs.elementTree)
+            : null;
 
         if (flatElements.length === 0) {
             refs.elementTree.innerHTML = renderEmptyState(
@@ -881,7 +1001,7 @@
             if (shouldResetScroll) {
                 refs.elementTree.scrollTop = 0;
             } else if (shouldPreserveScroll) {
-                refs.elementTree.scrollTop = preservedScrollTop;
+                restoreOutlineScrollAnchor(refs.elementTree, preservedScrollAnchor, preservedScrollTop);
             }
             pendingScrollReset = false;
             return;
@@ -891,9 +1011,51 @@
         if (shouldResetScroll) {
             refs.elementTree.scrollTop = 0;
         } else if (shouldPreserveScroll) {
-            refs.elementTree.scrollTop = preservedScrollTop;
+            restoreOutlineScrollAnchor(refs.elementTree, preservedScrollAnchor, preservedScrollTop);
         }
         pendingScrollReset = false;
+    }
+
+    function captureOutlineScrollAnchor(container) {
+        if (!(container instanceof HTMLElement)) {
+            return null;
+        }
+
+        const rows = Array.from(container.querySelectorAll('[data-action="select-element"]'));
+        for (const row of rows) {
+            if (!(row instanceof HTMLElement)) {
+                continue;
+            }
+
+            const rowBottom = row.offsetTop + row.offsetHeight;
+            if (rowBottom > container.scrollTop + 1) {
+                return {
+                    path: String(row.dataset.path || ''),
+                    offsetWithinRow: Math.max(0, container.scrollTop - row.offsetTop)
+                };
+            }
+        }
+
+        return null;
+    }
+
+    function restoreOutlineScrollAnchor(container, anchor, fallbackScrollTop) {
+        if (!(container instanceof HTMLElement)) {
+            return;
+        }
+
+        if (!anchor?.path) {
+            container.scrollTop = fallbackScrollTop;
+            return;
+        }
+
+        const row = container.querySelector(`[data-action="select-element"][data-path="${CSS.escape(anchor.path)}"]`);
+        if (!(row instanceof HTMLElement)) {
+            container.scrollTop = fallbackScrollTop;
+            return;
+        }
+
+        container.scrollTop = Math.max(0, row.offsetTop + Math.max(0, Number(anchor.offsetWithinRow) || 0));
     }
 
     function renderSelectedElementHeader(selectedElement, activeElement, snapshot, attributesByPath) {
@@ -974,7 +1136,7 @@
                 }
             ),
             renderSuggestedStepsSection(selectedElement),
-            notes.length > 0
+            uiState.showTechnicalInfo && notes.length > 0
                 ? renderSectionCard(
                     t('notes', 'Notes'),
                     `<ul class="notes-list">${notes.map(note => `<li>${escapeHtml(String(note))}</li>`).join('')}</ul>`
@@ -1231,10 +1393,10 @@
     }
 
     function renderTableOutlineRow(entry) {
-        const rowCountTotal = Number.isFinite(entry.tableData.rowCount)
-            ? Number(entry.tableData.rowCount)
-            : entry.tableData.rows.length;
         const rowCountShown = entry.tableData.rows.length;
+        const rowCountTotal = Number.isFinite(entry.tableData.rowCount)
+            ? String(Number(entry.tableData.rowCount))
+            : t('unknownValue', 'n/a');
         const preview = `${t('tableRowsShown', 'Rows shown')}: ${rowCountShown} • ${t('tableRowsTotal', 'Rows total')}: ${rowCountTotal}`;
         const chips = renderStateChips([
             ...(entry.tableData.truncated ? [{ label: t('tableRowsTruncated', 'Table is truncated in snapshot.'), tone: 'warning' }] : [])
@@ -1269,17 +1431,6 @@
     }
 
     function renderSuggestedStepsSection(selectedElement) {
-        const pendingOperation = String(viewState.pendingOperation || '');
-        const headerActionsHtml = isTableLikeElement(selectedElement)
-            ? `
-                <button class="mini-btn compact" type="button" data-action="refresh-table-snapshot" ${pendingOperation ? 'disabled' : ''}>
-                    <span class="codicon codicon-refresh"></span>
-                    <span>${escapeHtml(pendingOperation === 'table'
-                        ? t('loadingTables', 'Loading tables into snapshot...')
-                        : t('getTables', 'Get tables'))}</span>
-                </button>
-            `
-            : '';
         return renderSectionCard(
             t('suggestedSteps', 'Suggested steps'),
             renderSuggestedStepsBody(selectedElement),
@@ -1288,8 +1439,7 @@
                 expanded: uiState.suggestedStepsExpanded,
                 action: 'toggle-suggested-steps',
                 sectionKey: 'suggested',
-                className: 'suggested-steps-card',
-                headerActionsHtml
+                className: 'suggested-steps-card'
             }
         );
     }
@@ -1504,7 +1654,9 @@
         return {
             columns,
             rows,
-            rowCount: Number.isFinite(rawTableData.rowCount) ? Number(rawTableData.rowCount) : rows.length,
+            rowCount: Number.isFinite(rawTableData.rowCount)
+                ? Number(rawTableData.rowCount)
+                : (rows.length > 0 ? rows.length : undefined),
             truncated: Boolean(rawTableData.truncated),
             sourcePath: firstDefined(rawTableData.sourcePath)
         };
@@ -1684,6 +1836,109 @@
         return null;
     }
 
+    function findNearestTableOwner(elements, targetPath, currentTable) {
+        for (const element of elements || []) {
+            const nextTable = isTableLikeElement(element) ? element : currentTable || null;
+            if (element.path === targetPath) {
+                return currentTable || null;
+            }
+
+            const nested = findNearestTableOwner(element.children || [], targetPath, nextTable);
+            if (nested !== undefined) {
+                return nested;
+            }
+        }
+
+        return undefined;
+    }
+
+    function findTableInfoForElement(snapshot, tableElement) {
+        if (!snapshot || !tableElement) {
+            return null;
+        }
+
+        const tables = Array.isArray(snapshot.tables) ? snapshot.tables : [];
+        return tables.find(table => {
+            return firstDefined(table.elementPath, table.path, '') === tableElement.path
+                || firstDefined(table.path, '') === tableElement.path
+                || (tableElement.boundAttributePath && firstDefined(table.boundAttributePath, table.path, '') === tableElement.boundAttributePath)
+                || (tableElement.name && firstDefined(table.name, '') === tableElement.name);
+        }) || null;
+    }
+
+    function resolveSelectedTableContext(snapshot, selectedElement) {
+        if (!snapshot || !selectedElement) {
+            return null;
+        }
+
+        const tableElement = isTableLikeElement(selectedElement)
+            ? selectedElement
+            : findNearestTableOwner(snapshot.elements || [], selectedElement.path);
+        if (!tableElement) {
+            return null;
+        }
+
+        const tableInfo = findTableInfoForElement(snapshot, tableElement);
+        const tableData = normalizeTableData(tableInfo?.tableData || tableElement.tableData);
+        if (!tableData) {
+            return null;
+        }
+
+        return {
+            tableElement,
+            tableInfo,
+            tableData
+        };
+    }
+
+    function isTableDataAwaitingRows(tableData) {
+        if (!tableData) {
+            return false;
+        }
+
+        const columns = Array.isArray(tableData.columns) ? tableData.columns : [];
+        const rows = Array.isArray(tableData.rows) ? tableData.rows : [];
+        return columns.length > 0
+            && rows.length === 0
+            && !Number.isFinite(tableData.rowCount);
+    }
+
+    function maybeRequestAutoTableSnapshot(snapshot, selectedElement) {
+        if (!snapshot || !selectedElement) {
+            lastAutoTableRequestKey = '';
+            return;
+        }
+
+        const pendingOperation = String(viewState.pendingOperation || '');
+        const tableContext = resolveSelectedTableContext(snapshot, selectedElement);
+        if (!tableContext || !isTableDataAwaitingRows(tableContext.tableData)) {
+            lastAutoTableRequestKey = '';
+            return;
+        }
+
+        if (pendingOperation === 'table') {
+            return;
+        }
+
+        const selectedPath = uiState.selectedElementPath || selectedElement.path || '';
+        const tablePath = tableContext.tableElement?.path || selectedPath;
+        if (!tablePath) {
+            lastAutoTableRequestKey = '';
+            return;
+        }
+
+        const snapshotStamp = String(snapshot.generatedAt || viewState.snapshotMtime || '');
+        const requestKey = `${snapshotStamp}::${tablePath}`;
+        if (requestKey === lastAutoTableRequestKey) {
+            return;
+        }
+
+        lastAutoTableRequestKey = requestKey;
+        post('requestTableSnapshotRefresh', {
+            elementPath: selectedPath
+        });
+    }
+
     function projectTableDataForDisplay(tableData, tableElement, tableName) {
         const columns = Array.isArray(tableData.columns) ? tableData.columns : [];
         const rows = Array.isArray(tableData.rows) ? tableData.rows : [];
@@ -1692,6 +1947,7 @@
         }
 
         const descriptors = collectTableColumnDescriptorsFromElement(tableElement, tableName);
+        const hideUntitledColumns = hasMixedExplicitTableColumnTitles(descriptors);
         const selectedIndexes = [];
         const selectedColumns = [];
 
@@ -1699,6 +1955,9 @@
             const rawColumnName = sanitizeTableCellValue(columns[index]);
             const descriptor = findColumnDescriptor(descriptors, rawColumnName, tableName);
             if (descriptor && descriptor.visible === false) {
+                continue;
+            }
+            if (descriptor && hideUntitledColumns && !descriptor.hasExplicitTitle && !isLineNumberColumn(rawColumnName)) {
                 continue;
             }
 
@@ -1714,11 +1973,12 @@
             const sourceRow = Array.isArray(row) ? row : [];
             return selectedIndexes.map(index => sanitizeTableCellValue(sourceRow[index]));
         });
+        const deduped = dropEmptyDuplicateDisplayColumns(selectedColumns, nextRows);
 
         return {
             ...tableData,
-            columns: selectedColumns,
-            rows: nextRows
+            columns: deduped.columns,
+            rows: deduped.rows
         };
     }
 
@@ -1728,31 +1988,114 @@
         }
 
         const descriptors = [];
-        for (const child of tableElement.children) {
-            if (!isTableColumnElement(child)) {
+        appendTableColumnDescriptors(descriptors, tableElement.children, tableName, true, 0);
+
+        return descriptors;
+    }
+
+    function appendTableColumnDescriptors(descriptors, elements, tableName, ancestorsVisible, depth) {
+        for (const child of elements || []) {
+            const nextAncestorsVisible = ancestorsVisible && child?.visible !== false;
+            if (isTableColumnElement(child)) {
+                const name = firstDefined(child.name, lastSegment(child.path), '');
+                if (name) {
+                    const explicitTitle = firstDefined(child.title, child.synonym);
+                    const title = firstDefined(
+                        explicitTitle,
+                        buildFallbackColumnTitle(name, tableName)
+                    );
+
+                    descriptors.push({
+                        key: toCaseFoldKey(name),
+                        shortKey: toCaseFoldKey(trimTechnicalTablePrefix(name, tableName)),
+                        titleKey: toCaseFoldKey(title),
+                        title,
+                        hasExplicitTitle: Boolean(explicitTitle),
+                        visible: ancestorsVisible && (depth > 0 || child.visible !== false)
+                    });
+                }
+            }
+
+            if (Array.isArray(child?.children) && child.children.length > 0) {
+                appendTableColumnDescriptors(descriptors, child.children, tableName, nextAncestorsVisible, depth + 1);
+            }
+        }
+    }
+
+    function dropEmptyDuplicateDisplayColumns(columns, rows) {
+        if (!Array.isArray(columns) || columns.length === 0 || !Array.isArray(rows) || rows.length === 0) {
+            return {
+                columns,
+                rows
+            };
+        }
+
+        const groups = new Map();
+        for (let index = 0; index < columns.length; index += 1) {
+            const key = buildDisplayColumnDeduplicationKey(columns[index]);
+            if (!key) {
                 continue;
             }
 
-            const name = firstDefined(child.name, lastSegment(child.path), '');
-            if (!name) {
+            const indexes = groups.get(key) || [];
+            indexes.push(index);
+            groups.set(key, indexes);
+        }
+
+        const keepIndexes = new Set(columns.map((_, index) => index));
+        for (const indexes of groups.values()) {
+            if (!Array.isArray(indexes) || indexes.length < 2) {
                 continue;
             }
 
-            const title = firstDefined(
-                child.title,
-                child.synonym,
-                buildFallbackColumnTitle(name, tableName)
-            );
+            const nonEmptyCounts = indexes.map(index => {
+                return rows.reduce((count, row) => {
+                    const value = sanitizeTableCellValue(Array.isArray(row) ? row[index] : '');
+                    return value.trim().length > 0 ? count + 1 : count;
+                }, 0);
+            });
 
-            descriptors.push({
-                key: toCaseFoldKey(name),
-                shortKey: toCaseFoldKey(trimTechnicalTablePrefix(name, tableName)),
-                title,
-                visible: child.visible !== false
+            const hasNonEmptyDuplicate = nonEmptyCounts.some(count => count > 0);
+            if (!hasNonEmptyDuplicate) {
+                continue;
+            }
+
+            indexes.forEach((index, groupIndex) => {
+                if (nonEmptyCounts[groupIndex] === 0) {
+                    keepIndexes.delete(index);
+                }
             });
         }
 
-        return descriptors;
+        if (keepIndexes.size === columns.length) {
+            return {
+                columns,
+                rows
+            };
+        }
+
+        const orderedIndexes = columns
+            .map((_, index) => index)
+            .filter(index => keepIndexes.has(index));
+
+        return {
+            columns: orderedIndexes.map(index => columns[index]),
+            rows: rows.map(row => {
+                const sourceRow = Array.isArray(row) ? row : [];
+                return orderedIndexes.map(index => sanitizeTableCellValue(sourceRow[index]));
+            })
+        };
+    }
+
+    function buildDisplayColumnDeduplicationKey(columnTitle) {
+        const key = toCaseFoldKey(columnTitle);
+        if (key === 'tax' || key === 'vatamount' || key === 'amountvat') {
+            return 'vatamount';
+        }
+        if (key === 'vatrate' || key === 'ratevat') {
+            return 'vatrate';
+        }
+        return key;
     }
 
     function isTableColumnElement(element) {
@@ -1771,6 +2114,7 @@
         return descriptors.find(descriptor => {
             return descriptor.key === key
                 || (descriptor.shortKey && descriptor.shortKey === key)
+                || (descriptor.titleKey && descriptor.titleKey === key)
                 || (shortKey && (descriptor.key === shortKey || descriptor.shortKey === shortKey));
         }) || null;
     }
@@ -1793,12 +2137,40 @@
         }
 
         const withoutPrefix = trimTechnicalTablePrefix(rawName, tableName);
-        if (/^(line(number)?|linenumber)$/i.test(withoutPrefix)) {
+        if (isLineNumberColumn(withoutPrefix)) {
             return '#';
         }
 
         const humanized = humanizeToken(withoutPrefix);
         return humanized || rawName;
+    }
+
+    function isLineNumberColumn(columnName) {
+        return /^(#|line(number)?|linenumber)$/i.test(String(columnName || '').trim());
+    }
+
+    function hasMixedExplicitTableColumnTitles(descriptors) {
+        if (!Array.isArray(descriptors) || descriptors.length === 0) {
+            return false;
+        }
+
+        let titledCount = 0;
+        let untitledCount = 0;
+        for (const descriptor of descriptors) {
+            if (descriptor?.visible === false) {
+                continue;
+            }
+            if (descriptor?.hasExplicitTitle) {
+                titledCount += 1;
+            } else {
+                untitledCount += 1;
+            }
+            if (titledCount > 0 && untitledCount > 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     function trimTechnicalTablePrefix(columnName, tableName) {
@@ -1819,8 +2191,8 @@
         const gherkinTable = buildGherkinTable(entry.label, entry.tableData);
         const rowCountShown = entry.tableData.rows.length;
         const rowCountTotal = Number.isFinite(entry.tableData.rowCount)
-            ? Number(entry.tableData.rowCount)
-            : rowCountShown;
+            ? String(Number(entry.tableData.rowCount))
+            : t('unknownValue', 'n/a');
         const rowMetricChips = renderStateChips([
             { label: `${t('tableRowsShown', 'Rows shown')}: ${rowCountShown}`, tone: 'neutral' },
             { label: `${t('tableRowsTotal', 'Rows total')}: ${rowCountTotal}`, tone: 'muted' }
@@ -2221,9 +2593,11 @@
             .filter(Boolean);
         const hiddenTechnical = !uiState.showTechnical && isTechnicalElement(element);
         const hiddenGroup = !uiState.showGroups && isGroupElement(element);
+        const hiddenByType = isElementHiddenByTypeFilter(element);
+        const hiddenInvisible = !uiState.showInvisible && element.visible === false;
         const matchesSelf = !query || elementMatchesQuery(element, query);
 
-        if ((hiddenTechnical || hiddenGroup) && children.length === 0) {
+        if ((hiddenTechnical || hiddenGroup || hiddenByType || hiddenInvisible) && children.length === 0) {
             return null;
         }
 
@@ -2231,7 +2605,7 @@
             return { ...element, children };
         }
 
-        if (!hiddenTechnical && !hiddenGroup && (matchesSelf || children.length > 0)) {
+        if (!hiddenTechnical && !hiddenGroup && !hiddenByType && !hiddenInvisible && (matchesSelf || children.length > 0)) {
             return { ...element, children };
         }
 
@@ -2248,10 +2622,15 @@
             const baseDepth = depth || 0;
             const hiddenTechnical = !uiState.showTechnical && isTechnicalElement(element);
             const hiddenGroup = !uiState.showGroups && isGroupElement(element);
-            if (!hiddenTechnical && !hiddenGroup) {
+            const hiddenByType = isElementHiddenByTypeFilter(element);
+            const hiddenInvisible = !uiState.showInvisible && element.visible === false;
+            if (!hiddenTechnical && !hiddenGroup && !hiddenByType && !hiddenInvisible) {
                 result.push({ element, depth: baseDepth });
             }
-            result.push(...flattenElements(element.children || [], (hiddenTechnical || hiddenGroup) ? baseDepth : baseDepth + 1));
+            result.push(...flattenElements(
+                element.children || [],
+                (hiddenTechnical || hiddenGroup || hiddenByType || hiddenInvisible) ? baseDepth : baseDepth + 1
+            ));
         }
         return result;
     }
@@ -2323,12 +2702,37 @@
             element.kind,
             element.type
         ].filter(Boolean).join(' '));
-        return /contextmenu|extendedtooltip|tooltip/.test(probe);
+        return /contextmenu|extendedtooltip|tooltip|itemaddition|item addition|дополнени/.test(probe);
     }
 
     function isGroupElement(element) {
         const probe = normalizeQuery([element.kind, element.type].filter(Boolean).join(' '));
         return probe.includes('form group');
+    }
+
+    function detectElementTypeFilter(element) {
+        const probe = normalizeQuery([element?.kind, element?.type, element?.path].filter(Boolean).join(' '));
+        if (isTableLikeProbe(probe) || element?.tableData) {
+            return 'table';
+        }
+        if (isGroupElement(element)) {
+            return 'group';
+        }
+        if (probe.includes('button') || probe.includes('кноп')) {
+            return 'button';
+        }
+        if (probe.includes('decoration') || probe.includes('декорац') || probe.includes('label')) {
+            return 'decoration';
+        }
+        if (probe.includes('field') || probe.includes('поле')) {
+            return 'field';
+        }
+        return 'other';
+    }
+
+    function isElementHiddenByTypeFilter(element) {
+        const filterKey = detectElementTypeFilter(element);
+        return filterKey !== 'group' && !isElementTypeFilterEnabled(filterKey);
     }
 
     function getFormLabel(form) {
@@ -2479,7 +2883,7 @@
         }
         if (refs.filterMenuBtn instanceof HTMLButtonElement) {
             refs.filterMenuBtn.setAttribute('aria-expanded', filterMenuOpen ? 'true' : 'false');
-            refs.filterMenuBtn.classList.toggle('is-active', uiState.showTechnical || uiState.showGroups);
+            refs.filterMenuBtn.classList.toggle('is-active', hasActiveElementFilters());
         }
     }
 

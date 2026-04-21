@@ -7,31 +7,41 @@
 | Файл | Роль |
 |---|---|
 | `src/extension.ts` | Точка входа: регистрация providers/команд, конвейер сохранения, интеграция между подсистемами |
-| `src/phaseSwitcher.ts` | Backend Test Manager (`Менеджер тестов`): webview-мост, кеш сценариев, сборка, запуск Vanessa, статусы запуска |
+| `src/phaseSwitcher.ts` | Backend Test Manager: webview-мост, кеш сценариев, сборка, запуск Vanessa, статусы запуска |
 | `src/workspaceScanner.ts` | Полный скан текущего корня сценариев, построение `TestInfo` |
 | `src/completionProvider.ts` | IntelliSense шагов и вызовов вложенных сценариев |
 | `src/hoverProvider.ts` | Hover по шагам и вызовам |
+| `src/scenarioSyntaxHighlightProvider.ts` | Semantic tokens для Gherkin-подсветки внутри `ТекстСценария` YAML-сценариев |
 | `src/scenarioHeaderInlayHintsProvider.ts` | Inlay-иконки (карандаш) у полей `ДанныеСценария.Имя` / `ДанныеСценария.Код` для быстрых команд переименования/смены кода |
 | `src/scenarioDiagnostics.ts` | Диагностика и code actions |
 | `src/commandHandlers.ts` | Редактирование/навигация/авто-операции по YAML |
 | `src/scenarioCreator.ts` | Создание главных и вложенных сценариев по шаблонам |
 | `src/phaseSwitcherMetadata.ts` | Работа с `KOTМетаданные`, миграция legacy-тегов |
+| `src/kotMetadataDescription.ts` | Парсинг, нормализация и upsert блока `KOTМетаданные.Описание` в YAML |
+| `src/scenarioAiDescription.ts` | Генерация AI-описания сценария для `KOTМетаданные.Описание` |
+| `src/aiClient.ts` | Унифицированный AI-клиент для `chatCompletions` / `responses`, валидация настроек и HTTP transport |
+| `src/configurationDiffAiReport.ts` | Сбор diff конфигурации, эвристики влияния и генерация AI-отчета для тестировщика |
+| `src/testReviewAiReport.ts` | AI-ревью измененных тестов на основе diff тестов, diff конфигурации и опционального `UserStory` |
 | `src/yamlParametersManager.ts` | Webview менеджера параметров (СППР/VA/GlobalVars) |
+| `src/infobaseManager.ts` | Backend каталога ИБ: сбор общего списка баз, операции подготовки, launch keys и platform override |
+| `src/infobaseManagerPanel.ts` | Webview `KOT Infobase Manager` |
 | `src/formExplorerPanel.ts` | Webview-панель исследования открытой формы 1С через JSON snapshot |
 | `src/formExplorerPaths.ts` | Разрешение настроек путей Form Explorer: snapshot, исходники конфигурации, каталог генерации |
-| `src/formExplorerExtensionGenerator.ts` | Генерация дерева исходников расширения Form Explorer, индекса форм и сборка `.cfe` (встроенный Windows builder через `1cv8c.exe` + sibling `1cv8.exe` или внешнее переопределение) |
-| `src/formExplorerBuilder.ts` | Builder-ИБ Form Explorer: вспомогательные файлы адаптера, прогрев builder-ИБ, результаты сборки |
+| `src/formExplorerExtensionGenerator.ts` | Legacy-генератор расширения Form Explorer и связанные build-пути `.cfe` (оставлен для совместимости/внутренних сценариев) |
+| `src/formExplorerBuilder.ts` | Подготовка sidecar-файлов Form Explorer и служебных runtime-артефактов |
+| `src/formExplorerBridgeGenerator.ts` | Bridge-based запуск Form Explorer: подготовка startup-ИБ, config JSON и старт связки `TestManager` + `TestClient` |
+| `src/formExplorerLiveSnapshot.ts` | Разрешение актуального live snapshot-а Form Explorer и его кэширование для editor-side интеграций |
 | `src/startupInfobase.ts` | Легковесная startup-ИБ для Vanessa и `СборкаТекстовСценариев`: автосоздание, output и фоновый прогрев |
 | `src/oneCPlatform.ts` | Автоопределение установленной платформы 1С и разрешение путей `1cv8c.exe` / `1cv8.exe` |
 | `src/formExplorerEnrichment.ts` | Обогащение runtime snapshot-а данными из `Form.xml` и metadata выгрузки конфигурации |
 | `src/formExplorerTypes.ts` | Контракт и нормализация snapshot JSON для Form Explorer |
 | `src/stepsFetcher.ts` | Загрузка и кеширование `steps.htm` |
 | `src/scenarioParameterUtils.ts` | Нормализация и дефолты параметров |
-| `media/phaseSwitcher.*` | UI Test Manager (`Менеджер тестов`) |
+| `media/phaseSwitcher.*` | UI Test Manager |
 | `media/yamlParameters.*` | UI менеджера параметров |
 | `media/formExplorer.*` | UI панели Form Explorer |
-| `res/formExplorer/adapter/KOTFormExplorerAdapterClient.bsl` | Базовый source template runtime-модуля, который генератор дополняет support-кодом |
-| `tools/form-explorer/build-cfe.*` | Внешние вспомогательные скрипты для необязательного переопределения сборки `.cfe` |
+| `res/formExplorer/bridge/KOTFormExplorerBridge.bsl` | Клиентский модуль EPF-моста, который опрашивает `TestClient`, собирает snapshot и читает request-файлы |
+| `tools/form-explorer/build-cfe.*` | Legacy-скрипты для старой `.cfe`-сборки Form Explorer |
 
 ## 2) Основной runtime-поток
 
@@ -79,7 +89,7 @@
 - глобальный проход сделан как тяжелая ручная операция;
 - дубликаты `ДанныеСценария.Код` проверяются через кеш сценариев.
 
-## 5) Test Manager (`Менеджер тестов`): backend + frontend
+## 5) Test Manager: backend + frontend
 
 ### Backend (`src/phaseSwitcher.ts`)
 
@@ -144,25 +154,29 @@
 
 - используется SecretStorage для состояния менеджера.
 
-## 8) Form Explorer: runtime + static enrichment
+## 8) Form Explorer: bridge + static enrichment
 
 Поток Form Explorer:
 
-1. `src/formExplorerExtensionGenerator.ts` сканирует источник конфигурации, строит `forms-index.json` и генерирует runtime-расширение; в режиме `cfe` оно дополнительно собирается в пакет `.cfe`.
-2. Generated runtime инициализируется на старте 1С через `ManagedApplicationModule`.
-3. Runtime пишет:
+1. `src/formExplorerBridgeGenerator.ts` готовит shared startup-ИБ, пишет `bridge-config.json` и стартует две 1С-сессии:
+   - целевую базу в `TestClient`;
+   - служебную startup-ИБ в `TestManager` с `KOTFormExplorerBridge.epf`.
+2. `res/formExplorer/bridge/KOTFormExplorerBridge.bsl` каждую секунду опрашивает `TestClient`, собирает snapshot активной формы и реагирует на request-файл (`auto` / `manual` / `refresh` / `table` / `locator`).
+3. Bridge пишет:
    - `form-snapshot.json`
-   - `adapter-settings.json`
    - `adapter-mode.txt`
    - `adapter-mode-request.txt`
+   - `bridge/bridge-config.json`
+   - `bridge/bridge-status.txt`
 4. `src/formExplorerPanel.ts` читает snapshot и mode-state, а `src/formExplorerEnrichment.ts` обогащает данные из `Form.xml`.
-5. `media/formExplorer.*` показывает UI-инспектор и умеет переключать `manual/auto` режим.
+5. `src/formExplorerLiveSnapshot.ts` переиспользует тот же snapshot/enrichment слой для completion/hover вне webview.
+6. `media/formExplorer.*` показывает UI-инспектор и управляет bridge-режимом `manual/auto`.
 
 Особенности:
 
-- runtime намеренно сделан легковесным: без заимствования прикладных форм;
-- builder на Windows кэширует file infobase и не перезагружает базовую конфигурацию без необходимости;
-- `auto snapshot` оптимизирован: полный snapshot строится не на каждом тике, а только если изменился cheap-signature активной формы.
+- bridge не внедряется в тестируемую базу и не требует установки runtime-расширения;
+- отдельный poller в панели отслеживает PID и при закрытии одной стороны завершает вторую;
+- `auto snapshot` в EPF-мосте оптимизирован: файл переписывается только если содержимое snapshot реально изменилось.
 
 ## 9) Где расширять функционал
 
@@ -187,7 +201,7 @@
 3. Добавить quick fix при необходимости.
 4. Добавить переводные строки.
 
-### Добавить пункт в Test Manager (`Менеджер тестов`)
+### Добавить пункт в Test Manager
 
 1. Добавить UI-элемент в `media/phaseSwitcher.html/js`.
 2. Проложить `postMessage` в backend.
@@ -207,11 +221,10 @@
    - менеджер параметров (все вкладки, импорт/экспорт);
    - Form Explorer webview.
 
-3. Если менялся runtime Form Explorer:
-   - пересобрать `.cfe`;
-   - переустановить его в тестовую базу;
-   - перезапустить клиент 1С;
-   - проверить manual/auto режим, hotkey и startup-init.
+3. Если менялся bridge Form Explorer:
+   - пересобрать `KOTFormExplorerBridge.epf`, если правился BSL source;
+   - перезапустить `TestClient` и окно моста;
+   - проверить manual/auto режим, locator и snapshot-refresh.
 
 ## 11) Что важно не ломать
 

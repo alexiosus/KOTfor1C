@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/kakoytochelik/KOTfor1C",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -352,6 +352,14 @@
             "default": false,
             "description": "%config.formExplorer.showOutputPanel.description%",
             "order": 6
+          },
+          "kotTestToolkit.formExplorer.bridge.testClientPort": {
+            "type": "number",
+            "default": 1538,
+            "minimum": 1024,
+            "maximum": 65535,
+            "description": "%config.formExplorer.bridge.testClientPort.description%",
+            "order": 7
           }
         }
       },
@@ -412,6 +420,13 @@
             "description": "%config.ai.baseUrl.description%",
             "markdownDescription": "%config.ai.baseUrl.markdownDescription%",
             "order": 2
+          },
+          "kotTestToolkit.ai.apiVersion": {
+            "type": "string",
+            "default": "",
+            "description": "%config.ai.apiVersion.description%",
+            "markdownDescription": "%config.ai.apiVersion.markdownDescription%",
+            "order": 3
           },
           "kotTestToolkit.ai.apiKey": {
             "type": "string",
@@ -631,6 +646,16 @@
         "category": "%cmd.category%"
       },
       {
+        "command": "kotTestToolkit.enableDemoMode",
+        "title": "%cmd.enableDemoMode.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.setDemoStateForScenario",
+        "title": "%cmd.setDemoStateForScenario.title%",
+        "category": "%cmd.category%"
+      },
+      {
         "command": "kotTestToolkit.createFirstLaunchZip",
         "title": "%cmd.createFirstLaunchZip.title%",
         "category": "%cmd.category%"
@@ -651,18 +676,8 @@
         "category": "%cmd.category%"
       },
       {
-        "command": "kotTestToolkit.generateFormExplorerExtension",
-        "title": "%cmd.generateFormExplorerExtension.title%",
-        "category": "%cmd.category%"
-      },
-      {
-        "command": "kotTestToolkit.buildFormExplorerExtensionCfe",
-        "title": "%cmd.buildFormExplorerExtensionCfe.title%",
-        "category": "%cmd.category%"
-      },
-      {
-        "command": "kotTestToolkit.installFormExplorerExtension",
-        "title": "%cmd.installFormExplorerExtension.title%",
+        "command": "kotTestToolkit.startFormExplorerBridge",
+        "title": "%cmd.startFormExplorerBridge.title%",
         "category": "%cmd.category%"
       },
       {
@@ -733,6 +748,16 @@
       {
         "command": "kotTestToolkit.generateScenarioDescriptionWithAi",
         "title": "%cmd.generateScenarioDescriptionWithAi.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.generateConfigurationDiffImpactReportWithAi",
+        "title": "%cmd.generateConfigurationDiffImpactReportWithAi.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.reviewChangedTestsWithAi",
+        "title": "%cmd.reviewChangedTestsWithAi.title%",
         "category": "%cmd.category%"
       },
       {
@@ -982,18 +1007,6 @@
           "when": "true"
         },
         {
-          "command": "kotTestToolkit.generateFormExplorerExtension",
-          "when": "true"
-        },
-        {
-          "command": "kotTestToolkit.buildFormExplorerExtensionCfe",
-          "when": "true"
-        },
-        {
-          "command": "kotTestToolkit.installFormExplorerExtension",
-          "when": "true"
-        },
-        {
           "command": "kotTestToolkit.fixScenarioIssues",
           "when": "true"
         },
@@ -1050,6 +1063,10 @@
           "when": "true"
         },
         {
+          "command": "kotTestToolkit.generateConfigurationDiffImpactReportWithAi",
+          "when": "true"
+        },
+        {
           "command": "kotTestToolkit.openNestedScenarioFromFeature",
           "when": "true"
         },
@@ -1080,6 +1097,105 @@
         }
       ]
     },
+    "semanticTokenTypes": [
+      {
+        "id": "gherkinComment",
+        "description": "Gherkin comment",
+        "superType": "comment"
+      },
+      {
+        "id": "gherkinFeatureKeyword",
+        "description": "Gherkin feature keyword",
+        "superType": "keyword"
+      },
+      {
+        "id": "gherkinFeatureTitle",
+        "description": "Gherkin feature title",
+        "superType": "string"
+      },
+      {
+        "id": "gherkinScenarioKeyword",
+        "description": "Gherkin scenario keyword",
+        "superType": "keyword"
+      },
+      {
+        "id": "gherkinScenarioTitle",
+        "description": "Gherkin scenario title",
+        "superType": "string"
+      },
+      {
+        "id": "gherkinStepKeyword",
+        "description": "Gherkin step keyword",
+        "superType": "keyword"
+      },
+      {
+        "id": "gherkinString",
+        "description": "Gherkin quoted string",
+        "superType": "string"
+      },
+      {
+        "id": "gherkinTag",
+        "description": "Gherkin tag",
+        "superType": "decorator"
+      },
+      {
+        "id": "gherkinPlaceholder",
+        "description": "Gherkin placeholder",
+        "superType": "variable"
+      },
+      {
+        "id": "gherkinBracketParameter",
+        "description": "KOT bracket parameter",
+        "superType": "variable"
+      },
+      {
+        "id": "gherkinTable",
+        "description": "Gherkin table line",
+        "superType": "keyword"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "yaml",
+        "scopes": {
+          "gherkinComment": [
+            "comment.line.number-sign"
+          ],
+          "gherkinFeatureKeyword": [
+            "keyword.language.gherkin.feature"
+          ],
+          "gherkinFeatureTitle": [
+            "string.language.gherkin.feature.title"
+          ],
+          "gherkinScenarioKeyword": [
+            "keyword.language.gherkin.feature.scenario"
+          ],
+          "gherkinScenarioTitle": [
+            "string.language.gherkin.scenario.title.title"
+          ],
+          "gherkinStepKeyword": [
+            "keyword.language.gherkin.feature.step"
+          ],
+          "gherkinString": [
+            "string.quoted.double",
+            "string.quoted.single"
+          ],
+          "gherkinTag": [
+            "entity.name.type.class.tsx"
+          ],
+          "gherkinPlaceholder": [
+            "variable.other"
+          ],
+          "gherkinBracketParameter": [
+            "variable.parameter",
+            "variable.other"
+          ],
+          "gherkinTable": [
+            "keyword.control.cucumber.table"
+          ]
+        }
+      }
+    ],
     "views": {
       "kotTestToolkitContainer": [
         {

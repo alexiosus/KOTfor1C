@@ -1615,6 +1615,25 @@ async function promptInfobaseAuthentication(
     };
 }
 
+export function getCachedInfobaseAuthentication(
+    infobasePath: string
+): { username: string; password: string } | null {
+    return INFOBASE_AUTH_CACHE.get(normalizePathForCompare(infobasePath)) || null;
+}
+
+export async function promptAndCacheInfobaseAuthentication(
+    t: Translator,
+    infobasePath: string
+): Promise<{ username: string; password: string } | null | undefined> {
+    const key = normalizePathForCompare(infobasePath);
+    const cached = INFOBASE_AUTH_CACHE.get(key) || null;
+    const result = await promptInfobaseAuthentication(t, cached, false);
+    if (result) {
+        INFOBASE_AUTH_CACHE.set(key, result);
+    }
+    return result;
+}
+
 async function resolveConfiguredOneCDesignerExePath(
     t: Translator,
     preferredOneCClientExePath?: string | null

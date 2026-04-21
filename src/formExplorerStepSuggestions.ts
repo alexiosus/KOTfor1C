@@ -17,7 +17,9 @@ interface StepCatalogRow {
 interface TableColumnDescriptor {
     key: string;
     shortKey: string;
+    titleKey: string;
     title: string;
+    hasExplicitTitle: boolean;
     visible: boolean;
 }
 
@@ -232,11 +234,15 @@ function buildFallbackColumnTitle(rawColumnName: string, tableName: string): str
     }
 
     const withoutPrefix = trimTechnicalTablePrefix(rawName, tableName);
-    if (/^(line(number)?|linenumber)$/i.test(withoutPrefix)) {
+    if (isLineNumberColumn(withoutPrefix)) {
         return '#';
     }
 
     return humanizeToken(withoutPrefix) || rawName;
+}
+
+function isLineNumberColumn(columnName: string): boolean {
+    return /^(#|line(number)?|linenumber)$/i.test(String(columnName || '').trim());
 }
 
 function collectTableColumnDescriptorsFromElement(
@@ -248,25 +254,40 @@ function collectTableColumnDescriptorsFromElement(
     }
 
     const descriptors: TableColumnDescriptor[] = [];
-    for (const child of tableElement.children) {
-        if (!isTableColumnElement(child)) {
-            continue;
-        }
-
-        const name = firstNonEmpty(child.name, lastSegment(child.path));
-        if (!name) {
-            continue;
-        }
-
-        descriptors.push({
-            key: toCaseFoldKey(name),
-            shortKey: toCaseFoldKey(trimTechnicalTablePrefix(name, tableName)),
-            title: firstNonEmpty(child.title, child.synonym, buildFallbackColumnTitle(name, tableName)),
-            visible: child.visible !== false
-        });
-    }
+    appendTableColumnDescriptors(descriptors, tableElement.children, tableName, true, 0);
 
     return descriptors;
+}
+
+function appendTableColumnDescriptors(
+    descriptors: TableColumnDescriptor[],
+    elements: FormExplorerElementInfo[],
+    tableName: string,
+    ancestorsVisible: boolean,
+    depth: number
+): void {
+    for (const child of elements || []) {
+        const nextAncestorsVisible = ancestorsVisible && child.visible !== false;
+        if (isTableColumnElement(child)) {
+            const name = firstNonEmpty(child.name, lastSegment(child.path));
+            if (name) {
+                const explicitTitle = firstNonEmpty(child.title, child.synonym);
+                const title = firstNonEmpty(explicitTitle, buildFallbackColumnTitle(name, tableName));
+                descriptors.push({
+                    key: toCaseFoldKey(name),
+                    shortKey: toCaseFoldKey(trimTechnicalTablePrefix(name, tableName)),
+                    titleKey: toCaseFoldKey(title),
+                    title,
+                    hasExplicitTitle: Boolean(explicitTitle),
+                    visible: ancestorsVisible && (depth > 0 || child.visible !== false)
+                });
+            }
+        }
+
+        if (Array.isArray(child.children) && child.children.length > 0) {
+            appendTableColumnDescriptors(descriptors, child.children, tableName, nextAncestorsVisible, depth + 1);
+        }
+    }
 }
 
 function findColumnDescriptor(
@@ -283,8 +304,32 @@ function findColumnDescriptor(
     return descriptors.find(descriptor => {
         return descriptor.key === key
             || (descriptor.shortKey && descriptor.shortKey === key)
+            || (descriptor.titleKey && descriptor.titleKey === key)
             || (shortKey && (descriptor.key === shortKey || descriptor.shortKey === shortKey));
     });
+}
+
+function hasMixedExplicitTableColumnTitles(descriptors: TableColumnDescriptor[]): boolean {
+    let titledCount = 0;
+    let untitledCount = 0;
+
+    for (const descriptor of descriptors) {
+        if (descriptor.visible === false) {
+            continue;
+        }
+
+        if (descriptor.hasExplicitTitle) {
+            titledCount += 1;
+        } else {
+            untitledCount += 1;
+        }
+
+        if (titledCount > 0 && untitledCount > 0) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function projectTableDataForDisplay(
@@ -301,6 +346,7 @@ function projectTableDataForDisplay(
     }
 
     const descriptors = collectTableColumnDescriptorsFromElement(tableElement, tableName);
+    const hideUntitledColumns = hasMixedExplicitTableColumnTitles(descriptors);
     const selectedIndexes: number[] = [];
     const selectedColumns: string[] = [];
 
@@ -308,6 +354,9 @@ function projectTableDataForDisplay(
         const rawColumnName = sanitizeTableCellValue(tableColumnsRaw[index]);
         const descriptor = findColumnDescriptor(descriptors, rawColumnName, tableName);
         if (descriptor && descriptor.visible === false) {
+            continue;
+        }
+        if (descriptor && hideUntitledColumns && !descriptor.hasExplicitTitle && !isLineNumberColumn(rawColumnName)) {
             continue;
         }
 
@@ -326,11 +375,91 @@ function projectTableDataForDisplay(
         const sourceRow = Array.isArray(row) ? row : [];
         return selectedIndexes.map(index => sanitizeTableCellValue(sourceRow[index]));
     });
+    const deduped = dropEmptyDuplicateDisplayColumns(selectedColumns, rows);
 
     return {
-        columns: selectedColumns,
-        rows
+        columns: deduped.columns,
+        rows: deduped.rows
     };
+}
+
+function dropEmptyDuplicateDisplayColumns(
+    columns: string[],
+    rows: string[][]
+): { columns: string[]; rows: string[][] } {
+    if (!Array.isArray(columns) || columns.length === 0 || !Array.isArray(rows) || rows.length === 0) {
+        return {
+            columns,
+            rows
+        };
+    }
+
+    const groups = new Map<string, number[]>();
+    for (let index = 0; index < columns.length; index += 1) {
+        const key = buildDisplayColumnDeduplicationKey(columns[index]);
+        if (!key) {
+            continue;
+        }
+
+        const indexes = groups.get(key) || [];
+        indexes.push(index);
+        groups.set(key, indexes);
+    }
+
+    const keepIndexes = new Set(columns.map((_, index) => index));
+    for (const indexes of groups.values()) {
+        if (indexes.length < 2) {
+            continue;
+        }
+
+        const nonEmptyCounts = indexes.map(index => {
+            return rows.reduce((count, row) => {
+                const value = sanitizeTableCellValue(Array.isArray(row) ? row[index] : '');
+                return value.trim().length > 0 ? count + 1 : count;
+            }, 0);
+        });
+
+        const hasNonEmptyDuplicate = nonEmptyCounts.some(count => count > 0);
+        if (!hasNonEmptyDuplicate) {
+            continue;
+        }
+
+        indexes.forEach((index, groupIndex) => {
+            if (nonEmptyCounts[groupIndex] === 0) {
+                keepIndexes.delete(index);
+            }
+        });
+    }
+
+    if (keepIndexes.size === columns.length) {
+        return {
+            columns,
+            rows
+        };
+    }
+
+    const orderedIndexes = columns
+        .map((_, index) => index)
+        .filter(index => keepIndexes.has(index));
+
+    return {
+        columns: orderedIndexes.map(index => columns[index]),
+        rows: rows.map(row => {
+            const sourceRow = Array.isArray(row) ? row : [];
+            return orderedIndexes.map(index => sanitizeTableCellValue(sourceRow[index]));
+        })
+    };
+}
+
+function buildDisplayColumnDeduplicationKey(columnTitle: string): string {
+    const key = toCaseFoldKey(columnTitle);
+    if (key === 'tax' || key === 'vatamount' || key === 'amountvat') {
+        return 'vatamount';
+    }
+    if (key === 'vatrate' || key === 'ratevat') {
+        return 'vatrate';
+    }
+    return key;
 }
 
 function parseCatalogRows(htmlContent: string): Map<string, StepCatalogRow> {

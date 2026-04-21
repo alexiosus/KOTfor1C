@@ -1,0 +1,954 @@
+{
+"ДанныеСценария": [
+{
+"Имя": "010 - Demo order happy path",
+"Код": "010 - Demo order happy path",
+"Основной": true,
+"ТекстШага": "#language: en",
+"СтрокаЛин": 16,
+"СтрокаОриг": 2,
+"УровеньВложенности": 0,
+"UIDСценария": "59403680-937c-4a72-8366-02e894038b49"
+},
+{
+"Имя": "010 - Demo order happy path",
+"Код": "010 - Demo order happy path",
+"Основной": true,
+"ТекстШага": "# KOT demo:",
+"СтрокаЛин": 17,
+"СтрокаОриг": 3,
+"УровеньВложенности": 0,
+"UIDСценария": "59403680-937c-4a72-8366-02e894038b49"
+},
+{
+"Имя": "010 - Demo order happy path",
+"Код": "010 - Demo order happy path",
+"Основной": true,
+"ТекстШага": "# - Open this file from Test Manager to see a main scenario with PhaseSwitcher metadata.",
+"СтрокаЛин": 18,
+"СтрокаОриг": 4,
+"УровеньВложенности": 0,
+"UIDСценария": "59403680-937c-4a72-8366-02e894038b49"
+},
+{
+"Имя": "010 - Demo order happy path",
+"Код": "010 - Demo order happy path",
+"Основной": true,
+"ТекстШага": "# - Put the caret on nested scenario names below to test hover, navigation, and \"Find references\".",
+"СтрокаЛин": 19,
+"СтрокаОриг": 5,
+"УровеньВложенности": 0,
+"UIDСценария": "59403680-937c-4a72-8366-02e894038b49"
+},
+{
+"Имя": "010 - Demo order happy path",
+"Код": "010 - Demo order happy path",
+"Основной": true,
+"ТекстШага": "# - Open one of the nested scen.yaml files or files under their folders to see affected-main highlighting.",
+"СтрокаЛин": 20,
+"СтрокаОриг": 6,
+"УровеньВложенности": 0,
+"UIDСценария": "59403680-937c-4a72-8366-02e894038b49"
+},
+{
+"Имя": "010 - Demo order happy path",
+"Код": "010 - Demo order happy path",
+"Основной": true,
+"ТекстШага": "# - This main scenario intentionally has no own ПараметрыСценария block content.",
+"СтрокаЛин": 21,
+"СтрокаОриг": 7,
+"УровеньВложенности": 0,
+"UIDСценария": "59403680-937c-4a72-8366-02e894038b49"
+},
+{
+"Имя": "010 - Demo order happy path",
+"Код": "010 - Demo order happy path",
+"Основной": true,
+"ТекстШага": "And I prepare demo session",
+"СтрокаЛин": 22,
+"СтрокаОриг": 9,
+"УровеньВложенности": 0,
+"UIDСценария": "59403680-937c-4a72-8366-02e894038b49"
+},
+{
+"Имя": "I prepare demo session",
+"Код": "000100",
+"Основной": false,
+"ТекстШага": "#language: en",
+"СтрокаЛин": 23,
+"СтрокаОриг": 2,
+"УровеньВложенности": 1,
+"UIDСценария": "4c5d1200-c9e9-4354-856c-61fd4004a769"
+},
+{
+"Имя": "I prepare demo session",
+"Код": "000100",
+"Основной": false,
+"ТекстШага": "And I set \"Administrator\" synonym to the current TestClient",
+"СтрокаЛин": 24,
+"СтрокаОриг": 4,
+"УровеньВложенности": 1,
+"UIDСценария": "4c5d1200-c9e9-4354-856c-61fd4004a769"
+},
+{
+"Имя": "I prepare demo session",
+"Код": "000100",
+"Основной": false,
+"ТекстШага": "And I connect \"Administrator\" profile of TestClient",
+"СтрокаЛин": 25,
+"СтрокаОриг": 5,
+"УровеньВложенности": 1,
+"UIDСценария": "4c5d1200-c9e9-4354-856c-61fd4004a769"
+},
+{
+"Имя": "I prepare demo session",
+"Код": "000100",
+"Основной": false,
+"ТекстШага": "And Delay \"1\"",
+"СтрокаЛин": 26,
+"СтрокаОриг": 6,
+"УровеньВложенности": 1,
+"UIDСценария": "4c5d1200-c9e9-4354-856c-61fd4004a769"
+},
+{
+"Имя": "010 - Demo order happy path",
+"Код": "010 - Demo order happy path",
+"Основной": true,
+"ТекстШага": "And I ensure demo master data",
+"СтрокаЛин": 27,
+"СтрокаОриг": 11,
+"УровеньВложенности": 0,
+"UIDСценария": "59403680-937c-4a72-8366-02e894038b49"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "#language: en",
+"СтрокаЛин": 28,
+"СтрокаОриг": 2,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "Given I open hyperlink \"e1cib/list/Catalog.Companies\"",
+"СтрокаЛин": 29,
+"СтрокаОриг": 4,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "Then \"Companies\" window is opened",
+"СтрокаЛин": 30,
+"СтрокаОриг": 5,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "And I click the button named \"FormCreate\"",
+"СтрокаЛин": 31,
+"СтрокаОриг": 6,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "Then \"Company (create)\" window is opened",
+"СтрокаЛин": 32,
+"СтрокаОриг": 7,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "And I input [Company] text in \"Description\" field",
+"СтрокаЛин": 33,
+"СтрокаОриг": 8,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "And I click \"Save and close\" button",
+"СтрокаЛин": 34,
+"СтрокаОриг": 9,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "And I wait \"Company (create) *\" window closing in 20 seconds",
+"СтрокаЛин": 35,
+"СтрокаОриг": 10,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "Given I open hyperlink \"e1cib/list/Catalog.Counterparties\"",
+"СтрокаЛин": 36,
+"СтрокаОриг": 12,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "Then \"Counterparties\" window is opened",
+"СтрокаЛин": 37,
+"СтрокаОриг": 13,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "And I click the button named \"FormCreate\"",
+"СтрокаЛин": 38,
+"СтрокаОриг": 14,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "Then \"Counterparty (create)\" window is opened",
+"СтрокаЛин": 39,
+"СтрокаОриг": 15,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "And I input [Customer] text in \"Description\" field",
+"СтрокаЛин": 40,
+"СтрокаОриг": 16,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "And I click \"Save and close\" button",
+"СтрокаЛин": 41,
+"СтрокаОриг": 17,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "And I wait \"Counterparty (create) *\" window closing in 20 seconds",
+"СтрокаЛин": 42,
+"СтрокаОриг": 18,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "Given I open hyperlink \"e1cib/list/Catalog.Items\"",
+"СтрокаЛин": 43,
+"СтрокаОриг": 20,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "Then \"Items\" window is opened",
+"СтрокаЛин": 44,
+"СтрокаОриг": 21,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "And I click the button named \"FormCreate\"",
+"СтрокаЛин": 45,
+"СтрокаОриг": 22,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "Then \"Item (create)\" window is opened",
+"СтрокаЛин": 46,
+"СтрокаОриг": 23,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "And I input [Item] text in \"Description\" field",
+"СтрокаЛин": 47,
+"СтрокаОриг": 24,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "And I click \"Save and close\" button",
+"СтрокаЛин": 48,
+"СтрокаОриг": 25,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "I ensure demo master data",
+"Код": "000110",
+"Основной": false,
+"ТекстШага": "And I wait \"Item (create) *\" window closing in 20 seconds",
+"СтрокаЛин": 49,
+"СтрокаОриг": 26,
+"УровеньВложенности": 1,
+"UIDСценария": "27365c28-5470-4f93-8327-b09616d411c8"
+},
+{
+"Имя": "010 - Demo order happy path",
+"Код": "010 - Demo order happy path",
+"Основной": true,
+"ТекстШага": "And I create demo sales order",
+"СтрокаЛин": 50,
+"СтрокаОриг": 13,
+"УровеньВложенности": 0,
+"UIDСценария": "59403680-937c-4a72-8366-02e894038b49"
+},
+{
+"Имя": "I create demo sales order",
+"Код": "000120",
+"Основной": false,
+"ТекстШага": "#language: en",
+"СтрокаЛин": 53,
+"СтрокаОриг": 2,
+"УровеньВложенности": 1,
+"UIDСценария": "a6b136b6-07d1-43fb-ad28-f49aa046ce41"
+},
+{
+"Имя": "I create demo sales order",
+"Код": "000120",
+"Основной": false,
+"ТекстШага": "# KOT demo:",
+"СтрокаЛин": 54,
+"СтрокаОриг": 3,
+"УровеньВложенности": 1,
+"UIDСценария": "a6b136b6-07d1-43fb-ad28-f49aa046ce41"
+},
+{
+"Имя": "I create demo sales order",
+"Код": "000120",
+"Основной": false,
+"ТекстШага": "# - This scenario receives only part of the values from its parent main scenario.",
+"СтрокаЛин": 55,
+"СтрокаОриг": 4,
+"УровеньВложенности": 1,
+"UIDСценария": "a6b136b6-07d1-43fb-ad28-f49aa046ce41"
+},
+{
+"Имя": "I create demo sales order",
+"Код": "000120",
+"Основной": false,
+"ТекстШага": "# - The rest is taken from defaults in ПараметрыСценария below.",
+"СтрокаЛин": 56,
+"СтрокаОриг": 5,
+"УровеньВложенности": 1,
+"UIDСценария": "a6b136b6-07d1-43fb-ad28-f49aa046ce41"
+},
+{
+"Имя": "I create demo sales order",
+"Код": "000120",
+"Основной": false,
+"ТекстШага": "# - Open the nested call \"I add demo sales order lines\" to inspect the next propagation level.",
+"СтрокаЛин": 57,
+"СтрокаОриг": 6,
+"УровеньВложенности": 1,
+"UIDСценария": "a6b136b6-07d1-43fb-ad28-f49aa046ce41"
+},
+{
+"Имя": "I create demo sales order",
+"Код": "000120",
+"Основной": false,
+"ТекстШага": "Given I open hyperlink \"e1cib/list/Document.SalesOrder\"",
+"СтрокаЛин": 58,
+"СтрокаОриг": 8,
+"УровеньВложенности": 1,
+"UIDСценария": "a6b136b6-07d1-43fb-ad28-f49aa046ce41"
+},
+{
+"Имя": "I create demo sales order",
+"Код": "000120",
+"Основной": false,
+"ТекстШага": "Then \"Sales orders\" window is opened",
+"СтрокаЛин": 59,
+"СтрокаОриг": 9,
+"УровеньВложенности": 1,
+"UIDСценария": "a6b136b6-07d1-43fb-ad28-f49aa046ce41"
+},
+{
+"Имя": "I create demo sales order",
+"Код": "000120",
+"Основной": false,
+"ТекстШага": "And I click the button named \"FormCreate\"",
+"СтрокаЛин": 60,
+"СтрокаОриг": 10,
+"УровеньВложенности": 1,
+"UIDСценария": "a6b136b6-07d1-43fb-ad28-f49aa046ce41"
+},
+{
+"Имя": "I create demo sales order",
+"Код": "000120",
+"Основной": false,
+"ТекстШага": "Then \"Sales order (create)\" window is opened",
+"СтрокаЛин": 61,
+"СтрокаОриг": 11,
+"УровеньВложенности": 1,
+"UIDСценария": "a6b136b6-07d1-43fb-ad28-f49aa046ce41"
+},
+{
+"Имя": "I create demo sales order",
+"Код": "000120",
+"Основной": false,
+"ТекстШага": "And I select from \"Company\" drop-down list by [Company] string",
+"СтрокаЛин": 62,
+"СтрокаОриг": 12,
+"УровеньВложенности": 1,
+"UIDСценария": "a6b136b6-07d1-43fb-ad28-f49aa046ce41"
+},
+{
+"Имя": "I create demo sales order",
+"Код": "000120",
+"Основной": false,
+"ТекстШага": "And I select from \"Customer\" drop-down list by [Customer] string",
+"СтрокаЛин": 63,
+"СтрокаОриг": 13,
+"УровеньВложенности": 1,
+"UIDСценария": "a6b136b6-07d1-43fb-ad28-f49aa046ce41"
+},
+{
+"Имя": "I create demo sales order",
+"Код": "000120",
+"Основной": false,
+"ТекстШага": "And I add demo sales order lines",
+"СтрокаЛин": 64,
+"СтрокаОриг": 14,
+"УровеньВложенности": 1,
+"UIDСценария": "a6b136b6-07d1-43fb-ad28-f49aa046ce41"
+},
+{
+"Имя": "I add demo sales order lines",
+"Код": "000122",
+"Основной": false,
+"ТекстШага": "#language: en",
+"СтрокаЛин": 71,
+"СтрокаОриг": 2,
+"УровеньВложенности": 2,
+"UIDСценария": "38629af2-9194-420d-aaef-3ca38961e166"
+},
+{
+"Имя": "I add demo sales order lines",
+"Код": "000122",
+"Основной": false,
+"ТекстШага": "# KOT demo:",
+"СтрокаЛин": 72,
+"СтрокаОриг": 3,
+"УровеньВложенности": 2,
+"UIDСценария": "38629af2-9194-420d-aaef-3ca38961e166"
+},
+{
+"Имя": "I add demo sales order lines",
+"Код": "000122",
+"Основной": false,
+"ТекстШага": "# - The same nested scenario is called twice below with different parameters.",
+"СтрокаЛин": 73,
+"СтрокаОриг": 4,
+"УровеньВложенности": 2,
+"UIDСценария": "38629af2-9194-420d-aaef-3ca38961e166"
+},
+{
+"Имя": "I add demo sales order lines",
+"Код": "000122",
+"Основной": false,
+"ТекстШага": "# - The second call exists only when SecondLineItem is passed or has a non-empty value.",
+"СтрокаЛин": 74,
+"СтрокаОриг": 5,
+"УровеньВложенности": 2,
+"UIDСценария": "38629af2-9194-420d-aaef-3ca38961e166"
+},
+{
+"Имя": "I add demo sales order lines",
+"Код": "000122",
+"Основной": false,
+"ТекстШага": "And I save \"[SecondLineItem]\" line to the variable \"SecondLineItem\"",
+"СтрокаЛин": 75,
+"СтрокаОриг": 7,
+"УровеньВложенности": 2,
+"UIDСценария": "38629af2-9194-420d-aaef-3ca38961e166"
+},
+{
+"Имя": "I add demo sales order lines",
+"Код": "000122",
+"Основной": false,
+"ТекстШага": "And I fill demo sales order line",
+"СтрокаЛин": 76,
+"СтрокаОриг": 9,
+"УровеньВложенности": 2,
+"UIDСценария": "38629af2-9194-420d-aaef-3ca38961e166"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "#language: en",
+"СтрокаЛин": 80,
+"СтрокаОриг": 2,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "# KOT demo:",
+"СтрокаЛин": 81,
+"СтрокаОриг": 3,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "# - This is a leaf reusable scenario.",
+"СтрокаЛин": 82,
+"СтрокаОриг": 4,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "# - Hover [Item], [Quantity], and [Price] to inspect declared parameters and defaults.",
+"СтрокаЛин": 83,
+"СтрокаОриг": 5,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "# - The parent scenario calls this block multiple times with different values.",
+"СтрокаЛин": 84,
+"СтрокаОриг": 6,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "# - Use \"Find references\" to inspect both call sites.",
+"СтрокаЛин": 85,
+"СтрокаОриг": 7,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "And in the table \"Inventory\" I click the button named \"InventoryAdd\"",
+"СтрокаЛин": 86,
+"СтрокаОриг": 9,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "And I activate \"Product\" field in \"Inventory\" table",
+"СтрокаЛин": 87,
+"СтрокаОриг": 10,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "And I input [Item] text in \"Product\" field of \"Inventory\" table",
+"СтрокаЛин": 88,
+"СтрокаОриг": 11,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "And I input [Quantity] text in \"Quantity\" field of \"Inventory\" table",
+"СтрокаЛин": 89,
+"СтрокаОриг": 12,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "And I input [Price] text in \"Price\" field of \"Inventory\" table",
+"СтрокаЛин": 90,
+"СтрокаОриг": 13,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "And I finish line editing in \"Inventory\" table",
+"СтрокаЛин": 91,
+"СтрокаОриг": 14,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I add demo sales order lines",
+"Код": "000122",
+"Основной": false,
+"ТекстШага": "If \"$SecondLineItem$\" Then",
+"СтрокаЛин": 92,
+"СтрокаОриг": 14,
+"УровеньВложенности": 2,
+"UIDСценария": "38629af2-9194-420d-aaef-3ca38961e166"
+},
+{
+"Имя": "I add demo sales order lines",
+"Код": "000122",
+"Основной": false,
+"ТекстШага": "And I fill demo sales order line",
+"СтрокаЛин": 93,
+"СтрокаОриг": 15,
+"УровеньВложенности": 2,
+"UIDСценария": "38629af2-9194-420d-aaef-3ca38961e166"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "#language: en",
+"СтрокаЛин": 97,
+"СтрокаОриг": 2,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "# KOT demo:",
+"СтрокаЛин": 98,
+"СтрокаОриг": 3,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "# - This is a leaf reusable scenario.",
+"СтрокаЛин": 99,
+"СтрокаОриг": 4,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "# - Hover [Item], [Quantity], and [Price] to inspect declared parameters and defaults.",
+"СтрокаЛин": 100,
+"СтрокаОриг": 5,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "# - The parent scenario calls this block multiple times with different values.",
+"СтрокаЛин": 101,
+"СтрокаОриг": 6,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "# - Use \"Find references\" to inspect both call sites.",
+"СтрокаЛин": 102,
+"СтрокаОриг": 7,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "And in the table \"Inventory\" I click the button named \"InventoryAdd\"",
+"СтрокаЛин": 103,
+"СтрокаОриг": 9,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "And I activate \"Product\" field in \"Inventory\" table",
+"СтрокаЛин": 104,
+"СтрокаОриг": 10,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "And I input [Item] text in \"Product\" field of \"Inventory\" table",
+"СтрокаЛин": 105,
+"СтрокаОриг": 11,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "And I input [Quantity] text in \"Quantity\" field of \"Inventory\" table",
+"СтрокаЛин": 106,
+"СтрокаОриг": 12,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "And I input [Price] text in \"Price\" field of \"Inventory\" table",
+"СтрокаЛин": 107,
+"СтрокаОриг": 13,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I fill demo sales order line",
+"Код": "000121",
+"Основной": false,
+"ТекстШага": "And I finish line editing in \"Inventory\" table",
+"СтрокаЛин": 108,
+"СтрокаОриг": 14,
+"УровеньВложенности": 3,
+"UIDСценария": "955fb7fa-9d86-47a5-83c1-dc803bd6b688"
+},
+{
+"Имя": "I create demo sales order",
+"Код": "000120",
+"Основной": false,
+"ТекстШага": "And I click \"Save\" button",
+"СтрокаЛин": 110,
+"СтрокаОриг": 21,
+"УровеньВложенности": 1,
+"UIDСценария": "a6b136b6-07d1-43fb-ad28-f49aa046ce41"
+},
+{
+"Имя": "010 - Demo order happy path",
+"Код": "010 - Demo order happy path",
+"Основной": true,
+"ТекстШага": "And I post and validate demo document",
+"СтрокаЛин": 111,
+"СтрокаОриг": 17,
+"УровеньВложенности": 0,
+"UIDСценария": "59403680-937c-4a72-8366-02e894038b49"
+},
+{
+"Имя": "I post and validate demo document",
+"Код": "000130",
+"Основной": false,
+"ТекстШага": "#language: en",
+"СтрокаЛин": 114,
+"СтрокаОриг": 2,
+"УровеньВложенности": 1,
+"UIDСценария": "a88ad0c7-b78f-44be-ad82-e6d11da81273"
+},
+{
+"Имя": "I post and validate demo document",
+"Код": "000130",
+"Основной": false,
+"ТекстШага": "And I click \"Post and close\" button",
+"СтрокаЛин": 115,
+"СтрокаОриг": 4,
+"УровеньВложенности": 1,
+"UIDСценария": "a88ad0c7-b78f-44be-ad82-e6d11da81273"
+},
+{
+"Имя": "I post and validate demo document",
+"Код": "000130",
+"Основной": false,
+"ТекстШага": "And I wait \"Sales order *\" window closing in 20 seconds",
+"СтрокаЛин": 116,
+"СтрокаОриг": 5,
+"УровеньВложенности": 1,
+"UIDСценария": "a88ad0c7-b78f-44be-ad82-e6d11da81273"
+},
+{
+"Имя": "I post and validate demo document",
+"Код": "000130",
+"Основной": false,
+"ТекстШага": "Then \"Sales orders\" window is opened",
+"СтрокаЛин": 117,
+"СтрокаОриг": 6,
+"УровеньВложенности": 1,
+"UIDСценария": "a88ad0c7-b78f-44be-ad82-e6d11da81273"
+},
+{
+"Имя": "I post and validate demo document",
+"Код": "000130",
+"Основной": false,
+"ТекстШага": "And I go to line in \"List\" table",
+"СтрокаЛин": 118,
+"СтрокаОриг": 7,
+"УровеньВложенности": 1,
+"UIDСценария": "a88ad0c7-b78f-44be-ad82-e6d11da81273"
+},
+{
+"Имя": "I post and validate demo document",
+"Код": "000130",
+"Основной": false,
+"ТекстШага": "| 'Customer'         |",
+"СтрокаЛин": 119,
+"СтрокаОриг": 8,
+"УровеньВложенности": 1,
+"UIDСценария": "a88ad0c7-b78f-44be-ad82-e6d11da81273"
+},
+{
+"Имя": "I post and validate demo document",
+"Код": "000130",
+"Основной": false,
+"ТекстШага": "| [ExpectedCustomer] |",
+"СтрокаЛин": 120,
+"СтрокаОриг": 9,
+"УровеньВложенности": 1,
+"UIDСценария": "a88ad0c7-b78f-44be-ad82-e6d11da81273"
+},
+{
+"Имя": "I post and validate demo document",
+"Код": "000130",
+"Основной": false,
+"ТекстШага": "And I close \"Sales orders\" window",
+"СтрокаЛин": 121,
+"СтрокаОриг": 10,
+"УровеньВложенности": 1,
+"UIDСценария": "a88ad0c7-b78f-44be-ad82-e6d11da81273"
+},
+{
+"Имя": "I post and validate demo document",
+"Код": "000130",
+"Основной": false,
+"ТекстШага": "Given I open hyperlink \"e1cib/list/Catalog.Items\"",
+"СтрокаЛин": 122,
+"СтрокаОриг": 12,
+"УровеньВложенности": 1,
+"UIDСценария": "a88ad0c7-b78f-44be-ad82-e6d11da81273"
+},
+{
+"Имя": "I post and validate demo document",
+"Код": "000130",
+"Основной": false,
+"ТекстШага": "Then \"Items\" window is opened",
+"СтрокаЛин": 123,
+"СтрокаОриг": 13,
+"УровеньВложенности": 1,
+"UIDСценария": "a88ad0c7-b78f-44be-ad82-e6d11da81273"
+},
+{
+"Имя": "I post and validate demo document",
+"Код": "000130",
+"Основной": false,
+"ТекстШага": "And I go to line in \"List\" table",
+"СтрокаЛин": 124,
+"СтрокаОриг": 14,
+"УровеньВложенности": 1,
+"UIDСценария": "a88ad0c7-b78f-44be-ad82-e6d11da81273"
+},
+{
+"Имя": "I post and validate demo document",
+"Код": "000130",
+"Основной": false,
+"ТекстШага": "| 'Description'  |",
+"СтрокаЛин": 125,
+"СтрокаОриг": 15,
+"УровеньВложенности": 1,
+"UIDСценария": "a88ad0c7-b78f-44be-ad82-e6d11da81273"
+},
+{
+"Имя": "I post and validate demo document",
+"Код": "000130",
+"Основной": false,
+"ТекстШага": "| [ExpectedItem] |",
+"СтрокаЛин": 126,
+"СтрокаОриг": 16,
+"УровеньВложенности": 1,
+"UIDСценария": "a88ad0c7-b78f-44be-ad82-e6d11da81273"
+},
+{
+"Имя": "I post and validate demo document",
+"Код": "000130",
+"Основной": false,
+"ТекстШага": "And I close \"Items\" window",
+"СтрокаЛин": 127,
+"СтрокаОриг": 17,
+"УровеньВложенности": 1,
+"UIDСценария": "a88ad0c7-b78f-44be-ad82-e6d11da81273"
+}
+]
+}

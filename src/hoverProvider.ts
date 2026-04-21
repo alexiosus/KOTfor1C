@@ -11,6 +11,10 @@ import {
     findVariableReferenceAtPosition,
     SavedVariableDefinition
 } from './completionProvider';
+import {
+    extractScenarioParameterNameFromText,
+    parseScenarioParameterDefinitions
+} from './scenarioParameterUtils';
 import { YamlParametersManager } from './yamlParametersManager';
 
 // Интерфейс для хранения определений шагов и их описаний
@@ -786,6 +790,36 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         return merged;
     }
 
+    private findScenarioBracketParameterAtPosition(
+        lineText: string,
+        character: number
+    ): { name: string; startCharacter: number; endCharacter: number } | null {
+        const parameterRegex = /\[[A-Za-zА-Яа-яЁё0-9_-]+\]/g;
+        let match: RegExpExecArray | null;
+
+        while ((match = parameterRegex.exec(lineText)) !== null) {
+            const tokenText = match[0];
+            const parameterName = extractScenarioParameterNameFromText(tokenText);
+            if (!parameterName) {
+                continue;
+            }
+
+            const startCharacter = match.index;
+            const endCharacter = startCharacter + tokenText.length;
+            if (character < startCharacter || character > endCharacter) {
+                continue;
+            }
+
+            return {
+                name: parameterName,
+                startCharacter,
+                endCharacter
+            };
+        }
+
+        return null;
+    }
+
     private async provideVariableHover(
         document: vscode.TextDocument,
         position: vscode.Position
@@ -832,6 +866,55 @@ export class DriveHoverProvider implements vscode.HoverProvider {
                 variableReference.startCharacter,
                 position.line,
                 variableReference.endCharacter
+            )
+        );
+    }
+
+    private async provideScenarioParameterHover(
+        document: vscode.TextDocument,
+        position: vscode.Position
+    ): Promise<vscode.Hover | null> {
+        const lineText = document.lineAt(position.line).text;
+        const parameterReference = this.findScenarioBracketParameterAtPosition(lineText, position.character);
+        if (!parameterReference) {
+            return null;
+        }
+
+        const definitions = parseScenarioParameterDefinitions(document.getText());
+        const definition = definitions.get(parameterReference.name);
+        if (!definition) {
+            return null;
+        }
+
+        const t = await this.getHoverTranslator();
+        const content = new vscode.MarkdownString();
+        content.isTrusted = true;
+        content.supportThemeIcons = true;
+        content.appendMarkdown(`**${t('Scenario parameter')}:** \`[${definition.name}]\`\n\n`);
+
+        if (definition.rawDefaultValue === null) {
+            content.appendMarkdown(`**${t('Default value')}:** _${t('Default value is not defined in the parameter block.')}_`);
+        } else if (!definition.rawDefaultValue.trim()) {
+            content.appendMarkdown(`**${t('Default value')}:** _${t('Empty.')}_`);
+        } else {
+            this.appendVariableValueMarkdown(content, t('Default value'), definition.rawDefaultValue.trim());
+        }
+
+        if (definition.valueRange) {
+            const editDefaultValueCommandUri = `command:kotTestToolkit.editScenarioParameterDefaultValue?${encodeURIComponent(JSON.stringify([
+                document.uri.toString(),
+                definition.name
+            ]))}`;
+            content.appendMarkdown(`\n\n[$(edit) ${t('Edit default value')}](${editDefaultValueCommandUri})`);
+        }
+
+        return new vscode.Hover(
+            content,
+            new vscode.Range(
+                position.line,
+                parameterReference.startCharacter,
+                position.line,
+                parameterReference.endCharacter
             )
         );
     }
@@ -1120,17 +1203,31 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         
         // Получаем текст строки
         const lineText = document.lineAt(position.line).text.trim();
-        if (!lineText || lineText.startsWith('#') || lineText.startsWith('|') || lineText.startsWith('"""')) {
+        if (!lineText || lineText.startsWith('#') || lineText.startsWith('"""')) {
             return null;
         }
 
-        if (isFeatureDocument && this.scenarioCacheProvider?.isFailedFeatureLine?.(document.uri, position.line)) {
+        const isTableRow = lineText.startsWith('|');
+
+        if (!isTableRow && isFeatureDocument && this.scenarioCacheProvider?.isFailedFeatureLine?.(document.uri, position.line)) {
             return null;
         }
 
         const variableHover = await this.provideVariableHover(document, position);
         if (variableHover) {
             return variableHover;
+        }
+
+        if (!isFeatureDocument) {
+            const scenarioParameterHover = await this.provideScenarioParameterHover(document, position);
+            if (scenarioParameterHover) {
+                return scenarioParameterHover;
+            }
+        }
+
+        // Строки таблицы не содержат шагов — дальнейший поиск не нужен
+        if (isTableRow) {
+            return null;
         }
 
         const scenarioCallHover = await this.provideScenarioCallHover(lineText);
