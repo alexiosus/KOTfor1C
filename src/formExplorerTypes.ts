@@ -363,7 +363,7 @@ function normalizeTableData(value: unknown): FormExplorerTableData | undefined {
     return {
         columns: inferredColumns,
         rows,
-        rowCount: rowCount ?? rows.length,
+        rowCount: rowCount ?? (rows.length > 0 ? rows.length : undefined),
         truncated,
         sourcePath: asString(record.sourcePath)
     };

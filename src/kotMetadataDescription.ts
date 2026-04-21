@@ -197,18 +197,23 @@ function wrapNormalizedDescription(rawValue: string, maxLineLength: number): str
     const paragraphs = rawValue.split('\n');
 
     for (const paragraph of paragraphs) {
-        const normalizedParagraph = paragraph.trim();
-        if (normalizedParagraph.length === 0) {
+        const normalizedParagraph = paragraph.replace(/\t/g, '    ').replace(/\s+$/g, '');
+        const trimmedParagraph = normalizedParagraph.trim();
+        if (trimmedParagraph.length === 0) {
             wrappedLines.push('');
             continue;
         }
 
-        const words = normalizedParagraph.split(/\s+/).filter(Boolean);
-        let currentLine = '';
+        const bulletMatch = normalizedParagraph.match(/^(\s*-\s+)(.*)$/);
+        const prefix = bulletMatch?.[1] || '';
+        const continuationPrefix = prefix.length > 0 ? ' '.repeat(prefix.length) : '';
+        const content = bulletMatch?.[2]?.trim() || trimmedParagraph;
+        const words = content.split(/\s+/).filter(Boolean);
+        let currentLine = prefix;
 
         for (const word of words) {
-            if (currentLine.length === 0) {
-                currentLine = word;
+            if (currentLine.trim().length === 0) {
+                currentLine = `${prefix}${word}`;
                 continue;
             }
 
@@ -219,10 +224,10 @@ function wrapNormalizedDescription(rawValue: string, maxLineLength: number): str
             }
 
             wrappedLines.push(currentLine);
-            currentLine = word;
+            currentLine = `${continuationPrefix}${word}`;
         }
 
-        if (currentLine.length > 0) {
+        if (currentLine.trim().length > 0) {
             wrappedLines.push(currentLine);
         }
     }

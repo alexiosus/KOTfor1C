@@ -8,9 +8,18 @@ import { ScenarioLanguage, getScenarioCallKeyword, getScenarioLanguageForDocumen
 import { YamlParametersManager } from './yamlParametersManager';
 import { getBlockClosingKeyword, parseBlockKeyword } from './blockKeywordParser';
 import { normalizeMultilineStepInsertText } from './gherkinTableUtils';
+import { loadLiveFormExplorerSnapshot } from './formExplorerLiveSnapshot';
+import {
+    FormExplorerElementInfo,
+    FormExplorerSnapshot,
+} from './formExplorerTypes';
 
 const VARIABLE_REFERENCE_PREFIX_REGEX = /^[A-Za-zА-Яа-яЁё0-9_]*$/;
+const SCENARIO_BRACKET_PARAMETER_PREFIX_REGEX = /(^|[^\\])\[([A-Za-zА-Яа-яЁё0-9_-]*)$/;
+const STEP_TEMPLATE_PLACEHOLDER_REGEX = /%(\d+)\s+([^"'\r\n]+)/g;
 const SEMANTIC_STEP_PREFIX = '!';
+const FORM_EXPLORER_INITIAL_SUGGEST_COMMAND = 'editor.action.triggerSuggest';
+const FORM_EXPLORER_ADVANCE_ARGUMENT_COMMAND = 'kotTestToolkit.completion.advanceFormExplorerArgument';
 const GHERKIN_KEYWORD_PREFIX_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\s+/i;
 const OPTIONAL_GHERKIN_PREFIX_FRAGMENT = String.raw`(?:(?:\*\s*)?(?:And|But|Then|When|Given|If|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?`;
 const VARIABLE_ASSIGNMENT_VERB_FRAGMENT = String.raw`(?:save|store|remember|read|create|determine|define|generate|wait|execute|put|retrieve|get|copy|запоминаю|сохраняю|читаю|создаю|определяю|генерирую|ожидаю|выполняю|вставляю|получаю|копирую)`;
@@ -72,6 +81,53 @@ export interface VariableReferenceContext {
     mode: VariableCompletionMode;
 }
 
+export interface ScenarioBracketParameterContext {
+    startCharacter: number;
+    typedPrefix: string;
+}
+
+interface QuotedTextReferenceContext {
+    value: string;
+    beforeQuote: string;
+    afterQuote: string;
+    argumentIndex: number;
+}
+
+interface QuotedTextCompletionContext {
+    startCharacter: number;
+    endCharacter: number;
+    typedPrefix: string;
+    quoteCharacter: '"' | "'";
+    argumentIndex: number;
+    quotedValuesBefore: string[];
+    quotedValuesAfter: string[];
+    otherQuotedReferences: QuotedTextReferenceContext[];
+    linePrefixBeforeQuote: string;
+}
+
+interface StepTemplateSnippetData {
+    displayText: string;
+    snippetText: string;
+    hasPlaceholders: boolean;
+}
+
+interface FormExplorerElementCompletionCandidate {
+    path: string;
+    name: string;
+    title: string;
+    kind: string;
+    valuePreview: string;
+    boundAttributePath: string;
+}
+
+interface FormExplorerTableCompletionCandidate {
+    path: string;
+    name: string;
+    title: string;
+    columns: string[];
+    rows: string[][];
+}
+
 export interface SavedVariableDefinition {
     name: string;
     value: string;
@@ -113,6 +169,166 @@ export function parseVariableReferenceContext(linePrefix: string): VariableRefer
         startCharacter,
         typedPrefix,
         mode: dollarPrefix === '$$' ? 'globalOnly' : 'all'
+    };
+}
+
+export function parseScenarioBracketParameterContext(linePrefix: string): ScenarioBracketParameterContext | null {
+    const match = linePrefix.match(SCENARIO_BRACKET_PARAMETER_PREFIX_REGEX);
+    if (!match) {
+        return null;
+    }
+
+    const typedPrefix = match[2] || '';
+    const startCharacter = linePrefix.length - typedPrefix.length - 1;
+    if (startCharacter < 0 || linePrefix[startCharacter] !== '[') {
+        return null;
+    }
+
+    return {
+        startCharacter,
+        typedPrefix
+    };
+}
+
+function escapeStepSnippetText(value: string): string {
+    return value
+        .replace(/\\/g, '\\\\')
+        .replace(/\$/g, '\\$')
+        .replace(/\}/g, '\\}');
+}
+
+function buildStepTemplateSnippetData(stepText: string): StepTemplateSnippetData {
+    if (!stepText) {
+        return {
+            displayText: '',
+            snippetText: '',
+            hasPlaceholders: false
+        };
+    }
+
+    let displayText = '';
+    let snippetText = '';
+    let lastIndex = 0;
+    let hasPlaceholders = false;
+    STEP_TEMPLATE_PLACEHOLDER_REGEX.lastIndex = 0;
+
+    let match: RegExpExecArray | null;
+    while ((match = STEP_TEMPLATE_PLACEHOLDER_REGEX.exec(stepText)) !== null) {
+        const matchStart = match.index;
+        const matchEnd = matchStart + match[0].length;
+        const placeholderIndex = Number.parseInt(match[1], 10);
+        if (!Number.isFinite(placeholderIndex) || placeholderIndex <= 0) {
+            continue;
+        }
+
+        const staticText = stepText.slice(lastIndex, matchStart);
+        displayText += staticText;
+        snippetText += escapeStepSnippetText(staticText);
+        snippetText += `\${${placeholderIndex}}`;
+        hasPlaceholders = true;
+        lastIndex = matchEnd;
+    }
+
+    const trailingText = stepText.slice(lastIndex);
+    displayText += trailingText;
+    snippetText += escapeStepSnippetText(trailingText);
+
+    return {
+        displayText,
+        snippetText,
+        hasPlaceholders
+    };
+}
+
+function parseQuotedTextCompletionContext(
+    lineText: string,
+    character: number
+): QuotedTextCompletionContext | null {
+    const safeCharacter = Math.max(0, Math.min(character, lineText.length));
+    const quotedSegments: Array<{
+        startCharacter: number;
+        endCharacter: number;
+        quoteCharacter: '"' | "'";
+        value: string;
+        beforeQuote: string;
+        afterQuote: string;
+    }> = [];
+
+    let activeQuote: '"' | "'" | null = null;
+    let activeQuoteStart = -1;
+    for (let index = 0; index < lineText.length; index++) {
+        const symbol = lineText[index];
+        if (symbol !== '"' && symbol !== '\'') {
+            continue;
+        }
+
+        if (!activeQuote) {
+            activeQuote = symbol;
+            activeQuoteStart = index;
+            continue;
+        }
+
+        if (symbol !== activeQuote || activeQuoteStart < 0) {
+            continue;
+        }
+
+        quotedSegments.push({
+            startCharacter: activeQuoteStart,
+            endCharacter: index,
+            quoteCharacter: activeQuote,
+            value: lineText.slice(activeQuoteStart + 1, index),
+            beforeQuote: lineText.slice(0, activeQuoteStart),
+            afterQuote: lineText.slice(index + 1)
+        });
+        activeQuote = null;
+        activeQuoteStart = -1;
+    }
+
+    if (activeQuote && activeQuoteStart >= 0) {
+        quotedSegments.push({
+            startCharacter: activeQuoteStart,
+            endCharacter: lineText.length,
+            quoteCharacter: activeQuote,
+            value: lineText.slice(activeQuoteStart + 1),
+            beforeQuote: lineText.slice(0, activeQuoteStart),
+            afterQuote: ''
+        });
+    }
+
+    const activeSegmentIndex = quotedSegments.findIndex(segment =>
+        safeCharacter >= segment.startCharacter + 1 && safeCharacter <= segment.endCharacter
+    );
+    if (activeSegmentIndex < 0) {
+        return null;
+    }
+
+    const activeSegment = quotedSegments[activeSegmentIndex];
+    const typedPrefixEndCharacter = Math.min(safeCharacter, activeSegment.endCharacter);
+    const quotedValuesBefore = quotedSegments
+        .slice(0, activeSegmentIndex)
+        .map(segment => segment.value);
+    const quotedValuesAfter = quotedSegments
+        .slice(activeSegmentIndex + 1)
+        .map(segment => segment.value);
+    const otherQuotedReferences = quotedSegments
+        .map((segment, index) => ({
+            value: segment.value,
+            beforeQuote: segment.beforeQuote,
+            afterQuote: segment.afterQuote,
+            argumentIndex: index
+        }))
+        .filter(reference => reference.argumentIndex !== activeSegmentIndex);
+
+    return {
+        startCharacter: activeSegment.startCharacter + 1,
+        endCharacter: activeSegment.endCharacter,
+        typedPrefix: lineText.slice(activeSegment.startCharacter + 1, typedPrefixEndCharacter),
+        quoteCharacter: activeSegment.quoteCharacter,
+        argumentIndex: activeSegmentIndex,
+        quotedValuesBefore,
+        quotedValuesAfter,
+        otherQuotedReferences,
+        linePrefixBeforeQuote: activeSegment.beforeQuote
     };
 }
 
@@ -528,55 +744,63 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 // Получаем английские варианты, если они есть (колонки 3-4)
                 const stepText = cells.length >= 4 ? this.normalizeLineBreaks(cells[2].textContent.trim()) : '';
                 const stepDescription = cells.length >= 4 ? this.normalizeLineBreaks(cells[3].textContent.trim()) : '';
+                const russianSnippet = buildStepTemplateSnippetData(russianStepText);
+                const englishSnippet = buildStepTemplateSnippetData(stepText);
 
                 // Создаем элемент автодополнения для русского шага (если он есть)
                 if (russianStepText) {
-                    const russianItem = new vscode.CompletionItem(russianStepText, vscode.CompletionItemKind.Snippet);
+                    const russianItem = new vscode.CompletionItem(russianSnippet.displayText, vscode.CompletionItemKind.Snippet);
 
                     // Создаем документацию: русское описание + оба варианта шагов
                     const russianDoc = new vscode.MarkdownString();
                     russianDoc.appendMarkdown(`**Описание:**\n\n${russianStepDescription}\n\n`);
-                    russianDoc.appendMarkdown(`\`${russianStepText}\``);
+                    russianDoc.appendMarkdown(`\`${russianSnippet.displayText}\``);
                     if (stepText) {
-                        russianDoc.appendMarkdown(`\n\n\`${stepText}\``);
+                        russianDoc.appendMarkdown(`\n\n\`${englishSnippet.displayText}\``);
                     }
 
                     russianItem.documentation = russianDoc;
                     russianItem.detail = "Gherkin Step (1C) - Russian";
-                    russianItem.insertText = russianStepText;
+                    russianItem.insertText = russianSnippet.hasPlaceholders
+                        ? new vscode.SnippetString(russianSnippet.snippetText)
+                        : russianSnippet.displayText;
+                    russianItem.filterText = `${russianSnippet.displayText} ${russianStepText}`;
                     this.gherkinItemLanguageByItem.set(russianItem, 'ru');
                     this.gherkinCompletionItems.push(russianItem);
                     this.semanticStepEntries.push(this.createSemanticStepEntry(
                         russianItem,
-                        russianStepText,
+                        russianSnippet.displayText,
                         russianStepDescription,
-                        [stepText, stepDescription],
+                        [englishSnippet.displayText, stepDescription, russianStepText],
                         'ru'
                     ));
                 }
 
                 // Создаем элемент автодополнения для английского шага (если он есть)
                 if (stepText) {
-                    const item = new vscode.CompletionItem(stepText, vscode.CompletionItemKind.Snippet);
+                    const item = new vscode.CompletionItem(englishSnippet.displayText, vscode.CompletionItemKind.Snippet);
 
                     // Создаем документацию: английское описание + оба варианта шагов
                     const englishDoc = new vscode.MarkdownString();
                     englishDoc.appendMarkdown(`**Description:**\n\n${stepDescription}\n\n`);
-                    englishDoc.appendMarkdown(`\`${stepText}\``);
+                    englishDoc.appendMarkdown(`\`${englishSnippet.displayText}\``);
                     if (russianStepText) {
-                        englishDoc.appendMarkdown(`\n\n\`${russianStepText}\``);
+                        englishDoc.appendMarkdown(`\n\n\`${russianSnippet.displayText}\``);
                     }
 
                     item.documentation = englishDoc;
                     item.detail = "Gherkin Step (1C) - English";
-                    item.insertText = stepText;
+                    item.insertText = englishSnippet.hasPlaceholders
+                        ? new vscode.SnippetString(englishSnippet.snippetText)
+                        : englishSnippet.displayText;
+                    item.filterText = `${englishSnippet.displayText} ${stepText}`;
                     this.gherkinItemLanguageByItem.set(item, 'en');
                     this.gherkinCompletionItems.push(item);
                     this.semanticStepEntries.push(this.createSemanticStepEntry(
                         item,
-                        stepText,
+                        englishSnippet.displayText,
                         stepDescription,
-                        [russianStepText, russianStepDescription],
+                        [russianSnippet.displayText, russianStepDescription, stepText],
                         'en'
                     ));
                 }
@@ -663,6 +887,34 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         const variableReferenceContext = this.getVariableReferenceContext(linePrefix);
         if (variableReferenceContext) {
             return await this.buildSavedVariableCompletionList(document, position, variableReferenceContext);
+        }
+
+        const scenarioBracketParameterContext = !isFeatureDocument
+            ? this.getScenarioBracketParameterContext(linePrefix)
+            : null;
+        if (scenarioBracketParameterContext) {
+            return this.buildScenarioParameterCompletionList(document, position, scenarioBracketParameterContext);
+        }
+
+        const quotedTextCompletionContext = parseQuotedTextCompletionContext(lineText, position.character);
+        if (quotedTextCompletionContext) {
+            const formExplorerQuotedCompletionList = await this.buildFormExplorerQuotedArgumentCompletionList(
+                lineText,
+                position,
+                quotedTextCompletionContext
+            );
+            if (formExplorerQuotedCompletionList) {
+                return formExplorerQuotedCompletionList;
+            }
+            // When cursor is inside a quote in an already-completed step (text follows the closing
+            // quote), don't offer gherkin step suggestions — they would corrupt the existing step.
+            const closingQuoteIndex = quotedTextCompletionContext.endCharacter;
+            if (
+                closingQuoteIndex < lineText.length
+                && lineText.slice(closingQuoteIndex + 1).trim().length > 0
+            ) {
+                return new vscode.CompletionList([], false);
+            }
         }
 
         // Если элементы Gherkin еще не загружены или идет загрузка, дождемся ее завершения
@@ -758,6 +1010,12 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     itemLanguage,
                     baseItem.insertText
                 );
+                if (completionItem.insertText instanceof vscode.SnippetString) {
+                    completionItem.command = {
+                        title: vscode.l10n.t('Suggest'),
+                        command: FORM_EXPLORER_INITIAL_SUGGEST_COMMAND
+                    };
+                }
                 // Сортировка по релевантности
                 const languageBucket = itemLanguage && itemLanguage !== scenarioLanguage ? '1' : '0';
                 completionItem.sortText = `0${languageBucket}${(1 - matchResult.score).toFixed(3)}${itemFullText}`;
@@ -874,6 +1132,1029 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         linePrefix: string
     ): VariableReferenceContext | null {
         return parseVariableReferenceContext(linePrefix);
+    }
+
+    private getScenarioBracketParameterContext(
+        linePrefix: string
+    ): ScenarioBracketParameterContext | null {
+        return parseScenarioBracketParameterContext(linePrefix);
+    }
+
+    private buildScenarioParameterCompletionList(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        context: ScenarioBracketParameterContext
+    ): vscode.CompletionList {
+        const completionList = new vscode.CompletionList<vscode.CompletionItem>([], false);
+        const scenarioParameters = Array.from(this.getScenarioParameterDefaults(document).entries());
+        if (scenarioParameters.length === 0) {
+            return completionList;
+        }
+        const lineText = document.lineAt(position.line).text;
+        const replacementEndCharacter = this.resolveScenarioBracketParameterReplacementEndCharacter(
+            lineText,
+            position.character
+        );
+
+        const typedPrefixLower = context.typedPrefix.toLocaleLowerCase();
+        const candidates = scenarioParameters
+            .map(([name, defaultValue], index) => ({
+                name,
+                defaultValue,
+                index,
+                matchResult: this.fuzzyMatch(name, context.typedPrefix)
+            }))
+            .filter(candidate => candidate.matchResult.matched)
+            .sort((left, right) => {
+                const leftStartsWithPrefix = typedPrefixLower.length > 0 && left.name.toLocaleLowerCase().startsWith(typedPrefixLower) ? 0 : 1;
+                const rightStartsWithPrefix = typedPrefixLower.length > 0 && right.name.toLocaleLowerCase().startsWith(typedPrefixLower) ? 0 : 1;
+                return leftStartsWithPrefix - rightStartsWithPrefix
+                    || right.matchResult.score - left.matchResult.score
+                    || left.index - right.index;
+            });
+
+        candidates.forEach(candidate => {
+            const insertedValue = `[${candidate.name}]`;
+            const preview = buildVariableValuePreview(candidate.defaultValue);
+            const completionItem = new vscode.CompletionItem({
+                label: insertedValue,
+                description: preview
+            }, vscode.CompletionItemKind.Variable);
+
+            completionItem.detail = vscode.l10n.t('Scenario parameter');
+            completionItem.documentation = this.buildScenarioParameterCompletionDocumentation(
+                candidate.name,
+                candidate.defaultValue
+            );
+            completionItem.insertText = insertedValue;
+            completionItem.filterText = `${candidate.name} ${insertedValue}`;
+            completionItem.sortText = `${(1 - candidate.matchResult.score).toFixed(4)}_${candidate.index.toString().padStart(3, '0')}`;
+            completionItem.range = new vscode.Range(
+                position.line,
+                context.startCharacter,
+                position.line,
+                replacementEndCharacter
+            );
+            completionList.items.push(completionItem);
+        });
+
+        return completionList;
+    }
+
+    private resolveScenarioBracketParameterReplacementEndCharacter(
+        lineText: string,
+        cursorCharacter: number
+    ): number {
+        if (cursorCharacter < lineText.length && lineText[cursorCharacter] === ']') {
+            return cursorCharacter + 1;
+        }
+
+        return cursorCharacter;
+    }
+
+    private normalizeFormExplorerLookupValue(value: string | undefined): string {
+        return String(value || '')
+            .trim()
+            .toLocaleLowerCase()
+            .replace(/ё/g, 'е')
+            .replace(/[\s._-]+/g, '');
+    }
+
+    private normalizeFormExplorerValueLookupValue(value: string | undefined): string {
+        return String(value || '')
+            .trim()
+            .toLocaleLowerCase()
+            .replace(/ё/g, 'е')
+            .replace(/\s+/g, ' ');
+    }
+
+    private collectFormExplorerElementCompletionCandidates(
+        snapshot: FormExplorerSnapshot
+    ): FormExplorerElementCompletionCandidate[] {
+        const result: FormExplorerElementCompletionCandidate[] = [];
+        const appendCandidates = (elements: FormExplorerElementInfo[]): void => {
+            for (const element of elements) {
+                result.push({
+                    path: element.path || '',
+                    name: (element.name || '').trim(),
+                    title: (element.title || element.synonym || '').trim(),
+                    kind: (element.kind || element.type || '').trim(),
+                    valuePreview: (element.valuePreview || '').trim(),
+                    boundAttributePath: (element.boundAttributePath || '').trim()
+                });
+                appendCandidates(element.children || []);
+            }
+        };
+
+        appendCandidates(snapshot.elements || []);
+        return result.filter(candidate => Boolean(candidate.path || candidate.name || candidate.title));
+    }
+
+    private collectFormExplorerTableCompletionCandidates(
+        snapshot: FormExplorerSnapshot
+    ): FormExplorerTableCompletionCandidate[] {
+        return (snapshot.tables || []).map(table => ({
+            path: (table.path || table.elementPath || '').trim(),
+            name: (table.name || '').trim(),
+            title: (table.title || '').trim(),
+            columns: Array.isArray(table.tableData?.columns)
+                ? table.tableData.columns.map(column => String(column || '').trim())
+                : [],
+            rows: Array.isArray(table.tableData?.rows)
+                ? table.tableData.rows.map(row => Array.isArray(row) ? row.map(cell => String(cell || '').trim()) : [])
+                : []
+        })).filter(candidate => Boolean(candidate.path || candidate.name || candidate.title));
+    }
+
+    private isFormExplorerTableLikeLine(lineText: string): boolean {
+        return /\b(table|таблиц|grid|spreadsheet\s+document|табличн(?:ый|ого)?\s+документ)\b/i.test(lineText);
+    }
+
+    private isFormExplorerFieldLikeLine(lineText: string): boolean {
+        return /(field|поле|attribute|атрибут|реквизит|checkbox|флаг|radio\s*button|переключател|drop-?down|dropdown|выпадающ|html\s+(?:document\s+)?field|form\s+item\s+addition|дополнени(?:е|я)\s+формы|spreadsheet\s+document|табличн(?:ый|ого)?\s+документ)/i.test(lineText);
+    }
+
+    private isFormExplorerButtonLikeLine(lineText: string): boolean {
+        return /\b(button|кнопк|hyperlink|link|гиперссыл|submenu|подменю)\b/i.test(lineText);
+    }
+
+    private isFormExplorerElementLikeLine(lineText: string): boolean {
+        return /(element|элемент|group|групп|field|поле|attribute|атрибут|реквизит|checkbox|флаг|radio\s*button|переключател|html\s+document|form\s+item\s+addition|дополнени(?:е|я)\s+формы|spreadsheet\s+document|табличн(?:ый|ого)?\s+документ)/i.test(lineText);
+    }
+
+    private isFormExplorerValueLikeLine(lineText: string): boolean {
+        return /(значени|value|equal|equals|became|имеет|стал|равен|равна|template|шаблон|contains|contain|header|tooltip|displayed|filled|exists?|available|unavailable|read.?only|appearance|появлен|ввожу|input|enter|text|текст|жду|wait|select|выбираю)/i.test(lineText);
+    }
+
+    private isFormExplorerVariableNameSlot(linePrefixBeforeQuote: string): boolean {
+        return /(как|as|переменн(?:ую|ой|ая|ые)?|variable)\s*$/i.test(linePrefixBeforeQuote);
+    }
+
+    private isWindowOrFormReferenceQuotedContext(beforeQuote: string, afterQuote: string): boolean {
+        // Explicit "named"/"titled": "window named "X"", "форма с именем "X""
+        if (/(window|form|окно|форм(?:а|у|е|ой)?)\s+(?:with\s+(?:title|name)|named|titled|с\s+(?:именем|заголовком|наименованием))\s*$/i.test(beforeQuote)) {
+            return true;
+        }
+        // Keyword directly before the quote: "close the "X" window" → "окно """, "форма """
+        if (/(window|form|окно|форм(?:а|у|е|ой)?)\s*$/i.test(beforeQuote)) {
+            return true;
+        }
+        // Keyword starts the afterQuote: "" window is opened", "" форма открылась"
+        // Use negative lookahead instead of \b so Cyrillic boundaries work correctly.
+        if (/^\s*(window|form|окно|форм(?:а|у|е|ой)?)(?![а-яА-ЯёЁa-zA-Z0-9])/i.test(afterQuote)) {
+            return true;
+        }
+        return false;
+    }
+
+    private isMatchingFormExplorerTableCandidate(
+        candidate: FormExplorerTableCompletionCandidate,
+        rawReference: string
+    ): boolean {
+        const normalizedReference = this.normalizeFormExplorerLookupValue(rawReference);
+        if (!normalizedReference) {
+            return false;
+        }
+
+        return [candidate.title, candidate.name, candidate.path]
+            .some(value => this.normalizeFormExplorerLookupValue(value) === normalizedReference);
+    }
+
+    private findMatchingFormExplorerElementCandidateFromReferences(
+        candidates: FormExplorerElementCompletionCandidate[],
+        rawReferences: string[]
+    ): FormExplorerElementCompletionCandidate | null {
+        for (let index = rawReferences.length - 1; index >= 0; index -= 1) {
+            const rawReference = rawReferences[index];
+            const matchedCandidate = this.findMatchingFormExplorerElementCandidate(candidates, rawReference);
+            if (matchedCandidate) {
+                return matchedCandidate;
+            }
+        }
+
+        return null;
+    }
+
+    private findMatchingFormExplorerTableCandidateFromReferences(
+        candidates: FormExplorerTableCompletionCandidate[],
+        rawReferences: string[]
+    ): FormExplorerTableCompletionCandidate | null {
+        for (let index = rawReferences.length - 1; index >= 0; index -= 1) {
+            const rawReference = rawReferences[index];
+            const matchedCandidate = this.findMatchingFormExplorerTableCandidate(candidates, rawReference);
+            if (matchedCandidate) {
+                return matchedCandidate;
+            }
+        }
+
+        return null;
+    }
+
+    private findMatchingFormExplorerTableColumn(
+        tableCandidate: FormExplorerTableCompletionCandidate,
+        rawColumnReference: string
+    ): string | null {
+        const normalizedReference = this.normalizeFormExplorerLookupValue(rawColumnReference);
+        if (!normalizedReference || tableCandidate.columns.length === 0) {
+            return null;
+        }
+
+        const exactColumn = tableCandidate.columns.find(column =>
+            this.normalizeFormExplorerLookupValue(column) === normalizedReference
+        );
+        if (exactColumn) {
+            return exactColumn;
+        }
+
+        return tableCandidate.columns.find(column =>
+            this.normalizeFormExplorerLookupValue(column).includes(normalizedReference)
+        ) || null;
+    }
+
+    private findMatchingFormExplorerTableColumnFromReferences(
+        tableCandidate: FormExplorerTableCompletionCandidate,
+        rawReferences: string[]
+    ): string | null {
+        for (let index = rawReferences.length - 1; index >= 0; index -= 1) {
+            const rawReference = rawReferences[index];
+            if (this.isMatchingFormExplorerTableCandidate(tableCandidate, rawReference)) {
+                continue;
+            }
+
+            const matchedColumn = this.findMatchingFormExplorerTableColumn(tableCandidate, rawReference);
+            if (matchedColumn) {
+                return matchedColumn;
+            }
+        }
+
+        return null;
+    }
+
+    private getFormExplorerQuotedArgumentSurroundings(
+        lineText: string,
+        context: QuotedTextCompletionContext
+    ): { beforeQuote: string; afterQuote: string; combined: string } {
+        const afterQuote = context.endCharacter < lineText.length && lineText[context.endCharacter] === context.quoteCharacter
+            ? lineText.slice(context.endCharacter + 1)
+            : lineText.slice(context.endCharacter);
+        const beforeQuote = context.linePrefixBeforeQuote;
+        return {
+            beforeQuote,
+            afterQuote,
+            combined: `${beforeQuote} ${afterQuote}`
+        };
+    }
+
+    private isFormExplorerRelevantQuotedContext(
+        beforeQuote: string,
+        afterQuote: string
+    ): boolean {
+        const combined = `${beforeQuote} ${afterQuote}`;
+        return this.isFormExplorerTableLikeLine(combined)
+            || this.isFormExplorerFieldLikeLine(combined)
+            || this.isFormExplorerButtonLikeLine(combined)
+            || this.isFormExplorerElementLikeLine(combined)
+            || this.isWindowOrFormReferenceQuotedContext(beforeQuote, afterQuote);
+    }
+
+    private isNamedFieldReferenceQuotedContext(beforeQuote: string): boolean {
+        return /(field|поле|attribute|атрибут|реквизит|element|элемент(?:\s+формы)?|checkbox|флаг|group|групп|drop-?down(?:\s+list)?|выпадающ(?:ий)?\s+список|html\s+(?:document\s+)?field|form\s+item\s+addition|дополнени(?:е|я)\s+формы)\s+(?:with\s+name|named|с\s+именем)\s*$/i.test(beforeQuote);
+    }
+
+    private isNamedButtonReferenceQuotedContext(beforeQuote: string): boolean {
+        return /(button|кнопк(?:а|у|и|е|ой)?|hyperlink|гиперссылк(?:а|у|и|е|ой)?|submenu|подменю)\s+(?:with\s+name|named|с\s+именем)\s*$/i.test(beforeQuote);
+    }
+
+    private isTableReferenceQuotedContext(
+        beforeQuote: string,
+        afterQuote: string
+    ): boolean {
+        return /(в\s+таблице|таблица(?:\s+формы)?(?:\s+с\s+именем)?|form\s+table(?:\s+named)?|table\s+named)\s*$/i.test(beforeQuote)
+            || /^\s*table\b/i.test(afterQuote);
+    }
+
+    private isButtonReferenceQuotedContext(
+        beforeQuote: string,
+        afterQuote: string
+    ): boolean {
+        if (this.isNamedFieldReferenceQuotedContext(beforeQuote)) {
+            return false;
+        }
+
+        return this.isNamedButtonReferenceQuotedContext(beforeQuote)
+            || /^\s*(button|кнопк|hyperlink|link|гиперссыл|submenu|подменю)\b/i.test(afterQuote);
+    }
+
+    private isFieldReferenceQuotedContext(
+        beforeQuote: string,
+        afterQuote: string
+    ): boolean {
+        if (this.isTableReferenceQuotedContext(beforeQuote, afterQuote) || this.isNamedButtonReferenceQuotedContext(beforeQuote)) {
+            return false;
+        }
+
+        return this.isNamedFieldReferenceQuotedContext(beforeQuote)
+            || /(field|поле|attribute|атрибут|реквизит|element|элемент(?:\s+формы)?|checkbox|флаг|group|групп|drop-?down(?:\s+list)?|выпадающ(?:ий)?\s+список|html\s+(?:document\s+)?field|form\s+item\s+addition|дополнени(?:е|я)\s+формы)\s*$/i.test(beforeQuote)
+            || /^\s*(field|поле|attribute|атрибут|реквизит|form\s+attribute|form\s+element|элемент(?:\s+формы)?|checkbox|флаг|group|групп|html\s+(?:document\s+)?field|form\s+item\s+addition|дополнени(?:е|я)\s+формы)\b/i.test(afterQuote);
+    }
+
+    private isElementReferenceQuotedContext(
+        beforeQuote: string,
+        afterQuote: string
+    ): boolean {
+        if (this.isTableReferenceQuotedContext(beforeQuote, afterQuote) || this.isButtonReferenceQuotedContext(beforeQuote, afterQuote)) {
+            return false;
+        }
+
+        return /(element|элемент|attribute|атрибут|form\s+attribute|form\s+element|элемент(?:\s+формы)?|group|групп)\s*$/i.test(beforeQuote)
+            || /^\s*(element|элемент|attribute|атрибут|form\s+attribute|form\s+element|элемент(?:\s+формы)?|group|групп)\b/i.test(afterQuote);
+    }
+
+    private isValueReferenceQuotedContext(
+        beforeQuote: string,
+        afterQuote: string
+    ): boolean {
+        const beforeTail = beforeQuote.slice(-120);
+        return /(equal(?:s| to)?|became(?:\s+equal(?:\s+to)?)?|имеет\s+значение|стал(?:а|о|и)?\s+рав(?:ен|на|но|ны)|рав(?:ен|на|но|ны)|жду\s+значени|wait(?:ing)?(?:\s+for)?\s+.*value|input(?:\s+text)?|ввожу(?:\s+текст)?|text|текст|template|шаблон|contains?|contain|tooltip|header|appearance|появлен|\bby\s*$)/i.test(beforeTail)
+            || /^\s*(value|значени|text|текст|template|шаблон)\b/i.test(afterQuote);
+    }
+
+    private isTableLikeFormExplorerCandidate(candidate: FormExplorerElementCompletionCandidate): boolean {
+        return /(table|таблиц|dynamiclist|динамическийспис)/i.test(candidate.kind);
+    }
+
+    private isFieldLikeFormExplorerCandidate(candidate: FormExplorerElementCompletionCandidate): boolean {
+        return /(field|поле)/i.test(candidate.kind)
+            || Boolean(candidate.boundAttributePath);
+    }
+
+    private isButtonLikeFormExplorerCandidate(candidate: FormExplorerElementCompletionCandidate): boolean {
+        return /(button|кнопк|hyperlink|гиперссыл)/i.test(candidate.kind);
+    }
+
+    private findMatchingFormExplorerElementCandidate(
+        candidates: FormExplorerElementCompletionCandidate[],
+        rawReference: string
+    ): FormExplorerElementCompletionCandidate | null {
+        const normalizedReference = this.normalizeFormExplorerLookupValue(rawReference);
+        if (!normalizedReference) {
+            return null;
+        }
+
+        const exactCandidate = candidates.find(candidate =>
+            [
+                candidate.title,
+                candidate.name,
+                candidate.path,
+                candidate.boundAttributePath
+            ].some(value => this.normalizeFormExplorerLookupValue(value) === normalizedReference)
+        );
+        if (exactCandidate) {
+            return exactCandidate;
+        }
+
+        return candidates.find(candidate =>
+            [
+                candidate.title,
+                candidate.name,
+                candidate.path,
+                candidate.boundAttributePath
+            ].some(value => this.normalizeFormExplorerLookupValue(value).includes(normalizedReference))
+        ) || null;
+    }
+
+    private findMatchingFormExplorerTableCandidate(
+        candidates: FormExplorerTableCompletionCandidate[],
+        rawReference: string
+    ): FormExplorerTableCompletionCandidate | null {
+        const normalizedReference = this.normalizeFormExplorerLookupValue(rawReference);
+        if (!normalizedReference) {
+            return null;
+        }
+
+        const exactCandidate = candidates.find(candidate =>
+            [candidate.title, candidate.name, candidate.path]
+                .some(value => this.normalizeFormExplorerLookupValue(value) === normalizedReference)
+        );
+        if (exactCandidate) {
+            return exactCandidate;
+        }
+
+        return candidates.find(candidate =>
+            [candidate.title, candidate.name, candidate.path]
+                .some(value => this.normalizeFormExplorerLookupValue(value).includes(normalizedReference))
+        ) || null;
+    }
+
+    private buildFormExplorerElementValueCandidates(
+        snapshot: FormExplorerSnapshot,
+        elementCandidate: FormExplorerElementCompletionCandidate
+    ): string[] {
+        const values = new Set<string>();
+        if (elementCandidate.valuePreview) {
+            values.add(elementCandidate.valuePreview);
+        }
+
+        if (elementCandidate.boundAttributePath) {
+            const linkedAttribute = snapshot.attributes.find(attribute =>
+                this.normalizeFormExplorerLookupValue(attribute.path) === this.normalizeFormExplorerLookupValue(elementCandidate.boundAttributePath)
+            );
+            if (linkedAttribute?.valuePreview?.trim()) {
+                values.add(linkedAttribute.valuePreview.trim());
+            }
+        }
+
+        return Array.from(values.values());
+    }
+
+    private doesFormExplorerValueMatchReference(
+        candidateValue: string,
+        rawReference: string
+    ): boolean {
+        const normalizedCandidate = this.normalizeFormExplorerValueLookupValue(candidateValue);
+        const normalizedReference = this.normalizeFormExplorerValueLookupValue(rawReference);
+        if (!normalizedCandidate || !normalizedReference) {
+            return false;
+        }
+
+        return normalizedCandidate === normalizedReference || normalizedCandidate.includes(normalizedReference);
+    }
+
+    private filterFormExplorerElementCandidatesByValueReferences(
+        snapshot: FormExplorerSnapshot,
+        candidates: FormExplorerElementCompletionCandidate[],
+        rawReferences: string[]
+    ): FormExplorerElementCompletionCandidate[] {
+        const meaningfulReferences = rawReferences
+            .map(reference => String(reference || '').trim())
+            .filter(Boolean);
+        if (meaningfulReferences.length === 0 || candidates.length === 0) {
+            return candidates;
+        }
+
+        const filteredCandidates = candidates.filter(candidate => {
+            const candidateValues = this.buildFormExplorerElementValueCandidates(snapshot, candidate);
+            if (candidateValues.length === 0) {
+                return false;
+            }
+
+            return meaningfulReferences.some(reference =>
+                candidateValues.some(candidateValue => this.doesFormExplorerValueMatchReference(candidateValue, reference))
+            );
+        });
+
+        return filteredCandidates.length > 0 ? filteredCandidates : candidates;
+    }
+
+    private collectFormExplorerCurrentValueCandidates(
+        snapshot: FormExplorerSnapshot
+    ): string[] {
+        const values = new Set<string>();
+        const appendValue = (value: string | undefined): void => {
+            const normalizedValue = String(value || '').trim();
+            if (normalizedValue) {
+                values.add(normalizedValue);
+            }
+        };
+
+        const appendElementValues = (elements: FormExplorerElementInfo[]): void => {
+            for (const element of elements) {
+                appendValue(element.valuePreview);
+                appendElementValues(element.children || []);
+            }
+        };
+
+        appendElementValues(snapshot.elements || []);
+        for (const attribute of snapshot.attributes || []) {
+            appendValue(attribute.valuePreview);
+        }
+
+        return Array.from(values.values());
+    }
+
+    private filterFormExplorerTableColumnsByValueReferences(
+        tableCandidate: FormExplorerTableCompletionCandidate,
+        rawReferences: string[]
+    ): string[] {
+        const meaningfulReferences = rawReferences
+            .map(reference => String(reference || '').trim())
+            .filter(Boolean);
+        if (meaningfulReferences.length === 0 || tableCandidate.columns.length === 0) {
+            return tableCandidate.columns;
+        }
+
+        const matchingColumns = tableCandidate.columns.filter(column => {
+            const columnValues = this.buildFormExplorerTableColumnValueCandidates(tableCandidate, column);
+            return meaningfulReferences.some(reference =>
+                columnValues.some(candidateValue => this.doesFormExplorerValueMatchReference(candidateValue, reference))
+            );
+        });
+
+        return matchingColumns.length > 0 ? matchingColumns : tableCandidate.columns;
+    }
+
+    private buildFormExplorerTableColumnValueCandidates(
+        tableCandidate: FormExplorerTableCompletionCandidate,
+        rawColumnReference: string
+    ): string[] {
+        const normalizedReference = this.normalizeFormExplorerLookupValue(rawColumnReference);
+        if (!normalizedReference || tableCandidate.columns.length === 0) {
+            return [];
+        }
+
+        let matchedColumnIndex = tableCandidate.columns.findIndex(column =>
+            this.normalizeFormExplorerLookupValue(column) === normalizedReference
+        );
+        if (matchedColumnIndex < 0) {
+            matchedColumnIndex = tableCandidate.columns.findIndex(column =>
+                this.normalizeFormExplorerLookupValue(column).includes(normalizedReference)
+            );
+        }
+        if (matchedColumnIndex < 0) {
+            return [];
+        }
+
+        const uniqueValues = new Set<string>();
+        for (const row of tableCandidate.rows) {
+            const cellValue = String(row[matchedColumnIndex] || '').trim();
+            if (cellValue) {
+                uniqueValues.add(cellValue);
+            }
+        }
+
+        return Array.from(uniqueValues.values());
+    }
+
+    private buildFormExplorerSimpleValueCompletionList(
+        position: vscode.Position,
+        context: QuotedTextCompletionContext,
+        values: string[],
+        detail: string,
+        itemKind: vscode.CompletionItemKind
+    ): vscode.CompletionList | null {
+        const uniqueValues = Array.from(new Set(
+            values
+                .map(value => String(value || '').trim())
+                .filter(Boolean)
+        ));
+        if (uniqueValues.length === 0) {
+            return null;
+        }
+
+        const candidates = uniqueValues
+            .map((value, index) => ({
+                value,
+                index,
+                matchResult: this.fuzzyMatch(value, context.typedPrefix)
+            }))
+            .filter(candidate => candidate.matchResult.matched)
+            .sort((left, right) => right.matchResult.score - left.matchResult.score || left.index - right.index);
+
+        if (candidates.length === 0) {
+            return null;
+        }
+
+        const completionList = new vscode.CompletionList<vscode.CompletionItem>([], false);
+        candidates.forEach(candidate => {
+            const completionItem = new vscode.CompletionItem({
+                label: candidate.value,
+                description: detail
+            }, itemKind);
+            completionItem.insertText = candidate.value;
+            completionItem.sortText = `${(1 - candidate.matchResult.score).toFixed(4)}_${candidate.index.toString().padStart(3, '0')}`;
+            completionItem.range = new vscode.Range(
+                position.line,
+                context.startCharacter,
+                position.line,
+                context.endCharacter
+            );
+            completionItem.command = {
+                title: vscode.l10n.t('Continue with next argument'),
+                command: FORM_EXPLORER_ADVANCE_ARGUMENT_COMMAND
+            };
+            completionList.items.push(completionItem);
+        });
+
+        return completionList;
+    }
+
+    private buildFormExplorerElementReferenceCompletionList(
+        position: vscode.Position,
+        context: QuotedTextCompletionContext,
+        candidates: FormExplorerElementCompletionCandidate[],
+        preferTechnicalName: boolean,
+        detailLabel: string
+    ): vscode.CompletionList | null {
+        const typedPrefixLower = context.typedPrefix.toLocaleLowerCase();
+        const filteredCandidates = candidates
+            .map((candidate, index) => {
+                const insertedValue = (preferTechnicalName ? candidate.name : candidate.title) || candidate.name || candidate.title;
+                return {
+                    candidate,
+                    insertedValue,
+                    index,
+                    matchResult: this.fuzzyMatch(
+                        [
+                            insertedValue,
+                            candidate.title,
+                            candidate.name,
+                            candidate.path,
+                            candidate.boundAttributePath,
+                            candidate.valuePreview
+                        ].filter(Boolean).join(' '),
+                        context.typedPrefix
+                    )
+                };
+            })
+            .filter(candidate => candidate.insertedValue && candidate.matchResult.matched)
+            .sort((left, right) => {
+                const leftStartsWithPrefix = typedPrefixLower.length > 0
+                    && left.insertedValue.toLocaleLowerCase().startsWith(typedPrefixLower) ? 0 : 1;
+                const rightStartsWithPrefix = typedPrefixLower.length > 0
+                    && right.insertedValue.toLocaleLowerCase().startsWith(typedPrefixLower) ? 0 : 1;
+                return leftStartsWithPrefix - rightStartsWithPrefix
+                    || right.matchResult.score - left.matchResult.score
+                    || left.index - right.index;
+            });
+
+        if (filteredCandidates.length === 0) {
+            return null;
+        }
+
+        const completionList = new vscode.CompletionList<vscode.CompletionItem>([], false);
+        filteredCandidates.forEach(candidate => {
+            const completionItem = new vscode.CompletionItem({
+                label: candidate.insertedValue,
+                description: buildVariableValuePreview(candidate.candidate.valuePreview || '')
+            }, vscode.CompletionItemKind.Field);
+            completionItem.detail = `${detailLabel}${candidate.candidate.name && candidate.candidate.name !== candidate.insertedValue ? ` • ${candidate.candidate.name}` : ''}`;
+            completionItem.insertText = candidate.insertedValue;
+            completionItem.filterText = [
+                candidate.insertedValue,
+                candidate.candidate.title,
+                candidate.candidate.name,
+                candidate.candidate.path,
+                candidate.candidate.boundAttributePath
+            ].filter(Boolean).join(' ');
+            completionItem.sortText = `${(1 - candidate.matchResult.score).toFixed(4)}_${candidate.index.toString().padStart(3, '0')}`;
+            completionItem.range = new vscode.Range(
+                position.line,
+                context.startCharacter,
+                position.line,
+                context.endCharacter
+            );
+            completionItem.command = {
+                title: vscode.l10n.t('Continue with next argument'),
+                command: FORM_EXPLORER_ADVANCE_ARGUMENT_COMMAND
+            };
+
+            const documentation = new vscode.MarkdownString();
+            documentation.appendMarkdown(`**${detailLabel}:** \`${candidate.insertedValue}\`\n\n`);
+            if (candidate.candidate.title && candidate.candidate.title !== candidate.insertedValue) {
+                documentation.appendMarkdown(`**${vscode.l10n.t('Title')}:** ${candidate.candidate.title}\n\n`);
+            }
+            if (candidate.candidate.name && candidate.candidate.name !== candidate.insertedValue) {
+                documentation.appendMarkdown(`**${vscode.l10n.t('Name')}:** ${candidate.candidate.name}\n\n`);
+            }
+            if (candidate.candidate.boundAttributePath) {
+                documentation.appendMarkdown(`**${vscode.l10n.t('Bound attribute')}:** \`${candidate.candidate.boundAttributePath}\`\n\n`);
+            }
+            if (candidate.candidate.valuePreview) {
+                this.appendVariableValueMarkdown(documentation, vscode.l10n.t('Value'), candidate.candidate.valuePreview);
+            }
+            completionItem.documentation = documentation;
+            completionList.items.push(completionItem);
+        });
+
+        return completionList;
+    }
+
+    private buildFormExplorerTableReferenceCompletionList(
+        position: vscode.Position,
+        context: QuotedTextCompletionContext,
+        candidates: FormExplorerTableCompletionCandidate[]
+    ): vscode.CompletionList | null {
+        const typedPrefixLower = context.typedPrefix.toLocaleLowerCase();
+        const filteredCandidates = candidates
+            .map((candidate, index) => {
+                const insertedValue = candidate.title || candidate.name || candidate.path;
+                return {
+                    candidate,
+                    insertedValue,
+                    index,
+                    matchResult: this.fuzzyMatch(
+                        [candidate.title, candidate.name, candidate.path].filter(Boolean).join(' '),
+                        context.typedPrefix
+                    )
+                };
+            })
+            .filter(candidate => candidate.insertedValue && candidate.matchResult.matched)
+            .sort((left, right) => {
+                const leftStartsWithPrefix = typedPrefixLower.length > 0
+                    && left.insertedValue.toLocaleLowerCase().startsWith(typedPrefixLower) ? 0 : 1;
+                const rightStartsWithPrefix = typedPrefixLower.length > 0
+                    && right.insertedValue.toLocaleLowerCase().startsWith(typedPrefixLower) ? 0 : 1;
+                return leftStartsWithPrefix - rightStartsWithPrefix
+                    || right.matchResult.score - left.matchResult.score
+                    || left.index - right.index;
+            });
+
+        if (filteredCandidates.length === 0) {
+            return null;
+        }
+
+        const completionList = new vscode.CompletionList<vscode.CompletionItem>([], false);
+        filteredCandidates.forEach(candidate => {
+            const completionItem = new vscode.CompletionItem({
+                label: candidate.insertedValue,
+                description: `${candidate.candidate.columns.length}`
+            }, vscode.CompletionItemKind.Struct);
+            completionItem.detail = vscode.l10n.t('Form table');
+            completionItem.insertText = candidate.insertedValue;
+            completionItem.filterText = [candidate.candidate.title, candidate.candidate.name, candidate.candidate.path]
+                .filter(Boolean)
+                .join(' ');
+            completionItem.sortText = `${(1 - candidate.matchResult.score).toFixed(4)}_${candidate.index.toString().padStart(3, '0')}`;
+            completionItem.range = new vscode.Range(
+                position.line,
+                context.startCharacter,
+                position.line,
+                context.endCharacter
+            );
+            completionItem.command = {
+                title: vscode.l10n.t('Continue with next argument'),
+                command: FORM_EXPLORER_ADVANCE_ARGUMENT_COMMAND
+            };
+            completionList.items.push(completionItem);
+        });
+
+        return completionList;
+    }
+
+    private async buildFormExplorerQuotedArgumentCompletionList(
+        lineText: string,
+        position: vscode.Position,
+        context: QuotedTextCompletionContext
+    ): Promise<vscode.CompletionList | null> {
+        const liveSnapshot = await loadLiveFormExplorerSnapshot();
+        if (!liveSnapshot) {
+            return null;
+        }
+
+        const snapshot = liveSnapshot.snapshot;
+        const { beforeQuote, afterQuote, combined } = this.getFormExplorerQuotedArgumentSurroundings(lineText, context);
+        if (!this.isFormExplorerRelevantQuotedContext(beforeQuote, afterQuote)) {
+            return null;
+        }
+
+        const preferTechnicalName = /(с именем|with name|named)\s*$/i.test(beforeQuote);
+        const elementCandidates = this.collectFormExplorerElementCompletionCandidates(snapshot);
+        const tableCandidates = this.collectFormExplorerTableCompletionCandidates(snapshot);
+        const nonTableElementCandidates = elementCandidates.filter(candidate => !this.isTableLikeFormExplorerCandidate(candidate));
+        const allOtherQuotedValues = context.otherQuotedReferences
+            .map(reference => String(reference.value || '').trim())
+            .filter(Boolean);
+        const otherTableReferenceValues = context.otherQuotedReferences
+            .filter(reference => this.isTableReferenceQuotedContext(reference.beforeQuote, reference.afterQuote))
+            .map(reference => String(reference.value || '').trim())
+            .filter(Boolean);
+        const otherFieldReferenceValues = context.otherQuotedReferences
+            .filter(reference => this.isFieldReferenceQuotedContext(reference.beforeQuote, reference.afterQuote))
+            .map(reference => String(reference.value || '').trim())
+            .filter(Boolean);
+        const otherElementReferenceValues = context.otherQuotedReferences
+            .filter(reference =>
+                this.isFieldReferenceQuotedContext(reference.beforeQuote, reference.afterQuote)
+                || this.isElementReferenceQuotedContext(reference.beforeQuote, reference.afterQuote)
+                || this.isButtonReferenceQuotedContext(reference.beforeQuote, reference.afterQuote)
+            )
+            .map(reference => String(reference.value || '').trim())
+            .filter(Boolean);
+        const otherValueReferenceValues = context.otherQuotedReferences
+            .filter(reference =>
+                !this.isFormExplorerVariableNameSlot(reference.beforeQuote)
+                && this.isValueReferenceQuotedContext(reference.beforeQuote, reference.afterQuote)
+            )
+            .map(reference => String(reference.value || '').trim())
+            .filter(Boolean);
+        const referencedTableCandidate = this.findMatchingFormExplorerTableCandidateFromReferences(
+            tableCandidates,
+            otherTableReferenceValues.length > 0
+                ? otherTableReferenceValues
+                : allOtherQuotedValues
+        );
+        const referencedElementCandidate = this.findMatchingFormExplorerElementCandidateFromReferences(
+            nonTableElementCandidates,
+            otherElementReferenceValues.length > 0
+                ? otherElementReferenceValues
+                : allOtherQuotedValues
+        );
+
+        if (this.isTableReferenceQuotedContext(beforeQuote, afterQuote)) {
+            return this.buildFormExplorerTableReferenceCompletionList(position, context, tableCandidates);
+        }
+
+        if (
+            referencedTableCandidate
+            && this.isFormExplorerTableLikeLine(combined)
+            && this.isFieldReferenceQuotedContext(beforeQuote, afterQuote)
+        ) {
+            return this.buildFormExplorerSimpleValueCompletionList(
+                position,
+                context,
+                this.filterFormExplorerTableColumnsByValueReferences(referencedTableCandidate, otherValueReferenceValues),
+                vscode.l10n.t('Table column'),
+                vscode.CompletionItemKind.Field
+            );
+        }
+
+        if (
+            !this.isFormExplorerVariableNameSlot(beforeQuote)
+            && !this.isNamedFieldReferenceQuotedContext(beforeQuote)
+            && !this.isNamedButtonReferenceQuotedContext(beforeQuote)
+            && this.isValueReferenceQuotedContext(beforeQuote, afterQuote)
+        ) {
+            if (referencedTableCandidate) {
+                const matchedColumn = this.findMatchingFormExplorerTableColumnFromReferences(
+                    referencedTableCandidate,
+                    otherFieldReferenceValues.length > 0
+                        ? otherFieldReferenceValues
+                        : allOtherQuotedValues
+                );
+                if (matchedColumn) {
+                    const columnValues = this.buildFormExplorerTableColumnValueCandidates(
+                        referencedTableCandidate,
+                        matchedColumn
+                    );
+                    const tableValueCompletionList = this.buildFormExplorerSimpleValueCompletionList(
+                        position,
+                        context,
+                        columnValues,
+                        vscode.l10n.t('Table value'),
+                        vscode.CompletionItemKind.Value
+                    );
+                    if (tableValueCompletionList) {
+                        return tableValueCompletionList;
+                    }
+                }
+            }
+
+            if (referencedElementCandidate) {
+                const elementValueCompletionList = this.buildFormExplorerSimpleValueCompletionList(
+                    position,
+                    context,
+                    this.buildFormExplorerElementValueCandidates(snapshot, referencedElementCandidate),
+                    vscode.l10n.t('Current form value'),
+                    vscode.CompletionItemKind.Value
+                );
+                if (elementValueCompletionList) {
+                    return elementValueCompletionList;
+                }
+            }
+
+            return this.buildFormExplorerSimpleValueCompletionList(
+                position,
+                context,
+                this.collectFormExplorerCurrentValueCandidates(snapshot),
+                vscode.l10n.t('Current form value'),
+                vscode.CompletionItemKind.Value
+            );
+        }
+
+        if (this.isWindowOrFormReferenceQuotedContext(beforeQuote, afterQuote)) {
+            const formTitles = [
+                snapshot.form?.title,
+                snapshot.form?.windowTitle,
+                snapshot.form?.name
+            ].filter((t): t is string => typeof t === 'string' && t.trim().length > 0);
+            return this.buildFormExplorerSimpleValueCompletionList(
+                position,
+                context,
+                formTitles,
+                vscode.l10n.t('Form'),
+                vscode.CompletionItemKind.Module
+            ) ?? new vscode.CompletionList([], false);
+        }
+
+        if (this.isButtonReferenceQuotedContext(beforeQuote, afterQuote)) {
+            return this.buildFormExplorerElementReferenceCompletionList(
+                position,
+                context,
+                elementCandidates.filter(candidate => this.isButtonLikeFormExplorerCandidate(candidate)),
+                preferTechnicalName,
+                vscode.l10n.t('Form button')
+            );
+        }
+
+        if (this.isFieldReferenceQuotedContext(beforeQuote, afterQuote)) {
+            if (referencedTableCandidate && this.isFormExplorerTableLikeLine(combined)) {
+                const tableColumnCompletionList = this.buildFormExplorerSimpleValueCompletionList(
+                    position,
+                    context,
+                    this.filterFormExplorerTableColumnsByValueReferences(referencedTableCandidate, otherValueReferenceValues),
+                    vscode.l10n.t('Table column'),
+                    vscode.CompletionItemKind.Field
+                );
+                if (tableColumnCompletionList) {
+                    return tableColumnCompletionList;
+                }
+            }
+
+            return this.buildFormExplorerElementReferenceCompletionList(
+                position,
+                context,
+                this.filterFormExplorerElementCandidatesByValueReferences(
+                    snapshot,
+                    nonTableElementCandidates.filter(candidate => this.isFieldLikeFormExplorerCandidate(candidate)),
+                    otherValueReferenceValues
+                ),
+                preferTechnicalName,
+                vscode.l10n.t('Form field')
+            );
+        }
+
+        if (this.isElementReferenceQuotedContext(beforeQuote, afterQuote)) {
+            return this.buildFormExplorerElementReferenceCompletionList(
+                position,
+                context,
+                this.filterFormExplorerElementCandidatesByValueReferences(
+                    snapshot,
+                    nonTableElementCandidates,
+                    otherValueReferenceValues
+                ),
+                preferTechnicalName,
+                vscode.l10n.t('Form element')
+            );
+        }
+
+        if (context.argumentIndex === 0) {
+            if (this.isFormExplorerTableLikeLine(combined)) {
+                return this.buildFormExplorerTableReferenceCompletionList(position, context, tableCandidates);
+            }
+
+            if (this.isFormExplorerButtonLikeLine(combined) && !this.isFormExplorerFieldLikeLine(combined)) {
+                return this.buildFormExplorerElementReferenceCompletionList(
+                    position,
+                    context,
+                    elementCandidates.filter(candidate => this.isButtonLikeFormExplorerCandidate(candidate)),
+                    preferTechnicalName,
+                    vscode.l10n.t('Form button')
+                );
+            }
+
+            if (this.isFormExplorerFieldLikeLine(combined)) {
+                return this.buildFormExplorerElementReferenceCompletionList(
+                    position,
+                    context,
+                    this.filterFormExplorerElementCandidatesByValueReferences(
+                        snapshot,
+                        nonTableElementCandidates.filter(candidate => this.isFieldLikeFormExplorerCandidate(candidate)),
+                        otherValueReferenceValues
+                    ),
+                    preferTechnicalName,
+                    vscode.l10n.t('Form field')
+                );
+            }
+
+            return this.buildFormExplorerElementReferenceCompletionList(
+                position,
+                context,
+                this.filterFormExplorerElementCandidatesByValueReferences(
+                    snapshot,
+                    nonTableElementCandidates,
+                    otherValueReferenceValues
+                ),
+                preferTechnicalName,
+                vscode.l10n.t('Form element')
+            );
+        }
+
+        // Fallback for non-first arguments: suggest values for the referenced element,
+        // or all current form values when the step context is field/element-like.
+        if (this.isFormExplorerFieldLikeLine(combined) || this.isFormExplorerElementLikeLine(combined)) {
+            if (referencedElementCandidate) {
+                const elementValueCompletionList = this.buildFormExplorerSimpleValueCompletionList(
+                    position,
+                    context,
+                    this.buildFormExplorerElementValueCandidates(snapshot, referencedElementCandidate),
+                    vscode.l10n.t('Current form value'),
+                    vscode.CompletionItemKind.Value
+                );
+                if (elementValueCompletionList) {
+                    return elementValueCompletionList;
+                }
+            }
+
+            return this.buildFormExplorerSimpleValueCompletionList(
+                position,
+                context,
+                this.collectFormExplorerCurrentValueCandidates(snapshot),
+                vscode.l10n.t('Current form value'),
+                vscode.CompletionItemKind.Value
+            );
+        }
+
+        return null;
     }
 
     private async buildSavedVariableCompletionList(
@@ -1032,6 +2313,16 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         return content;
     }
 
+    private buildScenarioParameterCompletionDocumentation(
+        parameterName: string,
+        defaultValue: string
+    ): vscode.MarkdownString {
+        const content = new vscode.MarkdownString();
+        content.appendMarkdown(`**${vscode.l10n.t('Scenario parameter')}:** \`[${parameterName}]\`\n\n`);
+        this.appendVariableValueMarkdown(content, vscode.l10n.t('Parameter value'), defaultValue);
+        return content;
+    }
+
     private appendVariableValueMarkdown(
         markdown: vscode.MarkdownString,
         label: string,
@@ -1084,11 +2375,23 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         baseInsertText?: string | vscode.SnippetString
     ): string | vscode.SnippetString {
         const resolvedInsertText = this.cloneCompletionInsertText(baseInsertText, stepText);
-        if (resolvedInsertText instanceof vscode.SnippetString) {
-            return resolvedInsertText;
-        }
+        const isAlreadySnippet = resolvedInsertText instanceof vscode.SnippetString;
+        const normalizedInsertText = normalizeMultilineStepInsertText(
+            isAlreadySnippet
+                ? resolvedInsertText.value
+                : resolvedInsertText
+        );
+        const templateSnippet = buildStepTemplateSnippetData(normalizedInsertText);
 
-        const normalizedInsertText = normalizeMultilineStepInsertText(resolvedInsertText);
+        // When base insert text was already a SnippetString (has ${N} tab stops from %N conversion),
+        // but buildStepTemplateSnippetData finds no %N-style placeholders (they're already ${N}),
+        // preserve the original snippet syntax rather than returning plain text.
+        const hasAnyPlaceholders = templateSnippet.hasPlaceholders || isAlreadySnippet;
+        const normalizedSnippetText = templateSnippet.hasPlaceholders
+            ? templateSnippet.snippetText
+            : isAlreadySnippet
+                ? normalizedInsertText
+                : escapeStepSnippetText(templateSnippet.displayText);
 
         const openingBlockKeyword = parseBlockKeyword(normalizedInsertText);
         const closingKeyword = getBlockClosingKeyword(
@@ -1096,14 +2399,16 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             language ?? this.inferStepLanguageFromText(stepText)
         );
         if (!closingKeyword) {
-            return normalizedInsertText;
+            return hasAnyPlaceholders
+                ? new vscode.SnippetString(normalizedSnippetText)
+                : templateSnippet.displayText;
         }
 
         // VS Code keeps the base indentation of the insertion line for snippet newlines,
         // so only the relative block indent should be added here.
         const innerIndent = '    ';
         return new vscode.SnippetString(
-            `${this.escapeSnippetText(normalizedInsertText)}\n${innerIndent}$0\n${this.escapeSnippetText(closingKeyword)}`
+            `${normalizedSnippetText}\n${innerIndent}$0\n${this.escapeSnippetText(closingKeyword)}`
         );
     }
 
@@ -1531,6 +2836,12 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 result.entry.language,
                 baseItem.insertText
             );
+            if (completionItem.insertText instanceof vscode.SnippetString) {
+                completionItem.command = {
+                    title: vscode.l10n.t('Suggest'),
+                    command: FORM_EXPLORER_INITIAL_SUGGEST_COMMAND
+                };
+            }
             completionItem.filterText = [
                 rawFilterKey,
                 normalizedFilterKey,

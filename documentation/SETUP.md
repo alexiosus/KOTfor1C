@@ -1,6 +1,6 @@
 # Setup (подробная настройка)
 
-Этот документ описывает все пользовательские настройки и команды KOT for 1C на уровне «как настроить и использовать».
+Этот документ описывает пользовательские настройки и публичные команды KOT for 1C на уровне «как настроить и использовать». Legacy-команды совместимости тоже перечислены ниже, но помечены отдельно.
 
 ## 1) Обязательные зависимости
 
@@ -45,7 +45,7 @@
 | Ключ | Default | Назначение |
 |---|---|---|
 | `kotTestToolkit.editor.autoCollapseOnOpen` | `true` | Автосворачивание служебных секций при открытии файла |
-| `kotTestToolkit.editor.useFeatureLanguageModeForScenarioYaml` | `true` | Автопереключение `scen.yaml` в language mode `Feature/Gherkin` для подсветки синтаксиса |
+| `kotTestToolkit.editor.useFeatureLanguageModeForScenarioYaml` | `true` | Включить Gherkin-подсветку внутри блока `ТекстСценария`, не переводя весь файл из `yaml` |
 | `kotTestToolkit.editor.autoReplaceTabsWithSpacesOnSave` | `true` | Замена табов пробелами при сохранении |
 | `kotTestToolkit.editor.autoAlignNestedScenarioParametersOnSave` | `true` | Выравнивание параметров вызова сценариев по `=` |
 | `kotTestToolkit.editor.autoAlignGherkinTablesOnSave` | `true` | Выравнивание таблиц Gherkin |
@@ -120,21 +120,21 @@
 
 | Ключ | Default | Назначение |
 |---|---|---|
-| `kotTestToolkit.formExplorer.snapshotPath` | `.vscode/kot-runtime/form-explorer/form-snapshot.json` | Базовый путь к snapshot-файлу формы; KOT сам резолвит актуальный session-specific snapshot runtime-адаптера |
-| `kotTestToolkit.formExplorer.configurationSourceDirectory` | `cf` | Папка файловой выгрузки конфигурации, которая используется для static enrichment и сборки адаптера Form Explorer |
-| `kotTestToolkit.formExplorer.generatedArtifactsDirectory` | `.vscode/kot-runtime/form-explorer` | Папка сгенерированных артефактов и builder-ИБ Form Explorer |
-| `kotTestToolkit.formExplorer.extensionBuildCommandTemplate` | `""` | Override встроенного builder через внешний скрипт |
+| `kotTestToolkit.formExplorer.snapshotPath` | `.vscode/kot-runtime/form-explorer/form-snapshot.json` | Базовый путь к snapshot-файлу формы; KOT сам резолвит актуальный session-specific snapshot bridge-сессии |
+| `kotTestToolkit.formExplorer.configurationSourceDirectory` | `cf` | Папка файловой выгрузки конфигурации, которая используется для static enrichment и переходов к `Form.xml` |
+| `kotTestToolkit.formExplorer.generatedArtifactsDirectory` | `.vscode/kot-runtime/form-explorer` | Папка runtime-артефактов Form Explorer: snapshot-sidecar, bridge-файлов и статического индекса |
+| `kotTestToolkit.formExplorer.extensionBuildCommandTemplate` | `""` | Legacy override встроенного builder через внешний скрипт для `.cfe`-ветки Form Explorer |
 | `kotTestToolkit.formExplorer.autoRefreshSeconds` | `1` | Интервал перечитывания snapshot-а в панели |
-| `kotTestToolkit.formExplorer.showOutputPanel` | `false` | Автопоказ Output при сборке `.cfe` и установке Form Explorer |
+| `kotTestToolkit.formExplorer.showOutputPanel` | `false` | Автопоказ Output при подготовке и запуске bridge-сессии Form Explorer |
+| `kotTestToolkit.formExplorer.bridge.testClientPort` | `1538` | Порт связи между служебной startup-ИБ (`TestManager`) и рабочей базой (`TestClient`) |
 
 Важно:
 
-- `configurationSourceDirectory` используется для static enrichment всегда, а также как источник сборки runtime в режимах `direct` и `cfe`;
-- отдельная builder-ИБ используется только для сценария `cfe`;
-- при `Start infobase`, `Open with Form Explorer` и ручной установке расширения KOT спрашивает режим установки:
-  `direct` выбран по умолчанию и строго рекомендуется только когда база соответствует текущей ветке или хотя бы не сильно отличается от нее;
-  `cfe` - промежуточный режим через builder-ИБ и пакет `.cfe`;
-  `target` - самый медленный, но самый точный режим: KOT сначала выгружает конфигурацию самой выбранной базы, а для файловых ИБ пытается ускорить этот шаг через `ibcmd`.
+- основной пользовательский сценарий Form Explorer — bridge-сессия на `TestManager` + `TestClient`;
+- `extensionBuildCommandTemplate` и команды генерации/сборки/установки Form Explorer extension нужны только для legacy `.cfe` / install flow и compatibility/internal сценариев;
+- `configurationSourceDirectory` нужен для static enrichment и навигации к `Form.xml`, а не для установки расширения в тестируемую базу;
+- при `Start infobase` и `Open with Form Explorer` KOT запускает bridge-сессию: рабочую базу в `TestClient` и служебную startup-ИБ с EPF-мостом в `TestManager`;
+- пока bridge-сессия активна, повторный старт блокируется; закрытие одного окна должно завершать и второе.
 
 ### 3.9 1C platform settings
 
@@ -145,15 +145,16 @@
 
 ### 3.10 AI settings
 
-Настройки этой секции используются для генерации `KOTМетаданные.Описание` через внешнюю или локальную LLM.
+Настройки этой секции используются для AI-описания `KOTМетаданные.Описание`, AI-отчета по diff конфигурации и AI-ревью измененных тестов через внешнюю или локальную LLM.
 
 | Ключ | Default | Назначение |
 |---|---|---|
 | `kotTestToolkit.ai.apiFormat` | `chatCompletions` | Формат API запроса: `chatCompletions` для OpenAI-compatible `/chat/completions` или `responses` для OpenAI Responses API |
 | `kotTestToolkit.ai.baseUrl` | `http://localhost:1234/v1` | Базовый URL AI-сервера без хвоста `/chat/completions` или `/responses` |
+| `kotTestToolkit.ai.apiVersion` | `""` | Версия API для провайдеров, которым нужен query-параметр `?api-version=...`; типичный случай: Azure OpenAI |
 | `kotTestToolkit.ai.apiKey` | `local` | API-ключ; для локальных серверов можно оставить фиктивное значение, если сервер его игнорирует |
 | `kotTestToolkit.ai.model` | `qwen3:4b` | Точный идентификатор модели, который ожидает выбранный AI-сервер |
-| `kotTestToolkit.ai.outputLanguage` | `ru` | Язык генерируемого описания (`ru` / `en`) |
+| `kotTestToolkit.ai.outputLanguage` | `ru` | Язык генерируемого текста (`ru` / `en`) для AI-описания, AI-отчета по diff конфигурации и AI-ревью тестов |
 | `kotTestToolkit.ai.maxLineLength` | `100` | Максимальная длина строки при записи `KOTМетаданные.Описание` перед переносом |
 | `kotTestToolkit.ai.timeoutSeconds` | `180` | Таймаут AI-запроса в секундах |
 | `kotTestToolkit.ai.systemPrompt` | `""` | Пользовательский system prompt; если заполнен, полностью заменяет встроенный prompt расширения |
@@ -162,6 +163,7 @@
 
 - дефолтный `baseUrl` ориентирован на локальный сервер LM Studio;
 - для Ollama обычно достаточно поменять `baseUrl` на `http://localhost:11434/v1` и указать точный тег модели;
+- для Azure OpenAI указывайте `baseUrl` совместимого endpoint, точную `model/deployment` и `apiVersion`;
 - `apiKey` лучше не оставлять пустым, если провайдер ожидает стандартный `Authorization` header;
 - если провайдер поддерживает только один формат API, явно выберите правильный `apiFormat`.
 
@@ -244,10 +246,19 @@ KOT показывает этот минимум прямо во вкладке 
 - `KOT - Find references to current scenario` (`KOT - Найти вызовы текущего сценария`)
 - `KOT - Create nested scenario` (`KOT - Создать вложенный сценарий`)
 - `KOT - Create main scenario` (`KOT - Создать главный сценарий`)
+- `KOT - Manage system functions` (`KOT - Управление функциями системы`)
+- `KOT - Manage etalon bases` (`KOT - Управление эталонными базами`)
+
+### 5.2 Избранное и demo-режим
+
+- `KOT - Add current scenario to favorites` (`KOT - Добавить открытый сценарий в избранное`)
+- `KOT - Remove current scenario from favorites` (`KOT - Убрать открытый сценарий из избранного`)
 - `KOT - Add or remove current scenario from favorites` (`KOT - Добавить/убрать открытый сценарий в избранное`)
 - `KOT - Show favorite scenarios` (`KOT - Показать избранные сценарии`)
+- `KOT - Enable Demo Mode (Test Manager)` (`KOT - Включить демо-режим (Менеджер тестов)`)
+- `KOT - Set Demo State for Scenario` (`KOT - Задать демо-состояние для сценария`)
 
-### 5.2 Диагностика и редактирование
+### 5.3 Диагностика и редактирование
 
 - `KOT - Fix scenario issues` (`KOT - Исправить проблемы сценария`)
 - `KOT - Repair and validate changed scenarios (safe batch)` (`KOT - Исправить и проверить измененные сценарии (безопасный пакетный режим)`)
@@ -256,29 +267,32 @@ KOT показывает этот минимум прямо во вкладке 
 - `KOT - Change main scenario name` (`KOT - Изменить имя главного сценария`)
 - `KOT - Change nested scenario name` (`KOT - Изменить имя вложенного сценария`)
 - `KOT - Change nested scenario code` (`KOT - Изменить код вложенного сценария`)
+- `KOT - Insert NestedScenarios (ВложенныеСценарии) block` (`KOT - Вставить блок ВложенныеСценарии`)
+- `KOT - Insert ScenarioParameters (ПараметрыСценария) block` (`KOT - Вставить блок ПараметрыСценария`)
 - `KOT - Fill NestedScenarios section` (`KOT - Заполнить секцию ВложенныеСценарии`)
 - `KOT - Fill ScenarioParameters section` (`KOT - Заполнить секцию ПараметрыСценария`)
 - `KOT - Generate KOT metadata description with AI` (`KOT - Сгенерировать описание KOTМетаданные через AI`)
+- `KOT - Generate tester-friendly configuration diff report with AI` (`KOT - Сгенерировать AI-отчет по diff конфигурации для тестировщика`)
+- `KOT - Review changed tests with AI` (`KOT - Сделать AI-ревью измененных тестов`)
 - `KOT - Replace tabs with spaces` (`KOT - Заменить табы на пробелы`)
 - `KOT - Scan workspace diagnostics` (`KOT - Выполнить сканирование диагностики по проекту`)
 - `KOT - Refresh steps library` (`KOT - Обновить библиотеку шагов`)
 - `KOT - Insert new UID` (`KOT - Вставить новый UID`)
 
-### 5.3 Работа с файлами
+### 5.4 Работа с файлами
 
 - `KOT - Open MXL file in editor` (`KOT - Открыть MXL файл в редакторе`)
 - `KOT - Reveal file in VS Code Explorer` (`KOT - Показать файл в проводнике VS Code`)
 - `KOT - Reveal file in OS file manager` (`KOT - Показать файл в системном проводнике`)
+- `KOT - Open current scenario files folder` (`KOT - Открыть папку files текущего сценария`)
 
-### 5.4 Сборка и запуск
+### 5.5 Сборка, запуск и сервисные панели
 
 - `KOT - Open Build Scenario Parameters Manager` (`KOT - Открыть Менеджер параметров Сборки Сценариев`)
 - `KOT - Open Infobase Manager` (`KOT - Открыть Менеджер баз`)
-- `KOT - Manage platforms` (`KOT - Управление платформами`)
+- `KOT - Manage 1C platforms` (`KOT - Управление платформами 1С`)
 - `KOT - Open 1C Form Explorer` (`KOT - Открыть Исследователь форм 1С`)
-- `KOT - Generate Form Explorer extension project` (`KOT - Сгенерировать проект расширения Form Explorer`)
-- `KOT - Build Form Explorer .cfe` (`KOT - Собрать .cfe для Form Explorer`)
-- `KOT - Install Form Explorer extension into infobase` (`KOT - Установить расширение Form Explorer в базу`)
+- `KOT - Start Form Explorer Bridge (TestClient mode)` (`KOT - Запустить Form Explorer Bridge (режим TestClient)`)
 - `KOT - Open build folder` (`KOT - Открыть папку сборки`)
 - `KOT - Create FirstLaunch archive` (`KOT - Собрать архив FirstLaunch`)
 - `KOT - Open scenario in Vanessa (manual debug)` (`KOT - Открыть сценарий в Vanessa (ручная отладка)`)
@@ -286,3 +300,11 @@ KOT показывает этот минимум прямо во вкладке 
 - `KOT - Switch tracked run for opened feature` (`KOT - Переключить отслеживаемый прогон для открытого feature`)
 - `KOT - Stop tracked runs for opened feature` (`KOT - Остановить отслеживание прогонов для открытого feature`)
 - `KOT - Track run by opened log file` (`KOT - Отслеживать прогон по открытому log-файлу`)
+
+### 5.6 Legacy compatibility: Form Explorer `.cfe`
+
+Эти команды оставлены для compatibility/internal сценариев и не нужны для основного bridge-flow Form Explorer:
+
+- `KOT - Generate Form Explorer extension project` (`KOT - Сгенерировать проект расширения Form Explorer`)
+- `KOT - Build Form Explorer .cfe` (`KOT - Собрать .cfe для Form Explorer`)
+- `KOT - Install Form Explorer extension into infobase` (`KOT - Установить расширение Form Explorer в базу`)

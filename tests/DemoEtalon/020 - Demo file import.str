@@ -1,0 +1,474 @@
+{
+"ДанныеСценария": [
+{
+"Имя": "020 - Demo file import",
+"Код": "020 - Demo file import",
+"Основной": true,
+"ТекстШага": "#language: en",
+"СтрокаЛин": 16,
+"СтрокаОриг": 2,
+"УровеньВложенности": 0,
+"UIDСценария": "9d150103-5718-4246-a4f3-8df64c33858b"
+},
+{
+"Имя": "020 - Demo file import",
+"Код": "020 - Demo file import",
+"Основной": true,
+"ТекстШага": "# KOT demo:",
+"СтрокаЛин": 17,
+"СтрокаОриг": 3,
+"УровеньВложенности": 0,
+"UIDСценария": "9d150103-5718-4246-a4f3-8df64c33858b"
+},
+{
+"Имя": "020 - Demo file import",
+"Код": "020 - Demo file import",
+"Основной": true,
+"ТекстШага": "# - The first validation call below uses the nested scenario default parameter.",
+"СтрокаЛин": 18,
+"СтрокаОриг": 4,
+"УровеньВложенности": 0,
+"UIDСценария": "9d150103-5718-4246-a4f3-8df64c33858b"
+},
+{
+"Имя": "020 - Demo file import",
+"Код": "020 - Demo file import",
+"Основной": true,
+"ТекстШага": "# - The second validation call invokes the same nested scenario again, but with another value.",
+"СтрокаЛин": 19,
+"СтрокаОриг": 5,
+"УровеньВложенности": 0,
+"UIDСценария": "9d150103-5718-4246-a4f3-8df64c33858b"
+},
+{
+"Имя": "020 - Demo file import",
+"Код": "020 - Demo file import",
+"Основной": true,
+"ТекстШага": "# - This is the most explicit demo of repeated calls to one scenario with different parameters.",
+"СтрокаЛин": 20,
+"СтрокаОриг": 6,
+"УровеньВложенности": 0,
+"UIDСценария": "9d150103-5718-4246-a4f3-8df64c33858b"
+},
+{
+"Имя": "020 - Demo file import",
+"Код": "020 - Demo file import",
+"Основной": true,
+"ТекстШага": "And I prepare demo session",
+"СтрокаЛин": 21,
+"СтрокаОриг": 8,
+"УровеньВложенности": 0,
+"UIDСценария": "9d150103-5718-4246-a4f3-8df64c33858b"
+},
+{
+"Имя": "I prepare demo session",
+"Код": "000100",
+"Основной": false,
+"ТекстШага": "#language: en",
+"СтрокаЛин": 22,
+"СтрокаОриг": 2,
+"УровеньВложенности": 1,
+"UIDСценария": "4c5d1200-c9e9-4354-856c-61fd4004a769"
+},
+{
+"Имя": "I prepare demo session",
+"Код": "000100",
+"Основной": false,
+"ТекстШага": "And I set \"Administrator\" synonym to the current TestClient",
+"СтрокаЛин": 23,
+"СтрокаОриг": 4,
+"УровеньВложенности": 1,
+"UIDСценария": "4c5d1200-c9e9-4354-856c-61fd4004a769"
+},
+{
+"Имя": "I prepare demo session",
+"Код": "000100",
+"Основной": false,
+"ТекстШага": "And I connect \"Administrator\" profile of TestClient",
+"СтрокаЛин": 24,
+"СтрокаОриг": 5,
+"УровеньВложенности": 1,
+"UIDСценария": "4c5d1200-c9e9-4354-856c-61fd4004a769"
+},
+{
+"Имя": "I prepare demo session",
+"Код": "000100",
+"Основной": false,
+"ТекстШага": "And Delay \"1\"",
+"СтрокаЛин": 25,
+"СтрокаОриг": 6,
+"УровеньВложенности": 1,
+"UIDСценария": "4c5d1200-c9e9-4354-856c-61fd4004a769"
+},
+{
+"Имя": "020 - Demo file import",
+"Код": "020 - Demo file import",
+"Основной": true,
+"ТекстШага": "And I import demo items from file",
+"СтрокаЛин": 26,
+"СтрокаОриг": 10,
+"УровеньВложенности": 0,
+"UIDСценария": "9d150103-5718-4246-a4f3-8df64c33858b"
+},
+{
+"Имя": "I import demo items from file",
+"Код": "000140",
+"Основной": false,
+"ТекстШага": "#language: en",
+"СтрокаЛин": 27,
+"СтрокаОриг": 2,
+"УровеньВложенности": 1,
+"UIDСценария": "8b30cfed-bf31-4bc9-8724-847ed664bc9c"
+},
+{
+"Имя": "I import demo items from file",
+"Код": "000140",
+"Основной": false,
+"ТекстШага": "# KOT demo:",
+"СтрокаЛин": 28,
+"СтрокаОриг": 3,
+"УровеньВложенности": 1,
+"UIDСценария": "8b30cfed-bf31-4bc9-8724-847ed664bc9c"
+},
+{
+"Имя": "I import demo items from file",
+"Код": "000140",
+"Основной": false,
+"ТекстШага": "# - Open files/demo-items.csv to verify that dependency highlighting also works from files/*.",
+"СтрокаЛин": 29,
+"СтрокаОриг": 4,
+"УровеньВложенности": 1,
+"UIDСценария": "8b30cfed-bf31-4bc9-8724-847ed664bc9c"
+},
+{
+"Имя": "I import demo items from file",
+"Код": "000140",
+"Основной": false,
+"ТекстШага": "# - You can use \"Open current scenario files folder\" to open catalog of attachments in Explorer.",
+"СтрокаЛин": 30,
+"СтрокаОриг": 5,
+"УровеньВложенности": 1,
+"UIDСценария": "8b30cfed-bf31-4bc9-8724-847ed664bc9c"
+},
+{
+"Имя": "I import demo items from file",
+"Код": "000140",
+"Основной": false,
+"ТекстШага": "Given I open hyperlink \"e1cib/list/Catalog.Items\"",
+"СтрокаЛин": 31,
+"СтрокаОриг": 7,
+"УровеньВложенности": 1,
+"UIDСценария": "8b30cfed-bf31-4bc9-8724-847ed664bc9c"
+},
+{
+"Имя": "I import demo items from file",
+"Код": "000140",
+"Основной": false,
+"ТекстШага": "Then \"Items\" window is opened",
+"СтрокаЛин": 32,
+"СтрокаОриг": 8,
+"УровеньВложенности": 1,
+"UIDСценария": "8b30cfed-bf31-4bc9-8724-847ed664bc9c"
+},
+{
+"Имя": "I import demo items from file",
+"Код": "000140",
+"Основной": false,
+"ТекстШага": "And I click \"Import data from an external source\" button",
+"СтрокаЛин": 33,
+"СтрокаОриг": 9,
+"УровеньВложенности": 1,
+"UIDСценария": "8b30cfed-bf31-4bc9-8724-847ed664bc9c"
+},
+{
+"Имя": "I import demo items from file",
+"Код": "000140",
+"Основной": false,
+"ТекстШага": "And I wait \"Import data from external sources\" window opening in 10 seconds",
+"СтрокаЛин": 34,
+"СтрокаОриг": 10,
+"УровеньВложенности": 1,
+"UIDСценария": "8b30cfed-bf31-4bc9-8724-847ed664bc9c"
+},
+{
+"Имя": "I import demo items from file",
+"Код": "000140",
+"Основной": false,
+"ТекстШага": "If [ImportFile] Exists then",
+"СтрокаЛин": 35,
+"СтрокаОриг": 12,
+"УровеньВложенности": 1,
+"UIDСценария": "8b30cfed-bf31-4bc9-8724-847ed664bc9c"
+},
+{
+"Имя": "I import demo items from file",
+"Код": "000140",
+"Основной": false,
+"ТекстШага": "And I select external file [ImportFile]",
+"СтрокаЛин": 36,
+"СтрокаОриг": 13,
+"УровеньВложенности": 1,
+"UIDСценария": "8b30cfed-bf31-4bc9-8724-847ed664bc9c"
+},
+{
+"Имя": "I import demo items from file",
+"Код": "000140",
+"Основной": false,
+"ТекстШага": "And I click \"import data from external file\" hyperlink of \"You can import data from external file (xlsx, mxl, csv) or copy and paste data into spreadsheet template.\" field",
+"СтрокаЛин": 38,
+"СтрокаОриг": 16,
+"УровеньВложенности": 1,
+"UIDСценария": "8b30cfed-bf31-4bc9-8724-847ed664bc9c"
+},
+{
+"Имя": "I import demo items from file",
+"Код": "000140",
+"Основной": false,
+"ТекстШага": "And I wait \"R1C1\" cell in \"SpreadsheetDocument\" spreadsheet document becomes equal to \"Do not import\" for \"10\" seconds",
+"СтрокаЛин": 39,
+"СтрокаОриг": 17,
+"УровеньВложенности": 1,
+"UIDСценария": "8b30cfed-bf31-4bc9-8724-847ed664bc9c"
+},
+{
+"Имя": "I import demo items from file",
+"Код": "000140",
+"Основной": false,
+"ТекстШага": "And I click \"Next >\" button",
+"СтрокаЛин": 40,
+"СтрокаОриг": 18,
+"УровеньВложенности": 1,
+"UIDСценария": "8b30cfed-bf31-4bc9-8724-847ed664bc9c"
+},
+{
+"Имя": "I import demo items from file",
+"Код": "000140",
+"Основной": false,
+"ТекстШага": "And I click \"Import data to application\" button",
+"СтрокаЛин": 41,
+"СтрокаОриг": 19,
+"УровеньВложенности": 1,
+"UIDСценария": "8b30cfed-bf31-4bc9-8724-847ed664bc9c"
+},
+{
+"Имя": "020 - Demo file import",
+"Код": "020 - Demo file import",
+"Основной": true,
+"ТекстШага": "And I validate demo import result",
+"СтрокаЛин": 42,
+"СтрокаОриг": 13,
+"УровеньВложенности": 0,
+"UIDСценария": "9d150103-5718-4246-a4f3-8df64c33858b"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "#language: en",
+"СтрокаЛин": 43,
+"СтрокаОриг": 2,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "# KOT demo:",
+"СтрокаЛин": 44,
+"СтрокаОриг": 3,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "# - This scenario is called twice from the import main scenario.",
+"СтрокаЛин": 45,
+"СтрокаОриг": 4,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "# - First call keeps the default ImportedItem, second call overrides it explicitly.",
+"СтрокаЛин": 46,
+"СтрокаОриг": 5,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "Given I open hyperlink \"e1cib/list/Catalog.Items\"",
+"СтрокаЛин": 47,
+"СтрокаОриг": 7,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "Then \"Items\" window is opened",
+"СтрокаЛин": 48,
+"СтрокаОриг": 8,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "And I go to line in \"List\" table",
+"СтрокаЛин": 49,
+"СтрокаОриг": 9,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "| 'Description'  |",
+"СтрокаЛин": 50,
+"СтрокаОриг": 10,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "| [ImportedItem] |",
+"СтрокаЛин": 51,
+"СтрокаОриг": 11,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "And I close \"Items\" window",
+"СтрокаЛин": 52,
+"СтрокаОриг": 12,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "020 - Demo file import",
+"Код": "020 - Demo file import",
+"Основной": true,
+"ТекстШага": "And I validate demo import result",
+"СтрокаЛин": 53,
+"СтрокаОриг": 15,
+"УровеньВложенности": 0,
+"UIDСценария": "9d150103-5718-4246-a4f3-8df64c33858b"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "#language: en",
+"СтрокаЛин": 55,
+"СтрокаОриг": 2,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "# KOT demo:",
+"СтрокаЛин": 56,
+"СтрокаОриг": 3,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "# - This scenario is called twice from the import main scenario.",
+"СтрокаЛин": 57,
+"СтрокаОриг": 4,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "# - First call keeps the default ImportedItem, second call overrides it explicitly.",
+"СтрокаЛин": 58,
+"СтрокаОриг": 5,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "Given I open hyperlink \"e1cib/list/Catalog.Items\"",
+"СтрокаЛин": 59,
+"СтрокаОриг": 7,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "Then \"Items\" window is opened",
+"СтрокаЛин": 60,
+"СтрокаОриг": 8,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "And I go to line in \"List\" table",
+"СтрокаЛин": 61,
+"СтрокаОриг": 9,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "| 'Description'  |",
+"СтрокаЛин": 62,
+"СтрокаОриг": 10,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "| [ImportedItem] |",
+"СтрокаЛин": 63,
+"СтрокаОриг": 11,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+},
+{
+"Имя": "I validate demo import result",
+"Код": "000150",
+"Основной": false,
+"ТекстШага": "And I close \"Items\" window",
+"СтрокаЛин": 64,
+"СтрокаОриг": 12,
+"УровеньВложенности": 1,
+"UIDСценария": "3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03"
+}
+]
+}
