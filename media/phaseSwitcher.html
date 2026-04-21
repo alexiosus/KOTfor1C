@@ -27,6 +27,26 @@
                     <span class="codicon codicon-database"></span>
                 </button>
                 <div class="dropdown-container">
+                    <button id="configurationDiffReportDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only" title="${loc.thinkingMenuTitle}">
+                        <span class="codicon codicon-thinking"></span>
+                    </button>
+                    <div id="configurationDiffReportDropdownContent" class="dropdown-content menu-popover">
+                        <a href="#" id="generateConfigurationDiffReportFromDropdownBtn" class="dropdown-item menu-item" title="${loc.generateConfigurationDiffReportHint}">
+                            <span class="codicon codicon-sparkle"></span> ${loc.generateConfigurationDiffReportTitle}
+                        </a>
+                        <a href="#" id="openConfigurationDiffReportFromDropdownBtn" class="dropdown-item menu-item" title="${loc.openConfigurationDiffReportHint}">
+                            <span class="codicon codicon-eye"></span> ${loc.openConfigurationDiffReportTitle}
+                        </a>
+                        <div class="dropdown-separator menu-separator" role="separator"></div>
+                        <a href="#" id="reviewChangedTestsWithAiFromDropdownBtn" class="dropdown-item menu-item" title="${loc.reviewChangedTestsWithAiHint}">
+                            <span class="codicon codicon-comment-discussion"></span> ${loc.reviewChangedTestsWithAiTitle}
+                        </a>
+                        <a href="#" id="openTestReviewReportFromDropdownBtn" class="dropdown-item menu-item" title="${loc.openTestReviewReportHint}">
+                            <span class="codicon codicon-eye"></span> ${loc.openTestReviewReportTitle}
+                        </a>
+                    </div>
+                </div>
+                <div class="dropdown-container">
                     <button id="scenarioRepairDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only" title="${loc.maintenanceMenuTitle}">
                         <span class="codicon codicon-ellipsis"></span>
                     </button>

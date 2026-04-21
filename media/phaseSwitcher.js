@@ -27,11 +27,24 @@
     let isBuildInProgress = false;
     let isScenarioRepairInProgress = false;
     let isScenarioRepairCancelling = false;
+    let isDemoMode = false;
     let phaseControlsActive = false;
     let areAllPhasesCurrentlyExpanded = false; 
     let activeRunModeMenu = null;
     let activeContextMenu = null;
     let activeContextSubmenu = null;
+    let configurationDiffReportState = {
+        available: false,
+        branchName: '',
+        hasSavedReport: false,
+        reportPath: ''
+    };
+    let testReviewReportState = {
+        available: false,
+        branchName: '',
+        hasSavedReport: false,
+        reportPath: ''
+    };
     const FAVORITE_SCENARIO_DROP_MIME = 'application/x-kot-favorite-scenario-uri';
 
     // === Получение ссылок на элементы DOM ===
@@ -55,6 +68,12 @@
     const runVanessaFromDropdownBtn = document.getElementById('runVanessaFromDropdownBtn');
     const openFormExplorerFromDropdownBtn = document.getElementById('openFormExplorerFromDropdownBtn');
     const openInfobaseManagerTopBtn = document.getElementById('openInfobaseManagerTopBtn');
+    const configurationDiffReportDropdownBtn = document.getElementById('configurationDiffReportDropdownBtn');
+    const configurationDiffReportDropdownContent = document.getElementById('configurationDiffReportDropdownContent');
+    const generateConfigurationDiffReportFromDropdownBtn = document.getElementById('generateConfigurationDiffReportFromDropdownBtn');
+    const openConfigurationDiffReportFromDropdownBtn = document.getElementById('openConfigurationDiffReportFromDropdownBtn');
+    const reviewChangedTestsWithAiFromDropdownBtn = document.getElementById('reviewChangedTestsWithAiFromDropdownBtn');
+    const openTestReviewReportFromDropdownBtn = document.getElementById('openTestReviewReportFromDropdownBtn');
     const openYamlParamsFromDropdownBtn = document.getElementById('openYamlParamsFromDropdownBtn');
     const openPlatformManagerFromDropdownBtn = document.getElementById('openPlatformManagerFromDropdownBtn');
     const openSettingsFromDropdownBtn = document.getElementById('openSettingsFromDropdownBtn');
@@ -100,6 +119,42 @@
         vscode.postMessage({ command: 'log', text: "[Webview] " + message });
     }
 
+    function normalizeConfigurationDiffReportState(rawState) {
+        if (!rawState || typeof rawState !== 'object') {
+            return {
+                available: false,
+                branchName: '',
+                hasSavedReport: false,
+                reportPath: ''
+            };
+        }
+
+        return {
+            available: !!rawState.available,
+            branchName: typeof rawState.branchName === 'string' ? rawState.branchName.trim() : '',
+            hasSavedReport: !!rawState.hasSavedReport,
+            reportPath: typeof rawState.reportPath === 'string' ? rawState.reportPath.trim() : ''
+        };
+    }
+
+    function normalizeTestReviewReportState(rawState) {
+        if (!rawState || typeof rawState !== 'object') {
+            return {
+                available: false,
+                branchName: '',
+                hasSavedReport: false,
+                reportPath: ''
+            };
+        }
+
+        return {
+            available: !!rawState.available,
+            branchName: typeof rawState.branchName === 'string' ? rawState.branchName.trim() : '',
+            hasSavedReport: !!rawState.hasSavedReport,
+            reportPath: typeof rawState.reportPath === 'string' ? rawState.reportPath.trim() : ''
+        };
+    }
+
     function renderMainStatusBar() {
         if (!(statusBar instanceof HTMLElement)) {
             return;
@@ -131,6 +186,7 @@
         }
         updateTopRunButtonState();
         updateScenarioRepairControls();
+        updateConfigurationDiffReportControls();
         log(`Status updated [${target}]: ${text}`);
     }
 
@@ -228,6 +284,7 @@
         }
         updateRunButtonsState();
         updateScenarioRepairControls();
+        updateConfigurationDiffReportControls();
         updateSelectDefaultsButtonState();
         log(`Phase controls enabled: ${effectiveEnable} (request ${enable}, feature ${isPhaseSwitcherVisible})`);
     }
@@ -417,6 +474,47 @@
         );
     }
 
+    function updateConfigurationDiffReportControls() {
+        const hasSavedConfigReport = !!configurationDiffReportState.hasSavedReport;
+        const hasSavedTestReview = !!testReviewReportState.hasSavedReport;
+        const menuTitle = window.__loc?.thinkingMenuTitle || 'Thinking menu';
+        const generateTitle = window.__loc?.generateConfigurationDiffReportTitle || 'Generate AI diff report';
+        const openTitle = window.__loc?.openConfigurationDiffReportTitle || 'Open AI diff report';
+        const missingConfigTitle = window.__loc?.configurationDiffReportMissing || 'Generate AI diff report first.';
+        const openTestReviewTitle = window.__loc?.openTestReviewReportTitle || 'Open AI test review';
+        const missingTestReviewTitle = window.__loc?.testReviewReportMissing || 'Run AI test review first.';
+
+        if (configurationDiffReportDropdownBtn instanceof HTMLButtonElement) {
+            setSoftDisabled(configurationDiffReportDropdownBtn, false);
+            setTooltipValue(configurationDiffReportDropdownBtn, menuTitle);
+        }
+
+        setDropdownItemDisabledState(
+            generateConfigurationDiffReportFromDropdownBtn,
+            false,
+            '',
+            window.__loc?.generateConfigurationDiffReportHint || generateTitle
+        );
+        setDropdownItemDisabledState(
+            openConfigurationDiffReportFromDropdownBtn,
+            !hasSavedConfigReport,
+            missingConfigTitle,
+            window.__loc?.openConfigurationDiffReportHint || openTitle
+        );
+        setDropdownItemDisabledState(
+            reviewChangedTestsWithAiFromDropdownBtn,
+            false,
+            '',
+            window.__loc?.reviewChangedTestsWithAiHint || 'Review changed tests against the test diff, configuration diff, and optional UserStory.'
+        );
+        setDropdownItemDisabledState(
+            openTestReviewReportFromDropdownBtn,
+            !hasSavedTestReview,
+            missingTestReviewTitle,
+            window.__loc?.openTestReviewReportHint || openTestReviewTitle
+        );
+    }
+
     function updateRunButtonsState() {
         if (!phaseTreeContainer) return;
         const runButtons = phaseTreeContainer.querySelectorAll('.run-scenario-btn');
@@ -440,7 +538,7 @@
     }
 
     function hasScenarioRunsInProgress() {
-        if (!runArtifacts || typeof runArtifacts !== 'object') {
+        if (isDemoMode || !runArtifacts || typeof runArtifacts !== 'object') {
             return false;
         }
         return Object.values(runArtifacts).some(info => !!info && info.runStatus === 'running' && info.blocksControls !== false);
@@ -1123,7 +1221,7 @@
         const selectedLogTemplate = window.__loc?.runScenarioSelectedLog || 'Log: {0}';
         const runButtonTitle = `${runTitle}${statusSuffix}${trackedSourceSuffix}${staleSuffix}${progressTitle ? ` • ${progressTitle}` : ''}${runMessage ? `\n${runMessage}` : ''}${activeRunLogPath ? `\n${selectedLogTemplate.replace('{0}', activeRunLogPath)}` : ''}`;
         const escapedRunTitle = escapeHtmlAttr(runButtonTitle);
-        const runButtonDisabledAttr = (isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact) ? ' disabled' : '';
+        const runButtonDisabledAttr = ((isBuildInProgress && !isDemoMode) || isBlockingRunInProgress || !hasRunArtifact) ? ' disabled' : '';
         const canOpenFailedStepInFeature = isRunFailed && !!runInfo?.featurePath;
         const runStepTitleTemplate = window.__loc?.runScenarioOpenFailedStepTitle || 'Open failed step in feature: {0}';
         const runStepTitle = escapeHtmlAttr(runStepTitleTemplate.replace('{0}', name));
@@ -1844,6 +1942,30 @@
         resetScenarioRepairDropdownPosition();
     }
 
+    function closeConfigurationDiffReportDropdownMenu() {
+        if (!(configurationDiffReportDropdownBtn instanceof HTMLElement)) {
+            return;
+        }
+        const container = configurationDiffReportDropdownBtn.closest('.dropdown-container');
+        if (!(container instanceof HTMLElement)) {
+            return;
+        }
+        container.classList.remove('show');
+        resetConfigurationDiffReportDropdownPosition();
+    }
+
+    function openConfigurationDiffReportDropdownMenu() {
+        if (!(configurationDiffReportDropdownBtn instanceof HTMLElement)) {
+            return;
+        }
+        const container = configurationDiffReportDropdownBtn.closest('.dropdown-container');
+        if (!(container instanceof HTMLElement)) {
+            return;
+        }
+        container.classList.add('show');
+        requestAnimationFrame(() => positionConfigurationDiffReportDropdownWithinViewport());
+    }
+
     function closeContextMenu() {
         if (activeContextSubmenu) {
             activeContextSubmenu.remove();
@@ -2499,6 +2621,21 @@
         updateSelectDefaultsButtonState();
     }
 
+    function buildDemoRunArtifact(name, stateKey) {
+        const fp = '/demo/' + name.replace(/[^a-zA-Z0-9]/g, '_') + '.feature';
+        const jp = '/demo/' + name.replace(/[^a-zA-Z0-9]/g, '_') + '.json';
+        switch (stateKey) {
+            case 'passed':         return { runStatus: 'passed', featurePath: fp, jsonPath: jp, stale: false, hasRunLog: true,  canOpenRunLog: true,  canWatchLiveLog: false, canSwitchTrackedRun: false };
+            case 'passed-stale':   return { runStatus: 'passed', featurePath: fp, jsonPath: jp, stale: true,  hasRunLog: true,  canOpenRunLog: true,  canWatchLiveLog: false, canSwitchTrackedRun: false };
+            case 'failed':         return { runStatus: 'failed', featurePath: fp, jsonPath: jp, stale: false, runMessage: 'Assertion failed at step 5', hasRunLog: true, canOpenRunLog: true, canWatchLiveLog: false, canSwitchTrackedRun: false };
+            case 'running-internal': return { runStatus: 'running', featurePath: fp, jsonPath: jp, stale: false, progressCurrentLine: 496, progressTotalLines: 9672, progressPercent: 26, blocksControls: true,  hasRunLog: false, canOpenRunLog: false, canWatchLiveLog: true, canSwitchTrackedRun: false };
+            case 'running-tracked':  return { runStatus: 'running', featurePath: fp, jsonPath: jp, stale: false, activeRunSource: 'tracked', blocksControls: false, hasRunLog: false, canOpenRunLog: false, canWatchLiveLog: true, canSwitchTrackedRun: false };
+            case 'idle-ready':     return { runStatus: 'idle',   featurePath: fp, jsonPath: jp, stale: false, hasRunLog: false, canOpenRunLog: false, canWatchLiveLog: false, canSwitchTrackedRun: false };
+            case 'idle-no-button': return { runStatus: 'idle',   featurePath: undefined, jsonPath: undefined, stale: false, hasRunLog: false, canOpenRunLog: false, canWatchLiveLog: false, canSwitchTrackedRun: false };
+            default: return null;
+        }
+    }
+
     // Обработчик сообщений от расширения
     window.addEventListener('message', event => {
         const message = event.data;
@@ -2510,8 +2647,11 @@
                      closeRunModeMenu();
                      closeAssembleOptionsMenu();
                      closeContextMenu();
+                     closeConfigurationDiffReportDropdownMenu();
                      applyYamlParametersProfilesState(undefined);
                      runArtifacts = {};
+                     configurationDiffReportState = normalizeConfigurationDiffReportState(undefined);
+                     testReviewReportState = normalizeTestReviewReportState(undefined);
                      const errorTemplate = window.__loc?.errorWithDetails || 'Error: {0}';
                      updateStatus(errorTemplate.replace('{0}', message.error), 'main');
                       phaseSwitcherSectionElements.forEach(el => { if (el instanceof HTMLElement) el.style.display = 'none'; });
@@ -2520,6 +2660,7 @@
                     closeRunModeMenu();
                     closeAssembleOptionsMenu();
                     closeContextMenu();
+                    closeConfigurationDiffReportDropdownMenu();
                     testDataByPhase = message.tabData || {};
                     initialTestStates = message.states || {};
                     runArtifacts = message.runArtifacts || {};
@@ -2527,6 +2668,8 @@
                     favoriteSortMode = normalizeFavoriteSortMode(message.favoriteSortMode || favoriteSortMode);
                     affectedMainScenarioNames = normalizeAffectedMainScenarioNames(message.affectedMainScenarioNames);
                     applyYamlParametersProfilesState(message.yamlParametersProfiles);
+                    configurationDiffReportState = normalizeConfigurationDiffReportState(message.configurationDiffReport);
+                    testReviewReportState = normalizeTestReviewReportState(message.testReviewReport);
                     rebuildTestInfoIndex();
                     settings = message.settings || {
                         assemblerEnabled: true,
@@ -2626,10 +2769,24 @@
                     }
                     updateTopRunButtonState();
                     updateScenarioRepairControls();
+                    updateConfigurationDiffReportControls();
                 }
                 break;
 
+            case 'updateConfigurationDiffReportState':
+                configurationDiffReportState = normalizeConfigurationDiffReportState(message.configurationDiffReport);
+                updateConfigurationDiffReportControls();
+                syncTooltipDataAttributes();
+                break;
+
+            case 'updateTestReviewReportState':
+                testReviewReportState = normalizeTestReviewReportState(message.testReviewReport);
+                updateConfigurationDiffReportControls();
+                syncTooltipDataAttributes();
+                break;
+
             case 'updateRunArtifactsState':
+                isDemoMode = false;
                 runArtifacts = message.runArtifacts || {};
                 updateTopRunButtonState();
                 if (settings.switcherEnabled && testDataByPhase && Object.keys(testDataByPhase).length > 0) {
@@ -2647,6 +2804,60 @@
                 }
                 applyAffectedMainScenarioHighlighting();
                 break;
+
+            case 'enableDemoMode': {
+                isDemoMode = true;
+                // Группа 0: результаты прогонов — passed×2, stale, failed, ready, no-button
+                const patternA = ['passed-stale', 'running-tracked', 'running-internal', 'idle-ready', 'idle-no-button'];
+                // Группа 1: активные прогоны — stale, running+button, running−button, ready, no-button
+                const patternB = ['passed', 'passed', 'passed-stale', 'failed', 'idle-ready', 'idle-no-button'];
+                // Остальные группы: все 7 состояний по кругу
+                const patternC = ['passed', 'passed-stale', 'failed', 'running-tracked', 'running-internal', 'idle-ready', 'idle-no-button'];
+
+                const demoOverlay = {};
+                const groupNames = Object.keys(testDataByPhase).sort();
+                groupNames.forEach((groupName, groupIdx) => {
+                    const scenarios = testDataByPhase[groupName];
+                    if (!Array.isArray(scenarios)) { return; }
+                    const pattern = groupIdx === 0 ? patternA : groupIdx === 1 ? patternB : patternC;
+                    scenarios.forEach((info, i) => {
+                        const name = info?.name;
+                        if (!name) { return; }
+                        const stateKey = i < pattern.length ? pattern[i] : 'idle-no-button';
+                        demoOverlay[name] = buildDemoRunArtifact(name, stateKey);
+                    });
+                });
+
+                runArtifacts = Object.assign({}, runArtifacts, demoOverlay);
+                updateTopRunButtonState();
+                if (settings.switcherEnabled && testDataByPhase && Object.keys(testDataByPhase).length > 0) {
+                    updateVisibleScenarioRunState();
+                    updatePendingStatus();
+                } else {
+                    updateRunButtonsState();
+                }
+                applyAffectedMainScenarioHighlighting();
+                break;
+            }
+
+            case 'setDemoState': {
+                isDemoMode = true;
+                const name = message.name;
+                const stateKey = message.stateKey;
+                if (!name || !stateKey) { break; }
+                const artifact = buildDemoRunArtifact(name, stateKey);
+                if (!artifact) { break; }
+                runArtifacts = Object.assign({}, runArtifacts, { [name]: artifact });
+                updateTopRunButtonState();
+                if (settings.switcherEnabled && testDataByPhase && Object.keys(testDataByPhase).length > 0) {
+                    updateVisibleScenarioRunState();
+                    updatePendingStatus();
+                } else {
+                    updateRunButtonsState();
+                }
+                applyAffectedMainScenarioHighlighting();
+                break;
+            }
 
             case 'updateFavoritesState':
                 favoriteScenarios = Array.isArray(message.favorites) ? message.favorites : [];
@@ -3003,6 +3214,42 @@
         scenarioRepairDropdownContent.style.left = `${shiftX}px`;
     }
 
+    function resetConfigurationDiffReportDropdownPosition() {
+        if (!(configurationDiffReportDropdownContent instanceof HTMLElement)) {
+            return;
+        }
+        configurationDiffReportDropdownContent.style.left = '';
+        configurationDiffReportDropdownContent.style.right = '';
+    }
+
+    function positionConfigurationDiffReportDropdownWithinViewport() {
+        if (!(configurationDiffReportDropdownBtn instanceof HTMLElement) || !(configurationDiffReportDropdownContent instanceof HTMLElement)) {
+            return;
+        }
+
+        const container = configurationDiffReportDropdownBtn.closest('.dropdown-container');
+        if (!(container instanceof HTMLElement) || !container.classList.contains('show')) {
+            return;
+        }
+
+        configurationDiffReportDropdownContent.style.left = '0px';
+        configurationDiffReportDropdownContent.style.right = 'auto';
+
+        const viewportPadding = 8;
+        const { minLeft, maxRight } = getDropdownHorizontalBounds(viewportPadding);
+        const rect = configurationDiffReportDropdownContent.getBoundingClientRect();
+        let shiftX = 0;
+
+        if (rect.right > maxRight) {
+            shiftX += maxRight - rect.right;
+        }
+        if (rect.left + shiftX < minLeft) {
+            shiftX += minLeft - (rect.left + shiftX);
+        }
+
+        configurationDiffReportDropdownContent.style.left = `${shiftX}px`;
+    }
+
     function resetAssembleDropdownPosition() {
         if (!(assembleDropdownContent instanceof HTMLElement)) {
             return;
@@ -3075,6 +3322,7 @@
             closeRunModeMenu();
             closeContextMenu();
             closeScenarioRepairDropdownMenu();
+            closeConfigurationDiffReportDropdownMenu();
             const container = addScenarioDropdownBtn.closest('.dropdown-container');
             const isShown = !!container?.classList.toggle('show');
             if (isShown) {
@@ -3106,6 +3354,81 @@
         }
     }
 
+    if (configurationDiffReportDropdownBtn && configurationDiffReportDropdownContent) {
+        configurationDiffReportDropdownBtn.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (isSoftDisabled(configurationDiffReportDropdownBtn)) {
+                return;
+            }
+
+            if (addScenarioDropdownBtn && addScenarioDropdownContent) {
+                addScenarioDropdownBtn.closest('.dropdown-container')?.classList.remove('show');
+                resetAddScenarioDropdownPosition();
+            }
+            closeScenarioRepairDropdownMenu();
+            closeAssembleOptionsMenu();
+            closeRunModeMenu();
+            closeContextMenu();
+            const container = configurationDiffReportDropdownBtn.closest('.dropdown-container');
+            const isShown = !!container?.classList.toggle('show');
+            if (isShown) {
+                requestAnimationFrame(() => positionConfigurationDiffReportDropdownWithinViewport());
+            } else {
+                resetConfigurationDiffReportDropdownPosition();
+            }
+            log('Configuration diff report dropdown toggled.');
+        });
+
+        if (generateConfigurationDiffReportFromDropdownBtn) {
+            generateConfigurationDiffReportFromDropdownBtn.addEventListener('click', event => {
+                event.preventDefault();
+                if (generateConfigurationDiffReportFromDropdownBtn.classList.contains('is-disabled')) {
+                    return;
+                }
+                closeConfigurationDiffReportDropdownMenu();
+                log('Generate configuration diff report from top bar clicked.');
+                vscode.postMessage({ command: 'generateConfigurationDiffReport' });
+            });
+        }
+
+        if (openConfigurationDiffReportFromDropdownBtn) {
+            openConfigurationDiffReportFromDropdownBtn.addEventListener('click', event => {
+                event.preventDefault();
+                if (openConfigurationDiffReportFromDropdownBtn.classList.contains('is-disabled')) {
+                    return;
+                }
+                closeConfigurationDiffReportDropdownMenu();
+                log('Open saved configuration diff report from top bar clicked.');
+                vscode.postMessage({ command: 'openConfigurationDiffReport' });
+            });
+        }
+
+        if (reviewChangedTestsWithAiFromDropdownBtn) {
+            reviewChangedTestsWithAiFromDropdownBtn.addEventListener('click', event => {
+                event.preventDefault();
+                if (reviewChangedTestsWithAiFromDropdownBtn.classList.contains('is-disabled')) {
+                    return;
+                }
+                closeConfigurationDiffReportDropdownMenu();
+                log('Review changed tests with AI from top bar clicked.');
+                vscode.postMessage({ command: 'reviewChangedTestsWithAi' });
+            });
+        }
+
+        if (openTestReviewReportFromDropdownBtn) {
+            openTestReviewReportFromDropdownBtn.addEventListener('click', event => {
+                event.preventDefault();
+                if (openTestReviewReportFromDropdownBtn.classList.contains('is-disabled')) {
+                    return;
+                }
+                closeConfigurationDiffReportDropdownMenu();
+                log('Open test review report from top bar clicked.');
+                vscode.postMessage({ command: 'openTestReviewReport' });
+            });
+        }
+    }
+
     if (scenarioRepairDropdownBtn && scenarioRepairDropdownContent) {
         scenarioRepairDropdownBtn.addEventListener('click', event => {
             event.stopPropagation();
@@ -3119,6 +3442,7 @@
             closeAssembleOptionsMenu();
             closeRunModeMenu();
             closeContextMenu();
+            closeConfigurationDiffReportDropdownMenu();
             const container = scenarioRepairDropdownBtn.closest('.dropdown-container');
             const isShown = !!container?.classList.toggle('show');
             if (isShown) {
@@ -3135,6 +3459,7 @@
                 if (runVanessaFromDropdownBtn.classList.contains('is-disabled')) {
                     return;
                 }
+                closeConfigurationDiffReportDropdownMenu();
                 handleTopRunVanessaClick(event);
             });
         }
@@ -3146,6 +3471,7 @@
                     return;
                 }
                 closeScenarioRepairDropdownMenu();
+                closeConfigurationDiffReportDropdownMenu();
                 log('Open KOT Form Explorer from top bar clicked.');
                 vscode.postMessage({ command: 'openFormExplorer' });
             });
@@ -3158,6 +3484,7 @@
                     return;
                 }
                 closeScenarioRepairDropdownMenu();
+                closeConfigurationDiffReportDropdownMenu();
                 log('Open KOT Infobase Manager from top bar clicked.');
                 vscode.postMessage({ command: 'openInfobaseManager' });
             });
@@ -3170,6 +3497,7 @@
                     return;
                 }
                 closeScenarioRepairDropdownMenu();
+                closeConfigurationDiffReportDropdownMenu();
                 log('Open Build Scenario Parameters Manager from actions menu clicked.');
                 vscode.postMessage({ command: 'openYamlParametersManager' });
             });
@@ -3182,6 +3510,7 @@
                     return;
                 }
                 closeScenarioRepairDropdownMenu();
+                closeConfigurationDiffReportDropdownMenu();
                 log('Open platform manager from actions menu clicked.');
                 vscode.postMessage({ command: 'openPlatformManager' });
             });
@@ -3194,6 +3523,7 @@
                     return;
                 }
                 closeScenarioRepairDropdownMenu();
+                closeConfigurationDiffReportDropdownMenu();
                 log('Open Settings from actions menu clicked.');
                 vscode.postMessage({ command: 'openSettings' });
             });
@@ -3206,6 +3536,7 @@
                     return;
                 }
                 closeScenarioRepairDropdownMenu();
+                closeConfigurationDiffReportDropdownMenu();
                 vscode.postMessage({ command: 'refreshData' });
             });
         }
@@ -3238,6 +3569,7 @@
                     'main'
                 );
                 closeScenarioRepairDropdownMenu();
+                closeConfigurationDiffReportDropdownMenu();
                 vscode.postMessage({ command: 'cancelScenarioRepair' });
             });
         }
@@ -3249,6 +3581,7 @@
                     return;
                 }
                 closeScenarioRepairDropdownMenu();
+                closeConfigurationDiffReportDropdownMenu();
                 vscode.postMessage({ command: 'refreshVanessaSteps' });
             });
         }
@@ -3261,6 +3594,7 @@
             if (assembleMenuBtn instanceof HTMLButtonElement && assembleMenuBtn.disabled) {
                 return;
             }
+            closeConfigurationDiffReportDropdownMenu();
             closeRunModeMenu();
             closeContextMenu();
             const shouldShow = !assembleSplitContainer.classList.contains('show');
@@ -3344,6 +3678,13 @@
                 resetScenarioRepairDropdownPosition();
             }
         }
+        if (configurationDiffReportDropdownBtn && configurationDiffReportDropdownContent) {
+            const container = configurationDiffReportDropdownBtn.closest('.dropdown-container');
+            if (container && !container.contains(event.target)) {
+                container.classList.remove('show');
+                resetConfigurationDiffReportDropdownPosition();
+            }
+        }
         if (assembleSplitContainer && !assembleSplitContainer.contains(event.target)) {
             closeAssembleOptionsMenu();
         }
@@ -3363,6 +3704,7 @@
     window.addEventListener('resize', () => {
         positionAddScenarioDropdownWithinViewport();
         positionScenarioRepairDropdownWithinViewport();
+        positionConfigurationDiffReportDropdownWithinViewport();
         positionAssembleDropdownWithinViewport();
         syncBuildFlButtonWidth();
         updateAssembleMainButtonLayout();

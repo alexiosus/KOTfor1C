@@ -309,7 +309,7 @@ input {
 }
 
 .filter-menu {
-    min-width: 240px;
+    min-width: 260px;
 }
 
 .menu-check {
@@ -328,6 +328,16 @@ input {
 
 .menu-check input {
     margin: 0;
+}
+
+.menu-section-title {
+    padding: 4px 10px 2px;
+    color: var(--fe-muted);
+    font-size: 10px;
+    line-height: 1.2;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 700;
 }
 
 .menu-item {
@@ -460,6 +470,7 @@ input {
 }
 
 .toggle-btn.is-active,
+.ghost-btn.is-active,
 .tab-btn.is-active {
     border-color: color-mix(in srgb, var(--fe-accent) 80%, transparent);
     background: color-mix(in srgb, var(--fe-accent) 14%, var(--fe-surface-1) 86%);
