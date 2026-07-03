@@ -75,7 +75,7 @@
 
 | Ключ | Default | Назначение |
 |---|---|---|
-| `kotTestToolkit.steps.externalUrl` | `https://raw.githubusercontent.com/kakoytochelik/KOTfor1C/main/res/steps.htm` | Источник `steps.htm` для библиотеки шагов |
+| `kotTestToolkit.steps.externalUrl` | `https://raw.githubusercontent.com/alexiosus/KOTfor1C/main/res/steps.htm` | Источник `steps.htm` для библиотеки шагов |
 | `kotTestToolkit.editor.checkRelatedParentScenarios` | `true` | Проверять связанные родительские сценарии вместе с активным |
 
 ### 3.5 Test Manager and UI (Менеджер тестов и UI)
