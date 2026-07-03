@@ -8,7 +8,7 @@
     "name": "Alexey Eremeev"
   },
   "license": "MIT",
-  "repository": "https://github.com/kakoytochelik/KOTfor1C",
+  "repository": "https://github.com/alexiosus/KOTfor1C",
   "version": "2.7.0",
   "engines": {
     "vscode": "^1.98.0"
@@ -192,7 +192,7 @@
         "properties": {
           "kotTestToolkit.steps.externalUrl": {
             "type": "string",
-            "default": "https://raw.githubusercontent.com/kakoytochelik/KOTfor1C/main/res/steps.htm",
+            "default": "https://raw.githubusercontent.com/alexiosus/KOTfor1C/main/res/steps.htm",
             "description": "%config.stepsExternalUrl.description%",
             "order": 1
           },
