@@ -315,7 +315,7 @@ async function warmUpFormExplorerBuilder(
             return;
         }
 
-        if (!(await shouldPrepareFormExplorerBuilderInfobase())) {
+        if (!(await shouldPrepareFormExplorerBuilderInfobase(oneCClientPath))) {
             return;
         }
 

@@ -81,6 +81,24 @@ type ResolvedEtalonBasesState = {
     bases: EtalonBaseDefinition[];
 };
 
+type SystemFunctionQuickPickItem = vscode.QuickPickItem & (
+    | { entryKind: 'systemFunction'; uid: string }
+    | { entryKind: 'add' }
+);
+
+type EtalonProfileQuickPickItem = vscode.QuickPickItem & (
+    | { entryKind: 'profile'; profileName: string }
+    | { entryKind: 'add' }
+);
+
+type EtalonBaseQuickPickItem = vscode.QuickPickItem & (
+    | { entryKind: 'base'; databaseId: string }
+    | { entryKind: 'add' }
+    | { entryKind: 'import' }
+    | { entryKind: 'export' }
+    | { entryKind: 'openCurrent' }
+);
+
 const SCENARIO_INDEX_CACHE_TTL_MS = 60_000;
 let scenarioIndexCache: ScenarioIndexCacheEntry | null = null;
 
@@ -1264,21 +1282,22 @@ export async function handleManageSystemFunctions(context: vscode.ExtensionConte
     let systemFunctions = [...getConfiguredSystemFunctions(config)];
 
     while (true) {
-        const pickedItem = await vscode.window.showQuickPick(
-            [
+        const items: SystemFunctionQuickPickItem[] = [
                 ...systemFunctions.map((systemFunction, index) => ({
                     label: systemFunction.name,
                     description: systemFunction.uid,
                     detail: index === 0 ? t('Default') : undefined,
-                    kind: 'systemFunction' as const,
+                    entryKind: 'systemFunction' as const,
                     uid: systemFunction.uid
                 })),
                 {
                     label: t('Add system function'),
                     detail: t('Create a new system function entry'),
-                    kind: 'add' as const
+                    entryKind: 'add' as const
                 }
-            ],
+            ];
+        const pickedItem = await vscode.window.showQuickPick<SystemFunctionQuickPickItem>(
+            items,
             {
                 placeHolder: t('Manage available system functions'),
                 title: t('System functions'),
@@ -1290,7 +1309,7 @@ export async function handleManageSystemFunctions(context: vscode.ExtensionConte
             return;
         }
 
-        if (pickedItem.kind === 'add') {
+        if (pickedItem.entryKind === 'add') {
             const name = await promptForSystemFunctionName(t);
             if (name === undefined) {
                 continue;
@@ -1517,21 +1536,22 @@ async function manageEtalonBaseProfiles(
     };
 
     while (true) {
-        const pickedItem = await vscode.window.showQuickPick(
-            [
+        const items: EtalonProfileQuickPickItem[] = [
                 ...nextBase.userProfiles.map(profile => ({
                     label: profile.profileName,
                     description: profile.login || undefined,
                     detail: profile.password ? t('Password is set') : t('Password is empty'),
-                    kind: 'profile' as const,
+                    entryKind: 'profile' as const,
                     profileName: profile.profileName
                 })),
                 {
                     label: t('Add user profile'),
                     detail: t('Create a new profile for this etalon base.'),
-                    kind: 'add' as const
+                    entryKind: 'add' as const
                 }
-            ],
+            ];
+        const pickedItem = await vscode.window.showQuickPick<EtalonProfileQuickPickItem>(
+            items,
             {
                 title: t('User profiles for "{0}"', base.name || base.databaseId),
                 placeHolder: t('Choose a profile to edit or add a new one'),
@@ -1543,7 +1563,7 @@ async function manageEtalonBaseProfiles(
             return nextBase;
         }
 
-        if (pickedItem.kind === 'add') {
+        if (pickedItem.entryKind === 'add') {
             const newProfile = await promptForEtalonBaseProfileValues(t);
             if (!newProfile) {
                 continue;
@@ -1651,38 +1671,39 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext):
     let etalonBasesState = await loadResolvedEtalonBasesState(context, t);
 
     while (true) {
-        const pickedItem = await vscode.window.showQuickPick(
-            [
+        const items: EtalonBaseQuickPickItem[] = [
                 ...etalonBasesState.bases.map(base => ({
                     label: base.name || base.databaseId,
                     description: base.databaseId,
                     detail: base.dtFilePath
                         ? t('DT: {0} · Profiles: {1}', base.dtFilePath, String(base.userProfiles.length))
                         : t('Profiles: {0}', String(base.userProfiles.length)),
-                    kind: 'base' as const,
+                    entryKind: 'base' as const,
                     databaseId: base.databaseId
                 })),
                 {
                     label: t('Add etalon base'),
                     detail: t('Create a new etalon base entry in bases.yaml.'),
-                    kind: 'add' as const
+                    entryKind: 'add' as const
                 },
                 {
                     label: t('Import bases.yaml from file'),
                     detail: t('Load etalon bases from an external YAML file into the current ModelDBSettings path.'),
-                    kind: 'import' as const
+                    entryKind: 'import' as const
                 },
                 {
                     label: t('Export bases.yaml to file'),
                     detail: t('Save the current etalon bases to an external YAML file.'),
-                    kind: 'export' as const
+                    entryKind: 'export' as const
                 },
                 {
                     label: t('Open current bases.yaml'),
                     detail: etalonBasesState.configuredPath || getDefaultModelDbSettingsValue(),
-                    kind: 'openCurrent' as const
+                    entryKind: 'openCurrent' as const
                 }
-            ],
+            ];
+        const pickedItem = await vscode.window.showQuickPick<EtalonBaseQuickPickItem>(
+            items,
             {
                 title: t('Etalon bases'),
                 placeHolder: t('ModelDBSettings: {0}', etalonBasesState.configuredPath || getDefaultModelDbSettingsValue()),
@@ -1694,7 +1715,7 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext):
             return;
         }
 
-        if (pickedItem.kind === 'add') {
+        if (pickedItem.entryKind === 'add') {
             const nextBase = await promptForEtalonBaseValues(t, etalonBasesState.workspaceRootPath);
             if (!nextBase) {
                 continue;
@@ -1713,7 +1734,7 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext):
             continue;
         }
 
-        if (pickedItem.kind === 'import') {
+        if (pickedItem.entryKind === 'import') {
             const selectedFile = await vscode.window.showOpenDialog({
                 canSelectFiles: true,
                 canSelectFolders: false,
@@ -1740,7 +1761,7 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext):
             continue;
         }
 
-        if (pickedItem.kind === 'export') {
+        if (pickedItem.entryKind === 'export') {
             const selectedTarget = await vscode.window.showSaveDialog({
                 title: t('Export bases.yaml'),
                 saveLabel: t('Export'),
@@ -1758,7 +1779,7 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext):
             continue;
         }
 
-        if (pickedItem.kind === 'openCurrent') {
+        if (pickedItem.entryKind === 'openCurrent') {
             await saveEtalonBasesToFile(etalonBasesState.resolvedPath, etalonBasesState.bases);
             await openEtalonBasesDocument(etalonBasesState.resolvedPath);
             continue;

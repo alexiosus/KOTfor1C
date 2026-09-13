@@ -306,7 +306,7 @@ export async function initializeFormExplorerRuntimeSidecars(): Promise<void> {
     await initializeAdapterRuntimeFiles(builderPaths);
 }
 
-export async function shouldPrepareFormExplorerBuilderInfobase(): Promise<boolean> {
+export async function shouldPrepareFormExplorerBuilderInfobase(oneCClientExePath: string): Promise<boolean> {
     const builderPaths = getFormExplorerBuilderPaths();
     if (!builderPaths) {
         return false;

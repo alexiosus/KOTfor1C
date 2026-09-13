@@ -52,16 +52,16 @@
 - Consumes: the existing VS Code and Form Explorer public functions without signature changes except adding the missing platform path parameter to `shouldPrepareFormExplorerBuilderInfobase`.
 - Produces: a zero-diagnostic strict TypeScript build with preserved runtime behavior.
 
-- [ ] Use the current failing `npm run check:types` output as the red regression test and group diagnostics by root cause.
-- [ ] Pass `oneCClientExePath` into the builder-cache predicate from its only caller.
-- [ ] Normalize optional XML nodes and QuickPick API property names according to their declared contracts.
-- [ ] Return the generated Form Explorer project from the progress callback instead of relying on closure mutation, and use the configured preferred infobase in the error result.
-- [ ] Normalize raw 1C platform entries through one raw-entry type and guard optional picker paths.
-- [ ] Give the Vanessa client collection an explicitly narrowed array value.
-- [ ] Remove the stale AI prompt variables that reference nonexistent identifiers.
-- [ ] Rename custom QuickPick discriminators from `kind` to `entryKind` and explicitly type each item union.
-- [ ] Wrap VS Code Thenables with `Promise.resolve` where native Promise storage is required.
-- [ ] Run `npm run check:types`; expected result is zero diagnostics.
+- [x] Use the current failing `npm run check:types` output as the red regression test and group diagnostics by root cause.
+- [x] Pass `oneCClientExePath` into the builder-cache predicate from its only caller.
+- [x] Normalize optional XML nodes and QuickPick API property names according to their declared contracts.
+- [x] Return the generated Form Explorer project from the progress callback instead of relying on closure mutation, and use the configured preferred infobase in the error result.
+- [x] Normalize raw 1C platform entries through one raw-entry type and guard optional picker paths.
+- [x] Give the Vanessa client collection an explicitly narrowed array value.
+- [x] Remove the stale AI prompt variables that reference nonexistent identifiers.
+- [x] Rename custom QuickPick discriminators from `kind` to `entryKind` and explicitly type each item union.
+- [x] Wrap VS Code Thenables with `Promise.resolve` where native Promise storage is required.
+- [x] Run `npm run check:types`; expected result is zero diagnostics.
 
 ### Task 3: Correct scenario-reference matching
 

@@ -9536,9 +9536,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             ?? this.findObjectKeyByAlias(root, 'ДанныеКлиентовТестирования')
             ?? 'КлиентыТестирования';
 
-        let clientsCollection = root[collectionKey];
-        if (!Array.isArray(clientsCollection)) {
-            clientsCollection = [];
+        const existingCollection = root[collectionKey];
+        const clientsCollection: unknown[] = Array.isArray(existingCollection)
+            ? existingCollection
+            : [];
+        if (!Array.isArray(existingCollection)) {
             root[collectionKey] = clientsCollection;
             changed = true;
         }

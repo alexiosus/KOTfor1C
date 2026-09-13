@@ -601,7 +601,7 @@ async function showQuickPickWithDefaultSelection<T extends vscode.QuickPickItem>
         };
 
         quickPick.title = options.title;
-        quickPick.placeHolder = options.placeHolder;
+        quickPick.placeholder = options.placeHolder;
         quickPick.ignoreFocusOut = true;
         quickPick.matchOnDescription = true;
         quickPick.matchOnDetail = true;
@@ -6731,11 +6731,12 @@ async function handleGenerateFormExplorerExtensionCore(
     }
 
     try {
-        let builtProject: GeneratedExtensionProject | null = null;
-        let buildExecuted = false;
-        let installExecuted = false;
-        let installedInfobasePath: string | null = null;
-        await vscode.window.withProgress(
+        const generationResult = await vscode.window.withProgress<{
+            project: GeneratedExtensionProject;
+            buildExecuted: boolean;
+            installExecuted: boolean;
+            installedInfobasePath: string | null;
+        } | null>(
             {
                 location: vscode.ProgressLocation.Notification,
                 title: runMode === 'install'
@@ -6744,6 +6745,9 @@ async function handleGenerateFormExplorerExtensionCore(
                 cancellable: false
             },
             async progress => {
+                let buildExecuted = false;
+                let installExecuted = false;
+                let installedInfobasePath: string | null = null;
                 const shouldUseTargetInfobaseExport = Boolean(targetInfobasePath) && effectiveInstallMode === 'target';
                 const shouldDirectInstallIntoTarget = Boolean(targetInfobasePath)
                     && (effectiveInstallMode === 'direct' || effectiveInstallMode === 'target');
@@ -6843,7 +6847,6 @@ async function handleGenerateFormExplorerExtensionCore(
                     snapshotPath,
                     cfeOutputPath
                 );
-                builtProject = project;
 
                 outputChannel.appendLine(t('Form Explorer extension project generated at: {0}', project.extensionSourceDirectory));
                 outputChannel.appendLine(t('Managed forms index written to: {0}', project.formsIndexPath));
@@ -6883,7 +6886,7 @@ async function handleGenerateFormExplorerExtensionCore(
                             outputChannel.show(true);
                         }
                     });
-                    return;
+                    return null;
                 }
 
                 if (!buildExecuted && !shouldDirectInstallIntoTarget) {
@@ -6968,12 +6971,25 @@ async function handleGenerateFormExplorerExtensionCore(
                     installExecuted = true;
                     installedInfobasePath = targetInfobasePath;
                 }
+
+                return {
+                    project,
+                    buildExecuted,
+                    installExecuted,
+                    installedInfobasePath
+                };
             }
         );
 
-        if (!builtProject || (!buildExecuted && !installExecuted)) {
+        if (!generationResult || (!generationResult.buildExecuted && !generationResult.installExecuted)) {
             return;
         }
+        const {
+            project: builtProject,
+            buildExecuted,
+            installExecuted,
+            installedInfobasePath
+        } = generationResult;
 
         if (installExecuted && installedInfobasePath) {
             await updateManagedInfobaseMetadata(context, installedInfobasePath, {
@@ -7121,7 +7137,7 @@ export async function handleStartFormExplorerInfobase(
     }
 
     try {
-        let selectedTargetInfobasePath = configuredPreferredInfobasePath;
+        let selectedTargetInfobasePath: string | null | undefined = configuredPreferredInfobasePath;
         if (!selectedTargetInfobasePath) {
             selectedTargetInfobasePath = await pickManagedInfobasePath(context, t, {
                 allowBuildOnly: false,
@@ -7276,8 +7292,8 @@ export async function handleStartFormExplorerInfobase(
         }
         return {
             status: 'error',
-            infobasePath: typeof preferredInfobasePath === 'string' && preferredInfobasePath.trim()
-                ? normalizeInfobaseReference(preferredInfobasePath.trim())
+            infobasePath: typeof configuredPreferredInfobasePath === 'string' && configuredPreferredInfobasePath.trim()
+                ? normalizeInfobaseReference(configuredPreferredInfobasePath.trim())
                 : null,
             error: t('Failed to start target infobase for Form Explorer: {0}', message),
             processId: null

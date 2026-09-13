@@ -430,7 +430,7 @@ export async function ensureSharedStartupInfobaseReady(
         };
     };
 
-    const operation = options?.showProgressNotification === false
+    const operation = Promise.resolve(options?.showProgressNotification === false
         ? performEnsure()
         : vscode.window.withProgress(
             {
@@ -439,7 +439,7 @@ export async function ensureSharedStartupInfobaseReady(
                 cancellable: false
             },
             async () => performEnsure()
-        );
+        ));
 
     activeEnsureOperations.set(ensureKey, operation);
     try {
