@@ -201,7 +201,7 @@ git commit -m "feat: add duplicate-aware scenario catalog"
 - Consumes: `ScenarioCatalog` from Task 1.
 - Produces: `LazyScenarioCatalog` with `current`, `isDirty`, `ensureLoaded`, `replace`, `update`, and `invalidate`.
 
-- [ ] **Step 1: Write lazy-loading tests**
+- [x] **Step 1: Write lazy-loading tests**
 
 Create `test/lazyScenarioCatalog.test.ts`:
 
@@ -271,11 +271,11 @@ test('update does not initialize an unloaded state', () => {
 });
 ```
 
-- [ ] **Step 2: Verify the tests fail for the missing module**
+- [x] **Step 2: Verify the tests fail for the missing module**
 
 Run `npm run compile-tests` and expect an unresolved `../src/lazyScenarioCatalog` error.
 
-- [ ] **Step 3: Implement the lazy holder**
+- [x] **Step 3: Implement the lazy holder**
 
 Create `src/lazyScenarioCatalog.ts`:
 
@@ -334,7 +334,7 @@ export class LazyScenarioCatalog {
 }
 ```
 
-- [ ] **Step 4: Run focused and full checks**
+- [x] **Step 4: Run focused and full checks**
 
 ```bash
 npm run compile-tests
@@ -344,7 +344,7 @@ npm run check
 
 Expected: 4 lazy-state tests pass and the full gate exits 0.
 
-- [ ] **Step 5: Commit the lazy holder**
+- [x] **Step 5: Commit the lazy holder**
 
 ```bash
 git add src/lazyScenarioCatalog.ts test/lazyScenarioCatalog.test.ts
