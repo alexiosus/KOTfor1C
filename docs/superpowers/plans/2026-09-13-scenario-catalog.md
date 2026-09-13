@@ -32,7 +32,7 @@
 - Consumes: `TestInfo` from `src/types.ts` as a type-only import.
 - Produces: `ScenarioCatalog`, `ScenarioResolution`, `buildScenarioCatalog`, `resolveScenarioByName`, `upsertScenarioInCatalog`, and `removeScenarioFromCatalogByUri`.
 
-- [ ] **Step 1: Write catalog tests**
+- [x] **Step 1: Write catalog tests**
 
 Create `test/scenarioCatalog.test.ts` with a URI stub and exact assertions for preservation, stable ordering, resolution, upsert, and removal:
 
@@ -97,7 +97,7 @@ test('upserts by URI and removal keeps the other duplicate', () => {
 });
 ```
 
-- [ ] **Step 2: Verify the tests fail for the missing module**
+- [x] **Step 2: Verify the tests fail for the missing module**
 
 Run:
 
@@ -107,7 +107,7 @@ npm run compile-tests
 
 Expected: esbuild fails to resolve `../src/scenarioCatalog`.
 
-- [ ] **Step 3: Implement the catalog**
+- [x] **Step 3: Implement the catalog**
 
 Create `src/scenarioCatalog.ts` with exact-name lookup, stable path ordering, and URI-based replacement:
 
@@ -170,7 +170,7 @@ export function removeScenarioFromCatalogByUri(catalog: ScenarioCatalog, uriKey:
 }
 ```
 
-- [ ] **Step 4: Run the focused tests and quality gate**
+- [x] **Step 4: Run the focused tests and quality gate**
 
 Run:
 
@@ -182,7 +182,7 @@ npm run check
 
 Expected: 3 catalog tests pass and the full gate exits 0.
 
-- [ ] **Step 5: Commit the catalog**
+- [x] **Step 5: Commit the catalog**
 
 ```bash
 git add src/scenarioCatalog.ts test/scenarioCatalog.test.ts
