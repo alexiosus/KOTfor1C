@@ -32,5 +32,4 @@ Use Node's built-in test runner with esbuild compiling small TypeScript unit tes
 - `npm test` executes real tests and returns a non-zero exit code for a failing assertion.
 - Reference matching finds `Given I change barcode scanning action` as well as Russian and English call keywords.
 - Built-in MXL and 1C process launches do not use a shell.
-- The full 1C:Drive corpus remains unchanged.
-
+- The full 1C:Drive corpus remains unchanged by this branch.

@@ -1216,7 +1216,7 @@
     "compile-tests": "esbuild test/*.test.ts --bundle --outdir=out/test --platform=node --format=cjs --sourcemap",
     "test": "npm run compile-tests && node --test out/test/*.test.js",
     "check:types": "tsc --noEmit",
-    "lint": "eslint src test",
+    "lint": "eslint src test --max-warnings 0",
     "check": "npm run check:types && npm run lint && npm test"
   },
   "devDependencies": {

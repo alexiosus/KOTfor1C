@@ -1246,7 +1246,9 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         }
         
         for (const stepDef of this.stepDefinitions) {
-            if (token.isCancellationRequested) return null;
+            if (token.isCancellationRequested) {
+                return null;
+            }
             try {
                 if (this.matchLineToPattern(lineText, stepDef)) {
                     const content = new vscode.MarkdownString();
@@ -1331,7 +1333,9 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             return this.isInFeatureScenarioBlock(document, position.line);
         }
 
-        if (!document.fileName.toLowerCase().endsWith('.yaml')) return false;
+        if (!document.fileName.toLowerCase().endsWith('.yaml')) {
+            return false;
+        }
         const textUpToPosition = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
         const scenarioBlockStartRegex = /\nТекстСценария:\s*\|?\s*(\r\n|\r|\n)/m;
         let lastScenarioBlockStart = -1;

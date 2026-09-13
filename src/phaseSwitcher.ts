@@ -6647,9 +6647,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     public async resolveWebviewView(
         webviewView: vscode.WebviewView,
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         context: vscode.WebviewViewResolveContext,
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         _token: vscode.CancellationToken,
     ) {
         console.log("[PhaseSwitcherProvider] Resolving webview view...");
@@ -7621,7 +7619,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 for (const testsuiteMatch of testsuiteMatches) {
                     // Extract test name and remove "Компиляция настройки сценария" prefix
                     const nameMatch = testsuiteMatch.match(/name="(?:Компиляция настройки сценария )?([^"]*)"/);
-                    if (!nameMatch) continue;
+                    if (!nameMatch) {
+                        continue;
+                    }
                     
                     const testName = nameMatch[1];
                     
@@ -7918,7 +7918,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         throw new Error(this.t('YAML build error. See log: {0}', yamlBuildLogFileUri.fsPath));
                     }
                 } catch (e: any) {
-                     if (e.code === 'FileNotFound') throw new Error(this.t('Build result file {0} not found after waiting.', yamlBuildResultFileUri.fsPath));
+                     if (e.code === 'FileNotFound') {
+                         throw new Error(this.t('Build result file {0} not found after waiting.', yamlBuildResultFileUri.fsPath));
+                     }
                      throw e; 
                 }
                 this.outputInfo(outputChannel, this.t('YAML build successful.'));

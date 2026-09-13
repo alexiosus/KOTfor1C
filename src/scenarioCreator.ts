@@ -2246,8 +2246,12 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
         ignoreFocusOut: true,
         validateInput: value => {
             const trimmedValue = value?.trim();
-            if (!trimmedValue) return t('Code cannot be empty');
-            if (!/^\d+$/.test(trimmedValue)) return t('Code must contain digits only');
+            if (!trimmedValue) {
+                return t('Code cannot be empty');
+            }
+            if (!/^\d+$/.test(trimmedValue)) {
+                return t('Code must contain digits only');
+            }
             if (knownScenarioCodes.has(normalizeScenarioCode(trimmedValue))) {
                 return t('Scenario code "{0}" already exists.', trimmedValue);
             }
@@ -2387,8 +2391,12 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
         ignoreFocusOut: true,
         validateInput: value => {
             const trimmedValue = value?.trim();
-            if (!trimmedValue) return t('Name cannot be empty');
-            if (/[/\\:*\?"<>|]/.test(trimmedValue)) return t('Name contains invalid characters');
+            if (!trimmedValue) {
+                return t('Name cannot be empty');
+            }
+            if (/[/\\:*\?"<>|]/.test(trimmedValue)) {
+                return t('Name contains invalid characters');
+            }
             if (knownScenarioNames.has(normalizeScenarioName(trimmedValue))) {
                 return t('Scenario name "{0}" already exists.', trimmedValue);
             }

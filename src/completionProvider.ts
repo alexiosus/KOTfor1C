@@ -2890,7 +2890,9 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
         if (inputWords.length === 0) { // Если ввод есть, но не разделяется на слова (например, одно слово без пробелов)
              for (const pWord of patternWords) {
-                 if (pWord.startsWith(inputLower)) return {matched: true, score: 0.55}; // Если одно из слов шаблона начинается с введенного текста
+                 if (pWord.startsWith(inputLower)) {
+                     return {matched: true, score: 0.55}; // Если одно из слов шаблона начинается с введенного текста
+                 }
              }
              return { matched: false, score: 0 }; // Если одиночное слово ввода не найдено как начало ни одного слова шаблона
         }
@@ -2908,7 +2910,9 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 const patternWord = patternWords[j];
                 if (patternWord.startsWith(inputWord)) {
                     matchedWordCount++;
-                    if (firstMatchInPatternIndex === -1) firstMatchInPatternIndex = j;
+                    if (firstMatchInPatternIndex === -1) {
+                        firstMatchInPatternIndex = j;
+                    }
                     lastMatchInPatternIndex = j;
                     currentPatternWordIndex = j; // Для проверки порядка
                     foundThisWord = true;
@@ -2980,8 +2984,12 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             const linesInBlock = textAfterLastBlockStart.split(/\r\n|\r|\n/);
             for (const line of linesInBlock) {
                 const trimmedLine = line.trim();
-                if (trimmedLine === "") continue; // Пропускаем пустые строки
-                if (trimmedLine.startsWith("#")) continue; // Пропускаем комментарии
+                if (trimmedLine === "") {
+                    continue; // Пропускаем пустые строки
+                }
+                if (trimmedLine.startsWith("#")) {
+                    continue; // Пропускаем комментарии
+                }
 
                 // Если строка не начинается с пробела (или таба) и содержит ':' и это не строка продолжения многострочного текста (|)
                 // Это эвристика для определения новой секции YAML

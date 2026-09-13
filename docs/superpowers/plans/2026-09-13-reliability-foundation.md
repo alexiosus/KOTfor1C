@@ -85,6 +85,8 @@
 **Files:**
 - Modify: `src/commandHandlers.ts`
 - Modify: `src/phaseSwitcher.ts`
+- Create: `src/directProcessLaunch.ts`
+- Create: `test/directProcessLaunch.test.ts`
 - Modify: `package.json`
 - Modify: `package-lock.json`
 
@@ -100,13 +102,36 @@
 ### Task 5: Final compatibility verification
 
 **Files:**
+- Modify: `package.json`
+- Modify: `src/commandHandlers.ts`
+- Modify: `src/completionProvider.ts`
+- Modify: `src/hoverProvider.ts`
+- Modify: `src/phaseSwitcher.ts`
+- Modify: `src/scenarioCreator.ts`
 - Modify: `docs/superpowers/plans/2026-09-13-reliability-foundation.md`
 
 **Interfaces:**
 - Consumes: all deliverables above.
 - Produces: recorded verification evidence for the next optimization increment.
 
-- [ ] Run `git diff --check` and inspect every changed file.
-- [ ] Run the full unit suite, type checker, linter, production prepublish build, and production dependency audit.
-- [ ] Recount the external corpus and verify it has 1,885 `scen.yaml` files and no modified files.
-- [ ] Record remaining deferred work: duplicate-name-aware ScenarioIndex, lazy activation/completion indexing, SecretStorage, YAML CST migration, and module decomposition.
+- [x] Make lint fail on warnings and resolve the existing warning set.
+- [x] Run `git diff --check` and inspect every changed file.
+- [x] Run the full unit suite, type checker, linter, production prepublish build, and production dependency audit.
+- [x] Recount the external corpus, verify it has 1,885 `scen.yaml` files, and preserve its pre-existing working-tree changes untouched.
+- [x] Record remaining deferred work: duplicate-name-aware ScenarioIndex, lazy activation/completion indexing, SecretStorage, YAML CST migration, and module decomposition.
+
+## Verification Evidence (2026-09-13)
+
+- `npm run check`: zero TypeScript diagnostics, zero ESLint warnings, 5/5 Node tests passed.
+- `npm run vscode:prepublish`: production bundle completed successfully.
+- `npm audit --omit=dev`: 0 vulnerabilities.
+- Read-only corpus probe: 1,885 `*scen.yaml` files; the `Given` reference at `Parent scenarios/0083_Work_orders/scen.yaml:764` was matched.
+- External repository state was not altered by this branch. It already contained a modified `Service/000015110/scen.yaml` and an untracked `Parent scenarios/test/` directory at final verification.
+
+## Deferred Optimization Work
+
+- Replace the name-only `ScenarioIndex` with duplicate-aware definitions and deterministic reference resolution.
+- Move activation and completion indexing to lazy, incremental caches with file-watcher invalidation.
+- Migrate stored passwords from JSON/YAML files to VS Code `SecretStorage`.
+- Replace regex-based structural YAML edits with CST-aware editing.
+- Decompose the largest provider/generator modules behind smaller service interfaces.

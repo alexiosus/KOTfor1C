@@ -34,7 +34,9 @@ async function findFileFromText(
     }
 
     const fileNameRaw = textEditor.document.getText(selection).trim().replace(/["']/g, '');
-    if (!fileNameRaw) return null;
+    if (!fileNameRaw) {
+        return null;
+    }
 
     const hasExtension = path.extname(fileNameRaw) !== '';
     const potentialFileNames = new Set<string>([fileNameRaw]);
@@ -955,7 +957,9 @@ export function parseCalledScenariosFromScriptBody(documentText: string): string
 
         for (const line of lines) {
             const trimmedLine = line.trim();
-            if (trimmedLine.startsWith('#') || trimmedLine === '') continue; // Пропускаем комментарии и пустые строки
+            if (trimmedLine.startsWith('#') || trimmedLine === '') {
+                continue; // Пропускаем комментарии и пустые строки
+            }
 
             const match = trimmedLine.match(callRegex);
             if (match && match[1]) {
@@ -1329,14 +1333,18 @@ export async function clearAndFillNestedScenarios(document: vscode.TextDocument,
         console.log("[clearAndFillNestedScenarios] Starting...");
         const fullText = document.getText();
 
-        if (!silent) progress.report({ increment: 20, message: t('Scanning for called scenarios...') });
+        if (!silent) {
+            progress.report({ increment: 20, message: t('Scanning for called scenarios...') });
+        }
 
         // Parse scenarios in order of appearance in script body
         const calledScenariosInOrder = parseCalledScenariosFromScriptBody(fullText);
         
         console.log(`[clearAndFillNestedScenarios] Found ${calledScenariosInOrder.length} scenarios in script body.`);
 
-        if (!silent) progress.report({ increment: 40, message: t('Processing scenario files...') });
+        if (!silent) {
+            progress.report({ increment: 40, message: t('Processing scenario files...') });
+        }
 
         const scenariosToAdd: { name: string; uid: string }[] = [];
 
@@ -1386,7 +1394,9 @@ export async function clearAndFillNestedScenarios(document: vscode.TextDocument,
 
         console.log(`[clearAndFillNestedScenarios] Found ${scenariosToAdd.length} valid scenarios to add.`);
 
-        if (!silent) progress.report({ increment: 60, message: t('Clearing and refilling section...') });
+        if (!silent) {
+            progress.report({ increment: 60, message: t('Clearing and refilling section...') });
+        }
 
         // Find the NestedScenarios section
         const nestedSectionHeaderRegex = /ВложенныеСценарии:/;
@@ -1617,7 +1627,9 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
         console.log("[clearAndFillScenarioParameters] Starting...");
         const fullText = document.getText();
 
-        if (!silent) progress.report({ increment: 20, message: t('Scanning for used parameters...') });
+        if (!silent) {
+            progress.report({ increment: 20, message: t('Scanning for used parameters...') });
+        }
 
         // Parse parameters in order of appearance in script body
         const usedParametersInOrder = parseUsedParametersFromScriptBody(fullText);
@@ -1630,7 +1642,9 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
         console.log(`[clearAndFillScenarioParameters] Found ${existingData.size} existing parameter blocks with attributes.`);
         console.log(`[clearAndFillScenarioParameters] Session cache has ${mergedData.size} parameter blocks.`);
 
-        if (!silent) progress.report({ increment: 60, message: t('Clearing and refilling section...') });
+        if (!silent) {
+            progress.report({ increment: 60, message: t('Clearing and refilling section...') });
+        }
 
         const PARAM_SECTION_KEY = "ПараметрыСценария";
         const PARAM_SECTION_HEADER = `${PARAM_SECTION_KEY}:`;
