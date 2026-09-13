@@ -1629,5 +1629,7 @@
   "Scenario name resolves to multiple files:": "Scenario name resolves to multiple files:",
   "Nested scenarios were not updated because some names resolve to multiple files:": "Nested scenarios were not updated because some names resolve to multiple files:",
   "Nested scenarios were not updated because the scenario catalog is unavailable.": "Nested scenarios were not updated because the scenario catalog is unavailable.",
+  "Action cancelled: scenario \"{0}\" resolves to multiple files:": "Action cancelled: scenario \"{0}\" resolves to multiple files:",
+  "Scenario \"{0}\" was not found or its file identity is stale.": "Scenario \"{0}\" was not found or its file identity is stale.",
   "Nested scenario (1C) — {0}": "Nested scenario (1C) — {0}"
 }

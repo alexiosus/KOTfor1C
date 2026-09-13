@@ -1627,5 +1627,7 @@
   "Scenario name resolves to multiple files:": "Имя сценария соответствует нескольким файлам:",
   "Nested scenarios were not updated because some names resolve to multiple files:": "Вложенные сценарии не обновлены: некоторые имена соответствуют нескольким файлам:",
   "Nested scenarios were not updated because the scenario catalog is unavailable.": "Вложенные сценарии не обновлены: каталог сценариев недоступен.",
+  "Action cancelled: scenario \"{0}\" resolves to multiple files:": "Действие отменено: сценарию \"{0}\" соответствуют несколько файлов:",
+  "Scenario \"{0}\" was not found or its file identity is stale.": "Сценарий \"{0}\" не найден или идентификатор его файла устарел.",
   "Nested scenario (1C) — {0}": "Вложенный сценарий (1C) — {0}"
 }

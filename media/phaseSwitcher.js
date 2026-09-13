@@ -1131,7 +1131,7 @@
 
         return `
             <div class="item-container">
-                <label class="checkbox-item${viewState.isAffectedMainScenario ? ' affected-main-scenario' : ''}" id="label-${viewState.safeName}" data-name="${viewState.escapedNameAttr}" title="${viewState.escapedTitleAttr}">
+                <label class="checkbox-item${viewState.isAffectedMainScenario ? ' affected-main-scenario' : ''}" id="label-${viewState.safeName}" data-name="${viewState.escapedNameAttr}" data-uri="${viewState.escapedFileUriAttr}" title="${viewState.escapedTitleAttr}">
                     ${viewState.leadingControlHtml}
                     <span class="checkbox-label-text">${viewState.name}</span>
                     ${viewState.progressHtml}
@@ -1155,6 +1155,7 @@
         const escapedNameAttr = escapeHtmlAttr(name);
         const escapedTitleAttr = escapeHtmlAttr(relativePath);
         const fileUriString = testInfo.yamlFileUriString || '';
+        const escapedFileUriAttr = escapeHtmlAttr(fileUriString);
         const isAffectedMainScenario = affectedMainScenarioNames.has(name);
         const escapedIconTitle = escapeHtmlAttr((window.__loc?.openScenarioFileTitle || 'Open scenario file {0}').replace('{0}', name));
         const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
@@ -1244,7 +1245,7 @@
             : '';
 
         const openButtonHtml = fileUriString
-            ? `<button class="open-scenario-btn" data-name="${escapedNameAttr}" title="${escapedIconTitle}">
+            ? `<button class="open-scenario-btn" data-name="${escapedNameAttr}" data-uri="${escapedFileUriAttr}" title="${escapedIconTitle}">
                    <span class="codicon codicon-circle-small-filled open-scenario-icon-idle"></span>
                    <span class="codicon codicon-edit open-scenario-icon-edit"></span>
                </button>`
@@ -1267,6 +1268,8 @@
             defaultState,
             safeName,
             escapedNameAttr,
+            escapedFileUriAttr,
+            fileUriString,
             escapedTitleAttr,
             isAffectedMainScenario,
             isRunInProgress,
@@ -1414,6 +1417,12 @@
         if (desiredName !== null) {
             existingButton.setAttribute('data-name', desiredName);
         }
+        const desiredUri = desiredButton.getAttribute('data-uri');
+        if (desiredUri !== null) {
+            existingButton.setAttribute('data-uri', desiredUri);
+        } else {
+            existingButton.removeAttribute('data-uri');
+        }
         existingButton.innerHTML = desiredButton.innerHTML;
     }
 
@@ -1435,6 +1444,7 @@
             }
 
             label.title = viewState.relativePath;
+            label.setAttribute('data-uri', viewState.fileUriString);
             label.classList.toggle('affected-main-scenario', viewState.isAffectedMainScenario);
             syncScenarioLeadingControl(label, viewState);
             syncScenarioProgress(label, viewState);
@@ -1822,10 +1832,12 @@
             log("ERROR: Open scenario button clicked without data-name attribute!");
             return;
         }
+        const uri = button.getAttribute('data-uri') || undefined;
         log(`Open scenario button clicked for: ${name}`);
         vscode.postMessage({
             command: 'openScenario',
-            name: name
+            name,
+            uri
         });
     }
 
@@ -1891,6 +1903,7 @@
         if (!name) {
             return;
         }
+        const uri = row.getAttribute('data-uri') || undefined;
 
         const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
         const runStatus = runInfo?.runStatus || 'idle';
@@ -1912,7 +1925,8 @@
         log(`Failed scenario row clicked, opening scenario yaml: ${name}`);
         vscode.postMessage({
             command: 'openScenario',
-            name
+            name,
+            uri
         });
     }
 
@@ -2124,6 +2138,7 @@
         if (!(event.currentTarget instanceof HTMLElement)) return;
         const name = event.currentTarget.getAttribute('data-name');
         if (!name) return;
+        const uri = event.currentTarget.getAttribute('data-uri') || undefined;
 
         event.preventDefault();
         event.stopPropagation();
@@ -2161,12 +2176,12 @@
             {
                 icon: 'codicon-edit',
                 label: window.__loc?.openScenarioTitle || 'Open scenario',
-                onClick: () => vscode.postMessage({ command: 'openScenario', name })
+                onClick: () => vscode.postMessage({ command: 'openScenario', name, uri })
             },
             {
                 icon: 'codicon-settings-gear',
                 label: window.__loc?.openTestSettingsTitle || 'Open test settings',
-                onClick: () => vscode.postMessage({ command: 'openMainScenarioTestSettings', name })
+                onClick: () => vscode.postMessage({ command: 'openMainScenarioTestSettings', name, uri })
             },
             { separator: true },
             {
@@ -2224,12 +2239,12 @@
             {
                 icon: 'codicon-rename',
                 label: window.__loc?.renameScenarioTitle || 'Rename scenario',
-                onClick: () => vscode.postMessage({ command: 'renameScenario', name })
+                onClick: () => vscode.postMessage({ command: 'renameScenario', name, uri })
             },
             {
                 icon: 'codicon-trash',
                 label: window.__loc?.deleteMainScenarioTitle || 'Delete main scenario',
-                onClick: () => vscode.postMessage({ command: 'deleteMainScenario', name })
+                onClick: () => vscode.postMessage({ command: 'deleteMainScenario', name, uri })
             }
         ], `scenario:${name}`);
     }

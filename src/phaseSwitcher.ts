@@ -12,6 +12,11 @@ import {
     type ScenarioCatalog,
     upsertScenarioInCatalog
 } from './scenarioCatalog';
+import {
+    resolveScenarioRenameTarget,
+    resolveScenarioTarget,
+    type ScenarioTarget
+} from './scenarioIdentity';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { migrateLegacyPhaseSwitcherMetadata, parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
 import { parseKotScenarioDescription } from './kotMetadataDescription';
@@ -5786,6 +5791,34 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         );
     }
 
+    private async resolveScenarioOperationTarget(
+        target: ScenarioTarget,
+        options: { requireUnambiguousName?: boolean } = {}
+    ): Promise<TestInfo | null> {
+        const catalog = await this.ensureFreshScenarioCatalog();
+        const resolution = options.requireUnambiguousName
+            ? resolveScenarioRenameTarget(catalog, target)
+            : resolveScenarioTarget(catalog, target);
+        if (resolution.kind === 'unique') {
+            return resolution.scenario;
+        }
+
+        if (resolution.kind === 'ambiguous') {
+            const paths = resolution.scenarios
+                .map(item => item.relativePath || item.yamlFileUri.fsPath)
+                .join('\n');
+            vscode.window.showErrorMessage(
+                `${this.t('Action cancelled: scenario "{0}" resolves to multiple files:', target.name)}\n${paths}`
+            );
+            return null;
+        }
+
+        vscode.window.showWarningMessage(
+            this.t('Scenario "{0}" was not found or its file identity is stale.', target.name)
+        );
+        return null;
+    }
+
     public async renameScenarioForActiveEditor(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
@@ -5799,19 +5832,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        await this.ensureFreshTestCache();
-        if (!this._testCache || this._testCache.size === 0) {
-            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
-            return;
-        }
-
-        const scenarioInfo = this.findScenarioByUriInCache(document.uri);
+        const catalog = await this.ensureFreshScenarioCatalog();
+        const scenarioInfo = catalog.byUri.get(document.uri.toString());
         if (!scenarioInfo) {
             vscode.window.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
             return;
         }
 
-        await this.renameScenario(scenarioInfo.name);
+        await this.renameScenario({ name: scenarioInfo.name, uri: document.uri.toString() });
     }
 
     public async openMainScenarioTestSettingsForActiveEditor(): Promise<void> {
@@ -5827,19 +5855,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        await this.ensureFreshTestCache();
-        if (!this._testCache || this._testCache.size === 0) {
-            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
-            return;
-        }
-
-        const scenarioInfo = this.findScenarioByUriInCache(document.uri);
+        const catalog = await this.ensureFreshScenarioCatalog();
+        const scenarioInfo = catalog.byUri.get(document.uri.toString());
         if (!scenarioInfo) {
             vscode.window.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
             return;
         }
 
-        await this.openMainScenarioTestSettings(scenarioInfo.name);
+        await this.openMainScenarioTestSettings({ name: scenarioInfo.name, uri: document.uri.toString() });
     }
 
     private async renameGroup(groupName: string): Promise<void> {
@@ -5939,30 +5962,27 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         );
     }
 
-    private async renameScenario(scenarioName: string): Promise<void> {
-        const trimmedScenarioName = scenarioName.trim();
+    private async renameScenario(target: ScenarioTarget): Promise<void> {
+        const trimmedScenarioName = target.name.trim();
         if (!trimmedScenarioName) {
             return;
         }
 
-        await this.ensureFreshTestCache();
-        if (!this._testCache || this._testCache.size === 0) {
-            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
-            return;
-        }
-
-        const scenarioInfo = this._testCache.get(trimmedScenarioName);
+        const scenarioInfo = await this.resolveScenarioOperationTarget(
+            { ...target, name: trimmedScenarioName },
+            { requireUnambiguousName: true }
+        );
         if (!scenarioInfo) {
-            vscode.window.showWarningMessage(this.t('Scenario "{0}" was not found in cache.', trimmedScenarioName));
             return;
         }
         const isMainScenario = this.isMainScenario(scenarioInfo);
 
+        const catalog = await this.ensureFreshScenarioCatalog();
         const knownLowerNames = new Set<string>(
-            Array.from(this._testCache.keys()).map(name => name.trim().toLowerCase())
+            catalog.all.map(item => item.name.trim().toLowerCase())
         );
         const knownLowerCodes = new Set<string>(
-            Array.from(this._testCache.values())
+            catalog.all
                 .map(item => (item.scenarioCode || '').trim().toLowerCase())
                 .filter(code => code.length > 0)
         );
@@ -6201,21 +6221,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         );
     }
 
-    private async openMainScenarioTestSettings(scenarioName: string): Promise<void> {
-        const trimmedScenarioName = scenarioName.trim();
+    private async openMainScenarioTestSettings(target: ScenarioTarget): Promise<void> {
+        const trimmedScenarioName = target.name.trim();
         if (!trimmedScenarioName) {
             return;
         }
 
-        await this.ensureFreshTestCache();
-        if (!this._testCache || this._testCache.size === 0) {
-            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
-            return;
-        }
-
-        const scenarioInfo = this._testCache.get(trimmedScenarioName);
+        const scenarioInfo = await this.resolveScenarioOperationTarget({ ...target, name: trimmedScenarioName });
         if (!scenarioInfo) {
-            vscode.window.showWarningMessage(this.t('Scenario "{0}" was not found in cache.', trimmedScenarioName));
             return;
         }
 
@@ -6238,21 +6251,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async deleteMainScenario(scenarioName: string): Promise<void> {
-        const trimmedScenarioName = scenarioName.trim();
+    private async deleteMainScenario(target: ScenarioTarget): Promise<void> {
+        const trimmedScenarioName = target.name.trim();
         if (!trimmedScenarioName) {
             return;
         }
 
-        await this.ensureFreshTestCache();
-        if (!this._testCache || this._testCache.size === 0) {
-            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
-            return;
-        }
-
-        const scenarioInfo = this._testCache.get(trimmedScenarioName);
+        const scenarioInfo = await this.resolveScenarioOperationTarget({ ...target, name: trimmedScenarioName });
         if (!scenarioInfo) {
-            vscode.window.showWarningMessage(this.t('Scenario "{0}" was not found in cache.', trimmedScenarioName));
             return;
         }
 
@@ -6949,9 +6955,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
                         const scenarioName = message.name.trim();
                         const catalog = await this.ensureFreshScenarioCatalog();
-                        const targetUri = await findFileByName(scenarioName, catalog);
+                        const uri = typeof message.uri === 'string' && message.uri.trim().length > 0
+                            ? message.uri.trim()
+                            : undefined;
+                        const resolution = resolveScenarioTarget(catalog, { name: scenarioName, uri });
+                        const targetUri = resolution.kind === 'unique'
+                            ? resolution.scenario.yamlFileUri
+                            : (uri ? null : await findFileByName(scenarioName, catalog));
                         if (!targetUri) {
-                            if ((catalog.byName.get(scenarioName)?.length || 0) <= 1) {
+                            if (uri || (catalog.byName.get(scenarioName)?.length || 0) <= 1) {
                                 vscode.window.showWarningMessage(this.t('Scenario "{0}" not found or its path is not defined.', scenarioName));
                             }
                             return;
@@ -7005,17 +7017,32 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     return;
                 case 'renameScenario':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
-                        await this.renameScenario(message.name.trim());
+                        await this.renameScenario({
+                            name: message.name.trim(),
+                            uri: typeof message.uri === 'string' && message.uri.trim().length > 0
+                                ? message.uri.trim()
+                                : undefined
+                        });
                     }
                     return;
                 case 'openMainScenarioTestSettings':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
-                        await this.openMainScenarioTestSettings(message.name.trim());
+                        await this.openMainScenarioTestSettings({
+                            name: message.name.trim(),
+                            uri: typeof message.uri === 'string' && message.uri.trim().length > 0
+                                ? message.uri.trim()
+                                : undefined
+                        });
                     }
                     return;
                 case 'deleteMainScenario':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
-                        await this.deleteMainScenario(message.name.trim());
+                        await this.deleteMainScenario({
+                            name: message.name.trim(),
+                            uri: typeof message.uri === 'string' && message.uri.trim().length > 0
+                                ? message.uri.trim()
+                                : undefined
+                        });
                     }
                     return;
                 case 'openFavoriteScenarios':
