@@ -76,19 +76,12 @@ import {
     handleStartFormExplorerBridge
 } from './formExplorerBridgeGenerator';
 import {
-    ensureFormExplorerBuilderInfobaseReady,
-    initializeFormExplorerRuntimeSidecars,
-    shouldPrepareFormExplorerBuilderInfobase
+    initializeFormExplorerRuntimeSidecars
 } from './formExplorerBuilder';
 import {
     ensureOneCPlatformsCatalogInitialized,
     handleManagePlatforms
 } from './oneCPlatform';
-import {
-    ensureSharedStartupInfobaseReady,
-    getSharedStartupInfobaseOutputChannel,
-    shouldPrepareSharedStartupInfobase
-} from './startupInfobase';
 import {
     extractTopLevelKotMetadataBlock,
     migrateLegacyPhaseSwitcherMetadata,
@@ -134,8 +127,6 @@ const pendingBackgroundScenarioFiles = new Set<string>();
 const kotDescriptionBlockLineRegex = /^Описание:\s*[|>][-+0-9]*\s*$/;
 const FAVORITE_SCENARIO_DROP_MIME = 'application/x-kot-favorite-scenario-uri';
 const execFileAsync = promisify(execFile);
-let builderWarmupInFlight: Promise<void> | null = null;
-let startupInfobaseWarmupInFlight: Promise<void> | null = null;
 const GHERKIN_STEP_LINE_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\b/i;
 const FEATURE_SCENARIO_HEADER_REGEX = /^(?:Scenario|Сценарий|Scenario Outline|Структура сценария|Background|Предыстория)\s*:/i;
 const FEATURE_SCENARIO_BLOCK_BREAK_REGEX = /^(?:Feature|Функционал|Rule|Правило|Examples|Примеры)\s*:?/i;
@@ -292,108 +283,6 @@ async function ensureScenarioYamlLanguage(document: vscode.TextDocument): Promis
     } catch (error) {
         console.warn(`[Extension] Failed to switch scenario YAML to yaml mode for ${document.uri.fsPath}:`, error);
     }
-}
-
-async function ensureOneCClientPathConfigured(context: vscode.ExtensionContext): Promise<string | null> {
-    void context;
-    const platforms = await ensureOneCPlatformsCatalogInitialized();
-    return platforms[0]?.clientExePath || null;
-}
-
-async function warmUpFormExplorerBuilder(
-    context: vscode.ExtensionContext,
-    reason: 'startup' | 'configuration'
-): Promise<void> {
-    if (builderWarmupInFlight) {
-        return builderWarmupInFlight;
-    }
-
-    builderWarmupInFlight = (async () => {
-        await initializeFormExplorerRuntimeSidecars();
-        const oneCClientPath = (await ensureOneCPlatformsCatalogInitialized())[0]?.clientExePath || '';
-        if (!oneCClientPath || !fs.existsSync(oneCClientPath)) {
-            return;
-        }
-
-        if (!(await shouldPrepareFormExplorerBuilderInfobase(oneCClientPath))) {
-            return;
-        }
-
-        const t = await getTranslator(context.extensionUri);
-        try {
-            const showOutputPanel = vscode.workspace
-                .getConfiguration('kotTestToolkit.formExplorer')
-                .get<boolean>('showOutputPanel', false);
-            await ensureFormExplorerBuilderInfobaseReady(context, oneCClientPath, {
-                showOutputPanel,
-                showProgressNotification: true,
-                progressTitle: reason === 'startup'
-                    ? t('Preparing KOT Form Explorer builder infobase...')
-                    : t('Preparing KOT Form Explorer builder infobase after settings change...')
-            });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            const openOutput = t('Open Output');
-            vscode.window.showErrorMessage(
-                t('Failed to prepare KOT Form Explorer builder infobase: {0}', message),
-                openOutput
-            ).then(selection => {
-                if (selection === openOutput) {
-                    void vscode.commands.executeCommand('workbench.action.output.toggleOutput');
-                }
-            });
-        }
-    })().finally(() => {
-        builderWarmupInFlight = null;
-    });
-
-    return builderWarmupInFlight;
-}
-
-async function warmUpSharedStartupInfobase(
-    context: vscode.ExtensionContext,
-    reason: 'startup' | 'configuration'
-): Promise<void> {
-    if (startupInfobaseWarmupInFlight) {
-        return startupInfobaseWarmupInFlight;
-    }
-
-    startupInfobaseWarmupInFlight = (async () => {
-        const oneCClientPath = (await ensureOneCPlatformsCatalogInitialized())[0]?.clientExePath || '';
-        if (!oneCClientPath || !fs.existsSync(oneCClientPath)) {
-            return;
-        }
-
-        if (!(await shouldPrepareSharedStartupInfobase())) {
-            return;
-        }
-
-        const t = await getTranslator(context.extensionUri);
-        try {
-            await ensureSharedStartupInfobaseReady(context, oneCClientPath, {
-                showOutputPanel: false,
-                showProgressNotification: true,
-                progressTitle: reason === 'startup'
-                    ? t('Preparing shared startup infobase...')
-                    : t('Preparing shared startup infobase after settings change...')
-            });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            const openOutput = t('Open Output');
-            vscode.window.showErrorMessage(
-                t('Failed to prepare shared startup infobase: {0}', message),
-                openOutput
-            ).then(selection => {
-                if (selection === openOutput) {
-                    getSharedStartupInfobaseOutputChannel().show(true);
-                }
-            });
-        }
-    })().finally(() => {
-        startupInfobaseWarmupInFlight = null;
-    });
-
-    return startupInfobaseWarmupInFlight;
 }
 
 function hasTopLevelScenarioSection(documentText: string, sectionName: string): boolean {
@@ -656,14 +545,6 @@ export function activate(context: vscode.ExtensionContext) {
     const infobaseManagerPanel = new InfobaseManagerPanel(context);
     context.subscriptions.push(formExplorerPanel);
     context.subscriptions.push(infobaseManagerPanel);
-    void ensureOneCClientPathConfigured(context)
-        .then(() => Promise.all([
-            warmUpSharedStartupInfobase(context, 'startup'),
-        ]))
-        .catch(error => {
-            console.warn('[Extension] Failed to initialize 1C platform or startup/builder infobases.', error);
-        });
-
     // --- Регистрация Провайдера для Webview (Test Manager) ---
     const phaseSwitcherProvider = new PhaseSwitcherProvider(context.extensionUri, context);
     context.subscriptions.push(
@@ -1307,9 +1188,6 @@ export function activate(context: vscode.ExtensionContext) {
                     await ensureOneCPlatformsCatalogInitialized();
                 }
 
-                await Promise.all([
-                    warmUpSharedStartupInfobase(context, 'configuration'),
-                ]);
             } catch (error) {
                 console.warn('[Extension] Failed to react to 1C platform/Form Explorer configuration change.', error);
             }
