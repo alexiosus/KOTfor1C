@@ -1208,12 +1208,16 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run copy-codicons && npm run esbuild-base -- --minify",
+    "vscode:prepublish": "npm run check && npm run copy-codicons && npm run esbuild-base -- --minify",
     "compile": "npm run copy-codicons && npm run esbuild-base -- --sourcemap",
     "watch": "npm run copy-codicons && npm run esbuild-base -- --sourcemap --watch",
     "copy-codicons": "cpy node_modules/@vscode/codicons/dist/codicon.css node_modules/@vscode/codicons/dist/codicon.ttf media --flat",
     "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
-    "test": "echo \"No automated tests configured\""
+    "compile-tests": "esbuild test/*.test.ts --bundle --outdir=out/test --platform=node --format=cjs --sourcemap",
+    "test": "npm run compile-tests && node --test out/test/*.test.js",
+    "check:types": "tsc --noEmit",
+    "lint": "eslint src test",
+    "check": "npm run check:types && npm run lint && npm test"
   },
   "devDependencies": {
     "@types/node": "20.x",
@@ -1223,6 +1227,7 @@
     "@typescript-eslint/parser": "^8.28.0",
     "@vscode/codicons": "^0.0.44",
     "cpy-cli": "^5.0.0",
+    "esbuild": "^0.28.2",
     "eslint": "^9.23.0",
     "typescript": "^5.8.2"
   },
