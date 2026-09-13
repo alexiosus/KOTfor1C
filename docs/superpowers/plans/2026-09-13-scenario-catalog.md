@@ -762,7 +762,7 @@ git commit -m "fix: surface ambiguous scenario definitions"
 - Consumes: the completed catalog, scanner, lazy provider, and editor integrations.
 - Produces: fresh verification evidence and an explicit boundary for the next optimization increment.
 
-- [ ] **Step 1: Run all automated gates**
+- [x] **Step 1: Run all automated gates**
 
 ```bash
 npm run check
@@ -773,7 +773,7 @@ git diff --check main
 
 Expected: 0 failed tests, 0 TypeScript diagnostics, 0 lint warnings, successful production bundle, 0 production vulnerabilities, and no whitespace errors.
 
-- [ ] **Step 2: Probe the corpus read-only**
+- [x] **Step 2: Probe the corpus read-only**
 
 Run a temporary Node probe that reads every `*scen.yaml`, builds `{name, path}` records, and prints only aggregate counts. Expected JSON:
 
@@ -795,7 +795,7 @@ git -C /Users/alexeremeev/Development/1cDrive status --short -- tests/Regression
 
 Expected: the pre-existing modified `Service/000015110/scen.yaml` and untracked `Parent scenarios/test/` may remain; this branch must not add or alter corpus paths.
 
-- [ ] **Step 3: Inspect migration boundaries**
+- [x] **Step 3: Inspect migration boundaries**
 
 ```bash
 rg -n "scanWorkspaceForTests\(" src
@@ -806,11 +806,25 @@ git status --short --branch
 
 The compatibility scanner may exist only as its exported adapter. Remaining `getTestCache` usages must be PhaseSwitcher flows where deterministic primary selection is explicitly accepted by the spec. The branch worktree must contain no uncommitted files.
 
-- [ ] **Step 4: Record verification evidence and deferred identity migration**
+- [x] **Step 4: Record verification evidence and deferred identity migration**
 
 Append the actual command results to this document. Record that build artifact maps, persisted Test Manager selection state, and PhaseSwitcher main-scenario identity remain name-keyed and are the next catalog migration target.
 
-- [ ] **Step 5: Commit verification notes**
+Verification evidence from 2026-09-14:
+
+- `npm run check`: exit 0; TypeScript and zero-warning ESLint passed; 15 tests passed, 0 failed.
+- `npm run vscode:prepublish`: exit 0; checks repeated successfully and the minified 1.6 MB extension bundle was produced.
+- `npm audit --omit=dev`: exit 0; 0 vulnerabilities. The sandboxed request could not resolve the npm registry, so the same command was rerun with approved network access.
+- `git diff --check main`: exit 0 with no whitespace errors.
+- Read-only corpus probe: 1,885 files, 1,885 definitions, 1,878 unique names, 7 duplicate-name buckets, 0 lost definitions.
+- External corpus status remained at the two pre-existing entries: modified `Service/000015110/scen.yaml` and untracked `Parent scenarios/test/`; this branch made no corpus changes.
+- `scanWorkspaceForTests(` remains only on the exported compatibility adapter in `src/workspaceScanner.ts`.
+- Eleven direct `_testCache.get` matches remain, all inside `PhaseSwitcherProvider`. These are the deliberately deferred deterministic `primaryByName` consumers described by the design.
+- Before adding these notes, `git status --short --branch` showed only `## codex/reliability-foundation`.
+
+Deferred next migration boundary: build artifact maps, persisted Test Manager selection state, and PhaseSwitcher main-scenario identity remain name-keyed. Migrating those identities to URI-backed keys is the next catalog increment.
+
+- [x] **Step 5: Commit verification notes**
 
 ```bash
 git add docs/superpowers/plans/2026-09-13-scenario-catalog.md
