@@ -66,6 +66,7 @@ import {
     openSavedTestReviewReport
 } from './testReviewAiReport';
 import { buildDirectSpawnCommand } from './directProcessLaunch';
+import { readFileTail } from './fileTailReader';
 
 // --- Вспомогательная функция для Nonce ---
 function getNonce(): string {
@@ -2576,7 +2577,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const intervalMs = this.getLiveRunLogRefreshIntervalMs();
         for (const [scenarioName, tracker] of this._liveFeatureStepTrackers.entries()) {
             clearInterval(tracker.timer);
-            tracker.timer = setInterval(() => this.pollFeatureStepTracker(scenarioName), intervalMs);
+            tracker.timer = setInterval(() => void this.pollFeatureStepTracker(scenarioName), intervalMs);
         }
     }
 
@@ -2584,7 +2585,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const intervalMs = this.getLiveRunLogRefreshIntervalMs();
         for (const [scenarioName, watcher] of this._liveRunLogWatchers.entries()) {
             clearInterval(watcher.timer);
-            watcher.timer = setInterval(() => this.pollLiveRunLogWatcher(scenarioName), intervalMs);
+            watcher.timer = setInterval(() => void this.pollLiveRunLogWatcher(scenarioName), intervalMs);
         }
     }
 
@@ -2596,7 +2597,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     continue;
                 }
                 clearInterval(tracker.timer);
-                tracker.timer = setInterval(() => this.pollTrackedRunLogWatcher(scenarioName, runLogKey), intervalMs);
+                tracker.timer = setInterval(() => void this.pollTrackedRunLogWatcher(scenarioName, runLogKey), intervalMs);
             }
         }
     }
@@ -4004,7 +4005,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private pollFeatureStepTracker(scenarioName: string): void {
+    private async pollFeatureStepTracker(scenarioName: string): Promise<void> {
         const tracker = this._liveFeatureStepTrackers.get(scenarioName);
         if (!tracker || tracker.isPolling) {
             return;
@@ -4014,24 +4015,24 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         try {
             const runState = this._scenarioExecutionStates.get(scenarioName);
             const isRunning = runState?.status === 'running';
-            if (!fs.existsSync(tracker.runLogPath)) {
+            const tail = await readFileTail(tracker.runLogPath, tracker.lastLength);
+            if (this._liveFeatureStepTrackers.get(scenarioName) !== tracker) {
+                return;
+            }
+            if (!tail) {
                 if (!isRunning) {
                     this.stopFeatureStepTracker(scenarioName, { preserveHighlight: true });
                 }
                 return;
             }
 
-            const fileBuffer = fs.readFileSync(tracker.runLogPath);
-            const currentLength = fileBuffer.byteLength;
-            if (currentLength < tracker.lastLength) {
-                tracker.lastLength = 0;
+            if (tail.wasTruncated) {
                 tracker.startOffset = 0;
                 tracker.pendingTail = '';
             }
 
-            if (currentLength > tracker.lastLength) {
-                const deltaBuffer = fileBuffer.subarray(tracker.lastLength);
-                const chunk = deltaBuffer.toString('utf8');
+            if (tail.content.byteLength > 0) {
+                const chunk = tail.content.toString('utf8');
                 const chunkWithPendingTail = tracker.pendingTail + chunk;
                 const endsWithNewline = /\r?\n$/.test(chunkWithPendingTail);
                 const lines = chunkWithPendingTail.split(/\r\n|\r|\n/);
@@ -4043,12 +4044,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 for (const line of lines) {
                     this.applyFeatureStepSyncLogLine(tracker, line);
                 }
-                tracker.lastLength = currentLength;
             }
+            tracker.lastLength = tail.currentLength;
 
             if (!isRunning) {
                 this.stopFeatureStepTracker(scenarioName, { preserveHighlight: true });
             }
+        } catch (error) {
+            console.error(`[PhaseSwitcherProvider] Failed to poll run log for "${scenarioName}":`, error);
         } finally {
             tracker.isPolling = false;
         }
@@ -4077,7 +4080,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const tracker: LiveFeatureStepTrackerState = {
             scenarioName,
             runLogPath: normalizedRunLogPath,
-            timer: setInterval(() => this.pollFeatureStepTracker(scenarioName), this.getLiveRunLogRefreshIntervalMs()),
+            timer: setInterval(() => void this.pollFeatureStepTracker(scenarioName), this.getLiveRunLogRefreshIntervalMs()),
             startOffset,
             lastLength: startOffset,
             pendingTail: '',
@@ -4087,7 +4090,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             currentScenarioNameFromLog: undefined
         };
         this._liveFeatureStepTrackers.set(scenarioName, tracker);
-        this.pollFeatureStepTracker(scenarioName);
+        void this.pollFeatureStepTracker(scenarioName);
     }
 
     private stopTrackedRunTimer(tracker: ExternalTrackedRunState): void {
@@ -4256,7 +4259,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.stopTrackedRunTimer(tracker);
     }
 
-    private pollTrackedRunLogWatcher(scenarioName: string, runLogKey: string): void {
+    private async pollTrackedRunLogWatcher(scenarioName: string, runLogKey: string): Promise<void> {
         const tracker = this.getTrackedRunsMapForScenario(scenarioName)?.get(runLogKey);
         if (!tracker || tracker.isPolling) {
             return;
@@ -4264,23 +4267,23 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         tracker.isPolling = true;
 
         try {
-            if (!fs.existsSync(tracker.runLogPath)) {
+            const tail = await readFileTail(tracker.runLogPath, tracker.lastLength);
+            if (this.getTrackedRunsMapForScenario(scenarioName)?.get(runLogKey) !== tracker) {
+                return;
+            }
+            if (!tail) {
                 return;
             }
 
-            const fileBuffer = fs.readFileSync(tracker.runLogPath);
-            const currentLength = fileBuffer.byteLength;
-            if (currentLength < tracker.lastLength) {
-                tracker.lastLength = 0;
+            if (tail.wasTruncated) {
                 tracker.startOffset = 0;
                 tracker.pendingTail = '';
             }
 
             let hasStateChanges = false;
             let hasNewLines = false;
-            if (currentLength > tracker.lastLength) {
-                const deltaBuffer = fileBuffer.subarray(tracker.lastLength);
-                const chunk = deltaBuffer.toString('utf8');
+            if (tail.content.byteLength > 0) {
+                const chunk = tail.content.toString('utf8');
                 const chunkWithPendingTail = tracker.pendingTail + chunk;
                 const endsWithNewline = /\r?\n$/.test(chunkWithPendingTail);
                 const lines = chunkWithPendingTail.split(/\r\n|\r|\n/);
@@ -4308,8 +4311,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     tracker.updatedAt = Date.now();
                 }
                 hasStateChanges = previousStatus !== tracker.status;
-                tracker.lastLength = currentLength;
             }
+            tracker.lastLength = tail.currentLength;
 
             if (tracker.status === 'failed'
                 && (!tracker.failureSummary || !tracker.failureDetails || !tracker.failureStepDescription)) {
@@ -4335,6 +4338,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             if (hasStateChanges || (hasNewLines && isActiveTrackedRun)) {
                 this.sendRunArtifactsStateToWebview();
             }
+        } catch (error) {
+            console.error(`[PhaseSwitcherProvider] Failed to poll tracked run log for "${scenarioName}":`, error);
         } finally {
             tracker.isPolling = false;
         }
@@ -4383,19 +4388,19 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 existing.failureStepDescription = undefined;
                 this.stopTrackedRunTimer(existing);
                 existing.timer = setInterval(
-                    () => this.pollTrackedRunLogWatcher(scenarioName, runLogKey),
+                    () => void this.pollTrackedRunLogWatcher(scenarioName, runLogKey),
                     this.getLiveRunLogRefreshIntervalMs()
                 );
             } else if (!existing.timer && existing.status === 'running') {
                 existing.timer = setInterval(
-                    () => this.pollTrackedRunLogWatcher(scenarioName, runLogKey),
+                    () => void this.pollTrackedRunLogWatcher(scenarioName, runLogKey),
                     this.getLiveRunLogRefreshIntervalMs()
                 );
             }
             if (options?.activate !== false) {
                 this.setActiveTrackedRunForScenario(scenarioName, runLogKey);
             }
-            this.pollTrackedRunLogWatcher(scenarioName, runLogKey);
+            void this.pollTrackedRunLogWatcher(scenarioName, runLogKey);
             return existing;
         }
 
@@ -4424,14 +4429,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         };
 
         tracker.timer = setInterval(
-            () => this.pollTrackedRunLogWatcher(scenarioName, runLogKey),
+            () => void this.pollTrackedRunLogWatcher(scenarioName, runLogKey),
             this.getLiveRunLogRefreshIntervalMs()
         );
         trackedRuns.set(runLogKey, tracker);
         if (options?.activate !== false) {
             this.setActiveTrackedRunForScenario(scenarioName, runLogKey, { refreshHighlights: true, notifyWebview: false });
         }
-        this.pollTrackedRunLogWatcher(scenarioName, runLogKey);
+        void this.pollTrackedRunLogWatcher(scenarioName, runLogKey);
         this.sendRunArtifactsStateToWebview();
         return tracker;
     }
@@ -4571,7 +4576,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private pollLiveRunLogWatcher(scenarioName: string): void {
+    private async pollLiveRunLogWatcher(scenarioName: string): Promise<void> {
         const watcher = this._liveRunLogWatchers.get(scenarioName);
         if (!watcher || watcher.isPolling) {
             return;
@@ -4592,7 +4597,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
             }
 
-            if (!fs.existsSync(watcher.runLogPath)) {
+            const tail = await readFileTail(watcher.runLogPath, watcher.lastLength);
+            if (this._liveRunLogWatchers.get(scenarioName) !== watcher) {
+                return;
+            }
+            if (!tail) {
                 if (!watcher.missingFileNotified) {
                     watcher.missingFileNotified = true;
                     this.outputInfo(
@@ -4610,17 +4619,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
 
             watcher.missingFileNotified = false;
-            const fileBuffer = fs.readFileSync(watcher.runLogPath);
-            const currentLength = fileBuffer.byteLength;
-
-            if (currentLength < watcher.lastLength) {
-                watcher.lastLength = 0;
+            if (tail.wasTruncated) {
                 watcher.pendingTail = '';
             }
 
-            if (currentLength > watcher.lastLength) {
-                const deltaBuffer = fileBuffer.subarray(watcher.lastLength);
-                const chunk = deltaBuffer.toString('utf8');
+            if (tail.content.byteLength > 0) {
+                const chunk = tail.content.toString('utf8');
                 const chunkWithPendingTail = watcher.pendingTail + chunk;
                 const endsWithNewline = /\r?\n$/.test(chunkWithPendingTail);
                 const lines = chunkWithPendingTail.split(/\r\n|\r|\n/);
@@ -4632,8 +4636,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 for (const line of lines) {
                     watcher.outputChannel.appendLine(line);
                 }
-                watcher.lastLength = currentLength;
             }
+            watcher.lastLength = tail.currentLength;
 
             if (!isRunning) {
                 this.stopLiveRunLogWatcher(scenarioName, {
@@ -4689,7 +4693,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             scenarioName,
             runLogPath,
             outputChannel,
-            timer: setInterval(() => this.pollLiveRunLogWatcher(scenarioName), this.getLiveRunLogRefreshIntervalMs()),
+            timer: setInterval(() => void this.pollLiveRunLogWatcher(scenarioName), this.getLiveRunLogRefreshIntervalMs()),
             lastLength: 0,
             pendingTail: '',
             missingFileNotified: false,
@@ -4697,7 +4701,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         };
         this._liveRunLogWatchers.set(scenarioName, watcher);
 
-        this.pollLiveRunLogWatcher(scenarioName);
+        void this.pollLiveRunLogWatcher(scenarioName);
         outputChannel.show(true);
     }
 
@@ -12452,7 +12456,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
         this.setActiveTrackedRunForScenario(sessionKey, runKey);
-        this.pollTrackedRunLogWatcher(sessionKey, runKey);
+        void this.pollTrackedRunLogWatcher(sessionKey, runKey);
     }
 
     private async openRunScenarioLog(scenarioName: string): Promise<void> {
