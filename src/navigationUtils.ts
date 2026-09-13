@@ -1,6 +1,7 @@
 ﻿import * as vscode from 'vscode';
 import * as path from 'path'; // Используется для path.basename в логах или QuickPick
 import { findScenarioDescriptorUris, findYamlFilesUnderScanDir, readTextFileFast } from './workspaceScanner';
+import { findScenarioReference } from './scenarioReferenceMatcher';
 
 /**
  * Асинхронно ищет первый YAML файл в папке tests,
@@ -56,7 +57,7 @@ export async function findFileByName(searchText: string, testCache?: Map<string,
 
 /**
  * Асинхронно ищет все вызовы вложенного сценария во всех YAML файлах в папке tests.
- * Поддерживаются ключевые слова: And, И, Допустим.
+ * Поддерживаются английские и русские ключевые слова шагов Gherkin.
  * @param targetName Имя сценария для поиска ссылок (значение из поля "Имя:").
  * @param token Токен отмены операции (опционально).
  * @returns Promise с массивом найденных местоположений (vscode.Location).
@@ -75,12 +76,6 @@ export async function findScenarioReferences(targetName: string, token?: vscode.
         const potentialFiles = await findYamlFilesUnderScanDir(workspaceRootUri, token);
         console.log(`[findScenarioReferences] Found ${potentialFiles.length} potential files to search within.`);
 
-        // Экранируем специальные символы Regex в targetName на всякий случай
-        const escapedTargetName = targetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        // Ищем строку вида "<отступ><ключевое слово><пробелы><имя сценария>".
-        // \s*$ позволяет наличие пробелов в конце строки, но ничего другого.
-        const usageRegex = new RegExp(`^(\\s*)(And|И|Допустим)(\\s+)(${escapedTargetName})\\s*$`, 'i');
-
         for (const fileUri of potentialFiles) {
             if (token?.isCancellationRequested) {
                  console.log("[findScenarioReferences] Search cancelled by token.");
@@ -92,15 +87,11 @@ export async function findScenarioReferences(targetName: string, token?: vscode.
 
                 for (let i = 0; i < lines.length; i++) {
                     const currentLineText = lines[i];
-                    const usageMatch = currentLineText.match(usageRegex);
+                    const usageMatch = findScenarioReference(currentLineText, targetName);
 
                     if (usageMatch) {
-                        const leadingSpaces = usageMatch[1].length;
-                        const keyword = usageMatch[2];
-                        const spacesAfterKeyword = usageMatch[3];
-                        const nameInLine = usageMatch[4];
-                        const startChar = leadingSpaces + keyword.length + spacesAfterKeyword.length;
-                        const endChar = startChar + nameInLine.length;
+                        const startChar = usageMatch.start;
+                        const endChar = startChar + usageMatch.length;
 
                         const usageRange = new vscode.Range(i, startChar, i, endChar);
                         locations.push(new vscode.Location(fileUri, usageRange));

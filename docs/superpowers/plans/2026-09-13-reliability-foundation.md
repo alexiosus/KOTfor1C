@@ -74,11 +74,11 @@
 - Produces: `findScenarioReference(line: string, targetName: string): { start: number; length: number } | null`.
 - Consumes: exact scenario names from the existing cache/navigation command.
 
-- [ ] Write tests for `And`, `Given`, `When`, `Then`, `But`, `If`, `К тому же`, `Но`, `Тогда`, `Когда`, `Если`, `И`, and `Допустим`; include regex punctuation in the scenario name.
-- [ ] Run the focused test and confirm `Given` fails because the matcher module does not exist yet.
-- [ ] Implement the pure matcher with escaped scenario names and precise character ranges.
-- [ ] Replace the local three-keyword regex in `findScenarioReferences` with the matcher.
-- [ ] Run unit tests and a read-only corpus probe; expected result is that the known line 764 reference is matched.
+- [x] Write tests for `And`, `Given`, `When`, `Then`, `But`, `If`, `К тому же`, `Но`, `Тогда`, `Когда`, `Если`, `И`, and `Допустим`; include regex punctuation in the scenario name.
+- [x] Run the focused test and confirm `Given` fails because the matcher module does not exist yet.
+- [x] Implement the pure matcher with escaped scenario names and precise character ranges.
+- [x] Replace the local three-keyword regex in `findScenarioReferences` with the matcher.
+- [x] Run unit tests and a read-only corpus probe; expected result is that the known line 764 reference is matched.
 
 ### Task 4: Harden built-in process launches and dependency audit
 
