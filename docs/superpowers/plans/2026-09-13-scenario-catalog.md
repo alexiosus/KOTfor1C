@@ -618,7 +618,7 @@ git commit -m "perf: load scenario catalog on demand"
 - Consumes: complete catalogs and `ScenarioResolution` from Tasks 1 and 4.
 - Produces: duplicate entries in completion, interactive disambiguation for navigation, ambiguity hover/diagnostics, and safe refusal in non-interactive metadata updates.
 
-- [ ] **Step 1: Change completion entries from name-keyed metadata to definition-keyed metadata**
+- [x] **Step 1: Change completion entries from name-keyed metadata to definition-keyed metadata**
 
 Replace `scenarioCompletionItems`, `scenarioParametersByName`, and `calledScenarioDefaultsByName` with entries that retain their source definition:
 
@@ -662,7 +662,7 @@ completionItem.insertText = this.buildScenarioCallInsertText(
 
 Change the first parameter of `buildScenarioCallInsertText` from `scenarioName: string` to `scenario: TestInfo`. Define `const scenarioName = scenario.name`, read `const params = scenario.parameters || []`, and build the defaults map from `scenario.parameterDefaults` inside that method. This removes both name-keyed metadata maps, so duplicated definitions never share parameter data.
 
-- [ ] **Step 2: Make navigation choose among duplicate definitions**
+- [x] **Step 2: Make navigation choose among duplicate definitions**
 
 Change `findFileByName` to accept `ScenarioCatalog | null`. Resolve cached results first and show a QuickPick only for ambiguity:
 
@@ -685,7 +685,7 @@ async function pickScenarioDefinition(
 
 If no catalog is supplied, call `scanWorkspaceForScenarioCatalog` once and resolve from it. Update navigation call sites to await `phaseSwitcherProvider.ensureFreshScenarioCatalog()` and pass `getScenarioCatalog()`. A cancelled picker returns `null` and does not show a misleading not-found message.
 
-- [ ] **Step 3: Stop non-interactive metadata rewrites on ambiguity**
+- [x] **Step 3: Stop non-interactive metadata rewrites on ambiguity**
 
 Change `clearAndFillNestedScenarios` to accept `ScenarioCatalog | null`. For each called name, switch on `resolveScenarioByName`. Add the unique definition normally; collect ambiguous paths and return `false` before editing when any ambiguity exists:
 
@@ -703,7 +703,7 @@ if (resolution.kind === 'unique') {
 
 Show one error containing the collected lines and do not apply a `WorkspaceEdit`. Update all callers in `extension.ts` and `commandHandlers.ts` to pass the catalog.
 
-- [ ] **Step 4: Show ambiguity in hover and diagnostics**
+- [x] **Step 4: Show ambiguity in hover and diagnostics**
 
 Expand the cache-provider interfaces with `getScenarioCatalog` and `ensureFreshScenarioCatalog`. Hover uses all definitions; for duplicates it lists relative paths and keeps the existing open command, which now opens the navigation picker.
 
@@ -733,7 +733,7 @@ const scenarioInfo = resolution.kind === 'unique' ? resolution.scenario : undefi
 
 Build duplicate-code diagnostics from `catalog.all`. In the dependency graph, retain every `scenarioNameByUri` entry, but create a callee edge only when `resolveScenarioByName` is unique; ambiguous calls already have their own diagnostic and must not create a false edge.
 
-- [ ] **Step 5: Update catalog events and run editor-flow checks**
+- [x] **Step 5: Update catalog events and run editor-flow checks**
 
 Subscribe completion to `onDidUpdateScenarioCatalog`; retain the old map event for consumers not migrated in this task. Run:
 
@@ -744,7 +744,7 @@ npm run vscode:prepublish
 
 Expected: all tests, strict types, zero-warning lint, and production bundle exit 0.
 
-- [ ] **Step 6: Commit duplicate-aware editor behavior**
+- [x] **Step 6: Commit duplicate-aware editor behavior**
 
 ```bash
 git add src/completionProvider.ts src/navigationUtils.ts src/commandHandlers.ts src/hoverProvider.ts src/scenarioDiagnostics.ts src/extension.ts test/scenarioCatalog.test.ts

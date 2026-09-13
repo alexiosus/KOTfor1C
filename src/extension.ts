@@ -772,14 +772,13 @@ export function activate(context: vscode.ExtensionContext) {
         )
     );
 
-    // Подписываемся на событие обновления кэша тестов от PhaseSwitcherProvider
-    // и обновляем автодополнение сценариев
+    // Автодополнение использует полный каталог, чтобы определения-дубли не терялись.
     context.subscriptions.push(
-        phaseSwitcherProvider.onDidUpdateTestCache((testCache: Map<string, TestInfo> | null) => {
-            completionProvider.updateScenarioCompletions(testCache);
-            console.log(testCache
-                ? '[Extension] Scenario completions updated based on PhaseSwitcher cache.'
-                : '[Extension] Scenario completions invalidated with PhaseSwitcher cache.');
+        phaseSwitcherProvider.onDidUpdateScenarioCatalog(catalog => {
+            completionProvider.updateScenarioCompletions(catalog);
+            console.log(catalog
+                ? '[Extension] Scenario completions updated based on the scenario catalog.'
+                : '[Extension] Scenario completions invalidated with the scenario catalog.');
         })
     );
 
@@ -1703,11 +1702,9 @@ export function activate(context: vscode.ExtensionContext) {
         const failedFiles: ScenarioRepairFailure[] = [];
 
         try {
-            let testCache = phaseSwitcherProvider.getTestCache();
-            if (!testCache && nestedEnabled) {
-                await phaseSwitcherProvider.initializeTestCache();
-                testCache = phaseSwitcherProvider.getTestCache();
-            }
+            let scenarioCatalog = nestedEnabled
+                ? await phaseSwitcherProvider.ensureFreshScenarioCatalog()
+                : null;
 
             await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
@@ -1777,7 +1774,8 @@ export function activate(context: vscode.ExtensionContext) {
 
                                 const currentText = document.getText();
                                 if (nestedEnabled && shouldRefillNestedScenariosSection(currentText)) {
-                                    await clearAndFillNestedScenarios(document, true, testCache);
+                                    scenarioCatalog = phaseSwitcherProvider.getScenarioCatalog() || scenarioCatalog;
+                                    await clearAndFillNestedScenarios(document, true, scenarioCatalog);
                                 }
 
                                 if (paramsEnabled && shouldRefillScenarioParametersSection(document.getText())) {
@@ -2069,11 +2067,10 @@ export function activate(context: vscode.ExtensionContext) {
                     }
 
                     progress.report({ increment: 20, message: t('Refreshing scenario cache...') });
-                    await phaseSwitcherProvider.ensureFreshTestCache();
-                    const testCache = phaseSwitcherProvider.getTestCache();
+                    const scenarioCatalog = await phaseSwitcherProvider.ensureFreshScenarioCatalog();
 
                     progress.report({ increment: 15, message: t('Filling nested scenarios...') });
-                    if (await clearAndFillNestedScenarios(document!, true, testCache)) {
+                    if (await clearAndFillNestedScenarios(document!, true, scenarioCatalog)) {
                         completedOperations.push('nested');
                     }
 
@@ -2258,7 +2255,6 @@ export function activate(context: vscode.ExtensionContext) {
                     }, async (progress) => {
                         const totalSteps = enabledOperations.length;
                         const completedOperations: string[] = [];
-                        let testCache = phaseSwitcherProvider.getTestCache();
 
                         try {
                             // 1. Замена табов на пробелы
@@ -2318,12 +2314,9 @@ export function activate(context: vscode.ExtensionContext) {
                                 if (shouldUpsertScenarioCache) {
                                     phaseSwitcherProvider.upsertScenarioCacheEntryFromDocument(document);
                                 }
-                                testCache = phaseSwitcherProvider.getTestCache();
-                                if (!testCache) {
-                                    await phaseSwitcherProvider.initializeTestCache();
-                                    testCache = phaseSwitcherProvider.getTestCache();
-                                }
-                                const result = await clearAndFillNestedScenarios(document, true, testCache);
+                                const scenarioCatalog = phaseSwitcherProvider.getScenarioCatalog()
+                                    || await phaseSwitcherProvider.ensureFreshScenarioCatalog();
+                                const result = await clearAndFillNestedScenarios(document, true, scenarioCatalog);
                                 if (result) {
                                     completedOperations.push('nested');
                                 }

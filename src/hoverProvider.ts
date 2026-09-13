@@ -4,6 +4,7 @@ import { getStepsHtml, forceRefreshSteps as forceRefreshStepsCore } from './step
 import { getTranslator } from './localization';
 import * as path from 'path';
 import { TestInfo } from './types';
+import { resolveScenarioByName, type ScenarioCatalog } from './scenarioCatalog';
 import {
     buildVariableReferenceText,
     extractSavedVariableFromStepLine,
@@ -37,6 +38,8 @@ const STEP_LITERAL_REGEX = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\[[A-Za-zА-Яа
 
 interface ScenarioCacheProvider {
     getTestCache(): Map<string, TestInfo> | null;
+    getScenarioCatalog(): ScenarioCatalog | null;
+    ensureFreshScenarioCatalog(): Promise<ScenarioCatalog>;
     isFailedFeatureLine?(documentUri: vscode.Uri, lineIndex: number): boolean;
 }
 
@@ -669,29 +672,42 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             return null;
         }
 
-        const testCache = this.scenarioCacheProvider.getTestCache();
-        const calledScenarioInfo = testCache?.get(calledScenarioName);
-        if (!calledScenarioInfo) {
+        const catalog = await this.scenarioCacheProvider.ensureFreshScenarioCatalog();
+        const resolution = resolveScenarioByName(catalog, calledScenarioName);
+        if (resolution.kind === 'missing') {
             return null;
         }
 
+        const t = await this.getHoverTranslator();
+        const nestedScenarioLabel = t('Nested scenario');
+        const openScenarioLabel = t('Open scenario');
+        const openScenarioCommandUri = `command:kotTestToolkit.openScenarioByName?${encodeURIComponent(JSON.stringify([calledScenarioName]))}`;
+
+        if (resolution.kind === 'ambiguous') {
+            const content = new vscode.MarkdownString();
+            content.isTrusted = true;
+            content.appendMarkdown(`**${nestedScenarioLabel}:** \`${calledScenarioName}\`\n\n`);
+            content.appendMarkdown(`**${t('Multiple scenario definitions:')}**\n\n`);
+            for (const scenario of resolution.scenarios) {
+                content.appendMarkdown(`- \`${scenario.relativePath || scenario.yamlFileUri.fsPath}\`\n`);
+            }
+            content.appendMarkdown(`\n[${openScenarioLabel}](${openScenarioCommandUri})\n\n`);
+            return new vscode.Hover(content);
+        }
+
+        const calledScenarioInfo = resolution.scenario;
         const hoverData = await this.getScenarioHoverCachedData(calledScenarioInfo);
         const parametersCount = calledScenarioInfo.parameters?.length ?? 0;
         const nestedScenariosCount = calledScenarioInfo.nestedScenarioNames?.length ?? 0;
         const filesValue = String(hoverData.filesCount);
         const paramsValue = String(parametersCount);
         const nestedValue = String(nestedScenariosCount);
-        const t = await this.getHoverTranslator();
-        const nestedScenarioLabel = t('Nested scenario');
         const attachedFilesLabel = t('Attached files');
         const parametersLabel = t('Parameters');
         const nestedScenariosLabel = t('Nested scenarios');
         const descriptionLabel = t('Description');
         const emptyLabel = t('Empty.');
         const missingKotMetadataLabel = t('KOT metadata block is missing.');
-        const openScenarioLabel = t('Open scenario');
-        const openScenarioCommandUri = `command:kotTestToolkit.openScenarioByName?${encodeURIComponent(JSON.stringify([calledScenarioName]))}`;
-
         const content = new vscode.MarkdownString();
         content.isTrusted = true;
         content.appendMarkdown(`**${nestedScenarioLabel}:** \`${calledScenarioName}\`\n\n`);

@@ -8,6 +8,7 @@ import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
 import { parseBlockKeyword } from './blockKeywordParser';
 import { getScenarioScanRootPath } from './scenarioScanRoot';
+import { resolveScenarioByName, type ScenarioCatalog } from './scenarioCatalog';
 
 const DIAGNOSTIC_SOURCE = 'KOT for 1C';
 const CODE_UNCLOSED_IF = 'kotTestToolkit.unclosedIf';
@@ -16,6 +17,7 @@ const CODE_UNCLOSED_TRY = 'kotTestToolkit.unclosedTry';
 const CODE_UNCLOSED_QUOTE = 'kotTestToolkit.unclosedQuote';
 const CODE_UNKNOWN_STEP = 'kotTestToolkit.unknownStep';
 const CODE_UNKNOWN_SCENARIO = 'kotTestToolkit.unknownScenario';
+const CODE_AMBIGUOUS_SCENARIO = 'kotTestToolkit.ambiguousScenario';
 const CODE_EXTRA_SCENARIO_PARAM = 'kotTestToolkit.extraScenarioParameter';
 const CODE_MISSING_SCENARIO_PARAM = 'kotTestToolkit.missingScenarioParameter';
 const CODE_MISSING_QUOTES = 'kotTestToolkit.missingQuotes';
@@ -92,6 +94,7 @@ interface DiagnosticMessages {
     fixAll: string;
     unknownStep: string;
     unknownScenario: string;
+    ambiguousScenario: string;
     maybeDidYouMeanHeader: string;
     extraScenarioParameter: string;
     missingScenarioParameters: string;
@@ -114,6 +117,7 @@ function buildMessages(): DiagnosticMessages {
         fixAll: vscode.l10n.t('KOT - Fix scenario issues'),
         unknownStep: vscode.l10n.t('Unknown Gherkin step.'),
         unknownScenario: vscode.l10n.t('Unknown nested scenario call.'),
+        ambiguousScenario: vscode.l10n.t('Scenario name resolves to multiple files:'),
         maybeDidYouMeanHeader: vscode.l10n.t('Maybe you meant:'),
         extraScenarioParameter: vscode.l10n.t('Extra parameter for called scenario: {0}.'),
         missingScenarioParameters: vscode.l10n.t('Missing parameters for called scenario:'),
@@ -708,9 +712,9 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     private readonly subscriptions: vscode.Disposable[] = [];
     private readonly validationTimers = new Map<string, NodeJS.Timeout>();
     private readonly relatedValidationTimers = new Map<string, NodeJS.Timeout>();
-    private dependencyGraphSource: Map<string, TestInfo> | null = null;
+    private dependencyGraphSource: ScenarioCatalog | null = null;
     private readonly scenarioNameByUri = new Map<string, string>();
-    private readonly scenarioUriByName = new Map<string, vscode.Uri>();
+    private readonly scenarioUrisByName = new Map<string, vscode.Uri[]>();
     private readonly callersByCalleeName = new Map<string, Set<string>>();
     private workspaceScanPromise: Promise<void> | null = null;
     private readonly messages = buildMessages();
@@ -754,7 +758,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     this.duplicateCodeDiagnostics.delete(oldUri);
                 });
             }),
-            this.phaseSwitcherProvider.onDidUpdateTestCache(() => {
+            this.phaseSwitcherProvider.onDidUpdateScenarioCatalog(() => {
                 this.resetDependencyGraph();
                 this.rebuildDuplicateScenarioCodeDiagnosticsFromCache();
                 const activeDocument = vscode.window.activeTextEditor?.document;
@@ -882,8 +886,8 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 }
                 const indent = match[1];
                 const unknownName = match[3].trim();
-                const cache = this.phaseSwitcherProvider.getTestCache();
-                const suggestions = findClosestStrings(unknownName, Array.from((cache || new Map<string, TestInfo>()).keys()), 3);
+                const catalog = this.phaseSwitcherProvider.getScenarioCatalog();
+                const suggestions = findClosestStrings(unknownName, Array.from(catalog?.byName.keys() || []), 3);
                 for (const suggestion of suggestions) {
                     const action = new vscode.CodeAction(
                         vscode.l10n.t('Replace with: {0}', suggestion),
@@ -906,8 +910,10 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     continue;
                 }
 
-                const scenarioInfo = this.phaseSwitcherProvider.getTestCache()?.get(callBlock.name);
-                if (!scenarioInfo || !scenarioInfo.parameters || scenarioInfo.parameters.length === 0) {
+                const catalog = this.phaseSwitcherProvider.getScenarioCatalog();
+                const resolution = catalog ? resolveScenarioByName(catalog, callBlock.name) : null;
+                const scenarioInfo = resolution?.kind === 'unique' ? resolution.scenario : null;
+                if (!scenarioInfo?.parameters || scenarioInfo.parameters.length === 0) {
                     continue;
                 }
 
@@ -1016,14 +1022,14 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     }
 
     private rebuildDuplicateScenarioCodeDiagnosticsFromCache(): void {
-        const cache = this.phaseSwitcherProvider.getTestCache();
+        const catalog = this.phaseSwitcherProvider.getScenarioCatalog();
         this.duplicateCodeDiagnostics.clear();
-        if (!cache || cache.size === 0) {
+        if (!catalog || catalog.all.length === 0) {
             return;
         }
 
         const scenariosByCode = new Map<string, TestInfo[]>();
-        for (const testInfo of cache.values()) {
+        for (const testInfo of catalog.all) {
             const scenarioCode = normalizeScenarioCode(testInfo.scenarioCode);
             if (shouldIgnoreScenarioCodeForDuplicateCheck(scenarioCode)) {
                 continue;
@@ -1043,7 +1049,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             for (const scenario of scenarios) {
                 const others = scenarios
                     .filter(item => item.yamlFileUri.toString() !== scenario.yamlFileUri.toString())
-                    .map(item => item.name)
+                    .map(item => `${item.name} — ${item.relativePath || item.yamlFileUri.fsPath}`)
                     .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
 
                 if (others.length === 0) {
@@ -1082,34 +1088,36 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     private resetDependencyGraph(): void {
         this.dependencyGraphSource = null;
         this.scenarioNameByUri.clear();
-        this.scenarioUriByName.clear();
+        this.scenarioUrisByName.clear();
         this.callersByCalleeName.clear();
     }
 
     private rebuildDependencyGraphFromCacheIfNeeded(): void {
-        const cache = this.phaseSwitcherProvider.getTestCache();
-        if (cache === this.dependencyGraphSource) {
+        const catalog = this.phaseSwitcherProvider.getScenarioCatalog();
+        if (catalog === this.dependencyGraphSource) {
             return;
         }
 
         this.resetDependencyGraph();
-        this.dependencyGraphSource = cache;
-        if (!cache) {
+        this.dependencyGraphSource = catalog;
+        if (!catalog) {
             return;
         }
 
-        for (const [scenarioName, testInfo] of cache) {
-            const normalizedName = scenarioName.trim();
+        for (const testInfo of catalog.all) {
+            const normalizedName = testInfo.name.trim();
             if (!normalizedName) {
                 continue;
             }
 
-            this.scenarioUriByName.set(normalizedName, testInfo.yamlFileUri);
             this.scenarioNameByUri.set(testInfo.yamlFileUri.toString(), normalizedName);
+            const uris = this.scenarioUrisByName.get(normalizedName) || [];
+            uris.push(testInfo.yamlFileUri);
+            this.scenarioUrisByName.set(normalizedName, uris);
         }
 
-        for (const [scenarioName, testInfo] of cache) {
-            const callerName = scenarioName.trim();
+        for (const testInfo of catalog.all) {
+            const callerName = testInfo.name.trim();
             if (!callerName) {
                 continue;
             }
@@ -1118,6 +1126,10 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             for (const calledNameRaw of calledNames) {
                 const calledName = calledNameRaw.trim();
                 if (!calledName) {
+                    continue;
+                }
+
+                if (resolveScenarioByName(catalog, calledName).kind !== 'unique') {
                     continue;
                 }
 
@@ -1160,24 +1172,24 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             }
 
             for (const callerName of callerNames) {
+                if (relatedUris.size >= maxFiles) {
+                    break;
+                }
                 if (!visitedScenarioNames.has(callerName)) {
                     visitedScenarioNames.add(callerName);
                     queue.push(callerName);
                 }
 
-                const callerUri = this.scenarioUriByName.get(callerName);
-                if (!callerUri) {
-                    continue;
-                }
+                for (const callerUri of this.scenarioUrisByName.get(callerName) || []) {
+                    const callerUriKey = callerUri.toString();
+                    if (callerUriKey === sourceUriKey) {
+                        continue;
+                    }
 
-                const callerUriKey = callerUri.toString();
-                if (callerUriKey === sourceUriKey) {
-                    continue;
-                }
-
-                relatedUris.set(callerUriKey, callerUri);
-                if (relatedUris.size >= maxFiles) {
-                    break;
+                    relatedUris.set(callerUriKey, callerUri);
+                    if (relatedUris.size >= maxFiles) {
+                        break;
+                    }
                 }
             }
         }
@@ -1236,18 +1248,19 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     }
 
     private async getWorkspaceScenarioUris(refreshCache: boolean): Promise<vscode.Uri[]> {
+        let catalog: ScenarioCatalog | null = null;
         try {
             if (refreshCache) {
-                await this.phaseSwitcherProvider.ensureFreshTestCache();
+                catalog = await this.phaseSwitcherProvider.ensureFreshScenarioCatalog();
             } else {
-                await this.phaseSwitcherProvider.initializeTestCache();
+                catalog = this.phaseSwitcherProvider.getScenarioCatalog()
+                    || await this.phaseSwitcherProvider.ensureFreshScenarioCatalog();
             }
         } catch (error) {
             console.error('[ScenarioDiagnostics] Failed to prepare scenario cache for workspace scan:', error);
         }
 
-        const cache = this.phaseSwitcherProvider.getTestCache();
-        const cachedUris = cache ? Array.from(cache.values()).map(testInfo => testInfo.yamlFileUri) : [];
+        const cachedUris = catalog?.all.map(testInfo => testInfo.yamlFileUri) || [];
         if (cachedUris.length > 0) {
             return this.mergeWithOpenScenarioDocuments(cachedUris);
         }
@@ -1329,8 +1342,13 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         const diagnostics: vscode.Diagnostic[] = [];
         const documentText = document.getText();
         const configuredLanguage = getScenarioLanguageForDocument(document);
-        const testCache = this.phaseSwitcherProvider.getTestCache() || new Map<string, TestInfo>();
-        const hasScenarioCache = testCache.size > 0;
+        let scenarioCatalog: ScenarioCatalog | null = null;
+        try {
+            scenarioCatalog = await this.phaseSwitcherProvider.ensureFreshScenarioCatalog();
+        } catch (error) {
+            console.error('[ScenarioDiagnostics] Failed to load scenario catalog for validation:', error);
+        }
+        const hasScenarioCache = (scenarioCatalog?.byName.size || 0) > 0;
         const scenarioCallBlocks = parseScenarioCallBlocks(document, bodyRange);
         const validatedScenarioCallBlocks: ScenarioCallBlock[] = [];
         const scenarioCallLineSet = new Set<number>();
@@ -1399,11 +1417,35 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
 
         // Scenario calls checks
         for (const block of scenarioCallBlocks) {
-            const scenarioInfo = testCache.get(block.name);
+            const resolution = scenarioCatalog
+                ? resolveScenarioByName(scenarioCatalog, block.name)
+                : { kind: 'missing' as const, name: block.name };
+            if (resolution.kind === 'ambiguous') {
+                validatedScenarioCallBlocks.push(block);
+                scenarioCallLineSet.add(block.line);
+                block.parameters.forEach(param => scenarioParamLineSet.add(param.line));
+                const diagnostic = createDiagnostic(
+                    document,
+                    block.line,
+                    formatMultilineListMessage(
+                        this.messages.ambiguousScenario,
+                        resolution.scenarios.map(item => item.relativePath || item.yamlFileUri.fsPath)
+                    ),
+                    vscode.DiagnosticSeverity.Error,
+                    CODE_AMBIGUOUS_SCENARIO
+                );
+                diagnostic.relatedInformation = resolution.scenarios.map(item => new vscode.DiagnosticRelatedInformation(
+                    new vscode.Location(item.yamlFileUri, new vscode.Position(0, 0)),
+                    item.relativePath || item.yamlFileUri.fsPath
+                ));
+                diagnostics.push(diagnostic);
+                continue;
+            }
+            const scenarioInfo = resolution.kind === 'unique' ? resolution.scenario : undefined;
             const lineText = document.lineAt(block.line).text.trim();
             const includeScenarioSuggestions = options.includeScenarioSuggestions ?? options.includeSuggestions;
             const scenarioSuggestions = (!scenarioInfo && hasScenarioCache && includeScenarioSuggestions)
-                ? findClosestStrings(block.name, Array.from(testCache.keys()), 3)
+                ? findClosestStrings(block.name, Array.from(scenarioCatalog?.byName.keys() || []), 3)
                 : [];
             const hasStrongScenarioNameMatch = scenarioSuggestions.length > 0
                 && getStringSimilarity(block.name, scenarioSuggestions[0]) >= 0.85;

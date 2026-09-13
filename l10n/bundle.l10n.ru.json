@@ -1621,5 +1621,11 @@
   "Launching startup infobase with /TestManager...": "Запуск служебной ИБ с ключом /TestManager...",
   "Form Explorer Bridge started for: {0}": "Form Explorer Bridge запущен для: {0}",
   "Form Explorer session is still running. Close the current 1C windows first.": "Сессия Form Explorer все еще запущена. Сначала закройте текущие окна 1С.",
-  "Failed to start Form Explorer Bridge: {0}": "Не удалось запустить Form Explorer Bridge: {0}"
+  "Failed to start Form Explorer Bridge: {0}": "Не удалось запустить Form Explorer Bridge: {0}",
+  "Multiple scenarios named \"{0}\"": "Найдено несколько сценариев с именем \"{0}\"",
+  "Multiple scenario definitions:": "Несколько определений сценария:",
+  "Scenario name resolves to multiple files:": "Имя сценария соответствует нескольким файлам:",
+  "Nested scenarios were not updated because some names resolve to multiple files:": "Вложенные сценарии не обновлены: некоторые имена соответствуют нескольким файлам:",
+  "Nested scenarios were not updated because the scenario catalog is unavailable.": "Вложенные сценарии не обновлены: каталог сценариев недоступен.",
+  "Nested scenario (1C) — {0}": "Вложенный сценарий (1C) — {0}"
 }

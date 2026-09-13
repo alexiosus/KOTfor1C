@@ -43,6 +43,26 @@ test('returns missing, unique, and ambiguous name resolutions', () => {
     });
 });
 
+test('keeps definition-specific parameters for duplicate names', () => {
+    const first = {
+        ...scenario('Duplicate', 'a', 'file:///a/scen.yaml'),
+        parameters: ['FirstParameter'],
+        parameterDefaults: { FirstParameter: '"first"' }
+    };
+    const second = {
+        ...scenario('Duplicate', 'b', 'file:///b/scen.yaml'),
+        parameters: ['SecondParameter'],
+        parameterDefaults: { SecondParameter: '"second"' }
+    };
+
+    const definitions = buildScenarioCatalog([second, first]).byName.get('Duplicate');
+    assert.deepEqual(definitions?.map(item => item.parameters), [['FirstParameter'], ['SecondParameter']]);
+    assert.deepEqual(definitions?.map(item => item.parameterDefaults), [
+        { FirstParameter: '"first"' },
+        { SecondParameter: '"second"' }
+    ]);
+});
+
 test('upserts by URI and removal keeps the other duplicate', () => {
     const oldEntry = scenario('Old', 'same', 'file:///same/scen.yaml', '1');
     const replacement = scenario('New', 'same', 'file:///same/scen.yaml', '2');

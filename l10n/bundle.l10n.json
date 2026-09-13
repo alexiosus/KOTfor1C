@@ -1623,5 +1623,11 @@
   "Launching startup infobase with /TestManager...": "Launching startup infobase with /TestManager...",
   "Form Explorer Bridge started for: {0}": "Form Explorer Bridge started for: {0}",
   "Form Explorer session is still running. Close the current 1C windows first.": "Form Explorer session is still running. Close the current 1C windows first.",
-  "Failed to start Form Explorer Bridge: {0}": "Failed to start Form Explorer Bridge: {0}"
+  "Failed to start Form Explorer Bridge: {0}": "Failed to start Form Explorer Bridge: {0}",
+  "Multiple scenarios named \"{0}\"": "Multiple scenarios named \"{0}\"",
+  "Multiple scenario definitions:": "Multiple scenario definitions:",
+  "Scenario name resolves to multiple files:": "Scenario name resolves to multiple files:",
+  "Nested scenarios were not updated because some names resolve to multiple files:": "Nested scenarios were not updated because some names resolve to multiple files:",
+  "Nested scenarios were not updated because the scenario catalog is unavailable.": "Nested scenarios were not updated because the scenario catalog is unavailable.",
+  "Nested scenario (1C) — {0}": "Nested scenario (1C) — {0}"
 }

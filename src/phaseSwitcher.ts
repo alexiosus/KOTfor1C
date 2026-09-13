@@ -6948,10 +6948,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 case 'openScenario':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
                         const scenarioName = message.name.trim();
-                        const testInfo = this._testCache?.get(scenarioName);
-                        const targetUri = testInfo?.yamlFileUri || await findFileByName(scenarioName, this._testCache);
+                        const catalog = await this.ensureFreshScenarioCatalog();
+                        const targetUri = await findFileByName(scenarioName, catalog);
                         if (!targetUri) {
-                            vscode.window.showWarningMessage(this.t('Scenario "{0}" not found or its path is not defined.', scenarioName));
+                            if ((catalog.byName.get(scenarioName)?.length || 0) <= 1) {
+                                vscode.window.showWarningMessage(this.t('Scenario "{0}" not found or its path is not defined.', scenarioName));
+                            }
                             return;
                         }
 
@@ -12618,9 +12620,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return false;
         }
 
-        const targetUri = await findFileByName(normalizedName, this.getTestCache());
+        const catalog = await this.ensureFreshScenarioCatalog();
+        const targetUri = await findFileByName(normalizedName, catalog);
         if (!targetUri) {
-            vscode.window.showInformationMessage(this.t('File for "{0}" not found.', normalizedName));
+            if ((catalog.byName.get(normalizedName)?.length || 0) <= 1) {
+                vscode.window.showInformationMessage(this.t('File for "{0}" not found.', normalizedName));
+            }
             return false;
         }
 

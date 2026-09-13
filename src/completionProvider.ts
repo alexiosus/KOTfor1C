@@ -2,6 +2,7 @@
 import { parse } from 'node-html-parser';
 import { getStepsHtml, forceRefreshSteps as forceRefreshStepsCore } from './stepsFetcher';
 import { TestInfo } from './types';
+import type { ScenarioCatalog } from './scenarioCatalog';
 import { getTranslator } from './localization';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { ScenarioLanguage, getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
@@ -593,6 +594,11 @@ interface SemanticStepEntry {
     language: ScenarioLanguage;
 }
 
+interface ScenarioCompletionEntry {
+    item: vscode.CompletionItem;
+    scenario: TestInfo;
+}
+
 export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     private gherkinCompletionItems: vscode.CompletionItem[] = [];
     private semanticStepEntries: SemanticStepEntry[] = [];
@@ -601,9 +607,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     private semanticTermsByPrefix = new Map<string, string[]>();
     private semanticVectorScoreCache = new Map<string, Map<number, number>>();
     private gherkinItemLanguageByItem = new WeakMap<vscode.CompletionItem, ScenarioLanguage>();
-    private scenarioCompletionItems: vscode.CompletionItem[] = [];
-    private scenarioParametersByName: Map<string, string[]> = new Map();
-    private calledScenarioDefaultsByName: Map<string, Map<string, string>> = new Map();
+    private scenarioCompletionEntries: ScenarioCompletionEntry[] = [];
     private scenarioDefaultsByDocument = new Map<string, { version: number; defaults: Map<string, string> }>();
     private isLoadingGherkin: boolean = false;
     private loadingGherkinPromise: Promise<void> | null = null;
@@ -653,22 +657,27 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     }
 
     // Метод для обновления списка автодополнений сценариев
-    public updateScenarioCompletions(scenarios: Map<string, TestInfo> | null): void {
-        this.scenarioCompletionsInitialized = scenarios !== null;
-        this.scenarioCompletionItems = []; // Очищаем перед заполнением
-        this.scenarioParametersByName.clear();
-        this.calledScenarioDefaultsByName.clear();
-        if (!scenarios || scenarios.size === 0) {
+    public updateScenarioCompletions(catalog: ScenarioCatalog | null): void {
+        this.scenarioCompletionsInitialized = catalog !== null;
+        this.scenarioCompletionEntries = [];
+        if (!catalog || catalog.all.length === 0) {
             console.log("[DriveCompletionProvider] No scenarios provided for completion items.");
             return;
         }
 
-        scenarios.forEach((scenarioInfo, scenarioName) => {
+        for (const scenarioInfo of catalog.all) {
+            const scenarioName = scenarioInfo.name;
+            const duplicateCount = catalog.byName.get(scenarioName)?.length || 0;
+            const label: vscode.CompletionItemLabel | string = duplicateCount > 1
+                ? { label: scenarioName, description: scenarioInfo.relativePath }
+                : scenarioName;
             // Метка, которую увидит пользователь в списке автодополнения
-            const item = new vscode.CompletionItem(scenarioName, vscode.CompletionItemKind.Function);
+            const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Function);
             const scenarioDescription = (scenarioInfo.scenarioDescription || '').trim();
 
-            item.detail = vscode.l10n.t('Nested scenario (1C)');
+            item.detail = duplicateCount > 1
+                ? vscode.l10n.t('Nested scenario (1C) — {0}', scenarioInfo.relativePath)
+                : vscode.l10n.t('Nested scenario (1C)');
             if (scenarioDescription) {
                 const firstLine = scenarioDescription.split(/\r\n|\r|\n/)[0].trim();
                 if (firstLine) {
@@ -688,32 +697,13 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
             item.insertText = scenarioName;
 
-            const scenarioParameters = (scenarioInfo.parameters || [])
-                .map(param => param.trim())
-                .filter(Boolean);
-            if (scenarioParameters.length > 0) {
-                this.scenarioParametersByName.set(scenarioName, scenarioParameters);
-            }
-
-            if (scenarioInfo.parameterDefaults) {
-                const defaultsMap = new Map<string, string>();
-                Object.entries(scenarioInfo.parameterDefaults).forEach(([paramName, defaultValue]) => {
-                    const normalizedParamName = paramName.trim();
-                    if (normalizedParamName && typeof defaultValue === 'string') {
-                        defaultsMap.set(normalizedParamName, defaultValue);
-                    }
-                });
-                if (defaultsMap.size > 0) {
-                    this.calledScenarioDefaultsByName.set(scenarioName, defaultsMap);
-                }
-            }
             // Приоритет ниже, чем у шагов Gherkin (начинающихся с "0"), сортировка по имени сценария
             // sortText будет формироваться в provideCompletionItems на основе оценки совпадения
             // item.sortText = "1" + scenarioName;
 
-            this.scenarioCompletionItems.push(item);
-        });
-        console.log(`[DriveCompletionProvider] Updated with ${this.scenarioCompletionItems.length} scenario completions.`);
+            this.scenarioCompletionEntries.push({ item, scenario: scenarioInfo });
+        }
+        console.log(`[DriveCompletionProvider] Updated with ${this.scenarioCompletionEntries.length} scenario completions.`);
     }
 
 
@@ -1043,10 +1033,9 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         console.log(`[DriveCompletionProvider:provideCompletionItems] Text for scenario fuzzy match: '${textForScenarioFuzzyMatch}' (based on userTextAfterIndentation: '${userTextAfterIndentation}')`);
 
         if (!isFeatureDocument) {
-            this.scenarioCompletionItems.forEach(baseScenarioItem => {
-                const scenarioName = baseScenarioItem.filterText || (typeof baseScenarioItem.label === 'string'
-                    ? baseScenarioItem.label
-                    : baseScenarioItem.label.label);
+            this.scenarioCompletionEntries.forEach(entry => {
+                const baseScenarioItem = entry.item;
+                const scenarioName = entry.scenario.name;
                 if (!scenarioName) {
                     return;
                 }
@@ -1055,7 +1044,14 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 const matchResult = this.fuzzyMatch(scenarioName, textForScenarioFuzzyMatch);
 
                 if (matchResult.matched) {
-                    const completionItem = new vscode.CompletionItem(`${scenarioCallKeyword} ${scenarioName}`, baseScenarioItem.kind);
+                    const baseLabel = baseScenarioItem.label;
+                    const completionLabel: vscode.CompletionItemLabel | string = typeof baseLabel === 'string'
+                        ? `${scenarioCallKeyword} ${scenarioName}`
+                        : {
+                            label: `${scenarioCallKeyword} ${scenarioName}`,
+                            description: baseLabel.description
+                        };
+                    const completionItem = new vscode.CompletionItem(completionLabel, baseScenarioItem.kind);
                     completionItem.filterText = scenarioName; // filterText = "ИмяСценария"
                     completionItem.documentation = baseScenarioItem.documentation;
                     completionItem.detail = baseScenarioItem.detail;
@@ -1075,7 +1071,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     completionItem.range = replacementRange;
 
                     completionItem.insertText = this.buildScenarioCallInsertText(
-                        scenarioName,
+                        entry.scenario,
                         scenarioCallBaseIndent,
                         scenarioCallFirstLinePrefix,
                         scenarioParameterDefaults,
@@ -1089,7 +1085,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             });
         }
 
-        console.log(`[DriveCompletionProvider:provideCompletionItems] Total Gherkin items: ${this.gherkinCompletionItems.length}, Total Scenario items: ${this.scenarioCompletionItems.length}, Proposed items: ${completionList.items.length}`);
+        console.log(`[DriveCompletionProvider:provideCompletionItems] Total Gherkin items: ${this.gherkinCompletionItems.length}, Total Scenario items: ${this.scenarioCompletionEntries.length}, Proposed items: ${completionList.items.length}`);
         return completionList;
     }
 
@@ -3117,20 +3113,27 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     }
 
     private buildScenarioCallInsertText(
-        scenarioName: string,
+        scenario: TestInfo,
         lineIndent: string,
         firstLinePrefix: string,
         defaults: Map<string, string>,
         scenarioCallKeyword: string
     ): string | vscode.SnippetString {
+        const scenarioName = scenario.name;
         if (!scenarioName) {
             return `${firstLinePrefix}${scenarioCallKeyword} `;
         }
 
-        const params = this.scenarioParametersByName.get(scenarioName) || [];
+        const params = (scenario.parameters || []).map(param => param.trim()).filter(Boolean);
         if (params.length === 0) {
             return `${firstLinePrefix}${scenarioCallKeyword} ${scenarioName}`;
         }
+
+        const calledScenarioDefaults = new Map(
+            Object.entries(scenario.parameterDefaults || {})
+                .map(([name, value]) => [name.trim(), value] as const)
+                .filter(([name, value]) => name.length > 0 && typeof value === 'string')
+        );
 
         const maxParamLength = params.reduce((max, param) => Math.max(max, param.length), 0);
         const paramIndent = firstLinePrefix.length > 0 ? `${lineIndent}    ` : '    ';
@@ -3139,7 +3142,6 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
         params.forEach(paramName => {
             const alignedName = paramName.padEnd(maxParamLength, ' ');
-            const calledScenarioDefaults = this.calledScenarioDefaultsByName.get(scenarioName);
             const defaultValue = calledScenarioDefaults?.get(paramName) ?? defaults.get(paramName) ?? `"${paramName}"`;
             const escapedDefault = this.escapeSnippetDefaultValue(defaultValue);
             snippetText += `\n${paramIndent}${alignedName} = \${${paramIndex++}:${escapedDefault}}`;

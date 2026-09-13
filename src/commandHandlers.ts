@@ -8,10 +8,15 @@ import { v4 as uuidv4 } from 'uuid';
 import { findFileByName, findScenarioReferences } from './navigationUtils';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { TestInfo } from './types';
+import { resolveScenarioByName, type ScenarioCatalog } from './scenarioCatalog';
 import { normalizeScenarioParameterName } from './scenarioParameterUtils';
 import { getFeatureNestedScenarioContextAtPosition } from './featureNestedScenarioUtils';
 import { alignGherkinTablesInText } from './gherkinTableUtils';
 import JSZip = require('jszip');
+
+function isAmbiguousScenarioName(catalog: ScenarioCatalog | null, name: string): boolean {
+    return (catalog?.byName.get(name)?.length || 0) > 1;
+}
 
 /**
  * Общая функция для поиска файла по выделенному тексту в редакторе.
@@ -59,15 +64,14 @@ async function findFileFromText(
     searchPaths.add(path.join(currentFileDir, 'files'));
 
     // Приоритет №2: Папки 'files' из вложенных сценариев
-    const testCache = phaseSwitcherProvider.getTestCache();
+    const scenarioCatalog = await phaseSwitcherProvider.ensureFreshScenarioCatalog();
     const documentText = textEditor.document.getText();
-    if (testCache) {
+    if (scenarioCatalog) {
         const callRegex = /^\s*(?:And|И)\s+(.+)/gm;
         let match;
         while ((match = callRegex.exec(documentText)) !== null) {
             const scenarioName = match[1].trim();
-            const testInfo = testCache.get(scenarioName);
-            if (testInfo) {
+            for (const testInfo of scenarioCatalog.byName.get(scenarioName) || []) {
                 const scenarioDir = path.dirname(testInfo.yamlFileUri.fsPath);
                 searchPaths.add(path.join(scenarioDir, 'files'));
             }
@@ -92,10 +96,13 @@ async function findFileFromText(
     // Поиск файла сценария по имени (только для имен без расширения)
     for (const name of potentialFileNames) {
         if (path.extname(name) === '') {
-            const scenarioUri = await findFileByName(name, testCache);
+            const scenarioUri = await findFileByName(name, scenarioCatalog);
             if (scenarioUri) {
                 console.log(`[Cmd:findFileFromText] Found scenario file: ${scenarioUri.fsPath}`);
                 return scenarioUri;
+            }
+            if (isAmbiguousScenarioName(scenarioCatalog, name)) {
+                return null;
             }
         }
     }
@@ -337,9 +344,8 @@ export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit
         
         progress.report({ increment: 25, message: t('Opening scenario file...') });
         
-        // Use cached data for fast scenario lookup
-        const testCache = phaseSwitcherProvider.getTestCache();
-        const targetUri = await findFileByName(scenarioNameFromLine, testCache);
+        const scenarioCatalog = await phaseSwitcherProvider.ensureFreshScenarioCatalog();
+        const targetUri = await findFileByName(scenarioNameFromLine, scenarioCatalog);
         if (targetUri && targetUri.fsPath !== document.uri.fsPath) {
             console.log(`[Cmd:openSubscenario] Target found: ${targetUri.fsPath}. Opening...`);
             try {
@@ -350,7 +356,7 @@ export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit
                 console.error(`[Cmd:openSubscenario] Error opening ${targetUri.fsPath}:`, error); 
                 vscode.window.showErrorMessage(t('Failed to open file: {0}', error.message || error)); 
             }
-        } else { 
+        } else if (!isAmbiguousScenarioName(scenarioCatalog, scenarioNameFromLine)) {
             console.log("[Cmd:openSubscenario] Target not found."); 
             vscode.window.showInformationMessage(t('File for "{0}" not found.', scenarioNameFromLine)); 
         }
@@ -379,10 +385,12 @@ export async function openNestedScenarioFromFeatureHandler(
         return;
     }
 
-    const testCache = phaseSwitcherProvider.getTestCache();
-    const targetUri = await findFileByName(context.scenarioName, testCache);
+    const scenarioCatalog = await phaseSwitcherProvider.ensureFreshScenarioCatalog();
+    const targetUri = await findFileByName(context.scenarioName, scenarioCatalog);
     if (!targetUri) {
-        vscode.window.showInformationMessage(t('File for "{0}" not found.', context.scenarioName));
+        if (!isAmbiguousScenarioName(scenarioCatalog, context.scenarioName)) {
+            vscode.window.showInformationMessage(t('File for "{0}" not found.', context.scenarioName));
+        }
         return;
     }
 
@@ -409,11 +417,13 @@ export async function openScenarioByNameHandler(
 
     const t = await getTranslator(getExtensionUri());
     const activeDocument = vscode.window.activeTextEditor?.document;
-    const testCache = phaseSwitcherProvider.getTestCache();
-    const targetUri = await findFileByName(normalizedName, testCache);
+    const scenarioCatalog = await phaseSwitcherProvider.ensureFreshScenarioCatalog();
+    const targetUri = await findFileByName(normalizedName, scenarioCatalog);
 
     if (!targetUri) {
-        vscode.window.showInformationMessage(t('File for "{0}" not found.', normalizedName));
+        if (!isAmbiguousScenarioName(scenarioCatalog, normalizedName)) {
+            vscode.window.showInformationMessage(t('File for "{0}" not found.', normalizedName));
+        }
         return false;
     }
 
@@ -540,8 +550,12 @@ export async function insertNestedScenarioRefHandler(textEditor: vscode.TextEdit
         if (scenarioCallMatch && scenarioCallMatch[1]) {
             const scenarioNameFromSelection = scenarioCallMatch[1].trim();
             console.log(`[Cmd:insertNestedScenarioRef] Selected text matches, trying to find scenario: "${scenarioNameFromSelection}"`);
-            const testCache = phaseSwitcherProvider.getTestCache();
-            const targetFileUri = await findFileByName(scenarioNameFromSelection, testCache);
+            const scenarioCatalog = await phaseSwitcherProvider.ensureFreshScenarioCatalog();
+            const targetFileUri = await findFileByName(scenarioNameFromSelection, scenarioCatalog);
+
+            if (!targetFileUri && isAmbiguousScenarioName(scenarioCatalog, scenarioNameFromSelection)) {
+                return;
+            }
 
             if (targetFileUri) {
                 console.log(`[Cmd:insertNestedScenarioRef] Found target file: ${targetFileUri.fsPath}`);
@@ -1022,10 +1036,8 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
         return;
     }
     
-    // Use the new clear-and-refill logic with cached data for performance
-    await phaseSwitcherProvider.ensureFreshTestCache();
-    const testCache = phaseSwitcherProvider.getTestCache();
-    await clearAndFillNestedScenarios(textEditor.document, false, testCache);
+    const scenarioCatalog = await phaseSwitcherProvider.ensureFreshScenarioCatalog();
+    await clearAndFillNestedScenarios(textEditor.document, false, scenarioCatalog);
 }
 
 /**
@@ -1323,10 +1335,14 @@ function resolveSafeSectionEndOffset(
  * Clears and refills the NestedScenarios section with scenarios in order of their appearance in the script body.
  * @param document The text document to modify
  * @param silent If true, don't show progress notifications
- * @param testCache Optional test cache to use instead of file system searches
+ * @param scenarioCatalog Catalog used to resolve called scenario names safely
  * @returns Promise<boolean> true if changes were made
  */
-export async function clearAndFillNestedScenarios(document: vscode.TextDocument, silent: boolean = false, testCache?: Map<string, TestInfo> | null): Promise<boolean> {
+export async function clearAndFillNestedScenarios(
+    document: vscode.TextDocument,
+    silent: boolean = false,
+    scenarioCatalog?: ScenarioCatalog | null
+): Promise<boolean> {
     const t = await getTranslator(getExtensionUri());
     
     const progressHandler = async (progress: any) => {
@@ -1347,49 +1363,30 @@ export async function clearAndFillNestedScenarios(document: vscode.TextDocument,
         }
 
         const scenariosToAdd: { name: string; uid: string }[] = [];
-
-        if (testCache) {
-            // Use cached data for fast lookup
-            console.log("[clearAndFillNestedScenarios] Using cached test data for scenario lookup");
-            for (const calledName of calledScenariosInOrder) {
-                const cachedTestInfo = testCache.get(calledName);
-                if (cachedTestInfo) {
-                    const uid = cachedTestInfo.uid || uuidv4();
-                    scenariosToAdd.push({ name: calledName, uid: uid });
-                    console.log(`[clearAndFillNestedScenarios] Found cached scenario "${calledName}" with UID: ${uid}`);
-                } else {
-                    console.log(`[clearAndFillNestedScenarios] Scenario "${calledName}" not found in cache, skipping`);
-                }
+        const ambiguousCalls: string[] = [];
+        if (!scenarioCatalog) {
+            vscode.window.showErrorMessage(t('Nested scenarios were not updated because the scenario catalog is unavailable.'));
+            return false;
+        }
+        for (const calledName of calledScenariosInOrder) {
+            const resolution = resolveScenarioByName(scenarioCatalog, calledName);
+            if (resolution.kind === 'ambiguous') {
+                ambiguousCalls.push(
+                    `${calledName}: ${resolution.scenarios.map(item => item.relativePath || item.yamlFileUri.fsPath).join(', ')}`
+                );
+                continue;
             }
-        } else {
-            // Fallback to file system search (legacy behavior)
-            console.log("[clearAndFillNestedScenarios] No cache available, falling back to file system search");
-            for (const calledName of calledScenariosInOrder) {
-                const targetFileUri = await findFileByName(calledName, null);
-                if (targetFileUri) {
-                    let uid = uuidv4();
-                    let nameForBlock = calledName;
-                    try {
-                        const fileContentBytes = await vscode.workspace.fs.readFile(targetFileUri);
-                        const fileContent = Buffer.from(fileContentBytes).toString('utf-8');
-                        const dataScenarioBlockRegex = /ДанныеСценария:\s*([\s\S]*?)(?=\n[А-Яа-яЁёA-Za-z]+:|\n*$)/;
-                        const dataScenarioBlockMatch = fileContent.match(dataScenarioBlockRegex);
-
-                        if (dataScenarioBlockMatch && dataScenarioBlockMatch[1]) {
-                            const blockContent = dataScenarioBlockMatch[1];
-                            const uidMatch = blockContent.match(/^\s*UID:\s*"([^"]+)"/m);
-                            const nameFileMatch = blockContent.match(/^\s*Имя:\s*"([^"]+)"/m);
-
-                            if (uidMatch && uidMatch[1]) {
-                                uid = uidMatch[1];
-                            }
-                        }
-                    } catch (error) {
-                        // Use generated UID if file reading fails
-                    }
-                    scenariosToAdd.push({ name: nameForBlock, uid: uid });
-                }
+            if (resolution.kind === 'unique') {
+                const uid = resolution.scenario.uid || uuidv4();
+                scenariosToAdd.push({ name: calledName, uid });
             }
+        }
+
+        if (ambiguousCalls.length > 0) {
+            vscode.window.showErrorMessage(
+                `${t('Nested scenarios were not updated because some names resolve to multiple files:')}\n${ambiguousCalls.join('\n')}`
+            );
+            return false;
         }
 
         console.log(`[clearAndFillNestedScenarios] Found ${scenariosToAdd.length} valid scenarios to add.`);
