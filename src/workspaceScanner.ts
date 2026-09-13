@@ -7,6 +7,7 @@ import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
 import { parseKotScenarioDescription } from './kotMetadataDescription';
 import { getScenarioScanRootPath, resolveScenarioScanRootFsPath } from './scenarioScanRoot';
+import { buildScenarioCatalog, type ScenarioCatalog } from './scenarioCatalog';
 
 function buildWorkspaceUriFromFsPath(workspaceRootUri: vscode.Uri, targetFsPath: string): vscode.Uri {
     if (workspaceRootUri.scheme === 'file') {
@@ -175,28 +176,16 @@ function parseNestedScenarioNamesFromText(documentText: string): string[] {
     return names;
 }
 
-/**
- * Сканирует директорию воркспейса на наличие файлов сценариев,
- * парсит их для извлечения метаданных и возвращает Map.
- * Теперь собирает все сценарии, у которых есть Имя, а не только те, что с PhaseSwitcher metadata.
- * @param workspaceRootUri URI корневой папки воркспейса.
- * @param token Токен отмены.
- * @returns Promise с Map<string, TestInfo> или null в случае ошибки.
- */
-export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?: vscode.CancellationToken): Promise<Map<string, TestInfo> | null> {
-    console.log("[scanWorkspaceForTests] Starting scan...");
-    const discoveredTests = new Map<string, TestInfo>();
-    const scanDirUri = vscode.Uri.file(resolveScanDirFsPath(workspaceRootUri));
-    console.log(`[scanWorkspaceForTests] Scanning directory: ${scanDirUri.fsPath} for pattern ${SCAN_GLOB_PATTERN}`);
-
+async function readScenarioDefinitions(
+    potentialFiles: readonly vscode.Uri[],
+    scanDirUri: vscode.Uri,
+    token?: vscode.CancellationToken
+): Promise<TestInfo[]> {
+    const definitions: TestInfo[] = [];
     try {
-        const potentialFiles = await findScenarioDescriptorUris(workspaceRootUri, token);
-        console.log(`[scanWorkspaceForTests] Found ${potentialFiles.length} potential files.`);
-
         for (const fileUri of potentialFiles) {
-            if (token?.isCancellationRequested) { 
-                console.log("[scanWorkspaceForTests] Scan cancelled.");
-                break; 
+            if (token?.isCancellationRequested) {
+                throw new vscode.CancellationError();
             }
 
             try {
@@ -337,9 +326,6 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                 // Информация для PhaseSwitcher (tabName, defaultState, order) добавляется, только если найден ключ Tab
                 // в KOT metadata или в legacy-маркере.
                 if (name) {
-                    if (discoveredTests.has(name)) {
-                        //  console.warn(`[scanWorkspaceForTests] Duplicate test name "${name}". Overwriting with ${fileUri.fsPath}`);
-                    }
                     const parentDirFsPath = path.dirname(fileUri.fsPath);
                     const scanDirFsPath = scanDirUri.fsPath;
                     let relativePathValue = '';
@@ -381,7 +367,7 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
                         testInfo.order = parsedOrder !== undefined ? parsedOrder : Infinity; // По умолчанию Infinity, если не указано
                     }
                     
-                    discoveredTests.set(name, testInfo);
+                    definitions.push(testInfo);
 
                     const logParams = uniqueParameters ? `Parameters: [${uniqueParameters.join(', ')}]` : "(No parameters found)";
                     const logTab = testInfo.tabName ? `Tab: ${testInfo.tabName}` : "(No tab for PhaseSwitcher)";
@@ -395,11 +381,46 @@ export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?
             }
         } // end for (const fileUri of potentialFiles)
     } catch (error) {
+        if (error instanceof vscode.CancellationError) {
+            throw error;
+        }
         console.error('[WorkspaceScanner] Error scanning workspace:', error);
         vscode.window.showErrorMessage(vscode.l10n.t('Error searching for scenario files.'));
-        return new Map();
+        return [];
     }
 
-    console.log(`[scanWorkspaceForTests] Scan finished. Total discovered tests: ${discoveredTests.size}.`);
-    return discoveredTests;
+    return definitions;
+}
+
+export async function readScenarioInfo(
+    fileUri: vscode.Uri,
+    scanRootUri: vscode.Uri
+): Promise<TestInfo | null> {
+    return (await readScenarioDefinitions([fileUri], scanRootUri))[0] || null;
+}
+
+export async function scanWorkspaceForScenarioCatalog(
+    workspaceRootUri: vscode.Uri,
+    token?: vscode.CancellationToken
+): Promise<ScenarioCatalog> {
+    const startedAt = Date.now();
+    const scanDirUri = vscode.Uri.file(resolveScanDirFsPath(workspaceRootUri));
+    const potentialFiles = await findScenarioDescriptorUris(workspaceRootUri, token);
+    const definitions = await readScenarioDefinitions(potentialFiles, scanDirUri, token);
+    const catalog = buildScenarioCatalog(definitions);
+    const duplicateNames = [...catalog.byName.values()].filter(items => items.length > 1).length;
+
+    console.log(
+        `[WorkspaceScanner] Scanned ${catalog.all.length} definitions, ${catalog.byName.size} names, `
+        + `${duplicateNames} duplicate names in ${Date.now() - startedAt} ms.`
+    );
+    return catalog;
+}
+
+export async function scanWorkspaceForTests(
+    workspaceRootUri: vscode.Uri,
+    token?: vscode.CancellationToken
+): Promise<Map<string, TestInfo> | null> {
+    const catalog = await scanWorkspaceForScenarioCatalog(workspaceRootUri, token);
+    return new Map(catalog.primaryByName);
 }

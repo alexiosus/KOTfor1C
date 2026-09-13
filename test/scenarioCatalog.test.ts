@@ -56,3 +56,18 @@ test('upserts by URI and removal keeps the other duplicate', () => {
     assert.deepEqual(removed.byName.get('New'), [other]);
     assert.equal(removed.byUri.has('file:///same/scen.yaml'), false);
 });
+
+test('keeps 1885 definitions in 1878 name buckets', () => {
+    const entries = Array.from({ length: 1878 }, (_, index) =>
+        scenario(`Scenario ${index}`, `base/${index}`, `file:///base/${index}/scen.yaml`)
+    );
+    for (let index = 0; index < 7; index += 1) {
+        entries.push(scenario(`Scenario ${index}`, `duplicate/${index}`, `file:///duplicate/${index}/scen.yaml`));
+    }
+
+    const catalog = buildScenarioCatalog(entries);
+
+    assert.equal(catalog.all.length, 1885);
+    assert.equal(catalog.byName.size, 1878);
+    assert.equal([...catalog.byName.values()].filter(items => items.length > 1).length, 7);
+});

@@ -364,7 +364,7 @@ git commit -m "feat: add lazy scenario catalog state"
 - Consumes: `buildScenarioCatalog` and `ScenarioCatalog` from Task 1.
 - Produces: `readScenarioInfo(fileUri, scanRootUri)` and `scanWorkspaceForScenarioCatalog(workspaceRootUri, token)`; preserves `scanWorkspaceForTests` as an adapter.
 
-- [ ] **Step 1: Extend the catalog test to model the measured corpus counts**
+- [x] **Step 1: Extend the catalog test to model the measured corpus counts**
 
 Append a synthetic cardinality test that creates 1,878 unique names and seven second definitions:
 
@@ -383,11 +383,11 @@ test('keeps 1885 definitions in 1878 name buckets', () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused test as a baseline**
+- [x] **Step 2: Run the focused test as a baseline**
 
 Run `npm run compile-tests && node --test out/test/scenarioCatalog.test.js` and confirm the new cardinality test passes against the catalog while the workspace scanner still returns only a map.
 
-- [ ] **Step 3: Extract one-file parsing and add the catalog scanner**
+- [x] **Step 3: Extract one-file parsing and add the catalog scanner**
 
 Move the current per-file loop body from `scanWorkspaceForTests` into a private `readScenarioDefinitions(fileUris: readonly vscode.Uri[], scanRootUri: vscode.Uri, token?: vscode.CancellationToken): Promise<TestInfo[]>` helper. Initialize `const definitions: TestInfo[] = []`, iterate the supplied `fileUris`, retain the current cancellation/read/parse error behavior, replace `discoveredTests.set(name, testInfo)` with `definitions.push(testInfo)`, remove the obsolete `discoveredTests.has(name)` branch, and return `definitions`. Keep the current name, UID, code, parameters, nested-scenario, KOT metadata, and relative-path parsing statements unchanged.
 
@@ -438,7 +438,7 @@ export async function scanWorkspaceForTests(
 }
 ```
 
-- [ ] **Step 4: Migrate direct scanner calls in scenario creation**
+- [x] **Step 4: Migrate direct scanner calls in scenario creation**
 
 Use `scanWorkspaceForScenarioCatalog` in `scenarioCreator.ts`. Build uniqueness sets from `catalog.all` so codes and groups from duplicate-name files are not lost:
 
@@ -452,7 +452,7 @@ for (const scenario of catalog.all) {
 }
 ```
 
-- [ ] **Step 5: Run scanner compatibility checks**
+- [x] **Step 5: Run scanner compatibility checks**
 
 ```bash
 npm run check
@@ -461,7 +461,7 @@ npm run vscode:prepublish
 
 Expected: strict types, lint, tests, and bundle exit 0.
 
-- [ ] **Step 6: Commit scanner migration**
+- [x] **Step 6: Commit scanner migration**
 
 ```bash
 git add src/workspaceScanner.ts src/scenarioCreator.ts test/scenarioCatalog.test.ts

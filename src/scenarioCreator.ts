@@ -3,7 +3,7 @@ import * as path from 'path';
 import { getTranslator } from './localization';
 import { v4 as uuidv4 } from 'uuid';
 import { YamlParametersManager } from './yamlParametersManager';
-import { scanWorkspaceForTests } from './workspaceScanner';
+import { scanWorkspaceForScenarioCatalog } from './workspaceScanner';
 import { applyPreferredStepKeyword, getConfiguredScenarioLanguage, ScenarioLanguage } from './gherkinLanguage';
 import { isScenarioYamlFile, isTestSettingsYamlFile } from './yamlValidator';
 import { getScenarioScanRootPath } from './scenarioScanRoot';
@@ -877,13 +877,13 @@ async function selectScenarioForTestSettingsLink(
         return undefined;
     }
 
-    const discoveredTests = await scanWorkspaceForTests(workspaceFolder.uri);
-    if (!discoveredTests || discoveredTests.size === 0) {
+    const catalog = await scanWorkspaceForScenarioCatalog(workspaceFolder.uri);
+    if (catalog.all.length === 0) {
         vscode.window.showWarningMessage(t('No scenarios found in workspace.'));
         return undefined;
     }
 
-    const items = Array.from(discoveredTests.values())
+    const items = catalog.all
         .filter(item => !excludeUri || item.yamlFileUri.fsPath !== excludeUri.fsPath)
         .map(item => ({
             label: item.name,
@@ -2081,20 +2081,15 @@ async function getKnownScenarioIndex(): Promise<ScenarioIndex> {
         return scenarioIndexCache.index;
     }
 
-    const discoveredTests = await scanWorkspaceForTests(workspaceRootUri);
+    const catalog = await scanWorkspaceForScenarioCatalog(workspaceRootUri);
     const index = createEmptyScenarioIndex();
-    if (discoveredTests) {
-        for (const [scenarioName, testInfo] of discoveredTests.entries()) {
-            index.names.add(normalizeScenarioName(scenarioName));
-            if (typeof testInfo?.name === 'string' && testInfo.name.trim().length > 0) {
-                index.names.add(normalizeScenarioName(testInfo.name));
-            }
-            if (typeof testInfo?.scenarioCode === 'string' && testInfo.scenarioCode.trim().length > 0) {
-                index.codes.add(normalizeScenarioCode(testInfo.scenarioCode));
-            }
-            if (typeof testInfo?.tabName === 'string' && testInfo.tabName.trim().length > 0) {
-                index.mainScenarioGroups.add(testInfo.tabName.trim());
-            }
+    for (const testInfo of catalog.all) {
+        index.names.add(normalizeScenarioName(testInfo.name));
+        if (typeof testInfo.scenarioCode === 'string' && testInfo.scenarioCode.trim().length > 0) {
+            index.codes.add(normalizeScenarioCode(testInfo.scenarioCode));
+        }
+        if (typeof testInfo.tabName === 'string' && testInfo.tabName.trim().length > 0) {
+            index.mainScenarioGroups.add(testInfo.tabName.trim());
         }
     }
 
