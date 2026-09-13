@@ -3,8 +3,15 @@ import * as cp from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs'; 
 import * as os from 'os';
-import { scanWorkspaceForTests, resolveScanDirFsPath } from './workspaceScanner';
+import { readScenarioInfo, scanWorkspaceForScenarioCatalog, resolveScanDirFsPath } from './workspaceScanner';
 import { TestInfo } from './types';
+import { LazyScenarioCatalog } from './lazyScenarioCatalog';
+import {
+    buildScenarioCatalog,
+    removeScenarioFromCatalogByUri,
+    type ScenarioCatalog,
+    upsertScenarioInCatalog
+} from './scenarioCatalog';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { migrateLegacyPhaseSwitcherMetadata, parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
 import { parseKotScenarioDescription } from './kotMetadataDescription';
@@ -443,8 +450,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _testCache: Map<string, TestInfo> | null = null;
     private _isScanning: boolean = false;
     private _cacheDirty: boolean = false;
-    private _cacheRefreshPromise: Promise<void> | null = null;
-    private _cacheRefreshTimer: NodeJS.Timeout | null = null;
+    private readonly _scenarioCatalogState = new LazyScenarioCatalog(() => this.loadScenarioCatalog());
     private _aiReportStateRefreshTimer: NodeJS.Timeout | null = null;
     private _isBuildInProgress: boolean = false;
     private _isScenarioRepairInProgress: boolean = false;
@@ -483,19 +489,25 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _ruBundle: Record<string, string> | null = null;
     private _mainScenarioSelectionStates: Record<string, boolean> | null = null;
     
-    // Этот промис будет хранить состояние первоначального сканирования.
-    // Он создается один раз при вызове initializeTestCache.
-    public initializationPromise: Promise<void> | null = null;
-
     // Событие, которое будет генерироваться после обновления _testCache
     private _onDidUpdateTestCache: vscode.EventEmitter<Map<string, TestInfo> | null> = new vscode.EventEmitter<Map<string, TestInfo> | null>();
     public readonly onDidUpdateTestCache: vscode.Event<Map<string, TestInfo> | null> = this._onDidUpdateTestCache.event;
+    private _onDidUpdateScenarioCatalog = new vscode.EventEmitter<ScenarioCatalog | null>();
+    public readonly onDidUpdateScenarioCatalog = this._onDidUpdateScenarioCatalog.event;
 
     /**
      * Публичный геттер для доступа к кешу тестов.
      */
     public getTestCache(): Map<string, TestInfo> | null {
         return this._testCache;
+    }
+
+    public getScenarioCatalog(): ScenarioCatalog | null {
+        return this._scenarioCatalogState.isDirty ? null : this._scenarioCatalogState.current;
+    }
+
+    public getScenarioDefinitions(name: string): readonly TestInfo[] {
+        return this.getScenarioCatalog()?.byName.get(name) || [];
     }
 
     public isFailedFeatureLine(documentUri: vscode.Uri, lineIndex: number): boolean {
@@ -559,9 +571,23 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
      * Обеспечивает актуальность кеша перед операциями, чувствительными к свежим данным.
      */
     public async ensureFreshTestCache(): Promise<void> {
-        await this.initializeTestCache();
-        if (this._cacheDirty || this._testCache === null) {
-            await this.refreshTestCacheFromDisk('ensureFreshTestCache');
+        await this.ensureFreshScenarioCatalog();
+    }
+
+    public async ensureFreshScenarioCatalog(): Promise<ScenarioCatalog> {
+        const previousCatalog = this._scenarioCatalogState.current;
+        this._isScanning = true;
+        try {
+            const catalog = await this._scenarioCatalogState.ensureLoaded();
+            if (catalog !== previousCatalog || this._testCache === null || this._cacheDirty) {
+                this.publishScenarioCatalog(catalog);
+            }
+            return catalog;
+        } catch (error) {
+            this._cacheDirty = true;
+            throw error;
+        } finally {
+            this._isScanning = false;
         }
     }
 
@@ -571,8 +597,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     public async refreshFromExternalStateChange(options?: { refreshCache?: boolean }): Promise<void> {
         if (options?.refreshCache) {
-            this._testCache = null;
-            this._cacheDirty = true;
+            this.invalidateScenarioCatalog(true);
         }
 
         // After a scan-root change the active editor may now qualify (or stop qualifying)
@@ -1547,139 +1572,168 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         try {
+            const catalog = this.getScenarioCatalog();
+            if (!catalog) {
+                return false;
+            }
+
             const updatedInfo = this.buildTestInfoFromDocument(document);
-            if (!this._testCache) {
-                this._testCache = new Map<string, TestInfo>();
-            }
-
             const uriKey = document.uri.toString();
-            let changed = false;
-
-            for (const [cachedName, cachedInfo] of this._testCache) {
-                if (cachedInfo.yamlFileUri.toString() === uriKey && (!updatedInfo || cachedName !== updatedInfo.name)) {
-                    this._testCache.delete(cachedName);
-                    changed = true;
-                }
+            const existing = catalog.byUri.get(uriKey);
+            if ((!existing && !updatedInfo) || (existing && updatedInfo && this.isSameTestInfo(existing, updatedInfo))) {
+                return true;
             }
 
-            if (updatedInfo) {
-                const existing = this._testCache.get(updatedInfo.name);
-                if (!existing || !this.isSameTestInfo(existing, updatedInfo)) {
-                    this._testCache.set(updatedInfo.name, updatedInfo);
-                    changed = true;
-                }
+            const updated = this._scenarioCatalogState.update(current => updatedInfo
+                ? upsertScenarioInCatalog(current, updatedInfo)
+                : removeScenarioFromCatalogByUri(current, uriKey));
+            const nextCatalog = this._scenarioCatalogState.current;
+            if (updated && nextCatalog) {
+                this.publishScenarioCatalog(nextCatalog);
             }
-
-            if (changed) {
-                this._onDidUpdateTestCache.fire(this._testCache);
-            }
-
-            return true;
+            return updated;
         } catch (error) {
             console.error('[PhaseSwitcherProvider] Failed to incrementally update scenario cache entry:', error);
             return false;
         }
     }
 
-    private markCacheDirtyAndScheduleRefresh(reason: string, immediate: boolean = false): void {
-        this._cacheDirty = true;
-        if (this._cacheRefreshTimer) {
-            clearTimeout(this._cacheRefreshTimer);
-            this._cacheRefreshTimer = null;
+    private async upsertScenarioCacheEntriesFromUris(uris: readonly vscode.Uri[]): Promise<boolean> {
+        const catalog = this.getScenarioCatalog();
+        const workspaceRootUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+        if (!catalog || !workspaceRootUri) {
+            return false;
         }
 
-        const delay = immediate ? 0 : 500;
-        this._cacheRefreshTimer = setTimeout(() => {
-            this.refreshTestCacheFromDisk(reason).catch(error => {
-                console.error('[PhaseSwitcherProvider] Scheduled cache refresh failed:', error);
-            });
-        }, delay);
+        const scenarioUris = uris.filter(uri =>
+            path.basename(uri.fsPath).toLowerCase() === 'scen.yaml' && this.shouldTrackUriForCache(uri)
+        );
+        if (scenarioUris.length !== uris.filter(uri => this.shouldTrackUriForCache(uri)).length) {
+            return false;
+        }
+
+        const scanRootUri = vscode.Uri.file(resolveScanDirFsPath(workspaceRootUri));
+        let nextCatalog = catalog;
+        for (const uri of scenarioUris) {
+            const scenarioInfo = await readScenarioInfo(uri, scanRootUri);
+            if (!scenarioInfo) {
+                return false;
+            }
+            nextCatalog = upsertScenarioInCatalog(nextCatalog, scenarioInfo);
+        }
+
+        if (nextCatalog === catalog) {
+            return true;
+        }
+        const updated = this._scenarioCatalogState.update(() => nextCatalog);
+        if (updated) {
+            this.publishScenarioCatalog(nextCatalog);
+        }
+        return updated;
+    }
+
+    private removeScenarioCacheEntriesForUris(uris: readonly vscode.Uri[]): boolean {
+        const catalog = this.getScenarioCatalog();
+        if (!catalog) {
+            return false;
+        }
+
+        let nextCatalog = catalog;
+        for (const uri of uris.filter(candidate => this.shouldTrackUriForCache(candidate))) {
+            const normalizedPath = path.resolve(uri.fsPath);
+            if (path.basename(normalizedPath).toLowerCase() === 'scen.yaml') {
+                nextCatalog = removeScenarioFromCatalogByUri(nextCatalog, uri.toString());
+                continue;
+            }
+
+            for (const scenario of nextCatalog.all) {
+                if (this.isPathInside(normalizedPath, path.resolve(scenario.yamlFileUri.fsPath))) {
+                    nextCatalog = removeScenarioFromCatalogByUri(nextCatalog, scenario.yamlFileUri.toString());
+                }
+            }
+        }
+
+        const updated = this._scenarioCatalogState.update(() => nextCatalog);
+        if (updated) {
+            this.publishScenarioCatalog(nextCatalog);
+        }
+        return updated;
+    }
+
+    private async updateScenarioCacheEntriesForRenames(
+        files: readonly { oldUri: vscode.Uri; newUri: vscode.Uri }[]
+    ): Promise<boolean> {
+        const catalog = this.getScenarioCatalog();
+        const workspaceRootUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+        if (!catalog || !workspaceRootUri) {
+            return false;
+        }
+
+        const affectedFiles = files.filter(({ oldUri, newUri }) =>
+            this.shouldTrackUriForCache(oldUri) || this.shouldTrackUriForCache(newUri)
+        );
+        if (affectedFiles.some(({ oldUri, newUri }) =>
+            path.basename(oldUri.fsPath).toLowerCase() !== 'scen.yaml'
+            || path.basename(newUri.fsPath).toLowerCase() !== 'scen.yaml'
+        )) {
+            return false;
+        }
+
+        const scanRootUri = vscode.Uri.file(resolveScanDirFsPath(workspaceRootUri));
+        let nextCatalog = catalog;
+        for (const { oldUri, newUri } of affectedFiles) {
+            nextCatalog = removeScenarioFromCatalogByUri(nextCatalog, oldUri.toString());
+            if (this.shouldTrackUriForCache(newUri)) {
+                const scenarioInfo = await readScenarioInfo(newUri, scanRootUri);
+                if (!scenarioInfo) {
+                    return false;
+                }
+                nextCatalog = upsertScenarioInCatalog(nextCatalog, scenarioInfo);
+            }
+        }
+
+        const updated = this._scenarioCatalogState.update(() => nextCatalog);
+        if (updated) {
+            this.publishScenarioCatalog(nextCatalog);
+        }
+        return updated;
+    }
+
+    private publishScenarioCatalog(catalog: ScenarioCatalog): void {
+        this._scenarioCatalogState.replace(catalog);
+        this._testCache = new Map(catalog.primaryByName);
+        this._cacheDirty = false;
+        this._onDidUpdateScenarioCatalog.fire(catalog);
+        this._onDidUpdateTestCache.fire(this._testCache);
+    }
+
+    private invalidateScenarioCatalog(clearPublishedCache: boolean = false): void {
+        this._scenarioCatalogState.invalidate();
+        this._cacheDirty = true;
+        if (clearPublishedCache) {
+            this._testCache = null;
+            this._onDidUpdateScenarioCatalog.fire(null);
+            this._onDidUpdateTestCache.fire(null);
+        }
+    }
+
+    private async loadScenarioCatalog(): Promise<ScenarioCatalog> {
+        const workspaceRootUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+        if (!workspaceRootUri) {
+            return buildScenarioCatalog([]);
+        }
+        return scanWorkspaceForScenarioCatalog(workspaceRootUri);
     }
 
     private async refreshTestCacheFromDisk(reason: string): Promise<void> {
-        if (this._cacheRefreshPromise) {
-            await this._cacheRefreshPromise;
-            return;
-        }
-
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders || workspaceFolders.length === 0) {
-            this._testCache = null;
-            this._cacheDirty = false;
-            this._onDidUpdateTestCache.fire(this._testCache);
-            return;
-        }
-
-        const workspaceRootUri = workspaceFolders[0].uri;
         console.log(`[PhaseSwitcherProvider] Refreshing test cache from disk. Reason: ${reason}`);
-
-        this._cacheRefreshPromise = (async () => {
-            this._isScanning = true;
-            try {
-                this._testCache = await scanWorkspaceForTests(workspaceRootUri);
-                this._cacheDirty = false;
-                this._onDidUpdateTestCache.fire(this._testCache);
-                console.log(`[PhaseSwitcherProvider] Cache refreshed. Total scenarios: ${this._testCache?.size || 0}`);
-            } catch (scanError) {
-                console.error('[PhaseSwitcherProvider] Error during cache refresh:', scanError);
-            } finally {
-                this._isScanning = false;
-                this._cacheRefreshPromise = null;
-            }
-        })();
-
-        await this._cacheRefreshPromise;
+        this.invalidateScenarioCatalog();
+        const catalog = await this.ensureFreshScenarioCatalog();
+        console.log(`[PhaseSwitcherProvider] Cache refreshed. Total definitions: ${catalog.all.length}`);
     }
 
-    /**
-     * Инициализирует кеш тестов. Этот метод теперь идемпотентный:
-     * он выполняет сканирование только один раз и возвращает один и тот же промис
-     * при последующих вызовах.
-     */
-    public initializeTestCache(): Promise<void> {
-        if (this.initializationPromise) {
-            console.log("[PhaseSwitcherProvider:initializeTestCache] Initialization already started or completed.");
-            return this.initializationPromise;
-        }
-
-        console.log("[PhaseSwitcherProvider:initializeTestCache] Starting initial cache load...");
-        // Создаем и сохраняем промис. IIFE (Immediately Invoked Function Expression)
-        // немедленно запускает асинхронную операцию.
-        this.initializationPromise = (async () => {
-            if (this._isScanning) {
-                // Эта проверка на всякий случай, с новой логикой она не должна срабатывать.
-                console.log("[PhaseSwitcherProvider:initializeTestCache] Scan was already in progress.");
-                return;
-            }
-
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            if (!workspaceFolders || workspaceFolders.length === 0) {
-                console.log("[PhaseSwitcherProvider:initializeTestCache] No workspace folder, skipping cache initialization.");
-                this._testCache = null;
-                this._cacheDirty = false;
-                this._onDidUpdateTestCache.fire(this._testCache);
-                return;
-            }
-
-            const workspaceRootUri = workspaceFolders[0].uri;
-            this._isScanning = true;
-            try {
-                this._testCache = await scanWorkspaceForTests(workspaceRootUri);
-                this._cacheDirty = false;
-                console.log(`[PhaseSwitcherProvider:initializeTestCache] Initial cache loaded with ${this._testCache?.size || 0} scenarios`);
-                this._onDidUpdateTestCache.fire(this._testCache);
-            } catch (scanError: any) {
-                console.error("[PhaseSwitcherProvider:initializeTestCache] Error during initial scan:", scanError);
-                this._testCache = null;
-                this._cacheDirty = true;
-                this._onDidUpdateTestCache.fire(this._testCache);
-            } finally {
-                this._isScanning = false;
-                console.log("[PhaseSwitcherProvider:initializeTestCache] Initial scan finished.");
-            }
-        })();
-
-        return this.initializationPromise;
+    public async initializeTestCache(): Promise<void> {
+        await this.ensureFreshScenarioCatalog();
     }
 
 
@@ -1792,7 +1846,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             if (shouldTrackCache) {
                 const updatedIncrementally = this.upsertScenarioCacheEntryFromDocument(document);
                 if (!updatedIncrementally) {
-                    this.markCacheDirtyAndScheduleRefresh(`save:${path.basename(document.uri.fsPath)}`);
+                    this.invalidateScenarioCatalog();
                 }
             }
 
@@ -1825,14 +1879,25 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }));
 
         context.subscriptions.push(vscode.workspace.onDidCreateFiles(event => {
-            if (event.files.some(uri => this.shouldTrackUriForCache(uri))) {
-                this.markCacheDirtyAndScheduleRefresh('createFiles');
+            if (!event.files.some(uri => this.shouldTrackUriForCache(uri))) {
+                return;
             }
+            void this.upsertScenarioCacheEntriesFromUris(event.files).then(updated => {
+                if (!updated) {
+                    this.invalidateScenarioCatalog();
+                }
+            }).catch(error => {
+                console.error('[PhaseSwitcherProvider] Failed to add scenario cache entries:', error);
+                this.invalidateScenarioCatalog();
+            });
         }));
 
         context.subscriptions.push(vscode.workspace.onDidDeleteFiles(event => {
             if (event.files.some(uri => this.shouldTrackUriForCache(uri))) {
-                this.markCacheDirtyAndScheduleRefresh('deleteFiles');
+                const updated = this.removeScenarioCacheEntriesForUris(event.files);
+                if (!updated) {
+                    this.invalidateScenarioCatalog();
+                }
             }
 
             const deletedUris = new Set(event.files.map(uri => uri.toString()));
@@ -1860,7 +1925,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this.shouldTrackUriForCache(oldUri) || this.shouldTrackUriForCache(newUri)
             );
             if (affectsCache) {
-                this.markCacheDirtyAndScheduleRefresh('renameFiles');
+                void this.updateScenarioCacheEntriesForRenames(event.files).then(updated => {
+                    if (!updated) {
+                        this.invalidateScenarioCatalog();
+                    }
+                }).catch(error => {
+                    console.error('[PhaseSwitcherProvider] Failed to rename scenario cache entries:', error);
+                    this.invalidateScenarioCatalog();
+                });
             }
 
             if (this._activeScenarioUriForHighlight) {
@@ -1890,9 +1962,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }));
 
         context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => {
-            this._testCache = null;
-            this._cacheDirty = true;
-            this.initializationPromise = null;
+            this.invalidateScenarioCatalog(true);
             this._startupArtifactsRestoreAttempted = false;
             this._scenarioBuildArtifacts.clear();
             this._staleBuiltScenarioNames.clear();
@@ -1903,14 +1973,19 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._activeScenarioUriForHighlight = null;
             this._lastHighlightedMainScenarioNames.clear();
             this.resetVanessaRuntimeLogMonitorState({ clearAutoDetectedRuns: true });
-            this.markCacheDirtyAndScheduleRefresh('workspaceFoldersChanged', true);
             this.sendRunArtifactsStateToWebview();
             this.handleActiveEditorChanged(vscode.window.activeTextEditor);
+            if (this._view?.visible) {
+                void this._sendInitialState(this._view.webview);
+            }
         }));
 
         const gitHeadWatcher = vscode.workspace.createFileSystemWatcher('**/.git/HEAD');
         const onGitBranchChanged = (): void => {
-            this.markCacheDirtyAndScheduleRefresh('gitBranchChanged');
+            this.invalidateScenarioCatalog();
+            if (this._view?.visible) {
+                void this._sendInitialState(this._view.webview);
+            }
             if (this._aiReportStateRefreshTimer) {
                 clearTimeout(this._aiReportStateRefreshTimer);
             }
@@ -1928,10 +2003,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         context.subscriptions.push({
             dispose: () => {
-                if (this._cacheRefreshTimer) {
-                    clearTimeout(this._cacheRefreshTimer);
-                    this._cacheRefreshTimer = null;
-                }
                 if (this._aiReportStateRefreshTimer) {
                     clearTimeout(this._aiReportStateRefreshTimer);
                     this._aiReportStateRefreshTimer = null;
@@ -6364,13 +6435,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     public async refreshPanelData() {
         if (this._view && this._view.webview && this._view.visible) {
             console.log("[PhaseSwitcherProvider] Refreshing panel data programmatically...");
-            this._testCache = null;
-            this._cacheDirty = true;
+            this.invalidateScenarioCatalog(true);
             await this._sendInitialState(this._view.webview);
         } else {
             console.log("[PhaseSwitcherProvider] Panel not visible or not resolved, cannot refresh programmatically yet. Will refresh on next resolve/show.");
             // Можно установить флаг, чтобы _sendInitialState вызвался при следующем resolveWebviewView или onDidChangeVisibility
-            this._cacheDirty = true;
+            this.invalidateScenarioCatalog();
         }
     }
 
@@ -6836,8 +6906,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     await this._sendInitialState(webviewView.webview);
                     return;
                 case 'refreshData': 
-                    this._testCache = null;
-                    this._cacheDirty = true;
+                    this.invalidateScenarioCatalog(true);
                     await this._sendInitialState(webviewView.webview);
                     return;
                 case 'refreshVanessaSteps':
@@ -7071,21 +7140,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             vscode.window.showErrorMessage(this.t('Please open a project folder.'));
             webview.postMessage({ command: 'loadInitialState', error: this.t('Project folder is not open') });
             webview.postMessage({ command: 'updateStatus', text: this.t('Error: Project folder is not open') });
-            this._testCache = null; 
-            this._onDidUpdateTestCache.fire(this._testCache); // Уведомляем об отсутствии данных
+            this.invalidateScenarioCatalog(true);
             return;
         }
         const workspaceRootUri = workspaceFolders[0].uri;
-
-        if (this._testCache === null && this.initializationPromise) {
-            console.log("[PhaseSwitcherProvider:_sendInitialState] Waiting for initial cache warmup after webview render...");
-            try {
-                await this.initializationPromise;
-                console.log("[PhaseSwitcherProvider:_sendInitialState] Initial cache warmup completed.");
-            } catch (error) {
-                console.error("[PhaseSwitcherProvider:_sendInitialState] Initial cache warmup failed:", error);
-            }
-        }
 
         // Check if first launch folder exists (independent of test cache)
         const projectPaths = this.getProjectPaths(workspaceRootUri);
@@ -7107,11 +7165,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 : "cache marked as dirty";
             console.log(`[PhaseSwitcherProvider:_sendInitialState] Refreshing cache because ${reason}.`);
             try {
-                await this.refreshTestCacheFromDisk('_sendInitialState');
+                await this.ensureFreshScenarioCatalog();
             } catch (scanError: any) {
                 console.error("[PhaseSwitcherProvider:_sendInitialState] Error during cache refresh:", scanError);
                 vscode.window.showErrorMessage(this.t('Error scanning scenario files: {0}', scanError.message || scanError));
-                this._testCache = null;
+                this.invalidateScenarioCatalog(true);
             }
         } else {
             console.log(`[PhaseSwitcherProvider:_sendInitialState] Using existing cache with ${this._testCache.size} scenarios`);

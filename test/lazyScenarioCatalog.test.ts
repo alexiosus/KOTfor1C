@@ -66,3 +66,12 @@ test('update does not initialize an unloaded state', () => {
     }), false);
     assert.equal(transformed, false);
 });
+
+test('update does not publish incremental changes over a dirty catalog', async () => {
+    const state = new LazyScenarioCatalog(async () => emptyCatalog);
+    await state.ensureLoaded();
+    state.invalidate();
+
+    assert.equal(state.update(catalog => catalog), false);
+    assert.equal(state.isDirty, true);
+});

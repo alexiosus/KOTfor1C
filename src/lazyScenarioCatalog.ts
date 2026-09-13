@@ -40,7 +40,7 @@ export class LazyScenarioCatalog {
     }
 
     public update(transform: (catalog: ScenarioCatalog) => ScenarioCatalog): boolean {
-        if (!this.catalog) {
+        if (!this.catalog || this.dirty) {
             return false;
         }
 

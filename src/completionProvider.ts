@@ -608,8 +608,12 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     private isLoadingGherkin: boolean = false;
     private loadingGherkinPromise: Promise<void> | null = null;
     private context: vscode.ExtensionContext;
+    private scenarioCompletionsInitialized = false;
 
-    constructor(context: vscode.ExtensionContext) {
+    constructor(
+        context: vscode.ExtensionContext,
+        private readonly ensureScenarioCompletionsLoaded?: () => Promise<void>
+    ) {
         this.context = context;
         this.context.subscriptions.push(
             vscode.workspace.onDidCloseTextDocument(document => {
@@ -650,6 +654,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
     // Метод для обновления списка автодополнений сценариев
     public updateScenarioCompletions(scenarios: Map<string, TestInfo> | null): void {
+        this.scenarioCompletionsInitialized = scenarios !== null;
         this.scenarioCompletionItems = []; // Очищаем перед заполнением
         this.scenarioParametersByName.clear();
         this.calledScenarioDefaultsByName.clear();
@@ -878,6 +883,14 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         if (!this.isInScenarioTextBlock(document, position)) {
             console.log("[DriveCompletionProvider:provideCompletionItems] Not in scenario text block. Returning empty.");
             return [];
+        }
+
+        if (!this.scenarioCompletionsInitialized && this.ensureScenarioCompletionsLoaded) {
+            try {
+                await this.ensureScenarioCompletionsLoaded();
+            } catch (error) {
+                console.error('[DriveCompletionProvider] Failed to load scenario completions on demand:', error);
+            }
         }
 
         // Получаем текст текущей строки до позиции курсора

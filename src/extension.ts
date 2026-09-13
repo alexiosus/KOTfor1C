@@ -696,13 +696,10 @@ export function activate(context: vscode.ExtensionContext) {
         )
     );
 
-    // Инициализируем кеш тестов сразу после активации для быстрого доступа
-    phaseSwitcherProvider.initializeTestCache().catch(error => {
-        console.error('[Extension] Error during eager cache initialization:', error);
-    });
-
     // --- Регистрация Провайдеров Языковых Функций (Автодополнение и Подсказки) ---
-    const completionProvider = new DriveCompletionProvider(context);
+    const completionProvider = new DriveCompletionProvider(context, async () => {
+        await phaseSwitcherProvider.ensureFreshScenarioCatalog();
+    });
     const hoverProvider = new DriveHoverProvider(context, phaseSwitcherProvider);
     const completionAndHoverSelector: vscode.DocumentSelector = [
         { pattern: '**/*.yaml', scheme: 'file' },
@@ -779,13 +776,10 @@ export function activate(context: vscode.ExtensionContext) {
     // и обновляем автодополнение сценариев
     context.subscriptions.push(
         phaseSwitcherProvider.onDidUpdateTestCache((testCache: Map<string, TestInfo> | null) => {
-            if (testCache) {
-                completionProvider.updateScenarioCompletions(testCache);
-                console.log('[Extension] Scenario completions updated based on PhaseSwitcher cache.');
-            } else {
-                completionProvider.updateScenarioCompletions(new Map());
-                console.log('[Extension] Scenario completions cleared due to null PhaseSwitcher cache.');
-            }
+            completionProvider.updateScenarioCompletions(testCache);
+            console.log(testCache
+                ? '[Extension] Scenario completions updated based on PhaseSwitcher cache.'
+                : '[Extension] Scenario completions invalidated with PhaseSwitcher cache.');
         })
     );
 

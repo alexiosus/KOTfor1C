@@ -481,7 +481,7 @@ git commit -m "refactor: preserve all scanned scenarios"
 - Consumes: `LazyScenarioCatalog`, `ScenarioCatalog`, scanner APIs, and incremental catalog helpers.
 - Produces: `getScenarioCatalog`, `getScenarioDefinitions`, `ensureFreshScenarioCatalog`, and `onDidUpdateScenarioCatalog`; keeps `getTestCache`, `initializeTestCache`, and `onDidUpdateTestCache` operational.
 
-- [ ] **Step 1: Add provider catalog state and publication**
+- [x] **Step 1: Add provider catalog state and publication**
 
 Import the catalog APIs and construct one lazy store in `PhaseSwitcherProvider`. Keep one compatibility map that is rebuilt only on publication:
 
@@ -523,7 +523,7 @@ public async ensureFreshScenarioCatalog(): Promise<ScenarioCatalog | null> {
 
 Initialize `scenarioCatalogState` in the constructor with `scanWorkspaceForScenarioCatalog` and the current workspace folder. Throw a descriptive error when no workspace is open; `ensureFreshScenarioCatalog` converts it to the existing unavailable state.
 
-- [ ] **Step 2: Preserve compatibility methods without a second scan mechanism**
+- [x] **Step 2: Preserve compatibility methods without a second scan mechanism**
 
 Make `initializeTestCache()` and `ensureFreshTestCache()` delegate to `ensureFreshScenarioCatalog()`:
 
@@ -539,7 +539,7 @@ public async ensureFreshTestCache(): Promise<void> {
 
 Replace assignments from full scans with `scenarioCatalogState.replace(catalog)` followed by `publishScenarioCatalog(catalog)`. Replace invalidation assignments with `scenarioCatalogState.invalidate()` and `publishScenarioCatalog(null)` only when the active scan root becomes invalid.
 
-- [ ] **Step 3: Keep watchers passive before first use**
+- [x] **Step 3: Keep watchers passive before first use**
 
 Update the save/create/delete/rename handlers to call `scenarioCatalogState.update`. For create and rename, await `readScenarioInfo`; for delete remove by URI. If `update` returns false, do nothing because the catalog has not been requested. If parsing a loaded catalog fails, call `invalidate()` without starting a scan.
 
@@ -552,7 +552,7 @@ this.scenarioCatalogState.update(catalog => removeScenarioFromCatalogByUri(catal
 
 After a successful update, call `publishScenarioCatalog(this.scenarioCatalogState.current)`. Scan-root, workspace-folder, and Git HEAD events call only `invalidate()` unless a visible Test Manager immediately invokes `_sendInitialState` as an active consumer.
 
-- [ ] **Step 4: Remove eager activation and add completion demand loading**
+- [x] **Step 4: Remove eager activation and add completion demand loading**
 
 Delete the complete eager-initialization statement in `activate()`—the call to `phaseSwitcherProvider.initializeTestCache()` together with its `.catch` handler—so provider construction is followed directly by language-provider registration.
 
@@ -584,7 +584,7 @@ if (!this.scenarioCompletionsInitialized && this.ensureScenarioCatalogLoaded) {
 
 Construct the provider in `extension.ts` with an async callback to `ensureFreshScenarioCatalog`. Reset the completion initialization flag when the scan root changes or the catalog event publishes `null`.
 
-- [ ] **Step 5: Verify lazy integration**
+- [x] **Step 5: Verify lazy integration**
 
 ```bash
 npm run check
@@ -594,7 +594,7 @@ rg -n "initializeTestCache\(\)" src/extension.ts
 
 Expected: quality/build gates exit 0 and `rg` finds no unconditional activation call near `activate()`; command-specific compatibility calls may remain.
 
-- [ ] **Step 6: Commit lazy provider integration**
+- [x] **Step 6: Commit lazy provider integration**
 
 ```bash
 git add src/phaseSwitcher.ts src/extension.ts src/completionProvider.ts
