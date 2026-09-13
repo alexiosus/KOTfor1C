@@ -53,6 +53,7 @@ import {
     getTestReviewReportState,
     openSavedTestReviewReport
 } from './testReviewAiReport';
+import { buildDirectSpawnCommand } from './directProcessLaunch';
 
 // --- Вспомогательная функция для Nonce ---
 function getNonce(): string {
@@ -6604,8 +6605,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const args = [
             ...this.buildStartupParams(startupInfobase.infobaseDirectory, startupInfobase.authentication),
             '/Execute',
-            `"${vanessaEpfPath}"`,
-            `/C"${vaCommand}"`,
+            vanessaEpfPath,
+            '/C',
+            vaCommand,
             '/TESTMANAGER'
         ];
 
@@ -7495,13 +7497,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     /**
      * Builds СборкаТекстовСценариев /C command with custom parameters and ErrorFolder
      */
-    private buildBuildScenarioBddCommand(jsonParamsPath: string, resultFilePath: string, logFilePath: string, errorFolderPath: string): string {
+    private buildBuildScenarioBddArgs(jsonParamsPath: string, resultFilePath: string, logFilePath: string, errorFolderPath: string): string[] {
         // Ensure ErrorFolder path ends with a slash
         const errorFolderWithSlash = errorFolderPath.endsWith(path.sep) ? errorFolderPath : errorFolderPath + path.sep;
 
         const command = `СобратьСценарии;JsonParams=${jsonParamsPath};ResultFile=${resultFilePath};LogFile=${logFilePath};ErrorFolder=${errorFolderWithSlash}`;
 
-        return `/C"${command}"`;
+        return ['/C', command];
     }
 
     /**
@@ -7892,8 +7894,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
                 const yamlBuildParams = [
                     ...this.buildStartupParams(startupInfobase.infobaseDirectory, startupInfobase.authentication),
-                    `/Execute`, `"${buildScenarioBddEpfPath}"`,
-                    this.buildBuildScenarioBddCommand(localSettingsPath.fsPath, yamlBuildResultFileUri.fsPath, yamlBuildLogFileUri.fsPath, buildErrorsPathUri.fsPath)
+                    '/Execute',
+                    buildScenarioBddEpfPath,
+                    ...this.buildBuildScenarioBddArgs(localSettingsPath.fsPath, yamlBuildResultFileUri.fsPath, yamlBuildLogFileUri.fsPath, buildErrorsPathUri.fsPath)
                 ];
                 ensureBuildNotCancelled();
                 // BuildScenarioBdd rewrites output artifacts, so stale run buttons must be removed immediately.
@@ -8220,11 +8223,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
             this.outputInfo(outputChannel, this.t('Launching process: {0}', processName));
             this.outputAdvanced(outputChannel, `Executing 1C process: ${processName} with args: ${args.join(' ')}`);
-            const command = exePath.includes(' ') && !exePath.startsWith('"') ? `"${exePath}"` : exePath;
+            const command = buildDirectSpawnCommand(exePath, args);
             
-            const child = cp.spawn(command, args, {
+            const child = cp.spawn(command.executable, command.args, {
                 cwd: cwd,
-                shell: true, 
+                shell: command.shell,
                 windowsHide: true
             });
             if (trackAsBuildProcess) {
@@ -8346,10 +8349,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         return new Promise((resolve, reject) => {
             try {
-                const command = exePath.includes(' ') && !exePath.startsWith('"') ? `"${exePath}"` : exePath;
-                const child = cp.spawn(command, args, {
+                const command = buildDirectSpawnCommand(exePath, args);
+                const child = cp.spawn(command.executable, command.args, {
                     cwd,
-                    shell: true,
+                    shell: command.shell,
                     windowsHide: false,
                     detached: true,
                     stdio: 'ignore'
@@ -11577,8 +11580,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const args = [
             ...this.buildStartupParams(startupInfobasePathForRun, startupInfobase.authentication),
             '/Execute',
-            `"${vanessaEpfPath}"`,
-            `/C"${vaCommand}"`,
+            vanessaEpfPath,
+            '/C',
+            vaCommand,
             '/TESTMANAGER'
         ];
 

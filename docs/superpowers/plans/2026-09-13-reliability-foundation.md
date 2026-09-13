@@ -92,10 +92,10 @@
 - Consumes: executable path plus an argument array.
 - Produces: direct `execFile`/`spawn` launches with `shell: false` for built-in commands.
 
-- [ ] Replace the MXL shell command string with `execFile(fileWorkshopPath, [filePath], callback)`.
-- [ ] Pass the raw executable path to both PhaseSwitcher `spawn` calls and set `shell: false`.
-- [ ] Upgrade `uuid` to a release outside `<11.1.1` and regenerate the lockfile.
-- [ ] Run `npm audit --omit=dev`, `npm run check`, and `npm run vscode:prepublish`.
+- [x] Replace the MXL shell command string with `execFile(fileWorkshopPath, [filePath], callback)`.
+- [x] Pass the raw executable path to both PhaseSwitcher `spawn` calls and set `shell: false`.
+- [x] Upgrade `uuid` to a release outside `<11.1.1` and regenerate the lockfile.
+- [x] Run `npm audit --omit=dev`, `npm run check`, and `npm run vscode:prepublish`.
 
 ### Task 5: Final compatibility verification
 

@@ -3,7 +3,7 @@ import { getTranslator } from './localization';
 import { getExtensionUri } from './appContext';
 import * as path from 'path';
 import * as fs from 'fs';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import { findFileByName, findScenarioReferences } from './navigationUtils';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
@@ -158,8 +158,7 @@ async function openMxlWithFileWorkshop(filePath: string) {
         return;
     }
 
-    const command = `"${fileWorkshopPath}" "${filePath}"`;
-    exec(command, (error, stdout, stderr) => {
+    execFile(fileWorkshopPath, [filePath], (error, stdout, stderr) => {
         if (error) {
             console.error(`[Cmd:openMxl] Exec error: ${error}`);
             vscode.window.showErrorMessage(t('Error opening MXL file: {0}', error.message));
@@ -168,7 +167,7 @@ async function openMxlWithFileWorkshop(filePath: string) {
         if (stderr) {
             console.error(`[Cmd:openMxl] Stderr: ${stderr}`);
         }
-        console.log(`[Cmd:openMxl] Successfully executed: ${command}`);
+        console.log(`[Cmd:openMxl] Successfully opened: ${filePath}`);
     });
 }
 
