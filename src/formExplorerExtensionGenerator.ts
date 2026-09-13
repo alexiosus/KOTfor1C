@@ -35,6 +35,7 @@ import {
     resolveOneCIBCmdExePath,
     resolveOneCPlatformForLaunch
 } from './oneCPlatform';
+import { formatProcessCommandForDisplay } from './processCommandDisplay';
 
 interface BaseConfigurationInfo {
     name: string;
@@ -393,10 +394,6 @@ function hashText(text: string): string {
 async function hashFileContents(filePath: string): Promise<string> {
     const contents = await fs.promises.readFile(filePath);
     return crypto.createHash('sha256').update(contents).digest('hex');
-}
-
-function formatCommandForOutput(exePath: string, args: string[]): string {
-    return [quoteForShell(exePath), ...args.map(arg => quoteForShell(arg))].join(' ');
 }
 
 function getOutputTail(text: string, maxLength: number = 4000): string {
@@ -5763,7 +5760,7 @@ async function run1CCommand(
 ): Promise<void> {
     const effectiveArgs = [...args, '/Out', outFilePath];
     outputChannel.appendLine(t('Form Explorer build step: {0}', stepTitle));
-    outputChannel.appendLine(t('Resolved 1C command: {0}', formatCommandForOutput(exePath, effectiveArgs)));
+    outputChannel.appendLine(t('Resolved 1C command: {0}', formatProcessCommandForDisplay(exePath, effectiveArgs)));
 
     await new Promise<void>((resolve, reject) => {
         let stdout = '';
@@ -5819,7 +5816,7 @@ async function runProcessCommand(
     t: Awaited<ReturnType<typeof getTranslator>>
 ): Promise<void> {
     outputChannel.appendLine(t('Form Explorer build step: {0}', stepTitle));
-    outputChannel.appendLine(t('Resolved command: {0}', formatCommandForOutput(exePath, args)));
+    outputChannel.appendLine(t('Resolved command: {0}', formatProcessCommandForDisplay(exePath, args)));
 
     await new Promise<void>((resolve, reject) => {
         let stdout = '';
@@ -6507,7 +6504,7 @@ async function launchInfobaseClientDetached(
     );
     const workspaceRootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
     outputChannel.appendLine(t('Launching 1C:Enterprise client for infobase: {0}', targetInfobasePath));
-    outputChannel.appendLine(t('Resolved 1C command: {0}', formatCommandForOutput(oneCClientExePath, launchArgs)));
+    outputChannel.appendLine(t('Resolved 1C command: {0}', formatProcessCommandForDisplay(oneCClientExePath, launchArgs)));
 
     return await new Promise<number | null>((resolve, reject) => {
         try {

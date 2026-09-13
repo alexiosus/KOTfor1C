@@ -67,6 +67,7 @@ import {
 } from './testReviewAiReport';
 import { buildDirectSpawnCommand } from './directProcessLaunch';
 import { readFileTail } from './fileTailReader';
+import { formatProcessCommandForDisplay } from './processCommandDisplay';
 
 // --- Вспомогательная функция для Nonce ---
 function getNonce(): string {
@@ -8315,7 +8316,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             };
 
             this.outputInfo(outputChannel, this.t('Launching process: {0}', processName));
-            this.outputAdvanced(outputChannel, `Executing 1C process: ${processName} with args: ${args.join(' ')}`);
+            this.outputAdvanced(
+                outputChannel,
+                `Executing 1C process: ${processName}: ${formatProcessCommandForDisplay(exePath, args)}`
+            );
             const command = buildDirectSpawnCommand(exePath, args);
             
             const child = cp.spawn(command.executable, command.args, {
@@ -8438,7 +8442,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     ): Promise<void> {
         const targetOutputChannel = outputChannel || this.getBuildOutputChannel();
         this.outputInfo(targetOutputChannel, this.t('Launching process: {0}', processName));
-        this.outputAdvanced(targetOutputChannel, `Executing detached 1C process: ${processName} with args: ${args.join(' ')}`);
+        this.outputAdvanced(
+            targetOutputChannel,
+            `Executing detached 1C process: ${processName}: ${formatProcessCommandForDisplay(exePath, args)}`
+        );
 
         return new Promise((resolve, reject) => {
             try {
@@ -10472,10 +10479,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return this.validateRunLogForFailedSummary(runLogPath, outputChannel);
     }
 
-    private formatOneCCommandForOutput(exePath: string, args: string[]): string {
-        return [this.quoteForShell(exePath), ...args.map(arg => this.quoteForShell(arg))].join(' ');
-    }
-
     private appendVanessaInfobaseAuthenticationArgs(
         args: string[],
         authentication: VanessaInfobaseAuthentication | null
@@ -10551,7 +10554,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     ): Promise<void> {
         const effectiveArgs = [...args, '/Out', outFilePath];
         this.outputInfo(outputChannel, this.t('Target infobase step: {0}', stepTitle));
-        this.outputAdvanced(outputChannel, this.t('Resolved 1C command: {0}', this.formatOneCCommandForOutput(designerExePath, effectiveArgs)));
+        this.outputAdvanced(
+            outputChannel,
+            this.t('Resolved 1C command: {0}', formatProcessCommandForDisplay(designerExePath, effectiveArgs))
+        );
 
         await new Promise<void>((resolve, reject) => {
             let stdout = '';

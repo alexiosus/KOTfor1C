@@ -11,6 +11,7 @@ import {
 } from './formExplorerPaths';
 import { buildFileInfobaseConnectionArgument } from './oneCInfobaseConnection';
 import { resolveOneCDesignerExePath } from './oneCPlatform';
+import { formatProcessCommandForDisplay } from './processCommandDisplay';
 
 const OUTPUT_CHANNEL_NAME = 'KOT Form Explorer Build';
 const BUILDER_INFOBASE_DIRECTORY_NAME = 'builder-infobase';
@@ -174,12 +175,6 @@ function shouldSkipBuilderWarmup(): boolean {
     return buildCommandTemplate.length > 0;
 }
 
-function formatCommandForOutput(exePath: string, args: string[]): string {
-    return [exePath, ...args]
-        .map(part => `"${part}"`)
-        .join(' ');
-}
-
 function getOutputTail(output: string, maxLength: number = 4000): string {
     if (!output) {
         return '';
@@ -199,7 +194,7 @@ async function run1CCommand(
 ): Promise<void> {
     const effectiveArgs = [...args, '/Out', outFilePath];
     channel.appendLine(t('Form Explorer build step: {0}', stepTitle));
-    channel.appendLine(t('Resolved 1C command: {0}', formatCommandForOutput(exePath, effectiveArgs)));
+    channel.appendLine(t('Resolved 1C command: {0}', formatProcessCommandForDisplay(exePath, effectiveArgs)));
 
     await new Promise<void>((resolve, reject) => {
         let stdout = '';
