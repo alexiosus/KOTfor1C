@@ -8,6 +8,9 @@ import { parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
 import { parseKotScenarioDescription } from './kotMetadataDescription';
 import { getScenarioScanRootPath, resolveScenarioScanRootFsPath } from './scenarioScanRoot';
 import { buildScenarioCatalog, type ScenarioCatalog } from './scenarioCatalog';
+import { mapWithConcurrencyLimit } from './boundedConcurrency';
+
+const SCENARIO_READ_CONCURRENCY = 16;
 
 function buildWorkspaceUriFromFsPath(workspaceRootUri: vscode.Uri, targetFsPath: string): vscode.Uri {
     if (workspaceRootUri.scheme === 'file') {
@@ -394,9 +397,10 @@ async function readScenarioDefinitions(
 
 export async function readScenarioInfo(
     fileUri: vscode.Uri,
-    scanRootUri: vscode.Uri
+    scanRootUri: vscode.Uri,
+    token?: vscode.CancellationToken
 ): Promise<TestInfo | null> {
-    return (await readScenarioDefinitions([fileUri], scanRootUri))[0] || null;
+    return (await readScenarioDefinitions([fileUri], scanRootUri, token))[0] || null;
 }
 
 export async function scanWorkspaceForScenarioCatalog(
@@ -406,7 +410,15 @@ export async function scanWorkspaceForScenarioCatalog(
     const startedAt = Date.now();
     const scanDirUri = vscode.Uri.file(resolveScanDirFsPath(workspaceRootUri));
     const potentialFiles = await findScenarioDescriptorUris(workspaceRootUri, token);
-    const definitions = await readScenarioDefinitions(potentialFiles, scanDirUri, token);
+    const parsedDefinitions = await mapWithConcurrencyLimit(
+        potentialFiles,
+        SCENARIO_READ_CONCURRENCY,
+        fileUri => readScenarioInfo(fileUri, scanDirUri, token)
+    );
+    if (token?.isCancellationRequested) {
+        throw new vscode.CancellationError();
+    }
+    const definitions = parsedDefinitions.filter((item): item is TestInfo => item !== null);
     const catalog = buildScenarioCatalog(definitions);
     const duplicateNames = [...catalog.byName.values()].filter(items => items.length > 1).length;
 
