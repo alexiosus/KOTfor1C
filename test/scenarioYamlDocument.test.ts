@@ -8,6 +8,7 @@ test('ScenarioYamlDocument reads quoted scalars without confusing YAML punctuati
         '  # Имя: "Комментарий не является полем"',
         '  Имя: "Оплата: этап #1" # настоящий комментарий',
         '  Код: DRIVE-1',
+        '  Номер: 000015110',
         'ДругаяСекция:',
         '  Имя: Неверное имя',
         ''
@@ -18,6 +19,7 @@ test('ScenarioYamlDocument reads quoted scalars without confusing YAML punctuati
 
     assert.deepEqual(document.errors, []);
     assert.equal(document.readScalar('ДанныеСценария', 'Имя'), 'Оплата: этап #1');
+    assert.equal(document.readScalar('ДанныеСценария', 'Номер'), '000015110');
     assert.ok(field);
     assert.equal(source.slice(field.valueRange!.start, field.valueRange!.end), '"Оплата: этап #1"');
     assert.equal(source.slice(field.lineStart, field.lineEnd), '  Имя: "Оплата: этап #1" # настоящий комментарий');

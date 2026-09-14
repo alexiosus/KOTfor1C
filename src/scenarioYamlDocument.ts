@@ -133,12 +133,7 @@ export class ScenarioYamlDocument {
     }
 
     findField(sectionName: string, fieldName: string): ScenarioYamlField | null {
-        const sectionPair = this.findTopLevelPair(sectionName);
-        if (!sectionPair || !isMap(sectionPair.value)) {
-            return null;
-        }
-
-        const fieldPair = this.findMapPair(sectionPair.value, fieldName);
+        const fieldPair = this.findFieldPair(sectionName, fieldName);
         if (!fieldPair) {
             return null;
         }
@@ -163,12 +158,19 @@ export class ScenarioYamlDocument {
     }
 
     readScalar(sectionName: string, fieldName: string): string | undefined {
-        const field = this.findField(sectionName, fieldName);
-        if (!field || field.value === null || field.value === undefined) {
+        const fieldPair = this.findFieldPair(sectionName, fieldName);
+        if (!fieldPair || !isScalar(fieldPair.value) || fieldPair.value.value === null) {
             return undefined;
         }
 
-        return typeof field.value === 'string' ? field.value : String(field.value);
+        const valueRange = getPresentNodeRange(fieldPair.value);
+        if (fieldPair.value.type === 'PLAIN' && valueRange) {
+            return this.source.slice(valueRange[0], valueRange[1]).trim();
+        }
+
+        return typeof fieldPair.value.value === 'string'
+            ? fieldPair.value.value
+            : String(fieldPair.value.value);
     }
 
     findSection(sectionName: string): ScenarioYamlSection | null {
@@ -281,6 +283,15 @@ export class ScenarioYamlDocument {
         }
 
         return this.findMapPair(this.parsed.contents, key);
+    }
+
+    private findFieldPair(sectionName: string, fieldName: string): Pair | null {
+        const sectionPair = this.findTopLevelPair(sectionName);
+        if (!sectionPair || !isMap(sectionPair.value)) {
+            return null;
+        }
+
+        return this.findMapPair(sectionPair.value, fieldName);
     }
 
     private findMapPair(map: unknown, key: string): Pair | null {

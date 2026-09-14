@@ -54,13 +54,13 @@
 - Preserve: `findScenarioHeaderFieldLines(document)` and `findTestSettingsFieldLines(document)` result shapes.
 - Preserve: `parseYamlSectionFieldValues(text, sectionName, fieldNames)`.
 
-- [ ] Add regression tests for comments, quoted colons/hashes, CRLF, BOM, and a similarly named key inside another section.
-- [ ] Run the focused tests and confirm the current line/regex implementation fails at least the ambiguous-value or range case.
-- [ ] Replace `findYamlSectionStart`, `findYamlSectionEnd`, `isYamlKeyLine`, and field regex matching with `ScenarioYamlDocument` lookups.
-- [ ] Convert source offsets back to VS Code line numbers only at the compatibility boundary; preserve the existing caller signatures.
-- [ ] Keep scalar rendering in `buildYamlHeaderFieldLine` unchanged unless a new test demonstrates a correctness defect.
-- [ ] Run `npm test -- --test-name-pattern="YAML header"`, `npm run check:types`, and `npm run lint`.
-- [ ] Commit with `refactor: parse YAML header fields through CST ranges`.
+- [x] Add regression tests for comments, quoted colons/hashes, CRLF, BOM, and a similarly named key inside another section.
+- [x] Run the focused tests and confirm the current line/regex implementation fails at least the ambiguous-value or range case.
+- [x] Replace `findYamlSectionStart`, `findYamlSectionEnd`, `isYamlKeyLine`, and field regex matching with `ScenarioYamlDocument` lookups.
+- [x] Convert source offsets back to VS Code line numbers only at the compatibility boundary; preserve the existing caller signatures.
+- [x] Keep scalar rendering in `buildYamlHeaderFieldLine` unchanged unless a new test demonstrates a correctness defect.
+- [x] Run `npm test -- --test-name-pattern="YAML header"`, `npm run check:types`, and `npm run lint`.
+- [x] Commit with `refactor: parse YAML header fields through CST ranges`.
 
 ### Task 3: Migrate nested-scenario structural edits
 
