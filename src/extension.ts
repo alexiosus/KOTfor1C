@@ -64,16 +64,12 @@ import { InfobaseManagerPanel } from './infobaseManagerPanel';
 import { handleGenerateConfigurationDiffImpactReport } from './configurationDiffAiReport';
 import { handleGenerateScenarioDescriptionWithAi } from './scenarioAiDescription';
 import { handleReviewChangedTestsWithAi } from './testReviewAiReport';
-import {
-    type BuildFormExplorerExtensionCommandOptions,
-    handleBuildFormExplorerExtensionCfe,
-    handleGenerateFormExplorerExtension,
-    type InstallFormExplorerExtensionCommandOptions,
-    handleInstallFormExplorerExtension
+import type {
+    BuildFormExplorerExtensionCommandOptions,
+    InstallFormExplorerExtensionCommandOptions
 } from './formExplorerExtensionGenerator';
-import {
-    type StartFormExplorerBridgeCommandOptions,
-    handleStartFormExplorerBridge
+import type {
+    StartFormExplorerBridgeCommandOptions
 } from './formExplorerBridgeGenerator';
 import {
     initializeFormExplorerRuntimeSidecars
@@ -92,6 +88,7 @@ import {
     normalizeScenarioCallParameterValue,
     parseScenarioParameterDefinitions
 } from './scenarioParameterUtils';
+import { createDeferredLoader } from './deferredLoader';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -127,6 +124,12 @@ const pendingBackgroundScenarioFiles = new Set<string>();
 const kotDescriptionBlockLineRegex = /^Описание:\s*[|>][-+0-9]*\s*$/;
 const FAVORITE_SCENARIO_DROP_MIME = 'application/x-kot-favorite-scenario-uri';
 const execFileAsync = promisify(execFile);
+const loadFormExplorerExtensionGenerator = createDeferredLoader(
+    () => import('./formExplorerExtensionGenerator.js')
+);
+const loadFormExplorerBridgeGenerator = createDeferredLoader(
+    () => import('./formExplorerBridgeGenerator.js')
+);
 const GHERKIN_STEP_LINE_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\b/i;
 const FEATURE_SCENARIO_HEADER_REGEX = /^(?:Scenario|Сценарий|Scenario Outline|Структура сценария|Background|Предыстория)\s*:/i;
 const FEATURE_SCENARIO_BLOCK_BREAK_REGEX = /^(?:Feature|Функционал|Rule|Правило|Examples|Примеры)\s*:?/i;
@@ -1228,6 +1231,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.generateFormExplorerExtension',
         async () => {
+            const { handleGenerateFormExplorerExtension } = await loadFormExplorerExtensionGenerator();
             await handleGenerateFormExplorerExtension(context);
         }
     ));
@@ -1235,6 +1239,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.buildFormExplorerExtensionCfe',
         async (options?: BuildFormExplorerExtensionCommandOptions) => {
+            const { handleBuildFormExplorerExtensionCfe } = await loadFormExplorerExtensionGenerator();
             await handleBuildFormExplorerExtensionCfe(context, options);
         }
     ));
@@ -1242,6 +1247,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.installFormExplorerExtension',
         async (options?: InstallFormExplorerExtensionCommandOptions) => {
+            const { handleInstallFormExplorerExtension } = await loadFormExplorerExtensionGenerator();
             await handleInstallFormExplorerExtension(context, options);
         }
     ));
@@ -1249,6 +1255,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.startFormExplorerInfobase',
         async (options?: string | StartFormExplorerBridgeCommandOptions) => {
+            const { handleStartFormExplorerBridge } = await loadFormExplorerBridgeGenerator();
             return await handleStartFormExplorerBridge(context, options);
         }
     ));
@@ -1256,6 +1263,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.startFormExplorerBridge',
         async (options?: string | StartFormExplorerBridgeCommandOptions) => {
+            const { handleStartFormExplorerBridge } = await loadFormExplorerBridgeGenerator();
             return await handleStartFormExplorerBridge(context, options);
         }
     ));
