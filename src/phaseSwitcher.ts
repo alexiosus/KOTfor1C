@@ -25,7 +25,6 @@ import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherki
 import { isScenarioYamlFile } from './yamlValidator';
 import { findFileByName } from './navigationUtils';
 import { getFeatureNestedScenarioContextAtLine } from './featureNestedScenarioUtils';
-import { registerInfobaseInLauncher, resolveLauncherInfobaseNameByPath } from './infobasePicker';
 import {
     buildFileInfobaseConnectionArgument,
     buildInfobaseConnectionArgument,
@@ -45,13 +44,10 @@ import {
     resolveEtalonBaseDtFilePath,
     resolveModelDbSettingsFilePathFromParameters
 } from './etalonBases';
-import {
-    ensureSharedStartupInfobaseReady,
-    getSharedStartupInfobaseOutputChannel,
-    type EnsureSharedStartupInfobaseResult,
-    type SharedStartupInfobaseAuthentication
+import type {
+    EnsureSharedStartupInfobaseResult,
+    SharedStartupInfobaseAuthentication
 } from './startupInfobase';
-import { resolveOneCDesignerExePath, resolveOneCPlatformForLaunch } from './oneCPlatform';
 import { getScenarioScanRootPath } from './scenarioScanRoot';
 import { parseYamlSectionFieldValues } from './yamlHeaderFields';
 import {
@@ -71,6 +67,15 @@ import { createDeferredLoader } from './deferredLoader';
 
 const loadInfobaseManager = createDeferredLoader(
     () => import('./infobaseManager.js')
+);
+const loadInfobasePicker = createDeferredLoader(
+    () => import('./infobasePicker.js')
+);
+const loadStartupInfobase = createDeferredLoader(
+    () => import('./startupInfobase.js')
+);
+const loadOneCPlatform = createDeferredLoader(
+    () => import('./oneCPlatform.js')
 );
 
 // --- Вспомогательная функция для Nonce ---
@@ -6616,6 +6621,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const workspaceRootPath = workspaceFolder.uri.fsPath;
+        const { resolveOneCPlatformForLaunch } = await loadOneCPlatform();
         const selectedPlatform = await resolveOneCPlatformForLaunch(this.t.bind(this), {
             placeHolder: this.t('Select 1C platform for Vanessa launch')
         });
@@ -7347,8 +7353,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         progressTitle: string,
         showProgressNotification: boolean = true
     ): Promise<EnsureSharedStartupInfobaseResult | null> {
+        const startupInfobase = await loadStartupInfobase();
         try {
-            return await ensureSharedStartupInfobaseReady(this._context, oneCClientPath, {
+            return await startupInfobase.ensureSharedStartupInfobaseReady(this._context, oneCClientPath, {
                 showOutputPanel: false,
                 showProgressNotification,
                 progressTitle
@@ -7361,7 +7368,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 openOutput
             ).then(selection => {
                 if (selection === openOutput) {
-                    getSharedStartupInfobaseOutputChannel().show(true);
+                    startupInfobase.getSharedStartupInfobaseOutputChannel().show(true);
                 }
             });
             return null;
@@ -7883,6 +7890,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const workspaceRootUri = workspaceFolders[0].uri;
                 const workspaceRootPath = workspaceRootUri.fsPath;
 
+                const { resolveOneCPlatformForLaunch } = await loadOneCPlatform();
                 const selectedPlatform = await resolveOneCPlatformForLaunch(this.t.bind(this), {
                     promptUser: false
                 });
@@ -11131,6 +11139,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
             recreateExistingInfobase = recreateSelection;
             if (recreateExistingInfobase) {
+                const { resolveLauncherInfobaseNameByPath } = await loadInfobasePicker();
                 const existingLauncherName = await resolveLauncherInfobaseNameByPath(targetInfobasePath);
                 if (existingLauncherName) {
                     launcherRegistrationName = existingLauncherName;
@@ -11396,6 +11405,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         outputChannel: vscode.OutputChannel
     ): Promise<void> {
         try {
+            const { registerInfobaseInLauncher } = await loadInfobasePicker();
             const registrationResult = await registerInfobaseInLauncher(infobasePath, launcherRegistrationName);
             if (registrationResult.status === 'added') {
                 this.outputInfo(
@@ -11575,6 +11585,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const workspaceRootPath = workspaceFolder.uri.fsPath;
+        const { resolveOneCDesignerExePath, resolveOneCPlatformForLaunch } = await loadOneCPlatform();
         const selectedPlatform = await resolveOneCPlatformForLaunch(this.t.bind(this), {
             placeHolder: this.t('Select 1C platform for Vanessa launch')
         });

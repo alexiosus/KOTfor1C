@@ -59,13 +59,6 @@ import type {
     StartFormExplorerBridgeCommandOptions
 } from './formExplorerBridgeGenerator';
 import {
-    initializeFormExplorerRuntimeSidecars
-} from './formExplorerBuilder';
-import {
-    ensureOneCPlatformsCatalogInitialized,
-    handleManagePlatforms
-} from './oneCPlatform';
-import {
     extractTopLevelKotMetadataBlock,
     migrateLegacyPhaseSwitcherMetadata,
     parsePhaseSwitcherMetadata,
@@ -119,6 +112,12 @@ const loadFormExplorerBridgeGenerator = createDeferredLoader(
 );
 const loadScenarioCreator = createDeferredLoader(
     () => import('./scenarioCreator.js')
+);
+const loadFormExplorerBuilder = createDeferredLoader(
+    () => import('./formExplorerBuilder.js')
+);
+const loadOneCPlatform = createDeferredLoader(
+    () => import('./oneCPlatform.js')
 );
 const GHERKIN_STEP_LINE_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\b/i;
 const FEATURE_SCENARIO_HEADER_REGEX = /^(?:Scenario|Сценарий|Scenario Outline|Структура сценария|Background|Предыстория)\s*:/i;
@@ -1002,7 +1001,10 @@ export function activate(context: vscode.ExtensionContext) {
         }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.managePlatforms', () => handleManagePlatforms(context)
+        'kotTestToolkit.managePlatforms', async () => {
+            const { handleManagePlatforms } = await loadOneCPlatform();
+            await handleManagePlatforms(context);
+        }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.changeScenarioSystemFunctionFromEditor',
@@ -1203,8 +1205,10 @@ export function activate(context: vscode.ExtensionContext) {
             || event.affectsConfiguration('kotTestToolkit.formExplorer.snapshotPath')
         ) {
             try {
+                const { initializeFormExplorerRuntimeSidecars } = await loadFormExplorerBuilder();
                 await initializeFormExplorerRuntimeSidecars();
                 if (event.affectsConfiguration('kotTestToolkit.platforms.catalog')) {
+                    const { ensureOneCPlatformsCatalogInitialized } = await loadOneCPlatform();
                     await ensureOneCPlatformsCatalogInitialized();
                 }
 

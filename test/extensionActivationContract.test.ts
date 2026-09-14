@@ -49,3 +49,22 @@ test('phase switcher defers infobase management helpers', () => {
         /createDeferredLoader\(\s*\(\) => import\('\.\/infobaseManager\.js'\)\s*\)/
     );
 });
+
+test('activation defers Form Explorer and 1C platform infrastructure', () => {
+    assert.doesNotMatch(source, /from '\.\/formExplorerBuilder';/);
+    assert.doesNotMatch(source, /from '\.\/oneCPlatform';/);
+    assert.match(source, /import\('\.\/formExplorerBuilder\.js'\)/);
+    assert.match(source, /import\('\.\/oneCPlatform\.js'\)/);
+});
+
+test('phase switcher defers optional 1C runtime infrastructure', () => {
+    assert.doesNotMatch(phaseSwitcherSource, /from '\.\/infobasePicker';/);
+    assert.doesNotMatch(
+        phaseSwitcherSource,
+        /import\s*\{\s*ensureSharedStartupInfobaseReady[\s\S]*?from '\.\/startupInfobase';/
+    );
+    assert.doesNotMatch(phaseSwitcherSource, /from '\.\/oneCPlatform';/);
+    assert.match(phaseSwitcherSource, /import\('\.\/infobasePicker\.js'\)/);
+    assert.match(phaseSwitcherSource, /import\('\.\/startupInfobase\.js'\)/);
+    assert.match(phaseSwitcherSource, /import\('\.\/oneCPlatform\.js'\)/);
+});
