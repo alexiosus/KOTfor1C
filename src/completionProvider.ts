@@ -6,7 +6,6 @@ import type { ScenarioCatalog } from './scenarioCatalog';
 import { getTranslator } from './localization';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { ScenarioLanguage, getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
-import { YamlParametersManager } from './yamlParametersManager';
 import { getBlockClosingKeyword, parseBlockKeyword } from './blockKeywordParser';
 import { normalizeMultilineStepInsertText } from './gherkinTableUtils';
 import { loadLiveFormExplorerSnapshot } from './formExplorerLiveSnapshot';
@@ -2263,6 +2262,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
     private async collectGlobalVariableDefinitions(): Promise<SavedVariableDefinition[]> {
         try {
+            const { YamlParametersManager } = await import('./yamlParametersManager.js');
             const manager = YamlParametersManager.getInstance(this.context);
             const globalVariables = await manager.loadGlobalVanessaVariables();
             return globalVariables

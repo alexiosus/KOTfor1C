@@ -16,7 +16,6 @@ import {
     extractScenarioParameterNameFromText,
     parseScenarioParameterDefinitions
 } from './scenarioParameterUtils';
-import { YamlParametersManager } from './yamlParametersManager';
 
 // Интерфейс для хранения определений шагов и их описаний
 interface StepDefinition {
@@ -763,6 +762,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
 
     private async collectGlobalVariableDefinitions(): Promise<SavedVariableDefinition[]> {
         try {
+            const { YamlParametersManager } = await import('./yamlParametersManager.js');
             const manager = YamlParametersManager.getInstance(this.context);
             const globalVariables = await manager.loadGlobalVanessaVariables();
             return globalVariables

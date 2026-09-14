@@ -4,6 +4,14 @@ import path from 'node:path';
 import test from 'node:test';
 
 const source = fs.readFileSync(path.join(process.cwd(), 'src', 'extension.ts'), 'utf8');
+const completionProviderSource = fs.readFileSync(
+    path.join(process.cwd(), 'src', 'completionProvider.ts'),
+    'utf8'
+);
+const hoverProviderSource = fs.readFileSync(
+    path.join(process.cwd(), 'src', 'hoverProvider.ts'),
+    'utf8'
+);
 
 test('activation does not eagerly provision 1C helper infobases', () => {
     assert.doesNotMatch(source, /warmUpSharedStartupInfobase/);
@@ -21,4 +29,11 @@ test('activation defers optional panel modules until their commands are used', (
 test('activation defers scenario creation and settings commands', () => {
     assert.doesNotMatch(source, /from '\.\/scenarioCreator';/);
     assert.match(source, /createDeferredLoader\(\s*\(\) => import\('\.\/scenarioCreator\.js'\)\s*\)/);
+});
+
+test('completion and hover defer the YAML parameters manager', () => {
+    for (const providerSource of [completionProviderSource, hoverProviderSource]) {
+        assert.doesNotMatch(providerSource, /from '\.\/yamlParametersManager';/);
+        assert.match(providerSource, /import\('\.\/yamlParametersManager\.js'\)/);
+    }
 });
