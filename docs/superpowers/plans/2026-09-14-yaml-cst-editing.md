@@ -73,13 +73,13 @@
 - Add pure helpers `getSectionInsertion(source, sectionName, itemText): SourceEdit` and `getSectionBodyReplacement(source, sectionName, bodyText): SourceEdit`, where `SourceEdit` contains `{ range: SourceRange; text: string }`.
 - Keep `parseCalledScenariosFromScriptBody` regex behavior unchanged.
 
-- [ ] Write failing tests for insertion into populated and empty `ВложенныеСценарии`, replacement with a following top-level section, comments adjacent to the section, CRLF, and exact preservation of prefix/suffix source.
-- [ ] Implement insertion and body replacement from `ScenarioYamlSection.bodyRange`, preserving the document newline and observed indentation.
-- [ ] Replace structural regex range discovery in `insertNestedScenarioRefHandler` and `clearAndFillNestedScenarios` with the pure edit helpers.
-- [ ] Keep snippet construction and Gherkin call discovery in their current owners.
-- [ ] Remove only the structural fallback helpers that have no remaining callers.
-- [ ] Run the focused tests, `npm run check:types`, and `npm run lint`.
-- [ ] Commit with `refactor: edit nested scenarios through YAML ranges`.
+- [x] Write failing tests for insertion into populated and empty `ВложенныеСценарии`, replacement with a following top-level section, comments adjacent to the section, CRLF, and exact preservation of prefix/suffix source.
+- [x] Implement insertion and body replacement from `ScenarioYamlSection.bodyRange`, preserving the document newline and observed indentation.
+- [x] Replace structural regex range discovery in `insertNestedScenarioRefHandler` and `clearAndFillNestedScenarios` with the pure edit helpers.
+- [x] Keep snippet construction and Gherkin call discovery in their current owners.
+- [x] Remove only the structural fallback helpers that have no remaining callers.
+- [x] Run the focused tests, `npm run check:types`, and `npm run lint`.
+- [x] Commit with `refactor: edit nested scenarios through YAML ranges`.
 
 ### Task 4: Migrate scenario-parameter structural edits
 

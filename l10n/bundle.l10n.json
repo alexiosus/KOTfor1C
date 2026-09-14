@@ -1180,6 +1180,7 @@
   "Update target infobase configuration from source directory": "Update target infobase configuration from source directory",
   "Update target infobase configuration from CF": "Update target infobase configuration from CF",
   "Could not parse Vanessa launch JSON for \"{0}\".": "Could not parse Vanessa launch JSON for \"{0}\".",
+  "Could not edit scenario YAML because its structure is invalid: {0}": "Could not edit scenario YAML because its structure is invalid: {0}",
   "Could not apply selected infobase because Vanessa launch JSON could not be parsed.": "Could not apply selected infobase because Vanessa launch JSON could not be parsed.",
   "Could not detect target infobase field in JSON. Built-in Vanessa launch cannot apply the selected infobase.": "Could not detect target infobase field in JSON. Built-in Vanessa launch cannot apply the selected infobase.",
   "Target infobase path does not exist: {0}": "Target infobase path does not exist: {0}",

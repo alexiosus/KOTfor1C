@@ -1179,6 +1179,7 @@
   "Update target infobase configuration from source directory": "Обновление конфигурации целевой ИБ из папки исходников",
   "Update target infobase configuration from CF": "Обновление конфигурации целевой ИБ из CF",
   "Could not parse Vanessa launch JSON for \"{0}\".": "Не удалось разобрать JSON запуска Vanessa для \"{0}\".",
+  "Could not edit scenario YAML because its structure is invalid: {0}": "Не удалось изменить YAML сценария: структура файла некорректна. {0}",
   "Could not apply selected infobase because Vanessa launch JSON could not be parsed.": "Не удалось применить выбранную ИБ, потому что JSON запуска Vanessa не удалось разобрать.",
   "Could not detect target infobase field in JSON. Built-in Vanessa launch cannot apply the selected infobase.": "Не удалось определить поле целевой ИБ в JSON. Встроенный запуск Vanessa не может применить выбранную ИБ.",
   "Target infobase path does not exist: {0}": "Путь к целевой ИБ не существует: {0}",

@@ -13,6 +13,11 @@ export interface SourceRange {
     end: number;
 }
 
+export interface SourceEdit {
+    range: SourceRange;
+    text: string;
+}
+
 export interface ScenarioYamlField {
     key: string;
     value: unknown;
@@ -207,7 +212,7 @@ export class ScenarioYamlDocument {
         const keyIndent = this.source.slice(keyLineStart, keyRange[0]);
         const itemIndent = rawValueRange && !valueStartsOnKeyLine
             ? this.source.slice(findLineStart(this.source, rawValueRange[0]), rawValueRange[0])
-            : `${keyIndent}  `;
+            : `${keyIndent}    `;
 
         return {
             name: sectionName,
@@ -307,4 +312,100 @@ export class ScenarioYamlDocument {
 
         return null;
     }
+}
+
+function getSourceNewline(source: string): '\n' | '\r\n' {
+    return source.includes('\r\n') ? '\r\n' : '\n';
+}
+
+function renderSectionItems(itemText: string, indent: string, newline: string): string {
+    return itemText
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .split('\n')
+        .map(line => line.length > 0 ? `${indent}${line}` : line)
+        .join(newline);
+}
+
+function getInlineValueRange(source: string, section: ScenarioYamlSection): SourceRange | null {
+    if (!section.valueRange) {
+        return null;
+    }
+    if (findLineStart(source, section.valueRange.start) !== findLineStart(source, section.pairRange.start)) {
+        return null;
+    }
+
+    let start = section.valueRange.start;
+    while (start > section.pairRange.start && (source[start - 1] === ' ' || source[start - 1] === '\t')) {
+        start -= 1;
+    }
+    return { start, end: section.valueRange.end };
+}
+
+export function getSectionInsertion(
+    source: string,
+    sectionName: string,
+    itemText: string
+): SourceEdit | null {
+    const document = ScenarioYamlDocument.parse(source);
+    document.requireValidForEdit();
+    const section = document.findSection(sectionName);
+    if (!section) {
+        return null;
+    }
+
+    const newline = getSourceNewline(source);
+    const renderedItem = renderSectionItems(itemText, section.itemIndent, newline);
+    const inlineValueRange = getInlineValueRange(source, section);
+    if (inlineValueRange) {
+        return {
+            range: inlineValueRange,
+            text: `${newline}${renderedItem}`
+        };
+    }
+
+    const insertOffset = section.bodyRange.start === section.bodyRange.end
+        ? section.bodyRange.start
+        : section.bodyRange.end;
+    const needsLeadingNewline = insertOffset > 0 && !source.slice(0, insertOffset).endsWith(newline);
+    const needsTrailingNewline = insertOffset < source.length || source.endsWith(newline);
+    return {
+        range: { start: insertOffset, end: insertOffset },
+        text: `${needsLeadingNewline ? newline : ''}${renderedItem}${needsTrailingNewline ? newline : ''}`
+    };
+}
+
+export function getSectionBodyReplacement(
+    source: string,
+    sectionName: string,
+    bodyText: string
+): SourceEdit | null {
+    const document = ScenarioYamlDocument.parse(source);
+    document.requireValidForEdit();
+    const section = document.findSection(sectionName);
+    if (!section) {
+        return null;
+    }
+
+    const inlineValueRange = getInlineValueRange(source, section);
+    const range = inlineValueRange ?? section.bodyRange;
+    if (bodyText.length === 0) {
+        return { range, text: '' };
+    }
+
+    const newline = getSourceNewline(source);
+    const renderedBody = renderSectionItems(bodyText, section.itemIndent, newline);
+    if (inlineValueRange) {
+        return {
+            range,
+            text: `${newline}${renderedBody}`
+        };
+    }
+
+    const replacedText = source.slice(range.start, range.end);
+    const needsTrailingNewline = range.end < source.length || replacedText.endsWith(newline);
+    return {
+        range,
+        text: `${renderedBody}${needsTrailingNewline ? newline : ''}`
+    };
 }

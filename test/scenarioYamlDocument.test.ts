@@ -90,7 +90,7 @@ test('ScenarioYamlDocument exposes a zero-width body for an empty section', () =
         start: source.indexOf('СледующаяСекция:'),
         end: source.indexOf('СледующаяСекция:')
     });
-    assert.equal(section.itemIndent, '  ');
+    assert.equal(section.itemIndent, '    ');
 });
 
 test('ScenarioYamlDocument refuses unsafe edits for malformed YAML', () => {
