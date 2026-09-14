@@ -38,17 +38,6 @@ import {
 import { getTranslator } from './localization';
 import { setExtensionUri } from './appContext';
 import { getScenarioScanRootPath, initializeScenarioScanRoot, onDidChangeScenarioScanRoot } from './scenarioScanRoot';
-import {
-    handleCreateNestedScenario,
-    handleCreateMainScenario,
-    handleManageSystemFunctions,
-    handleChangeScenarioSystemFunctionFromEditor,
-    handleChangeTestSettingsScenarioFromEditor,
-    handleChangeTestSettingsEtalonBaseFromEditor,
-    handleChangeTestSettingsUserProfileFromEditor,
-    handleManageEtalonBases,
-    handleSyncTestSettingsFromScenario
-} from './scenarioCreator';
 import { TestInfo } from './types'; // Импортируем TestInfo
 import { SettingsProvider } from './settingsProvider';
 import { ScenarioDiagnosticsProvider } from './scenarioDiagnostics';
@@ -127,6 +116,9 @@ const loadFormExplorerExtensionGenerator = createDeferredLoader(
 );
 const loadFormExplorerBridgeGenerator = createDeferredLoader(
     () => import('./formExplorerBridgeGenerator.js')
+);
+const loadScenarioCreator = createDeferredLoader(
+    () => import('./scenarioCreator.js')
 );
 const GHERKIN_STEP_LINE_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\b/i;
 const FEATURE_SCENARIO_HEADER_REGEX = /^(?:Scenario|Сценарий|Scenario Outline|Структура сценария|Background|Предыстория)\s*:/i;
@@ -978,10 +970,16 @@ export function activate(context: vscode.ExtensionContext) {
         }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.createNestedScenario', () => handleCreateNestedScenario(context)
+        'kotTestToolkit.createNestedScenario', async () => {
+            const { handleCreateNestedScenario } = await loadScenarioCreator();
+            await handleCreateNestedScenario(context);
+        }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.createMainScenario', () => handleCreateMainScenario(context)
+        'kotTestToolkit.createMainScenario', async () => {
+            const { handleCreateMainScenario } = await loadScenarioCreator();
+            await handleCreateMainScenario(context);
+        }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.refreshPhaseSwitcher',
@@ -992,10 +990,16 @@ export function activate(context: vscode.ExtensionContext) {
         }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.manageSystemFunctions', () => handleManageSystemFunctions(context)
+        'kotTestToolkit.manageSystemFunctions', async () => {
+            const { handleManageSystemFunctions } = await loadScenarioCreator();
+            await handleManageSystemFunctions(context);
+        }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.manageEtalonBases', () => handleManageEtalonBases(context)
+        'kotTestToolkit.manageEtalonBases', async () => {
+            const { handleManageEtalonBases } = await loadScenarioCreator();
+            await handleManageEtalonBases(context);
+        }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.managePlatforms', () => handleManagePlatforms(context)
@@ -1003,6 +1007,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.changeScenarioSystemFunctionFromEditor',
         async () => {
+            const { handleChangeScenarioSystemFunctionFromEditor } = await loadScenarioCreator();
             await handleChangeScenarioSystemFunctionFromEditor(context);
             await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
@@ -1010,6 +1015,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.changeTestSettingsScenarioFromEditor',
         async () => {
+            const { handleChangeTestSettingsScenarioFromEditor } = await loadScenarioCreator();
             await handleChangeTestSettingsScenarioFromEditor(context);
             await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
@@ -1017,6 +1023,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.changeTestSettingsEtalonBaseFromEditor',
         async () => {
+            const { handleChangeTestSettingsEtalonBaseFromEditor } = await loadScenarioCreator();
             await handleChangeTestSettingsEtalonBaseFromEditor(context);
             await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
@@ -1024,6 +1031,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.changeTestSettingsUserProfileFromEditor',
         async () => {
+            const { handleChangeTestSettingsUserProfileFromEditor } = await loadScenarioCreator();
             await handleChangeTestSettingsUserProfileFromEditor(context);
             await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
@@ -1031,6 +1039,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.syncTestSettingsFromScenario',
         async () => {
+            const { handleSyncTestSettingsFromScenario } = await loadScenarioCreator();
             await handleSyncTestSettingsFromScenario(context);
             await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }

@@ -17,3 +17,8 @@ test('activation defers optional panel modules until their commands are used', (
     assert.match(source, /import\('\.\/formExplorerPanel\.js'\)/);
     assert.match(source, /import\('\.\/infobaseManagerPanel\.js'\)/);
 });
+
+test('activation defers scenario creation and settings commands', () => {
+    assert.doesNotMatch(source, /from '\.\/scenarioCreator';/);
+    assert.match(source, /createDeferredLoader\(\s*\(\) => import\('\.\/scenarioCreator\.js'\)\s*\)/);
+});
