@@ -64,6 +64,15 @@ import { buildDirectSpawnCommand } from './directProcessLaunch';
 import { readFileTail, readFileTailSync } from './fileTailReader';
 import { formatProcessCommandForDisplay } from './processCommandDisplay';
 import { createDeferredLoader } from './deferredLoader';
+import {
+    areScenarioNamesEqual,
+    extractFailedStepDetails,
+    extractFailedSummaryFromLogLine,
+    extractFeatureLineNumberFromRunLogLine,
+    extractFeaturePathFromRunLogLine,
+    extractLastStepLocation,
+    extractScenarioNameFromRunLogLine
+} from './vanessaRunLog';
 
 const loadInfobaseManager = createDeferredLoader(
     () => import('./infobaseManager.js')
@@ -3028,234 +3037,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private extractFeaturePathFromRunLogLine(line: string): string | undefined {
-        const match = line.match(/^\s*(?:Фича|Feature|ПолныйПутьКФиче|FullPathToFeature)\s*:\s*(.+?)\s*$/i);
-        if (!match || !match[1]) {
-            return undefined;
-        }
-
-        const featurePath = this.stripWrappingQuotes(match[1]);
-        return featurePath.length > 0 ? featurePath : undefined;
-    }
-
-    private extractFeatureLineNumberFromRunLogLine(line: string): number | undefined {
-        const match = line.match(/\((\d+)\)\s*\.?\s*(?:Шаг|Step)\s*:/i)
-            || line.match(/^\s*(?:НомерСтрокиФичи|FeatureLineNumber)\s*:\s*(\d+)\s*$/i)
-            // Some external logs emit step line index without "Step:" marker.
-            || line.match(/\((\d+)\)\s*(?:Given|When|Then|And|But|Но|Тогда|Когда|Если|И|К\s+тому\s+же|Допустим|Дано|Пусть)\b/i)
-            || line.match(/^\s*(\d+)\s*[\)\.]\s*(?:Шаг|Step)\s*:/i)
-            || line.match(/^\s*(\d+)\s*[\)\.]\s*(?:Given|When|Then|And|But|Но|Тогда|Когда|Если|И|К\s+тому\s+же|Допустим|Дано|Пусть)\b/i);
-        if (!match || !match[1]) {
-            return undefined;
-        }
-
-        const lineNumber = Number(match[1]);
-        if (!Number.isFinite(lineNumber) || lineNumber <= 0) {
-            return undefined;
-        }
-
-        return Math.floor(lineNumber);
-    }
-
-    private extractScenarioNameFromRunLogLine(line: string): string | undefined {
-        const match = line.match(/^\s*(?:Сценарий|Scenario|ИмяСценария|ScenarioName)\s*:\s*(.+?)\s*$/i);
-        if (!match || !match[1]) {
-            return undefined;
-        }
-
-        const scenarioName = this.stripWrappingQuotes(match[1]);
-        return scenarioName.length > 0 ? scenarioName : undefined;
-    }
-
-    private areScenarioNamesEqual(left: string | undefined, right: string | undefined): boolean {
-        if (!left || !right) {
-            return false;
-        }
-        return this.stripWrappingQuotes(left).trim().toLowerCase() === this.stripWrappingQuotes(right).trim().toLowerCase();
-    }
-
-    private isRunLogLineForScenario(
-        normalizedScenarioName: string | undefined,
-        currentScenarioNameFromLog: string | undefined,
-        hasScenarioMarkers: boolean
-    ): boolean {
-        if (!normalizedScenarioName) {
-            return true;
-        }
-        if (currentScenarioNameFromLog) {
-            return this.areScenarioNamesEqual(currentScenarioNameFromLog, normalizedScenarioName);
-        }
-        return !hasScenarioMarkers;
-    }
-
-    private isFailedStepLogLine(line: string): boolean {
-        const trimmed = line.trim();
-        if (!trimmed) {
-            return false;
-        }
-        if (/^Failed:\s*/i.test(trimmed)) {
-            return true;
-        }
-        return /^(?:Шаг|Step)\s*\(.+?\)\s*(?:не\s+выполнен|failed|is\s+not\s+executed|was\s+not\s+executed)/i.test(trimmed);
-    }
-
-    private extractFailedSummaryFromLogLine(
-        line: string
-    ): { failedCount?: number; summaryLine: string } | null {
-        const trimmed = line.trim();
-        if (!/^Failed:\s*/i.test(trimmed)) {
-            return null;
-        }
-
-        const valuePart = trimmed.replace(/^Failed:\s*/i, '').trim();
-        const countMatch = valuePart.match(/-?\d+/);
-        if (!countMatch) {
-            return { summaryLine: trimmed };
-        }
-
-        const count = Number(countMatch[0]);
-        if (!Number.isFinite(count)) {
-            return { summaryLine: trimmed };
-        }
-
-        return {
-            failedCount: Math.floor(count),
-            summaryLine: trimmed
-        };
-    }
-
-    private collectFailedStepLogBlock(lines: string[], startIndex: number): string[] {
-        const block: string[] = [];
-        const maxLines = 400;
-
-        for (let index = startIndex; index < lines.length && block.length < maxLines; index++) {
-            const rawLine = lines[index];
-            const line = rawLine.replace(/\t/g, '    ').trimEnd();
-            const trimmed = line.trim();
-
-            if (index > startIndex) {
-                const isNewStepEntry = /^\s*\d{1,2}\/\d{1,2}\/\d{4}.*\(\d+\)\s*\.?\s*(?:Шаг|Step)\s*:/i.test(trimmed);
-                const isFeatureHeader = /^\s*(?:Фича|Feature)\s*:/i.test(trimmed);
-                const isScenarioHeader = /^\s*(?:Сценарий|Scenario)\s*:/i.test(trimmed);
-                if (isNewStepEntry || isFeatureHeader || isScenarioHeader) {
-                    break;
-                }
-            }
-
-            block.push(line);
-            if (/^\s*ErrorFileJson\s*:/i.test(trimmed)) {
-                break;
-            }
-        }
-
-        while (block.length > 0 && block[block.length - 1].trim().length === 0) {
-            block.pop();
-        }
-        return block;
-    }
-
-    private formatFailedStepSummaryFromLogBlock(block: string[]): string | undefined {
-        if (!block.length) {
-            return undefined;
-        }
-        const failedLine = block.find(line => /^Failed:\s*/i.test(line.trim()))?.trim();
-        if (failedLine) {
-            return failedLine;
-        }
-
-        const failedStepLine = block.find(line => /^(?:Шаг|Step)\s*\(.+?\)\s*(?:не\s+выполнен|failed|is\s+not\s+executed|was\s+not\s+executed)/i.test(line.trim()))?.trim();
-        if (failedStepLine) {
-            return failedStepLine;
-        }
-
-        const firstNonEmptyLine = block.find(line => line.trim().length > 0)?.trim();
-        return firstNonEmptyLine;
-    }
-
-    private formatFailedStepDetailsFromLogBlock(block: string[]): string | undefined {
-        if (!block.length) {
-            return undefined;
-        }
-
-        const stepLogLineRegex = /^\s*\d{1,2}\/\d{1,2}\/\d{4}.*\(\d+\)\s*\.?\s*(?:Шаг|Step)\s*:/i;
-        const failedStepLineRegex = /^(?:Шаг|Step)\s*\(.+?\)\s*(?:не\s+выполнен|failed|is\s+not\s+executed|was\s+not\s+executed)/i;
-        const failedLineRegex = /^Failed:\s*/i;
-
-        const filtered: string[] = [];
-        let previousNonEmptyTrimmed: string | undefined;
-
-        for (const line of block) {
-            const trimmed = line.trim();
-            if (stepLogLineRegex.test(trimmed)) {
-                continue;
-            }
-            if (failedStepLineRegex.test(trimmed)) {
-                continue;
-            }
-            if (failedLineRegex.test(trimmed)) {
-                continue;
-            }
-
-            if (!trimmed) {
-                if (filtered.length > 0 && filtered[filtered.length - 1].trim().length > 0) {
-                    filtered.push('');
-                }
-                continue;
-            }
-
-            if (trimmed === previousNonEmptyTrimmed) {
-                continue;
-            }
-
-            filtered.push(line);
-            previousNonEmptyTrimmed = trimmed;
-        }
-
-        while (filtered.length > 0 && filtered[0].trim().length === 0) {
-            filtered.shift();
-        }
-        while (filtered.length > 0 && filtered[filtered.length - 1].trim().length === 0) {
-            filtered.pop();
-        }
-
-        const details = filtered.join('\n').trim();
-        return details.length > 0 ? details : undefined;
-    }
-
-    private formatFailedStepDescriptionFromLogBlock(block: string[]): string | undefined {
-        if (!block.length) {
-            return undefined;
-        }
-
-        const failedStepLineRegex = /^(?:Шаг|Step)\s*\((.+?)\)\s*(?:не\s+выполнен|failed|is\s+not\s+executed|was\s+not\s+executed)/i;
-        const stepLogLineRegex = /^\s*\d{1,2}\/\d{1,2}\/\d{4}.*\(\d+\)\s*\.?\s*(?:Шаг|Step)\s*:\s*(.+)$/i;
-
-        for (const line of block) {
-            const trimmed = line.trim();
-            const failedStepMatch = trimmed.match(failedStepLineRegex);
-            if (failedStepMatch?.[1]) {
-                const description = failedStepMatch[1].trim();
-                if (description.length > 0) {
-                    return description;
-                }
-            }
-        }
-
-        for (const line of block) {
-            const trimmed = line.trim();
-            const stepLogMatch = trimmed.match(stepLogLineRegex);
-            if (stepLogMatch?.[1]) {
-                const description = stepLogMatch[1].trim();
-                if (description.length > 0) {
-                    return description;
-                }
-            }
-        }
-
-        return undefined;
-    }
-
-    private extractFailedStepDetailsFromRunLog(
+    private readFailedStepDetailsFromRunLog(
         runLogPath: string,
         scenarioName?: string,
         startOffset?: number
@@ -3275,38 +3057,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return null;
         }
 
-        const lines = content.split(/\r\n|\r|\n/);
-        const normalizedScenarioName = scenarioName?.trim();
-        let currentScenarioNameFromLog: string | undefined;
-        let hasScenarioMarkers = false;
-        let latestFailureBlock: string[] = [];
-
-        for (let index = 0; index < lines.length; index++) {
-            const line = lines[index];
-            const scenarioNameFromLine = this.extractScenarioNameFromRunLogLine(line);
-            if (scenarioNameFromLine) {
-                hasScenarioMarkers = true;
-                currentScenarioNameFromLog = scenarioNameFromLine;
-            }
-
-            if (!this.isRunLogLineForScenario(normalizedScenarioName, currentScenarioNameFromLog, hasScenarioMarkers)) {
-                continue;
-            }
-
-            if (this.isFailedStepLogLine(line)) {
-                latestFailureBlock = this.collectFailedStepLogBlock(lines, index);
-            }
-        }
-
-        if (!latestFailureBlock.length) {
-            return null;
-        }
-
-        return {
-            failureSummary: this.formatFailedStepSummaryFromLogBlock(latestFailureBlock),
-            failureDetails: this.formatFailedStepDetailsFromLogBlock(latestFailureBlock),
-            failureStepDescription: this.formatFailedStepDescriptionFromLogBlock(latestFailureBlock)
-        };
+        return extractFailedStepDetails(content, { scenarioName });
     }
 
     private clearFailedFeatureStepHighlight(scenarioName: string): void {
@@ -3438,7 +3189,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.applyRunningFeatureStepDecorations();
     }
 
-    private extractLastStepLocationFromRunLog(
+    private readLastStepLocationFromRunLog(
         runLogPath: string,
         scenarioName?: string,
         startOffset?: number
@@ -3458,60 +3209,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return null;
         }
 
-        const lines = content.split(/\r\n|\r|\n/);
-        const normalizedScenarioName = scenarioName?.trim();
-        let featurePath: string | undefined;
-        let featureLineNumber: number | undefined;
-        let currentFeaturePathFromLog: string | undefined;
-        let currentScenarioNameFromLog: string | undefined;
-        let currentScenarioFeaturePathFromLog: string | undefined;
-        let hasScenarioMarkers = false;
-        for (const line of lines) {
-            const pathFromLine = this.extractFeaturePathFromRunLogLine(line);
-            if (pathFromLine) {
-                currentFeaturePathFromLog = pathFromLine;
-                if (!normalizedScenarioName) {
-                    featurePath = pathFromLine;
-                }
-            }
-
-            const scenarioNameFromLine = this.extractScenarioNameFromRunLogLine(line);
-            if (scenarioNameFromLine) {
-                hasScenarioMarkers = true;
-                currentScenarioNameFromLog = scenarioNameFromLine;
-                currentScenarioFeaturePathFromLog = currentFeaturePathFromLog;
-            }
-
-            const lineNumber = this.extractFeatureLineNumberFromRunLogLine(line);
-            if (lineNumber) {
-                if (!this.isRunLogLineForScenario(normalizedScenarioName, currentScenarioNameFromLog, hasScenarioMarkers)) {
-                    continue;
-                }
-                if (normalizedScenarioName) {
-                    if (currentScenarioFeaturePathFromLog) {
-                        featurePath = currentScenarioFeaturePathFromLog;
-                    } else if (currentFeaturePathFromLog) {
-                        featurePath = currentFeaturePathFromLog;
-                    }
-                }
-                featureLineNumber = lineNumber;
-            }
-        }
-
-        if (!featureLineNumber) {
-            return null;
-        }
-
-        return {
-            featurePath,
-            featureLineNumber
-        };
+        return extractLastStepLocation(content, { scenarioName });
     }
 
     private captureFailedStepHighlight(scenarioName: string, runLogPath?: string): void {
         const tracker = this._liveFeatureStepTrackers.get(scenarioName);
         const failedDetails = runLogPath
-            ? this.extractFailedStepDetailsFromRunLog(runLogPath, scenarioName, tracker?.startOffset)
+            ? this.readFailedStepDetailsFromRunLog(runLogPath, scenarioName, tracker?.startOffset)
             : null;
 
         const runningHighlight = this._runningFeatureStepHighlights.get(scenarioName);
@@ -3531,7 +3235,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const fromRunLog = runLogPath
-            ? this.extractLastStepLocationFromRunLog(runLogPath, scenarioName, tracker?.startOffset)
+            ? this.readLastStepLocationFromRunLog(runLogPath, scenarioName, tracker?.startOffset)
             : null;
         const featurePath = fromRunLog?.featurePath
             || this._scenarioBuildArtifacts.get(scenarioName)?.featurePath
@@ -3922,26 +3626,26 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private applyFeatureStepSyncLogLine(tracker: LiveFeatureStepTrackerState, line: string): void {
-        const featurePathFromLine = this.extractFeaturePathFromRunLogLine(line);
+        const featurePathFromLine = extractFeaturePathFromRunLogLine(line);
         if (featurePathFromLine) {
             tracker.currentFeaturePathFromLog = featurePathFromLine;
         }
 
-        const scenarioNameFromLine = this.extractScenarioNameFromRunLogLine(line);
+        const scenarioNameFromLine = extractScenarioNameFromRunLogLine(line);
         if (scenarioNameFromLine) {
             tracker.currentScenarioNameFromLog = scenarioNameFromLine;
-            if (this.areScenarioNamesEqual(scenarioNameFromLine, tracker.scenarioName)) {
+            if (areScenarioNamesEqual(scenarioNameFromLine, tracker.scenarioName)) {
                 tracker.featurePathFromLog = tracker.currentFeaturePathFromLog || tracker.featurePathFromLog;
             }
         }
 
-        const featureLineNumber = this.extractFeatureLineNumberFromRunLogLine(line);
+        const featureLineNumber = extractFeatureLineNumberFromRunLogLine(line);
         if (!featureLineNumber) {
             return;
         }
 
         if (tracker.currentScenarioNameFromLog
-            && !this.areScenarioNamesEqual(tracker.currentScenarioNameFromLog, tracker.scenarioName)) {
+            && !areScenarioNamesEqual(tracker.currentScenarioNameFromLog, tracker.scenarioName)) {
             return;
         }
 
@@ -4152,7 +3856,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (runState?.status === 'running') {
             this.clearFailedFeatureStepHighlight(scenarioName);
             if (runState.runLogPath) {
-                const fromRunLog = this.extractLastStepLocationFromRunLog(runState.runLogPath, scenarioName);
+                const fromRunLog = this.readLastStepLocationFromRunLog(runState.runLogPath, scenarioName);
                 const featurePath = fromRunLog?.featurePath
                     || this._scenarioBuildArtifacts.get(scenarioName)?.featurePath;
                 const featureLineNumber = fromRunLog?.featureLineNumber;
@@ -4201,31 +3905,31 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private applyTrackedRunStepSyncLogLine(tracker: ExternalTrackedRunState, line: string): void {
-        const featurePathFromLine = this.extractFeaturePathFromRunLogLine(line);
+        const featurePathFromLine = extractFeaturePathFromRunLogLine(line);
         if (featurePathFromLine) {
             tracker.currentFeaturePathFromLog = featurePathFromLine;
         }
 
-        const scenarioNameFromLine = this.extractScenarioNameFromRunLogLine(line);
+        const scenarioNameFromLine = extractScenarioNameFromRunLogLine(line);
         if (scenarioNameFromLine) {
             tracker.currentScenarioNameFromLog = scenarioNameFromLine;
             if (!tracker.expectedScenarioName) {
                 if (!tracker.featurePathFromLog) {
                     tracker.featurePathFromLog = tracker.currentFeaturePathFromLog || tracker.featurePathFromLog;
                 }
-            } else if (this.areScenarioNamesEqual(scenarioNameFromLine, tracker.expectedScenarioName)) {
+            } else if (areScenarioNamesEqual(scenarioNameFromLine, tracker.expectedScenarioName)) {
                 tracker.featurePathFromLog = tracker.currentFeaturePathFromLog || tracker.featurePathFromLog;
             }
         }
 
-        const featureLineNumber = this.extractFeatureLineNumberFromRunLogLine(line);
+        const featureLineNumber = extractFeatureLineNumberFromRunLogLine(line);
         if (!featureLineNumber) {
             return;
         }
 
         if (tracker.expectedScenarioName
             && tracker.currentScenarioNameFromLog
-            && !this.areScenarioNamesEqual(tracker.currentScenarioNameFromLog, tracker.expectedScenarioName)) {
+            && !areScenarioNamesEqual(tracker.currentScenarioNameFromLog, tracker.expectedScenarioName)) {
             return;
         }
 
@@ -4303,7 +4007,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const previousStatus = tracker.status;
                 for (const line of lines) {
                     this.applyTrackedRunStepSyncLogLine(tracker, line);
-                    const failedSummary = this.extractFailedSummaryFromLogLine(line);
+                    const failedSummary = extractFailedSummaryFromLogLine(line);
                     if (!failedSummary) {
                         continue;
                     }
@@ -4322,7 +4026,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
             if (tracker.status === 'failed'
                 && (!tracker.failureSummary || !tracker.failureDetails || !tracker.failureStepDescription)) {
-                const failedDetails = this.extractFailedStepDetailsFromRunLog(
+                const failedDetails = this.readFailedStepDetailsFromRunLog(
                     tracker.runLogPath,
                     tracker.expectedScenarioName,
                     tracker.startOffset
@@ -10443,7 +10147,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         let latestFailedSummaryLine: string | undefined;
         let latestFailedCount: number | undefined;
         for (const line of logLines) {
-            const failedSummary = this.extractFailedSummaryFromLogLine(line);
+            const failedSummary = extractFailedSummaryFromLogLine(line);
             if (!failedSummary) {
                 continue;
             }
@@ -11966,10 +11670,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         let scenarioNameFromLog: string | undefined;
         for (const line of lines) {
             if (!featurePathFromLog) {
-                featurePathFromLog = this.extractFeaturePathFromRunLogLine(line);
+                featurePathFromLog = extractFeaturePathFromRunLogLine(line);
             }
             if (!scenarioNameFromLog) {
-                scenarioNameFromLog = this.extractScenarioNameFromRunLogLine(line);
+                scenarioNameFromLog = extractScenarioNameFromRunLogLine(line);
             }
             if (featurePathFromLog && scenarioNameFromLog) {
                 break;

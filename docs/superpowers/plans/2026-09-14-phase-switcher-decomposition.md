@@ -30,14 +30,16 @@
 - Extract the existing feature-path, feature-line, scenario-name, failed-step, failure-summary, and last-step-location logic as pure functions accepting strings and explicit identity/options.
 - Return structured values; keep localized message selection and VS Code objects in `phaseSwitcher.ts`.
 
-- [ ] Inventory the private log helpers and their call graph with `rg`; record the exact set being moved in the test descriptions.
-- [ ] Write characterization tests from current accepted inputs: Russian/English markers, Windows/Unix file paths, missing scenario name, failed step with details, summary-only failure, and last location.
-- [ ] Confirm tests fail because the pure module does not yet expose the behavior.
-- [ ] Implement the pure module by moving behavior without simplifying its matching rules.
-- [ ] Replace provider calls with the module functions and delete the moved private methods.
-- [ ] Confirm `src/vanessaRunLog.ts` has no `vscode`, filesystem, or process imports.
-- [ ] Run the focused tests and `npm run check`.
-- [ ] Commit with `refactor: extract Vanessa run log parser`.
+- [x] Inventory the private log helpers and their call graph with `rg`; record the exact set being moved in the test descriptions.
+- [x] Write characterization tests from current accepted inputs: Russian/English markers, Windows/Unix file paths, missing scenario name, failed step with details, summary-only failure, and last location.
+- [x] Confirm tests fail because the pure module does not yet expose the behavior.
+- [x] Implement the pure module by moving behavior without simplifying its matching rules.
+- [x] Replace provider calls with the module functions and delete the moved private methods.
+- [x] Confirm `src/vanessaRunLog.ts` has no `vscode`, filesystem, or process imports.
+- [x] Run the focused tests and `npm run check`.
+- [x] Commit with `refactor: extract Vanessa run log parser`.
+
+Moved helper set: feature-path, feature-line and scenario-name extraction; scenario-name comparison and marker filtering; failed-summary recognition; failed-block collection and formatting; failed-step detail extraction; and last-step location extraction. The provider retains only file-tail reading and VS Code state updates.
 
 ### Task 2: Characterize launch JSON pointer and alias logic
 
@@ -77,4 +79,3 @@
 - [ ] Run `git diff --check`, `npm run check`, and `npm run vscode:prepublish`.
 - [ ] Verify no excluded IntelliSense, steps, or AI files changed relative to the pre-decomposition commit.
 - [ ] Record verification evidence in this plan and commit with `test: verify phase switcher extraction`.
-
