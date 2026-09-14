@@ -75,9 +75,19 @@ Moved helper set: immutable JSON-pointer get/set with RFC 6901 decoding; dot/bra
 - Consumes: both extracted modules and unchanged `PhaseSwitcherProvider` public behavior.
 - Produces: recorded size, dependency, and verification evidence.
 
-- [ ] Compare `phaseSwitcher.ts` line count before/after and verify both extracted implementations exist only in their new modules.
-- [ ] Run `rg -n "from './vanessa(RunLog|LaunchJson)'" src/phaseSwitcher.ts` and verify the provider is the dependency owner.
-- [ ] Run `rg -n "vscode|node:fs|child_process|process\." src/vanessaRunLog.ts src/vanessaLaunchJson.ts` and inspect any match; expected result is none.
-- [ ] Run `git diff --check`, `npm run check`, and `npm run vscode:prepublish`.
-- [ ] Verify no excluded IntelliSense, steps, or AI files changed relative to the pre-decomposition commit.
-- [ ] Record verification evidence in this plan and commit with `test: verify phase switcher extraction`.
+- [x] Compare `phaseSwitcher.ts` line count before/after and verify both extracted implementations exist only in their new modules.
+- [x] Run `rg -n "from './vanessa(RunLog|LaunchJson)'" src/phaseSwitcher.ts` and verify the provider is the dependency owner.
+- [x] Run `rg -n "vscode|node:fs|child_process|process\." src/vanessaRunLog.ts src/vanessaLaunchJson.ts` and inspect any match; expected result is none.
+- [x] Run `git diff --check`, `npm run check`, and `npm run vscode:prepublish`.
+- [x] Verify no excluded IntelliSense, steps, or AI files changed relative to the pre-decomposition commit.
+- [x] Record verification evidence in this plan and commit with `test: verify phase switcher extraction`.
+
+#### Verification evidence (2026-09-14)
+
+- Relative to pre-decomposition commit `1f7b11b`, `phaseSwitcher.ts` changed by 63 insertions and 905 deletions: 12,960 lines before, 12,118 after, a net reduction of 842 lines.
+- `src/vanessaRunLog.ts` contains the 330-line pure run-log domain; `src/vanessaLaunchJson.ts` contains the 578-line pure launch-JSON domain. Removed private implementations no longer occur in `phaseSwitcher.ts`.
+- The provider imports both modules directly; neither pure module imports `vscode`, filesystem, `child_process`, or accesses `process`.
+- `git diff --check 1f7b11b..HEAD`: exit 0.
+- `npm run check`: exit 0; TypeScript and ESLint clean; 71 tests passed, 0 failed.
+- `npm run vscode:prepublish`: exit 0; the minified production extension bundle built successfully.
+- Changed files are limited to this plan, `phaseSwitcher.ts`, the two extracted modules, and their two test files. No IntelliSense, `steps.htm`, `stepsFetcher.ts`, or AI files changed.
