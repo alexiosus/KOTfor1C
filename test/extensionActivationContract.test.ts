@@ -16,6 +16,14 @@ const phaseSwitcherSource = fs.readFileSync(
     path.join(process.cwd(), 'src', 'phaseSwitcher.ts'),
     'utf8'
 );
+const phaseSwitcherConstructorSource = phaseSwitcherSource.slice(
+    phaseSwitcherSource.indexOf('    constructor(extensionUri:'),
+    phaseSwitcherSource.indexOf('    private async loadLocalizationBundleIfNeeded')
+);
+const phaseSwitcherResolveWebviewSource = phaseSwitcherSource.slice(
+    phaseSwitcherSource.indexOf('    public async resolveWebviewView('),
+    phaseSwitcherSource.indexOf('    private async _sendInitialState(')
+);
 
 test('activation does not eagerly provision 1C helper infobases', () => {
     assert.doesNotMatch(source, /warmUpSharedStartupInfobase/);
@@ -67,4 +75,23 @@ test('phase switcher defers optional 1C runtime infrastructure', () => {
     assert.match(phaseSwitcherSource, /import\('\.\/infobasePicker\.js'\)/);
     assert.match(phaseSwitcherSource, /import\('\.\/startupInfobase\.js'\)/);
     assert.match(phaseSwitcherSource, /import\('\.\/oneCPlatform\.js'\)/);
+});
+
+test('phase switcher starts background log monitoring only after its view opens', () => {
+    assert.doesNotMatch(phaseSwitcherConstructorSource, /startVanessaRuntimeLogMonitor\(\)/);
+    assert.match(
+        phaseSwitcherResolveWebviewSource,
+        /_vanessaRuntimeLogMonitorEnabled = true;\s*this\.startVanessaRuntimeLogMonitor\(\)/
+    );
+    assert.match(
+        phaseSwitcherSource,
+        /startVanessaRuntimeLogMonitor\(\): void \{\s*if \(!this\._vanessaRuntimeLogMonitorEnabled\)/
+    );
+});
+
+test('phase switcher creates its build output channel on demand', () => {
+    assert.doesNotMatch(
+        phaseSwitcherConstructorSource,
+        /createOutputChannel\(["']KOT Test Assembly["']\)/
+    );
 });

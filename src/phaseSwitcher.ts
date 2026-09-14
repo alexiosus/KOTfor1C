@@ -481,6 +481,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _liveFeatureStepTrackers: Map<string, LiveFeatureStepTrackerState> = new Map();
     private _externalTrackedRunsByScenario: Map<string, Map<string, ExternalTrackedRunState>> = new Map();
     private _activeTrackedRunKeyByScenario: Map<string, string> = new Map();
+    private _vanessaRuntimeLogMonitorEnabled: boolean = false;
     private _vanessaRuntimeLogMonitorTimer: NodeJS.Timeout | null = null;
     private _vanessaRuntimeLogMonitorStartedAt: number = Date.now();
     private _vanessaRuntimeLogSnapshots: Map<string, VanessaRuntimeLogSnapshot> = new Map();
@@ -1757,7 +1758,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this._extensionUri = extensionUri;
         this._context = context;
         console.log("[PhaseSwitcherProvider] Initialized.");
-        this._buildOutputChannel = vscode.window.createOutputChannel("KOT Test Assembly");
         this._runningFeatureStepDecorationType = vscode.window.createTextEditorDecorationType({
             isWholeLine: true,
             backgroundColor: new vscode.ThemeColor('editor.wordHighlightStrongBackground'),
@@ -2023,6 +2023,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     clearTimeout(this._aiReportStateRefreshTimer);
                     this._aiReportStateRefreshTimer = null;
                 }
+                this._vanessaRuntimeLogMonitorEnabled = false;
                 this.stopVanessaRuntimeLogMonitor();
                 this.stopAllFeatureStepTrackers();
                 this.stopAllTrackedRunLogWatchers();
@@ -2033,8 +2034,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this._runOutputChannel = undefined;
             }
         });
-
-        this.startVanessaRuntimeLogMonitor();
     }
 
     private async loadLocalizationBundleIfNeeded(): Promise<void> {
@@ -2613,6 +2612,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private startVanessaRuntimeLogMonitor(): void {
+        if (!this._vanessaRuntimeLogMonitorEnabled) {
+            return;
+        }
         if (this._vanessaRuntimeLogMonitorTimer) {
             return;
         }
@@ -6743,6 +6745,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     ) {
         console.log("[PhaseSwitcherProvider] Resolving webview view...");
         this._view = webviewView;
+        this._vanessaRuntimeLogMonitorEnabled = true;
+        this.startVanessaRuntimeLogMonitor();
 
         webviewView.webview.options = {
             enableScripts: true,
