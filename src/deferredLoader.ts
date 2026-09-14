@@ -16,3 +16,14 @@ export function createDeferredLoader<T>(factory: () => Promise<T>): () => Promis
         return attempt;
     };
 }
+
+export function createDeferredResourceLoader<T>(
+    factory: () => Promise<T>,
+    register: (resource: T) => void
+): () => Promise<T> {
+    return createDeferredLoader(async () => {
+        const resource = await factory();
+        register(resource);
+        return resource;
+    });
+}

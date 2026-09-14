@@ -59,8 +59,6 @@ import {
 } from './scenarioSyntaxHighlightProvider';
 import { isScenarioYamlFile } from './yamlValidator';
 import { ScenarioHeaderInlayHintsProvider } from './scenarioHeaderInlayHintsProvider';
-import { FormExplorerPanel } from './formExplorerPanel';
-import { InfobaseManagerPanel } from './infobaseManagerPanel';
 import { handleGenerateConfigurationDiffImpactReport } from './configurationDiffAiReport';
 import { handleGenerateScenarioDescriptionWithAi } from './scenarioAiDescription';
 import { handleReviewChangedTestsWithAi } from './testReviewAiReport';
@@ -88,7 +86,7 @@ import {
     normalizeScenarioCallParameterValue,
     parseScenarioParameterDefinitions
 } from './scenarioParameterUtils';
-import { createDeferredLoader } from './deferredLoader';
+import { createDeferredLoader, createDeferredResourceLoader } from './deferredLoader';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -544,10 +542,20 @@ export function activate(context: vscode.ExtensionContext) {
     setExtensionUri(context.extensionUri);
     notifyIfUpdated(context).catch(e => console.error('[Extension] notifyIfUpdated error:', e));
     initializeScenarioScanRoot(context);
-    const formExplorerPanel = new FormExplorerPanel(context);
-    const infobaseManagerPanel = new InfobaseManagerPanel(context);
-    context.subscriptions.push(formExplorerPanel);
-    context.subscriptions.push(infobaseManagerPanel);
+    const loadFormExplorerPanel = createDeferredResourceLoader(
+        async () => {
+            const { FormExplorerPanel } = await import('./formExplorerPanel.js');
+            return new FormExplorerPanel(context);
+        },
+        panel => context.subscriptions.push(panel)
+    );
+    const loadInfobaseManagerPanel = createDeferredResourceLoader(
+        async () => {
+            const { InfobaseManagerPanel } = await import('./infobaseManagerPanel.js');
+            return new InfobaseManagerPanel(context);
+        },
+        panel => context.subscriptions.push(panel)
+    );
     // --- Регистрация Провайдера для Webview (Test Manager) ---
     const phaseSwitcherProvider = new PhaseSwitcherProvider(context.extensionUri, context);
     context.subscriptions.push(
@@ -1210,21 +1218,24 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openInfobaseManager',
         async () => {
-            await infobaseManagerPanel.open();
+            const panel = await loadInfobaseManagerPanel();
+            await panel.open();
         }
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openFormExplorer',
         async () => {
-            await formExplorerPanel.open();
+            const panel = await loadFormExplorerPanel();
+            await panel.open();
         }
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openFormExplorerForInfobase',
         async (options?: string | StartFormExplorerBridgeCommandOptions) => {
-            await formExplorerPanel.openAndStart(options);
+            const panel = await loadFormExplorerPanel();
+            await panel.openAndStart(options);
         }
     ));
 

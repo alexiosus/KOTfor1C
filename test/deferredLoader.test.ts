@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createDeferredLoader } from '../src/deferredLoader';
+import {
+    createDeferredLoader,
+    createDeferredResourceLoader
+} from '../src/deferredLoader';
 
 test('does not invoke the factory before first use and reuses the loaded value', async () => {
     let calls = 0;
@@ -49,4 +52,24 @@ test('allows a retry after a failed load', async () => {
     await assert.rejects(load(), /temporary failure/);
     assert.equal(await load(), 'loaded');
     assert.equal(calls, 2);
+});
+
+test('registers one deferred resource when it is first requested', async () => {
+    let created = 0;
+    const registered: Array<{ dispose(): void }> = [];
+    const load = createDeferredResourceLoader(
+        async () => {
+            created += 1;
+            return { dispose() {} };
+        },
+        resource => registered.push(resource)
+    );
+
+    assert.equal(created, 0);
+    assert.equal(registered.length, 0);
+
+    const [first, second] = await Promise.all([load(), load()]);
+    assert.equal(first, second);
+    assert.equal(created, 1);
+    assert.deepEqual(registered, [first]);
 });
