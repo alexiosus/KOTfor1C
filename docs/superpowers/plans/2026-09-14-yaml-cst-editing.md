@@ -4,7 +4,7 @@
 
 **Goal:** Replace regex-based YAML structural navigation with parser-backed source ranges while preserving user formatting through minimal text edits.
 
-**Architecture:** A pure `ScenarioYamlDocument` adapter wraps `yaml@2`, shields the extension from parser node types, and returns source ranges and domain records. Existing VS Code commands keep their UI and rendering responsibilities and apply only targeted edits.
+**Architecture:** A pure `ScenarioYamlDocument` adapter wraps `yaml@2`, shields the extension from parser node types, and returns source ranges and domain records. It parses an equal-length structural shadow so legacy KOT free-form payloads cannot invalidate CST offsets into the original source. Existing VS Code commands keep their UI and rendering responsibilities and apply only targeted edits.
 
 **Tech Stack:** TypeScript 5.9, `yaml@2`, Node.js `node:test`, VS Code Extension API, esbuild.
 
@@ -110,9 +110,20 @@
 **Interfaces:**
 - Produces: `npm run verify:yaml-corpus -- <directory>` with file count and parser error count; never writes corpus files.
 
-- [ ] Implement a read-only corpus walker that parses every `scen.yaml`, reports relative paths for parser errors, and exits non-zero on any fatal error.
-- [ ] Run it against `/Users/alexeremeev/Development/1cDrive/tests/RegressionTests/Yaml/Drive`; expect 1,885 files and zero fatal errors.
-- [ ] Capture the external repository status before and after and confirm it is identical.
-- [ ] Run `git diff --check`, `npm run check`, `npm run vscode:prepublish`, and `npm audit --omit=dev`.
-- [ ] Inspect `rg -n` results proving no structural regex remains for the two migrated sections and no files in the excluded IntelliSense/AI scope changed.
-- [ ] Record verification evidence in this plan and commit with `test: verify YAML CST compatibility`.
+- [x] Implement a read-only corpus walker that parses every `scen.yaml`, reports relative paths for parser errors, and exits non-zero on any fatal error.
+- [x] Run it against `/Users/alexeremeev/Development/1cDrive/tests/RegressionTests/Yaml/Drive`; expect 1,885 files and zero fatal errors.
+- [x] Capture the external repository status before and after and confirm it is identical.
+- [x] Run `git diff --check`, `npm run check`, `npm run vscode:prepublish`, and `npm audit --omit=dev`.
+- [x] Inspect `rg -n` results proving no structural regex remains for the two migrated sections and no files in the excluded IntelliSense/AI scope changed.
+- [x] Record verification evidence in this plan and commit with `test: verify YAML CST compatibility`.
+
+#### Verification evidence (2026-09-14)
+
+- `npm run verify:yaml-corpus -- /Users/alexeremeev/Development/1cDrive/tests/RegressionTests/Yaml/Drive`: 1,885 files, 0 parser errors, 0 parser warnings.
+- External repository status was identical before and after the read-only walk: one pre-existing modified scenario plus one pre-existing untracked test directory.
+- `git diff --check`: exit 0.
+- `npm run check`: exit 0; TypeScript and ESLint clean; 59 tests passed, 0 failed.
+- `npm run vscode:prepublish`: exit 0; production extension bundle built successfully.
+- Online `npm audit --omit=dev` could not reach the registry in the sandbox and the escalation was denied; `npm audit --offline --omit=dev` completed with 0 known vulnerabilities in the local audit cache.
+- YAML ranges for `ВложенныеСценарии` and `ПараметрыСценария` are obtained only through `ScenarioYamlDocument`; remaining regular expressions in `commandHandlers.ts` parse Gherkin or unrelated formats. The compatibility shadow uses lexical masking only and never selects an edit range.
+- The changed-file list contains no `steps.htm`, `stepsFetcher.ts`, completion/IntelliSense, or AI files.

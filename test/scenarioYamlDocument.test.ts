@@ -96,9 +96,45 @@ test('ScenarioYamlDocument exposes a zero-width body for an empty section', () =
     assert.equal(section.itemIndent, '    ');
 });
 
-test('ScenarioYamlDocument refuses unsafe edits for malformed YAML', () => {
-    const document = ScenarioYamlDocument.parse('ДанныеСценария:\n  Имя: [не закрыто\n');
+test('ScenarioYamlDocument tolerates legacy scalar payloads but refuses structural errors', () => {
+    const legacyScalar = ScenarioYamlDocument.parse([
+        'ПараметрыСценария:',
+        '    - ПараметрыСценария1:',
+        '        Имя: NewAGP',
+        '        Значение: "',
+        ''
+    ].join('\n'));
+    assert.deepEqual(legacyScalar.errors, []);
+    assert.equal(legacyScalar.readRecords('ПараметрыСценария')[0].fields.get('Значение'), '"');
+
+    const document = ScenarioYamlDocument.parse('ДанныеСценария:\n    Имя: Тест\n  - structural error\n');
 
     assert.ok(document.errors.length > 0);
     assert.throws(() => document.requireValidForEdit(), /YAML/i);
+});
+
+test('ScenarioYamlDocument masks KOT free-form blocks without changing section offsets', () => {
+    const source = [
+        '\uFEFFТипФайла: "Сценарий"',
+        'ДанныеСценария:',
+        '    Имя: "Тест"',
+        'KOTМетаданные:',
+        '    Описание: |',
+        '        ',
+        '    -',
+        'ПараметрыСценария:',
+        'ВложенныеСценарии:',
+        'ТекстСценария: |',
+        '            ',
+        '    And I go to line:',
+        '        | value |',
+        ''
+    ].join('\n');
+
+    const document = ScenarioYamlDocument.parse(source);
+
+    assert.deepEqual(document.errors, []);
+    assert.equal(document.readScalar('ДанныеСценария', 'Имя'), 'Тест');
+    assert.equal(document.findSection('ПараметрыСценария')?.pairRange.start, source.indexOf('ПараметрыСценария:'));
+    assert.equal(document.findSection('ВложенныеСценарии')?.pairRange.start, source.indexOf('ВложенныеСценарии:'));
 });

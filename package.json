@@ -1217,7 +1217,8 @@
     "test": "npm run compile-tests && node --test out/test/*.test.js",
     "check:types": "tsc --noEmit",
     "lint": "eslint src test --max-warnings 0",
-    "check": "npm run check:types && npm run lint && npm test"
+    "check": "npm run check:types && npm run lint && npm test",
+    "verify:yaml-corpus": "node scripts/verifyScenarioYamlCorpus.mjs"
   },
   "devDependencies": {
     "@types/node": "20.x",

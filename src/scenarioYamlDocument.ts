@@ -8,6 +8,16 @@ import {
     type Pair
 } from 'yaml';
 
+const SCENARIO_TOP_LEVEL_KEYS = new Set([
+    'ТипФайла',
+    'ДанныеСценария',
+    'ДанныеТеста',
+    'KOTМетаданные',
+    'ПараметрыСценария',
+    'ВложенныеСценарии',
+    'ТекстСценария'
+]);
+
 export interface SourceRange {
     start: number;
     end: number;
@@ -67,20 +77,164 @@ function getScalarKey(value: unknown): string | null {
     return value.value;
 }
 
-function getNodeValue(value: unknown, source?: string): unknown {
-    if (isScalar(value)) {
-        const range = getPresentNodeRange(value);
-        if (source !== undefined && value.type === 'PLAIN' && range) {
-            return source.slice(range[0], range[1]).trim();
-        }
-        return value.value;
-    }
-
+function getNodeValue(value: unknown): unknown {
     if (isNode(value)) {
         return value.toJSON();
     }
 
     return value ?? null;
+}
+
+function maskRange(characters: string[], start: number, end: number): void {
+    for (let offset = start; offset < end; offset += 1) {
+        if (characters[offset] !== '\uFEFF') {
+            characters[offset] = ' ';
+        }
+    }
+}
+
+function buildStructuralShadow(source: string): string {
+    const characters = source.split('');
+    const linePattern = /([^\r\n]*)(\r\n|\r|\n|$)/g;
+    let currentTopLevelKey = '';
+    let maskFreeFormBody = false;
+    let match: RegExpExecArray | null;
+
+    while ((match = linePattern.exec(source)) !== null) {
+        const line = match[1];
+        if (line.length === 0 && match[2].length === 0) {
+            break;
+        }
+
+        const lineStart = match.index;
+        const lineWithoutBom = line.replace(/^\uFEFF/, '');
+        const topLevelMatch = lineWithoutBom.match(/^([^\s#][^:]*):/);
+        const candidateTopLevelKey = topLevelMatch?.[1]?.trim() || '';
+        const topLevelKey = SCENARIO_TOP_LEVEL_KEYS.has(candidateTopLevelKey)
+            ? candidateTopLevelKey
+            : null;
+
+        if (maskFreeFormBody && topLevelKey) {
+            maskFreeFormBody = false;
+        }
+
+        if (maskFreeFormBody) {
+            maskRange(characters, lineStart, lineStart + line.length);
+            continue;
+        }
+
+        if (topLevelKey) {
+            currentTopLevelKey = topLevelKey;
+        }
+
+        if (/^\s*#/.test(lineWithoutBom)) {
+            continue;
+        }
+
+        const colonOffsetInLine = line.indexOf(':');
+        if (colonOffsetInLine === -1) {
+            continue;
+        }
+
+        let valueOffsetInLine = colonOffsetInLine + 1;
+        while (valueOffsetInLine < line.length && (line[valueOffsetInLine] === ' ' || line[valueOffsetInLine] === '\t')) {
+            valueOffsetInLine += 1;
+        }
+
+        const rawValue = line.slice(valueOffsetInLine);
+        const isBlockScalar = /^[|>][0-9+-]*(?:\s+#.*)?$/.test(rawValue.trim());
+        const startsKnownFreeFormBody = isBlockScalar && (
+            currentTopLevelKey === 'ТекстСценария'
+            || (currentTopLevelKey === 'KOTМетаданные' && /^\s+Описание:/.test(lineWithoutBom))
+        );
+        if (startsKnownFreeFormBody) {
+            maskFreeFormBody = true;
+            continue;
+        }
+
+        if (valueOffsetInLine < line.length && line[valueOffsetInLine] !== '#' && !isBlockScalar) {
+            for (let offset = lineStart + valueOffsetInLine; offset < lineStart + line.length; offset += 1) {
+                characters[offset] = 'x';
+            }
+        }
+    }
+
+    return characters.join('');
+}
+
+interface OriginalScalar {
+    range: SourceRange;
+    value: string;
+}
+
+function findQuotedScalarEnd(source: string, start: number, lineEnd: number, quote: string): number {
+    for (let offset = start + 1; offset < lineEnd; offset += 1) {
+        if (quote === '"' && source[offset] === '\\') {
+            offset += 1;
+            continue;
+        }
+        if (quote === '\'' && source[offset] === '\'' && source[offset + 1] === '\'') {
+            offset += 1;
+            continue;
+        }
+        if (source[offset] === quote) {
+            return offset + 1;
+        }
+    }
+    return lineEnd;
+}
+
+function readOriginalScalar(source: string, pair: Pair): OriginalScalar | null {
+    const keyRange = getNodeRange(pair.key);
+    if (!keyRange) {
+        return null;
+    }
+
+    const lineEnd = findLineEnd(source, keyRange[1]);
+    const colonOffset = source.indexOf(':', keyRange[1]);
+    if (colonOffset === -1 || colonOffset >= lineEnd) {
+        return null;
+    }
+
+    let start = colonOffset + 1;
+    while (start < lineEnd && (source[start] === ' ' || source[start] === '\t')) {
+        start += 1;
+    }
+    if (start >= lineEnd || source[start] === '#') {
+        return null;
+    }
+
+    let end = lineEnd;
+    const quote = source[start];
+    if (quote === '"' || quote === '\'') {
+        end = findQuotedScalarEnd(source, start, lineEnd, quote);
+    } else {
+        for (let offset = start; offset < lineEnd; offset += 1) {
+            if (source[offset] === '#' && offset > start && /\s/.test(source[offset - 1])) {
+                end = offset;
+                break;
+            }
+        }
+        while (end > start && /\s/.test(source[end - 1])) {
+            end -= 1;
+        }
+    }
+
+    const rawValue = source.slice(start, end);
+    if ((quote === '"' || quote === '\'') && rawValue.endsWith(quote) && rawValue.length >= 2) {
+        const parsedScalar = parseDocument(`value: ${rawValue}`, {
+            prettyErrors: false,
+            uniqueKeys: false
+        });
+        if (parsedScalar.errors.length === 0 && isMap(parsedScalar.contents)) {
+            const parsedPair = parsedScalar.contents.items[0];
+            if (isPair(parsedPair) && isScalar(parsedPair.value) && parsedPair.value.value !== null) {
+                return { range: { start, end }, value: String(parsedPair.value.value) };
+            }
+        }
+    }
+
+    return { range: { start, end }, value: rawValue };
 }
 
 function findLineStart(source: string, offset: number): number {
@@ -129,7 +283,7 @@ export class ScenarioYamlDocument {
     ) {}
 
     static parse(source: string): ScenarioYamlDocument {
-        const parsed = parseDocument(source, {
+        const parsed = parseDocument(buildStructuralShadow(source), {
             keepSourceTokens: true,
             prettyErrors: false,
             uniqueKeys: false
@@ -153,33 +307,20 @@ export class ScenarioYamlDocument {
             return null;
         }
 
-        const rawValueRange = getPresentNodeRange(fieldPair.value);
+        const originalScalar = readOriginalScalar(this.source, fieldPair);
         return {
             key: fieldName,
-            value: getNodeValue(fieldPair.value, this.source),
+            value: originalScalar?.value,
             pairRange: sourceRange,
-            valueRange: rawValueRange
-                ? { start: rawValueRange[0], end: rawValueRange[1] }
-                : null,
+            valueRange: originalScalar?.range ?? null,
             lineStart: findLineStart(this.source, keyRange[0]),
             lineEnd: findLineEnd(this.source, keyRange[1])
         };
     }
 
     readScalar(sectionName: string, fieldName: string): string | undefined {
-        const fieldPair = this.findFieldPair(sectionName, fieldName);
-        if (!fieldPair || !isScalar(fieldPair.value) || fieldPair.value.value === null) {
-            return undefined;
-        }
-
-        const valueRange = getPresentNodeRange(fieldPair.value);
-        if (fieldPair.value.type === 'PLAIN' && valueRange) {
-            return this.source.slice(valueRange[0], valueRange[1]).trim();
-        }
-
-        return typeof fieldPair.value.value === 'string'
-            ? fieldPair.value.value
-            : String(fieldPair.value.value);
+        const field = this.findField(sectionName, fieldName);
+        return typeof field?.value === 'string' ? field.value : undefined;
     }
 
     findSection(sectionName: string): ScenarioYamlSection | null {
@@ -260,7 +401,10 @@ export class ScenarioYamlDocument {
                     }
                     const fieldKey = getScalarKey(fieldPair.key);
                     if (fieldKey) {
-                        fields.set(fieldKey, getNodeValue(fieldPair.value, this.source));
+                        fields.set(
+                            fieldKey,
+                            readOriginalScalar(this.source, fieldPair)?.value ?? getNodeValue(fieldPair.value)
+                        );
                     }
                 }
             }

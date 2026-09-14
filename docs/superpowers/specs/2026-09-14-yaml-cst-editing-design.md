@@ -27,9 +27,11 @@ Current helpers infer YAML structure from indentation and regular expressions. T
 
 Add a pure `scenarioYamlDocument.ts` adapter around `yaml@2`. The adapter parses once, exposes domain-specific lookups, and translates YAML node ranges into source offsets. It never owns VS Code objects and never writes files.
 
+The real KOT corpus is a YAML-like compatibility dialect rather than strict YAML. In particular, legacy scenarios contain free-form scalar payloads, inconsistently indented block-scalar content, and an isolated unclosed quote. Before parsing, the adapter therefore builds an equal-length structural shadow: keys, indentation, collection markers, and line endings remain at their original offsets, while scalar payloads and the known free-form bodies of `KOTМетаданные.Описание` and `ТекстСценария` are masked. YAML CST ranges from this shadow remain valid offsets into the untouched source. Scalar values are then read from the original source within the parser-proven pair boundaries.
+
 Edits remain minimal text edits:
 
-1. Parse the current source and reject structural mutation when the document has parser errors.
+1. Build the equal-length structural shadow and reject mutation when parsing reports structural errors outside tolerated free-form payloads.
 2. Find the target map pair or sequence node through the YAML AST.
 3. Derive the smallest safe source range from node ranges and surrounding line boundaries.
 4. Return an offset/range and replacement text to the existing VS Code command.
@@ -88,8 +90,9 @@ The implementation may add private helpers, but callers must not depend directly
 
 - Read-only lookups return no result for a missing section or field.
 - Mutating commands abort with a localized error when parser errors make a target range unsafe.
-- No regex fallback is used for YAML structure because silently selecting the wrong range is worse than refusing an edit.
-- Incomplete text inside `ТекстСценария: |` remains valid block-scalar content and does not affect structural navigation.
+- No regex fallback chooses editable YAML ranges: all section and field ranges come from parser nodes.
+- Scalar payload syntax and known free-form block bodies are compatibility data, not structural validation targets.
+- Incomplete text inside `ТекстСценария: |` and legacy `KOTМетаданные.Описание` content do not affect structural navigation.
 
 ## Compatibility Strategy
 
@@ -104,6 +107,5 @@ The implementation may add private helpers, but callers must not depend directly
 - Header helpers no longer locate YAML keys with structural regular expressions.
 - `commandHandlers.ts` no longer uses regular expressions to find the boundaries of `ВложенныеСценарии` or `ПараметрыСценария`.
 - Gherkin parsing regular expressions remain unchanged.
-- All 1,885 external `scen.yaml` files parse without a fatal YAML error.
+- All 1,885 external `scen.yaml` files produce a parser-backed structural model without a fatal structural error.
 - Existing checks pass and the external corpus remains unchanged.
-

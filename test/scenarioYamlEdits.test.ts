@@ -160,7 +160,11 @@ test('YAML section replacement preserves parameter neighbors and quoted punctuat
 
 test('YAML section edits refuse malformed documents and ignore missing sections', () => {
     assert.throws(
-        () => getSectionBodyReplacement('ВложенныеСценарии:\n  - [broken\n', 'ВложенныеСценарии', ''),
+        () => getSectionBodyReplacement(
+            'ВложенныеСценарии:\n    - ВложенныеСценарии1:\n        ИмяСценария: Тест\n  - structural error\n',
+            'ВложенныеСценарии',
+            ''
+        ),
         /YAML/i
     );
     assert.equal(getSectionInsertion('ДанныеСценария:\n  Имя: Тест\n', 'ВложенныеСценарии', '- item'), null);
