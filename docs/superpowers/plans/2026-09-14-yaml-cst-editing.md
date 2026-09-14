@@ -32,13 +32,13 @@
 - Produces: `ScenarioYamlDocument.parse(source)`, `errors`, `findField`, `readScalar`, `findSection`, `readRecords`, and `requireValidForEdit` as specified in the design.
 - Consumes: raw scenario YAML text only; no `vscode` dependency.
 
-- [ ] Add `yaml` as a production dependency with `npm install yaml@^2`.
-- [ ] Write failing tests for scalar lookup, quoted values containing `:` and `#`, comments, Cyrillic keys, an empty section, and the sequence-of-single-key-maps shape used by scenario parameters.
-- [ ] Write failing tests asserting exact offsets with UTF-8 BOM, LF, CRLF, and a `ТекстСценария: |` block scalar.
-- [ ] Implement parsing with `parseDocument` and parser node ranges. Normalize ranges to JavaScript string offsets without removing the BOM from the caller's source.
-- [ ] Make `requireValidForEdit()` throw a domain error containing parser diagnostics; verify a malformed document cannot yield an editable range.
-- [ ] Run `npm test -- --test-name-pattern="ScenarioYamlDocument"` and `npm run check:types`.
-- [ ] Commit with `feat: add parser-backed scenario YAML model`.
+- [x] Add `yaml` as a production dependency with `npm install yaml@^2`.
+- [x] Write failing tests for scalar lookup, quoted values containing `:` and `#`, comments, Cyrillic keys, an empty section, and the sequence-of-single-key-maps shape used by scenario parameters.
+- [x] Write failing tests asserting exact offsets with UTF-8 BOM, LF, CRLF, and a `ТекстСценария: |` block scalar.
+- [x] Implement parsing with `parseDocument` and parser node ranges. Normalize ranges to JavaScript string offsets without removing the BOM from the caller's source.
+- [x] Make `requireValidForEdit()` throw a domain error containing parser diagnostics; verify a malformed document cannot yield an editable range.
+- [x] Run `npm test -- --test-name-pattern="ScenarioYamlDocument"` and `npm run check:types`.
+- [x] Commit with `feat: add parser-backed scenario YAML model`.
 
 ### Task 2: Migrate YAML header field helpers
 
@@ -116,4 +116,3 @@
 - [ ] Run `git diff --check`, `npm run check`, `npm run vscode:prepublish`, and `npm audit --omit=dev`.
 - [ ] Inspect `rg -n` results proving no structural regex remains for the two migrated sections and no files in the excluded IntelliSense/AI scope changed.
 - [ ] Record verification evidence in this plan and commit with `test: verify YAML CST compatibility`.
-
