@@ -61,7 +61,7 @@ import {
     openSavedTestReviewReport
 } from './testReviewAiReport';
 import { buildDirectSpawnCommand } from './directProcessLaunch';
-import { readFileTail } from './fileTailReader';
+import { readFileTail, readFileTailSync } from './fileTailReader';
 import { formatProcessCommandForDisplay } from './processCommandDisplay';
 import { createDeferredLoader } from './deferredLoader';
 
@@ -3260,20 +3260,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         scenarioName?: string,
         startOffset?: number
     ): { failureSummary?: string; failureDetails?: string; failureStepDescription?: string } | null {
-        if (!runLogPath || !fs.existsSync(runLogPath)) {
+        if (!runLogPath) {
             return null;
         }
 
         let content = '';
         try {
-            const fileBuffer = fs.readFileSync(runLogPath);
-            const normalizedStartOffset = Number.isFinite(startOffset)
-                ? Math.max(0, Math.floor(startOffset as number))
-                : 0;
-            const safeStartOffset = normalizedStartOffset >= fileBuffer.byteLength
-                ? 0
-                : normalizedStartOffset;
-            content = fileBuffer.subarray(safeStartOffset).toString('utf8');
+            const tail = readFileTailSync(runLogPath, startOffset ?? 0);
+            if (!tail) {
+                return null;
+            }
+            content = tail.content.toString('utf8');
         } catch {
             return null;
         }
@@ -3446,20 +3443,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         scenarioName?: string,
         startOffset?: number
     ): { featurePath?: string; featureLineNumber?: number } | null {
-        if (!runLogPath || !fs.existsSync(runLogPath)) {
+        if (!runLogPath) {
             return null;
         }
 
         let content = '';
         try {
-            const fileBuffer = fs.readFileSync(runLogPath);
-            const normalizedStartOffset = Number.isFinite(startOffset)
-                ? Math.max(0, Math.floor(startOffset as number))
-                : 0;
-            const safeStartOffset = normalizedStartOffset >= fileBuffer.byteLength
-                ? 0
-                : normalizedStartOffset;
-            content = fileBuffer.subarray(safeStartOffset).toString('utf8');
+            const tail = readFileTailSync(runLogPath, startOffset ?? 0);
+            if (!tail) {
+                return null;
+            }
+            content = tail.content.toString('utf8');
         } catch {
             return null;
         }

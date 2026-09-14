@@ -95,3 +95,11 @@ test('phase switcher creates its build output channel on demand', () => {
         /createOutputChannel\(["']KOT Test Assembly["']\)/
     );
 });
+
+test('run log analyzers read only the requested file tail', () => {
+    assert.equal(
+        phaseSwitcherSource.match(/readFileTailSync\(runLogPath, startOffset \?\? 0\)/g)?.length,
+        2
+    );
+    assert.doesNotMatch(phaseSwitcherSource, /fs\.readFileSync\(runLogPath\)/);
+});

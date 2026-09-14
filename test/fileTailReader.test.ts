@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { readFileTail } from '../src/fileTailReader';
+import { readFileTail, readFileTailSync } from '../src/fileTailReader';
 
 test('reads only bytes appended after the previous length', async t => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-tail-'));
@@ -33,4 +33,31 @@ test('restarts at byte zero when the file was truncated', async t => {
 
 test('returns null when the watched file does not exist', async () => {
     assert.equal(await readFileTail(path.join(os.tmpdir(), 'kot-missing-run.log'), 0), null);
+});
+
+test('synchronous tail reader reads only appended bytes', async t => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-tail-sync-'));
+    t.after(() => fs.rm(directory, { recursive: true, force: true }));
+    const filePath = path.join(directory, 'run.log');
+    await fs.writeFile(filePath, 'old\nnew\n');
+
+    const result = readFileTailSync(filePath, Buffer.byteLength('old\n'));
+
+    assert.equal(result?.content.toString('utf8'), 'new\n');
+    assert.equal(result?.currentLength, Buffer.byteLength('old\nnew\n'));
+    assert.equal(result?.wasTruncated, false);
+});
+
+test('synchronous tail reader does not replay a file when offset equals its size', async t => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-tail-sync-'));
+    t.after(() => fs.rm(directory, { recursive: true, force: true }));
+    const filePath = path.join(directory, 'run.log');
+    await fs.writeFile(filePath, 'old failure\n');
+    const size = Buffer.byteLength('old failure\n');
+
+    const result = readFileTailSync(filePath, size);
+
+    assert.equal(result?.content.byteLength, 0);
+    assert.equal(result?.currentLength, size);
+    assert.equal(result?.wasTruncated, false);
 });

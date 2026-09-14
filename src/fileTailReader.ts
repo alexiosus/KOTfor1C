@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 
 export interface FileTailReadResult {
     content: Buffer;
@@ -51,5 +52,54 @@ export async function readFileTail(
         };
     } finally {
         await handle.close();
+    }
+}
+
+export function readFileTailSync(
+    filePath: string,
+    previousLength: number
+): FileTailReadResult | null {
+    let fileDescriptor: number;
+    try {
+        fileDescriptor = fsSync.openSync(filePath, 'r');
+    } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+            return null;
+        }
+        throw error;
+    }
+
+    try {
+        const stat = fsSync.fstatSync(fileDescriptor);
+        const normalizedPreviousLength = Number.isFinite(previousLength)
+            ? Math.max(0, Math.floor(previousLength))
+            : 0;
+        const wasTruncated = stat.size < normalizedPreviousLength;
+        const startOffset = wasTruncated ? 0 : normalizedPreviousLength;
+        const byteCount = Math.max(0, stat.size - startOffset);
+        const content = Buffer.allocUnsafe(byteCount);
+        let bytesReadTotal = 0;
+
+        while (bytesReadTotal < byteCount) {
+            const bytesRead = fsSync.readSync(
+                fileDescriptor,
+                content,
+                bytesReadTotal,
+                byteCount - bytesReadTotal,
+                startOffset + bytesReadTotal
+            );
+            if (bytesRead === 0) {
+                break;
+            }
+            bytesReadTotal += bytesRead;
+        }
+
+        return {
+            content: content.subarray(0, bytesReadTotal),
+            currentLength: startOffset + bytesReadTotal,
+            wasTruncated
+        };
+    } finally {
+        fsSync.closeSync(fileDescriptor);
     }
 }
