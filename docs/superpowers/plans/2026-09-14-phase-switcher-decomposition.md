@@ -54,15 +54,17 @@ Moved helper set: feature-path, feature-line and scenario-name extraction; scena
 - Export alias resolution and additional-parameter application functions used by the existing launch preparation flow.
 - Return a cloned transformed value rather than mutating caller-owned configuration.
 
-- [ ] Inventory the launch JSON helpers and distinguish pure transformations from prompts, workspace paths, and file I/O.
-- [ ] Write characterization tests for root/nested pointers, `~0`/`~1`, missing paths, arrays, supported aliases, unknown aliases, additional parameters, and input immutability.
-- [ ] Confirm the new tests fail before implementation.
-- [ ] Move only the pure traversal and transformation logic to `vanessaLaunchJson.ts`.
-- [ ] Keep workspace-relative path resolution in the provider unless it can be expressed with an explicit base-path argument and no environment reads.
-- [ ] Switch provider call sites and remove the obsolete private methods.
-- [ ] Confirm the new module has no `vscode`, filesystem, or process imports.
-- [ ] Run the focused tests and `npm run check`.
-- [ ] Commit with `refactor: extract Vanessa launch JSON transforms`.
+- [x] Inventory the launch JSON helpers and distinguish pure transformations from prompts, workspace paths, and file I/O.
+- [x] Write characterization tests for root/nested pointers, `~0`/`~1`, missing paths, arrays, supported aliases, unknown aliases, additional parameters, and input immutability.
+- [x] Confirm the new tests fail before implementation.
+- [x] Move only the pure traversal and transformation logic to `vanessaLaunchJson.ts`.
+- [x] Keep workspace-relative path resolution in the provider unless it can be expressed with an explicit base-path argument and no environment reads.
+- [x] Switch provider call sites and remove the obsolete private methods.
+- [x] Confirm the new module has no `vscode`, filesystem, or process imports.
+- [x] Run the focused tests and `npm run check`.
+- [x] Commit with `refactor: extract Vanessa launch JSON transforms`.
+
+Moved helper set: immutable JSON-pointer get/set with RFC 6901 decoding; dot/bracket pointer parsing; alias lookup and path resolution; typed value conversion; additional-parameter and global-variable transformations. Workspace path resolution, prompts, file reads/writes, infobase preparation and runtime-path selection remain in the provider.
 
 ### Task 3: Boundary and regression verification
 

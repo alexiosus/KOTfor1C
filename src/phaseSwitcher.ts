@@ -73,6 +73,15 @@ import {
     extractLastStepLocation,
     extractScenarioNameFromRunLogLine
 } from './vanessaRunLog';
+import {
+    applyAdditionalVanessaParameters,
+    applyGlobalVanessaVariables,
+    findObjectKeyByAlias,
+    getJsonValueAtPointer,
+    setJsonValueAtPointer,
+    type AdditionalLaunchVanessaParameter,
+    type JsonValue
+} from './vanessaLaunchJson';
 
 const loadInfobaseManager = createDeferredLoader(
     () => import('./infobaseManager.js')
@@ -336,12 +345,6 @@ interface VanessaRuntimeLogSnapshot {
 
 type VanessaInfobaseSource = 'jsonOrSettings' | 'lastCustom' | 'newCustom';
 
-interface AdditionalLaunchVanessaParameter {
-    key: string;
-    value: string;
-    overrideExisting: boolean;
-}
-
 interface VanessaLaunchOverlayParameters {
     additionalParameters: AdditionalLaunchVanessaParameter[];
     globalVariables: AdditionalLaunchVanessaParameter[];
@@ -352,111 +355,6 @@ interface VanessaTestClientDefaults {
     computerName: string;
     port: string;
 }
-
-const VANESSA_PARAM_ALIAS_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
-    ['ВерсияVA', 'VersionVA'],
-    ['КаталогФич', 'featurepath'],
-    ['КаталогПроекта', 'projectpath'],
-    ['КаталогиБиблиотек', 'librarycatalogs'],
-    ['СписокТеговИсключение', 'ignoretags'],
-    ['СписокТеговОтбор', 'filtertags'],
-    ['СписокСценариевДляВыполнения', 'scenariofilter'],
-    ['ЯзыкГенератораGherkin', 'gherkinlanguage'],
-    ['ДобавлятьПриНакликиванииМетаИнформацию', 'addmetainformationclicking'],
-    ['ИскатьЭлементыФормыПоИмени', 'searchformelementsbyname'],
-    ['ПоказыватьОкноОстановкиЗаписиДействийПользователя', 'ShowWindowToStopRecordingUserActions'],
-    ['ИспользоватьКомпонентуVanessaExt', 'useaddin'],
-    ['ИспользоватьПарсерGherkinИзКомпонентыVanessaExt', 'usethegherkinparserfromthevanessaextaddin'],
-    ['ПоискФайловСПомощьюКомпонентыVanessaExt', 'SearchingForFilesUsingTheVanessaExtComponent'],
-    ['ЗавершатьРаботуЕслиНеПолучилосьВыполнитьТихуюУстановкуКомпоненты', 'QuitIfSilentInstallationAddinFails'],
-    ['КаталогИнструментов', 'instrpath'],
-    ['КаталогВременныхФайлов', 'TemporaryFilesDirectory'],
-    ['ЗапускатьКлиентТестированияСМаксимизированнымОкном', 'runtestclientwithmaximizedwindow'],
-    ['МодальноеОкноПриЗапускеТестКлиентаЭтоОшибка', 'modalwindowwhenstartingtestclientiserror'],
-    ['ВыполнятьПопыткуПереподключенияЕслиПроцессТестКлиентаНеНайден', 'starttestclientsessionagainonconnectionifitsprocessisnotfound'],
-    ['ЗакрыватьКлиентТестированияПринудительно', 'forceclosetestclient'],
-    ['ТаймаутПередПринудительнымЗакрытиемТестКлиента', 'timeoutbeforeforciblyclosingtestclient'],
-    ['ПутьКadb', 'PathToadb'],
-    ['ДелатьЛогВыполненияСценариевВЖР', 'logtogr'],
-    ['ЗвуковоеОповещениеПриОкончанииВыполненияСценария', 'soundnotificationwhenscriptends'],
-    ['ВыполнятьШагиАсинхронно', 'makestepsasync'],
-    ['ИнтервалВыполненияШагаЗаданныйПользователем', 'SpacingStepSpecifiedUser'],
-    ['ОстановкаПриВозникновенииОшибки', 'stoponerror'],
-    ['ПоказыватьНомерСтрокиДереваПриВозникновенииОшибки', 'showrownumberonerror'],
-    ['ПриравниватьPendingКFailed', 'pendingequalfailed'],
-    ['БезопасноеВыполнениеШагов', 'safeexecutionofsteps'],
-    ['ТаймаутДляАсинхронныхШагов', 'timeoutforasynchronoussteps'],
-    ['КоличествоСекундПоискаОкна', 'timetofindwindow'],
-    ['КоличествоПопытокВыполненияДействия', 'numberofattemptstoperformanaction'],
-    ['ТаймаутЗапуска1С', 'testclienttimeout'],
-    ['ПаузаПриОткрытииОкна', 'pauseonwindowopening'],
-    ['ВыгружатьСтатусВыполненияСценариевВФайл', 'createlogs'],
-    ['ПутьКФайлуДляВыгрузкиСтатусаВыполненияСценариев', 'logpath'],
-    ['ИмяТекущейСборки', 'NameCurrentBuild'],
-    ['ЗагрузкаФичПриОткрытии', 'DownloadFeaturesOpen'],
-    ['ДелатьЛогВыполненияСценариевВТекстовыйФайл', 'logtotext'],
-    ['ВыводитьЛогВКонсоль', 'outputloginconsole'],
-    ['ВыводитьВЛогВыполнениеШагов', 'logstepstotext'],
-    ['ПодробныйЛогВыполненияСценариев', 'fulllog'],
-    ['ИмяФайлаЛогВыполненияСценариев', 'textlogname'],
-    ['ДелатьОтчетВФорматеАллюр', 'allurecreatereport'],
-    ['КаталогВыгрузкиAllure', 'allurepath'],
-    ['КаталогВыгрузкиAllureБазовый', 'allurepathbase'],
-    ['ПодставлятьВОтчетеAllureЗначенияПеременных', 'setvariablevaluesinstepsallurereport'],
-    ['ДанныеАллюрМеток', 'DataAllureMarks'],
-    ['ДелатьОтчетВФорматеjUnit', 'junitcreatereport'],
-    ['КаталогВыгрузкиjUnit', 'junitpath'],
-    ['СкриншотыjUnit', 'junitscreenshots'],
-    ['ДелатьОтчетВФорматеСППР', 'ModelingCreateReport'],
-    ['КаталогВыгрузкиСППР', 'modelingreportpath'],
-    ['ИмяКонфигурацииСППР', 'ModelingConfigurationName'],
-    ['ВерсияКонфигурацииСППР', 'ModelingConfigurationVersion'],
-    ['ДелатьОтчетВФорматеCucumberJson', 'cucumbercreatereport'],
-    ['КаталогВыгрузкиCucumberJson', 'cucumberreportpath'],
-    ['ДелатьЛогОшибокВТекстовыйФайл', 'logerrorstotext'],
-    ['СобиратьДанныеОСостоянииАктивнойФормыПриОшибке', 'getactiveformdataonerror'],
-    ['СобиратьДанныеОСостоянииВсехФормПриОшибке', 'getallformsdataonerror'],
-    ['СобиратьДанныеОЗначенияхПеременных', 'CollectDataOnVariableValues'],
-    ['ДелатьСкриншотПриВозникновенииОшибки', 'onerrorscreenshot'],
-    ['СниматьСкриншотКаждогоОкна1С', 'onerrorscreenshoteverywindow'],
-    ['ИспользоватьВнешнююКомпонентуДляСкриншотов', 'useaddinforscreencapture'],
-    ['СпособСнятияСкриншотовВнешнейКомпонентой', 'screencaptureaddinmethod'],
-    ['КаталогВыгрузкиСкриншотов', 'outputscreenshot'],
-    ['ИмяКаталогаЛогОшибок', 'texterrorslogname'],
-    ['ОткрыватьНачальнуюСтраницуПриЗапуске', 'OpenStartPageAtStartup'],
-    ['ВыполнитьСценарии', 'ExecuteScenarios', 'RunScenarios'],
-    ['ЗавершитьРаботуСистемы', 'CloseSystemOnComplete', 'QuitSystemOnComplete'],
-    ['ЗакрытьTestClientПослеЗапускаСценариев', 'CloseTestClientAfterScenarioRun', 'CloseTestClient', 'closetestclient'],
-    ['ПутьКИнфобазе', 'PathToInfobase'],
-    ['ВыполнениеСценариев', 'RunningScripts'],
-    ['КлиентТестирования', 'TestClient'],
-    ['КлиентыТестирования', 'ДанныеКлиентовТестирования', 'datatestclients'],
-    ['ПортЗапускаТестКлиента', 'PortTestClient'],
-    ['ДопПараметры', 'AddItionalParameters'],
-    ['ТипКлиента', 'ClientType'],
-    ['ИмяКомпьютера', 'ComputerName'],
-    ['Имя', 'Name'],
-    ['Синоним', 'Synonym']
-];
-
-const VANESSA_PARAM_ALIAS_INDEX = (() => {
-    const index = new Map<string, Set<string>>();
-    for (const group of VANESSA_PARAM_ALIAS_GROUPS) {
-        const normalizedGroup = Array.from(new Set(group
-            .map(key => key.trim())
-            .filter(key => key.length > 0)));
-        if (normalizedGroup.length < 2) {
-            continue;
-        }
-        const normalizedLookup = normalizedGroup.map(key => key.toLowerCase());
-        for (const lookupKey of normalizedLookup) {
-            const bucket = index.get(lookupKey) ?? new Set<string>();
-            normalizedGroup.forEach(key => bucket.add(key));
-            index.set(lookupKey, bucket);
-        }
-    }
-    return index;
-})();
 
 
 /**
@@ -6372,12 +6270,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const launchOverlay = await this.loadVanessaLaunchOverlayParameters();
-        const launchJson: Record<string, unknown> = {};
+        let launchJson: JsonValue = {};
         if (launchOverlay.additionalParameters.length > 0) {
-            this.applyAdditionalVanessaParameters(launchJson, launchOverlay.additionalParameters);
+            launchJson = applyAdditionalVanessaParameters(launchJson, launchOverlay.additionalParameters).value;
         }
         if (launchOverlay.globalVariables.length > 0) {
-            this.applyGlobalVanessaVariables(launchJson, launchOverlay.globalVariables);
+            launchJson = applyGlobalVanessaVariables(launchJson, launchOverlay.globalVariables).value;
         }
 
         const tempDir = path.join(os.tmpdir(), 'kot-test-toolkit', 'vanessa');
@@ -9038,37 +8936,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return extracted.replace(/[\\/]+$/, '');
     }
 
-    private getJsonValueAtPointer(root: any, pointer: Array<string | number>): any {
-        let current = root;
-        for (const segment of pointer) {
-            if (current === null || current === undefined) {
-                return undefined;
-            }
-            current = current[segment as any];
-        }
-        return current;
-    }
-
-    private setJsonValueAtPointer(root: any, pointer: Array<string | number>, value: any): void {
-        if (pointer.length === 0) {
-            return;
-        }
-
-        let current = root;
-        for (let index = 0; index < pointer.length - 1; index++) {
-            const segment = pointer[index];
-            if (current === null || current === undefined) {
-                return;
-            }
-            current = current[segment as any];
-        }
-
-        const lastSegment = pointer[pointer.length - 1];
-        if (current !== null && current !== undefined) {
-            current[lastSegment as any] = value;
-        }
-    }
-
     private isCombinedScenarioJsonArtifactPath(filePath: string): boolean {
         return path.basename(filePath).toLowerCase().endsWith('.combined.json');
     }
@@ -9094,10 +8961,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         let nextJsonText = sourceJsonRaw;
         try {
-            const parsedJson = JSON.parse(sourceJsonRaw);
+            let parsedJson = JSON.parse(sourceJsonRaw) as JsonValue;
             if (parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson)) {
-                this.applyAdditionalVanessaParameters(parsedJson, overlay.additionalParameters);
-                this.applyGlobalVanessaVariables(parsedJson, overlay.globalVariables);
+                parsedJson = applyAdditionalVanessaParameters(parsedJson, overlay.additionalParameters).value;
+                parsedJson = applyGlobalVanessaVariables(parsedJson, overlay.globalVariables).value;
                 nextJsonText = JSON.stringify(parsedJson, null, 2);
             }
         } catch {
@@ -9260,7 +9127,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private resolveVanessaProfileNameFromJson(root: Record<string, unknown>): string {
-        const testProfileKey = this.findObjectKeyByAlias(root, 'ПрофильПользователяНастройкаТеста');
+        const testProfileKey = findObjectKeyByAlias(root, 'ПрофильПользователяНастройкаТеста');
         if (testProfileKey) {
             const testProfileValue = String(root[testProfileKey] || '').trim();
             if (testProfileValue) {
@@ -9268,7 +9135,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        const scenarioProfileKey = this.findObjectKeyByAlias(root, 'ПрофильПользователяСценарий');
+        const scenarioProfileKey = findObjectKeyByAlias(root, 'ПрофильПользователяСценарий');
         if (scenarioProfileKey) {
             return String(root[scenarioProfileKey] || '').trim();
         }
@@ -9277,7 +9144,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private ensureVanessaRootInfobasePath(root: Record<string, unknown>, connectionArgument: string): boolean {
-        const existingKey = this.findObjectKeyByAlias(root, 'ПутьКИнфобазе') ?? 'ПутьКИнфобазе';
+        const existingKey = findObjectKeyByAlias(root, 'ПутьКИнфобазе') ?? 'ПутьКИнфобазе';
         const currentValue = typeof root[existingKey] === 'string'
             ? String(root[existingKey] || '')
             : '';
@@ -9310,7 +9177,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     ): boolean {
         let changed = false;
         const ensureField = (alias: string, nextValue: string) => {
-            const key = this.findObjectKeyByAlias(clientEntry, alias) ?? alias;
+            const key = findObjectKeyByAlias(clientEntry, alias) ?? alias;
             const currentValue = typeof clientEntry[key] === 'string'
                 ? String(clientEntry[key] || '')
                 : '';
@@ -9322,19 +9189,19 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         };
 
         ensureField('ПутьКИнфобазе', connectionArgument);
-        if (!this.findObjectKeyByAlias(clientEntry, 'Имя')) {
+        if (!findObjectKeyByAlias(clientEntry, 'Имя')) {
             clientEntry.Имя = profileName;
             changed = true;
         }
-        if (!this.findObjectKeyByAlias(clientEntry, 'ТипКлиента')) {
+        if (!findObjectKeyByAlias(clientEntry, 'ТипКлиента')) {
             clientEntry.ТипКлиента = defaults.clientType;
             changed = true;
         }
-        if (!this.findObjectKeyByAlias(clientEntry, 'ИмяКомпьютера')) {
+        if (!findObjectKeyByAlias(clientEntry, 'ИмяКомпьютера')) {
             clientEntry.ИмяКомпьютера = defaults.computerName;
             changed = true;
         }
-        if (!this.findObjectKeyByAlias(clientEntry, 'ПортЗапускаТестКлиента')) {
+        if (!findObjectKeyByAlias(clientEntry, 'ПортЗапускаТестКлиента')) {
             clientEntry.ПортЗапускаТестКлиента = defaults.port;
             changed = true;
         }
@@ -9349,8 +9216,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     ): boolean {
         let changed = false;
         const profileName = this.resolveVanessaProfileNameFromJson(root);
-        const collectionKey = this.findObjectKeyByAlias(root, 'КлиентыТестирования')
-            ?? this.findObjectKeyByAlias(root, 'ДанныеКлиентовТестирования')
+        const collectionKey = findObjectKeyByAlias(root, 'КлиентыТестирования')
+            ?? findObjectKeyByAlias(root, 'ДанныеКлиентовТестирования')
             ?? 'КлиентыТестирования';
 
         const existingCollection = root[collectionKey];
@@ -9400,345 +9267,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return changed;
     }
 
-    private parseAdditionalParameterPointer(rawKey: string): Array<string | number> | null {
-        const key = rawKey.trim();
-        if (!key) {
-            return null;
-        }
-
-        if (!key.includes('.') && !key.includes('[')) {
-            return [key];
-        }
-
-        const pointer: Array<string | number> = [];
-        for (const rawSegment of key.split('.')) {
-            const segment = rawSegment.trim();
-            if (!segment) {
-                return null;
-            }
-
-            const matcher = /([^[\]]+)|\[(\d+)\]/g;
-            let cursor = 0;
-            let hasMatch = false;
-            let match: RegExpExecArray | null;
-            while ((match = matcher.exec(segment)) !== null) {
-                if (match.index !== cursor) {
-                    return null;
-                }
-
-                hasMatch = true;
-                if (match[1] !== undefined) {
-                    const prop = match[1].trim();
-                    if (!prop) {
-                        return null;
-                    }
-                    pointer.push(prop);
-                } else {
-                    pointer.push(Number(match[2]));
-                }
-
-                cursor = matcher.lastIndex;
-            }
-
-            if (!hasMatch || cursor !== segment.length) {
-                return null;
-            }
-        }
-
-        return pointer.length > 0 ? pointer : null;
-    }
-
-    private getAdditionalParamAliasCandidates(rawKey: string): string[] {
-        const key = rawKey.trim();
-        if (!key) {
-            return [];
-        }
-
-        const normalized = key.toLowerCase();
-        const fromIndex = VANESSA_PARAM_ALIAS_INDEX.get(normalized);
-        if (!fromIndex || fromIndex.size === 0) {
-            return [key];
-        }
-
-        return Array.from(new Set([key, ...Array.from(fromIndex)]));
-    }
-
-    private findObjectKeyByAlias(container: unknown, rawKey: string): string | null {
-        if (!container || typeof container !== 'object' || Array.isArray(container)) {
-            return null;
-        }
-
-        const objectContainer = container as Record<string, unknown>;
-        if (Object.prototype.hasOwnProperty.call(objectContainer, rawKey)) {
-            return rawKey;
-        }
-
-        const normalizedInput = rawKey.trim().toLowerCase();
-        if (!normalizedInput) {
-            return null;
-        }
-
-        for (const key of Object.keys(objectContainer)) {
-            if (key.trim().toLowerCase() === normalizedInput) {
-                return key;
-            }
-        }
-
-        const aliases = this.getAdditionalParamAliasCandidates(rawKey)
-            .map(alias => alias.trim().toLowerCase())
-            .filter(alias => alias.length > 0);
-        if (!aliases.length) {
-            return null;
-        }
-        const aliasSet = new Set(aliases);
-
-        for (const key of Object.keys(objectContainer)) {
-            if (aliasSet.has(key.trim().toLowerCase())) {
-                return key;
-            }
-        }
-
-        return null;
-    }
-
-    private resolveExistingPointerByAliases(root: unknown, pointer: Array<string | number>): Array<string | number> | null {
-        let current = root as any;
-        const resolved: Array<string | number> = [];
-
-        for (const segment of pointer) {
-            if (typeof segment === 'number') {
-                if (!Array.isArray(current) || segment < 0 || segment >= current.length) {
-                    return null;
-                }
-                resolved.push(segment);
-                current = current[segment];
-                continue;
-            }
-
-            const resolvedKey = this.findObjectKeyByAlias(current, segment);
-            if (!resolvedKey) {
-                return null;
-            }
-
-            resolved.push(resolvedKey);
-            current = current[resolvedKey as any];
-        }
-
-        return resolved;
-    }
-
-    private resolveRootPointerByLeafAlias(root: unknown, pointer: Array<string | number>): Array<string | number> | null {
-        if (!root || typeof root !== 'object' || Array.isArray(root) || pointer.length < 2) {
-            return null;
-        }
-        if (pointer.some(segment => typeof segment === 'number')) {
-            return null;
-        }
-
-        const leaf = pointer[pointer.length - 1];
-        if (typeof leaf !== 'string') {
-            return null;
-        }
-
-        const resolvedRootKey = this.findObjectKeyByAlias(root, leaf);
-        if (!resolvedRootKey) {
-            return null;
-        }
-
-        return [resolvedRootKey];
-    }
-
-    private hasJsonValueAtPointer(root: any, pointer: Array<string | number>): boolean {
-        let current = root;
-        for (const segment of pointer) {
-            if (current === null || current === undefined || typeof current !== 'object') {
-                return false;
-            }
-            if (!Object.prototype.hasOwnProperty.call(current, segment as any)) {
-                return false;
-            }
-            current = current[segment as any];
-        }
-        return true;
-    }
-
-    private hasRootSpprTestClientsKey(root: unknown): boolean {
-        if (!root || typeof root !== 'object' || Array.isArray(root)) {
-            return false;
-        }
-        return Object.keys(root as Record<string, unknown>).some(key => key.trim().toLowerCase() === 'клиентытестирования');
-    }
-
-    private shouldSkipAdditionalParamForSpprClients(
-        root: unknown,
-        pointer: Array<string | number>
-    ): boolean {
-        if (!this.hasRootSpprTestClientsKey(root)) {
-            return false;
-        }
-
-        const stringSegments = pointer
-            .filter((segment): segment is string => typeof segment === 'string')
-            .map(segment => segment.trim().toLowerCase())
-            .filter(segment => segment.length > 0);
-        if (!stringSegments.length) {
-            return false;
-        }
-
-        const touchesClientsCollection = stringSegments.some(segment =>
-            segment === 'datatestclients'
-            || segment === 'клиентытестирования'
-            || segment === 'данныеклиентовтестирования'
-        );
-        if (!touchesClientsCollection) {
-            return false;
-        }
-
-        if (pointer.length === 1 && typeof pointer[0] === 'string') {
-            return false;
-        }
-
-        return true;
-    }
-
-    private ensureJsonPointerContainers(root: any, pointer: Array<string | number>): boolean {
-        if (!root || typeof root !== 'object' || pointer.length === 0) {
-            return false;
-        }
-
-        let current = root;
-        for (let index = 0; index < pointer.length - 1; index++) {
-            if (current === null || current === undefined || typeof current !== 'object') {
-                return false;
-            }
-
-            const segment = pointer[index];
-            const nextSegment = pointer[index + 1];
-            const currentValue = current[segment as any];
-            if (currentValue === null || currentValue === undefined || typeof currentValue !== 'object') {
-                current[segment as any] = typeof nextSegment === 'number' ? [] : {};
-            }
-            current = current[segment as any];
-        }
-
-        return current !== null && current !== undefined && typeof current === 'object';
-    }
-
-    private parseAdditionalParameterValue(rawValue: string, hasExisting: boolean, existingValue: unknown): unknown {
-        const source = String(rawValue ?? '');
-        const trimmed = source.trim();
-
-        const tryParseJson = (): { ok: boolean; value: unknown } => {
-            try {
-                return { ok: true, value: JSON.parse(trimmed) };
-            } catch {
-                return { ok: false, value: source };
-            }
-        };
-
-        if (hasExisting) {
-            if (typeof existingValue === 'string') {
-                return source;
-            }
-            if (typeof existingValue === 'number') {
-                const parsedNumber = Number(trimmed);
-                return Number.isFinite(parsedNumber) ? parsedNumber : source;
-            }
-            if (typeof existingValue === 'boolean') {
-                if (/^true$/i.test(trimmed)) {
-                    return true;
-                }
-                if (/^false$/i.test(trimmed)) {
-                    return false;
-                }
-                return source;
-            }
-            if (existingValue === null || typeof existingValue === 'object') {
-                const parsed = tryParseJson();
-                return parsed.ok ? parsed.value : source;
-            }
-            return source;
-        }
-
-        if (!trimmed) {
-            return source;
-        }
-
-        const shouldTryJsonParse =
-            trimmed.startsWith('{') ||
-            trimmed.startsWith('[') ||
-            trimmed === 'true' ||
-            trimmed === 'false' ||
-            trimmed === 'null' ||
-            /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(trimmed);
-        if (!shouldTryJsonParse) {
-            return source;
-        }
-
-        const parsed = tryParseJson();
-        return parsed.ok ? parsed.value : source;
-    }
-
-    private areJsonValuesEqual(left: unknown, right: unknown): boolean {
-        if (left === right) {
-            return true;
-        }
-
-        if (!left || !right || typeof left !== 'object' || typeof right !== 'object') {
-            return false;
-        }
-
-        try {
-            return JSON.stringify(left) === JSON.stringify(right);
-        } catch {
-            return false;
-        }
-    }
-
-    private applyAdditionalVanessaParameters(root: any, params: AdditionalLaunchVanessaParameter[]): number {
-        if (!root || typeof root !== 'object' || Array.isArray(root)) {
-            return 0;
-        }
-
-        let changed = 0;
-        for (const param of params) {
-            const key = (param.key || '').trim();
-            if (!key) {
-                continue;
-            }
-
-            const parsedPointer = this.parseAdditionalParameterPointer(key) ?? [key];
-            if (this.shouldSkipAdditionalParamForSpprClients(root, parsedPointer)) {
-                continue;
-            }
-            const existingPointer =
-                this.resolveExistingPointerByAliases(root, parsedPointer)
-                ?? this.resolveRootPointerByLeafAlias(root, parsedPointer);
-            const pointer = existingPointer ?? parsedPointer;
-            const hasExisting = this.hasJsonValueAtPointer(root, pointer);
-            if (hasExisting && !param.overrideExisting) {
-                continue;
-            }
-
-            if (!this.ensureJsonPointerContainers(root, pointer)) {
-                continue;
-            }
-
-            const existingValue = hasExisting ? this.getJsonValueAtPointer(root, pointer) : undefined;
-            const nextValue = this.parseAdditionalParameterValue(
-                String(param.value ?? ''),
-                hasExisting,
-                existingValue
-            );
-            const currentValue = this.getJsonValueAtPointer(root, pointer);
-            if (!this.areJsonValuesEqual(currentValue, nextValue)) {
-                this.setJsonValueAtPointer(root, pointer, nextValue);
-                changed++;
-            }
-        }
-        return changed;
-    }
-
     private async loadVanessaLaunchOverlayParameters(): Promise<VanessaLaunchOverlayParameters> {
         try {
             const { YamlParametersManager } = await import('./yamlParametersManager.js');
@@ -9758,80 +9286,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             console.warn('[PhaseSwitcherProvider] Failed to load additional Vanessa parameters:', error);
             return { additionalParameters: [], globalVariables: [] };
         }
-    }
-
-    private getGlobalVarsRootAliases(): string[] {
-        return ['GlobalVars', 'ГлобальныеПеременные', 'globalvariables', 'global_vars'];
-    }
-
-    private resolveGlobalVarsContainer(root: unknown): { key: string; value: Record<string, unknown> } | null {
-        if (!root || typeof root !== 'object' || Array.isArray(root)) {
-            return null;
-        }
-
-        const rootObj = root as Record<string, unknown>;
-        for (const alias of this.getGlobalVarsRootAliases()) {
-            const foundKey = this.findObjectKeyByAlias(rootObj, alias);
-            if (!foundKey) {
-                continue;
-            }
-
-            const currentValue = rootObj[foundKey];
-            if (currentValue && typeof currentValue === 'object' && !Array.isArray(currentValue)) {
-                return { key: foundKey, value: currentValue as Record<string, unknown> };
-            }
-
-            const replacement: Record<string, unknown> = {};
-            rootObj[foundKey] = replacement;
-            return { key: foundKey, value: replacement };
-        }
-
-        const defaultKey = 'GlobalVars';
-        const created: Record<string, unknown> = {};
-        rootObj[defaultKey] = created;
-        return { key: defaultKey, value: created };
-    }
-
-    private applyGlobalVanessaVariables(root: any, variables: AdditionalLaunchVanessaParameter[]): number {
-        if (!root || typeof root !== 'object' || Array.isArray(root)) {
-            return 0;
-        }
-        if (!Array.isArray(variables) || variables.length === 0) {
-            return 0;
-        }
-
-        const containerInfo = this.resolveGlobalVarsContainer(root);
-        if (!containerInfo) {
-            return 0;
-        }
-        const container = containerInfo.value;
-        let changed = 0;
-
-        for (const variable of variables) {
-            const key = (variable.key || '').trim();
-            if (!key) {
-                continue;
-            }
-
-            const resolvedKey = this.findObjectKeyByAlias(container, key) ?? key;
-            const hasExisting = Object.prototype.hasOwnProperty.call(container, resolvedKey);
-            if (hasExisting && !variable.overrideExisting) {
-                continue;
-            }
-
-            const existingValue = hasExisting ? container[resolvedKey] : undefined;
-            const nextValue = this.parseAdditionalParameterValue(
-                String(variable.value ?? ''),
-                hasExisting,
-                existingValue
-            );
-            if (!this.areJsonValuesEqual(existingValue, nextValue)) {
-                container[resolvedKey] = nextValue;
-                changed++;
-            }
-        }
-
-        return changed;
     }
 
     private getVanessaStatusFileKeySet(): Set<string> {
@@ -9943,16 +9397,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         let changed = false;
         for (const candidate of logPointers) {
-            const current = this.getJsonValueAtPointer(parsedJson, candidate.pointer);
+            const current = getJsonValueAtPointer(parsedJson, candidate.pointer);
             if (typeof current === 'string' && current !== logPath) {
-                this.setJsonValueAtPointer(parsedJson, candidate.pointer, logPath);
+                parsedJson = setJsonValueAtPointer(parsedJson, candidate.pointer, logPath);
                 changed = true;
             }
         }
         for (const candidate of statusPointers) {
-            const current = this.getJsonValueAtPointer(parsedJson, candidate.pointer);
+            const current = getJsonValueAtPointer(parsedJson, candidate.pointer);
             if (typeof current === 'string' && current !== statusPath) {
-                this.setJsonValueAtPointer(parsedJson, candidate.pointer, statusPath);
+                parsedJson = setJsonValueAtPointer(parsedJson, candidate.pointer, statusPath);
                 changed = true;
             }
         }
@@ -11228,11 +10682,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             };
         }
 
-        const patchedJson = JSON.parse(rawJson);
+        let patchedJson = JSON.parse(rawJson) as JsonValue;
         let infobaseChanged = false;
         if (shouldPatchInfobase) {
             for (const candidate of candidates) {
-                const currentValue = this.getJsonValueAtPointer(patchedJson, candidate.pointer);
+                const currentValue = getJsonValueAtPointer(patchedJson, candidate.pointer);
                 if (typeof currentValue !== 'string') {
                     continue;
                 }
@@ -11241,7 +10695,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     ? this.patchConnectionStringFilePath(currentValue, chosenScenarioInfobasePath)
                     : chosenScenarioInfobasePath;
                 if (nextValue !== currentValue) {
-                    this.setJsonValueAtPointer(patchedJson, candidate.pointer, nextValue);
+                    patchedJson = setJsonValueAtPointer(patchedJson, candidate.pointer, nextValue);
                     infobaseChanged = true;
                 }
             }
