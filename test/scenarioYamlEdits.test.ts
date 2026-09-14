@@ -120,6 +120,44 @@ test('YAML section replacement supports inline empty sequences', () => {
     ].join('\n'));
 });
 
+test('YAML section replacement preserves parameter neighbors and quoted punctuation', () => {
+    const source = [
+        'ДанныеСценария:',
+        '  Имя: Тест',
+        'ПараметрыСценария:',
+        '    - ПараметрыСценария1:',
+        '        Имя: Старый',
+        '        Значение: "A: #1"',
+        'ВложенныеСценарии:',
+        '    - ВложенныеСценарии1:',
+        '        ИмяСценария: Сосед',
+        'ТекстСценария: |',
+        '    И Сосед',
+        ''
+    ].join('\n');
+    const edit = getSectionBodyReplacement(source, 'ПараметрыСценария', [
+        '- ПараметрыСценария1:',
+        '    Имя: "Новый"',
+        '    Значение: "B: #2"'
+    ].join('\n'));
+
+    assert.ok(edit);
+    assert.equal(applyEdit(source, edit), [
+        'ДанныеСценария:',
+        '  Имя: Тест',
+        'ПараметрыСценария:',
+        '    - ПараметрыСценария1:',
+        '        Имя: "Новый"',
+        '        Значение: "B: #2"',
+        'ВложенныеСценарии:',
+        '    - ВложенныеСценарии1:',
+        '        ИмяСценария: Сосед',
+        'ТекстСценария: |',
+        '    И Сосед',
+        ''
+    ].join('\n'));
+});
+
 test('YAML section edits refuse malformed documents and ignore missing sections', () => {
     assert.throws(
         () => getSectionBodyReplacement('ВложенныеСценарии:\n  - [broken\n', 'ВложенныеСценарии', ''),

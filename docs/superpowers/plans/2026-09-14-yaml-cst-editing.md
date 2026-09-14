@@ -93,12 +93,12 @@
 - Use the same `getSectionInsertion` and `getSectionBodyReplacement` helpers for mutations.
 - Keep `parseUsedParametersFromScriptBody` regex behavior unchanged.
 
-- [ ] Add failing tests for multiple records, quoted defaults, descriptions containing `:` or `#`, missing optional fields, empty sections, and source preservation after replacement.
-- [ ] Replace `parseExistingParameterData` structural regex parsing with typed records from `ScenarioYamlDocument`.
-- [ ] Replace structural range discovery in `insertScenarioParamHandler` and `clearAndFillScenarioParameters` with CST-backed edit helpers.
-- [ ] Delete obsolete section-boundary regular expressions after confirming `rg` finds no callers.
-- [ ] Run the focused tests and the complete `npm run check`.
-- [ ] Commit with `refactor: edit scenario parameters through YAML ranges`.
+- [x] Add failing tests for multiple records, quoted defaults, descriptions containing `:` or `#`, missing optional fields, empty sections, and source preservation after replacement.
+- [x] Replace `parseExistingParameterData` structural regex parsing with typed records from `ScenarioYamlDocument`.
+- [x] Replace structural range discovery in `insertScenarioParamHandler` and `clearAndFillScenarioParameters` with CST-backed edit helpers.
+- [x] Delete obsolete section-boundary regular expressions after confirming `rg` finds no callers.
+- [x] Run the focused tests and the complete `npm run check`.
+- [x] Commit with `refactor: edit scenario parameters through YAML ranges`.
 
 ### Task 5: Read-only corpus and final verification
 

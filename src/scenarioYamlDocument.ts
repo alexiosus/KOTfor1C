@@ -67,8 +67,12 @@ function getScalarKey(value: unknown): string | null {
     return value.value;
 }
 
-function getNodeValue(value: unknown): unknown {
+function getNodeValue(value: unknown, source?: string): unknown {
     if (isScalar(value)) {
+        const range = getPresentNodeRange(value);
+        if (source !== undefined && value.type === 'PLAIN' && range) {
+            return source.slice(range[0], range[1]).trim();
+        }
         return value.value;
     }
 
@@ -152,7 +156,7 @@ export class ScenarioYamlDocument {
         const rawValueRange = getPresentNodeRange(fieldPair.value);
         return {
             key: fieldName,
-            value: getNodeValue(fieldPair.value),
+            value: getNodeValue(fieldPair.value, this.source),
             pairRange: sourceRange,
             valueRange: rawValueRange
                 ? { start: rawValueRange[0], end: rawValueRange[1] }
@@ -256,7 +260,7 @@ export class ScenarioYamlDocument {
                     }
                     const fieldKey = getScalarKey(fieldPair.key);
                     if (fieldKey) {
-                        fields.set(fieldKey, getNodeValue(fieldPair.value));
+                        fields.set(fieldKey, getNodeValue(fieldPair.value, this.source));
                     }
                 }
             }

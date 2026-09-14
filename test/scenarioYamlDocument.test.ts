@@ -57,6 +57,7 @@ test('ScenarioYamlDocument reads sequence records as decoded field maps', () => 
         '  - ПараметрыСценария1:',
         '      Имя: "Артикул"',
         '      Значение: "A: #1"',
+        '      НомерСтроки: 000015110',
         '      Описание: "Код # с двоеточием: да"',
         '  - ПараметрыСценария2:',
         '      Имя: Количество',
@@ -70,12 +71,14 @@ test('ScenarioYamlDocument reads sequence records as decoded field maps', () => 
     assert.deepEqual(Object.fromEntries(records[0].fields), {
         Имя: 'Артикул',
         Значение: 'A: #1',
+        НомерСтроки: '000015110',
         Описание: 'Код # с двоеточием: да'
     });
     assert.equal(source.slice(records[0].range.start, records[0].range.end), [
         'ПараметрыСценария1:',
         '      Имя: "Артикул"',
         '      Значение: "A: #1"',
+        '      НомерСтроки: 000015110',
         '      Описание: "Код # с двоеточием: да"'
     ].join('\n'));
     assert.deepEqual(Object.fromEntries(records[1].fields), { Имя: 'Количество' });

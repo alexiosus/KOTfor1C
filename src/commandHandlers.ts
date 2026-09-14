@@ -631,7 +631,7 @@ export async function insertNestedScenarioRefHandler(textEditor: vscode.TextEdit
  */
 export async function insertScenarioParamHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
     const document = textEditor.document;
-    
+
     // Проверяем, что это файл сценария YAML
     const { isScenarioYamlFile } = await import('./yamlValidator.js');
     if (!isScenarioYamlFile(document)) {
@@ -639,134 +639,31 @@ export async function insertScenarioParamHandler(textEditor: vscode.TextEditor, 
         vscode.window.showWarningMessage(t('This command is only available for scenario YAML files.'));
         return;
     }
-    
+
     const text = document.getText();
-    
-    // Ищем блок ПараметрыСценария:
-    const paramsRegex = /ПараметрыСценария:/;
-    const paramsMatch = text.match(paramsRegex);
-    
-    if (paramsMatch && paramsMatch.index !== undefined) {
-        const sectionStartIndex = paramsMatch.index;
-        
-        // Находим следующую основную секцию после "ПараметрыСценария:"
-        const nextSectionRegex = /\n[А-Яа-я]+:/g;
-        let nextSectionMatch;
-        let insertIndex = text.length; // По умолчанию - конец файла
-        
-        nextSectionRegex.lastIndex = sectionStartIndex;
-        while ((nextSectionMatch = nextSectionRegex.exec(text)) !== null) {
-            const matchedLine = nextSectionMatch[0];
-            // Проверяем, это не вложенная секция (без отступов)
-            if (matchedLine.match(/^\n[А-Яа-я]+:/) && !matchedLine.match(/^\n\s+[А-Яа-я]+:/)) {
-                insertIndex = nextSectionMatch.index;
-                break;
-            }
-        }
-        
-        // Проверяем, есть ли уже элементы в секции
-        const sectionText = text.substring(sectionStartIndex, insertIndex);
-        const hasItems = sectionText.includes('- ПараметрыСценария');
-        
-        // Определяем позицию для вставки
-        let insertPosition;
-        let snippet;
-        
-        if (hasItems) {
-            // Ищем последний блок элемента в секции
-            const lines = sectionText.split('\n');
-            
-            // Находим все строки, начинающиеся с "- ПараметрыСценария"
-            const itemStartLines = [];
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].match(/\s+- ПараметрыСценария/)) {
-                    itemStartLines.push(i);
-                }
-            }
-            
-            if (itemStartLines.length > 0) {
-                const lastItemStartLineIndex = itemStartLines[itemStartLines.length - 1];
-                const indentMatch = lines[lastItemStartLineIndex].match(/^(\s+)/);
-                const indent = indentMatch ? indentMatch[1] : '    ';
-                
-                // Определяем конец последнего элемента
-                // Ищем последнюю строку, относящуюся к последнему элементу
-                let lastElementEndLineIndex = lastItemStartLineIndex;
-                
-                for (let i = lastItemStartLineIndex + 1; i < lines.length; i++) {
-                    const line = lines[i];
-                    
-                    if (line.trim() === '') {
-                        continue;
-                    }
-                    
-                    const indentMatch = line.match(/^\s+/);
-                    if (indentMatch && indentMatch[0].length > indent.length) {
-                        lastElementEndLineIndex = i;
-                    } 
-                    else {
-                        break;
-                    }
-                }
-                
-                // Вычисляем позицию конца последнего элемента
-                let offset = sectionStartIndex;
-                for (let i = 0; i <= lastElementEndLineIndex; i++) {
-                    offset += lines[i].length + 1; // +1 за \n
-                }
-                
-                insertPosition = document.positionAt(offset);
-                
-                // Проверяем, нет ли пустой строки перед местом вставки
-                const currentText = document.getText(new vscode.Range(document.positionAt(offset - 2), document.positionAt(offset)));
-                if (currentText === '\n\n') {
-                    // Если перед местом вставки пустая строка, меняем сниппет, убирая лишний перенос
-                    snippet = new vscode.SnippetString(
-                        `${indent}- ПараметрыСценария:\n` +
-                        `${indent}    НомерСтроки: "$1"\n` +
-                        `${indent}    Имя: "$2"\n` +
-                        `${indent}    Значение: "$3"\n` +
-                        `${indent}    ТипПараметра: "\${4|Строка,Число,Булево,Массив,Дата|}"\n` +
-                        `${indent}    ИсходящийПараметр: "\${5|No,Yes|}"\n$0`
-                    );
-                } else {
-                    // Обычная вставка с переносом строки
-                    snippet = new vscode.SnippetString(
-                        `${indent}- ПараметрыСценария:\n` +
-                        `${indent}    НомерСтроки: "$1"\n` +
-                        `${indent}    Имя: "$2"\n` +
-                        `${indent}    Значение: "$3"\n` +
-                        `${indent}    ТипПараметра: "\${4|Строка,Число,Булево,Массив,Дата|}"\n` +
-                        `${indent}    ИсходящийПараметр: "\${5|No,Yes|}"\n$0`
-                    );
-                }
-            } else {
-                // Если не удалось найти элементы, добавляем в начало секции
-                insertPosition = document.positionAt(sectionStartIndex + paramsMatch[0].length);
-                snippet = new vscode.SnippetString(
-                    '\n    - ПараметрыСценария:\n' +
-                    '        НомерСтроки: "$1"\n' +
-                    '        Имя: "$2"\n' +
-                    '        Значение: "$3"\n' +
-                    '        ТипПараметра: "\${4|Строка,Число,Булево,Массив,Дата|}"\n' +
-                    '        ИсходящийПараметр: "\${5|No,Yes}"$0'
-                );
-            }
-        } else {
-            // Если элементов нет, вставляем первый с отступом
-            insertPosition = document.positionAt(sectionStartIndex + paramsMatch[0].length);
-            snippet = new vscode.SnippetString(
-                '\n    - ПараметрыСценария:\n' +
-                '        НомерСтроки: "$1"\n' +
-                '        Имя: "$2"\n' +
-                '        Значение: "$3"\n' +
-                '        ТипПараметра: "\${4|Строка,Число,Булево,Массив,Дата|}"\n' +
-                '        ИсходящийПараметр: "\${5|No,Yes}"$0'
-            );
-        }
-        
-        // Вставляем сниппет в найденную позицию
-        textEditor.insertSnippet(snippet, insertPosition);
+
+    const parameterItem = '- ПараметрыСценария:\n'
+        + '    НомерСтроки: "$1"\n'
+        + '    Имя: "$2"\n'
+        + '    Значение: "$3"\n'
+        + '    ТипПараметра: "${4|Строка,Число,Булево,Массив,Дата|}"\n'
+        + '    ИсходящийПараметр: "${5|No,Yes|}"$0';
+    let sectionEdit;
+    try {
+        sectionEdit = getSectionInsertion(text, 'ПараметрыСценария', parameterItem);
+    } catch (error) {
+        const t = await getTranslator(getExtensionUri());
+        const message = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(t('Could not edit scenario YAML because its structure is invalid: {0}', message));
+        return;
+    }
+
+    if (sectionEdit) {
+        const range = new vscode.Range(
+            document.positionAt(sectionEdit.range.start),
+            document.positionAt(sectionEdit.range.end)
+        );
+        await textEditor.insertSnippet(new vscode.SnippetString(sectionEdit.text), range);
     } else {
         // Если блок не найден, вставляем в текущую позицию как раньше
         const snippet = new vscode.SnippetString(
@@ -993,19 +890,10 @@ export function shouldRefillScenarioParametersSection(documentText: string): boo
  * @returns Массив имен определенных параметров.
  */
 function parseDefinedScenarioParameters(documentText: string): string[] {
-    const definedParameters: string[] = [];
-    const paramsSectionRegex = /ПараметрыСценария:\s*([\s\S]*?)(?=\n[А-Яа-яЁёA-Za-z]+:|\n*$)/;
-    const paramsMatch = documentText.match(paramsSectionRegex);
-
-    if (paramsMatch && paramsMatch[1]) {
-        const sectionContent = paramsMatch[1];
-        // Ищем строки вида 'Имя: "ИмяПараметра"'
-        const nameRegex = /^\s*Имя:\s*"([^"]+)"/gm;
-        let match;
-        while ((match = nameRegex.exec(sectionContent)) !== null) {
-            definedParameters.push(match[1]);
-        }
-    }
+    const definedParameters = ScenarioYamlDocument.parse(documentText)
+        .readRecords('ПараметрыСценария')
+        .map(record => record.fields.get('Имя'))
+        .filter((name): name is string => typeof name === 'string');
     console.log(`[parseDefinedScenarioParameters] Found: ${definedParameters.join(', ')}`);
     return definedParameters;
 }
@@ -1205,32 +1093,6 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
     }
 }
 
-function escapeRegExp(raw: string): string {
-    return raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function findTopLevelSectionOffset(documentText: string, sectionKey: string): number {
-    const sectionRegex = new RegExp(`^(?:\\uFEFF)?${escapeRegExp(sectionKey)}:\\s*.*$`, 'm');
-    const match = sectionRegex.exec(documentText);
-    return match?.index ?? -1;
-}
-
-function resolveSafeSectionEndOffset(
-    documentText: string,
-    afterHeaderOffset: number,
-    fallbackEndOffset: number,
-    preferredNextSections: string[]
-): number {
-    let safeEnd = fallbackEndOffset;
-    for (const sectionKey of preferredNextSections) {
-        const sectionOffset = findTopLevelSectionOffset(documentText, sectionKey);
-        if (sectionOffset > afterHeaderOffset && sectionOffset < safeEnd) {
-            safeEnd = sectionOffset;
-        }
-    }
-    return safeEnd;
-}
-
 /**
  * Clears and refills the NestedScenarios section with scenarios in order of their appearance in the script body.
  * @param document The text document to modify
@@ -1406,62 +1268,19 @@ export function clearScenarioParameterSessionCache(documentOrUri: vscode.TextDoc
  */
 function parseExistingParameterData(documentText: string): Map<string, ExistingScenarioParameterData> {
     const existingData = new Map<string, ExistingScenarioParameterData>();
-    
-    const PARAM_SECTION_KEY = "ПараметрыСценария";
-    const PARAM_SECTION_HEADER = `${PARAM_SECTION_KEY}:`;
-    
-    // Find the ScenarioParameters section
-    const sectionHeaderRegex = new RegExp(`^${PARAM_SECTION_HEADER}`, "m");
-    const sectionMatch = documentText.match(sectionHeaderRegex);
-    
-    if (!sectionMatch || sectionMatch.index === undefined) {
-        return existingData;
-    }
-    
-    const afterHeaderOffset = sectionMatch.index + sectionMatch[0].length;
-    
-    // Find the end of the section
-    const nextMajorKeyRegex = /\n(?![ \t])([А-Яа-яЁёA-Za-z]+:)/g;
-    nextMajorKeyRegex.lastIndex = afterHeaderOffset;
-    const nextMajorKeyMatchResult = nextMajorKeyRegex.exec(documentText);
-    const sectionContentEndOffset = nextMajorKeyMatchResult ? nextMajorKeyMatchResult.index : documentText.length;
-    
-    const sectionContent = documentText.substring(afterHeaderOffset, sectionContentEndOffset);
-    
-    const parseFieldValue = (blockContent: string, fieldName: string): string | null => {
-        const escapedFieldName = fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const fieldRegex = new RegExp(`^\\s*${escapedFieldName}:\\s*(.+?)\\s*$`, 'm');
-        const fieldMatch = blockContent.match(fieldRegex);
-        if (!fieldMatch?.[1]) {
+    const scalarField = (fields: ReadonlyMap<string, unknown>, fieldName: string): string | null => {
+        const value = fields.get(fieldName);
+        if (value === null || value === undefined || typeof value === 'object') {
             return null;
         }
-
-        const raw = fieldMatch[1].trim();
-        if (raw.length >= 2 && ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith('\'') && raw.endsWith('\'')))) {
-            return raw.slice(1, -1);
-        }
-        return raw;
+        return String(value);
     };
 
-    // Parse each parameter block
-    const paramBlockRegex = new RegExp(`^\\s*-\\s*${PARAM_SECTION_KEY}\\d*:\\s*$`, "gm");
-    let match;
-    
-    while ((match = paramBlockRegex.exec(sectionContent)) !== null) {
-        const blockStartOffset = match.index + match[0].length;
-        
-        // Find the end of this parameter block (next parameter or end of section)
-        paramBlockRegex.lastIndex = blockStartOffset;
-        const nextParamMatch = paramBlockRegex.exec(sectionContent);
-        const blockEndOffset = nextParamMatch ? nextParamMatch.index : sectionContent.length;
-        
-        const blockContent = sectionContent.substring(blockStartOffset, blockEndOffset);
-        
-        // Extract parameter fields
-        const parsedName = parseFieldValue(blockContent, 'Имя');
-        const parsedValue = parseFieldValue(blockContent, 'Значение');
-        const parsedType = parseFieldValue(blockContent, 'ТипПараметра');
-        const parsedOutgoing = parseFieldValue(blockContent, 'ИсходящийПараметр');
+    for (const record of ScenarioYamlDocument.parse(documentText).readRecords('ПараметрыСценария')) {
+        const parsedName = scalarField(record.fields, 'Имя');
+        const parsedValue = scalarField(record.fields, 'Значение');
+        const parsedType = scalarField(record.fields, 'ТипПараметра');
+        const parsedOutgoing = scalarField(record.fields, 'ИсходящийПараметр');
 
         const paramName = parsedName ? normalizeScenarioParameterName(parsedName) : '';
 
@@ -1473,11 +1292,8 @@ function parseExistingParameterData(documentText: string): Map<string, ExistingS
             });
             console.log(`[parseExistingParameterData] Found existing data for "${paramName}"`);
         }
-        
-        // Reset regex position to continue searching
-        paramBlockRegex.lastIndex = blockStartOffset;
     }
-    
+
     return existingData;
 }
 
@@ -1515,74 +1331,41 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
         }
 
         const PARAM_SECTION_KEY = "ПараметрыСценария";
-        const PARAM_SECTION_HEADER = `${PARAM_SECTION_KEY}:`;
-
-        // Find the ScenarioParameters section
-        const sectionHeaderRegex = new RegExp(`^${PARAM_SECTION_HEADER}`, "m");
-        const sectionMatch = fullText.match(sectionHeaderRegex);
-
-        if (!sectionMatch || sectionMatch.index === undefined) {
-            console.log("[clearAndFillScenarioParameters] 'ПараметрыСценария:' section not found. No changes made.");
-            return false;
-        }
-
-        const sectionHeaderGlobalStartOffset = sectionMatch.index;
-        const sectionHeaderLineText = sectionMatch[0];
-        const afterHeaderOffset = sectionHeaderGlobalStartOffset + sectionHeaderLineText.length;
-
-        // Find the end of the section
-        const nextMajorKeyRegex = /\n(?![ \t])([А-Яа-яЁёA-Za-z]+:)/g;
-        nextMajorKeyRegex.lastIndex = afterHeaderOffset;
-        const nextMajorKeyMatchResult = nextMajorKeyRegex.exec(fullText);
-        let sectionContentEndOffset = nextMajorKeyMatchResult ? nextMajorKeyMatchResult.index : fullText.length;
-        sectionContentEndOffset = resolveSafeSectionEndOffset(
-            fullText,
-            afterHeaderOffset,
-            sectionContentEndOffset,
-            ['ВложенныеСценарии', 'ТекстСценария']
-        );
-        if (sectionContentEndOffset < afterHeaderOffset) {
-            console.warn('[clearAndFillScenarioParameters] Invalid section range. Skipping update to avoid destructive edit.');
-            return false;
-        }
-
-        // Clear the entire section content and rebuild it
-        const baseIndentForNewItems = '    ';
         let itemsToInsertString = "";
 
         usedParametersInOrder.forEach((paramName, index) => {
             if (index > 0) {
                 itemsToInsertString += "\n";
             }
-            itemsToInsertString += `${baseIndentForNewItems}- ${PARAM_SECTION_KEY}${index + 1}:\n`;
-            itemsToInsertString += `${baseIndentForNewItems}    НомерСтроки: "${index + 1}"\n`;
-            itemsToInsertString += `${baseIndentForNewItems}    Имя: "${paramName.replace(/"/g, '\\"')}"\n`;
+            itemsToInsertString += `- ${PARAM_SECTION_KEY}${index + 1}:\n`;
+            itemsToInsertString += `    НомерСтроки: "${index + 1}"\n`;
+            itemsToInsertString += `    Имя: "${paramName.replace(/"/g, '\\"')}"\n`;
             
             const existingParamData = mergedData.get(paramName);
             const paramValue = existingParamData?.value ?? paramName;
             const paramType = existingParamData?.type ?? "Строка";
             const paramOutgoing = existingParamData?.outgoing ?? "No";
-            itemsToInsertString += `${baseIndentForNewItems}    Значение: "${paramValue.replace(/"/g, '\\"')}"\n`;
-            
-            itemsToInsertString += `${baseIndentForNewItems}    ТипПараметра: "${paramType.replace(/"/g, '\\"')}"\n`;
-            itemsToInsertString += `${baseIndentForNewItems}    ИсходящийПараметр: "${paramOutgoing.replace(/"/g, '\\"')}"`;
+            itemsToInsertString += `    Значение: "${paramValue.replace(/"/g, '\\"')}"\n`;
+
+            itemsToInsertString += `    ТипПараметра: "${paramType.replace(/"/g, '\\"')}"\n`;
+            itemsToInsertString += `    ИсходящийПараметр: "${paramOutgoing.replace(/"/g, '\\"')}"`;
         });
 
-        // Handle empty vs non-empty sections differently
-        let finalTextToInsert: string;
-        if (usedParametersInOrder.length === 0) {
-            // Empty section: no content, but preserve newline before next section if needed
-            finalTextToInsert = nextMajorKeyMatchResult && sectionContentEndOffset < fullText.length ? "\n" : "";
-        } else {
-            // Non-empty section: add leading newline and trailing newline if needed
-            if (nextMajorKeyMatchResult && sectionContentEndOffset < fullText.length) {
-                itemsToInsertString += "\n";
-            }
-            finalTextToInsert = "\n" + itemsToInsertString;
+        let sectionEdit;
+        try {
+            sectionEdit = getSectionBodyReplacement(fullText, PARAM_SECTION_KEY, itemsToInsertString);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            vscode.window.showErrorMessage(t('Could not edit scenario YAML because its structure is invalid: {0}', message));
+            return false;
+        }
+        if (!sectionEdit) {
+            console.log("[clearAndFillScenarioParameters] 'ПараметрыСценария:' section not found. No changes made.");
+            return false;
         }
 
-        const currentSectionContent = fullText.substring(afterHeaderOffset, sectionContentEndOffset);
-        if (currentSectionContent === finalTextToInsert) {
+        const currentSectionContent = fullText.substring(sectionEdit.range.start, sectionEdit.range.end);
+        if (currentSectionContent === sectionEdit.text) {
             console.log("[clearAndFillScenarioParameters] Section already up-to-date. No changes made.");
             return false;
         }
@@ -1590,10 +1373,10 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
         // Apply the edit
         const edit = new vscode.WorkspaceEdit();
         const rangeToReplace = new vscode.Range(
-            document.positionAt(afterHeaderOffset),
-            document.positionAt(sectionContentEndOffset)
+            document.positionAt(sectionEdit.range.start),
+            document.positionAt(sectionEdit.range.end)
         );
-        edit.replace(document.uri, rangeToReplace, finalTextToInsert);
+        edit.replace(document.uri, rangeToReplace, sectionEdit.text);
         await vscode.workspace.applyEdit(edit);
 
         const refreshedSessionData = cloneScenarioParameterDataMap(mergedData);
