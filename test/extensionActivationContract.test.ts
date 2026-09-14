@@ -12,6 +12,10 @@ const hoverProviderSource = fs.readFileSync(
     path.join(process.cwd(), 'src', 'hoverProvider.ts'),
     'utf8'
 );
+const phaseSwitcherSource = fs.readFileSync(
+    path.join(process.cwd(), 'src', 'phaseSwitcher.ts'),
+    'utf8'
+);
 
 test('activation does not eagerly provision 1C helper infobases', () => {
     assert.doesNotMatch(source, /warmUpSharedStartupInfobase/);
@@ -36,4 +40,12 @@ test('completion and hover defer the YAML parameters manager', () => {
         assert.doesNotMatch(providerSource, /from '\.\/yamlParametersManager';/);
         assert.match(providerSource, /import\('\.\/yamlParametersManager\.js'\)/);
     }
+});
+
+test('phase switcher defers infobase management helpers', () => {
+    assert.doesNotMatch(phaseSwitcherSource, /from '\.\/infobaseManager';/);
+    assert.match(
+        phaseSwitcherSource,
+        /createDeferredLoader\(\s*\(\) => import\('\.\/infobaseManager\.js'\)\s*\)/
+    );
 });

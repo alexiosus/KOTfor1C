@@ -26,7 +26,6 @@ import { isScenarioYamlFile } from './yamlValidator';
 import { findFileByName } from './navigationUtils';
 import { getFeatureNestedScenarioContextAtLine } from './featureNestedScenarioUtils';
 import { registerInfobaseInLauncher, resolveLauncherInfobaseNameByPath } from './infobasePicker';
-import { pickManagedInfobasePath, promptNewInfobaseTarget, updateManagedInfobaseMetadata } from './infobaseManager';
 import {
     buildFileInfobaseConnectionArgument,
     buildInfobaseConnectionArgument,
@@ -68,6 +67,11 @@ import {
 import { buildDirectSpawnCommand } from './directProcessLaunch';
 import { readFileTail } from './fileTailReader';
 import { formatProcessCommandForDisplay } from './processCommandDisplay';
+import { createDeferredLoader } from './deferredLoader';
+
+const loadInfobaseManager = createDeferredLoader(
+    () => import('./infobaseManager.js')
+);
 
 // --- Вспомогательная функция для Nonce ---
 function getNonce(): string {
@@ -10753,6 +10757,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 return false;
             }
         }) || workspaceRootPath;
+        const { promptNewInfobaseTarget } = await loadInfobaseManager();
         const creationTarget = await promptNewInfobaseTarget(this._context, this.t.bind(this), {
             defaultName: scenarioName.trim() || safeScenarioName,
             defaultDirectoryPath: defaultDialogPath
@@ -11085,6 +11090,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         let targetInfobasePath = selection.infobasePath?.trim() || '';
         let launcherRegistrationName: string | undefined;
         if (selection.source === 'existing') {
+            const { pickManagedInfobasePath } = await loadInfobaseManager();
             const pickedPath = await pickManagedInfobasePath(this._context, this.t.bind(this), {
                 allowBuildOnly: false,
                 allowCreateNew: false,
@@ -11185,6 +11191,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
+        const { updateManagedInfobaseMetadata } = await loadInfobaseManager();
         const runtimeDirectory = this.resolveVanessaRuntimeDirectory(workspaceRootPath);
         const logsDirectory = path.join(runtimeDirectory, 'infobase-setup-logs');
         const targetFileInfobasePath = getFileInfobasePath(plan.targetInfobasePath);
@@ -11729,6 +11736,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
             }
 
+            const { updateManagedInfobaseMetadata } = await loadInfobaseManager();
             await updateManagedInfobaseMetadata(this._context, scenarioInfobasePath, {
                 displayName: path.basename(scenarioInfobasePath),
                 addRoles: ['vanessa'],
