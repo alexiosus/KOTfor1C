@@ -120,6 +120,38 @@ test('YAML section replacement supports inline empty sequences', () => {
     ].join('\n'));
 });
 
+test('YAML inline empty section preserves its trailing comment', () => {
+    const source = 'ВложенныеСценарии: [] # оставить комментарий\nТекстСценария: |\n    И Сценарий\n';
+    const edit = getSectionInsertion(
+        source,
+        'ВложенныеСценарии',
+        '- ВложенныеСценарии1:\n    ИмяСценария: "Сценарий"'
+    );
+
+    assert.ok(edit);
+    assert.equal(applyEdit(source, edit), [
+        'ВложенныеСценарии: # оставить комментарий',
+        '    - ВложенныеСценарии1:',
+        '        ИмяСценария: "Сценарий"',
+        'ТекстСценария: |',
+        '    И Сценарий',
+        ''
+    ].join('\n'));
+});
+
+test('YAML section edits reject non-empty or malformed inline values', () => {
+    for (const value of ['[{existing: value}]', '[broken']) {
+        assert.throws(
+            () => getSectionInsertion(
+                `ВложенныеСценарии: ${value}\nТекстСценария: |\n    И Сценарий\n`,
+                'ВложенныеСценарии',
+                '- ВложенныеСценарии1:\n    ИмяСценария: "Новый"'
+            ),
+            /Unsafe YAML edit/i
+        );
+    }
+});
+
 test('YAML section replacement preserves parameter neighbors and quoted punctuation', () => {
     const source = [
         'ДанныеСценария:',

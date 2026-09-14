@@ -279,7 +279,8 @@ export class ScenarioYamlDocument {
     private constructor(
         private readonly source: string,
         private readonly parsed: ReturnType<typeof parseDocument>,
-        readonly errors: readonly string[]
+        readonly errors: readonly string[],
+        readonly warnings: readonly string[]
     ) {}
 
     static parse(source: string): ScenarioYamlDocument {
@@ -291,7 +292,8 @@ export class ScenarioYamlDocument {
         return new ScenarioYamlDocument(
             source,
             parsed,
-            parsed.errors.map(error => error.message)
+            parsed.errors.map(error => error.message),
+            parsed.warnings.map(warning => warning.message)
         );
     }
 
@@ -475,7 +477,15 @@ function renderSectionItems(itemText: string, indent: string, newline: string): 
         .join(newline);
 }
 
-function getInlineValueRange(source: string, section: ScenarioYamlSection): SourceRange | null {
+interface InlineValueEditContext {
+    range: SourceRange;
+    trailingSuffix: string;
+}
+
+function getInlineValueEditContext(
+    source: string,
+    section: ScenarioYamlSection
+): InlineValueEditContext | null {
     if (!section.valueRange) {
         return null;
     }
@@ -483,11 +493,23 @@ function getInlineValueRange(source: string, section: ScenarioYamlSection): Sour
         return null;
     }
 
+    const lineEnd = findLineEnd(source, section.valueRange.start);
+    const rawValue = source.slice(section.valueRange.start, lineEnd);
+    const emptySequence = /^\[\]((?:[ \t]+#.*)?[ \t]*)$/.exec(rawValue);
+    if (!emptySequence) {
+        throw new Error(
+            `Unsafe YAML edit: inline value of section "${section.name}" must be an empty sequence`
+        );
+    }
+
     let start = section.valueRange.start;
     while (start > section.pairRange.start && (source[start - 1] === ' ' || source[start - 1] === '\t')) {
         start -= 1;
     }
-    return { start, end: section.valueRange.end };
+    return {
+        range: { start, end: lineEnd },
+        trailingSuffix: emptySequence[1]
+    };
 }
 
 export function getSectionInsertion(
@@ -504,11 +526,11 @@ export function getSectionInsertion(
 
     const newline = getSourceNewline(source);
     const renderedItem = renderSectionItems(itemText, section.itemIndent, newline);
-    const inlineValueRange = getInlineValueRange(source, section);
-    if (inlineValueRange) {
+    const inlineValue = getInlineValueEditContext(source, section);
+    if (inlineValue) {
         return {
-            range: inlineValueRange,
-            text: `${newline}${renderedItem}`
+            range: inlineValue.range,
+            text: `${inlineValue.trailingSuffix}${newline}${renderedItem}`
         };
     }
 
@@ -535,18 +557,18 @@ export function getSectionBodyReplacement(
         return null;
     }
 
-    const inlineValueRange = getInlineValueRange(source, section);
-    const range = inlineValueRange ?? section.bodyRange;
+    const inlineValue = getInlineValueEditContext(source, section);
+    const range = inlineValue?.range ?? section.bodyRange;
     if (bodyText.length === 0) {
-        return { range, text: '' };
+        return { range, text: inlineValue?.trailingSuffix ?? '' };
     }
 
     const newline = getSourceNewline(source);
     const renderedBody = renderSectionItems(bodyText, section.itemIndent, newline);
-    if (inlineValueRange) {
+    if (inlineValue) {
         return {
             range,
-            text: `${newline}${renderedBody}`
+            text: `${inlineValue.trailingSuffix}${newline}${renderedBody}`
         };
     }
 

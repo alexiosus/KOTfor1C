@@ -131,3 +131,25 @@ test('global Vanessa variables are applied to an aliased cloned container', () =
     });
     assert.deepEqual(source, { global_vars: { Existing: 1 } });
 });
+
+test('JSON pointer transformations reject prototype-polluting segments', t => {
+    const prototype = Object.prototype as Record<string, unknown>;
+    delete prototype.polluted;
+    t.after(() => delete prototype.polluted);
+
+    const setResult = setJsonValueAtPointer({}, '/__proto__/polluted', true);
+    assert.equal(prototype.polluted, undefined);
+    assert.deepEqual(setResult, {});
+
+    const overlayResult = applyAdditionalVanessaParameters({}, [
+        { key: 'constructor.prototype.polluted', value: 'true', overrideExisting: true }
+    ]);
+    assert.equal(prototype.polluted, undefined);
+    assert.deepEqual(overlayResult, { value: {}, changedCount: 0 });
+
+    const globalResult = applyGlobalVanessaVariables({ GlobalVars: {} }, [
+        { key: '__proto__', value: '{"polluted":true}', overrideExisting: true }
+    ]);
+    assert.equal(prototype.polluted, undefined);
+    assert.deepEqual(globalResult, { value: { GlobalVars: {} }, changedCount: 0 });
+});

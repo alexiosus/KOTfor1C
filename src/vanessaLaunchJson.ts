@@ -178,6 +178,14 @@ function normalizeJsonPointer(pointer: string | JsonPointer): Array<string | num
     return typeof pointer === 'string' ? parseJsonPointer(pointer) : Array.from(pointer);
 }
 
+const UNSAFE_JSON_POINTER_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function hasUnsafeJsonPointerSegment(pointer: JsonPointer): boolean {
+    return pointer.some(segment =>
+        typeof segment === 'string' && UNSAFE_JSON_POINTER_SEGMENTS.has(segment)
+    );
+}
+
 function getMutableJsonValueAtPointer(root: JsonValue, pointer: JsonPointer): JsonValue | undefined {
     let current: JsonValue | undefined = root;
     for (const segment of pointer) {
@@ -194,7 +202,9 @@ export function getJsonValueAtPointer(
     pointer: string | JsonPointer
 ): JsonValue | undefined {
     const normalizedPointer = normalizeJsonPointer(pointer);
-    return normalizedPointer ? getMutableJsonValueAtPointer(root, normalizedPointer) : undefined;
+    return normalizedPointer && !hasUnsafeJsonPointerSegment(normalizedPointer)
+        ? getMutableJsonValueAtPointer(root, normalizedPointer)
+        : undefined;
 }
 
 function setMutableJsonValueAtPointer(root: JsonValue, pointer: JsonPointer, value: JsonValue): boolean {
@@ -223,7 +233,7 @@ export function setJsonValueAtPointer(
     value: JsonValue
 ): JsonValue {
     const normalizedPointer = normalizeJsonPointer(pointer);
-    if (!normalizedPointer) {
+    if (!normalizedPointer || hasUnsafeJsonPointerSegment(normalizedPointer)) {
         return cloneJsonValue(root);
     }
     if (normalizedPointer.length === 0) {
@@ -494,12 +504,16 @@ export function applyAdditionalVanessaParameters(
         }
 
         const parsedPointer = parseAdditionalParameterPointer(key) ?? [key];
-        if (shouldSkipAdditionalParamForSpprClients(nextRoot, parsedPointer)) {
+        if (hasUnsafeJsonPointerSegment(parsedPointer)
+            || shouldSkipAdditionalParamForSpprClients(nextRoot, parsedPointer)) {
             continue;
         }
         const pointer = resolveExistingPointerByAliases(nextRoot, parsedPointer)
             ?? resolveRootPointerByLeafAlias(nextRoot, parsedPointer)
             ?? parsedPointer;
+        if (hasUnsafeJsonPointerSegment(pointer)) {
+            continue;
+        }
         const hasExisting = hasJsonValueAtPointer(nextRoot, pointer);
         if (hasExisting && !parameter.overrideExisting) {
             continue;
@@ -563,6 +577,9 @@ export function applyGlobalVanessaVariables(
             continue;
         }
         const resolvedKey = findObjectKeyByAlias(container, key) ?? key;
+        if (hasUnsafeJsonPointerSegment([resolvedKey])) {
+            continue;
+        }
         const hasExisting = Object.prototype.hasOwnProperty.call(container, resolvedKey);
         if (hasExisting && !variable.overrideExisting) {
             continue;

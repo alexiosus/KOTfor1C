@@ -1218,7 +1218,7 @@
     "check:types": "tsc --noEmit",
     "lint": "eslint src test --max-warnings 0",
     "check": "npm run check:types && npm run lint && npm test",
-    "verify:yaml-corpus": "node scripts/verifyScenarioYamlCorpus.mjs"
+    "verify:yaml-corpus": "esbuild ./src/scenarioYamlCorpusVerifier.ts --bundle --outfile=out/scenarioYamlCorpusVerifier.js --format=cjs --platform=node && node out/scenarioYamlCorpusVerifier.js"
   },
   "devDependencies": {
     "@types/node": "20.x",

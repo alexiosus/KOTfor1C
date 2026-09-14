@@ -91,3 +91,8 @@ Moved helper set: immutable JSON-pointer get/set with RFC 6901 decoding; dot/bra
 - `npm run check`: exit 0; TypeScript and ESLint clean; 71 tests passed, 0 failed.
 - `npm run vscode:prepublish`: exit 0; the minified production extension bundle built successfully.
 - Changed files are limited to this plan, `phaseSwitcher.ts`, the two extracted modules, and their two test files. No IntelliSense, `steps.htm`, `stepsFetcher.ts`, or AI files changed.
+
+#### Review follow-up (2026-09-14)
+
+- JSON-pointer writes now reject `__proto__`, `constructor`, and `prototype` path segments before container creation or mutation.
+- The same guard protects additional Vanessa parameters and global variables; regression tests verify that rejected inputs leave both the returned value and `Object.prototype` unchanged.

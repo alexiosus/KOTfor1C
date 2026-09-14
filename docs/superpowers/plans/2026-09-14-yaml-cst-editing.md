@@ -103,14 +103,15 @@
 ### Task 5: Read-only corpus and final verification
 
 **Files:**
-- Create: `scripts/verifyScenarioYamlCorpus.mjs`
+- Create: `src/scenarioYamlCorpusVerifier.ts`
+- Create: `test/scenarioYamlCorpusVerifier.test.ts`
 - Modify: `package.json`
 - Modify: `docs/superpowers/plans/2026-09-14-yaml-cst-editing.md`
 
 **Interfaces:**
 - Produces: `npm run verify:yaml-corpus -- <directory>` with file count and parser error count; never writes corpus files.
 
-- [x] Implement a read-only corpus walker that parses every `scen.yaml`, reports relative paths for parser errors, and exits non-zero on any fatal error.
+- [x] Implement a read-only corpus walker that exercises `ScenarioYamlDocument` sections, source ranges, and records for every `scen.yaml`, reports relative paths for parser errors, and exits non-zero on any fatal error.
 - [x] Run it against `/Users/alexeremeev/Development/1cDrive/tests/RegressionTests/Yaml/Drive`; expect 1,885 files and zero fatal errors.
 - [x] Capture the external repository status before and after and confirm it is identical.
 - [x] Run `git diff --check`, `npm run check`, `npm run vscode:prepublish`, and `npm audit --omit=dev`.
@@ -122,8 +123,14 @@
 - `npm run verify:yaml-corpus -- /Users/alexeremeev/Development/1cDrive/tests/RegressionTests/Yaml/Drive`: 1,885 files, 0 parser errors, 0 parser warnings.
 - External repository status was identical before and after the read-only walk: one pre-existing modified scenario plus one pre-existing untracked test directory.
 - `git diff --check`: exit 0.
-- `npm run check`: exit 0; TypeScript and ESLint clean; 59 tests passed, 0 failed.
+- `npm run check`: exit 0; TypeScript and ESLint clean; 77 tests passed, 0 failed.
 - `npm run vscode:prepublish`: exit 0; production extension bundle built successfully.
 - Online `npm audit --omit=dev` could not reach the registry in the sandbox and the escalation was denied; `npm audit --offline --omit=dev` completed with 0 known vulnerabilities in the local audit cache.
 - YAML ranges for `ВложенныеСценарии` and `ПараметрыСценария` are obtained only through `ScenarioYamlDocument`; remaining regular expressions in `commandHandlers.ts` parse Gherkin or unrelated formats. The compatibility shadow uses lexical masking only and never selects an edit range.
 - The changed-file list contains no `steps.htm`, `stepsFetcher.ts`, completion/IntelliSense, or AI files.
+
+#### Review follow-up (2026-09-14)
+
+- Inline section edits now accept only the supported empty sequence `[]`, preserve a trailing comment, and reject populated or malformed flow values instead of replacing them silently.
+- The standalone verifier implementation and its duplicate structural masker were removed. The corpus command now bundles and invokes the production-backed `scenarioYamlCorpusVerifier.ts`.
+- Regression tests cover comment preservation, rejection of unsafe inline values, production section/range/record traversal, parser error propagation, file filtering, and read-only corpus behavior.
