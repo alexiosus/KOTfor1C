@@ -1,17 +1,47 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-const source = fs.readFileSync(path.join(process.cwd(), 'media', 'phaseSwitcher.js'), 'utf8');
+const protocol = require(path.join(process.cwd(), 'media', 'phaseSwitcherProtocol.js')) as {
+    getScenarioKey(testInfo: unknown): string;
+    createScenarioCommand(
+        command: string,
+        testInfo: unknown,
+        extra?: Record<string, unknown>
+    ): Record<string, unknown>;
+};
 
-test('scenario rows carry the descriptor URI into destructive command messages', () => {
-    assert.match(source, /data-uri="\$\{escapedFileUriAttr\}"/);
-    assert.match(source, /command: 'openScenario',\s*name,\s*uri/);
-    assert.match(source, /command: 'renameScenario', name, uri/);
-    assert.match(source, /command: 'deleteMainScenario', name, uri/);
+test('scenario protocol creates exact URI-backed command payloads', () => {
+    const testInfo = {
+        scenarioKey: 'file:///a/scen.yaml',
+        name: 'Duplicate',
+        yamlFileUriString: 'file:///a/scen.yaml'
+    };
+
+    assert.equal(protocol.getScenarioKey(testInfo), 'file:///a/scen.yaml');
+    assert.deepEqual(protocol.createScenarioCommand('runScenarioInVanessa', testInfo), {
+        command: 'runScenarioInVanessa',
+        key: 'file:///a/scen.yaml',
+        name: 'Duplicate',
+        uri: 'file:///a/scen.yaml'
+    });
+    assert.deepEqual(protocol.createScenarioCommand('openScenarioJsonArtifactInEditor', testInfo, {
+        variant: 'combined'
+    }), {
+        command: 'openScenarioJsonArtifactInEditor',
+        key: 'file:///a/scen.yaml',
+        name: 'Duplicate',
+        uri: 'file:///a/scen.yaml',
+        variant: 'combined'
+    });
 });
 
-test('test settings command carries the exact scenario URI', () => {
-    assert.match(source, /command: 'openMainScenarioTestSettings', name, uri/);
+test('scenario protocol rejects incomplete runtime identities', () => {
+    assert.throws(
+        () => protocol.createScenarioCommand('openScenario', {
+            name: 'Missing key',
+            yamlFileUriString: 'file:///a/scen.yaml'
+        }),
+        /runtime key/i
+    );
 });

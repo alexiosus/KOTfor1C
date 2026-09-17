@@ -271,7 +271,7 @@ Commit: `feat: add URI-backed scenario runtime identity`
 - Persists selection states as `{ version: 2, byKey: Record<ScenarioRuntimeKey, boolean> }` while reading the legacy name-keyed object.
 - Produces executable browser/Node protocol helpers `getScenarioKey(testInfo)` and `createScenarioCommand(command, testInfo, extra)`.
 
-- [ ] **Step 1: Replace source-text contract tests with failing behavior tests**
+- [x] **Step 1: Replace source-text contract tests with failing behavior tests**
 
 Load `media/phaseSwitcherProtocol.js` in Node and assert observable payloads:
 
@@ -290,13 +290,13 @@ assert.deepEqual(protocol.createScenarioCommand('runScenarioInVanessa', {
 
 Also assert it throws or returns `null` when `scenarioKey` is missing.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `npm run compile-tests && node --test out/test/phaseSwitcherWebviewContract.test.js`
 
 Expected: protocol module does not exist.
 
-- [ ] **Step 3: Implement and load the protocol helper**
+- [x] **Step 3: Implement and load the protocol helper**
 
 Use a small UMD-style module so Node tests and the webview execute the same code:
 
@@ -317,15 +317,15 @@ Use a small UMD-style module so Node tests and the webview execute the same code
 
 Add its webview URI before `phaseSwitcher.js` in the generated HTML.
 
-- [ ] **Step 4: Key selection state and rendered rows by URI**
+- [x] **Step 4: Key selection state and rendered rows by URI**
 
 Build Test Manager rows from `catalog.all`, not `_testCache.values()`. Set `scenarioKey` from `getScenarioRuntimeKey(info)`. Change checkbox/state objects, phase counts, `data-key`, artifact lookup, and command payload creation in `media/phaseSwitcher.js` to use the key while retaining `data-name` for filtering and display.
 
-- [ ] **Step 5: Migrate provider persistence**
+- [x] **Step 5: Migrate provider persistence**
 
 Read both shapes from `workspaceState`. After the catalog is available, call `migrateLegacySelectionStates`, save only version 2, and delete/update exact URI keys on file rename/delete. `getMainScenarioSelectionSnapshotForBuild()` returns enabled/disabled definitions and projects their names only at the SPPR filter boundary.
 
-- [ ] **Step 6: Verify focused and full tests, then commit**
+- [x] **Step 6: Verify focused and full tests, then commit**
 
 Run: `npm run check`
 

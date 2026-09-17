@@ -17,6 +17,11 @@ import {
     resolveScenarioTarget,
     type ScenarioTarget
 } from './scenarioIdentity';
+import {
+    getScenarioRuntimeKey,
+    migrateLegacySelectionStates,
+    type ScenarioRuntimeKey
+} from './scenarioRuntimeIdentity';
 import { migrateLegacyPhaseSwitcherMetadata } from './phaseSwitcherMetadata';
 import { parseTestInfoFromScenarioSource } from './scenarioDescriptor';
 import type { YamlParameter } from './yamlParametersManager';
@@ -208,12 +213,18 @@ interface FavoriteQuickPickItem extends vscode.QuickPickItem {
 }
 
 interface PhaseSwitcherWebviewTestInfo {
+    scenarioKey: ScenarioRuntimeKey;
     name: string;
     relativePath: string;
     defaultState?: boolean;
     order?: number;
     scenarioCode?: string;
-    yamlFileUriString?: string;
+    yamlFileUriString: string;
+}
+
+interface MainScenarioSelectionStateStorageV2 {
+    version: 2;
+    byKey: Record<ScenarioRuntimeKey, boolean>;
 }
 
 interface LiveRunLogWatcherState {
@@ -410,7 +421,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _runOutputChannel: vscode.OutputChannel | undefined;
     private _langOverride: 'System' | 'English' | 'Русский' = 'System';
     private _ruBundle: Record<string, string> | null = null;
-    private _mainScenarioSelectionStates: Record<string, boolean> | null = null;
+    private _mainScenarioSelectionStates: Record<ScenarioRuntimeKey, boolean> | null = null;
     
     // Событие, которое будет генерироваться после обновления _testCache
     private _onDidUpdateTestCache: vscode.EventEmitter<Map<string, TestInfo> | null> = new vscode.EventEmitter<Map<string, TestInfo> | null>();
@@ -732,74 +743,94 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return !!(testInfo?.tabName && testInfo.tabName.trim().length > 0);
     }
 
-    private getMainScenariosFromCache(): TestInfo[] {
-        if (!this._testCache || this._testCache.size === 0) {
-            return [];
-        }
-        return Array.from(this._testCache.values()).filter(info => this.isMainScenario(info));
+    private getMainScenariosFromCatalog(): TestInfo[] {
+        return (this.getScenarioCatalog()?.all ?? []).filter(info => this.isMainScenario(info));
     }
 
-    private getStoredMainScenarioSelectionStates(): Record<string, boolean> {
+    private readStoredMainScenarioSelectionStates(): {
+        legacyByName: Record<string, boolean>;
+        currentByKey: Record<ScenarioRuntimeKey, boolean>;
+        isVersion2: boolean;
+    } {
         if (this._mainScenarioSelectionStates) {
-            return { ...this._mainScenarioSelectionStates };
+            return {
+                legacyByName: {},
+                currentByKey: { ...this._mainScenarioSelectionStates },
+                isVersion2: true
+            };
         }
 
-        const raw = this._context.workspaceState.get<Record<string, unknown>>(
+        const raw = this._context.workspaceState.get<unknown>(
             PhaseSwitcherProvider.mainScenarioSelectionStatesCacheKey,
             {}
-        ) || {};
-
-        const normalized: Record<string, boolean> = {};
-        for (const [scenarioName, state] of Object.entries(raw)) {
-            const trimmedName = scenarioName.trim();
-            if (!trimmedName || typeof state !== 'boolean') {
-                continue;
-            }
-            normalized[trimmedName] = state;
+        );
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            return { legacyByName: {}, currentByKey: {}, isVersion2: false };
         }
 
-        this._mainScenarioSelectionStates = normalized;
-        return { ...normalized };
+        const candidate = raw as Partial<MainScenarioSelectionStateStorageV2>;
+        if (candidate.version === 2
+            && candidate.byKey
+            && typeof candidate.byKey === 'object'
+            && !Array.isArray(candidate.byKey)) {
+            const currentByKey: Record<ScenarioRuntimeKey, boolean> = {};
+            for (const [key, state] of Object.entries(candidate.byKey)) {
+                const trimmedKey = key.trim();
+                if (trimmedKey && typeof state === 'boolean') {
+                    currentByKey[trimmedKey] = state;
+                }
+            }
+            this._mainScenarioSelectionStates = currentByKey;
+            return { legacyByName: {}, currentByKey: { ...currentByKey }, isVersion2: true };
+        }
+
+        const legacyByName: Record<string, boolean> = {};
+        for (const [name, state] of Object.entries(raw)) {
+            const trimmedName = name.trim();
+            if (trimmedName && typeof state === 'boolean') {
+                legacyByName[trimmedName] = state;
+            }
+        }
+        return { legacyByName, currentByKey: {}, isVersion2: false };
     }
 
-    private async saveMainScenarioSelectionStates(states: Record<string, boolean>): Promise<void> {
-        const normalized: Record<string, boolean> = {};
-        for (const [scenarioName, state] of Object.entries(states)) {
-            const trimmedName = scenarioName.trim();
-            if (!trimmedName) {
-                continue;
+    private async saveMainScenarioSelectionStates(
+        states: Record<ScenarioRuntimeKey, boolean>
+    ): Promise<void> {
+        const normalized: Record<ScenarioRuntimeKey, boolean> = {};
+        for (const [key, state] of Object.entries(states)) {
+            const trimmedKey = key.trim();
+            if (trimmedKey) {
+                normalized[trimmedKey] = !!state;
             }
-            normalized[trimmedName] = !!state;
         }
 
         this._mainScenarioSelectionStates = normalized;
+        const stored: MainScenarioSelectionStateStorageV2 = {
+            version: 2,
+            byKey: normalized
+        };
         await this._context.workspaceState.update(
             PhaseSwitcherProvider.mainScenarioSelectionStatesCacheKey,
-            normalized
+            stored
         );
     }
 
-    private async getMainScenarioSelectionStates(mainScenarios?: TestInfo[]): Promise<Record<string, boolean>> {
-        const scenarios = mainScenarios ?? this.getMainScenariosFromCache();
-        const persisted = this.getStoredMainScenarioSelectionStates();
-        const next: Record<string, boolean> = {};
-
-        for (const scenarioInfo of scenarios) {
-            const scenarioName = scenarioInfo.name.trim();
-            if (!scenarioName) {
-                continue;
-            }
-            if (Object.prototype.hasOwnProperty.call(persisted, scenarioName)) {
-                next[scenarioName] = !!persisted[scenarioName];
-                continue;
-            }
-            next[scenarioName] = scenarioInfo.defaultState === true;
-        }
-
-        const persistedKeys = Object.keys(persisted);
+    private async getMainScenarioSelectionStates(
+        mainScenarios?: TestInfo[]
+    ): Promise<Record<ScenarioRuntimeKey, boolean>> {
+        const scenarios = mainScenarios ?? this.getMainScenariosFromCatalog();
+        const stored = this.readStoredMainScenarioSelectionStates();
+        const next = migrateLegacySelectionStates(
+            buildScenarioCatalog(scenarios),
+            stored.legacyByName,
+            stored.currentByKey
+        );
+        const persistedKeys = Object.keys(stored.currentByKey);
         const nextKeys = Object.keys(next);
-        const shouldPersist = persistedKeys.length !== nextKeys.length
-            || nextKeys.some(key => persisted[key] !== next[key]);
+        const shouldPersist = !stored.isVersion2
+            || persistedKeys.length !== nextKeys.length
+            || nextKeys.some(key => stored.currentByKey[key] !== next[key]);
 
         if (shouldPersist) {
             await this.saveMainScenarioSelectionStates(next);
@@ -808,12 +839,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return next;
     }
 
-    private async updateMainScenarioSelectionStates(states: Record<string, boolean>): Promise<void> {
+    private async updateMainScenarioSelectionStates(
+        states: Record<ScenarioRuntimeKey, boolean>
+    ): Promise<void> {
         if (!states || typeof states !== 'object') {
             return;
         }
 
-        const scenarios = this.getMainScenariosFromCache();
+        const scenarios = this.getMainScenariosFromCatalog();
         if (scenarios.length === 0) {
             return;
         }
@@ -821,16 +854,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const next = await this.getMainScenarioSelectionStates(scenarios);
         let changed = false;
         for (const scenarioInfo of scenarios) {
-            const scenarioName = scenarioInfo.name.trim();
-            if (!scenarioName || !Object.prototype.hasOwnProperty.call(states, scenarioName)) {
+            const scenarioKey = getScenarioRuntimeKey(scenarioInfo);
+            if (!Object.prototype.hasOwnProperty.call(states, scenarioKey)) {
                 continue;
             }
 
-            const nextState = !!states[scenarioName];
-            if (next[scenarioName] === nextState) {
+            const nextState = !!states[scenarioKey];
+            if (next[scenarioKey] === nextState) {
                 continue;
             }
-            next[scenarioName] = nextState;
+            next[scenarioKey] = nextState;
             changed = true;
         }
 
@@ -841,41 +874,113 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         await this.saveMainScenarioSelectionStates(next);
     }
 
-    private async renameMainScenarioSelectionState(oldScenarioName: string, newScenarioName: string): Promise<void> {
-        const trimmedOldName = oldScenarioName.trim();
-        const trimmedNewName = newScenarioName.trim();
-        if (!trimmedOldName || !trimmedNewName || trimmedOldName === trimmedNewName) {
+    private async renameMainScenarioSelectionState(
+        oldScenarioKey: ScenarioRuntimeKey,
+        newScenarioKey: ScenarioRuntimeKey
+    ): Promise<void> {
+        const trimmedOldKey = oldScenarioKey.trim();
+        const trimmedNewKey = newScenarioKey.trim();
+        if (!trimmedOldKey || !trimmedNewKey || trimmedOldKey === trimmedNewKey) {
             return;
         }
 
-        const states = this.getStoredMainScenarioSelectionStates();
-        if (!Object.prototype.hasOwnProperty.call(states, trimmedOldName)) {
+        const stored = this.readStoredMainScenarioSelectionStates();
+        const states = stored.isVersion2
+            ? stored.currentByKey
+            : await this.getMainScenarioSelectionStates();
+        if (!Object.prototype.hasOwnProperty.call(states, trimmedOldKey)) {
             return;
         }
 
-        const oldValue = !!states[trimmedOldName];
-        delete states[trimmedOldName];
-        states[trimmedNewName] = oldValue;
+        const oldValue = !!states[trimmedOldKey];
+        delete states[trimmedOldKey];
+        states[trimmedNewKey] = oldValue;
         await this.saveMainScenarioSelectionStates(states);
     }
 
-    private async removeMainScenarioSelectionState(scenarioName: string): Promise<void> {
-        const trimmedScenarioName = scenarioName.trim();
-        if (!trimmedScenarioName) {
+    private async removeMainScenarioSelectionState(scenarioKey: ScenarioRuntimeKey): Promise<void> {
+        const trimmedScenarioKey = scenarioKey.trim();
+        if (!trimmedScenarioKey) {
             return;
         }
 
-        const states = this.getStoredMainScenarioSelectionStates();
-        if (!Object.prototype.hasOwnProperty.call(states, trimmedScenarioName)) {
+        const stored = this.readStoredMainScenarioSelectionStates();
+        const states = stored.isVersion2
+            ? stored.currentByKey
+            : await this.getMainScenarioSelectionStates();
+        if (!Object.prototype.hasOwnProperty.call(states, trimmedScenarioKey)) {
             return;
         }
 
-        delete states[trimmedScenarioName];
+        delete states[trimmedScenarioKey];
         await this.saveMainScenarioSelectionStates(states);
+    }
+
+    private async removeMainScenarioSelectionStatesForUris(uris: readonly vscode.Uri[]): Promise<void> {
+        if (uris.length === 0) {
+            return;
+        }
+        const stored = this.readStoredMainScenarioSelectionStates();
+        const states = stored.isVersion2
+            ? stored.currentByKey
+            : await this.getMainScenarioSelectionStates();
+        let changed = false;
+        for (const key of Object.keys(states)) {
+            let scenarioUri: vscode.Uri;
+            try {
+                scenarioUri = vscode.Uri.parse(key);
+            } catch {
+                continue;
+            }
+            if (!uris.some(uri => this.areUrisEqual(uri, scenarioUri)
+                || (uri.scheme === 'file'
+                    && scenarioUri.scheme === 'file'
+                    && this.isPathInside(uri.fsPath, scenarioUri.fsPath)))) {
+                continue;
+            }
+            delete states[key];
+            changed = true;
+        }
+        if (changed) {
+            await this.saveMainScenarioSelectionStates(states);
+        }
+    }
+
+    private async remapMainScenarioSelectionStatesForRenames(
+        files: readonly { oldUri: vscode.Uri; newUri: vscode.Uri }[]
+    ): Promise<void> {
+        if (files.length === 0) {
+            return;
+        }
+        const stored = this.readStoredMainScenarioSelectionStates();
+        const states = stored.isVersion2
+            ? stored.currentByKey
+            : await this.getMainScenarioSelectionStates();
+        const next: Record<ScenarioRuntimeKey, boolean> = {};
+        let changed = false;
+        for (const [key, state] of Object.entries(states)) {
+            let scenarioUri: vscode.Uri;
+            try {
+                scenarioUri = vscode.Uri.parse(key);
+            } catch {
+                next[key] = state;
+                continue;
+            }
+            let remappedUri = scenarioUri;
+            for (const { oldUri, newUri } of files) {
+                remappedUri = this.remapUriAfterRename(remappedUri, oldUri, newUri) ?? remappedUri;
+            }
+            const nextKey = remappedUri.toString();
+            next[nextKey] = state;
+            changed ||= nextKey !== key;
+        }
+        if (changed) {
+            await this.saveMainScenarioSelectionStates(next);
+        }
     }
 
     private async getMainScenarioSelectionSnapshotForBuild(): Promise<MainScenarioSelectionSnapshot> {
-        const mainScenarios = this.getMainScenariosFromCache();
+        const mainScenarios = this.getMainScenariosFromCatalog();
         if (mainScenarios.length === 0) {
             return {
                 total: 0,
@@ -892,7 +997,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             if (!scenarioName) {
                 continue;
             }
-            if (selectionStates[scenarioName] === true) {
+            if (selectionStates[getScenarioRuntimeKey(scenarioInfo)] === true) {
                 enabledNames.push(scenarioName);
             } else {
                 disabledNames.push(scenarioName);
@@ -1701,6 +1806,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }));
 
         context.subscriptions.push(vscode.workspace.onDidDeleteFiles(event => {
+            void this.removeMainScenarioSelectionStatesForUris(event.files).catch(error => {
+                console.error('[PhaseSwitcherProvider] Failed to remove scenario selection state:', error);
+            });
             if (event.files.some(uri => this.shouldTrackUriForCache(uri))) {
                 const updated = this.removeScenarioCacheEntriesForUris(event.files);
                 if (!updated) {
@@ -1729,6 +1837,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }));
 
         context.subscriptions.push(vscode.workspace.onDidRenameFiles(event => {
+            void this.remapMainScenarioSelectionStatesForRenames(event.files).catch(error => {
+                console.error('[PhaseSwitcherProvider] Failed to remap scenario selection state:', error);
+            });
             const affectsCache = event.files.some(({ oldUri, newUri }) =>
                 this.shouldTrackUriForCache(oldUri) || this.shouldTrackUriForCache(newUri)
             );
@@ -5701,7 +5812,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             await this.saveFavoriteEntries(favorites);
         }
         if (isMainScenario) {
-            await this.renameMainScenarioSelectionState(trimmedScenarioName, newScenarioName);
+            await this.renameMainScenarioSelectionState(
+                oldScenarioUriString,
+                scenarioYamlUriAfterRename.toString()
+            );
         }
 
         this.markBuiltArtifactsAsStale([trimmedScenarioName, newScenarioName]);
@@ -5810,7 +5924,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         await this.removeFavoriteEntriesUnderDirectory(vscode.Uri.file(scenarioDirectory));
-        await this.removeMainScenarioSelectionState(trimmedScenarioName);
+        await this.removeMainScenarioSelectionState(getScenarioRuntimeKey(scenarioInfo));
         this.cleanupDeletedScenarioRuntimeState(trimmedScenarioName);
         this.sendRunArtifactsStateToWebview();
         await this.refreshTestCacheFromDisk('deleteMainScenario');
@@ -6240,6 +6354,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         await this.loadLocalizationBundleIfNeeded();
         const nonce = getNonce();
         const styleUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'phaseSwitcher.css'));
+        const protocolScriptUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'phaseSwitcherProtocol.js'));
         const scriptUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'phaseSwitcher.js'));
         const htmlTemplateUri = vscode.Uri.joinPath(this._extensionUri, 'media', 'phaseSwitcher.html');
         const codiconsUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'codicon.css'));
@@ -6249,6 +6364,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             let htmlContent = Buffer.from(htmlBytes).toString('utf-8');
             htmlContent = htmlContent.replace(/\$\{nonce\}/g, nonce);
             htmlContent = htmlContent.replace('${stylesUri}', styleUri.toString());
+            htmlContent = htmlContent.replace('${protocolScriptUri}', protocolScriptUri.toString());
             htmlContent = htmlContent.replace('${scriptUri}', scriptUri.toString());
             htmlContent = htmlContent.replace('${codiconsUri}', codiconsUri.toString());
             htmlContent = htmlContent.replace(/\$\{webview.cspSource\}/g, webviewView.webview.cspSource);
@@ -6715,20 +6831,21 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             status = this.t('Checking test state...');
             webview.postMessage({ command: 'updateStatus', text: status });
 
-            const testsForPhaseSwitcherProcessing = this.getMainScenariosFromCache();
+            const testsForPhaseSwitcherProcessing = this.getMainScenariosFromCatalog();
             testsForPhaseSwitcherCount = testsForPhaseSwitcherProcessing.length;
             const savedSelectionStates = await this.getMainScenarioSelectionStates(testsForPhaseSwitcherProcessing);
 
             for (const info of testsForPhaseSwitcherProcessing) {
-                const isChecked = savedSelectionStates[info.name] === true;
-                states[info.name] = isChecked ? 'checked' : 'unchecked';
+                const scenarioKey = getScenarioRuntimeKey(info);
+                const isChecked = savedSelectionStates[scenarioKey] === true;
+                states[scenarioKey] = isChecked ? 'checked' : 'unchecked';
                 if (isChecked) {
                     checkedCount++;
                 }
             }
             
             // Группируем и сортируем данные только для тех тестов, что идут в UI
-            tabDataForUI = this._groupAndSortTestData(new Map(testsForPhaseSwitcherProcessing.map(info => [info.name, info])));
+            tabDataForUI = this._groupAndSortTestData(testsForPhaseSwitcherProcessing);
 
 
             status = this.t('State loaded: \n{0} / {1} enabled', String(checkedCount), String(testsForPhaseSwitcherCount));
@@ -7973,22 +8090,23 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
      * Группирует и сортирует данные тестов для отображения в Test Manager.
      * Использует только тесты, у которых есть tabName.
      */
-    private _groupAndSortTestData(testCacheForUI: Map<string, TestInfo>): { [tabName: string]: PhaseSwitcherWebviewTestInfo[] } {
+    private _groupAndSortTestData(testCacheForUI: readonly TestInfo[]): { [tabName: string]: PhaseSwitcherWebviewTestInfo[] } {
         const grouped: { [tabName: string]: PhaseSwitcherWebviewTestInfo[] } = {};
         if (!testCacheForUI) {
             return grouped;
         }
 
-        for (const info of testCacheForUI.values()) {
+        for (const info of testCacheForUI) {
             // Убедимся, что tabName существует и является строкой для группировки
             if (info.tabName && typeof info.tabName === 'string' && info.tabName.trim() !== "") {
                 const infoForWebview: PhaseSwitcherWebviewTestInfo = {
+                    scenarioKey: getScenarioRuntimeKey(info),
                     name: info.name,
                     relativePath: info.relativePath,
                     defaultState: info.defaultState,
                     order: info.order,
                     scenarioCode: info.scenarioCode,
-                    yamlFileUriString: info.yamlFileUri?.toString()
+                    yamlFileUriString: info.yamlFileUri.toString()
                 };
 
                 if (!grouped[info.tabName]) { grouped[info.tabName] = []; }
