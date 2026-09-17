@@ -180,7 +180,7 @@ Commit: `refactor: unify scenario descriptor parsing`
 - Produces `validateEnabledScenarioKeys`, `remapRuntimeKey`, and `removeRuntimeKey` for later provider migrations.
 - Consumes `ScenarioCatalog`, `ScenarioResolution`, and `TestInfo` only as pure values/types.
 
-- [ ] **Step 1: Write failing identity tests**
+- [x] **Step 1: Write failing identity tests**
 
 Cover exact key resolution, stale key/name rejection, ambiguous name-only rejection, and legacy state migration:
 
@@ -197,13 +197,13 @@ assert.equal(resolveUniqueRuntimeKeyByName(catalog, 'Duplicate'), null);
 
 The second duplicate uses its `defaultState`; an existing URI-keyed value overrides the legacy value.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run: `npm run compile-tests && node --test out/test/scenarioRuntimeIdentity.test.js`
 
 Expected: module-not-found failure.
 
-- [ ] **Step 3: Implement minimal pure identity helpers**
+- [x] **Step 3: Implement minimal pure identity helpers**
 
 Key and target resolution must be strict:
 
@@ -249,7 +249,7 @@ export function removeRuntimeKey<T>(
 
 `validateEnabledScenarioKeys` returns the first stable duplicate-name group among enabled definitions. The map helpers return copies and never remove a same-named sibling.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `npm run compile-tests && node --test out/test/scenarioRuntimeIdentity.test.js out/test/scenarioIdentity.test.js out/test/scenarioCatalog.test.js`
 
