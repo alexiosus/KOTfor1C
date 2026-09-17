@@ -31,9 +31,8 @@
 **Interfaces:**
 - Produces `ParsedScenarioDescriptor` and `parseScenarioDescriptor(source)`.
 - Produces `buildTestInfoFromScenarioDescriptor(descriptor, yamlFileUri, relativePath)` without a runtime `vscode` import.
-- Extends `ScenarioYamlRecord` with source information required to preserve field line/range metadata.
 
-- [ ] **Step 1: Write failing descriptor tests**
+- [x] **Step 1: Write failing descriptor tests**
 
 Use a hand-written CRLF/BOM fixture with a misleading `Имя` in another section, duplicate nested names, quoted punctuation, parameters, KOT description, and PhaseSwitcher metadata:
 
@@ -61,35 +60,13 @@ assert.deepEqual(descriptor, {
 
 Also assert that `buildTestInfoFromScenarioDescriptor()` returns `null` without `ДанныеСценария.Имя` and copies arrays/maps rather than exposing parser-owned mutable state.
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run: `npm run compile-tests && node --test out/test/scenarioDescriptor.test.js`
 
 Expected: compilation fails because `src/scenarioDescriptor.ts` does not exist.
 
-- [ ] **Step 3: Extend record field source metadata**
-
-Change the record contract so descriptor code can locate `Код` without scanning lines:
-
-```ts
-export interface ScenarioYamlRecordField {
-    readonly value: unknown;
-    readonly pairRange: SourceRange;
-    readonly valueRange: SourceRange | null;
-    readonly lineStart: number;
-    readonly lineEnd: number;
-}
-
-export interface ScenarioYamlRecord {
-    readonly key: string;
-    readonly fields: ReadonlyMap<string, ScenarioYamlRecordField>;
-    readonly range: SourceRange;
-}
-```
-
-Populate each field with `readOriginalScalar`, `pairSourceRange`, and line offsets. Update existing record assertions to read `.value`.
-
-- [ ] **Step 4: Implement the descriptor and adapter**
+- [x] **Step 3: Implement the descriptor and adapter**
 
 The implementation creates exactly one `ScenarioYamlDocument`:
 
@@ -114,13 +91,13 @@ export function parseScenarioDescriptor(source: string): ParsedScenarioDescripto
 
 Use `normalizeScenarioCallParameterValue` for defaults so completion/diagnostics retain current quoting semantics.
 
-- [ ] **Step 5: Verify GREEN and regressions**
+- [x] **Step 4: Verify GREEN and regressions**
 
 Run: `npm run compile-tests && node --test out/test/scenarioDescriptor.test.js out/test/scenarioYamlDocument.test.js out/test/scenarioParameterUtils.test.js`
 
 Expected: all focused tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 5: Commit**
 
 Commit: `feat: add shared scenario descriptor parser`
 
