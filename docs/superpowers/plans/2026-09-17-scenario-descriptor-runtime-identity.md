@@ -403,23 +403,23 @@ Commit: `refactor: bind build artifacts to scenario URI`
 - Runtime records keep `scenarioName` solely for log matching and UI text.
 - Removes `_testCache`, `getTestCache()`, and PhaseSwitcher access to `catalog.primaryByName`.
 
-- [ ] **Step 1: Add failing same-name isolation tests**
+- [x] **Step 1: Add failing same-name isolation tests**
 
 Create two scenario keys sharing one name and exercise pure state remapping/removal helpers. Deleting or renaming key A must leave key B untouched. A name-only auto-detected log must return no key for the pair.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run focused identity tests; expected failure is missing remap/removal helper behavior.
 
-- [ ] **Step 3: Convert runtime maps methodically**
+- [x] **Step 3: Convert runtime maps methodically**
 
 Change method parameters and map access in this order: execution state and launch contexts; live log watcher; feature-step tracker; external tracked runs; running/failed highlights. Each method receives `scenarioKey`, obtains display/log name through the artifact or `catalog.byUri`, and never calls `catalog.primaryByName`.
 
-- [ ] **Step 4: Remove the compatibility cache**
+- [x] **Step 4: Remove the compatibility cache**
 
 Publish catalog events directly. Update hover provider's compatibility interface to consume `getScenarioCatalog()` and exact definitions. Remove `scanWorkspaceForTests` only if `rg` confirms no callers; otherwise keep it as an exported legacy adapter outside PhaseSwitcher.
 
-- [ ] **Step 5: Prove the migration boundary is gone**
+- [x] **Step 5: Prove the migration boundary is gone**
 
 Run exact searches and inspect every remaining match:
 
@@ -429,7 +429,7 @@ rg -n "_testCache|getTestCache\(|primaryByName" src/phaseSwitcher.ts src/hoverPr
 
 Expected: no PhaseSwitcher/hover runtime use. `primaryByName` may remain only in the catalog and exported scanner compatibility adapter.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run: `npm run check`
 

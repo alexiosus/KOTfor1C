@@ -103,3 +103,10 @@ test('run log analyzers read only the requested file tail', () => {
     );
     assert.doesNotMatch(phaseSwitcherSource, /fs\.readFileSync\(runLogPath\)/);
 });
+
+test('scenario runtime consumers do not recreate the legacy name-keyed cache', () => {
+    for (const providerSource of [phaseSwitcherSource, hoverProviderSource]) {
+        assert.doesNotMatch(providerSource, /_testCache|getTestCache\(|primaryByName/);
+        assert.match(providerSource, /getScenarioCatalog\(|ensureFreshScenarioCatalog\(/);
+    }
+});

@@ -37,7 +37,6 @@ const PLACEHOLDER_REGEX = /"%\d+\s+[^"]*"|'%\d+\s+[^']*'/g;
 const STEP_LITERAL_REGEX = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\[[A-Za-zА-Яа-яЁё0-9_-]+\]/g;
 
 interface ScenarioCacheProvider {
-    getTestCache(): Map<string, TestInfo> | null;
     getScenarioCatalog(): ScenarioCatalog | null;
     ensureFreshScenarioCatalog(): Promise<ScenarioCatalog>;
     isFailedFeatureLine?(documentUri: vscode.Uri, lineIndex: number): boolean;
