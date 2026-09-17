@@ -160,3 +160,15 @@ export function buildTestInfoFromScenarioDescriptor(
 
     return result;
 }
+
+export function parseTestInfoFromScenarioSource(
+    source: string,
+    yamlFileUri: TestInfo['yamlFileUri'],
+    relativePath: string
+): TestInfo | null {
+    return buildTestInfoFromScenarioDescriptor(
+        parseScenarioDescriptor(source),
+        yamlFileUri,
+        relativePath
+    );
+}

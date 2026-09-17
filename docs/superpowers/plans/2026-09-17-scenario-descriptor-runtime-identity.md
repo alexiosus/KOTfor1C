@@ -116,7 +116,7 @@ Commit: `feat: add shared scenario descriptor parser`
 - Preserves `readScenarioInfo()` and `scanWorkspaceForScenarioCatalog()` signatures.
 - Removes `PhaseSwitcherProvider.extractScenarioHeaderFields()` and both private nested-scenario regex parsers.
 
-- [ ] **Step 1: Add a failing parity/corpus test**
+- [x] **Step 1: Add a failing parity/corpus test**
 
 Add a pure verifier assertion that the descriptor has the same required identity for every corpus file and explicitly rejects fields borrowed from unrelated sections:
 
@@ -129,13 +129,13 @@ assert.deepEqual(descriptor.nestedScenarioNames, ['Nested']);
 
 The production-change mutation caught by this test is reintroducing a whole-file `^\s*Имя:` scan.
 
-- [ ] **Step 2: Verify RED against the duplicated readers**
+- [x] **Step 2: Verify RED against the duplicated readers**
 
 Run: `npm run compile-tests && node --test out/test/scenarioYamlCorpusVerifier.test.js`
 
 Expected: the new parity API or assertion is unavailable before refactoring.
 
-- [ ] **Step 3: Replace scanner parsing**
+- [x] **Step 3: Replace scanner parsing**
 
 Inside `readScenarioDefinitions`, replace line-by-line metadata extraction with:
 
@@ -151,17 +151,17 @@ if (testInfo) definitions.push(testInfo);
 
 Delete the scanner's nested-scenario parser and manual header/parameter state machine. Preserve cancellation, bounded concurrency, relative-path behavior, and error isolation.
 
-- [ ] **Step 4: Replace open-document parsing**
+- [x] **Step 4: Replace open-document parsing**
 
 Implement `buildTestInfoFromDocument()` as the same adapter call using `document.getText()`, `document.uri`, and `computeRelativePathForScenarioFile()`. Delete `extractScenarioHeaderFields()` and `parseNestedScenarioNamesFromText()` from `PhaseSwitcherProvider` and remove obsolete imports.
 
-- [ ] **Step 5: Verify the full external corpus read-only**
+- [x] **Step 5: Verify the full external corpus read-only**
 
 Run: `npm run verify:yaml-corpus -- /Users/alexeremeev/Development/1cDrive/tests/RegressionTests/Yaml/Drive`
 
-Expected: 1,885 files, zero structural errors, zero warnings. Compare `git -C /Users/alexeremeev/Development/1cDrive status --short` before and after; outputs must be identical.
+Expected: the current complete corpus (1,888 files on 2026-09-17), zero structural errors, zero warnings. Compare `git -C /Users/alexeremeev/Development/1cDrive status --short` before and after; outputs must be identical.
 
-- [ ] **Step 6: Run the full project check and commit**
+- [x] **Step 6: Run the full project check and commit**
 
 Run: `npm run check`
 

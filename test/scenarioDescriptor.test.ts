@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
     buildTestInfoFromScenarioDescriptor,
-    parseScenarioDescriptor
+    parseScenarioDescriptor,
+    parseTestInfoFromScenarioSource
 } from '../src/scenarioDescriptor';
 import type { TestInfo } from '../src/types';
 
@@ -77,4 +78,15 @@ test('test info adapter rejects unnamed descriptors and copies mutable metadata'
 
     const unnamed = parseScenarioDescriptor('ДанныеСценария:\n    UID: "uid-only"\n');
     assert.equal(buildTestInfoFromScenarioDescriptor(unnamed, uri, 'Scenario'), null);
+});
+
+test('source adapter cannot borrow scenario identity from an unrelated section', () => {
+    const uri = { toString: () => 'file:///scenario/scen.yaml' } as TestInfo['yamlFileUri'];
+    const info = parseTestInfoFromScenarioSource(source, uri, 'Scenario');
+
+    assert.ok(info);
+    assert.equal(info.name, 'Main: #1');
+    assert.equal(info.uid, 'uid-main');
+    assert.equal(info.scenarioCode, '000000001');
+    assert.deepEqual(info.nestedScenarioNames, ['Nested one']);
 });

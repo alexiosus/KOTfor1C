@@ -17,9 +17,8 @@ import {
     resolveScenarioTarget,
     type ScenarioTarget
 } from './scenarioIdentity';
-import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
-import { migrateLegacyPhaseSwitcherMetadata, parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
-import { parseKotScenarioDescription } from './kotMetadataDescription';
+import { migrateLegacyPhaseSwitcherMetadata } from './phaseSwitcherMetadata';
+import { parseTestInfoFromScenarioSource } from './scenarioDescriptor';
 import type { YamlParameter } from './yamlParametersManager';
 import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
 import { isScenarioYamlFile } from './yamlValidator';
@@ -1303,83 +1302,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             || baseName === 'test.feature';
     }
 
-    private parseNestedScenarioNamesFromText(documentText: string): string[] {
-        const names: string[] = [];
-        const sectionRegex = /ВложенныеСценарии:\s*([\s\S]*?)(?=\n(?![ \t])[А-Яа-яЁёA-Za-z]+:|\n*$)/;
-        const match = sectionRegex.exec(documentText);
-        if (!match || !match[1]) {
-            return names;
-        }
-
-        const nameRegex = /^\s*ИмяСценария:\s*"([^"]+)"/gm;
-        let nameMatch: RegExpExecArray | null;
-        while ((nameMatch = nameRegex.exec(match[1])) !== null) {
-            const name = nameMatch[1].trim();
-            if (name.length > 0) {
-                names.push(name);
-            }
-        }
-
-        return names;
-    }
-
-    private extractScenarioHeaderFields(documentText: string): {
-        name: string | null;
-        uid: string | null;
-        scenarioCode: string | null;
-        scenarioCodeLine: number | null;
-        scenarioCodeLineStartCharacter: number | null;
-        scenarioCodeLineEndCharacter: number | null;
-    } {
-        let name: string | null = null;
-        let uid: string | null = null;
-        let scenarioCode: string | null = null;
-        let scenarioCodeLine: number | null = null;
-        let scenarioCodeLineStartCharacter: number | null = null;
-        let scenarioCodeLineEndCharacter: number | null = null;
-        const lines = documentText.split(/\r\n|\r|\n/);
-
-        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-            const line = lines[lineIndex];
-            if (!name) {
-                const nameMatch = line.match(/^\s*Имя:\s*"(.+?)"\s*$/);
-                if (nameMatch?.[1]) {
-                    name = nameMatch[1].trim();
-                }
-            }
-
-            if (!uid) {
-                const uidMatch = line.match(/^\s*UID:\s*"(.+?)"\s*$/);
-                if (uidMatch?.[1]) {
-                    uid = uidMatch[1].trim();
-                }
-            }
-
-            if (!scenarioCode) {
-                const codeMatch = line.match(/^\s*Код:\s*"(.+?)"\s*$/);
-                if (codeMatch?.[1]) {
-                    scenarioCode = codeMatch[1].trim();
-                    scenarioCodeLine = lineIndex;
-                    scenarioCodeLineStartCharacter = Math.max(0, line.search(/\S|$/));
-                    scenarioCodeLineEndCharacter = line.length;
-                }
-            }
-
-            if (name && uid && scenarioCode) {
-                break;
-            }
-        }
-
-        return {
-            name,
-            uid,
-            scenarioCode,
-            scenarioCodeLine,
-            scenarioCodeLineStartCharacter,
-            scenarioCodeLineEndCharacter
-        };
-    }
-
     private computeRelativePathForScenarioFile(fileUri: vscode.Uri): string {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders || workspaceFolders.length === 0) {
@@ -1397,48 +1319,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private buildTestInfoFromDocument(document: vscode.TextDocument): TestInfo | null {
-        const documentText = document.getText();
-        const {
-            name,
-            uid,
-            scenarioCode,
-            scenarioCodeLine,
-            scenarioCodeLineStartCharacter,
-            scenarioCodeLineEndCharacter
-        } = this.extractScenarioHeaderFields(documentText);
-        if (!name) {
-            return null;
-        }
-
-        const nestedScenarioNames = this.parseNestedScenarioNamesFromText(documentText);
-        const defaultsMap = parseScenarioParameterDefaults(documentText);
-        const phaseSwitcherMetadata = parsePhaseSwitcherMetadata(documentText);
-        const scenarioDescription = parseKotScenarioDescription(documentText);
-        const parameters = defaultsMap.size > 0 ? Array.from(defaultsMap.keys()) : undefined;
-        const parameterDefaults = defaultsMap.size > 0 ? Object.fromEntries(defaultsMap.entries()) : undefined;
-
-        const testInfo: TestInfo = {
-            name,
-            yamlFileUri: document.uri,
-            relativePath: this.computeRelativePathForScenarioFile(document.uri),
-            parameters,
-            parameterDefaults,
-            nestedScenarioNames: nestedScenarioNames.length > 0 ? [...new Set(nestedScenarioNames)] : undefined,
-            uid: uid || undefined,
-            scenarioDescription: scenarioDescription || undefined,
-            scenarioCode: scenarioCode || undefined,
-            scenarioCodeLine: scenarioCodeLine ?? undefined,
-            scenarioCodeLineStartCharacter: scenarioCodeLineStartCharacter ?? undefined,
-            scenarioCodeLineEndCharacter: scenarioCodeLineEndCharacter ?? undefined
-        };
-
-        if (phaseSwitcherMetadata.hasTab) {
-            testInfo.tabName = phaseSwitcherMetadata.tabName;
-            testInfo.defaultState = phaseSwitcherMetadata.defaultState !== undefined ? phaseSwitcherMetadata.defaultState : false;
-            testInfo.order = phaseSwitcherMetadata.order !== undefined ? phaseSwitcherMetadata.order : Infinity;
-        }
-
-        return testInfo;
+        return parseTestInfoFromScenarioSource(
+            document.getText(),
+            document.uri,
+            this.computeRelativePathForScenarioFile(document.uri)
+        );
     }
 
     private areStringArraysEqual(left?: string[], right?: string[]): boolean {
