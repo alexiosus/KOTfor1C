@@ -345,7 +345,7 @@ Commit: `refactor: key Test Manager selection by scenario URI`
 - `ScenarioBuildArtifact` carries `scenarioKey`, `scenarioName`, and `sourceUri`.
 - Scenario-specific messages resolve `{ key, name, uri }` through `resolveScenarioRuntimeTarget` before any operation.
 
-- [ ] **Step 1: Add failing projection/ambiguity tests**
+- [x] **Step 1: Add failing projection/ambiguity tests**
 
 Test a pure helper that associates name-only recovered artifacts only for unique names:
 
@@ -356,15 +356,15 @@ assert.equal(resolveUniqueRuntimeKeyByName(catalog, 'Duplicate'), null);
 
 Test the build-selection validator: two enabled keys with the same name produce `{ kind: 'ambiguous', name, keys }`; one enabled sibling with the other physically excluded is accepted.
 
-- [ ] **Step 2: Verify RED for the build-selection contract**
+- [x] **Step 2: Verify RED for the build-selection contract**
 
 Run the focused runtime identity test and confirm the new validator is missing.
 
-- [ ] **Step 3: Convert artifact indexing and restoration**
+- [x] **Step 3: Convert artifact indexing and restoration**
 
 Use runtime key when artifacts originate from a selected `TestInfo`. During filesystem restoration, resolve basename/name only through `resolveUniqueRuntimeKeyByName`; log and skip duplicates. Pruning checks `catalog.byUri.has(key)` and deletion removes only that key.
 
-- [ ] **Step 4: Convert scenario-specific webview handlers**
+- [x] **Step 4: Convert scenario-specific webview handlers**
 
 For run/open-feature/open-JSON/open-log/watch/manual commands, resolve the exact target first:
 
@@ -382,7 +382,7 @@ await this.runScenarioInVanessa(getScenarioRuntimeKey(resolution.scenario));
 
 Legacy command-palette calls by name continue through the same resolver and existing duplicate picker.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `npm run check`
 

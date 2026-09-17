@@ -537,8 +537,8 @@
         const runButtons = phaseTreeContainer.querySelectorAll('.run-scenario-btn');
         runButtons.forEach(button => {
             if (button instanceof HTMLButtonElement) {
-                const scenarioName = button.getAttribute('data-name') || '';
-                const runInfo = scenarioName && runArtifacts ? runArtifacts[scenarioName] : null;
+                const scenarioKey = button.getAttribute('data-key') || '';
+                const runInfo = scenarioKey && runArtifacts ? runArtifacts[scenarioKey] : null;
                 const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
                 const isBlockingRunInProgress = runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false;
                 button.disabled = isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact;
@@ -1181,7 +1181,7 @@
         const isAffectedMainScenario = affectedMainScenarioNames.has(name);
         const escapedIconTitle = escapeHtmlAttr((window.__loc?.openScenarioFileTitle || 'Open scenario file {0}').replace('{0}', name));
         const runInfo = runArtifacts && typeof runArtifacts === 'object'
-            ? (runArtifacts[scenarioKey] || runArtifacts[name])
+            ? runArtifacts[scenarioKey]
             : null;
         const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
         const runStatus = runInfo?.runStatus || 'idle';
@@ -1887,7 +1887,7 @@
         }
         const scenarioKey = button.getAttribute('data-key') || '';
         const runInfo = runArtifacts && typeof runArtifacts === 'object'
-            ? (runArtifacts[scenarioKey] || runArtifacts[name])
+            ? runArtifacts[scenarioKey]
             : null;
         if (runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false) {
             log(`Run request ignored for "${name}" because run is already in progress.`);
@@ -1940,7 +1940,7 @@
         }
         const scenarioKey = row.getAttribute('data-key') || '';
         const runInfo = runArtifacts && typeof runArtifacts === 'object'
-            ? (runArtifacts[scenarioKey] || runArtifacts[name])
+            ? runArtifacts[scenarioKey]
             : null;
         const runStatus = runInfo?.runStatus || 'idle';
         if (runStatus !== 'running' && runStatus !== 'failed') {
@@ -2184,7 +2184,7 @@
         event.preventDefault();
         event.stopPropagation();
         const runInfo = runArtifacts && typeof runArtifacts === 'object'
-            ? (runArtifacts[scenarioKey] || runArtifacts[name])
+            ? runArtifacts[scenarioKey]
             : null;
         const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
         const hasFeatureArtifact = !!(runInfo && runInfo.featurePath);
@@ -2292,9 +2292,11 @@
         ], `scenario:${name}`);
     }
 
-    function showRunModeMenu(anchorButton, scenarioName, options = {}) {
+    function showRunModeMenu(anchorButton, scenarioKey, options = {}) {
         const includeManual = options?.includeManual !== false;
-        const menuScope = scenarioName || '__top__';
+        const scenarioInfo = getTestInfoByKey(scenarioKey);
+        const scenarioName = scenarioInfo?.name || '';
+        const menuScope = scenarioKey || '__top__';
         if (activeRunModeMenu && activeRunModeMenu.getAttribute('data-scenario') === menuScope) {
             closeRunModeMenu();
             return;
@@ -2313,7 +2315,7 @@
         const autoHint = window.__loc?.runScenarioModeAutomaticHint || 'Runs scenario with StartFeaturePlayer and waits for completion.';
         const manualHint = window.__loc?.runScenarioModeManualHint || 'Opens Vanessa for manual debugging without StartFeaturePlayer.';
         const canRunAuto = scenarioName ? true : hasRunnableArtifacts();
-        const runInfo = scenarioName && runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[scenarioName] : null;
+        const runInfo = scenarioKey && runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[scenarioKey] : null;
         const hasFeatureArtifact = !!(scenarioName && runInfo && runInfo.featurePath);
 
         const autoItem = document.createElement('button');
@@ -2334,11 +2336,8 @@
                 return;
             }
             closeRunModeMenu();
-            if (scenarioName) {
-                vscode.postMessage({
-                    command: 'runScenarioInVanessa',
-                    name: scenarioName
-                });
+            if (scenarioInfo) {
+                vscode.postMessage(scenarioProtocol.createScenarioCommand('runScenarioInVanessa', scenarioInfo));
             } else {
                 vscode.postMessage({
                     command: 'runScenarioViaPicker',
@@ -2356,11 +2355,8 @@
             e.preventDefault();
             e.stopPropagation();
             closeRunModeMenu();
-            if (scenarioName) {
-                vscode.postMessage({
-                    command: 'openScenarioInVanessaManual',
-                    name: scenarioName
-                });
+            if (scenarioInfo) {
+                vscode.postMessage(scenarioProtocol.createScenarioCommand('openScenarioInVanessaManual', scenarioInfo));
             } else {
                 vscode.postMessage({
                     command: 'runScenarioViaPicker',
@@ -2374,7 +2370,7 @@
             menu.appendChild(manualItem);
         }
 
-        if (scenarioName) {
+        if (scenarioInfo) {
             const openFeatureLabel = window.__loc?.runScenarioModeOpenFeature || 'Open feature in editor';
             const openFeatureHint = window.__loc?.runScenarioModeOpenFeatureHint || 'Opens built feature file for this scenario in editor.';
             const openFeatureUnavailable = window.__loc?.runScenarioNoFeatureArtifact || 'Feature artifact is not available for this scenario.';
@@ -2396,10 +2392,7 @@
                     return;
                 }
                 closeRunModeMenu();
-                vscode.postMessage({
-                    command: 'openScenarioFeatureInEditor',
-                    name: scenarioName
-                });
+                vscode.postMessage(scenarioProtocol.createScenarioCommand('openScenarioFeatureInEditor', scenarioInfo));
             });
             menu.appendChild(openFeatureItem);
         }
@@ -2561,8 +2554,7 @@
         runButtons.forEach(btn => {
             if (!(btn instanceof HTMLButtonElement)) return;
             const scenarioKey = btn.getAttribute('data-key') || '';
-            const scenarioName = btn.getAttribute('data-name') || '';
-            const runInfo = runArtifacts ? (runArtifacts[scenarioKey] || runArtifacts[scenarioName]) : null;
+            const runInfo = runArtifacts ? runArtifacts[scenarioKey] : null;
             const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
             const isBlockingRunInProgress = runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false;
             btn.disabled = isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact;
