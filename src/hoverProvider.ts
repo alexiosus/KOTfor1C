@@ -16,6 +16,7 @@ import {
     extractScenarioParameterNameFromText,
     parseScenarioParameterDefinitions
 } from './scenarioParameterUtils';
+import { StepSuggestionIndex } from './stepSuggestionIndex';
 
 // Интерфейс для хранения определений шагов и их описаний
 interface StepDefinition {
@@ -55,6 +56,7 @@ interface ScenarioHoverCachedData {
 
 export class DriveHoverProvider implements vscode.HoverProvider {
     private stepDefinitions: StepDefinition[] = [];
+    private stepSuggestionIndex = new StepSuggestionIndex([]);
     private readonly templateRegexCache = new Map<string, RegExp>();
     private isLoading: boolean = false;
     private loadingPromise: Promise<void> | null = null;
@@ -127,39 +129,13 @@ export class DriveHoverProvider implements vscode.HoverProvider {
     /**
      * Подбирает ближайшие варианты шагов для текущей строки.
      */
-    public async getStepSuggestions(lineText: string, maxSuggestions: number = 3): Promise<string[]> {
+    public async getStepSuggestions(
+        lineText: string,
+        maxSuggestions: number = 3,
+        shouldCancel: () => boolean = () => false
+    ): Promise<string[]> {
         await this.ensureStepDefinitionsLoaded();
-        const inputNormalized = this.normalizeForSuggestion(lineText);
-        if (!inputNormalized) {
-            return [];
-        }
-
-        const scoredCandidates = new Map<string, number>();
-
-        for (const stepDef of this.stepDefinitions) {
-            const candidates: string[] = [stepDef.firstLine];
-            if (stepDef.russianFirstLine) {
-                candidates.push(stepDef.russianFirstLine);
-            }
-
-            for (const candidate of candidates) {
-                const normalizedCandidate = this.normalizeForSuggestion(candidate);
-                if (!normalizedCandidate) {
-                    continue;
-                }
-                const score = this.calculateSimilarity(inputNormalized, normalizedCandidate);
-                const existingScore = scoredCandidates.get(candidate);
-                if (existingScore === undefined || score > existingScore) {
-                    scoredCandidates.set(candidate, score);
-                }
-            }
-        }
-
-        return Array.from(scoredCandidates.entries())
-            .filter(([, score]) => score >= 0.25)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, Math.max(1, maxSuggestions))
-            .map(([candidate]) => candidate);
+        return this.stepSuggestionIndex.getSuggestions(lineText, maxSuggestions, shouldCancel);
     }
 
     // Метод для принудительного обновления
@@ -181,6 +157,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
                 } catch (fallbackError: any) {
                     console.error(`[DriveHoverProvider] Fallback load also failed: ${fallbackError.message}`);
                     this.stepDefinitions = [];
+                    this.stepSuggestionIndex = new StepSuggestionIndex([]);
                 }
             })
             .finally(() => {
@@ -191,6 +168,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
     
     private parseAndStoreStepDefinitions(htmlContent: string): void {
         this.stepDefinitions = []; // Очищаем перед заполнением
+        this.stepSuggestionIndex = new StepSuggestionIndex([]);
         this.templateRegexCache.clear();
         if (!htmlContent) {
             console.warn("[DriveHoverProvider] HTML content is null or empty, cannot parse step definitions.");
@@ -241,10 +219,12 @@ export class DriveHoverProvider implements vscode.HoverProvider {
                     this.stepDefinitions.push(this.createStepDefinition(russianStepPattern, russianStepDescription));
                 }
             });
+            this.stepSuggestionIndex = new StepSuggestionIndex(this.stepDefinitions);
             console.log(`[DriveHoverProvider] Parsed and stored ${this.stepDefinitions.length} step definitions.`);
         } catch (e) {
             console.error("[DriveHoverProvider] Error parsing HTML for step definitions:", e);
             this.stepDefinitions = [];
+            this.stepSuggestionIndex = new StepSuggestionIndex([]);
         }
     }
 
@@ -268,6 +248,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
                 const t = await getTranslator(this.context.extensionUri);
                 vscode.window.showWarningMessage(t('Error updating hints: {0}. Attempting to load from backup sources.', error.message));
                 this.stepDefinitions = [];
+                this.stepSuggestionIndex = new StepSuggestionIndex([]);
             })
             .finally(() => {
                 this.isLoading = false;
@@ -1404,56 +1385,4 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         return russianRegex.test(text);
     }
 
-    private normalizeForSuggestion(text: string): string {
-        const gherkinKeywords = /^(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
-        return text
-            .trim()
-            .replace(gherkinKeywords, '')
-            .replace(/"%\d+\s+[^"]*"/g, ' ')
-            .replace(/"[^"]*"/g, ' ')
-            .replace(/'[^']*'/g, ' ')
-            .replace(/\[[^\]]+\]/g, ' ')
-            .replace(/[.,;:!?()]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .toLowerCase();
-    }
-
-    private calculateSimilarity(a: string, b: string): number {
-        if (!a || !b) {
-            return 0;
-        }
-        if (a === b) {
-            return 1;
-        }
-        const distance = this.levenshteinDistance(a, b);
-        const maxLen = Math.max(a.length, b.length);
-        return maxLen === 0 ? 0 : (1 - distance / maxLen);
-    }
-
-    private levenshteinDistance(a: string, b: string): number {
-        const rows = a.length + 1;
-        const cols = b.length + 1;
-        const matrix: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
-
-        for (let i = 0; i < rows; i++) {
-            matrix[i][0] = i;
-        }
-        for (let j = 0; j < cols; j++) {
-            matrix[0][j] = j;
-        }
-
-        for (let i = 1; i < rows; i++) {
-            for (let j = 1; j < cols; j++) {
-                const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-                matrix[i][j] = Math.min(
-                    matrix[i - 1][j] + 1,
-                    matrix[i][j - 1] + 1,
-                    matrix[i - 1][j - 1] + cost
-                );
-            }
-        }
-
-        return matrix[a.length][b.length];
-    }
 }

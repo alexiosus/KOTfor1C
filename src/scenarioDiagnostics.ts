@@ -9,6 +9,12 @@ import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherki
 import { parseBlockKeyword } from './blockKeywordParser';
 import { getScenarioScanRootPath } from './scenarioScanRoot';
 import { resolveScenarioByName, type ScenarioCatalog } from './scenarioCatalog';
+import {
+    createDocumentValidationCancellation,
+    getScenarioValidationOptions,
+    type ScenarioValidationOptions as ValidationOptions
+} from './scenarioValidationPolicy';
+import { calculateLevenshteinSimilarity } from './stringSimilarity';
 
 const DIAGNOSTIC_SOURCE = 'KOT for 1C';
 const CODE_UNCLOSED_IF = 'kotTestToolkit.unclosedIf';
@@ -26,43 +32,15 @@ const CODE_DEFAULT_DESCRIPTION = 'kotTestToolkit.defaultDescription';
 const CODE_DUPLICATE_SCENARIO_CODE = 'kotTestToolkit.duplicateScenarioCode';
 const LOCAL_DEPENDENCY_SCAN_MAX_FILES = 120;
 
-interface ValidationOptions {
-    includeSuggestions: boolean;
-    includeStepChecks: boolean;
-    includeStepSuggestions?: boolean;
-    includeScenarioSuggestions?: boolean;
-}
-
 interface WorkspaceDiagnosticsScanOptions {
     refreshCache?: boolean;
 }
 
-const FULL_VALIDATION_OPTIONS: ValidationOptions = {
-    includeSuggestions: true,
-    includeStepChecks: true
-};
-
-const GLOBAL_VALIDATION_OPTIONS: ValidationOptions = {
-    includeSuggestions: false,
-    includeStepChecks: true
-};
-
-const CHANGE_VALIDATION_OPTIONS: ValidationOptions = {
-    includeSuggestions: true,
-    includeStepChecks: true
-};
-
-const SAVE_VALIDATION_OPTIONS: ValidationOptions = {
-    includeSuggestions: false,
-    includeStepChecks: true,
-    includeStepSuggestions: true,
-    includeScenarioSuggestions: true
-};
-
-const RELATED_VALIDATION_OPTIONS: ValidationOptions = {
-    includeSuggestions: false,
-    includeStepChecks: false
-};
+const FULL_VALIDATION_OPTIONS = getScenarioValidationOptions('full');
+const GLOBAL_VALIDATION_OPTIONS = getScenarioValidationOptions('global');
+const CHANGE_VALIDATION_OPTIONS = getScenarioValidationOptions('change');
+const SAVE_VALIDATION_OPTIONS = getScenarioValidationOptions('save');
+const RELATED_VALIDATION_OPTIONS = getScenarioValidationOptions('related');
 
 const GLOBAL_SCAN_YIELD_EVERY = 20;
 const LOCAL_DEPENDENCY_SCAN_YIELD_EVERY = 10;
@@ -476,29 +454,6 @@ function buildMissingParameterInsertion(
     };
 }
 
-function levenshteinDistance(a: string, b: string): number {
-    const rows = a.length + 1;
-    const cols = b.length + 1;
-    const matrix: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
-    for (let i = 0; i < rows; i++) {
-        matrix[i][0] = i;
-    }
-    for (let j = 0; j < cols; j++) {
-        matrix[0][j] = j;
-    }
-    for (let i = 1; i < rows; i++) {
-        for (let j = 1; j < cols; j++) {
-            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-            matrix[i][j] = Math.min(
-                matrix[i - 1][j] + 1,
-                matrix[i][j - 1] + 1,
-                matrix[i - 1][j - 1] + cost
-            );
-        }
-    }
-    return matrix[a.length][b.length];
-}
-
 function findClosestStrings(input: string, candidates: string[], max: number): string[] {
     const normalizedInput = input.trim().toLowerCase();
     if (!normalizedInput) {
@@ -508,9 +463,7 @@ function findClosestStrings(input: string, candidates: string[], max: number): s
     return candidates
         .map(candidate => {
             const normalizedCandidate = candidate.toLowerCase();
-            const distance = levenshteinDistance(normalizedInput, normalizedCandidate);
-            const maxLen = Math.max(normalizedInput.length, normalizedCandidate.length);
-            const score = maxLen === 0 ? 0 : 1 - distance / maxLen;
+            const score = calculateLevenshteinSimilarity(normalizedInput, normalizedCandidate);
             return { candidate, score };
         })
         .filter(item => item.score >= 0.3)
@@ -525,9 +478,7 @@ function getStringSimilarity(input: string, candidate: string): number {
     if (!normalizedInput || !normalizedCandidate) {
         return 0;
     }
-    const distance = levenshteinDistance(normalizedInput, normalizedCandidate);
-    const maxLen = Math.max(normalizedInput.length, normalizedCandidate.length);
-    return maxLen === 0 ? 0 : 1 - distance / maxLen;
+    return calculateLevenshteinSimilarity(normalizedInput, normalizedCandidate);
 }
 
 function containsQuotedPlaceholderTemplate(text: string): boolean {
@@ -810,11 +761,14 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     public async provideCodeActions(
         document: vscode.TextDocument,
         range: vscode.Range,
-        context: vscode.CodeActionContext
+        context: vscode.CodeActionContext,
+        token: vscode.CancellationToken
     ): Promise<vscode.CodeAction[]> {
         if (!isScenarioYamlFile(document)) {
             return [];
         }
+
+        const shouldCancel = createDocumentValidationCancellation(document, token);
 
         const actions: vscode.CodeAction[] = [];
         const localScenarioParameterDefaults = parseScenarioParameterDefaults(document.getText());
@@ -848,13 +802,19 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         }
 
         for (const diagnostic of context.diagnostics) {
+            if (shouldCancel()) {
+                return [];
+            }
             if (diagnostic.source !== DIAGNOSTIC_SOURCE || typeof diagnostic.code !== 'string') {
                 continue;
             }
 
             if (diagnostic.code === CODE_UNKNOWN_STEP) {
                 const lineText = document.lineAt(diagnostic.range.start.line).text.trim();
-                const suggestions = await this.hoverProvider.getStepSuggestions(lineText, 3);
+                const suggestions = await this.hoverProvider.getStepSuggestions(lineText, 3, shouldCancel);
+                if (shouldCancel()) {
+                    return [];
+                }
                 const indent = document.lineAt(diagnostic.range.start.line).text.match(/^\s*/)?.[0] || '';
                 const replacementVariants = new Set<string>();
                 for (const suggestion of suggestions) {
@@ -968,7 +928,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             }
         }
 
-        return actions;
+        return shouldCancel() ? [] : actions;
     }
 
     private scheduleValidation(
@@ -986,7 +946,11 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         }
         const timer = setTimeout(() => {
             this.validationTimers.delete(key);
-            this.validateDocument(document, options).catch(error => {
+            this.validateDocument(
+                document,
+                options,
+                createDocumentValidationCancellation(document)
+            ).catch(error => {
                 console.error('[ScenarioDiagnostics] Validation failed:', error);
             });
         }, delayMs);
@@ -1208,7 +1172,11 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             const uri = relatedUris[index];
             try {
                 const document = await vscode.workspace.openTextDocument(uri);
-                await this.validateDocument(document, options);
+                await this.validateDocument(
+                    document,
+                    options,
+                    createDocumentValidationCancellation(document)
+                );
             } catch (error) {
                 console.error(`[ScenarioDiagnostics] Failed to validate related scenario ${uri.fsPath}:`, error);
             }
@@ -1236,7 +1204,11 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             const uri = workspaceScenarioUris[index];
             try {
                 const document = await vscode.workspace.openTextDocument(uri);
-                await this.validateDocument(document, GLOBAL_VALIDATION_OPTIONS);
+                await this.validateDocument(
+                    document,
+                    GLOBAL_VALIDATION_OPTIONS,
+                    createDocumentValidationCancellation(document)
+                );
             } catch (error) {
                 console.error(`[ScenarioDiagnostics] Failed to validate ${uri.fsPath}:`, error);
             }
@@ -1326,8 +1298,12 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
 
     private async validateDocument(
         document: vscode.TextDocument,
-        options: ValidationOptions = FULL_VALIDATION_OPTIONS
+        options: ValidationOptions = FULL_VALIDATION_OPTIONS,
+        shouldCancel: () => boolean = () => false
     ): Promise<void> {
+        if (shouldCancel()) {
+            return;
+        }
         if (!isScenarioYamlFile(document)) {
             this.diagnostics.delete(document.uri);
             return;
@@ -1348,6 +1324,9 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         } catch (error) {
             console.error('[ScenarioDiagnostics] Failed to load scenario catalog for validation:', error);
         }
+        if (shouldCancel()) {
+            return;
+        }
         const hasScenarioCache = (scenarioCatalog?.byName.size || 0) > 0;
         const scenarioCallBlocks = parseScenarioCallBlocks(document, bodyRange);
         const validatedScenarioCallBlocks: ScenarioCallBlock[] = [];
@@ -1356,6 +1335,9 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
 
         if (options.includeStepChecks) {
             await this.hoverProvider.ensureStepDefinitionsLoaded();
+            if (shouldCancel()) {
+                return;
+            }
         }
 
         // If/EndIf, Do/EndDo, Try/EndTry + quotes checks
@@ -1363,6 +1345,9 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         const doStack: number[] = [];
         const tryStack: number[] = [];
         for (let line = bodyRange.startLine; line <= bodyRange.endLine; line++) {
+            if (shouldCancel()) {
+                return;
+            }
             const text = document.lineAt(line).text;
             const blockKeyword = parseBlockKeyword(text);
 
@@ -1444,6 +1429,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             const scenarioInfo = resolution.kind === 'unique' ? resolution.scenario : undefined;
             const lineText = document.lineAt(block.line).text.trim();
             const includeScenarioSuggestions = options.includeScenarioSuggestions ?? options.includeSuggestions;
+            const includeStepSuggestions = options.includeStepSuggestions ?? options.includeSuggestions;
             const scenarioSuggestions = (!scenarioInfo && hasScenarioCache && includeScenarioSuggestions)
                 ? findClosestStrings(block.name, Array.from(scenarioCatalog?.byName.keys() || []), 3)
                 : [];
@@ -1461,15 +1447,24 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     }
                 }
 
-                if (options.includeStepChecks) {
-                    const stepHints = await this.hoverProvider.getStepSuggestions(lineText, 1);
+                if (options.includeStepChecks && includeStepSuggestions) {
+                    const stepHints = await this.hoverProvider.getStepSuggestions(lineText, 1, shouldCancel);
+                    if (shouldCancel()) {
+                        return;
+                    }
                     if (stepHints.length > 0) {
                         continue;
                     }
                 } else if (stepLikeSyntax) {
                     // Lightweight pass without full step validation:
                     // if it looks like a step and isn't known, emit step diagnostic instead of unknown scenario.
-                    const stepHints = await this.hoverProvider.getStepSuggestions(lineText, 3);
+                    if (!includeStepSuggestions) {
+                        continue;
+                    }
+                    const stepHints = await this.hoverProvider.getStepSuggestions(lineText, 3, shouldCancel);
+                    if (shouldCancel()) {
+                        return;
+                    }
                     const likelyMissingQuotes = looksLikeMissingQuotes(lineText, stepHints);
                     const suggestions = stepHints.map(suggestion => applyStepSuggestionWithOriginalValues(lineText, suggestion));
                     const suffix = formatSuggestionListSuffix(this.messages, suggestions);
@@ -1569,6 +1564,9 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         if (options.includeStepChecks) {
             const gherkinStepRegex = /^\s*(And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\b/i;
             for (let line = bodyRange.startLine; line <= bodyRange.endLine; line++) {
+                if (shouldCancel()) {
+                    return;
+                }
                 if (scenarioCallLineSet.has(line) || scenarioParamLineSet.has(line)) {
                     continue;
                 }
@@ -1587,11 +1585,14 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     continue;
                 }
 
-                const includeStepSuggestions = options.includeStepSuggestions ?? options.includeSuggestions;
-                const rawSuggestions = includeStepSuggestions
-                    ? await this.hoverProvider.getStepSuggestions(trimmed, 3)
+                const shouldIncludeStepSuggestions = options.includeStepSuggestions ?? options.includeSuggestions;
+                const rawSuggestions = shouldIncludeStepSuggestions
+                    ? await this.hoverProvider.getStepSuggestions(trimmed, 3, shouldCancel)
                     : [];
-                const likelyMissingQuotes = includeStepSuggestions && looksLikeMissingQuotes(trimmed, rawSuggestions);
+                if (shouldCancel()) {
+                    return;
+                }
+                const likelyMissingQuotes = shouldIncludeStepSuggestions && looksLikeMissingQuotes(trimmed, rawSuggestions);
                 const suggestions = rawSuggestions.map(suggestion => applyStepSuggestionWithOriginalValues(trimmed, suggestion));
                 const suffix = formatSuggestionListSuffix(this.messages, suggestions);
 
@@ -1647,6 +1648,8 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             ));
         }
 
-        this.diagnostics.set(document.uri, diagnostics);
+        if (!shouldCancel()) {
+            this.diagnostics.set(document.uri, diagnostics);
+        }
     }
 }
