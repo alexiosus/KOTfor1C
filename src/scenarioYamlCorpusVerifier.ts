@@ -1,6 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { parseScenarioDescriptor } from './scenarioDescriptor';
 import {
     ScenarioYamlDocument,
     type SourceRange
@@ -82,6 +83,11 @@ export function validateScenarioYamlSource(source: string): ScenarioYamlValidati
                 }
             }
         }
+    }
+
+    const descriptor = parseScenarioDescriptor(source);
+    if (!descriptor.name) {
+        errors.push('Scenario descriptor: scenario name is missing');
     }
 
     return { errors, warnings, sectionCount, recordCount };

@@ -18,13 +18,19 @@ import {
     type ScenarioTarget
 } from './scenarioIdentity';
 import {
+    applyScenarioRuntimeRenamePlanToRecord,
+    buildUniqueCaseInsensitiveNameLookup,
     getScenarioRuntimeKey,
+    migrateLegacyScenarioValues,
     migrateLegacySelectionStates,
+    projectScenarioBuildSelection,
     remapRuntimeKey,
+    resolveConfirmedScenarioRuntimeRenames,
     resolveScenarioRuntimeTarget,
     resolveUniqueRuntimeKeyByName,
     validateEnabledScenarioKeys,
     type ScenarioRuntimeKey,
+    type ScenarioRuntimeRenamePlan,
     type ScenarioRuntimeTarget
 } from './scenarioRuntimeIdentity';
 import { migrateLegacyPhaseSwitcherMetadata } from './phaseSwitcherMetadata';
@@ -194,6 +200,8 @@ interface MainScenarioSelectionSnapshot {
     disabledKeys: ScenarioRuntimeKey[];
     enabledNames: string[];
     disabledNames: string[];
+    isolatedDisabledKeys: ScenarioRuntimeKey[];
+    enabledKeyByName: Record<string, ScenarioRuntimeKey>;
 }
 
 interface BuildScenarioFilterDecision {
@@ -239,6 +247,11 @@ interface PhaseSwitcherWebviewTestInfo {
 interface MainScenarioSelectionStateStorageV2 {
     version: 2;
     byKey: Record<ScenarioRuntimeKey, boolean>;
+}
+
+interface ScenarioCustomInfobaseStorageV2 {
+    version: 2;
+    byKey: Record<ScenarioRuntimeKey, string>;
 }
 
 interface LiveRunLogWatcherState {
@@ -871,30 +884,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         await this.saveMainScenarioSelectionStates(next);
     }
 
-    private async renameMainScenarioSelectionState(
-        oldScenarioKey: ScenarioRuntimeKey,
-        newScenarioKey: ScenarioRuntimeKey
-    ): Promise<void> {
-        const trimmedOldKey = oldScenarioKey.trim();
-        const trimmedNewKey = newScenarioKey.trim();
-        if (!trimmedOldKey || !trimmedNewKey || trimmedOldKey === trimmedNewKey) {
-            return;
-        }
-
-        const stored = this.readStoredMainScenarioSelectionStates();
-        const states = stored.isVersion2
-            ? stored.currentByKey
-            : await this.getMainScenarioSelectionStates();
-        if (!Object.prototype.hasOwnProperty.call(states, trimmedOldKey)) {
-            return;
-        }
-
-        const oldValue = !!states[trimmedOldKey];
-        delete states[trimmedOldKey];
-        states[trimmedNewKey] = oldValue;
-        await this.saveMainScenarioSelectionStates(states);
-    }
-
     private async removeMainScenarioSelectionState(scenarioKey: ScenarioRuntimeKey): Promise<void> {
         const trimmedScenarioKey = scenarioKey.trim();
         if (!trimmedScenarioKey) {
@@ -943,141 +932,139 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async remapMainScenarioSelectionStatesForRenames(
-        files: readonly { oldUri: vscode.Uri; newUri: vscode.Uri }[]
-    ): Promise<void> {
-        if (files.length === 0) {
-            return;
-        }
+    private captureMainScenarioSelectionStatesForRename(
+        catalog: ScenarioCatalog | null
+    ): Record<ScenarioRuntimeKey, boolean> | null {
         const stored = this.readStoredMainScenarioSelectionStates();
-        const states = stored.isVersion2
-            ? stored.currentByKey
-            : await this.getMainScenarioSelectionStates();
-        const next: Record<ScenarioRuntimeKey, boolean> = {};
-        let changed = false;
-        for (const [key, state] of Object.entries(states)) {
-            let scenarioUri: vscode.Uri;
-            try {
-                scenarioUri = vscode.Uri.parse(key);
-            } catch {
-                next[key] = state;
-                continue;
-            }
-            let remappedUri = scenarioUri;
-            for (const { oldUri, newUri } of files) {
-                remappedUri = this.remapUriAfterRename(remappedUri, oldUri, newUri) ?? remappedUri;
-            }
-            const nextKey = remappedUri.toString();
-            next[nextKey] = state;
-            changed ||= nextKey !== key;
+        if (stored.isVersion2) {
+            return stored.currentByKey;
         }
-        if (changed) {
-            await this.saveMainScenarioSelectionStates(next);
+        if (!catalog) {
+            return null;
         }
+        const mainCatalog = buildScenarioCatalog(catalog.all.filter(scenario => this.isMainScenario(scenario)));
+        return migrateLegacySelectionStates(mainCatalog, stored.legacyByName, {});
     }
 
-    private remapScenarioBuildArtifactsForRenames(
-        files: readonly { oldUri: vscode.Uri; newUri: vscode.Uri }[]
-    ): void {
-        if (files.length === 0 || this._scenarioBuildArtifacts.size === 0) {
+    private async applyMainScenarioSelectionRenamePlan(
+        states: Readonly<Record<ScenarioRuntimeKey, boolean>> | null,
+        plan: ScenarioRuntimeRenamePlan
+    ): Promise<void> {
+        if (!states) {
             return;
         }
-        const nextArtifacts = new Map<ScenarioRuntimeKey, ScenarioBuildArtifact>();
-        const nextStaleKeys = new Set<ScenarioRuntimeKey>();
-        const remappedKeys: Array<{ oldKey: ScenarioRuntimeKey; newKey: ScenarioRuntimeKey }> = [];
+        const affected = [...plan.remappedKeys.keys(), ...plan.removedKeys]
+            .some(key => Object.prototype.hasOwnProperty.call(states, key));
+        if (!affected) {
+            return;
+        }
+        await this.saveMainScenarioSelectionStates(
+            applyScenarioRuntimeRenamePlanToRecord(states, plan)
+        );
+    }
+
+    private applyScenarioRuntimeRenamePlan(
+        plan: ScenarioRuntimeRenamePlan,
+        refreshedCatalog: ScenarioCatalog
+    ): void {
         let changed = false;
-        for (const [scenarioKey, artifact] of this._scenarioBuildArtifacts) {
-            let remappedUri = artifact.sourceUri;
-            for (const { oldUri, newUri } of files) {
-                remappedUri = this.remapUriAfterRename(remappedUri, oldUri, newUri) ?? remappedUri;
+        for (const removedKey of plan.removedKeys) {
+            changed = this.disposeScenarioRuntimeKey(removedKey) || changed;
+        }
+        for (const [oldKey, newKey] of plan.remappedKeys) {
+            const hadRuntimeState = this.getKnownScenarioRuntimeKeys().has(oldKey);
+            const scenarioInfo = refreshedCatalog.byUri.get(newKey);
+            const artifact = this._scenarioBuildArtifacts.get(oldKey);
+            if (artifact) {
+                this._scenarioBuildArtifacts.delete(oldKey);
+                this._scenarioBuildArtifacts.set(newKey, {
+                    ...artifact,
+                    scenarioKey: newKey,
+                    scenarioName: scenarioInfo?.name || artifact.scenarioName,
+                    sourceUri: scenarioInfo?.yamlFileUri || vscode.Uri.parse(newKey)
+                });
             }
-            const nextKey = remappedUri.toString();
-            nextArtifacts.set(nextKey, {
-                ...artifact,
-                scenarioKey: nextKey,
-                sourceUri: remappedUri
+            if (this._staleBuiltScenarioNames.delete(oldKey)) {
+                this._staleBuiltScenarioNames.add(newKey);
+            }
+            this._scenarioExecutionStates = remapRuntimeKey(this._scenarioExecutionStates, oldKey, newKey);
+            this._scenarioLastLaunchContexts = remapRuntimeKey(this._scenarioLastLaunchContexts, oldKey, newKey);
+            this._liveRunLogWatchers = remapRuntimeKey(this._liveRunLogWatchers, oldKey, newKey);
+            this._liveFeatureStepTrackers = remapRuntimeKey(this._liveFeatureStepTrackers, oldKey, newKey);
+            this._externalTrackedRunsByScenario = remapRuntimeKey(this._externalTrackedRunsByScenario, oldKey, newKey);
+            this._activeTrackedRunKeyByScenario = remapRuntimeKey(this._activeTrackedRunKeyByScenario, oldKey, newKey);
+            this._runningFeatureStepHighlights = remapRuntimeKey(this._runningFeatureStepHighlights, oldKey, newKey);
+            this._failedFeatureStepHighlights = remapRuntimeKey(this._failedFeatureStepHighlights, oldKey, newKey);
+            const nextScenarioName = scenarioInfo?.name;
+            const executionState = this._scenarioExecutionStates.get(newKey);
+            if (executionState && nextScenarioName) {
+                executionState.scenarioName = nextScenarioName;
+            }
+            const launchContext = this._scenarioLastLaunchContexts.get(newKey);
+            if (launchContext && nextScenarioName) {
+                launchContext.scenarioName = nextScenarioName;
+            }
+            const records = [
+                this._liveRunLogWatchers.get(newKey),
+                this._liveFeatureStepTrackers.get(newKey),
+                this._runningFeatureStepHighlights.get(newKey),
+                this._failedFeatureStepHighlights.get(newKey)
+            ];
+            records.forEach(record => {
+                if (record) {
+                    record.scenarioKey = newKey;
+                    if (nextScenarioName) {
+                        record.scenarioName = nextScenarioName;
+                    }
+                }
             });
-            if (this._staleBuiltScenarioNames.has(scenarioKey)) {
-                nextStaleKeys.add(nextKey);
-            }
-            if (nextKey !== scenarioKey) {
-                remappedKeys.push({ oldKey: scenarioKey, newKey: nextKey });
-                changed = true;
-            }
+            this._externalTrackedRunsByScenario.get(newKey)?.forEach(record => {
+                record.scenarioKey = newKey;
+                if (nextScenarioName) {
+                    record.scenarioName = nextScenarioName;
+                }
+            });
+            changed = hadRuntimeState || changed;
         }
         if (changed) {
-            this._scenarioBuildArtifacts = nextArtifacts;
-            this._staleBuiltScenarioNames = nextStaleKeys;
-            for (const { oldKey, newKey } of remappedKeys) {
-                this._scenarioExecutionStates = remapRuntimeKey(this._scenarioExecutionStates, oldKey, newKey);
-                this._scenarioLastLaunchContexts = remapRuntimeKey(this._scenarioLastLaunchContexts, oldKey, newKey);
-                this._liveRunLogWatchers = remapRuntimeKey(this._liveRunLogWatchers, oldKey, newKey);
-                this._liveFeatureStepTrackers = remapRuntimeKey(this._liveFeatureStepTrackers, oldKey, newKey);
-                this._externalTrackedRunsByScenario = remapRuntimeKey(this._externalTrackedRunsByScenario, oldKey, newKey);
-                this._activeTrackedRunKeyByScenario = remapRuntimeKey(this._activeTrackedRunKeyByScenario, oldKey, newKey);
-                this._runningFeatureStepHighlights = remapRuntimeKey(this._runningFeatureStepHighlights, oldKey, newKey);
-                this._failedFeatureStepHighlights = remapRuntimeKey(this._failedFeatureStepHighlights, oldKey, newKey);
-                const records = [
-                    this._liveRunLogWatchers.get(newKey),
-                    this._liveFeatureStepTrackers.get(newKey),
-                    this._runningFeatureStepHighlights.get(newKey),
-                    this._failedFeatureStepHighlights.get(newKey)
-                ];
-                records.forEach(record => {
-                    if (record) {
-                        record.scenarioKey = newKey;
-                    }
-                });
-                this._externalTrackedRunsByScenario.get(newKey)?.forEach(record => {
-                    record.scenarioKey = newKey;
-                });
-            }
             this.sendRunArtifactsStateToWebview();
         }
     }
 
+    private getKnownScenarioRuntimeKeys(): Set<ScenarioRuntimeKey> {
+        return new Set<ScenarioRuntimeKey>([
+            ...this._scenarioBuildArtifacts.keys(),
+            ...this._scenarioExecutionStates.keys(),
+            ...this._scenarioLastLaunchContexts.keys(),
+            ...this._liveRunLogWatchers.keys(),
+            ...this._liveFeatureStepTrackers.keys(),
+            ...this._externalTrackedRunsByScenario.keys(),
+            ...this._activeTrackedRunKeyByScenario.keys(),
+            ...this._runningFeatureStepHighlights.keys(),
+            ...this._failedFeatureStepHighlights.keys()
+        ]);
+    }
+
+    private disposeScenarioRuntimeKey(scenarioKey: ScenarioRuntimeKey): boolean {
+        const hadState = this.getKnownScenarioRuntimeKeys().has(scenarioKey);
+        this._scenarioBuildArtifacts.delete(scenarioKey);
+        this._staleBuiltScenarioNames.delete(scenarioKey);
+        this._scenarioExecutionStates.delete(scenarioKey);
+        this._scenarioLastLaunchContexts.delete(scenarioKey);
+        this.stopFeatureStepTracker(scenarioKey);
+        this.clearFailedFeatureStepHighlight(scenarioKey);
+        this.clearTrackedRunLogWatchersForScenario(scenarioKey);
+        this.stopLiveRunLogWatcher(scenarioKey, { disposeChannel: true });
+        this._activeTrackedRunKeyByScenario.delete(scenarioKey);
+        this._runningFeatureStepHighlights.delete(scenarioKey);
+        this._failedFeatureStepHighlights.delete(scenarioKey);
+        return hadState;
+    }
+
     private async getMainScenarioSelectionSnapshotForBuild(): Promise<MainScenarioSelectionSnapshot> {
         const mainScenarios = this.getMainScenariosFromCatalog();
-        if (mainScenarios.length === 0) {
-            return {
-                total: 0,
-                enabledKeys: [],
-                disabledKeys: [],
-                enabledNames: [],
-                disabledNames: []
-            };
-        }
-
         const selectionStates = await this.getMainScenarioSelectionStates(mainScenarios);
-        const enabledKeys: ScenarioRuntimeKey[] = [];
-        const disabledKeys: ScenarioRuntimeKey[] = [];
-        const enabledNames: string[] = [];
-        const disabledNames: string[] = [];
-        for (const scenarioInfo of mainScenarios) {
-            const scenarioName = scenarioInfo.name.trim();
-            if (!scenarioName) {
-                continue;
-            }
-            const scenarioKey = getScenarioRuntimeKey(scenarioInfo);
-            if (selectionStates[scenarioKey] === true) {
-                enabledKeys.push(scenarioKey);
-                enabledNames.push(scenarioName);
-            } else {
-                disabledKeys.push(scenarioKey);
-                disabledNames.push(scenarioName);
-            }
-        }
-
-        enabledNames.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
-        disabledNames.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
-
-        return {
-            total: mainScenarios.length,
-            enabledKeys,
-            disabledKeys,
-            enabledNames,
-            disabledNames
-        };
+        return projectScenarioBuildSelection(mainScenarios, selectionStates);
     }
 
     private buildScenarioFilterDecision(snapshot: MainScenarioSelectionSnapshot): BuildScenarioFilterDecision {
@@ -1191,9 +1178,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private async temporarilyMoveDisabledScenarioTestFilesForBuild(
         workspaceRootUri: vscode.Uri,
         disabledScenarioKeys: ScenarioRuntimeKey[],
-        outputChannel: vscode.OutputChannel
+        outputChannel: vscode.OutputChannel,
+        requiredIsolationKeys: readonly ScenarioRuntimeKey[] = []
     ): Promise<LegacyTemporarilyMovedTestFilesResult> {
-        if (!this.isLegacyDisabledTestsMoveOnBuildEnabled()) {
+        const scenarioKeysToMove = this.isLegacyDisabledTestsMoveOnBuildEnabled()
+            ? disabledScenarioKeys
+            : [...requiredIsolationKeys];
+        if (scenarioKeysToMove.length === 0) {
             return {
                 temporaryRootUri: null,
                 movedFiles: []
@@ -1201,7 +1192,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const catalog = this.getScenarioCatalog();
-        if (!catalog || disabledScenarioKeys.length === 0) {
+        if (!catalog) {
             return {
                 temporaryRootUri: null,
                 movedFiles: []
@@ -1213,7 +1204,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         try {
             await vscode.workspace.fs.createDirectory(temporaryRootUri);
-            for (const scenarioKey of disabledScenarioKeys) {
+            for (const scenarioKey of scenarioKeysToMove) {
                 const scenarioInfo = catalog.byUri.get(scenarioKey);
                 if (!scenarioInfo) {
                     continue;
@@ -1682,6 +1673,107 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return updated;
     }
 
+    private buildScenarioRuntimeRenameCandidates(
+        files: readonly { oldUri: vscode.Uri; newUri: vscode.Uri }[],
+        scenarioKeys: Iterable<ScenarioRuntimeKey>
+    ): Array<{ oldKey: ScenarioRuntimeKey; newKey: ScenarioRuntimeKey }> {
+        const candidates = new Map<ScenarioRuntimeKey, ScenarioRuntimeKey>();
+        for (const oldKey of scenarioKeys) {
+            let oldScenarioUri: vscode.Uri;
+            try {
+                oldScenarioUri = vscode.Uri.parse(oldKey);
+            } catch {
+                continue;
+            }
+            let nextScenarioUri = oldScenarioUri;
+            for (const { oldUri, newUri } of files) {
+                nextScenarioUri = this.remapUriAfterRename(nextScenarioUri, oldUri, newUri)
+                    ?? nextScenarioUri;
+            }
+            const newKey = nextScenarioUri.toString();
+            if (newKey !== oldKey) {
+                candidates.set(oldKey, newKey);
+            }
+        }
+        return [...candidates].map(([oldKey, newKey]) => ({ oldKey, newKey }));
+    }
+
+    private async handleScenarioFilesRenamed(
+        files: readonly { oldUri: vscode.Uri; newUri: vscode.Uri }[]
+    ): Promise<void> {
+        const previousCatalog = this.getScenarioCatalog();
+        const selectionStates = this.captureMainScenarioSelectionStatesForRename(previousCatalog);
+        const customInfobasePaths = this.captureScenarioCustomInfobasePathsForRename(previousCatalog);
+        const affectsCatalog = files.some(({ oldUri, newUri }) =>
+            this.shouldTrackUriForCache(oldUri) || this.shouldTrackUriForCache(newUri)
+        );
+        let refreshedCatalog = previousCatalog;
+        if (affectsCatalog) {
+            try {
+                const updated = await this.updateScenarioCacheEntriesForRenames(files);
+                if (!updated) {
+                    this.invalidateScenarioCatalog();
+                    refreshedCatalog = await this.ensureFreshScenarioCatalog();
+                } else {
+                    refreshedCatalog = this.getScenarioCatalog();
+                }
+            } catch (error) {
+                console.error('[PhaseSwitcherProvider] Failed to rename scenario catalog entries:', error);
+                this.invalidateScenarioCatalog();
+                return;
+            }
+        }
+        if (!refreshedCatalog) {
+            return;
+        }
+
+        const candidateKeys = new Set<ScenarioRuntimeKey>([
+            ...(previousCatalog?.all.map(getScenarioRuntimeKey) ?? []),
+            ...Object.keys(selectionStates ?? {}),
+            ...Object.keys(customInfobasePaths ?? {}),
+            ...this.getKnownScenarioRuntimeKeys()
+        ]);
+        const renamePlan = resolveConfirmedScenarioRuntimeRenames(
+            this.buildScenarioRuntimeRenameCandidates(files, candidateKeys),
+            refreshedCatalog
+        );
+        try {
+            await this.applyMainScenarioSelectionRenamePlan(selectionStates, renamePlan);
+        } catch (error) {
+            console.error('[PhaseSwitcherProvider] Failed to remap scenario selection state:', error);
+        }
+        try {
+            await this.applyScenarioCustomInfobaseRenamePlan(customInfobasePaths, renamePlan);
+        } catch (error) {
+            console.error('[PhaseSwitcherProvider] Failed to remap scenario infobase state:', error);
+        }
+
+        this.applyScenarioRuntimeRenamePlan(renamePlan, refreshedCatalog);
+
+        if (!this._activeScenarioUriForHighlight) {
+            return;
+        }
+        let remappedUri: vscode.Uri | null = this._activeScenarioUriForHighlight;
+        let changed = false;
+        for (const { oldUri, newUri } of files) {
+            if (!remappedUri) {
+                break;
+            }
+            const nextUri = this.remapUriAfterRename(remappedUri, oldUri, newUri);
+            if (!nextUri || this.areUrisEqual(remappedUri, nextUri)) {
+                continue;
+            }
+            remappedUri = nextUri;
+            changed = true;
+        }
+        if (changed) {
+            this._activeScenarioUriForHighlight = remappedUri && this.shouldUseUriForAffectedScenarioHighlight(remappedUri)
+                ? remappedUri
+                : null;
+            this.sendAffectedMainScenariosToWebview(true);
+        }
+    }
+
     private publishScenarioCatalog(catalog: ScenarioCatalog): void {
         this._scenarioCatalogState.replace(catalog);
         this._onDidUpdateScenarioCatalog.fire(catalog);
@@ -1761,6 +1853,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this._scenarioLastLaunchContexts.clear();
                 this.stopAllFeatureStepTrackers();
                 this.stopAllTrackedRunLogWatchers();
+                this.disposeAllLiveRunLogWatchers();
             }
             if (e.affectsConfiguration('kotTestToolkit.runVanessa.liveLogRefreshSeconds')) {
                 this.rearmLiveFeatureStepTrackerTimers();
@@ -1869,6 +1962,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }));
 
         context.subscriptions.push(vscode.workspace.onDidDeleteFiles(event => {
+            this.removeScenarioCustomInfobasePathsForUris(event.files);
             void this.removeMainScenarioSelectionStatesForUris(event.files).catch(error => {
                 console.error('[PhaseSwitcherProvider] Failed to remove scenario selection state:', error);
             });
@@ -1879,22 +1973,21 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
             }
 
-            if (event.files.length > 0 && this._scenarioBuildArtifacts.size > 0) {
+            if (event.files.length > 0) {
                 let changed = false;
-                for (const [scenarioKey, artifact] of this._scenarioBuildArtifacts) {
-                    const wasDeleted = event.files.some(uri => this.areUrisEqual(uri, artifact.sourceUri)
+                for (const scenarioKey of this.getKnownScenarioRuntimeKeys()) {
+                    let scenarioUri: vscode.Uri;
+                    try {
+                        scenarioUri = vscode.Uri.parse(scenarioKey);
+                    } catch {
+                        continue;
+                    }
+                    const wasDeleted = event.files.some(uri => this.areUrisEqual(uri, scenarioUri)
                         || (uri.scheme === 'file'
-                            && artifact.sourceUri.scheme === 'file'
-                            && this.isPathInside(uri.fsPath, artifact.sourceUri.fsPath)));
+                            && scenarioUri.scheme === 'file'
+                            && this.isPathInside(uri.fsPath, scenarioUri.fsPath)));
                     if (wasDeleted) {
-                        this._scenarioBuildArtifacts.delete(scenarioKey);
-                        this._staleBuiltScenarioNames.delete(scenarioKey);
-                        this._scenarioExecutionStates.delete(scenarioKey);
-                        this._scenarioLastLaunchContexts.delete(scenarioKey);
-                        this.clearFailedFeatureStepHighlight(scenarioKey);
-                        this.stopFeatureStepTracker(scenarioKey);
-                        this.clearTrackedRunLogWatchersForScenario(scenarioKey);
-                        changed = true;
+                        changed = this.disposeScenarioRuntimeKey(scenarioKey) || changed;
                     }
                 }
                 if (changed) {
@@ -1904,48 +1997,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }));
 
         context.subscriptions.push(vscode.workspace.onDidRenameFiles(event => {
-            void this.remapMainScenarioSelectionStatesForRenames(event.files).catch(error => {
-                console.error('[PhaseSwitcherProvider] Failed to remap scenario selection state:', error);
-            });
-            this.remapScenarioBuildArtifactsForRenames(event.files);
-            const affectsCache = event.files.some(({ oldUri, newUri }) =>
-                this.shouldTrackUriForCache(oldUri) || this.shouldTrackUriForCache(newUri)
-            );
-            if (affectsCache) {
-                void this.updateScenarioCacheEntriesForRenames(event.files).then(updated => {
-                    if (!updated) {
-                        this.invalidateScenarioCatalog();
-                    }
-                }).catch(error => {
-                    console.error('[PhaseSwitcherProvider] Failed to rename scenario cache entries:', error);
-                    this.invalidateScenarioCatalog();
-                });
-            }
-
-            if (this._activeScenarioUriForHighlight) {
-                let remappedUri: vscode.Uri | null = this._activeScenarioUriForHighlight;
-                let changed = false;
-                for (const { oldUri, newUri } of event.files) {
-                    if (!remappedUri) {
-                        break;
-                    }
-
-                    const nextUri = this.remapUriAfterRename(remappedUri, oldUri, newUri);
-                    if (!nextUri || this.areUrisEqual(remappedUri, nextUri)) {
-                        continue;
-                    }
-
-                    remappedUri = nextUri;
-                    changed = true;
-                }
-
-                if (changed) {
-                    this._activeScenarioUriForHighlight = remappedUri && this.shouldUseUriForAffectedScenarioHighlight(remappedUri)
-                        ? remappedUri
-                        : null;
-                    this.sendAffectedMainScenariosToWebview(true);
-                }
-            }
+            void this.handleScenarioFilesRenamed(event.files);
         }));
 
         context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => {
@@ -1957,6 +2009,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._scenarioLastLaunchContexts.clear();
             this.stopAllFeatureStepTrackers();
             this.stopAllTrackedRunLogWatchers();
+            this.disposeAllLiveRunLogWatchers();
             this._activeScenarioUriForHighlight = null;
             this._lastHighlightedMainScenarioNames.clear();
             this.resetVanessaRuntimeLogMonitorState({ clearAutoDetectedRuns: true });
@@ -2555,29 +2608,32 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private rearmLiveFeatureStepTrackerTimers(): void {
         const intervalMs = this.getLiveRunLogRefreshIntervalMs();
-        for (const [scenarioKey, tracker] of this._liveFeatureStepTrackers.entries()) {
+        for (const tracker of this._liveFeatureStepTrackers.values()) {
             clearInterval(tracker.timer);
-            tracker.timer = setInterval(() => void this.pollFeatureStepTracker(scenarioKey), intervalMs);
+            tracker.timer = setInterval(() => void this.pollFeatureStepTracker(tracker.scenarioKey), intervalMs);
         }
     }
 
     private rearmLiveRunLogWatcherTimers(): void {
         const intervalMs = this.getLiveRunLogRefreshIntervalMs();
-        for (const [scenarioKey, watcher] of this._liveRunLogWatchers.entries()) {
+        for (const watcher of this._liveRunLogWatchers.values()) {
             clearInterval(watcher.timer);
-            watcher.timer = setInterval(() => void this.pollLiveRunLogWatcher(scenarioKey), intervalMs);
+            watcher.timer = setInterval(() => void this.pollLiveRunLogWatcher(watcher.scenarioKey), intervalMs);
         }
     }
 
     private rearmTrackedRunWatcherTimers(): void {
         const intervalMs = this.getLiveRunLogRefreshIntervalMs();
-        for (const [scenarioKey, runsMap] of this._externalTrackedRunsByScenario.entries()) {
+        for (const runsMap of this._externalTrackedRunsByScenario.values()) {
             for (const [runLogKey, tracker] of runsMap.entries()) {
                 if (!tracker.timer) {
                     continue;
                 }
                 clearInterval(tracker.timer);
-                tracker.timer = setInterval(() => void this.pollTrackedRunLogWatcher(scenarioKey, runLogKey), intervalMs);
+                tracker.timer = setInterval(
+                    () => void this.pollTrackedRunLogWatcher(tracker.scenarioKey, runLogKey),
+                    intervalMs
+                );
             }
         }
     }
@@ -2746,16 +2802,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             };
         }
 
-        for (const [scenarioName, definitions] of catalog.byName) {
-            if (definitions.length !== 1 || !this.isMainScenario(definitions[0])) {
-                continue;
-            }
+        const eligibleNames = [...catalog.byName.entries()]
+            .filter(([, definitions]) => definitions.length === 1 && this.isMainScenario(definitions[0]))
+            .map(([scenarioName]) => scenarioName);
+        for (const [lower, scenarioName] of buildUniqueCaseInsensitiveNameLookup(eligibleNames)) {
+            exactNamesByLowercase.set(lower, scenarioName);
+        }
 
-            const lower = scenarioName.toLowerCase();
-            if (!exactNamesByLowercase.has(lower)) {
-                exactNamesByLowercase.set(lower, scenarioName);
-            }
-
+        for (const scenarioName of eligibleNames) {
             const normalized = this.normalizeScenarioLookupKey(scenarioName);
             if (!normalized) {
                 continue;
@@ -3776,11 +3830,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             startOffset = 0;
         }
 
-        const tracker: LiveFeatureStepTrackerState = {
+        let tracker: LiveFeatureStepTrackerState;
+        tracker = {
             scenarioKey,
             scenarioName,
             runLogPath: normalizedRunLogPath,
-            timer: setInterval(() => void this.pollFeatureStepTracker(scenarioKey), this.getLiveRunLogRefreshIntervalMs()),
+            timer: setInterval(
+                () => void this.pollFeatureStepTracker(tracker.scenarioKey),
+                this.getLiveRunLogRefreshIntervalMs()
+            ),
             startOffset,
             lastLength: startOffset,
             pendingTail: '',
@@ -4100,12 +4158,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 existing.failureStepDescription = undefined;
                 this.stopTrackedRunTimer(existing);
                 existing.timer = setInterval(
-                    () => void this.pollTrackedRunLogWatcher(scenarioKey, runLogKey),
+                    () => void this.pollTrackedRunLogWatcher(existing.scenarioKey, runLogKey),
                     this.getLiveRunLogRefreshIntervalMs()
                 );
             } else if (!existing.timer && existing.status === 'running') {
                 existing.timer = setInterval(
-                    () => void this.pollTrackedRunLogWatcher(scenarioKey, runLogKey),
+                    () => void this.pollTrackedRunLogWatcher(existing.scenarioKey, runLogKey),
                     this.getLiveRunLogRefreshIntervalMs()
                 );
             }
@@ -4142,7 +4200,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         };
 
         tracker.timer = setInterval(
-            () => void this.pollTrackedRunLogWatcher(scenarioKey, runLogKey),
+            () => void this.pollTrackedRunLogWatcher(tracker.scenarioKey, runLogKey),
             this.getLiveRunLogRefreshIntervalMs()
         );
         trackedRuns.set(runLogKey, tracker);
@@ -4156,14 +4214,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private clearTrackedRunLogWatchersForScenario(scenarioKey: ScenarioRuntimeKey): void {
         const trackedRuns = this.getTrackedRunsMapForScenario(scenarioKey);
-        if (!trackedRuns) {
-            return;
+        if (trackedRuns) {
+            for (const tracker of trackedRuns.values()) {
+                this.stopTrackedRunTimer(tracker);
+            }
+            trackedRuns.clear();
         }
-
-        for (const tracker of trackedRuns.values()) {
-            this.stopTrackedRunTimer(tracker);
-        }
-        trackedRuns.clear();
         this._externalTrackedRunsByScenario.delete(scenarioKey);
         this._activeTrackedRunKeyByScenario.delete(scenarioKey);
         this.stopLiveRunLogWatcher(scenarioKey, { disposeChannel: true });
@@ -4407,12 +4463,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.outputInfo(outputChannel, this.t('Live run log watcher started for "{0}".', scenarioName));
         this.outputInfo(outputChannel, this.t('Run log file: {0}', runLogPath));
 
-        const watcher: LiveRunLogWatcherState = {
+        let watcher: LiveRunLogWatcherState;
+        watcher = {
             scenarioKey: runtimeKey,
             scenarioName,
             runLogPath,
             outputChannel,
-            timer: setInterval(() => void this.pollLiveRunLogWatcher(runtimeKey), this.getLiveRunLogRefreshIntervalMs()),
+            timer: setInterval(
+                () => void this.pollLiveRunLogWatcher(watcher.scenarioKey),
+                this.getLiveRunLogRefreshIntervalMs()
+            ),
             lastLength: 0,
             pendingTail: '',
             missingFileNotified: false,
@@ -4534,13 +4594,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const artifactKey = scenarioKey
             || (catalog ? resolveUniqueRuntimeKeyByName(catalog, trimmedScenarioName) : null);
         if (artifactKey) {
-            this._scenarioBuildArtifacts.delete(artifactKey);
-            this._staleBuiltScenarioNames.delete(artifactKey);
-            this._scenarioExecutionStates.delete(artifactKey);
-            this._scenarioLastLaunchContexts.delete(artifactKey);
-            this.clearFailedFeatureStepHighlight(artifactKey);
-            this.stopFeatureStepTracker(artifactKey);
-            this.clearTrackedRunLogWatchersForScenario(artifactKey);
+            this.disposeScenarioRuntimeKey(artifactKey);
         }
     }
 
@@ -5991,11 +6045,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (favoritesChanged) {
             await this.saveFavoriteEntries(favorites);
         }
-        if (isMainScenario) {
-            await this.renameMainScenarioSelectionState(
-                oldScenarioUriString,
-                scenarioYamlUriAfterRename.toString()
-            );
+        if (oldScenarioUriString !== scenarioYamlUriAfterRename.toString()) {
+            await this.handleScenarioFilesRenamed([{
+                oldUri: scenarioInfo.yamlFileUri,
+                newUri: scenarioYamlUriAfterRename
+            }]);
         }
 
         this.markBuiltArtifactsAsStale([trimmedScenarioName, newScenarioName]);
@@ -6103,6 +6157,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
+        this.removeScenarioCustomInfobasePathsForUris([vscode.Uri.file(scenarioDirectory)]);
         await this.removeFavoriteEntriesUnderDirectory(vscode.Uri.file(scenarioDirectory));
         await this.removeMainScenarioSelectionState(getScenarioRuntimeKey(scenarioInfo));
         this.cleanupDeletedScenarioRuntimeState(trimmedScenarioName, getScenarioRuntimeKey(scenarioInfo));
@@ -7787,7 +7842,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const legacyMoveResult = await this.temporarilyMoveDisabledScenarioTestFilesForBuild(
                     workspaceRootUri,
                     selectionSnapshot.disabledKeys,
-                    outputChannel
+                    outputChannel,
+                    selectionSnapshot.isolatedDisabledKeys
                 );
                 legacyTemporaryRootUri = legacyMoveResult.temporaryRootUri;
                 temporarilyMovedLegacyFiles = legacyMoveResult.movedFiles;
@@ -7871,7 +7927,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
 
                 ensureBuildNotCancelled();
-                await this.updateScenarioBuildArtifacts(featureFiles, featureFileDirUri);
+                await this.updateScenarioBuildArtifacts(
+                    featureFiles,
+                    featureFileDirUri,
+                    selectionSnapshot.enabledKeyByName
+                );
                 await this.ensureUniqueVanessaRuntimePathsForArtifacts(outputChannel, workspaceRootPath);
                 await this.ensureCombinedScenarioJsonArtifacts(workspaceRootPath, outputChannel);
                 this.sendRunArtifactsStateToWebview();
@@ -8405,6 +8465,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._scenarioLastLaunchContexts.clear();
             this.stopAllFeatureStepTrackers();
             this.stopAllTrackedRunLogWatchers();
+            this.disposeAllLiveRunLogWatchers();
             return;
         }
 
@@ -8690,32 +8751,172 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return 'json';
     }
 
-    private getCustomInfobasePathByScenarioMap(): Record<string, string> {
-        return this._context.workspaceState.get<Record<string, string>>(
+    private readStoredScenarioCustomInfobasePaths(): {
+        legacyByName: Record<string, string>;
+        currentByKey: Record<ScenarioRuntimeKey, string>;
+        isVersion2: boolean;
+    } {
+        const raw = this._context.workspaceState.get<unknown>(
             PhaseSwitcherProvider.runVanessaCustomInfobaseCacheKey,
             {}
         );
-    }
-
-    private getScenarioCustomInfobasePath(scenarioName: string): string | undefined {
-        const map = this.getCustomInfobasePathByScenarioMap();
-        const value = map[scenarioName];
-        if (!value || typeof value !== 'string') {
-            return undefined;
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            return { legacyByName: {}, currentByKey: {}, isVersion2: false };
         }
-        const trimmed = value.trim();
-        return trimmed.length > 0 ? trimmed : undefined;
+
+        const candidate = raw as Partial<ScenarioCustomInfobaseStorageV2>;
+        if (candidate.version === 2
+            && candidate.byKey
+            && typeof candidate.byKey === 'object'
+            && !Array.isArray(candidate.byKey)) {
+            const currentByKey: Record<ScenarioRuntimeKey, string> = {};
+            for (const [key, value] of Object.entries(candidate.byKey)) {
+                if (key.trim() && typeof value === 'string' && value.trim()) {
+                    currentByKey[key.trim()] = value.trim();
+                }
+            }
+            return { legacyByName: {}, currentByKey, isVersion2: true };
+        }
+
+        const legacyByName: Record<string, string> = {};
+        for (const [name, value] of Object.entries(raw)) {
+            if (name.trim() && typeof value === 'string' && value.trim()) {
+                legacyByName[name.trim()] = value.trim();
+            }
+        }
+        return { legacyByName, currentByKey: {}, isVersion2: false };
     }
 
-    private async saveScenarioCustomInfobasePath(scenarioName: string, infobasePath: string): Promise<void> {
-        const trimmedName = scenarioName.trim();
+    private async getScenarioCustomInfobasePaths(): Promise<Record<ScenarioRuntimeKey, string>> {
+        const stored = this.readStoredScenarioCustomInfobasePaths();
+        if (stored.isVersion2) {
+            return stored.currentByKey;
+        }
+        const catalog = await this.ensureFreshScenarioCatalog();
+        const launchableCatalog = buildScenarioCatalog(catalog.all.filter(scenario => this.isMainScenario(scenario)));
+        const migrated = migrateLegacyScenarioValues(
+            launchableCatalog,
+            stored.legacyByName,
+            stored.currentByKey
+        );
+        await this._context.workspaceState.update(
+            PhaseSwitcherProvider.runVanessaCustomInfobaseCacheKey,
+            { version: 2, byKey: migrated } satisfies ScenarioCustomInfobaseStorageV2
+        );
+        return migrated;
+    }
+
+    private async getScenarioCustomInfobasePath(scenarioKey: ScenarioRuntimeKey): Promise<string | undefined> {
+        const map = await this.getScenarioCustomInfobasePaths();
+        return map[scenarioKey]?.trim() || undefined;
+    }
+
+    private async saveScenarioCustomInfobasePath(
+        scenarioKey: ScenarioRuntimeKey,
+        infobasePath: string
+    ): Promise<void> {
+        const trimmedKey = scenarioKey.trim();
         const trimmedPath = infobasePath.trim();
-        if (!trimmedName || !trimmedPath) {
+        if (!trimmedKey || !trimmedPath) {
             return;
         }
-        const map = this.getCustomInfobasePathByScenarioMap();
-        map[trimmedName] = trimmedPath;
-        await this._context.workspaceState.update(PhaseSwitcherProvider.runVanessaCustomInfobaseCacheKey, map);
+        const map = await this.getScenarioCustomInfobasePaths();
+        map[trimmedKey] = trimmedPath;
+        await this._context.workspaceState.update(
+            PhaseSwitcherProvider.runVanessaCustomInfobaseCacheKey,
+            { version: 2, byKey: map } satisfies ScenarioCustomInfobaseStorageV2
+        );
+    }
+
+    private captureScenarioCustomInfobasePathsForRename(
+        catalog: ScenarioCatalog | null
+    ): Record<ScenarioRuntimeKey, string> | null {
+        const stored = this.readStoredScenarioCustomInfobasePaths();
+        if (stored.isVersion2) {
+            return stored.currentByKey;
+        }
+        if (!catalog) {
+            return null;
+        }
+        const launchableCatalog = buildScenarioCatalog(catalog.all.filter(scenario => this.isMainScenario(scenario)));
+        return migrateLegacyScenarioValues(launchableCatalog, stored.legacyByName, {});
+    }
+
+    private async applyScenarioCustomInfobaseRenamePlan(
+        paths: Readonly<Record<ScenarioRuntimeKey, string>> | null,
+        plan: ScenarioRuntimeRenamePlan
+    ): Promise<void> {
+        if (!paths) {
+            return;
+        }
+        const affected = [...plan.remappedKeys.keys(), ...plan.removedKeys]
+            .some(key => Object.prototype.hasOwnProperty.call(paths, key));
+        if (!affected) {
+            return;
+        }
+        await this._context.workspaceState.update(
+            PhaseSwitcherProvider.runVanessaCustomInfobaseCacheKey,
+            {
+                version: 2,
+                byKey: applyScenarioRuntimeRenamePlanToRecord(paths, plan)
+            } satisfies ScenarioCustomInfobaseStorageV2
+        );
+    }
+
+    private removeScenarioCustomInfobasePathsForUris(uris: readonly vscode.Uri[]): void {
+        const stored = this.readStoredScenarioCustomInfobasePaths();
+        if (stored.isVersion2) {
+            let changed = false;
+            for (const scenarioKey of Object.keys(stored.currentByKey)) {
+                let scenarioUri: vscode.Uri;
+                try {
+                    scenarioUri = vscode.Uri.parse(scenarioKey);
+                } catch {
+                    continue;
+                }
+                const matches = uris.some(uri => this.areUrisEqual(uri, scenarioUri)
+                    || (uri.scheme === 'file'
+                        && scenarioUri.scheme === 'file'
+                        && this.isPathInside(uri.fsPath, scenarioUri.fsPath)));
+                if (matches) {
+                    delete stored.currentByKey[scenarioKey];
+                    changed = true;
+                }
+            }
+            if (changed) {
+                void this._context.workspaceState.update(
+                    PhaseSwitcherProvider.runVanessaCustomInfobaseCacheKey,
+                    { version: 2, byKey: stored.currentByKey } satisfies ScenarioCustomInfobaseStorageV2
+                );
+            }
+            return;
+        }
+
+        const catalog = this.getScenarioCatalog();
+        if (!catalog) {
+            return;
+        }
+        const namesToRemove = new Set(
+            catalog.all
+                .filter(scenario => uris.some(uri => this.areUrisEqual(uri, scenario.yamlFileUri)
+                    || (uri.scheme === 'file'
+                        && scenario.yamlFileUri.scheme === 'file'
+                        && this.isPathInside(uri.fsPath, scenario.yamlFileUri.fsPath))))
+                .map(scenario => scenario.name)
+        );
+        let changed = false;
+        for (const name of namesToRemove) {
+            if (Object.prototype.hasOwnProperty.call(stored.legacyByName, name)) {
+                delete stored.legacyByName[name];
+                changed = true;
+            }
+        }
+        if (changed) {
+            void this._context.workspaceState.update(
+                PhaseSwitcherProvider.runVanessaCustomInfobaseCacheKey,
+                stored.legacyByName
+            );
+        }
     }
 
     private resolveScenarioLaunchTarget(
@@ -8774,13 +8975,19 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (!this._view?.webview) {
             return;
         }
-        const catalog = this.getScenarioCatalog();
-        const names = catalog ? [...catalog.byName.keys()].sort() : [];
-        if (names.length === 0) {
+        const scenarioItems: ScenarioArtifactQuickPickItem[] = this.getMainScenariosFromCatalog()
+            .map(info => ({
+                label: info.name,
+                description: info.relativePath,
+                scenarioKey: getScenarioRuntimeKey(info)
+            }))
+            .sort((left, right) => left.label.localeCompare(right.label)
+                || (left.description ?? '').localeCompare(right.description ?? ''));
+        if (scenarioItems.length === 0) {
             vscode.window.showWarningMessage('No scenarios loaded in Test Manager');
             return;
         }
-        const scenarioPick = await vscode.window.showQuickPick(names, {
+        const scenarioPick = await vscode.window.showQuickPick(scenarioItems, {
             placeHolder: 'Select scenario'
         });
         if (!scenarioPick) {
@@ -8796,14 +9003,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             { label: 'idle-no-button',   description: 'No run button (not built)' },
         ];
         const statePick = await vscode.window.showQuickPick(stateItems, {
-            placeHolder: 'Select demo state for: ' + scenarioPick
+            placeHolder: 'Select demo state for: ' + scenarioPick.label
         });
         if (!statePick) {
             return;
         }
         this._view.webview.postMessage({
             command: 'setDemoState',
-            name: scenarioPick,
+            key: scenarioPick.scenarioKey,
+            name: scenarioPick.label,
             stateKey: statePick.label
         });
     }
@@ -8988,7 +9196,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return false;
     }
 
-    private async updateScenarioBuildArtifacts(featureFiles: vscode.Uri[], buildRootUri: vscode.Uri): Promise<void> {
+    private async updateScenarioBuildArtifacts(
+        featureFiles: vscode.Uri[],
+        buildRootUri: vscode.Uri,
+        enabledKeyByName?: Readonly<Record<string, ScenarioRuntimeKey>>
+    ): Promise<void> {
         const previousArtifacts = this._scenarioBuildArtifacts;
         const staleScenarioKeysBeforeBuild = new Set<ScenarioRuntimeKey>(this._staleBuiltScenarioNames);
         this.pruneScenarioBuildArtifactsByCache();
@@ -9013,10 +9225,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const exactNamesByLowercase = new Map<string, string>();
         const normalizedNames = new Map<string, string[]>();
         const lowercaseNames = new Map<string, string[]>();
-        const uniqueScenarioNames = [...catalog.byName.entries()]
-            .filter(([, definitions]) => definitions.length === 1)
-            .map(([scenarioName]) => scenarioName);
-        for (const scenarioName of uniqueScenarioNames) {
+        const scenarioNamesForAssociation = enabledKeyByName
+            ? Object.keys(enabledKeyByName)
+            : [...catalog.byName.entries()]
+                .filter(([, definitions]) => definitions.length === 1)
+                .map(([scenarioName]) => scenarioName);
+        for (const scenarioName of scenarioNamesForAssociation) {
             const lower = scenarioName.toLowerCase();
             const lowercaseBucket = lowercaseNames.get(lower) ?? [];
             lowercaseBucket.push(scenarioName);
@@ -9051,7 +9265,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 continue;
             }
 
-            const scenarioKey = resolveUniqueRuntimeKeyByName(catalog, scenarioName);
+            const scenarioKey = enabledKeyByName?.[scenarioName]
+                || resolveUniqueRuntimeKeyByName(catalog, scenarioName);
             if (!scenarioKey) {
                 continue;
             }
@@ -9086,7 +9301,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             if (!scenarioKey) {
                 const scenarioName = this.tryResolveScenarioByName(jsonFileName, exactNamesByLowercase, normalizedNames);
                 scenarioKey = scenarioName
-                    ? resolveUniqueRuntimeKeyByName(catalog, scenarioName)
+                    ? (enabledKeyByName?.[scenarioName]
+                        || resolveUniqueRuntimeKeyByName(catalog, scenarioName))
                     : null;
             }
             if (!scenarioKey) {
@@ -10430,11 +10646,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private async promptVanessaInfobasePreparationPlan(
+        scenarioKey: ScenarioRuntimeKey,
         scenarioName: string,
         workspaceRootPath: string,
         jsonDefaultInfobasePath: string
     ): Promise<VanessaInfobasePreparationPlan | null> {
-        const lastSelectedInfobasePath = this.getScenarioCustomInfobasePath(scenarioName)?.trim() || '';
+        const lastSelectedInfobasePath = (await this.getScenarioCustomInfobasePath(scenarioKey))?.trim() || '';
         const quickPickItems: Array<vscode.QuickPickItem & {
             source: VanessaInfobasePreparationPlan['source'];
             infobasePath?: string;
@@ -10854,6 +11071,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private async prepareVanessaLaunchContext(
+        scenarioKey: ScenarioRuntimeKey,
         scenarioName: string,
         jsonLaunchPath: string,
         startupInfobasePath: string,
@@ -10886,6 +11104,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             ? candidates[0].extractedPath
             : '';
         const plan = await this.promptVanessaInfobasePreparationPlan(
+            scenarioKey,
             scenarioName,
             workspaceRootPath,
             jsonDefaultInfobase
@@ -10905,7 +11124,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         );
 
         if (!shouldPatchInfobase && !needsTargetInfobasePreparation) {
-            await this.saveScenarioCustomInfobasePath(scenarioName, chosenScenarioInfobasePath);
+            await this.saveScenarioCustomInfobasePath(scenarioKey, chosenScenarioInfobasePath);
             return {
                 startupInfobasePath,
                 scenarioInfobasePath: chosenScenarioInfobasePath,
@@ -10923,7 +11142,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const outputChannel = this.getRunOutputChannel();
         await this.prepareTargetInfobaseForVanessa(plan, workspaceRootPath, outputChannel, designerExePath);
-        await this.saveScenarioCustomInfobasePath(scenarioName, chosenScenarioInfobasePath);
+        await this.saveScenarioCustomInfobasePath(scenarioKey, chosenScenarioInfobasePath);
 
         if (!shouldPatchInfobase) {
             return {
@@ -11067,6 +11286,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const launchContext = await this.prepareVanessaLaunchContext(
+            artifact.scenarioKey,
             scenarioName,
             jsonLaunchPath,
             startupInfobase.infobaseDirectory,

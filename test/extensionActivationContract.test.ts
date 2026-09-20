@@ -110,3 +110,50 @@ test('scenario runtime consumers do not recreate the legacy name-keyed cache', (
         assert.match(providerSource, /getScenarioCatalog\(|ensureFreshScenarioCatalog\(/);
     }
 });
+
+test('runtime watcher timers poll through each record current URI key', () => {
+    assert.match(phaseSwitcherSource, /pollFeatureStepTracker\(tracker\.scenarioKey\)/);
+    assert.match(phaseSwitcherSource, /pollLiveRunLogWatcher\(watcher\.scenarioKey\)/);
+    assert.match(phaseSwitcherSource, /pollTrackedRunLogWatcher\(tracker\.scenarioKey, runLogKey\)/);
+});
+
+test('scenario rename publishes the new catalog before remapping runtime URI keys', () => {
+    const start = phaseSwitcherSource.indexOf('    private async handleScenarioFilesRenamed(');
+    const end = phaseSwitcherSource.indexOf('    private publishScenarioCatalog(', start);
+    const renameSource = phaseSwitcherSource.slice(start, end);
+
+    assert.ok(start >= 0 && end > start);
+    assert.ok(renameSource.indexOf('await this.updateScenarioCacheEntriesForRenames(files)') >= 0);
+    assert.ok(
+        renameSource.indexOf('await this.updateScenarioCacheEntriesForRenames(files)')
+            < renameSource.indexOf('resolveConfirmedScenarioRuntimeRenames(')
+    );
+    assert.match(renameSource, /applyMainScenarioSelectionRenamePlan\([\s\S]*?renamePlan/);
+    assert.match(renameSource, /applyScenarioCustomInfobaseRenamePlan\([\s\S]*?renamePlan/);
+    assert.match(renameSource, /applyScenarioRuntimeRenamePlan\(renamePlan/);
+    assert.doesNotMatch(
+        phaseSwitcherSource.slice(
+            phaseSwitcherSource.indexOf('    private applyScenarioRuntimeRenamePlan('),
+            phaseSwitcherSource.indexOf('    private async getMainScenarioSelectionSnapshotForBuild(')
+        ),
+        /_scenarioBuildArtifacts\.size === 0/
+    );
+});
+
+test('current build binds duplicate-name artifacts through the exact enabled URI projection', () => {
+    assert.match(
+        phaseSwitcherSource,
+        /updateScenarioBuildArtifacts\(\s*featureFiles,\s*featureFileDirUri,\s*selectionSnapshot\.enabledKeyByName/
+    );
+    assert.match(
+        phaseSwitcherSource,
+        /temporarilyMoveDisabledScenarioTestFilesForBuild\([\s\S]*?selectionSnapshot\.isolatedDisabledKeys/
+    );
+});
+
+test('demo state picker sends the selected scenario exact URI key', () => {
+    assert.match(
+        phaseSwitcherSource,
+        /command: 'setDemoState',[\s\S]*?key: scenarioPick\.scenarioKey/
+    );
+});

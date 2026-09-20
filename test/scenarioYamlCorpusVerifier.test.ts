@@ -44,12 +44,28 @@ test('corpus validation reports structural errors from ScenarioYamlDocument', ()
     assert.ok(result.errors.some(error => /YAML parser/i.test(error)));
 });
 
+test('corpus validation reports a scenario without descriptor identity', () => {
+    const result = validateScenarioYamlSource([
+        'ТипФайла: Сценарий',
+        'ВложенныеСценарии: []',
+        ''
+    ].join('\n'));
+
+    assert.ok(result.errors.some(error => /scenario name/i.test(error)));
+});
+
 test('corpus verifier walks only scen.yaml files without changing them', async t => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'scenario-yaml-corpus-'));
     const nestedDirectory = path.join(directory, 'nested');
     await mkdir(nestedDirectory);
     const scenarioPath = path.join(nestedDirectory, 'scen.yaml');
-    const source = 'ТипФайла: Сценарий\nВложенныеСценарии: []\n';
+    const source = [
+        'ТипФайла: Сценарий',
+        'ДанныеСценария:',
+        '    Имя: Sample',
+        'ВложенныеСценарии: []',
+        ''
+    ].join('\n');
     await writeFile(scenarioPath, source, 'utf8');
     await writeFile(path.join(directory, 'ignored.yaml'), 'broken: [', 'utf8');
     t.after(async () => {

@@ -2874,9 +2874,10 @@
                     const pattern = groupIdx === 0 ? patternA : groupIdx === 1 ? patternB : patternC;
                     scenarios.forEach((info, i) => {
                         const name = info?.name;
-                        if (!name) { return; }
+                        const scenarioKey = scenarioProtocol.getScenarioKey(info);
+                        if (!name || !scenarioKey) { return; }
                         const stateKey = i < pattern.length ? pattern[i] : 'idle-no-button';
-                        demoOverlay[name] = buildDemoRunArtifact(name, stateKey);
+                        demoOverlay[scenarioKey] = buildDemoRunArtifact(name, stateKey);
                     });
                 });
 
@@ -2894,12 +2895,13 @@
 
             case 'setDemoState': {
                 isDemoMode = true;
+                const scenarioKey = message.key;
                 const name = message.name;
                 const stateKey = message.stateKey;
-                if (!name || !stateKey) { break; }
+                if (!scenarioKey || !name || !stateKey) { break; }
                 const artifact = buildDemoRunArtifact(name, stateKey);
                 if (!artifact) { break; }
-                runArtifacts = Object.assign({}, runArtifacts, { [name]: artifact });
+                runArtifacts = Object.assign({}, runArtifacts, { [scenarioKey]: artifact });
                 updateTopRunButtonState();
                 if (settings.switcherEnabled && testDataByPhase && Object.keys(testDataByPhase).length > 0) {
                     updateVisibleScenarioRunState();

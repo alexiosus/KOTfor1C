@@ -2,10 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildScenarioCatalog } from '../src/scenarioCatalog';
 import {
+    buildUniqueCaseInsensitiveNameLookup,
     getScenarioRuntimeKey,
+    migrateLegacyScenarioValues,
     migrateLegacySelectionStates,
+    projectScenarioBuildSelection,
+    applyScenarioRuntimeRenamePlanToRecord,
     removeRuntimeKey,
     remapRuntimeKey,
+    resolveConfirmedScenarioRuntimeRenames,
     resolveScenarioRuntimeTarget,
     resolveUniqueRuntimeKeyByName,
     validateEnabledScenarioKeys
@@ -117,5 +122,80 @@ test('runtime map changes affect one URI without touching a same-named sibling',
     assert.deepEqual(
         [...removeRuntimeKey(remapped, 'file:///renamed/scen.yaml')],
         [['file:///b/scen.yaml', 'B']]
+    );
+});
+
+test('build projection isolates a disabled duplicate without filtering out the enabled sibling', () => {
+    const enabledDuplicate = scenario('Duplicate', 'a', 'file:///a/scen.yaml');
+    const disabledDuplicate = scenario('Duplicate', 'b', 'file:///b/scen.yaml');
+    const disabledUnique = scenario('Unique', 'u', 'file:///u/scen.yaml');
+
+    assert.deepEqual(
+        projectScenarioBuildSelection(
+            [enabledDuplicate, disabledDuplicate, disabledUnique],
+            { 'file:///a/scen.yaml': true }
+        ),
+        {
+            total: 3,
+            enabledKeys: ['file:///a/scen.yaml'],
+            disabledKeys: ['file:///b/scen.yaml', 'file:///u/scen.yaml'],
+            enabledNames: ['Duplicate'],
+            disabledNames: ['Unique'],
+            isolatedDisabledKeys: ['file:///b/scen.yaml'],
+            enabledKeyByName: { Duplicate: 'file:///a/scen.yaml' }
+        }
+    );
+});
+
+test('legacy scenario values migrate to one stable URI and preserve URI-backed values', () => {
+    const first = scenario('Duplicate', 'a', 'file:///a/scen.yaml');
+    const second = scenario('Duplicate', 'b', 'file:///b/scen.yaml');
+    const unique = scenario('Unique', 'u', 'file:///u/scen.yaml');
+    const catalog = buildScenarioCatalog([second, unique, first]);
+
+    assert.deepEqual(
+        migrateLegacyScenarioValues(
+            catalog,
+            { Duplicate: '/legacy/duplicate', Unique: '/legacy/unique' },
+            { 'file:///b/scen.yaml': '/current/duplicate' }
+        ),
+        {
+            'file:///a/scen.yaml': '/legacy/duplicate',
+            'file:///b/scen.yaml': '/current/duplicate',
+            'file:///u/scen.yaml': '/legacy/unique'
+        }
+    );
+});
+
+test('case-insensitive lookup rejects aliases shared by differently-cased names', () => {
+    assert.deepEqual(
+        [...buildUniqueCaseInsensitiveNameLookup(['Foo', 'foo', 'Bar'])],
+        [['bar', 'Bar']]
+    );
+});
+
+test('rename plan remaps only descriptor URIs confirmed by the refreshed catalog', () => {
+    const renamed = scenario('Renamed', 'renamed', 'file:///renamed/scen.yaml');
+    const catalog = buildScenarioCatalog([renamed]);
+
+    const plan = resolveConfirmedScenarioRuntimeRenames([
+        { oldKey: 'file:///old/scen.yaml', newKey: 'file:///renamed/scen.yaml' },
+        { oldKey: 'file:///invalid/scen.yaml', newKey: 'file:///invalid/renamed.yaml' }
+    ], catalog);
+
+    assert.deepEqual([...plan.remappedKeys], [
+        ['file:///old/scen.yaml', 'file:///renamed/scen.yaml']
+    ]);
+    assert.deepEqual([...plan.removedKeys], ['file:///invalid/scen.yaml']);
+    assert.deepEqual(
+        applyScenarioRuntimeRenamePlanToRecord({
+            'file:///old/scen.yaml': 'preserved',
+            'file:///invalid/scen.yaml': 'removed',
+            'file:///untouched/scen.yaml': 'untouched'
+        }, plan),
+        {
+            'file:///renamed/scen.yaml': 'preserved',
+            'file:///untouched/scen.yaml': 'untouched'
+        }
     );
 });
