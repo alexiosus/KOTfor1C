@@ -14,7 +14,7 @@
 
 - Do not modify AI code, `steps.htm`, `stepsFetcher.ts`, completion ranking, or IntelliSense behavior.
 - Do not change KOT YAML, generated artifact names, public command IDs, or visible scenario names.
-- Keep `/Users/alexeremeev/Development/1cDrive/tests/RegressionTests/Yaml/Drive` read-only and verify all 1,885 files.
+- Keep `/Users/alexeremeev/Development/1cDrive/tests/RegressionTests/Yaml/Drive` read-only and verify all 1,888 files.
 - Name-only resolution must never select one duplicated definition silently.
 - Each task starts with a failing behavioral test and ends with the full project check green.
 - Execute inline in the existing worktree to honor the user's limit-economy preference.
@@ -445,15 +445,15 @@ Commit: `refactor: isolate scenario runtime state by URI`
 **Interfaces:**
 - Records reproducible evidence for both implementation increments.
 
-- [ ] **Step 1: Verify excluded areas are untouched**
+- [x] **Step 1: Verify excluded areas are untouched**
 
 Compare from commit `d2c3c08` and confirm no changed path matches AI modules, `res/steps.htm`, `src/stepsFetcher.ts`, or `src/completionProvider.ts`.
 
-- [ ] **Step 2: Verify the external corpus without writes**
+- [x] **Step 2: Verify the external corpus without writes**
 
-Capture external repository status, run the corpus verifier, and compare status again. Expected: 1,885 files, zero structural errors/warnings, identical status output.
+Capture external repository status, run the corpus verifier, and compare status again. Expected: the current complete corpus (1,888 files on 2026-09-17), zero structural errors/warnings, identical status output.
 
-- [ ] **Step 3: Run all quality gates**
+- [x] **Step 3: Run all quality gates**
 
 Run:
 
@@ -465,10 +465,20 @@ npm run vscode:prepublish
 
 Expected: TypeScript clean, ESLint warning-free, every Node test passes, and production bundle succeeds.
 
-- [ ] **Step 4: Record identity evidence**
+- [x] **Step 4: Record identity evidence**
 
 Record counts for catalog definitions/names/duplicate buckets, remaining compatibility search matches, `phaseSwitcher.ts` line delta, tests, corpus, and production build in this plan.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit: `test: verify URI-backed scenario runtime`
+
+#### Verification evidence (2026-09-21)
+
+- Excluded-area diff from `d2c3c08`: zero changed paths in AI modules, `res/steps.htm`, `src/stepsFetcher.ts`, or `src/completionProvider.ts`.
+- External read-only corpus: 1,888 `scen.yaml` files, 0 parser errors, 0 parser warnings; `1cDrive` status was byte-for-byte identical before and after validation.
+- Catalog identity fixture: 1,885 definitions, 1,878 name buckets, 7 duplicate-name buckets.
+- Runtime compatibility search: 0 matches in `phaseSwitcher.ts`, `hoverProvider.ts`, and `extension.ts`; the 7 remaining `primaryByName` lines are confined to the catalog definition, explicit legacy migrations, and exported scanner compatibility adapter.
+- `src/phaseSwitcher.ts` since `d2c3c08`: +1,335 / -812 lines (net +523), 12,641 lines total.
+- Quality gates: `git diff --check d2c3c08` clean; TypeScript and ESLint clean; 104/104 Node tests passed; `npm run vscode:prepublish` produced the minified 1.7 MB extension bundle.
+- Review follow-up: rename/delete lifecycle, mutable watcher timer keys, duplicate-name build isolation, URI-backed custom infobase state, case-insensitive alias ambiguity, demo-state identity, and descriptor-level corpus verification are covered by the final implementation and regression tests.
