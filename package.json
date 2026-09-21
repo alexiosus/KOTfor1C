@@ -1213,7 +1213,7 @@
     "watch": "npm run copy-codicons && npm run esbuild-base -- --sourcemap --watch",
     "copy-codicons": "cpy node_modules/@vscode/codicons/dist/codicon.css node_modules/@vscode/codicons/dist/codicon.ttf media --flat",
     "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
-    "compile-tests": "esbuild test/*.test.ts --bundle --outdir=out/test --platform=node --format=cjs --sourcemap",
+    "compile-tests": "node tools/cleanTestOutput.cjs && esbuild test/*.test.ts --bundle --outdir=out/test --platform=node --format=cjs --sourcemap",
     "test": "npm run compile-tests && node --test out/test/*.test.js",
     "check:types": "tsc --noEmit",
     "lint": "eslint src test --max-warnings 0",

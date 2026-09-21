@@ -5,6 +5,7 @@ node_modules/**
 *.tsbuildinfo
 **/*.map
 out/test/**
+tools/cleanTestOutput.cjs
 .git/**
 .gitignore
 *.vsix
