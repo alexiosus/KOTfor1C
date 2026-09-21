@@ -138,3 +138,25 @@ test('ScenarioYamlDocument masks KOT free-form blocks without changing section o
     assert.equal(document.findSection('ПараметрыСценария')?.pairRange.start, source.indexOf('ПараметрыСценария:'));
     assert.equal(document.findSection('ВложенныеСценарии')?.pairRange.start, source.indexOf('ВложенныеСценарии:'));
 });
+
+test('ScenarioYamlDocument resumes KOT structure after a legacy description block', () => {
+    const source = [
+        'KOTМетаданные:',
+        '    Описание: |',
+        '        Произвольный текст: # не YAML',
+        '    -',
+        '    PhaseSwitcher:',
+        '        Tab: "Группа"',
+        '        Default: true',
+        'ПараметрыСценария:',
+        ''
+    ].join('\n');
+
+    const document = ScenarioYamlDocument.parse(source);
+
+    assert.deepEqual(document.errors, []);
+    assert.equal(
+        document.findFieldAtPath(['KOTМетаданные', 'PhaseSwitcher', 'Tab'])?.value,
+        'Группа'
+    );
+});

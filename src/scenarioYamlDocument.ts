@@ -5,6 +5,7 @@ import {
     isScalar,
     isSeq,
     parseDocument,
+    Scalar,
     type Pair
 } from 'yaml';
 
@@ -28,9 +29,21 @@ export interface SourceEdit {
     text: string;
 }
 
+export type ScenarioYamlValueKind =
+    | 'scalar'
+    | 'blockScalar'
+    | 'mapping'
+    | 'sequence'
+    | 'null'
+    | 'missing'
+    | 'other';
+
 export interface ScenarioYamlField {
     key: string;
     value: unknown;
+    valueKind: ScenarioYamlValueKind;
+    ambiguous: boolean;
+    blockScalarContentRange: SourceRange | null;
     pairRange: SourceRange;
     valueRange: SourceRange | null;
     lineStart: number;
@@ -85,6 +98,48 @@ function getNodeValue(value: unknown): unknown {
     return value ?? null;
 }
 
+function getValueKind(value: unknown): ScenarioYamlValueKind {
+    if (isMap(value)) {
+        return 'mapping';
+    }
+    if (isSeq(value)) {
+        return 'sequence';
+    }
+    if (isScalar(value)) {
+        if (value.value === null) {
+            return 'null';
+        }
+        if (value.type === Scalar.BLOCK_LITERAL || value.type === Scalar.BLOCK_FOLDED) {
+            return 'blockScalar';
+        }
+        return 'scalar';
+    }
+    return value === null || value === undefined ? 'missing' : 'other';
+}
+
+function refineOriginalScalarKind(
+    source: string,
+    originalScalar: OriginalScalar,
+    fallback: ScenarioYamlValueKind
+): ScenarioYamlValueKind {
+    const rawValue = source.slice(originalScalar.range.start, originalScalar.range.end).trim();
+    const collectionCandidate = rawValue.startsWith('[') || rawValue.startsWith('{');
+    const nullCandidate = /^(?:null|~)$/i.test(rawValue);
+    if (!collectionCandidate && !nullCandidate) {
+        return fallback;
+    }
+
+    const parsed = parseDocument(`value: ${rawValue}`, {
+        prettyErrors: false,
+        uniqueKeys: false
+    });
+    if (parsed.errors.length > 0 || !isMap(parsed.contents)) {
+        return collectionCandidate ? 'other' : fallback;
+    }
+    const pair = parsed.contents.items[0];
+    return isPair(pair) ? getValueKind(pair.value) : 'other';
+}
+
 function maskRange(characters: string[], start: number, end: number): void {
     for (let offset = start; offset < end; offset += 1) {
         if (characters[offset] !== '\uFEFF') {
@@ -98,6 +153,7 @@ function buildStructuralShadow(source: string): string {
     const linePattern = /([^\r\n]*)(\r\n|\r|\n|$)/g;
     let currentTopLevelKey = '';
     let maskFreeFormBody = false;
+    let maskedKotDescriptionIndent = -1;
     let match: RegExpExecArray | null;
 
     while ((match = linePattern.exec(source)) !== null) {
@@ -116,6 +172,15 @@ function buildStructuralShadow(source: string): string {
 
         if (maskFreeFormBody && topLevelKey) {
             maskFreeFormBody = false;
+            maskedKotDescriptionIndent = -1;
+        } else if (
+            maskFreeFormBody
+            && maskedKotDescriptionIndent >= 0
+            && /^\s*PhaseSwitcher:\s*(?:#.*)?$/.test(lineWithoutBom)
+            && (lineWithoutBom.match(/^\s*/)?.[0].length ?? -1) === maskedKotDescriptionIndent
+        ) {
+            maskFreeFormBody = false;
+            maskedKotDescriptionIndent = -1;
         }
 
         if (maskFreeFormBody) {
@@ -149,6 +214,9 @@ function buildStructuralShadow(source: string): string {
         );
         if (startsKnownFreeFormBody) {
             maskFreeFormBody = true;
+            maskedKotDescriptionIndent = currentTopLevelKey === 'KOTМетаданные'
+                ? (lineWithoutBom.match(/^\s*/)?.[0].length ?? -1)
+                : -1;
             continue;
         }
 
@@ -298,26 +366,32 @@ export class ScenarioYamlDocument {
     }
 
     findField(sectionName: string, fieldName: string): ScenarioYamlField | null {
-        const fieldPair = this.findFieldPair(sectionName, fieldName);
+        return this.findFieldAtPath([sectionName, fieldName]);
+    }
+
+    findFieldAtPath(path: readonly string[]): ScenarioYamlField | null {
+        if (path.length === 0) {
+            return null;
+        }
+
+        let current: unknown = this.parsed.contents;
+        let fieldPair: Pair | null = null;
+        let ambiguous = false;
+        for (const segment of path) {
+            const matches = this.findMapPairs(current, segment);
+            if (matches.length === 0) {
+                return null;
+            }
+            ambiguous ||= matches.length > 1;
+            fieldPair = matches[0];
+            current = fieldPair.value;
+        }
+
         if (!fieldPair) {
             return null;
         }
 
-        const keyRange = getNodeRange(fieldPair.key);
-        const sourceRange = pairSourceRange(this.source, fieldPair);
-        if (!keyRange || !sourceRange) {
-            return null;
-        }
-
-        const originalScalar = readOriginalScalar(this.source, fieldPair);
-        return {
-            key: fieldName,
-            value: originalScalar?.value,
-            pairRange: sourceRange,
-            valueRange: originalScalar?.range ?? null,
-            lineStart: findLineStart(this.source, keyRange[0]),
-            lineEnd: findLineEnd(this.source, keyRange[1])
-        };
+        return this.describeField(fieldPair, path[path.length - 1], ambiguous);
     }
 
     readScalar(sectionName: string, fieldName: string): string | undefined {
@@ -426,6 +500,78 @@ export class ScenarioYamlDocument {
         return records;
     }
 
+    findRecordFields(sectionName: string, fieldName: string): readonly ScenarioYamlField[] {
+        const sectionPair = this.findTopLevelPair(sectionName);
+        if (!sectionPair || !isSeq(sectionPair.value)) {
+            return [];
+        }
+
+        const fields: ScenarioYamlField[] = [];
+        for (const item of sectionPair.value.items) {
+            if (!isMap(item) || item.items.length === 0) {
+                continue;
+            }
+            const recordPair = item.items[0];
+            if (!isPair(recordPair) || !isMap(recordPair.value)) {
+                continue;
+            }
+            const fieldPairs = this.findMapPairs(recordPair.value, fieldName);
+            if (fieldPairs.length === 0) {
+                continue;
+            }
+            const field = this.describeField(fieldPairs[0], fieldName, fieldPairs.length > 1);
+            if (field) {
+                fields.push(field);
+            }
+        }
+        return fields;
+    }
+
+    findRecordFieldsForEdit(sectionName: string, fieldName: string): readonly ScenarioYamlField[] {
+        const sectionPairs = this.findMapPairs(this.parsed.contents, sectionName);
+        if (sectionPairs.length === 0) {
+            return [];
+        }
+        if (sectionPairs.length > 1) {
+            throw new Error(`Unsafe YAML edit: section "${sectionName}" is ambiguous`);
+        }
+
+        const sectionValue = sectionPairs[0].value;
+        if (isScalar(sectionValue)) {
+            if (sectionValue.value === null || readOriginalScalar(this.source, sectionPairs[0])?.value === '[]') {
+                return [];
+            }
+        }
+        if (!isSeq(sectionValue)) {
+            throw new Error(`Unsafe YAML edit: section "${sectionName}" must be a sequence`);
+        }
+
+        const fields: ScenarioYamlField[] = [];
+        for (const item of sectionValue.items) {
+            if (!isMap(item) || item.items.length !== 1) {
+                throw new Error(`Unsafe YAML edit: section "${sectionName}" contains an invalid record`);
+            }
+            const recordPair = item.items[0];
+            if (!isPair(recordPair) || !isMap(recordPair.value)) {
+                throw new Error(`Unsafe YAML edit: section "${sectionName}" contains an invalid record`);
+            }
+            const fieldPairs = this.findMapPairs(recordPair.value, fieldName);
+            if (fieldPairs.length > 1) {
+                throw new Error(
+                    `Unsafe YAML edit: record in section "${sectionName}" has duplicate field "${fieldName}"`
+                );
+            }
+            if (fieldPairs.length === 0) {
+                continue;
+            }
+            const field = this.describeField(fieldPairs[0], fieldName, false);
+            if (field) {
+                fields.push(field);
+            }
+        }
+        return fields;
+    }
+
     requireValidForEdit(): void {
         if (this.errors.length > 0) {
             throw new Error(`Unsafe YAML edit: ${this.errors.join('; ')}`);
@@ -440,27 +586,55 @@ export class ScenarioYamlDocument {
         return this.findMapPair(this.parsed.contents, key);
     }
 
-    private findFieldPair(sectionName: string, fieldName: string): Pair | null {
-        const sectionPair = this.findTopLevelPair(sectionName);
-        if (!sectionPair || !isMap(sectionPair.value)) {
-            return null;
-        }
-
-        return this.findMapPair(sectionPair.value, fieldName);
+    private findMapPair(map: unknown, key: string): Pair | null {
+        return this.findMapPairs(map, key)[0] ?? null;
     }
 
-    private findMapPair(map: unknown, key: string): Pair | null {
+    private findMapPairs(map: unknown, key: string): Pair[] {
         if (!isMap(map)) {
-            return null;
+            return [];
         }
 
+        const matches: Pair[] = [];
         for (const item of map.items) {
             if (isPair(item) && getScalarKey(item.key) === key) {
-                return item;
+                matches.push(item);
             }
         }
 
-        return null;
+        return matches;
+    }
+
+    private describeField(fieldPair: Pair, key: string, ambiguous: boolean): ScenarioYamlField | null {
+        const keyRange = getNodeRange(fieldPair.key);
+        const sourceRange = pairSourceRange(this.source, fieldPair);
+        if (!keyRange || !sourceRange) {
+            return null;
+        }
+
+        let valueKind = getValueKind(fieldPair.value);
+        const originalScalar = valueKind === 'scalar' || valueKind === 'blockScalar'
+            ? readOriginalScalar(this.source, fieldPair)
+            : null;
+        if (valueKind === 'scalar' && originalScalar) {
+            valueKind = refineOriginalScalarKind(this.source, originalScalar, valueKind);
+        }
+        return {
+            key,
+            value: originalScalar?.value ?? getNodeValue(fieldPair.value),
+            valueKind,
+            ambiguous,
+            blockScalarContentRange: valueKind === 'blockScalar'
+                ? {
+                    start: findLineEndWithNewline(this.source, keyRange[1]),
+                    end: sourceRange.end
+                }
+                : null,
+            pairRange: sourceRange,
+            valueRange: originalScalar?.range ?? null,
+            lineStart: findLineStart(this.source, keyRange[0]),
+            lineEnd: findLineEnd(this.source, keyRange[1])
+        };
     }
 }
 

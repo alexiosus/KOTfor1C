@@ -78,6 +78,7 @@ import {
 import { buildDirectSpawnCommand } from './directProcessLaunch';
 import { readFileTail, readFileTailSync } from './fileTailReader';
 import { formatProcessCommandForDisplay } from './processCommandDisplay';
+import { applyPreparedFileWrites } from './preparedFileWrites';
 import { createDeferredLoader } from './deferredLoader';
 import {
     areScenarioNamesEqual,
@@ -97,6 +98,13 @@ import {
     type AdditionalLaunchVanessaParameter,
     type JsonValue
 } from './vanessaLaunchJson';
+import {
+    planNestedScenarioRenameInChunks,
+    planScenarioGroupRename,
+    planScenarioIdentityRename,
+    updateScenarioDisplayNameInScenarioContent,
+    updateScenarioDisplayNameInTestConfigContent
+} from './scenarioYamlMutations';
 
 const loadInfobaseManager = createDeferredLoader(
     () => import('./infobaseManager.js')
@@ -2197,390 +2205,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
         const absoluteLogPath = path.resolve(normalizedPath);
         this.outputInfo(outputChannel, this.t('Run log for "{0}": {1}', scenarioName, absoluteLogPath));
-    }
-
-    private normalizeLeadingTabsForYaml(line: string): string {
-        return line.replace(/^\t+/, tabs => '    '.repeat(tabs.length));
-    }
-
-    private getYamlIndent(line: string): number {
-        const normalized = this.normalizeLeadingTabsForYaml(line);
-        const match = normalized.match(/^(\s*)/);
-        return match ? match[1].length : 0;
-    }
-
-    private isIgnorableYamlLine(line: string): boolean {
-        const trimmed = line.replace(/^\uFEFF/, '').trim();
-        return trimmed.length === 0 || trimmed.startsWith('#');
-    }
-
-    private isYamlKeyLine(trimmedNoBom: string): boolean {
-        return /^[^:#][^:]*:\s*(.*)$/.test(trimmedNoBom);
-    }
-
-    private findYamlSectionEnd(
-        lines: string[],
-        startIndex: number,
-        startIndent: number,
-        maxExclusive: number = lines.length
-    ): number {
-        for (let index = startIndex + 1; index < maxExclusive; index++) {
-            const line = lines[index];
-            if (this.isIgnorableYamlLine(line)) {
-                continue;
-            }
-
-            const indent = this.getYamlIndent(line);
-            const trimmedNoBom = line.replace(/^\uFEFF/, '').trim();
-            if (indent <= startIndent && this.isYamlKeyLine(trimmedNoBom)) {
-                return index;
-            }
-        }
-        return maxExclusive;
-    }
-
-    private escapeYamlDoubleQuotedScalar(value: string): string {
-        return value
-            .replace(/\\/g, '\\\\')
-            .replace(/"/g, '\\"');
-    }
-
-    private updateScenarioGroupInMetadataContent(
-        content: string,
-        groupName: string
-    ): { changed: boolean; content: string } {
-        const lineEnding = content.includes('\r\n') ? '\r\n' : '\n';
-        const lines = content.split(/\r\n|\r|\n/);
-        const escapedGroupName = this.escapeYamlDoubleQuotedScalar(groupName);
-        let changed = false;
-
-        let kotStart = -1;
-        for (let index = 0; index < lines.length; index++) {
-            const line = lines[index];
-            const trimmedNoBom = line.replace(/^\uFEFF/, '').trim();
-            if (this.getYamlIndent(line) === 0 && trimmedNoBom === 'KOTМетаданные:') {
-                kotStart = index;
-                break;
-            }
-        }
-        if (kotStart === -1) {
-            return { changed: false, content };
-        }
-
-        const kotIndent = this.getYamlIndent(lines[kotStart]);
-        let kotEnd = this.findYamlSectionEnd(lines, kotStart, kotIndent);
-        const phaseIndentText = ' '.repeat(kotIndent + 4);
-        const keyIndentText = ' '.repeat(kotIndent + 8);
-
-        let phaseStart = -1;
-        for (let index = kotStart + 1; index < kotEnd; index++) {
-            const line = lines[index];
-            if (this.isIgnorableYamlLine(line)) {
-                continue;
-            }
-
-            const trimmedNoBom = line.replace(/^\uFEFF/, '').trim();
-            if (trimmedNoBom === 'PhaseSwitcher:' && this.getYamlIndent(line) > kotIndent) {
-                phaseStart = index;
-                break;
-            }
-        }
-
-        if (phaseStart === -1) {
-            lines.splice(kotEnd, 0, `${phaseIndentText}PhaseSwitcher:`, `${keyIndentText}Tab: "${escapedGroupName}"`);
-            changed = true;
-            kotEnd = this.findYamlSectionEnd(lines, kotStart, kotIndent);
-            phaseStart = kotEnd - 2;
-        }
-
-        const phaseIndent = this.getYamlIndent(lines[phaseStart]);
-        const phaseEnd = this.findYamlSectionEnd(lines, phaseStart, phaseIndent, kotEnd);
-        let tabLineIndex = -1;
-        for (let index = phaseStart + 1; index < phaseEnd; index++) {
-            const line = lines[index];
-            if (this.isIgnorableYamlLine(line) || this.getYamlIndent(line) <= phaseIndent) {
-                continue;
-            }
-            if (/^Tab:\s*(.*)$/.test(line.replace(/^\uFEFF/, '').trim())) {
-                tabLineIndex = index;
-                break;
-            }
-        }
-
-        if (tabLineIndex === -1) {
-            lines.splice(phaseStart + 1, 0, `${' '.repeat(phaseIndent + 4)}Tab: "${escapedGroupName}"`);
-            changed = true;
-        } else {
-            const tabIndent = ' '.repeat(this.getYamlIndent(lines[tabLineIndex]));
-            const nextLine = `${tabIndent}Tab: "${escapedGroupName}"`;
-            if (lines[tabLineIndex] !== nextLine) {
-                lines[tabLineIndex] = nextLine;
-                changed = true;
-            }
-        }
-
-        return {
-            changed,
-            content: changed ? lines.join(lineEnding) : content
-        };
-    }
-
-    private updateScenarioDisplayNameInScenarioContent(
-        content: string,
-        scenarioName: string,
-        scenarioCode?: string
-    ): { changed: boolean; content: string } {
-        const lineEnding = content.includes('\r\n') ? '\r\n' : '\n';
-        const lines = content.split(/\r\n|\r|\n/);
-        const escapedScenarioName = this.escapeYamlDoubleQuotedScalar(scenarioName);
-        const escapedScenarioCode = typeof scenarioCode === 'string'
-            ? this.escapeYamlDoubleQuotedScalar(scenarioCode)
-            : undefined;
-        let changed = false;
-
-        let scenarioDataStart = -1;
-        for (let index = 0; index < lines.length; index++) {
-            const line = lines[index];
-            if (this.getYamlIndent(line) === 0 && line.replace(/^\uFEFF/, '').trim() === 'ДанныеСценария:') {
-                scenarioDataStart = index;
-                break;
-            }
-        }
-        if (scenarioDataStart === -1) {
-            return { changed: false, content };
-        }
-
-        const sectionIndent = this.getYamlIndent(lines[scenarioDataStart]);
-        const sectionEnd = this.findYamlSectionEnd(lines, scenarioDataStart, sectionIndent);
-        for (let index = scenarioDataStart + 1; index < sectionEnd; index++) {
-            const line = lines[index];
-            if (this.isIgnorableYamlLine(line)) {
-                continue;
-            }
-            if (this.getYamlIndent(line) <= sectionIndent) {
-                continue;
-            }
-            const nameMatch = line.match(/^(\s*Имя:\s*).*/);
-            if (nameMatch) {
-                const replacement = `${nameMatch[1]}"${escapedScenarioName}"`;
-                if (line !== replacement) {
-                    lines[index] = replacement;
-                    changed = true;
-                }
-                continue;
-            }
-
-            if (escapedScenarioCode !== undefined) {
-                const codeMatch = line.match(/^(\s*Код:\s*).*/);
-                if (codeMatch) {
-                    const replacement = `${codeMatch[1]}"${escapedScenarioCode}"`;
-                    if (line !== replacement) {
-                        lines[index] = replacement;
-                        changed = true;
-                    }
-                }
-            }
-        }
-
-        return {
-            changed,
-            content: changed ? lines.join(lineEnding) : content
-        };
-    }
-
-    private updateScenarioDisplayNameInTestConfigContent(
-        content: string,
-        scenarioName: string,
-        scenarioCode?: string
-    ): { changed: boolean; content: string } {
-        const lineEnding = content.includes('\r\n') ? '\r\n' : '\n';
-        const lines = content.split(/\r\n|\r|\n/);
-        const escapedScenarioName = this.escapeYamlDoubleQuotedScalar(scenarioName);
-        const escapedScenarioCode = typeof scenarioCode === 'string'
-            ? this.escapeYamlDoubleQuotedScalar(scenarioCode)
-            : undefined;
-        let changed = false;
-
-        for (let index = 0; index < lines.length; index++) {
-            const line = lines[index];
-            const match = line.match(/^(\s*)(Имя|СценарийНаименование|Код):\s*(.*)$/);
-            if (!match) {
-                continue;
-            }
-
-            const key = match[2];
-            if (key === 'Код' && escapedScenarioCode === undefined) {
-                continue;
-            }
-            const replacementValue = key === 'Код' && escapedScenarioCode !== undefined
-                ? escapedScenarioCode
-                : escapedScenarioName;
-            const replacement = `${match[1]}${key}: "${replacementValue}"`;
-            if (line !== replacement) {
-                lines[index] = replacement;
-                changed = true;
-            }
-        }
-
-        return {
-            changed,
-            content: changed ? lines.join(lineEnding) : content
-        };
-    }
-
-    private updateNestedScenarioNameReferencesInScenarioContent(
-        content: string,
-        oldScenarioName: string,
-        newScenarioName: string
-    ): {
-        changed: boolean;
-        content: string;
-        updatedCallCount: number;
-        updatedNestedSectionCount: number;
-    } {
-        const previousName = oldScenarioName.trim();
-        const nextName = newScenarioName.trim();
-        if (!previousName || !nextName || previousName === nextName) {
-            return {
-                changed: false,
-                content,
-                updatedCallCount: 0,
-                updatedNestedSectionCount: 0
-            };
-        }
-
-        const lineEnding = content.includes('\r\n') ? '\r\n' : '\n';
-        const lines = content.split(/\r\n|\r|\n/);
-        let changed = false;
-        let updatedCallCount = 0;
-        let updatedNestedSectionCount = 0;
-
-        let textSectionStart = -1;
-        let nestedSectionStart = -1;
-        const textSectionHeaderRegex = /^ТекстСценария:\s*(\|[-+]?)?\s*$/;
-        const nestedSectionHeaderRegex = /^ВложенныеСценарии:\s*$/;
-        for (let index = 0; index < lines.length; index++) {
-            const line = lines[index];
-            const trimmedNoBom = line.replace(/^\uFEFF/, '').trim();
-            if (this.getYamlIndent(line) !== 0) {
-                continue;
-            }
-            if (textSectionStart === -1 && textSectionHeaderRegex.test(trimmedNoBom)) {
-                textSectionStart = index;
-                continue;
-            }
-            if (nestedSectionStart === -1 && nestedSectionHeaderRegex.test(trimmedNoBom)) {
-                nestedSectionStart = index;
-            }
-            if (textSectionStart !== -1 && nestedSectionStart !== -1) {
-                break;
-            }
-        }
-
-        if (textSectionStart !== -1) {
-            const textIndent = this.getYamlIndent(lines[textSectionStart]);
-            const textEnd = this.findYamlSectionEnd(lines, textSectionStart, textIndent);
-            const callLineRegex = /^(\s*)(And|Then|When|Given|But|Но|Тогда|Когда|Если|И|К тому же|Допустим|Дано)(\s+)(.*)$/i;
-
-            for (let index = textSectionStart + 1; index < textEnd; index++) {
-                const line = lines[index];
-                if (this.isIgnorableYamlLine(line)) {
-                    continue;
-                }
-                if (this.getYamlIndent(line) <= textIndent) {
-                    continue;
-                }
-
-                const match = line.match(callLineRegex);
-                if (!match) {
-                    continue;
-                }
-
-                const body = match[4] || '';
-                const bodyMatch = body.match(/^(.*?)(\s+#.*)?$/);
-                const rawMainPart = bodyMatch?.[1] ?? body;
-                const commentPart = bodyMatch?.[2] ?? '';
-                if (rawMainPart.trim() !== previousName) {
-                    continue;
-                }
-
-                const leadingWhitespace = rawMainPart.match(/^\s*/)?.[0] ?? '';
-                const trailingWhitespace = rawMainPart.match(/\s*$/)?.[0] ?? '';
-                const nextBody = `${leadingWhitespace}${nextName}${trailingWhitespace}${commentPart}`;
-                const replacement = `${match[1]}${match[2]}${match[3]}${nextBody}`;
-                if (replacement !== line) {
-                    lines[index] = replacement;
-                    changed = true;
-                    updatedCallCount++;
-                }
-            }
-        }
-
-        if (nestedSectionStart !== -1) {
-            const nestedIndent = this.getYamlIndent(lines[nestedSectionStart]);
-            const nestedEnd = this.findYamlSectionEnd(lines, nestedSectionStart, nestedIndent);
-            const escapedNewName = this.escapeYamlDoubleQuotedScalar(nextName);
-            const escapedNewNameSingleQuoted = nextName.replace(/'/g, "''");
-
-            for (let index = nestedSectionStart + 1; index < nestedEnd; index++) {
-                const line = lines[index];
-                if (this.isIgnorableYamlLine(line)) {
-                    continue;
-                }
-                if (this.getYamlIndent(line) <= nestedIndent) {
-                    continue;
-                }
-
-                const doubleQuotedMatch = line.match(/^(\s*ИмяСценария:\s*)"([^"]*)"\s*$/);
-                if (doubleQuotedMatch) {
-                    if ((doubleQuotedMatch[2] || '').trim() !== previousName) {
-                        continue;
-                    }
-                    const replacement = `${doubleQuotedMatch[1]}"${escapedNewName}"`;
-                    if (replacement !== line) {
-                        lines[index] = replacement;
-                        changed = true;
-                        updatedNestedSectionCount++;
-                    }
-                    continue;
-                }
-
-                const singleQuotedMatch = line.match(/^(\s*ИмяСценария:\s*)'([^']*)'\s*$/);
-                if (singleQuotedMatch) {
-                    if ((singleQuotedMatch[2] || '').trim() !== previousName) {
-                        continue;
-                    }
-                    const replacement = `${singleQuotedMatch[1]}'${escapedNewNameSingleQuoted}'`;
-                    if (replacement !== line) {
-                        lines[index] = replacement;
-                        changed = true;
-                        updatedNestedSectionCount++;
-                    }
-                    continue;
-                }
-
-                const plainMatch = line.match(/^(\s*ИмяСценария:\s*)([^#\n]+?)\s*$/);
-                if (!plainMatch) {
-                    continue;
-                }
-                if ((plainMatch[2] || '').trim() !== previousName) {
-                    continue;
-                }
-                const replacement = `${plainMatch[1]}"${escapedNewName}"`;
-                if (replacement !== line) {
-                    lines[index] = replacement;
-                    changed = true;
-                    updatedNestedSectionCount++;
-                }
-            }
-        }
-
-        return {
-            changed,
-            content: changed ? lines.join(lineEnding) : content,
-            updatedCallCount,
-            updatedNestedSectionCount
-        };
     }
 
     private getLiveRunLogRefreshIntervalMs(): number {
@@ -5287,14 +4911,23 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const rawScenarioContent = Buffer.from(
-            await vscode.workspace.fs.readFile(scenarioYamlUriBeforeRename)
-        ).toString('utf8');
-        const updatedScenarioContent = this.updateScenarioDisplayNameInScenarioContent(
-            rawScenarioContent,
-            scenarioInfo.name,
-            newCode
-        );
+        let rawScenarioContent: string;
+        let updatedScenarioContent: ReturnType<typeof updateScenarioDisplayNameInScenarioContent>;
+        try {
+            rawScenarioContent = Buffer.from(
+                await vscode.workspace.fs.readFile(scenarioYamlUriBeforeRename)
+            ).toString('utf8');
+            updatedScenarioContent = updateScenarioDisplayNameInScenarioContent(
+                rawScenarioContent,
+                scenarioInfo.name,
+                newCode
+            );
+        } catch (error: any) {
+            vscode.window.showErrorMessage(
+                this.t('Failed to change nested scenario code for "{0}": {1}', scenarioInfo.name, error?.message || String(error))
+            );
+            return;
+        }
         if (!updatedScenarioContent.changed) {
             vscode.window.showWarningMessage(this.t('No files were updated for scenario "{0}".', scenarioInfo.name));
             return;
@@ -5314,11 +4947,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 );
             }
 
-            await vscode.workspace.fs.writeFile(
-                scenarioYamlUriAfterRename,
-                Buffer.from(updatedScenarioContent.content, 'utf8')
-            );
-            changedFiles++;
+            changedFiles += await applyPreparedFileWrites([{
+                key: scenarioYamlUriAfterRename,
+                before: rawScenarioContent,
+                after: updatedScenarioContent.content
+            }], async (uri, content) => {
+                await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+            });
         } catch (error: any) {
             if (scenarioDirectoryRenamed) {
                 try {
@@ -5481,40 +5116,38 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const affectedScenarioNames = new Set<string>([currentName, newName]);
 
         try {
+            const renameSources: Array<{
+                key: vscode.Uri;
+                content: string;
+                renameSelf: boolean;
+            }> = [];
             for (const scenarioUri of scenarioUris) {
                 const originalContent = Buffer.from(await vscode.workspace.fs.readFile(scenarioUri)).toString('utf8');
-                let nextContent = originalContent;
-                let fileChanged = false;
+                renameSources.push({
+                    key: scenarioUri,
+                    content: originalContent,
+                    renameSelf: this.areUrisEqual(scenarioUri, scenarioInfo.yamlFileUri)
+                });
+            }
 
-                if (this.areUrisEqual(scenarioUri, scenarioInfo.yamlFileUri)) {
-                    const renamedSelf = this.updateScenarioDisplayNameInScenarioContent(nextContent, newName);
-                    if (renamedSelf.changed) {
-                        nextContent = renamedSelf.content;
-                        fileChanged = true;
-                    }
+            const renamePlan = await planNestedScenarioRenameInChunks(renameSources, currentName, newName);
+            changedFiles = await applyPreparedFileWrites(
+                renamePlan.map(planned => ({
+                    key: planned.key,
+                    before: planned.before,
+                    after: planned.content
+                })),
+                async (uri, content) => {
+                    await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
                 }
-
-                const renamedReferences = this.updateNestedScenarioNameReferencesInScenarioContent(
-                    nextContent,
-                    currentName,
-                    newName
-                );
-                if (renamedReferences.changed) {
-                    nextContent = renamedReferences.content;
-                    fileChanged = true;
-                }
-
-                updatedCalls += renamedReferences.updatedCallCount;
-                updatedNestedSectionEntries += renamedReferences.updatedNestedSectionCount;
-
-                if (!fileChanged || nextContent === originalContent) {
+            );
+            for (const planned of renamePlan) {
+                updatedCalls += planned.updatedCallCount;
+                updatedNestedSectionEntries += planned.updatedNestedSectionCount;
+                if (!planned.changed) {
                     continue;
                 }
-
-                await vscode.workspace.fs.writeFile(scenarioUri, Buffer.from(nextContent, 'utf8'));
-                changedFiles++;
-
-                for (const affectedName of this.getScenarioNamesRelatedToUri(scenarioUri)) {
+                for (const affectedName of this.getScenarioNamesRelatedToUri(planned.key)) {
                     affectedScenarioNames.add(affectedName);
                 }
             }
@@ -5768,23 +5401,42 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             'editor.enableLegacyMetadataMigrationForMainScenarios',
             false
         ) && autoEnsureKotMetadataEnabled;
-        for (const scenarioInfo of groupScenarios) {
-            try {
+        try {
+            const groupRenameSources: Array<{
+                key: vscode.Uri;
+                content: string;
+                preparedContent: string;
+            }> = [];
+            for (const scenarioInfo of groupScenarios) {
                 const rawContent = Buffer.from(await vscode.workspace.fs.readFile(scenarioInfo.yamlFileUri)).toString('utf8');
                 const contentForUpdate = autoEnsureKotMetadataEnabled
                     ? migrateLegacyPhaseSwitcherMetadata(rawContent, {
                         migrateLegacyPhaseSwitcherTags: legacyMetadataMigrationForMainScenariosEnabled
                     }).content
                     : rawContent;
-                const updated = this.updateScenarioGroupInMetadataContent(contentForUpdate, newGroupName);
-                if (!updated.changed) {
-                    continue;
-                }
-                await vscode.workspace.fs.writeFile(scenarioInfo.yamlFileUri, Buffer.from(updated.content, 'utf8'));
-                changedFiles++;
-            } catch (error) {
-                console.error('[PhaseSwitcherProvider] Failed to rename group in file:', scenarioInfo.yamlFileUri.fsPath, error);
+                groupRenameSources.push({
+                    key: scenarioInfo.yamlFileUri,
+                    content: rawContent,
+                    preparedContent: contentForUpdate
+                });
             }
+
+            const renamePlan = planScenarioGroupRename(groupRenameSources, newGroupName);
+            changedFiles = await applyPreparedFileWrites(
+                renamePlan.map(planned => ({
+                    key: planned.key,
+                    before: planned.before,
+                    after: planned.content
+                })),
+                async (uri, content) => {
+                    await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+                }
+            );
+        } catch (error: any) {
+            vscode.window.showErrorMessage(
+                this.t('Failed to rename group "{0}": {1}', trimmedGroupName, error?.message || String(error))
+            );
+            return;
         }
 
         if (changedFiles === 0) {
@@ -5938,14 +5590,58 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
+        type IdentityMutationTarget = {
+            kind: 'scenario' | 'test';
+            fileName: string;
+        };
+        let identityMutationPlan: ReturnType<typeof planScenarioIdentityRename<IdentityMutationTarget>>;
+        try {
+            const identitySources: Array<{
+                key: IdentityMutationTarget;
+                content: string;
+                kind: 'scenario' | 'test';
+            }> = [{
+                key: {
+                    kind: 'scenario',
+                    fileName: path.basename(scenarioInfo.yamlFileUri.fsPath)
+                },
+                kind: 'scenario',
+                content: Buffer.from(
+                    await vscode.workspace.fs.readFile(scenarioInfo.yamlFileUri)
+                ).toString('utf8')
+            }];
+            for (const testConfigUri of testConfigUris) {
+                identitySources.push({
+                    key: {
+                        kind: 'test',
+                        fileName: path.basename(testConfigUri.fsPath)
+                    },
+                    kind: 'test',
+                    content: Buffer.from(
+                        await vscode.workspace.fs.readFile(testConfigUri)
+                    ).toString('utf8')
+                });
+            }
+            identityMutationPlan = planScenarioIdentityRename(
+                identitySources,
+                newScenarioName,
+                nextScenarioCode
+            );
+        } catch (error: any) {
+            vscode.window.showErrorMessage(
+                this.t('Failed to rename scenario "{0}": {1}', trimmedScenarioName, error?.message || String(error))
+            );
+            return;
+        }
+
         const oldScenarioUriString = scenarioInfo.yamlFileUri.toString();
         let scenarioYamlUriAfterRename = scenarioInfo.yamlFileUri;
         let currentTestDirectory = testDirectory;
 
         let changedFiles = 0;
+        let scenarioDirectoryRenamed = false;
+        let mainTestFileRenamed = false;
         try {
-            let scenarioDirectoryRenamed = false;
-
             if (directoryWillBeRenamed) {
                 await vscode.workspace.fs.rename(scenarioDirectoryUri, targetScenarioDirectoryUri, { overwrite: false });
                 scenarioDirectoryRenamed = true;
@@ -5960,65 +5656,55 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const sourceTestFileUri = vscode.Uri.file(path.join(currentTestDirectory, mainTestFileRename.fromFileName));
                 const targetTestFileUri = vscode.Uri.file(path.join(currentTestDirectory, mainTestFileRename.toFileName));
                 if (!this.areUrisEqual(sourceTestFileUri, targetTestFileUri)) {
-                    try {
-                        await vscode.workspace.fs.rename(sourceTestFileUri, targetTestFileUri, { overwrite: false });
-                        changedFiles++;
-                    } catch (renameMainTestFileError) {
-                        if (scenarioDirectoryRenamed) {
-                            try {
-                                await vscode.workspace.fs.rename(targetScenarioDirectoryUri, scenarioDirectoryUri, { overwrite: false });
-                                scenarioYamlUriAfterRename = scenarioInfo.yamlFileUri;
-                                currentTestDirectory = testDirectory;
-                                changedFiles = Math.max(0, changedFiles - 1);
-                            } catch (rollbackError) {
-                                console.error('[PhaseSwitcherProvider] Failed to rollback scenario directory rename:', rollbackError);
-                            }
-                        }
-                        throw renameMainTestFileError;
-                    }
+                    await vscode.workspace.fs.rename(sourceTestFileUri, targetTestFileUri, { overwrite: false });
+                    mainTestFileRenamed = true;
+                    changedFiles++;
                 }
             }
 
-            const currentTestConfigUris: vscode.Uri[] = [];
-            if (fs.existsSync(currentTestDirectory) && fs.statSync(currentTestDirectory).isDirectory()) {
-                for (const entry of fs.readdirSync(currentTestDirectory, { withFileTypes: true })) {
-                    if (!entry.isFile()) {
-                        continue;
-                    }
-                    if (!/\.yaml$/i.test(entry.name)) {
-                        continue;
-                    }
-                    currentTestConfigUris.push(vscode.Uri.file(path.join(currentTestDirectory, entry.name)));
+            const preparedWrites = identityMutationPlan.map(planned => {
+                let targetUri = scenarioYamlUriAfterRename;
+                if (planned.key.kind === 'test') {
+                    const targetFileName = mainTestFileRename
+                        && planned.key.fileName === mainTestFileRename.fromFileName
+                        ? mainTestFileRename.toFileName
+                        : planned.key.fileName;
+                    targetUri = vscode.Uri.file(path.join(currentTestDirectory, targetFileName));
                 }
-            }
-
-            const rawScenarioContent = Buffer.from(await vscode.workspace.fs.readFile(scenarioYamlUriAfterRename)).toString('utf8');
-            const updatedScenarioContent = this.updateScenarioDisplayNameInScenarioContent(
-                rawScenarioContent,
-                newScenarioName,
-                nextScenarioCode
-            );
-            if (updatedScenarioContent.changed) {
-                await vscode.workspace.fs.writeFile(scenarioYamlUriAfterRename, Buffer.from(updatedScenarioContent.content, 'utf8'));
-                changedFiles++;
-            }
-
-            for (const testConfigUri of currentTestConfigUris) {
-                const rawTestContent = Buffer.from(await vscode.workspace.fs.readFile(testConfigUri)).toString('utf8');
-                const updatedTestContent = this.updateScenarioDisplayNameInTestConfigContent(
-                    rawTestContent,
-                    newScenarioName,
-                    nextScenarioCode
-                );
-                if (!updatedTestContent.changed) {
-                    continue;
-                }
-                await vscode.workspace.fs.writeFile(testConfigUri, Buffer.from(updatedTestContent.content, 'utf8'));
-                changedFiles++;
-            }
+                return { key: targetUri, before: planned.before, after: planned.content };
+            });
+            changedFiles += await applyPreparedFileWrites(preparedWrites, async (uri, content) => {
+                await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+            });
         } catch (error: any) {
+            const rollbackErrors: unknown[] = [];
+            if (mainTestFileRenamed && mainTestFileRename) {
+                try {
+                    await vscode.workspace.fs.rename(
+                        vscode.Uri.file(path.join(currentTestDirectory, mainTestFileRename.toFileName)),
+                        vscode.Uri.file(path.join(currentTestDirectory, mainTestFileRename.fromFileName)),
+                        { overwrite: false }
+                    );
+                } catch (rollbackError) {
+                    rollbackErrors.push(rollbackError);
+                }
+            }
+            if (scenarioDirectoryRenamed) {
+                try {
+                    await vscode.workspace.fs.rename(targetScenarioDirectoryUri, scenarioDirectoryUri, { overwrite: false });
+                } catch (rollbackError) {
+                    rollbackErrors.push(rollbackError);
+                }
+            }
+            const displayedError = rollbackErrors.length > 0
+                ? new AggregateError([error, ...rollbackErrors], 'Rename rollback was incomplete')
+                : error;
             vscode.window.showErrorMessage(
-                this.t('Failed to rename scenario "{0}": {1}', trimmedScenarioName, error?.message || String(error))
+                this.t(
+                    'Failed to rename scenario "{0}": {1}',
+                    trimmedScenarioName,
+                    displayedError?.message || String(displayedError)
+                )
             );
             return;
         }
