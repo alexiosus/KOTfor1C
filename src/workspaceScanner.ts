@@ -7,8 +7,23 @@ import { buildScenarioCatalog, type ScenarioCatalog } from './scenarioCatalog';
 import { collectTreeWithConcurrencyLimit, mapWithConcurrencyLimit } from './boundedConcurrency';
 import { parseTestInfoFromScenarioSource } from './scenarioDescriptor';
 
-const SCENARIO_READ_CONCURRENCY = 16;
+const SCENARIO_READ_CONCURRENCY = 32;
 const SCENARIO_DIRECTORY_CONCURRENCY = 16;
+
+interface ScenarioScanMetrics {
+    readonly readLatenciesMs: number[];
+    pathTotalMs: number;
+    parseTotalMs: number;
+    fallbackAttempts: number;
+}
+
+function percentileMs(values: readonly number[], percentile: number): number {
+    if (values.length === 0) {
+        return 0;
+    }
+    const sorted = [...values].sort((left, right) => left - right);
+    return Math.round(sorted[Math.ceil(sorted.length * percentile) - 1]);
+}
 
 function buildWorkspaceUriFromFsPath(workspaceRootUri: vscode.Uri, targetFsPath: string): vscode.Uri {
     if (workspaceRootUri.scheme === 'file') {
@@ -107,7 +122,7 @@ async function collectFilesFromScanDirectory(
     return results;
 }
 
-export async function readTextFileFast(uri: vscode.Uri): Promise<string> {
+export async function readTextFileFast(uri: vscode.Uri, metrics?: ScenarioScanMetrics): Promise<string> {
     if (uri.fsPath) {
         try {
             return await fs.promises.readFile(uri.fsPath, 'utf-8');
@@ -116,6 +131,9 @@ export async function readTextFileFast(uri: vscode.Uri): Promise<string> {
         }
     }
 
+    if (metrics) {
+        metrics.fallbackAttempts += 1;
+    }
     const fileContentBytes = await vscode.workspace.fs.readFile(uri);
     return Buffer.from(fileContentBytes).toString('utf-8');
 }
@@ -164,7 +182,8 @@ function computeRelativeScenarioPath(fileUri: vscode.Uri, scanDirUri: vscode.Uri
 async function readScenarioDefinitions(
     potentialFiles: readonly vscode.Uri[],
     scanDirUri: vscode.Uri,
-    token?: vscode.CancellationToken
+    token?: vscode.CancellationToken,
+    metrics?: ScenarioScanMetrics
 ): Promise<TestInfo[]> {
     const definitions: TestInfo[] = [];
     try {
@@ -174,12 +193,23 @@ async function readScenarioDefinitions(
             }
 
             try {
-                const source = await readTextFileFast(fileUri);
+                const readStartedAt = performance.now();
+                const source = await readTextFileFast(fileUri, metrics);
+                metrics?.readLatenciesMs.push(performance.now() - readStartedAt);
+                const pathStartedAt = performance.now();
+                const relativePath = computeRelativeScenarioPath(fileUri, scanDirUri);
+                if (metrics) {
+                    metrics.pathTotalMs += performance.now() - pathStartedAt;
+                }
+                const parseStartedAt = performance.now();
                 const testInfo = parseTestInfoFromScenarioSource(
                     source,
                     fileUri,
-                    computeRelativeScenarioPath(fileUri, scanDirUri)
+                    relativePath
                 );
+                if (metrics) {
+                    metrics.parseTotalMs += performance.now() - parseStartedAt;
+                }
                 if (testInfo) {
                     definitions.push(testInfo);
                 }
@@ -202,9 +232,10 @@ async function readScenarioDefinitions(
 export async function readScenarioInfo(
     fileUri: vscode.Uri,
     scanRootUri: vscode.Uri,
-    token?: vscode.CancellationToken
+    token?: vscode.CancellationToken,
+    metrics?: ScenarioScanMetrics
 ): Promise<TestInfo | null> {
-    return (await readScenarioDefinitions([fileUri], scanRootUri, token))[0] || null;
+    return (await readScenarioDefinitions([fileUri], scanRootUri, token, metrics))[0] || null;
 }
 
 export async function scanWorkspaceForScenarioCatalog(
@@ -215,10 +246,13 @@ export async function scanWorkspaceForScenarioCatalog(
     const scanDirUri = vscode.Uri.file(resolveScanDirFsPath(workspaceRootUri));
     const potentialFiles = await findScenarioDescriptorUris(workspaceRootUri, token);
     const enumerationMs = Date.now() - startedAt;
+    const metrics: ScenarioScanMetrics = {
+        readLatenciesMs: [], pathTotalMs: 0, parseTotalMs: 0, fallbackAttempts: 0
+    };
     const parsedDefinitions = await mapWithConcurrencyLimit(
         potentialFiles,
         SCENARIO_READ_CONCURRENCY,
-        fileUri => readScenarioInfo(fileUri, scanDirUri, token)
+        fileUri => readScenarioInfo(fileUri, scanDirUri, token, metrics)
     );
     const readAndParseMs = Date.now() - startedAt - enumerationMs;
     if (token?.isCancellationRequested) {
@@ -231,7 +265,12 @@ export async function scanWorkspaceForScenarioCatalog(
     console.log(
         `[WorkspaceScanner] Scanned ${catalog.all.length} definitions, ${catalog.byName.size} names, `
         + `${duplicateNames} duplicate names in ${Date.now() - startedAt} ms `
-        + `(directories ${enumerationMs} ms, read/parse ${readAndParseMs} ms).`
+        + `(directories ${enumerationMs} ms, read/parse ${readAndParseMs} ms; `
+        + `read p50 ${percentileMs(metrics.readLatenciesMs, 0.5)} ms, `
+        + `p95 ${percentileMs(metrics.readLatenciesMs, 0.95)} ms, `
+        + `path ${Math.round(metrics.pathTotalMs)} ms, `
+        + `parse ${Math.round(metrics.parseTotalMs)} ms, `
+        + `fallback attempts ${metrics.fallbackAttempts}).`
     );
     return catalog;
 }
