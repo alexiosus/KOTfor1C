@@ -171,10 +171,18 @@ export function resolveScanDirFsPath(workspaceRootUri: vscode.Uri): string {
 // Используем scen.yaml, т.к. он содержит метаданные
 export const SCAN_GLOB_PATTERN = '**/scen.yaml';
 
-function computeRelativeScenarioPath(fileUri: vscode.Uri, scanDirUri: vscode.Uri): string {
+function computeRelativeScenarioPath(
+    fileUri: vscode.Uri,
+    scanDirUri: vscode.Uri,
+    fromEnumeratedScan = false
+): string {
     const parentDirFsPath = path.dirname(fileUri.fsPath);
-    if (isPathInside(scanDirUri.fsPath, parentDirFsPath)) {
-        return path.relative(scanDirUri.fsPath, parentDirFsPath).replace(/\\/g, '/');
+    const relativePath = path.relative(scanDirUri.fsPath, parentDirFsPath);
+    const lexicallyInside = relativePath !== '..'
+        && !relativePath.startsWith(`..${path.sep}`)
+        && !path.isAbsolute(relativePath);
+    if ((fromEnumeratedScan && lexicallyInside) || isPathInside(scanDirUri.fsPath, parentDirFsPath)) {
+        return relativePath.replace(/\\/g, '/');
     }
     return vscode.workspace.asRelativePath(parentDirFsPath, false);
 }
@@ -183,7 +191,8 @@ async function readScenarioDefinitions(
     potentialFiles: readonly vscode.Uri[],
     scanDirUri: vscode.Uri,
     token?: vscode.CancellationToken,
-    metrics?: ScenarioScanMetrics
+    metrics?: ScenarioScanMetrics,
+    fromEnumeratedScan = false
 ): Promise<TestInfo[]> {
     const definitions: TestInfo[] = [];
     try {
@@ -197,7 +206,7 @@ async function readScenarioDefinitions(
                 const source = await readTextFileFast(fileUri, metrics);
                 metrics?.readLatenciesMs.push(performance.now() - readStartedAt);
                 const pathStartedAt = performance.now();
-                const relativePath = computeRelativeScenarioPath(fileUri, scanDirUri);
+                const relativePath = computeRelativeScenarioPath(fileUri, scanDirUri, fromEnumeratedScan);
                 if (metrics) {
                     metrics.pathTotalMs += performance.now() - pathStartedAt;
                 }
@@ -252,7 +261,8 @@ export async function scanWorkspaceForScenarioCatalog(
     const parsedDefinitions = await mapWithConcurrencyLimit(
         potentialFiles,
         SCENARIO_READ_CONCURRENCY,
-        fileUri => readScenarioInfo(fileUri, scanDirUri, token, metrics)
+        // These paths came from readdir beneath scanDirUri; symlink entries are not traversed.
+        async fileUri => (await readScenarioDefinitions([fileUri], scanDirUri, token, metrics, true))[0] || null
     );
     const readAndParseMs = Date.now() - startedAt - enumerationMs;
     if (token?.isCancellationRequested) {

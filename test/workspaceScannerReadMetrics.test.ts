@@ -19,6 +19,7 @@ test('scanner overlaps 32 descriptor reads and reports read diagnostics', async 
     let maxActiveReads = 0;
     let fallbackReads = 0;
     let clockMs = 0;
+    let canonicalPathCalls = 0;
     const logs: string[] = [];
     const makeUri = (fsPath: string) => ({
         fsPath,
@@ -26,6 +27,7 @@ test('scanner overlaps 32 descriptor reads and reports read diagnostics', async 
         toString: () => `file://${fsPath}`
     });
     const canonicalPath = (filePath: string) => {
+        canonicalPathCalls += 1;
         clockMs += 3;
         return filePath;
     };
@@ -62,6 +64,7 @@ test('scanner overlaps 32 descriptor reads and reports read diagnostics', async 
     const vscode = {
         Uri: { file: makeUri },
         workspace: {
+            asRelativePath: () => 'outside-relative',
             fs: {
                 readFile: async () => {
                     fallbackReads += 1;
@@ -106,13 +109,26 @@ test('scanner overlaps 32 descriptor reads and reports read diagnostics', async 
     const catalog = await scan(makeUri(root));
 
     assert.equal(catalog.all.length, 40);
+    assert.equal(catalog.byName.get('scenario-7')?.[0].relativePath, 'scenario-7');
     assert.equal(maxActiveReads, 32);
     assert.equal(fallbackReads, 1);
+    assert.equal(canonicalPathCalls, 0);
     const metrics = logs[0].match(/read p50 (\d+) ms, p95 (\d+) ms, path (\d+) ms, parse (\d+) ms, fallback attempts (\d+)/);
     assert.ok(metrics);
     assert.ok(Number(metrics[1]) > 0);
     assert.ok(Number(metrics[2]) > Number(metrics[1]));
-    assert.equal(Number(metrics[3]), 240);
+    assert.equal(Number(metrics[3]), 0);
     assert.equal(Number(metrics[4]), 80);
     assert.equal(Number(metrics[5]), 1);
+
+    const readScenarioInfo = moduleObject.exports.readScenarioInfo as
+        (fileUri: ReturnType<typeof makeUri>, scanRootUri: ReturnType<typeof makeUri>) =>
+            Promise<{ relativePath: string } | null>;
+    const incremental = await readScenarioInfo(makeUri(path.join(root, 'scenario-7', descriptorName)), makeUri(root));
+    assert.equal(incremental?.relativePath, 'scenario-7');
+    assert.equal(canonicalPathCalls, 2);
+
+    const outside = await readScenarioInfo(makeUri(path.join(path.sep, 'outside', descriptorName)), makeUri(root));
+    assert.equal(outside?.relativePath, 'outside-relative');
+    assert.equal(canonicalPathCalls, 4);
 });
