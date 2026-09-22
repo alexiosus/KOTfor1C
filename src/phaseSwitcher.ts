@@ -106,6 +106,7 @@ import {
     updateScenarioDisplayNameInScenarioContent,
     updateScenarioDisplayNameInTestConfigContent
 } from './scenarioYamlMutations';
+import { resolveWorkspaceSettingPath } from './vanessaVersion';
 
 const loadInfobaseManager = createDeferredLoader(
     () => import('./infobaseManager.js')
@@ -9096,10 +9097,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private resolvePathFromWorkspaceSetting(rawPath: string, workspaceRootPath: string): string {
-        if (path.isAbsolute(rawPath)) {
-            return rawPath;
-        }
-        return path.join(workspaceRootPath, rawPath);
+        return resolveWorkspaceSettingPath(rawPath, workspaceRootPath, path);
     }
 
     private parseInfobasePathFromConnectionString(value: string): string | null {
