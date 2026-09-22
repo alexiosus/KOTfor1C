@@ -1078,7 +1078,6 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     );
 
                     completionItem.sortText = "1" + (1 - matchResult.score).toFixed(3) + scenarioName; // Используем toFixed(3)
-                    console.log(`[Scenario Autocomplete] Label: "${completionItem.label}", Scenario Name: ${scenarioName}, Input: "${textForScenarioFuzzyMatch}", Score: ${matchResult.score.toFixed(3)}, SortText: ${completionItem.sortText}`);
                     completionList.items.push(completionItem);
                 }
             });
