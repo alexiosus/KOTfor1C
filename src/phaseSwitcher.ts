@@ -9,6 +9,7 @@ import { LazyScenarioCatalog } from './lazyScenarioCatalog';
 import {
     buildScenarioCatalog,
     removeScenarioFromCatalogByUri,
+    ScenarioDirectoryIndex,
     type ScenarioCatalog,
     upsertScenarioInCatalog
 } from './scenarioCatalog';
@@ -422,6 +423,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private _isScanning: boolean = false;
     private readonly _scenarioCatalogState = new LazyScenarioCatalog(() => this.loadScenarioCatalog());
+    private _scenarioDirectoryIndexCache: {
+        catalog: ScenarioCatalog;
+        scanRootPath: string;
+        index: ScenarioDirectoryIndex;
+    } | null = null;
     private _aiReportStateRefreshTimer: NodeJS.Timeout | null = null;
     private _isBuildInProgress: boolean = false;
     private _isScenarioRepairInProgress: boolean = false;
@@ -8102,15 +8108,33 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return Array.from(names);
         }
 
-        const normalizedUriPath = path.resolve(uri.fsPath);
-        for (const info of catalog.all) {
-            if (info.yamlFileUri.scheme !== 'file') {
-                continue;
-            }
-            const scenarioDir = path.dirname(info.yamlFileUri.fsPath);
-            if (this.isPathInside(scenarioDir, normalizedUriPath)) {
-                names.add(info.name);
-            }
+        const workspaceRootUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+        if (!workspaceRootUri) {
+            return Array.from(names);
+        }
+
+        const scanRootPath = resolveScanDirFsPath(workspaceRootUri);
+        if (
+            !this._scenarioDirectoryIndexCache
+            || this._scenarioDirectoryIndexCache.catalog !== catalog
+            || this._scenarioDirectoryIndexCache.scanRootPath !== scanRootPath
+        ) {
+            this._scenarioDirectoryIndexCache = {
+                catalog,
+                scanRootPath,
+                index: new ScenarioDirectoryIndex(
+                    catalog.all
+                        .filter(info => info.yamlFileUri.scheme === 'file')
+                        .map(info => ({ name: info.name, filePath: info.yamlFileUri.fsPath })),
+                    scanRootPath,
+                    this.normalizeFsPathForComparison(scanRootPath)
+                )
+            };
+        }
+
+        const normalizedUriPath = this.normalizeFsPathForComparison(uri.fsPath);
+        for (const name of this._scenarioDirectoryIndexCache.index.getRelatedScenarioNames(normalizedUriPath)) {
+            names.add(name);
         }
 
         return Array.from(names);
