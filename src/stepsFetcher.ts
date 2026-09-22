@@ -4,6 +4,9 @@ import * as path from 'path';
 import * as fs from 'fs'; // Используем для синхронной проверки существования локального бандла
 import { getTranslator } from './localization';
 
+// Deprecated compatibility API. StepCatalogService is the only entry point for new runtime
+// consumers; these HTML-returning exports remain temporarily for providers migrated in Task 5.
+
 // Ключ конфигурации для URL внешнего файла steps.htm
 const EXTERNAL_STEPS_URL_CONFIG_KEY = 'kotTestToolkit.steps.externalUrl';
 // URL по умолчанию, если в конфигурации не указан другой

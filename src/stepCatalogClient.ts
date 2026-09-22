@@ -138,6 +138,18 @@ export class VersionedStepCatalogClient {
         return this.shareRequest(indexUrl, version, false, signal);
     }
 
+    public async getCachedExactCatalog(
+        indexUrl: string,
+        version: string
+    ): Promise<VersionedCatalogResult | null> {
+        try {
+            const paths = getStepCatalogCachePaths(indexUrl, version);
+            return await this.loadCachedCatalog(paths.catalog, version);
+        } catch {
+            return null;
+        }
+    }
+
     public refreshExactCatalog(
         indexUrl: string,
         version: string,

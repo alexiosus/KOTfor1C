@@ -177,6 +177,23 @@ test('returns a valid exact cache without contacting the network', async () => {
     assert.equal(transport.calls, 0);
 });
 
+test('exposes a cache-only lookup for non-blocking service startup', async () => {
+    const catalog = createCatalog();
+    const catalogBytes = jsonBytes(catalog);
+    const paths = getStepCatalogCachePaths(INDEX_URL, VERSION);
+    const transport = new FakeTransport([]);
+    const client = new VersionedStepCatalogClient(
+        new MemoryStorage({ [paths.catalog]: catalogBytes }),
+        transport,
+        () => 1_000
+    );
+
+    const result = await client.getCachedExactCatalog(INDEX_URL, VERSION);
+    assert.equal(result?.source, 'versioned-cache');
+    assert.equal(result?.digest, sha256Hex(catalogBytes));
+    assert.equal(transport.calls, 0);
+});
+
 test('invalid downloaded hash preserves a valid exact cache during refresh', async () => {
     const catalog = createCatalog();
     const cachedBytes = jsonBytes(catalog);
