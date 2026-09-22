@@ -4,10 +4,11 @@ import * as fs from 'fs';
 import type { TestInfo } from './types';
 import { getScenarioScanRootPath, resolveScenarioScanRootFsPath } from './scenarioScanRoot';
 import { buildScenarioCatalog, type ScenarioCatalog } from './scenarioCatalog';
-import { mapWithConcurrencyLimit } from './boundedConcurrency';
+import { collectTreeWithConcurrencyLimit, mapWithConcurrencyLimit } from './boundedConcurrency';
 import { parseTestInfoFromScenarioSource } from './scenarioDescriptor';
 
 const SCENARIO_READ_CONCURRENCY = 16;
+const SCENARIO_DIRECTORY_CONCURRENCY = 16;
 
 function buildWorkspaceUriFromFsPath(workspaceRootUri: vscode.Uri, targetFsPath: string): vscode.Uri {
     if (workspaceRootUri.scheme === 'file') {
@@ -54,58 +55,54 @@ async function collectFilesFromScanDirectory(
     token?: vscode.CancellationToken
 ): Promise<vscode.Uri[]> {
     const scanDirFsPath = resolveScenarioScanRootFsPath(workspaceRootUri);
-    const results: vscode.Uri[] = [];
 
     try {
         const stat = await fs.promises.stat(scanDirFsPath);
         if (!stat.isDirectory()) {
-            return results;
+            return [];
         }
     } catch {
-        return results;
+        return [];
     }
 
-    const walk = async (currentDirFsPath: string): Promise<void> => {
-        if (token?.isCancellationRequested) {
-            return;
-        }
-
-        let entries: fs.Dirent[];
-        try {
-            entries = await fs.promises.readdir(currentDirFsPath, { withFileTypes: true });
-        } catch {
-            return;
-        }
-
-        for (const entry of entries) {
-            if (token?.isCancellationRequested) {
-                return;
+    const filePaths = await collectTreeWithConcurrencyLimit(
+        scanDirFsPath,
+        SCENARIO_DIRECTORY_CONCURRENCY,
+        async currentDirFsPath => {
+            let entries: fs.Dirent[];
+            try {
+                entries = await fs.promises.readdir(currentDirFsPath, { withFileTypes: true });
+            } catch {
+                return { children: [], values: [] };
             }
 
-            const entryName = entry.name;
-            const entryFsPath = path.join(currentDirFsPath, entryName);
+            const children: string[] = [];
+            const values: string[] = [];
+            for (const entry of entries) {
+                if (token?.isCancellationRequested) {
+                    break;
+                }
 
-            if (entry.isDirectory()) {
-                if (entryName === 'node_modules' || entryName === '.git') {
+                const entryName = entry.name;
+                const entryFsPath = path.join(currentDirFsPath, entryName);
+
+                if (entry.isDirectory()) {
+                    if (entryName !== 'node_modules' && entryName !== '.git') {
+                        children.push(entryFsPath);
+                    }
                     continue;
                 }
-                await walk(entryFsPath);
-                continue;
+
+                if (entry.isFile() && fileMatcher(entryName)) {
+                    values.push(entryFsPath);
+                }
             }
+            return { children, values };
+        },
+        () => token?.isCancellationRequested ?? false
+    );
 
-            if (!entry.isFile()) {
-                continue;
-            }
-
-            if (!fileMatcher(entryName)) {
-                continue;
-            }
-
-            results.push(buildWorkspaceUriFromFsPath(workspaceRootUri, entryFsPath));
-        }
-    };
-
-    await walk(scanDirFsPath);
+    const results = filePaths.map(filePath => buildWorkspaceUriFromFsPath(workspaceRootUri, filePath));
     results.sort((left, right) => left.fsPath.localeCompare(right.fsPath, undefined, { sensitivity: 'base' }));
     return results;
 }
@@ -217,11 +214,13 @@ export async function scanWorkspaceForScenarioCatalog(
     const startedAt = Date.now();
     const scanDirUri = vscode.Uri.file(resolveScanDirFsPath(workspaceRootUri));
     const potentialFiles = await findScenarioDescriptorUris(workspaceRootUri, token);
+    const enumerationMs = Date.now() - startedAt;
     const parsedDefinitions = await mapWithConcurrencyLimit(
         potentialFiles,
         SCENARIO_READ_CONCURRENCY,
         fileUri => readScenarioInfo(fileUri, scanDirUri, token)
     );
+    const readAndParseMs = Date.now() - startedAt - enumerationMs;
     if (token?.isCancellationRequested) {
         throw new vscode.CancellationError();
     }
@@ -231,7 +230,8 @@ export async function scanWorkspaceForScenarioCatalog(
 
     console.log(
         `[WorkspaceScanner] Scanned ${catalog.all.length} definitions, ${catalog.byName.size} names, `
-        + `${duplicateNames} duplicate names in ${Date.now() - startedAt} ms.`
+        + `${duplicateNames} duplicate names in ${Date.now() - startedAt} ms `
+        + `(directories ${enumerationMs} ms, read/parse ${readAndParseMs} ms).`
     );
     return catalog;
 }

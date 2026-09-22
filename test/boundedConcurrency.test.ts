@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mapWithConcurrencyLimit } from '../src/boundedConcurrency';
+import { collectTreeWithConcurrencyLimit, mapWithConcurrencyLimit } from '../src/boundedConcurrency';
 
 test('limits concurrent work and preserves input order', async () => {
     let active = 0;
@@ -41,4 +41,46 @@ test('stops scheduling new work after the first failure', async () => {
     );
 
     assert.deepEqual(started, [1, 2]);
+});
+
+test('tree collection overlaps directory reads within a bound and preserves discovery order', async () => {
+    const children = new Map<string, string[]>([
+        ['root', ['a', 'b', 'c', 'd', 'e']],
+        ['a', ['a1']],
+        ['c', ['c1']]
+    ]);
+    let active = 0;
+    let maxActive = 0;
+
+    const files = await collectTreeWithConcurrencyLimit('root', 3, async directory => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise(resolve => setImmediate(resolve));
+        active -= 1;
+        return {
+            children: children.get(directory) || [],
+            values: [`${directory}/scen.yaml`]
+        };
+    });
+
+    assert.equal(maxActive, 3);
+    assert.deepEqual(files, [
+        'root/scen.yaml',
+        'a/scen.yaml', 'b/scen.yaml', 'c/scen.yaml', 'd/scen.yaml', 'e/scen.yaml',
+        'a1/scen.yaml', 'c1/scen.yaml'
+    ]);
+});
+
+test('tree collection does not start child-directory reads after cancellation', async () => {
+    let cancelled = false;
+    const visited: string[] = [];
+
+    const files = await collectTreeWithConcurrencyLimit('root', 4, async directory => {
+        visited.push(directory);
+        cancelled = true;
+        return { children: ['child'], values: ['root/scen.yaml'] };
+    }, () => cancelled);
+
+    assert.deepEqual(visited, ['root']);
+    assert.deepEqual(files, ['root/scen.yaml']);
 });

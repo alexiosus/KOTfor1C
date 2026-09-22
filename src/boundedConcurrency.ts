@@ -39,3 +39,29 @@ export async function mapWithConcurrencyLimit<T, TResult>(
 
     return results;
 }
+
+export async function collectTreeWithConcurrencyLimit<TNode, TValue>(
+    root: TNode,
+    concurrency: number,
+    visit: (node: TNode) => Promise<{ children: readonly TNode[]; values: readonly TValue[] }>,
+    shouldCancel: () => boolean = () => false
+): Promise<TValue[]> {
+    const values: TValue[] = [];
+    let level: readonly TNode[] = [root];
+
+    while (level.length > 0 && !shouldCancel()) {
+        const visited = await mapWithConcurrencyLimit(level, concurrency, node =>
+            shouldCancel()
+                ? Promise.resolve({ children: [], values: [] })
+                : visit(node)
+        );
+        const nextLevel: TNode[] = [];
+        for (const result of visited) {
+            values.push(...result.values);
+            nextLevel.push(...result.children);
+        }
+        level = nextLevel;
+    }
+
+    return values;
+}
