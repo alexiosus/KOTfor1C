@@ -8,7 +8,7 @@ import { collectTreeWithConcurrencyLimit, mapWithConcurrencyLimit } from './boun
 import { parseTestInfoFromScenarioSource } from './scenarioDescriptor';
 
 const SCENARIO_READ_CONCURRENCY = 32;
-const SCENARIO_DIRECTORY_CONCURRENCY = 32;
+const SCENARIO_DIRECTORY_CONCURRENCY = 16;
 
 interface ScenarioScanMetrics {
     readonly directoryReadLatenciesMs: number[];

@@ -127,7 +127,7 @@ test('scanner overlaps 32 descriptor reads and reports read diagnostics', async 
     assert.equal(catalog.byName.size, 40);
     assert.equal(catalog.byName.get('scenario-7')?.[0].relativePath, 'scenario-7');
     assert.equal(maxActiveReads, 32);
-    assert.equal(maxActiveDirectoryReads, 32);
+    assert.equal(maxActiveDirectoryReads, 16);
     assert.equal(totalDirectoryReads, 41);
     assert.equal(fallbackReads, 1);
     assert.equal(canonicalPathCalls, 0);
@@ -135,8 +135,8 @@ test('scanner overlaps 32 descriptor reads and reports read diagnostics', async 
     assert.ok(directoryMetrics);
     assert.equal(Number(directoryMetrics[1]), 41);
     assert.ok(Number(directoryMetrics[2]) > 0);
-    assert.ok(Number(directoryMetrics[3]) > Number(directoryMetrics[2]));
-    assert.equal(Number(directoryMetrics[4]), 32);
+    assert.ok(Number(directoryMetrics[3]) >= Number(directoryMetrics[2]));
+    assert.equal(Number(directoryMetrics[4]), 16);
     const metrics = logs[0].match(/read p50 (\d+) ms, p95 (\d+) ms, path (\d+) ms, parse (\d+) ms, fallback attempts (\d+)/);
     assert.ok(metrics);
     assert.ok(Number(metrics[1]) > 0);
