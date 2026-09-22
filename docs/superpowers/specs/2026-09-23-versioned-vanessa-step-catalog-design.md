@@ -6,7 +6,7 @@ The extension currently treats `res/steps.htm` as the built-in Vanessa Automatio
 
 The HTML represents one Vanessa Automation version and cannot follow the version used by an individual project. Updating the extension whenever Vanessa changes would keep those release cycles coupled, while parsing or unpacking every project EPF during activation would require a 1C platform installation and would recreate an expensive catalog on user machines.
 
-Vanessa's official repository contains the standard library sources and localization templates for every release tag. This makes a versioned catalog generated outside the Extension Host the most predictable primary source.
+Vanessa's official repository contains a ready bilingual step-localization table at `locales/Steps/Templates/en/Ext/Template.xml` for every release tag. The table has the same four useful columns as the current HTML and, for `1.2.043.28`, contains 1,613 step rows after excluding 11 documented Gherkin structure rows. This makes a versioned catalog generated outside the Extension Host the most predictable primary source without reconstructing registrations from BSL.
 
 ## Goal
 
@@ -49,9 +49,6 @@ export interface StepTextVariant {
 
 export interface BuiltInStepDefinition {
     readonly id: string;
-    readonly library: string;
-    readonly procedure?: string;
-    readonly kind?: string;
     readonly ru?: StepTextVariant;
     readonly en?: StepTextVariant;
 }
@@ -69,7 +66,7 @@ export interface BuiltInStepCatalog {
 }
 ```
 
-At least one language variant is required. Empty patterns are rejected. Newlines and whitespace are normalized by the generator, not by consumers. `id` is deterministic from the source library, procedure, and canonical Russian or English pattern; array order is deterministic as well. Timestamps are metadata and are excluded from the deterministic-content comparison used by CI.
+At least one language variant is required. Empty patterns are rejected. Newlines, XML entities, and whitespace are normalized by the generator, not by consumers. `id` is deterministic from the canonical Russian and English patterns; array order is deterministic as well. Timestamps are metadata and are excluded from the deterministic-content comparison used by CI.
 
 The publication index has its own schema:
 
@@ -90,11 +87,11 @@ The index path is relative to the index URL. The extension accepts only HTTPS UR
 
 ## CI Generator
 
-Add a Node generator under `tools/step-catalog/` with no VS Code dependency. It receives an already checked-out Vanessa source directory, release version, source ref, and output path. Unit tests use small checked-in fixtures; they never download Vanessa.
+Add a Node generator under `tools/step-catalog/` with no VS Code dependency. It receives an already checked-out Vanessa source directory, release version, source ref, and output path. Unit tests use a small checked-in `Template.xml` fixture; they never download Vanessa.
 
-The generator scans only the standard library sources represented by `features/Libraries` and the corresponding official step-localization templates. It uses a purpose-built BSL lexical reader rather than regular expressions over whole files. The reader understands comments, quoted strings with doubled quotes, multiline strings, balanced parentheses, omitted arguments, and top-level concatenation of static strings. It extracts registrations made through `ДобавитьШагВМассивТестов`, then pairs Russian and English variants by stable source identity and localization data.
+The generator reads only `locales/Steps/Templates/en/Ext/Template.xml`. Each data `rowsItem` must contain exactly four outer cells in this order: Russian pattern, Russian description, English pattern, English description. It decodes XML character and numeric entities, preserves meaningful multiline content, and normalizes line endings. The first header row is recognized by its column labels and excluded. The 11 Gherkin structure rows whose descriptions are exactly `Специальный текст` / `Special text` are excluded because they are syntax templates, not executable known steps.
 
-Dynamic expressions that cannot be evaluated statically are reported with file and line. They are not silently discarded: generation fails unless the expression is in a reviewed allowlist with an explanation. Duplicate IDs, duplicate patterns within a language, missing source metadata, invalid placeholders, an unexpectedly small catalog, and a material count drop from the preceding version also fail generation. The action writes a machine-readable generation report alongside the catalog.
+The parser is deliberately strict about the surrounding 1C spreadsheet XML shape: malformed rows, unexpected cell counts, a missing header, duplicate IDs, duplicate patterns within a language, missing source metadata, invalid placeholders, an unexpectedly small catalog, and a material count drop from the preceding version fail generation. No BSL parser or heuristic reconstruction of `ДобавитьШагВМассивТестов` calls is introduced. The action writes a machine-readable generation report alongside the catalog.
 
 The initial compatibility check compares the generated catalog for Vanessa `1.2.043.28` with the current `res/steps.htm`. Exact equality is not required because the source set may legitimately differ, but every legacy pattern absent from the generated catalog must appear in the reviewed report. This makes the migration auditable instead of relying only on a minimum step count.
 
@@ -186,9 +183,9 @@ Cache writes use a temporary file followed by rename. A failed write cannot corr
 
 Pure Node tests cover:
 
-- BSL lexical extraction across comments, multiline strings, omitted arguments, nested calls, and static concatenation;
-- explicit failure and diagnostics for unsupported dynamic registration expressions;
-- localization pairing, deterministic IDs and ordering, duplicate detection, and stable output;
+- spreadsheet XML extraction across namespaces, escaped entities, numeric entities, multiline values, and four-cell rows;
+- strict failure for malformed rows, missing headers, unexpected cell counts, and source-format drift;
+- Russian/English pairing, exclusion of the 11 syntax rows, deterministic IDs and ordering, duplicate detection, and stable output;
 - catalog and index schema validation, SHA-256 verification, version mismatch, and response-size rejection;
 - Vanessa version extraction and resolution priority;
 - exact-cache, offline, unknown-version, absent-version, invalid-download, and bundled-HTML fallback paths;
@@ -205,7 +202,7 @@ Implement in four green increments:
 
 1. Add the catalog model, validators, legacy HTML adapter, and provider conversion to the shared model without changing the active source.
 2. Add folder-scoped version resolution, `StepCatalogService`, immutable cache, settings, and single-load provider integration.
-3. Add the source generator, fixtures, deterministic validation, compatibility report, and local generator command.
+3. Add the official `Template.xml` generator, fixtures, deterministic validation, compatibility report, and local generator command.
 4. Add the publishing workflow and bootstrap `1.2.043.28`; keep `steps.htm` as fallback and document how to inspect the active catalog source.
 
 The runtime can ship only after the configured catalog URL contains the bootstrap index and catalog. Until then, all users continue through the bundled fallback without losing IntelliSense.
