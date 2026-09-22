@@ -17,9 +17,14 @@ test('scanner overlaps 32 descriptor reads and reports read diagnostics', async 
     const descriptorName = 'scen.yaml';
     let activeReads = 0;
     let maxActiveReads = 0;
+    let activeDirectoryReads = 0;
+    let maxActiveDirectoryReads = 0;
+    let totalDirectoryReads = 0;
     let fallbackReads = 0;
     let clockMs = 0;
     let canonicalPathCalls = 0;
+    let cancelAfterRoot = false;
+    let cancelled = false;
     const logs: string[] = [];
     const makeUri = (fsPath: string) => ({
         fsPath,
@@ -39,7 +44,16 @@ test('scanner overlaps 32 descriptor reads and reports read diagnostics', async 
         promises: {
             stat: async () => ({ isDirectory: () => true }),
             readdir: async (directory: string) => {
+                activeDirectoryReads += 1;
+                totalDirectoryReads += 1;
+                maxActiveDirectoryReads = Math.max(maxActiveDirectoryReads, activeDirectoryReads);
+                await new Promise(resolve => setImmediate(resolve));
+                clockMs += 1;
+                activeDirectoryReads -= 1;
                 if (directory === root) {
+                    if (cancelAfterRoot) {
+                        cancelled = true;
+                    }
                     return Array.from({ length: 40 }, (_, index) => ({
                         name: `scenario-${index}`,
                         isDirectory: () => true,
@@ -105,14 +119,24 @@ test('scanner overlaps 32 descriptor reads and reports read diagnostics', async 
     });
 
     const scan = moduleObject.exports.scanWorkspaceForScenarioCatalog as
-        (uri: ReturnType<typeof makeUri>) => Promise<ReturnType<typeof buildScenarioCatalog>>;
+        (uri: ReturnType<typeof makeUri>, token?: { readonly isCancellationRequested: boolean }) =>
+            Promise<ReturnType<typeof buildScenarioCatalog>>;
     const catalog = await scan(makeUri(root));
 
     assert.equal(catalog.all.length, 40);
+    assert.equal(catalog.byName.size, 40);
     assert.equal(catalog.byName.get('scenario-7')?.[0].relativePath, 'scenario-7');
     assert.equal(maxActiveReads, 32);
+    assert.equal(maxActiveDirectoryReads, 32);
+    assert.equal(totalDirectoryReads, 41);
     assert.equal(fallbackReads, 1);
     assert.equal(canonicalPathCalls, 0);
+    const directoryMetrics = logs[0].match(/directories \d+ ms, directory reads (\d+), p50 (\d+) ms, p95 (\d+) ms, max in flight (\d+);/);
+    assert.ok(directoryMetrics);
+    assert.equal(Number(directoryMetrics[1]), 41);
+    assert.ok(Number(directoryMetrics[2]) > 0);
+    assert.ok(Number(directoryMetrics[3]) > Number(directoryMetrics[2]));
+    assert.equal(Number(directoryMetrics[4]), 32);
     const metrics = logs[0].match(/read p50 (\d+) ms, p95 (\d+) ms, path (\d+) ms, parse (\d+) ms, fallback attempts (\d+)/);
     assert.ok(metrics);
     assert.ok(Number(metrics[1]) > 0);
@@ -131,4 +155,11 @@ test('scanner overlaps 32 descriptor reads and reports read diagnostics', async 
     const outside = await readScenarioInfo(makeUri(path.join(path.sep, 'outside', descriptorName)), makeUri(root));
     assert.equal(outside?.relativePath, 'outside-relative');
     assert.equal(canonicalPathCalls, 4);
+
+    cancelAfterRoot = true;
+    await assert.rejects(
+        scan(makeUri(root), { get isCancellationRequested() { return cancelled; } }),
+        error => error instanceof vscode.CancellationError
+    );
+    assert.equal(totalDirectoryReads, 42);
 });

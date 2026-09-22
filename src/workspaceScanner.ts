@@ -8,9 +8,12 @@ import { collectTreeWithConcurrencyLimit, mapWithConcurrencyLimit } from './boun
 import { parseTestInfoFromScenarioSource } from './scenarioDescriptor';
 
 const SCENARIO_READ_CONCURRENCY = 32;
-const SCENARIO_DIRECTORY_CONCURRENCY = 16;
+const SCENARIO_DIRECTORY_CONCURRENCY = 32;
 
 interface ScenarioScanMetrics {
+    readonly directoryReadLatenciesMs: number[];
+    activeDirectoryReads: number;
+    maxDirectoryReadsInFlight: number;
     readonly readLatenciesMs: number[];
     pathTotalMs: number;
     parseTotalMs: number;
@@ -67,7 +70,8 @@ function isPathInside(parentPath: string, candidatePath: string): boolean {
 async function collectFilesFromScanDirectory(
     workspaceRootUri: vscode.Uri,
     fileMatcher: (fileName: string) => boolean,
-    token?: vscode.CancellationToken
+    token?: vscode.CancellationToken,
+    metrics?: ScenarioScanMetrics
 ): Promise<vscode.Uri[]> {
     const scanDirFsPath = resolveScenarioScanRootFsPath(workspaceRootUri);
 
@@ -85,10 +89,23 @@ async function collectFilesFromScanDirectory(
         SCENARIO_DIRECTORY_CONCURRENCY,
         async currentDirFsPath => {
             let entries: fs.Dirent[];
+            const readStartedAt = metrics ? performance.now() : 0;
+            if (metrics) {
+                metrics.activeDirectoryReads += 1;
+                metrics.maxDirectoryReadsInFlight = Math.max(
+                    metrics.maxDirectoryReadsInFlight,
+                    metrics.activeDirectoryReads
+                );
+            }
             try {
                 entries = await fs.promises.readdir(currentDirFsPath, { withFileTypes: true });
             } catch {
                 return { children: [], values: [] };
+            } finally {
+                if (metrics) {
+                    metrics.directoryReadLatenciesMs.push(performance.now() - readStartedAt);
+                    metrics.activeDirectoryReads -= 1;
+                }
             }
 
             const children: string[] = [];
@@ -140,9 +157,15 @@ export async function readTextFileFast(uri: vscode.Uri, metrics?: ScenarioScanMe
 
 export async function findScenarioDescriptorUris(
     workspaceRootUri: vscode.Uri,
-    token?: vscode.CancellationToken
+    token?: vscode.CancellationToken,
+    metrics?: ScenarioScanMetrics
 ): Promise<vscode.Uri[]> {
-    return collectFilesFromScanDirectory(workspaceRootUri, fileName => fileName.toLowerCase() === 'scen.yaml', token);
+    return collectFilesFromScanDirectory(
+        workspaceRootUri,
+        fileName => fileName.toLowerCase() === 'scen.yaml',
+        token,
+        metrics
+    );
 }
 
 export async function findYamlFilesUnderScanDir(
@@ -253,11 +276,12 @@ export async function scanWorkspaceForScenarioCatalog(
 ): Promise<ScenarioCatalog> {
     const startedAt = Date.now();
     const scanDirUri = vscode.Uri.file(resolveScanDirFsPath(workspaceRootUri));
-    const potentialFiles = await findScenarioDescriptorUris(workspaceRootUri, token);
-    const enumerationMs = Date.now() - startedAt;
     const metrics: ScenarioScanMetrics = {
+        directoryReadLatenciesMs: [], activeDirectoryReads: 0, maxDirectoryReadsInFlight: 0,
         readLatenciesMs: [], pathTotalMs: 0, parseTotalMs: 0, fallbackAttempts: 0
     };
+    const potentialFiles = await findScenarioDescriptorUris(workspaceRootUri, token, metrics);
+    const enumerationMs = Date.now() - startedAt;
     const parsedDefinitions = await mapWithConcurrencyLimit(
         potentialFiles,
         SCENARIO_READ_CONCURRENCY,
@@ -275,7 +299,12 @@ export async function scanWorkspaceForScenarioCatalog(
     console.log(
         `[WorkspaceScanner] Scanned ${catalog.all.length} definitions, ${catalog.byName.size} names, `
         + `${duplicateNames} duplicate names in ${Date.now() - startedAt} ms `
-        + `(directories ${enumerationMs} ms, read/parse ${readAndParseMs} ms; `
+        + `(directories ${enumerationMs} ms, `
+        + `directory reads ${metrics.directoryReadLatenciesMs.length}, `
+        + `p50 ${percentileMs(metrics.directoryReadLatenciesMs, 0.5)} ms, `
+        + `p95 ${percentileMs(metrics.directoryReadLatenciesMs, 0.95)} ms, `
+        + `max in flight ${metrics.maxDirectoryReadsInFlight}; `
+        + `read/parse ${readAndParseMs} ms; `
         + `read p50 ${percentileMs(metrics.readLatenciesMs, 0.5)} ms, `
         + `p95 ${percentileMs(metrics.readLatenciesMs, 0.95)} ms, `
         + `path ${Math.round(metrics.pathTotalMs)} ms, `
