@@ -51,6 +51,7 @@ test('scenario completion logging does not grow with the number of matching scen
     const Provider = moduleObject.exports.DriveCompletionProvider as { prototype: object };
     const document = {
         fileName: 'test.yaml',
+        uri: { toString: () => 'file:///test.yaml' },
         lineAt: () => ({ text: '    ' })
     };
     const position = { line: 0, character: 4 };
@@ -63,10 +64,21 @@ test('scenario completion logging does not grow with the number of matching scen
             item: { label: `Scenario ${index}`, kind: 1 },
             scenario: { name: `Scenario ${index}` }
         }));
-        provider.gherkinCompletionItems = [];
-        provider.isLoadingGherkin = false;
+        provider.catalogProvider = {
+            getCatalog: async () => ({ identity: 'test:empty', steps: [] })
+        };
+        provider.preparedGherkinStates = {
+            getOrCreate: () => ({
+                items: [],
+                semanticEntries: [],
+                idfByTerm: new Map(),
+                postingsByTerm: new Map(),
+                termsByPrefix: new Map(),
+                vectorScoreCache: new Map(),
+                languageByItem: new WeakMap()
+            })
+        };
         provider.isInScenarioTextBlock = () => true;
-        provider.loadGherkinCompletionItems = async () => {};
         provider.getScenarioParameterDefaults = () => new Map();
         provider.resolveScenarioCallInsertIndent = () => ({
             baseIndent: '    ', firstLinePrefix: '', replacementStartCharacter: 4

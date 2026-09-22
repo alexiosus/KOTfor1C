@@ -372,6 +372,7 @@
   "Call scenario \"{0}\".": "Call scenario \"{0}\".",
   "Insert nested scenario call with parameters": "Insert nested scenario call with parameters",
   "Steps library successfully updated.": "Steps library successfully updated.",
+  "Steps library updated: version {0}, source {1}, {2} steps.": "Steps library updated: version {0}, source {1}, {2} steps.",
   "Error updating steps: {0}": "Error updating steps: {0}",
   "Failed to load step definitions from external resource, cache, or local bundle.": "Failed to load step definitions from external resource, cache, or local bundle.",
   "Error updating hints: {0}. Attempting to load from backup sources.": "Error updating hints: {0}. Attempting to load from backup sources.",

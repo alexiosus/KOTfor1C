@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
-import { parse } from 'node-html-parser';
 import { getStepsHtml } from './stepsFetcher';
 import { FormExplorerElementInfo, FormExplorerSnapshot } from './formExplorerTypes';
 import { ScenarioLanguage } from './gherkinLanguage';
+import { parseLegacyStepsHtml } from './legacyStepCatalog';
 
 type StepLanguage = ScenarioLanguage;
 type ElementKind = 'table' | 'field' | 'button' | 'decoration' | 'group' | 'itemAddition' | 'unknown';
@@ -468,24 +468,11 @@ function parseCatalogRows(htmlContent: string): Map<string, StepCatalogRow> {
         return index;
     }
 
-    const root = parse(htmlContent);
-    const rows = root.querySelectorAll('tr');
-
-    for (const row of rows) {
-        const rowClass = row.classNames;
-        if (!rowClass || !String(rowClass).startsWith('R')) {
-            continue;
-        }
-
-        const cells = row.querySelectorAll('td');
-        if (cells.length < 2) {
-            continue;
-        }
-
-        const ruTemplate = normalizeDisplayText(cells[0].textContent || '');
-        const ruDescription = normalizeDisplayText(cells[1].textContent || '');
-        const enTemplate = cells.length >= 4 ? normalizeDisplayText(cells[2].textContent || '') : '';
-        const enDescription = cells.length >= 4 ? normalizeDisplayText(cells[3].textContent || '') : '';
+    for (const step of parseLegacyStepsHtml(htmlContent)) {
+        const ruTemplate = normalizeDisplayText(step.ru?.pattern || '');
+        const ruDescription = normalizeDisplayText(step.ru?.description || '');
+        const enTemplate = normalizeDisplayText(step.en?.pattern || '');
+        const enDescription = normalizeDisplayText(step.en?.description || '');
 
         if (!ruTemplate) {
             continue;

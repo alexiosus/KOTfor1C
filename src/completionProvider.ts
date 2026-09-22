@@ -1,6 +1,4 @@
 ﻿import * as vscode from 'vscode';
-import { parse } from 'node-html-parser';
-import { getStepsHtml, forceRefreshSteps as forceRefreshStepsCore } from './stepsFetcher';
 import { TestInfo } from './types';
 import type { ScenarioCatalog } from './scenarioCatalog';
 import { getTranslator } from './localization';
@@ -13,6 +11,9 @@ import {
     FormExplorerElementInfo,
     FormExplorerSnapshot,
 } from './formExplorerTypes';
+import type { BuiltInStepDefinition } from './stepCatalog';
+import type { StepCatalogProvider } from './stepCatalogService';
+import { PreparedStepStateCache } from './preparedStepStateCache';
 
 const VARIABLE_REFERENCE_PREFIX_REGEX = /^[A-Za-zА-Яа-яЁё0-9_]*$/;
 const SCENARIO_BRACKET_PARAMETER_PREFIX_REGEX = /(^|[^\\])\[([A-Za-zА-Яа-яЁё0-9_-]*)$/;
@@ -598,23 +599,26 @@ interface ScenarioCompletionEntry {
     scenario: TestInfo;
 }
 
+interface GherkinCompletionState {
+    readonly items: vscode.CompletionItem[];
+    readonly semanticEntries: SemanticStepEntry[];
+    readonly idfByTerm: Map<string, number>;
+    readonly postingsByTerm: Map<string, number[]>;
+    readonly termsByPrefix: Map<string, string[]>;
+    readonly vectorScoreCache: Map<string, Map<number, number>>;
+    readonly languageByItem: WeakMap<vscode.CompletionItem, ScenarioLanguage>;
+}
+
 export class DriveCompletionProvider implements vscode.CompletionItemProvider {
-    private gherkinCompletionItems: vscode.CompletionItem[] = [];
-    private semanticStepEntries: SemanticStepEntry[] = [];
-    private semanticIdfByTerm = new Map<string, number>();
-    private semanticPostingsByTerm = new Map<string, number[]>();
-    private semanticTermsByPrefix = new Map<string, string[]>();
-    private semanticVectorScoreCache = new Map<string, Map<number, number>>();
-    private gherkinItemLanguageByItem = new WeakMap<vscode.CompletionItem, ScenarioLanguage>();
+    private readonly preparedGherkinStates = new PreparedStepStateCache<GherkinCompletionState>();
     private scenarioCompletionEntries: ScenarioCompletionEntry[] = [];
     private scenarioDefaultsByDocument = new Map<string, { version: number; defaults: Map<string, string> }>();
-    private isLoadingGherkin: boolean = false;
-    private loadingGherkinPromise: Promise<void> | null = null;
     private context: vscode.ExtensionContext;
     private scenarioCompletionsInitialized = false;
 
     constructor(
         context: vscode.ExtensionContext,
+        private readonly catalogProvider: StepCatalogProvider,
         private readonly ensureScenarioCompletionsLoaded?: () => Promise<void>
     ) {
         this.context = context;
@@ -623,36 +627,12 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 this.scenarioDefaultsByDocument.delete(document.uri.toString());
             })
         );
-        this.loadGherkinCompletionItems().catch(async err => {
-            const t = await getTranslator(context.extensionUri);
-            vscode.window.showErrorMessage(t('Error initializing Gherkin autocompletion: {0}', err.message));
-        });
+        this.context.subscriptions.push(this.catalogProvider.onDidChangeCatalog(event => {
+            if (event.oldIdentity) {
+                this.preparedGherkinStates.delete(event.oldIdentity);
+            }
+        }));
         console.log("[DriveCompletionProvider] Initialized. Scenario completions will be updated externally.");
-    }
-
-    // Метод для принудительного обновления шагов Gherkin
-    public async refreshSteps(): Promise<void> {
-        console.log("[DriveCompletionProvider] Refreshing Gherkin steps triggered...");
-        this.gherkinCompletionItems = [];
-        this.semanticStepEntries = [];
-        this.semanticIdfByTerm.clear();
-        this.semanticPostingsByTerm.clear();
-        this.semanticTermsByPrefix.clear();
-        this.semanticVectorScoreCache.clear();
-        this.gherkinItemLanguageByItem = new WeakMap<vscode.CompletionItem, ScenarioLanguage>();
-        this.loadingGherkinPromise = null;
-        this.isLoadingGherkin = false;
-        try {
-            // Вызываем основную логику обновления из stepsFetcher
-            const htmlContent = await forceRefreshStepsCore(this.context);
-            this.parseAndStoreGherkinCompletions(htmlContent);
-            console.log("[DriveCompletionProvider] Gherkin steps refreshed and re-parsed successfully.");
-        } catch (error: any) {
-            console.error(`[DriveCompletionProvider] Failed to refresh Gherkin steps: ${error.message}`);
-            // Если принудительное обновление не удалось, пытаемся загрузить хоть что-то
-            // чтобы расширение не осталось без автодополнения
-            await this.loadGherkinCompletionItems();
-        }
     }
 
     // Метод для обновления списка автодополнений сценариев
@@ -706,143 +686,90 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     }
 
 
-    private parseAndStoreGherkinCompletions(htmlContent: string): void {
-        this.gherkinCompletionItems = []; // Очищаем перед заполнением
-        this.semanticStepEntries = [];
-        this.semanticIdfByTerm.clear();
-        this.semanticPostingsByTerm.clear();
-        this.semanticTermsByPrefix.clear();
-        this.semanticVectorScoreCache.clear();
-        this.gherkinItemLanguageByItem = new WeakMap<vscode.CompletionItem, ScenarioLanguage>();
-        if (!htmlContent) {
-            console.warn("[DriveCompletionProvider] HTML content is null or empty for Gherkin steps.");
-            return;
-        }
-        const root = parse(htmlContent);
-        const rows = root.querySelectorAll('tr');
+    private buildGherkinCompletionState(
+        steps: readonly BuiltInStepDefinition[]
+    ): GherkinCompletionState {
+        const state: GherkinCompletionState = {
+            items: [],
+            semanticEntries: [],
+            idfByTerm: new Map<string, number>(),
+            postingsByTerm: new Map<string, number[]>(),
+            termsByPrefix: new Map<string, string[]>(),
+            vectorScoreCache: new Map<string, Map<number, number>>(),
+            languageByItem: new WeakMap<vscode.CompletionItem, ScenarioLanguage>()
+        };
 
-        rows.forEach(row => {
-            const rowClass = row.classNames;
-            // Проверяем, что класс строки начинается с 'R' (предполагая, что это строки с шагами)
-            if (!rowClass || !rowClass.startsWith('R')) {
-                return; // Пропускаем строки заголовков или другие нерелевантные
-            }
+        for (const step of steps) {
+            const russianStepText = step.ru?.pattern ?? '';
+            const russianStepDescription = step.ru?.description ?? '';
+            const stepText = this.normalizeLineBreaks(step.en?.pattern ?? '');
+            const stepDescription = this.normalizeLineBreaks(step.en?.description ?? '');
+            const russianSnippet = buildStepTemplateSnippetData(russianStepText);
+            const englishSnippet = buildStepTemplateSnippetData(stepText);
 
-            const cells = row.querySelectorAll('td');
-            // Убедимся, что есть хотя бы 4 ячейки для русского шага
-            if (cells.length >= 4) {
-                // Структура: колонки 1-2 русские, колонки 3-4 английские
-                const russianStepText = cells[0].textContent.trim();
-                const russianStepDescription = cells[1].textContent.trim();
-
-                // Получаем английские варианты, если они есть (колонки 3-4)
-                const stepText = cells.length >= 4 ? this.normalizeLineBreaks(cells[2].textContent.trim()) : '';
-                const stepDescription = cells.length >= 4 ? this.normalizeLineBreaks(cells[3].textContent.trim()) : '';
-                const russianSnippet = buildStepTemplateSnippetData(russianStepText);
-                const englishSnippet = buildStepTemplateSnippetData(stepText);
-
-                // Создаем элемент автодополнения для русского шага (если он есть)
-                if (russianStepText) {
-                    const russianItem = new vscode.CompletionItem(russianSnippet.displayText, vscode.CompletionItemKind.Snippet);
-
-                    // Создаем документацию: русское описание + оба варианта шагов
-                    const russianDoc = new vscode.MarkdownString();
-                    russianDoc.appendMarkdown(`**Описание:**\n\n${russianStepDescription}\n\n`);
-                    russianDoc.appendMarkdown(`\`${russianSnippet.displayText}\``);
-                    if (stepText) {
-                        russianDoc.appendMarkdown(`\n\n\`${englishSnippet.displayText}\``);
-                    }
-
-                    russianItem.documentation = russianDoc;
-                    russianItem.detail = "Gherkin Step (1C) - Russian";
-                    russianItem.insertText = russianSnippet.hasPlaceholders
-                        ? new vscode.SnippetString(russianSnippet.snippetText)
-                        : russianSnippet.displayText;
-                    russianItem.filterText = `${russianSnippet.displayText} ${russianStepText}`;
-                    this.gherkinItemLanguageByItem.set(russianItem, 'ru');
-                    this.gherkinCompletionItems.push(russianItem);
-                    this.semanticStepEntries.push(this.createSemanticStepEntry(
-                        russianItem,
-                        russianSnippet.displayText,
-                        russianStepDescription,
-                        [englishSnippet.displayText, stepDescription, russianStepText],
-                        'ru'
-                    ));
-                }
-
-                // Создаем элемент автодополнения для английского шага (если он есть)
+            if (russianStepText) {
+                const russianItem = new vscode.CompletionItem(
+                    russianSnippet.displayText,
+                    vscode.CompletionItemKind.Snippet
+                );
+                const russianDoc = new vscode.MarkdownString();
+                russianDoc.appendMarkdown(`**Описание:**\n\n${russianStepDescription}\n\n`);
+                russianDoc.appendMarkdown(`\`${russianSnippet.displayText}\``);
                 if (stepText) {
-                    const item = new vscode.CompletionItem(englishSnippet.displayText, vscode.CompletionItemKind.Snippet);
-
-                    // Создаем документацию: английское описание + оба варианта шагов
-                    const englishDoc = new vscode.MarkdownString();
-                    englishDoc.appendMarkdown(`**Description:**\n\n${stepDescription}\n\n`);
-                    englishDoc.appendMarkdown(`\`${englishSnippet.displayText}\``);
-                    if (russianStepText) {
-                        englishDoc.appendMarkdown(`\n\n\`${russianSnippet.displayText}\``);
-                    }
-
-                    item.documentation = englishDoc;
-                    item.detail = "Gherkin Step (1C) - English";
-                    item.insertText = englishSnippet.hasPlaceholders
-                        ? new vscode.SnippetString(englishSnippet.snippetText)
-                        : englishSnippet.displayText;
-                    item.filterText = `${englishSnippet.displayText} ${stepText}`;
-                    this.gherkinItemLanguageByItem.set(item, 'en');
-                    this.gherkinCompletionItems.push(item);
-                    this.semanticStepEntries.push(this.createSemanticStepEntry(
-                        item,
-                        englishSnippet.displayText,
-                        stepDescription,
-                        [russianSnippet.displayText, russianStepDescription, stepText],
-                        'en'
-                    ));
+                    russianDoc.appendMarkdown(`\n\n\`${englishSnippet.displayText}\``);
                 }
+                russianItem.documentation = russianDoc;
+                russianItem.detail = 'Gherkin Step (1C) - Russian';
+                russianItem.insertText = russianSnippet.hasPlaceholders
+                    ? new vscode.SnippetString(russianSnippet.snippetText)
+                    : russianSnippet.displayText;
+                russianItem.filterText = `${russianSnippet.displayText} ${russianStepText}`;
+                state.languageByItem.set(russianItem, 'ru');
+                state.items.push(russianItem);
+                state.semanticEntries.push(this.createSemanticStepEntry(
+                    russianItem,
+                    russianSnippet.displayText,
+                    russianStepDescription,
+                    [englishSnippet.displayText, stepDescription, russianStepText],
+                    'ru'
+                ));
             }
-        });
-        this.rebuildSemanticVectorIndex();
-        console.log(`[DriveCompletionProvider] Parsed and stored ${this.gherkinCompletionItems.length} Gherkin completion items and ${this.semanticStepEntries.length} semantic entries.`);
-    }
 
-    private loadGherkinCompletionItems(): Promise<void> {
-        // Если загрузка уже идет, возвращаем существующий промис
-        if (this.isLoadingGherkin && this.loadingGherkinPromise) {
-            return this.loadingGherkinPromise;
+            if (stepText) {
+                const item = new vscode.CompletionItem(
+                    englishSnippet.displayText,
+                    vscode.CompletionItemKind.Snippet
+                );
+                const englishDoc = new vscode.MarkdownString();
+                englishDoc.appendMarkdown(`**Description:**\n\n${stepDescription}\n\n`);
+                englishDoc.appendMarkdown(`\`${englishSnippet.displayText}\``);
+                if (russianStepText) {
+                    englishDoc.appendMarkdown(`\n\n\`${russianSnippet.displayText}\``);
+                }
+                item.documentation = englishDoc;
+                item.detail = 'Gherkin Step (1C) - English';
+                item.insertText = englishSnippet.hasPlaceholders
+                    ? new vscode.SnippetString(englishSnippet.snippetText)
+                    : englishSnippet.displayText;
+                item.filterText = `${englishSnippet.displayText} ${stepText}`;
+                state.languageByItem.set(item, 'en');
+                state.items.push(item);
+                state.semanticEntries.push(this.createSemanticStepEntry(
+                    item,
+                    englishSnippet.displayText,
+                    stepDescription,
+                    [russianSnippet.displayText, russianStepDescription, stepText],
+                    'en'
+                ));
+            }
         }
-        // Если элементы уже загружены и нет активной загрузки, просто возвращаем
-        if (this.gherkinCompletionItems.length > 0 && !this.isLoadingGherkin) {
-            return Promise.resolve();
-        }
 
-        this.isLoadingGherkin = true;
-        console.log("[DriveCompletionProvider] Starting to load Gherkin completion items...");
-
-        // Используем getStepsHtml из stepsFetcher
-        this.loadingGherkinPromise = getStepsHtml(this.context)
-            .then(htmlContent => {
-                this.parseAndStoreGherkinCompletions(htmlContent);
-            })
-            .catch(async error => {
-                console.error(`[DriveCompletionProvider] Ошибка загрузки или парсинга steps.htm: ${error.message}`);
-                const t = await getTranslator(this.context.extensionUri);
-                vscode.window.showErrorMessage(t('Failed to load Gherkin steps for autocompletion: {0}', error.message));
-                this.gherkinCompletionItems = []; // Убедимся, что список пуст в случае ошибки
-                this.semanticStepEntries = [];
-                this.semanticIdfByTerm.clear();
-                this.semanticPostingsByTerm.clear();
-                this.semanticTermsByPrefix.clear();
-                this.semanticVectorScoreCache.clear();
-                this.gherkinItemLanguageByItem = new WeakMap<vscode.CompletionItem, ScenarioLanguage>();
-            })
-            .finally(() => {
-                this.isLoadingGherkin = false;
-                // Не обнуляем loadingPromise здесь, чтобы повторные быстрые вызовы во время первой загрузки
-                // все еще могли использовать его. Он будет сброшен принудительно при refreshSteps
-                // или если gherkinCompletionItems пуст при следующем вызове loadGherkinCompletionItems.
-                console.log("[DriveCompletionProvider] Finished Gherkin loading attempt.");
-            });
-
-        return this.loadingGherkinPromise;
+        this.rebuildSemanticVectorIndex(state);
+        console.log(
+            `[DriveCompletionProvider] Prepared ${state.items.length} Gherkin completion items `
+            + `and ${state.semanticEntries.length} semantic entries.`
+        );
+        return state;
     }
 
     /**
@@ -919,15 +846,11 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
-        // Если элементы Gherkin еще не загружены или идет загрузка, дождемся ее завершения
-        if (this.isLoadingGherkin && this.loadingGherkinPromise) {
-            console.log("[DriveCompletionProvider:provideCompletionItems] Waiting for Gherkin load to complete...");
-            await this.loadingGherkinPromise;
-        } else if (this.gherkinCompletionItems.length === 0 && !this.isLoadingGherkin) {
-            // Если загрузка Gherkin не идет, но элементов нет, попробуем загрузить
-            console.log("[DriveCompletionProvider:provideCompletionItems] Gherkin items not loaded, attempting to load now...");
-            await this.loadGherkinCompletionItems();
-        }
+        const resolvedCatalog = await this.catalogProvider.getCatalog(document.uri);
+        const gherkinState = this.preparedGherkinStates.getOrCreate(
+            resolvedCatalog.identity,
+            () => this.buildGherkinCompletionState(resolvedCatalog.steps)
+        );
 
         // Создаем список автодополнения
         const completionList = new vscode.CompletionList();
@@ -958,6 +881,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         const semanticQuery = this.extractSemanticStepQuery(textToMatchAgainst);
         if (semanticQuery !== null) {
             return this.buildSemanticStepCompletionList(
+                gherkinState,
                 position,
                 indentation,
                 semanticQuery,
@@ -969,7 +893,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         console.log(`[DriveCompletionProvider:provideCompletionItems] Indent: '${indentation}', KeywordInLine: '${keywordInLine}', UserTextAfterKeyword: '${userTextAfterKeyword}', UserTextAfterIndentation: '${userTextAfterIndentation}'`);
 
         // Добавляем Gherkin шаги
-        this.gherkinCompletionItems.forEach(baseItem => {
+        gherkinState.items.forEach(baseItem => {
             const itemFullText = typeof baseItem.label === 'string' ? baseItem.label : baseItem.label.label; // Полный текст элемента автодополнения
 
             // Извлекаем ключевое слово из самого шага Gherkin, если оно там есть
@@ -1005,7 +929,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     position.character // Заменяем только то, что пользователь ввел после отступа
                 );
                 completionItem.range = replacementRange;
-                const itemLanguage = this.getStepLanguageForItem(baseItem);
+                const itemLanguage = this.getStepLanguageForItem(gherkinState, baseItem);
                 completionItem.insertText = this.buildStepCompletionInsertText(
                     itemFullText,
                     indentation,
@@ -1083,7 +1007,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             });
         }
 
-        console.log(`[DriveCompletionProvider:provideCompletionItems] Total Gherkin items: ${this.gherkinCompletionItems.length}, Total Scenario items: ${this.scenarioCompletionEntries.length}, Proposed items: ${completionList.items.length}`);
+        console.log(`[DriveCompletionProvider:provideCompletionItems] Total Gherkin items: ${gherkinState.items.length}, Total Scenario items: ${this.scenarioCompletionEntries.length}, Proposed items: ${completionList.items.length}`);
         return completionList;
     }
 
@@ -2372,8 +2296,11 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         };
     }
 
-    private getStepLanguageForItem(item: vscode.CompletionItem): ScenarioLanguage | null {
-        return this.gherkinItemLanguageByItem.get(item) || null;
+    private getStepLanguageForItem(
+        state: GherkinCompletionState,
+        item: vscode.CompletionItem
+    ): ScenarioLanguage | null {
+        return state.languageByItem.get(item) || null;
     }
 
     private buildStepCompletionInsertText(
@@ -2439,19 +2366,19 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         return /[А-Яа-яЁё]/.test(stepText) ? 'ru' : 'en';
     }
 
-    private rebuildSemanticVectorIndex(): void {
-        this.semanticIdfByTerm.clear();
-        this.semanticPostingsByTerm.clear();
-        this.semanticTermsByPrefix.clear();
-        this.semanticVectorScoreCache.clear();
+    private rebuildSemanticVectorIndex(state: GherkinCompletionState): void {
+        state.idfByTerm.clear();
+        state.postingsByTerm.clear();
+        state.termsByPrefix.clear();
+        state.vectorScoreCache.clear();
 
-        const totalDocuments = this.semanticStepEntries.length;
+        const totalDocuments = state.semanticEntries.length;
         if (totalDocuments === 0) {
             return;
         }
 
         const documentFrequencyByTerm = new Map<string, number>();
-        this.semanticStepEntries.forEach(entry => {
+        state.semanticEntries.forEach(entry => {
             const uniqueTerms = new Set(entry.tokens);
             uniqueTerms.forEach(term => {
                 documentFrequencyByTerm.set(term, (documentFrequencyByTerm.get(term) || 0) + 1);
@@ -2460,11 +2387,11 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
         documentFrequencyByTerm.forEach((documentFrequency, term) => {
             const idf = Math.log((1 + totalDocuments) / (1 + documentFrequency)) + 1;
-            this.semanticIdfByTerm.set(term, idf);
+            state.idfByTerm.set(term, idf);
         });
 
         const prefixBuckets = new Map<string, Set<string>>();
-        this.semanticIdfByTerm.forEach((_idf, term) => {
+        state.idfByTerm.forEach((_idf, term) => {
             const maxPrefixLength = Math.min(6, term.length);
             for (let prefixLength = 2; prefixLength <= maxPrefixLength; prefixLength++) {
                 const prefix = term.slice(0, prefixLength);
@@ -2474,24 +2401,24 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             }
         });
         prefixBuckets.forEach((bucket, prefix) => {
-            this.semanticTermsByPrefix.set(prefix, Array.from(bucket.values()));
+            state.termsByPrefix.set(prefix, Array.from(bucket.values()));
         });
 
-        this.semanticStepEntries.forEach((entry, entryIndex) => {
+        state.semanticEntries.forEach((entry, entryIndex) => {
             const uniqueTerms = new Set(entry.tokens);
             let normSquared = 0;
 
             uniqueTerms.forEach(term => {
-                const idf = this.semanticIdfByTerm.get(term);
+                const idf = state.idfByTerm.get(term);
                 if (!idf) {
                     return;
                 }
 
                 normSquared += idf * idf;
 
-                const postings = this.semanticPostingsByTerm.get(term) || [];
+                const postings = state.postingsByTerm.get(term) || [];
                 postings.push(entryIndex);
-                this.semanticPostingsByTerm.set(term, postings);
+                state.postingsByTerm.set(term, postings);
             });
 
             entry.semanticNorm = normSquared > 0 ? Math.sqrt(normSquared) : 0;
@@ -2606,15 +2533,18 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         return trimmed.substring(SEMANTIC_STEP_PREFIX.length).trim();
     }
 
-    private calculateSemanticVectorScores(queryTokens: string[]): Map<number, number> {
+    private calculateSemanticVectorScores(
+        state: GherkinCompletionState,
+        queryTokens: string[]
+    ): Map<number, number> {
         const cacheKey = queryTokens.join(' ');
-        const cached = this.semanticVectorScoreCache.get(cacheKey);
+        const cached = state.vectorScoreCache.get(cacheKey);
         if (cached) {
             return cached;
         }
 
         const scoresByEntry = new Map<number, number>();
-        if (queryTokens.length === 0 || this.semanticStepEntries.length === 0 || this.semanticIdfByTerm.size === 0) {
+        if (queryTokens.length === 0 || state.semanticEntries.length === 0 || state.idfByTerm.size === 0) {
             return scoresByEntry;
         }
 
@@ -2626,14 +2556,14 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 return;
             }
 
-            const hasExactTerm = this.semanticIdfByTerm.has(term);
-            if (this.semanticIdfByTerm.has(term)) {
+            const hasExactTerm = state.idfByTerm.has(term);
+            if (state.idfByTerm.has(term)) {
                 weightedQueryTerms.set(term, Math.max(weightedQueryTerms.get(term) || 0, 1));
             }
 
             if (term.length >= 3) {
                 const prefixKey = term.slice(0, Math.min(6, term.length));
-                const prefixCandidates = this.semanticTermsByPrefix.get(prefixKey) || [];
+                const prefixCandidates = state.termsByPrefix.get(prefixKey) || [];
                 let added = 0;
                 for (const candidate of prefixCandidates) {
                     if (!candidate.startsWith(term) || candidate === term) {
@@ -2655,7 +2585,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
         let queryNormSquared = 0;
         weightedQueryTerms.forEach((queryWeight, term) => {
-            const idf = this.semanticIdfByTerm.get(term) || 0;
+            const idf = state.idfByTerm.get(term) || 0;
             if (idf <= 0 || queryWeight <= 0) {
                 return;
             }
@@ -2664,7 +2594,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             queryNormSquared += queryTermWeight * queryTermWeight;
 
             const dotContribution = queryTermWeight * idf;
-            const postings = this.semanticPostingsByTerm.get(term) || [];
+            const postings = state.postingsByTerm.get(term) || [];
             for (const entryIndex of postings) {
                 scoresByEntry.set(entryIndex, (scoresByEntry.get(entryIndex) || 0) + dotContribution);
             }
@@ -2678,7 +2608,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         const cosineScores = new Map<number, number>();
 
         scoresByEntry.forEach((dotProduct, entryIndex) => {
-            const entryNorm = this.semanticStepEntries[entryIndex]?.semanticNorm || 0;
+            const entryNorm = state.semanticEntries[entryIndex]?.semanticNorm || 0;
             if (entryNorm <= 0) {
                 return;
             }
@@ -2688,11 +2618,11 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             }
         });
 
-        this.semanticVectorScoreCache.set(cacheKey, cosineScores);
-        if (this.semanticVectorScoreCache.size > 300) {
-            const firstKey = this.semanticVectorScoreCache.keys().next().value;
+        state.vectorScoreCache.set(cacheKey, cosineScores);
+        if (state.vectorScoreCache.size > 300) {
+            const firstKey = state.vectorScoreCache.keys().next().value;
             if (typeof firstKey === 'string') {
-                this.semanticVectorScoreCache.delete(firstKey);
+                state.vectorScoreCache.delete(firstKey);
             }
         }
 
@@ -2700,6 +2630,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     }
 
     private getSemanticStepScore(
+        state: GherkinCompletionState,
         entry: SemanticStepEntry,
         normalizedQuery: string,
         queryTokens: string[],
@@ -2718,7 +2649,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             const uniqueQueryTerms = new Set(queryTokens.filter(term => term.length >= 2));
             const matchableQueryTerms = new Set<string>();
             uniqueQueryTerms.forEach(term => {
-                if (entry.tokenSet.has(term) || this.semanticIdfByTerm.has(term)) {
+                if (entry.tokenSet.has(term) || state.idfByTerm.has(term)) {
                     matchableQueryTerms.add(term);
                     return;
                 }
@@ -2727,7 +2658,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     return;
                 }
                 const prefixKey = term.slice(0, Math.min(6, term.length));
-                const prefixCandidates = this.semanticTermsByPrefix.get(prefixKey) || [];
+                const prefixCandidates = state.termsByPrefix.get(prefixKey) || [];
                 if (prefixCandidates.some(candidate => candidate.startsWith(term) && candidate !== term)) {
                     matchableQueryTerms.add(term);
                 }
@@ -2756,6 +2687,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     }
 
     private buildSemanticStepCompletionList(
+        state: GherkinCompletionState,
         position: vscode.Position,
         indentation: string,
         semanticQuery: string,
@@ -2765,19 +2697,19 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         // Re-query semantic results as user types so relevance does not depend on
         // whether a trailing space/trigger character was entered.
         const completionList = new vscode.CompletionList<vscode.CompletionItem>([], true);
-        if (this.semanticStepEntries.length === 0) {
+        if (state.semanticEntries.length === 0) {
             return completionList;
         }
 
         const normalizedQuery = this.normalizeSemanticSearchText(semanticQuery);
         const queryTokens = this.extractSemanticSearchTokens(normalizedQuery);
-        const vectorScores = this.calculateSemanticVectorScores(queryTokens);
+        const vectorScores = this.calculateSemanticVectorScores(state, queryTokens);
         const rawFilterKey = (typedSemanticInput || '').trim();
         const normalizedFilterKey = this.normalizeSemanticSearchText(rawFilterKey);
 
         const candidateIndices = new Set<number>();
         if (!normalizedQuery) {
-            for (let index = 0; index < Math.min(60, this.semanticStepEntries.length); index++) {
+            for (let index = 0; index < Math.min(60, state.semanticEntries.length); index++) {
                 candidateIndices.add(index);
             }
         } else {
@@ -2786,7 +2718,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             });
 
             if (candidateIndices.size === 0) {
-                this.semanticStepEntries.forEach((entry, entryIndex) => {
+                state.semanticEntries.forEach((entry, entryIndex) => {
                     if (entry.stepSearchText.includes(normalizedQuery) || entry.descriptionSearchText.includes(normalizedQuery)) {
                         candidateIndices.add(entryIndex);
                     }
@@ -2794,7 +2726,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             }
 
             if (candidateIndices.size === 0) {
-                for (let index = 0; index < Math.min(120, this.semanticStepEntries.length); index++) {
+                for (let index = 0; index < Math.min(120, state.semanticEntries.length); index++) {
                     candidateIndices.add(index);
                 }
             }
@@ -2802,12 +2734,13 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
         const ranked = Array.from(candidateIndices.values())
             .map(entryIndex => {
-                const entry = this.semanticStepEntries[entryIndex];
+                const entry = state.semanticEntries[entryIndex];
                 return {
                     entryIndex,
                     entry,
                     languageBucket: entry.language === preferredLanguage ? 0 : 1,
                     score: this.getSemanticStepScore(
+                        state,
                         entry,
                         normalizedQuery,
                         queryTokens,

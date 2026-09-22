@@ -1,6 +1,4 @@
 ﻿import * as vscode from 'vscode';
-import { parse } from 'node-html-parser';
-import { getStepsHtml, forceRefreshSteps as forceRefreshStepsCore } from './stepsFetcher';
 import { getTranslator } from './localization';
 import * as path from 'path';
 import { TestInfo } from './types';
@@ -17,6 +15,9 @@ import {
     parseScenarioParameterDefinitions
 } from './scenarioParameterUtils';
 import { StepSuggestionIndex } from './stepSuggestionIndex';
+import type { BuiltInStepDefinition } from './stepCatalog';
+import type { StepCatalogProvider } from './stepCatalogService';
+import { PreparedStepStateCache } from './preparedStepStateCache';
 
 // Интерфейс для хранения определений шагов и их описаний
 interface StepDefinition {
@@ -53,26 +54,35 @@ interface ScenarioHoverCachedData {
     expiresAt: number;
 }
 
+interface HoverStepState {
+    readonly definitions: readonly StepDefinition[];
+    readonly suggestions: StepSuggestionIndex;
+    readonly regexByTemplate: Map<string, RegExp>;
+}
+
 export class DriveHoverProvider implements vscode.HoverProvider {
-    private stepDefinitions: StepDefinition[] = [];
-    private stepSuggestionIndex = new StepSuggestionIndex([]);
-    private readonly templateRegexCache = new Map<string, RegExp>();
-    private isLoading: boolean = false;
-    private loadingPromise: Promise<void> | null = null;
+    private readonly preparedStepStates = new PreparedStepStateCache<HoverStepState>();
+    private readonly stepStateRequestsByDocument = new Map<string, Promise<HoverStepState>>();
     private context: vscode.ExtensionContext;
     private readonly scenarioHoverCache = new Map<string, ScenarioHoverCachedData>();
     private readonly scenarioHoverCacheTtlMs = 8000;
     private hoverTranslator: ((message: string, ...args: string[]) => string) | null = null;
     private hoverTranslatorLanguageOverride: string | null = null;
 
-    constructor(context: vscode.ExtensionContext, private readonly scenarioCacheProvider?: ScenarioCacheProvider) {
+    constructor(
+        context: vscode.ExtensionContext,
+        private readonly catalogProvider: StepCatalogProvider,
+        private readonly scenarioCacheProvider?: ScenarioCacheProvider
+    ) {
         this.context = context;
-        // Загружаем определения асинхронно, не блокируя конструктор
-        this.loadStepDefinitions().catch(err => {
-            console.error("[DriveHoverProvider] Initial load failed on constructor:", err.message);
-        });
 
         this.context.subscriptions.push(
+            this.catalogProvider.onDidChangeCatalog(event => {
+                if (event.oldIdentity) {
+                    this.preparedStepStates.delete(event.oldIdentity);
+                }
+                this.stepStateRequestsByDocument.clear();
+            }),
             vscode.workspace.onDidSaveTextDocument(document => {
                 this.scenarioHoverCache.delete(document.uri.toString());
             }),
@@ -95,30 +105,17 @@ export class DriveHoverProvider implements vscode.HoverProvider {
     }
 
     /**
-     * Гарантирует, что библиотека шагов загружена.
-     */
-    public async ensureStepDefinitionsLoaded(): Promise<void> {
-        if (this.isLoading && this.loadingPromise) {
-            await this.loadingPromise;
-            return;
-        }
-        if (this.stepDefinitions.length === 0 && !this.isLoading) {
-            await this.loadStepDefinitions();
-        }
-    }
-
-    /**
      * Проверяет, известен ли шаг по текущей библиотеке шагов.
      */
-    public async isKnownStepLine(lineText: string): Promise<boolean> {
-        await this.ensureStepDefinitionsLoaded();
+    public async isKnownStepLine(documentUri: vscode.Uri, lineText: string): Promise<boolean> {
+        const state = await this.getStepState(documentUri);
         const trimmed = lineText.trim();
         if (!trimmed) {
             return false;
         }
-        return this.stepDefinitions.some(stepDef => {
+        return state.definitions.some(stepDef => {
             try {
-                return this.matchLineToPattern(trimmed, stepDef);
+                return this.matchLineToPattern(trimmed, stepDef, state.regexByTemplate);
             } catch {
                 return false;
             }
@@ -129,132 +126,80 @@ export class DriveHoverProvider implements vscode.HoverProvider {
      * Подбирает ближайшие варианты шагов для текущей строки.
      */
     public async getStepSuggestions(
+        documentUri: vscode.Uri,
         lineText: string,
         maxSuggestions: number = 3,
         shouldCancel: () => boolean = () => false
     ): Promise<string[]> {
-        await this.ensureStepDefinitionsLoaded();
-        return this.stepSuggestionIndex.getSuggestions(lineText, maxSuggestions, shouldCancel);
+        const state = await this.getStepState(documentUri);
+        return state.suggestions.getSuggestions(lineText, maxSuggestions, shouldCancel);
     }
 
-    // Метод для принудительного обновления
-    public async refreshSteps(): Promise<void> {
-        console.log("[DriveHoverProvider] Refreshing steps triggered...");
-        this.isLoading = true; // Устанавливаем флаг загрузки
-        this.loadingPromise = forceRefreshStepsCore(this.context)
-            .then(htmlContent => {
-                this.parseAndStoreStepDefinitions(htmlContent);
-                console.log("[DriveHoverProvider] Steps refreshed and re-parsed successfully for hover.");
-            })
-            .catch(async (error: any) => { // async здесь
-                console.error(`[DriveHoverProvider] Failed to refresh steps: ${error.message}`);
-                const t = await getTranslator(this.context.extensionUri);
-                vscode.window.showWarningMessage(t('Error updating hints: {0}. Attempting to load from backup sources.', error.message));
-                try {
-                    const fallbackHtml = await getStepsHtml(this.context, false); // false - не принудительно
-                    this.parseAndStoreStepDefinitions(fallbackHtml);
-                } catch (fallbackError: any) {
-                    console.error(`[DriveHoverProvider] Fallback load also failed: ${fallbackError.message}`);
-                    this.stepDefinitions = [];
-                    this.stepSuggestionIndex = new StepSuggestionIndex([]);
-                }
-            })
-            .finally(() => {
-                this.isLoading = false;
-            });
-        await this.loadingPromise; // Дожидаемся завершения промиса обновления
-    }
-    
-    private parseAndStoreStepDefinitions(htmlContent: string): void {
-        this.stepDefinitions = []; // Очищаем перед заполнением
-        this.stepSuggestionIndex = new StepSuggestionIndex([]);
-        this.templateRegexCache.clear();
-        if (!htmlContent) {
-            console.warn("[DriveHoverProvider] HTML content is null or empty, cannot parse step definitions.");
-            return;
+    private async getStepState(documentUri: vscode.Uri): Promise<HoverStepState> {
+        const documentKey = documentUri.toString();
+        const existing = this.stepStateRequestsByDocument.get(documentKey);
+        if (existing) {
+            return existing;
         }
-        try {
-            const root = parse(htmlContent);
-            const rows = root.querySelectorAll('tr');
-            
-            rows.forEach(row => {
-                const rowClass = row.classNames;
-                if (!rowClass || !rowClass.startsWith('R')) {
-                    return;
-                }
-                
-                const cells = row.querySelectorAll('td');
-                if (cells.length < 4) {
-                    return;
-                }
 
-                // Структура: колонки 1-2 русские, колонки 3-4 английские
-                const russianStepPattern = cells[0].textContent.trim();
-                const russianStepDescription = cells[1].textContent.trim();
-                const englishStepPattern = cells[2].textContent.trim();
-                const englishStepDescription = cells[3].textContent.trim();
-
-                // Предпочитаем единое определение с английским как primary и русским как secondary.
-                if (englishStepPattern) {
-                    const englishStepDef = this.createStepDefinition(englishStepPattern, englishStepDescription);
-
-                    if (russianStepPattern && russianStepPattern !== englishStepPattern) {
-                        const russianData = this.createStepDefinition(russianStepPattern, russianStepDescription);
-                        Object.assign(englishStepDef, {
-                            russianPattern: russianData.pattern,
-                            russianFirstLine: russianData.firstLine,
-                            russianSegments: russianData.segments,
-                            russianDescription: russianData.description,
-                            russianStartsWithPlaceholder: russianData.startsWithPlaceholder
-                        });
+        let request!: Promise<HoverStepState>;
+        request = this.catalogProvider.getCatalog(documentUri)
+            .then(catalog => this.preparedStepStates.getOrCreate(
+                catalog.identity,
+                () => this.buildStepState(catalog.steps)
+            ))
+            .finally(() => {
+                setImmediate(() => {
+                    if (this.stepStateRequestsByDocument.get(documentKey) === request) {
+                        this.stepStateRequestsByDocument.delete(documentKey);
                     }
-
-                    this.stepDefinitions.push(englishStepDef);
-                    return;
-                }
-
-                // Fallback для шагов, где доступна только русская колонка.
-                if (russianStepPattern) {
-                    this.stepDefinitions.push(this.createStepDefinition(russianStepPattern, russianStepDescription));
-                }
+                });
             });
-            this.stepSuggestionIndex = new StepSuggestionIndex(this.stepDefinitions);
-            console.log(`[DriveHoverProvider] Parsed and stored ${this.stepDefinitions.length} step definitions.`);
-        } catch (e) {
-            console.error("[DriveHoverProvider] Error parsing HTML for step definitions:", e);
-            this.stepDefinitions = [];
-            this.stepSuggestionIndex = new StepSuggestionIndex([]);
-        }
+        this.stepStateRequestsByDocument.set(documentKey, request);
+        return request;
     }
 
-    private loadStepDefinitions(): Promise<void> {
-        if (this.isLoading && this.loadingPromise) {
-            return this.loadingPromise;
+    private buildStepState(steps: readonly BuiltInStepDefinition[]): HoverStepState {
+        const definitions: StepDefinition[] = [];
+        for (const step of steps) {
+            const russianStepPattern = step.ru?.pattern ?? '';
+            const russianStepDescription = step.ru?.description ?? '';
+            const englishStepPattern = step.en?.pattern ?? '';
+            const englishStepDescription = step.en?.description ?? '';
+
+            if (englishStepPattern) {
+                const englishStepDef = this.createStepDefinition(
+                    englishStepPattern,
+                    englishStepDescription
+                );
+                if (russianStepPattern && russianStepPattern !== englishStepPattern) {
+                    const russianData = this.createStepDefinition(
+                        russianStepPattern,
+                        russianStepDescription
+                    );
+                    Object.assign(englishStepDef, {
+                        russianPattern: russianData.pattern,
+                        russianFirstLine: russianData.firstLine,
+                        russianSegments: russianData.segments,
+                        russianDescription: russianData.description,
+                        russianStartsWithPlaceholder: russianData.startsWithPlaceholder
+                    });
+                }
+                definitions.push(englishStepDef);
+            } else if (russianStepPattern) {
+                definitions.push(this.createStepDefinition(
+                    russianStepPattern,
+                    russianStepDescription
+                ));
+            }
         }
-        if (this.stepDefinitions.length > 0 && !this.isLoading) {
-            return Promise.resolve();
-        }
-        
-        this.isLoading = true;
-        console.log("[DriveHoverProvider] Starting to load step definitions...");
-        
-        this.loadingPromise = getStepsHtml(this.context)
-            .then(htmlContent => {
-                this.parseAndStoreStepDefinitions(htmlContent);
-            })
-            .catch(async error => {
-                console.error(`[DriveHoverProvider] Ошибка загрузки steps.htm для подсказок: ${error.message}`);
-                const t = await getTranslator(this.context.extensionUri);
-                vscode.window.showWarningMessage(t('Error updating hints: {0}. Attempting to load from backup sources.', error.message));
-                this.stepDefinitions = [];
-                this.stepSuggestionIndex = new StepSuggestionIndex([]);
-            })
-            .finally(() => {
-                this.isLoading = false;
-                console.log("[DriveHoverProvider] Finished loading attempt for step definitions.");
-            });
-            
-        return this.loadingPromise;
+
+        console.log(`[DriveHoverProvider] Prepared ${definitions.length} step definitions.`);
+        return {
+            definitions,
+            suggestions: new StepSuggestionIndex(definitions),
+            regexByTemplate: new Map<string, RegExp>()
+        };
     }
 
     private createStepDefinition(pattern: string, description: string) {
@@ -354,9 +299,9 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
 
-    private getTemplateRegex(template: string): RegExp {
+    private getTemplateRegex(template: string, regexByTemplate: Map<string, RegExp>): RegExp {
         const normalizedTemplate = this.stripGherkinKeyword(template);
-        const cachedRegex = this.templateRegexCache.get(normalizedTemplate);
+        const cachedRegex = regexByTemplate.get(normalizedTemplate);
         if (cachedRegex) {
             return cachedRegex;
         }
@@ -372,16 +317,20 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             .replace(/\s+/g, '\\s+');
 
         const regex = new RegExp(`^${regexPattern}$`, 'i');
-        this.templateRegexCache.set(normalizedTemplate, regex);
+        regexByTemplate.set(normalizedTemplate, regex);
         return regex;
     }
 
-    private doesLineMatchTemplate(line: string, template: string): boolean {
+    private doesLineMatchTemplate(
+        line: string,
+        template: string,
+        regexByTemplate: Map<string, RegExp>
+    ): boolean {
         const normalizedLine = this.stripGherkinKeyword(line);
         if (!normalizedLine) {
             return false;
         }
-        const regex = this.getTemplateRegex(template);
+        const regex = this.getTemplateRegex(template, regexByTemplate);
         return regex.test(normalizedLine);
     }
 
@@ -405,11 +354,18 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         });
     }
     
-    private matchLineToPattern(line: string, stepDef: StepDefinition): boolean {
-        if (this.doesLineMatchTemplate(line, stepDef.firstLine)) {
+    private matchLineToPattern(
+        line: string,
+        stepDef: StepDefinition,
+        regexByTemplate: Map<string, RegExp>
+    ): boolean {
+        if (this.doesLineMatchTemplate(line, stepDef.firstLine, regexByTemplate)) {
             return true;
         }
-        if (stepDef.russianFirstLine && this.doesLineMatchTemplate(line, stepDef.russianFirstLine)) {
+        if (
+            stepDef.russianFirstLine
+            && this.doesLineMatchTemplate(line, stepDef.russianFirstLine, regexByTemplate)
+        ) {
             return true;
         }
         return false;
@@ -1231,22 +1187,21 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             return scenarioCallHover;
         }
 
-        if (this.isLoading && this.loadingPromise) {
-            await this.loadingPromise;
-        } else if (this.stepDefinitions.length === 0 && !this.isLoading) {
-            await this.loadStepDefinitions();
-        }
-
-        if (token.isCancellationRequested || this.stepDefinitions.length === 0) {
+        const stepState = await this.getStepState(document.uri);
+        if (token.isCancellationRequested || stepState.definitions.length === 0) {
             return null;
         }
         
-        for (const stepDef of this.stepDefinitions) {
+        for (const stepDef of stepState.definitions) {
             if (token.isCancellationRequested) {
                 return null;
             }
             try {
-                if (this.matchLineToPattern(lineText, stepDef)) {
+                if (this.matchLineToPattern(
+                    lineText,
+                    stepDef,
+                    stepState.regexByTemplate
+                )) {
                     const content = new vscode.MarkdownString();
                     const isRussianInput = this.isRussianText(lineText);
                     const descriptionText = isRussianInput && stepDef.russianDescription

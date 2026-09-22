@@ -50,6 +50,23 @@ test('completion and hover defer the YAML parameters manager', () => {
     }
 });
 
+test('activation shares one step catalog service across language providers', () => {
+    assert.equal(source.match(/new StepCatalogService\(/g)?.length, 1);
+    assert.match(
+        source,
+        /new DriveCompletionProvider\(context,\s*stepCatalogService,/
+    );
+    assert.match(source, /new DriveHoverProvider\(\s*context,\s*stepCatalogService,/);
+    assert.doesNotMatch(source, /completionProvider\.refreshSteps\(\)/);
+    assert.doesNotMatch(source, /hoverProvider\.refreshSteps\(\)/);
+
+    const refreshStart = source.indexOf('    const refreshGherkinStepsCommand = async () => {');
+    const refreshEnd = source.indexOf('\n    };', refreshStart);
+    assert.ok(refreshStart >= 0 && refreshEnd > refreshStart);
+    const refreshSource = source.slice(refreshStart, refreshEnd);
+    assert.equal(refreshSource.match(/stepCatalogService\.refresh\(/g)?.length, 1);
+});
+
 test('phase switcher defers infobase management helpers', () => {
     assert.doesNotMatch(phaseSwitcherSource, /from '\.\/infobaseManager';/);
     assert.match(

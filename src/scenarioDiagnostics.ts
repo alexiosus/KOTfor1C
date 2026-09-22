@@ -811,7 +811,12 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
 
             if (diagnostic.code === CODE_UNKNOWN_STEP) {
                 const lineText = document.lineAt(diagnostic.range.start.line).text.trim();
-                const suggestions = await this.hoverProvider.getStepSuggestions(lineText, 3, shouldCancel);
+                const suggestions = await this.hoverProvider.getStepSuggestions(
+                    document.uri,
+                    lineText,
+                    3,
+                    shouldCancel
+                );
                 if (shouldCancel()) {
                     return [];
                 }
@@ -1333,13 +1338,6 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         const scenarioCallLineSet = new Set<number>();
         const scenarioParamLineSet = new Set<number>();
 
-        if (options.includeStepChecks) {
-            await this.hoverProvider.ensureStepDefinitionsLoaded();
-            if (shouldCancel()) {
-                return;
-            }
-        }
-
         // If/EndIf, Do/EndDo, Try/EndTry + quotes checks
         const ifStack: number[] = [];
         const doStack: number[] = [];
@@ -1441,14 +1439,22 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 const stepLikeSyntax = looksLikePotentialGherkinStep(block.name);
 
                 if (options.includeStepChecks || stepLikeSyntax) {
-                    const isKnownStep = await this.hoverProvider.isKnownStepLine(lineText);
+                    const isKnownStep = await this.hoverProvider.isKnownStepLine(
+                        document.uri,
+                        lineText
+                    );
                     if (isKnownStep) {
                         continue;
                     }
                 }
 
                 if (options.includeStepChecks && includeStepSuggestions) {
-                    const stepHints = await this.hoverProvider.getStepSuggestions(lineText, 1, shouldCancel);
+                    const stepHints = await this.hoverProvider.getStepSuggestions(
+                        document.uri,
+                        lineText,
+                        1,
+                        shouldCancel
+                    );
                     if (shouldCancel()) {
                         return;
                     }
@@ -1461,7 +1467,12 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     if (!includeStepSuggestions) {
                         continue;
                     }
-                    const stepHints = await this.hoverProvider.getStepSuggestions(lineText, 3, shouldCancel);
+                    const stepHints = await this.hoverProvider.getStepSuggestions(
+                        document.uri,
+                        lineText,
+                        3,
+                        shouldCancel
+                    );
                     if (shouldCancel()) {
                         return;
                     }
@@ -1580,14 +1591,19 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     continue;
                 }
 
-                const isKnown = await this.hoverProvider.isKnownStepLine(trimmed);
+                const isKnown = await this.hoverProvider.isKnownStepLine(document.uri, trimmed);
                 if (isKnown) {
                     continue;
                 }
 
                 const shouldIncludeStepSuggestions = options.includeStepSuggestions ?? options.includeSuggestions;
                 const rawSuggestions = shouldIncludeStepSuggestions
-                    ? await this.hoverProvider.getStepSuggestions(trimmed, 3, shouldCancel)
+                    ? await this.hoverProvider.getStepSuggestions(
+                        document.uri,
+                        trimmed,
+                        3,
+                        shouldCancel
+                    )
                     : [];
                 if (shouldCancel()) {
                     return;

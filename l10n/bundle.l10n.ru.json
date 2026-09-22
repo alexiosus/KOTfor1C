@@ -372,6 +372,7 @@
   "Call scenario \"{0}\".": "Вызвать сценарий \"{0}\".",
   "Insert nested scenario call with parameters": "Вставить вызов вложенного сценария с параметрами",
   "Steps library successfully updated.": "Библиотека шагов успешно обновлена.",
+  "Steps library updated: version {0}, source {1}, {2} steps.": "Библиотека шагов обновлена: версия {0}, источник {1}, шагов: {2}.",
   "Error updating steps: {0}": "Ошибка при обновлении шагов: {0}",
   "Failed to load step definitions from external resource, cache, or local bundle.": "Не удалось загрузить определения шагов ни с внешнего ресурса, ни из кеша, ни из локального бандла.",
   "Error updating hints: {0}. Attempting to load from backup sources.": "Ошибка при обновлении подсказок: {0}. Попытка загрузить из резервных источников.",

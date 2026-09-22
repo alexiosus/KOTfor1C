@@ -6,6 +6,7 @@ import * as os from 'node:os';
 import { promisify } from 'node:util';
 import { DriveCompletionProvider } from './completionProvider';
 import { DriveHoverProvider } from './hoverProvider';
+import { StepCatalogService } from './stepCatalogService';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
 import {
     openMxlFileFromTextHandler,
@@ -492,8 +493,6 @@ function updateScenarioMetadataBlockSessionCache(document: vscode.TextDocument):
     scenarioMetadataBlockSessionCache.set(fileKey, metadataBlock);
 }
 
-const EXTERNAL_STEPS_URL_CONFIG_KEY = 'kotTestToolkit.steps.externalUrl'; // Ключ для отслеживания изменений
-
 async function notifyIfUpdated(context: vscode.ExtensionContext): Promise<void> {
     const currentVersion = context.extension.packageJSON.version as string | undefined;
     if (!currentVersion) {
@@ -580,10 +579,16 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // --- Регистрация Провайдеров Языковых Функций (Автодополнение и Подсказки) ---
-    const completionProvider = new DriveCompletionProvider(context, async () => {
+    const stepCatalogService = new StepCatalogService(context, vscode);
+    context.subscriptions.push(stepCatalogService);
+    const completionProvider = new DriveCompletionProvider(context, stepCatalogService, async () => {
         await phaseSwitcherProvider.ensureFreshScenarioCatalog();
     });
-    const hoverProvider = new DriveHoverProvider(context, phaseSwitcherProvider);
+    const hoverProvider = new DriveHoverProvider(
+        context,
+        stepCatalogService,
+        phaseSwitcherProvider
+    );
     const completionAndHoverSelector: vscode.DocumentSelector = [
         { pattern: '**/*.yaml', scheme: 'file' },
         { pattern: '**/*.feature', scheme: 'file' }
@@ -1125,17 +1130,19 @@ export function activate(context: vscode.ExtensionContext) {
         }, async (progress) => {
             progress.report({ increment: 0, message: t('Loading Gherkin step definitions...') });
             try {
-                await completionProvider.refreshSteps(); // Обновляет только Gherkin шаги
-                progress.report({ increment: 50, message: t('Gherkin autocompletion update completed.') });
-                await hoverProvider.refreshSteps();
+                const catalogs = await stepCatalogService.refresh(
+                    vscode.window.activeTextEditor?.document.uri
+                );
                 progress.report({ increment: 100, message: t('Gherkin hints update completed.') });
-
-                // Для обновления автодополнения сценариев, мы полагаемся на событие от PhaseSwitcherProvider,
-                // которое должно сработать, если пользователь нажмет "Обновить" в панели Test Manager.
-                // Если нужно принудительное обновление сценариев здесь, то нужно будет вызвать
-                // логику сканирования сценариев и затем completionProvider.updateScenarioCompletions().
-                // Пока что команда `refreshGherkinSteps` обновляет только Gherkin.
-                // Обновление сценариев происходит через Test Manager UI.
+                const selected = catalogs[0];
+                if (selected) {
+                    vscode.window.showInformationMessage(t(
+                        'Steps library updated: version {0}, source {1}, {2} steps.',
+                        selected.requestedVersion ?? selected.catalogVersion,
+                        selected.source,
+                        String(selected.steps.length)
+                    ));
+                }
 
             } catch (error: any) {
                 console.error("[refreshGherkinSteps Command] Error during refresh:", error.message);
@@ -1176,11 +1183,6 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Слушатель изменения конфигурации
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async (event) => {
-        if (event.affectsConfiguration(EXTERNAL_STEPS_URL_CONFIG_KEY)) {
-            console.log(`[Extension] Configuration for '${EXTERNAL_STEPS_URL_CONFIG_KEY}' changed. Refreshing Gherkin steps.`);
-            await refreshGherkinStepsCommand();
-        }
-
         if (event.affectsConfiguration('kotTestToolkit.localization.languageOverride')) {
             console.log('[Extension] Language override setting changed. Prompting for reload.');
             const message = vscode.l10n.t('Language setting changed. Reload window to apply?');
@@ -2310,10 +2312,6 @@ export function activate(context: vscode.ExtensionContext) {
             clearScenarioParameterSessionCache(document);
         })
     );
-
-    // Инициализируем загрузку шагов Gherkin
-    completionProvider.refreshSteps();
-    hoverProvider.refreshSteps();
 
     console.log('kotTestToolkit commands and providers registered.');
 }
