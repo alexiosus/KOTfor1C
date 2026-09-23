@@ -157,8 +157,6 @@ export function parseBuiltInStepCatalog(
     }
 
     const ids = new Set<string>();
-    const russianPatterns = new Set<string>();
-    const englishPatterns = new Set<string>();
     const steps = catalog.steps.map((rawStep, index): BuiltInStepDefinition => {
         const step = asRecord(rawStep, `Step catalog step ${index}`);
         const ru = parseStepVariant(step.ru, `Step catalog step ${index}.ru`);
@@ -176,19 +174,6 @@ export function parseBuiltInStepCatalog(
             throw new Error(`Step catalog contains duplicate step id ${id}.`);
         }
         ids.add(id);
-
-        if (ru) {
-            if (russianPatterns.has(ru.pattern)) {
-                throw new Error(`Step catalog contains duplicate Russian pattern: ${ru.pattern}`);
-            }
-            russianPatterns.add(ru.pattern);
-        }
-        if (en) {
-            if (englishPatterns.has(en.pattern)) {
-                throw new Error(`Step catalog contains duplicate English pattern: ${en.pattern}`);
-            }
-            englishPatterns.add(en.pattern);
-        }
 
         return { id, ru, en };
     });

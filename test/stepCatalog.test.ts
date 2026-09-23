@@ -35,19 +35,17 @@ test('catalog parser rejects a requested-version mismatch', () => {
     );
 });
 
-test('catalog parser rejects duplicate language patterns', () => {
+test('catalog parser permits duplicate language patterns when paired definitions have unique ids', () => {
     const duplicateRussianStep = {
         id: createStepDefinitionId('И пауза 1', 'And 2 second pause'),
         ru: { pattern: 'И пауза 1', description: 'Другая пауза' },
         en: { pattern: 'And 2 second pause', description: 'Different pause' }
     };
-    assert.throws(
-        () => parseBuiltInStepCatalog({
-            ...validCatalog,
-            steps: [...validCatalog.steps, duplicateRussianStep]
-        }),
-        /duplicate Russian pattern/
-    );
+    const catalog = parseBuiltInStepCatalog({
+        ...validCatalog,
+        steps: [...validCatalog.steps, duplicateRussianStep]
+    });
+    assert.equal(catalog.steps.length, 2);
 });
 
 test('catalog parser rejects a definition whose id does not match its variants', () => {

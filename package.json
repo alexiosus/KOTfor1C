@@ -1215,10 +1215,12 @@
     "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
     "compile-tests": "node tools/cleanTestOutput.cjs && esbuild test/*.test.ts --bundle --outdir=out/test --platform=node --format=cjs --sourcemap",
     "test": "npm run compile-tests && node --test out/test/*.test.js",
-    "check:types": "tsc --noEmit",
-    "lint": "eslint src test --max-warnings 0",
+    "check:types": "tsc --noEmit && tsc -p tsconfig.tools.json --noEmit",
+    "lint": "eslint src test tools/step-catalog --max-warnings 0",
     "check": "npm run check:types && npm run lint && npm test",
-    "verify:yaml-corpus": "esbuild ./src/scenarioYamlCorpusVerifier.ts --bundle --outfile=out/scenarioYamlCorpusVerifier.js --format=cjs --platform=node && node out/scenarioYamlCorpusVerifier.js"
+    "verify:yaml-corpus": "esbuild ./src/scenarioYamlCorpusVerifier.ts --bundle --outfile=out/scenarioYamlCorpusVerifier.js --format=cjs --platform=node && node out/scenarioYamlCorpusVerifier.js",
+    "build:step-catalog-tool": "esbuild ./tools/step-catalog/cli.ts --bundle --outfile=out/tools/step-catalog.js --platform=node --format=cjs",
+    "generate:step-catalog": "npm run build:step-catalog-tool && node out/tools/step-catalog.js"
   },
   "devDependencies": {
     "@types/node": "20.x",
