@@ -38,7 +38,12 @@ import {
 } from './commandHandlers';
 import { getTranslator } from './localization';
 import { setExtensionUri } from './appContext';
-import { getScenarioScanRootPath, initializeScenarioScanRoot, onDidChangeScenarioScanRoot } from './scenarioScanRoot';
+import {
+    getScenarioScanRootPath,
+    initializeScenarioScanRoot,
+    onDidChangeScenarioScanRoot,
+    resolveScenarioScanRootFsPath
+} from './scenarioScanRoot';
 import { TestInfo } from './types'; // Импортируем TestInfo
 import { SettingsProvider } from './settingsProvider';
 import { ScenarioDiagnosticsProvider } from './scenarioDiagnostics';
@@ -81,6 +86,11 @@ import {
     openProjectDefinitionHandler,
     ProjectDefinitionProvider
 } from './projectDefinitionNavigation';
+import {
+    ProjectDefinitionReferenceProvider,
+    ProjectDefinitionReferenceService,
+    type ProjectDefinitionReferenceSearchRoot
+} from './projectDefinitionReferences';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -207,6 +217,74 @@ function createProjectDefinitionIndexService(
         yieldEvery: 24,
         yieldControl: () => new Promise(resolve => setImmediate(resolve)),
         log: message => console.warn(`[ProjectDefinitionIndex] ${message}`)
+    });
+}
+
+function createProjectDefinitionReferenceService(
+    context: vscode.ExtensionContext,
+    resolver: ProjectDefinitionResolver
+): ProjectDefinitionReferenceService {
+    return new ProjectDefinitionReferenceService({
+        resolver,
+        loadSearchRoots: async resource => {
+            const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+            const resourceFolder = resource ? vscode.workspace.getWorkspaceFolder(resource) : undefined;
+            const folders = resourceFolder ? [resourceFolder] : workspaceFolders;
+            if (folders.length === 0) {
+                return [];
+            }
+            const { YamlParametersManager } = await import('./yamlParametersManager.js');
+            const profile = await YamlParametersManager.getInstance(context).loadActiveProfileSnapshot();
+            const roots: ProjectDefinitionReferenceSearchRoot[] = [];
+            for (const folder of folders) {
+                const configuration = resolveProjectLibraryConfiguration({
+                    workspaceFolderPath: folder.uri.fsPath,
+                    workspaceFolderUri: folder.uri.toString(),
+                    profileId: profile.id,
+                    buildParameters: profile.buildParameters,
+                    additionalVanessaParameters: profile.additionalVanessaParameters
+                });
+                roots.push({
+                    path: resolveScenarioScanRootFsPath(folder.uri),
+                    extensions: ['.yaml', '.yml']
+                });
+                configuration.libraryRootPaths.forEach(rootPath => roots.push({
+                    path: rootPath,
+                    extensions: ['.feature']
+                }));
+                configuration.featureFolderPaths.forEach(rootPath => roots.push({
+                    path: rootPath,
+                    extensions: ['.feature']
+                }));
+            }
+            return roots;
+        },
+        fileSystem: {
+            async realpath(filePath) {
+                return fs.promises.realpath(filePath);
+            },
+            async readDirectory(directoryPath) {
+                const entries = await fs.promises.readdir(directoryPath, { withFileTypes: true });
+                return entries
+                    .filter(entry => entry.isDirectory() || entry.isFile())
+                    .map(entry => ({
+                        name: entry.name,
+                        type: entry.isDirectory() ? 'directory' as const : 'file' as const
+                    }));
+            },
+            async stat(filePath) {
+                const value = await fs.promises.stat(filePath);
+                return { size: value.size, mtimeMs: value.mtimeMs };
+            },
+            readFile: filePath => fs.promises.readFile(filePath, 'utf8'),
+            toUri: filePath => vscode.Uri.file(filePath).toString()
+        },
+        getOpenDocuments: () => vscode.workspace.textDocuments,
+        directoryConcurrency: 8,
+        readConcurrency: 4,
+        yieldEvery: 24,
+        yieldControl: () => new Promise(resolve => setImmediate(resolve)),
+        log: message => console.warn(`[ProjectDefinitionReferences] ${message}`)
     });
 }
 
@@ -671,6 +749,10 @@ export function activate(context: vscode.ExtensionContext) {
         scenarios: phaseSwitcherProvider,
         steps: stepCatalogService
     });
+    const projectDefinitionReferenceService = createProjectDefinitionReferenceService(
+        context,
+        projectDefinitionResolver
+    );
     context.subscriptions.push(projectDefinitionIndex, projectDefinitionResolver);
     const completionProvider = new DriveCompletionProvider(context, projectDefinitionResolver);
     const hoverProvider = new DriveHoverProvider(
@@ -711,6 +793,19 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.languages.registerDefinitionProvider(
             completionAndHoverSelector,
             new ProjectDefinitionProvider(projectDefinitionResolver)
+        )
+    );
+    context.subscriptions.push(
+        vscode.languages.registerReferenceProvider(
+            [
+                { pattern: '**/*.yaml', scheme: 'file' },
+                { pattern: '**/*.feature', scheme: 'file' },
+                { pattern: '**/*.bsl', scheme: 'file' }
+            ],
+            new ProjectDefinitionReferenceProvider(
+                projectDefinitionReferenceService,
+                projectDefinitionResolver
+            )
         )
     );
     context.subscriptions.push(
@@ -1170,7 +1265,11 @@ export function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.insertUid', insertUidHandler
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.findCurrentFileReferences', findCurrentFileReferencesHandler
+        'kotTestToolkit.findCurrentFileReferences',
+        () => findCurrentFileReferencesHandler(
+            projectDefinitionReferenceService,
+            projectDefinitionResolver
+        )
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         'kotTestToolkit.replaceTabsWithSpacesYaml', replaceTabsWithSpacesYamlHandler

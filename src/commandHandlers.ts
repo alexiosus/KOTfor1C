@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { execFile } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
-import { findFileByName, findScenarioReferences } from './navigationUtils';
+import { findFileByName } from './navigationUtils';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { TestInfo } from './types';
 import { resolveScenarioByName, type ScenarioCatalog } from './scenarioCatalog';
@@ -20,6 +20,10 @@ import {
 import { normalizeProjectDefinitionTemplate } from './projectDefinition';
 import { pickProjectDefinition } from './projectDefinitionNavigation';
 import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
+import {
+    resolveProjectDefinitionIdsAtPosition,
+    type ProjectDefinitionReferenceService
+} from './projectDefinitionReferences';
 import JSZip = require('jszip');
 
 function isAmbiguousScenarioName(catalog: ScenarioCatalog | null, name: string): boolean {
@@ -446,87 +450,112 @@ export async function openScenarioByNameHandler(
 /**
  * Обработчик команды поиска ссылок на текущий сценарий.
  */
-export async function findCurrentFileReferencesHandler() {
+export async function findCurrentFileReferencesHandler(
+    referenceService: ProjectDefinitionReferenceService,
+    definitionResolver: ProjectDefinitionResolver
+): Promise<void> {
     const t = await getTranslator(getExtensionUri());
-    
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showWarningMessage(t('No active editor.'));
+        return;
+    }
+
     await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: t('Searching for scenario references...'),
-        cancellable: false
-    }, async (progress) => {
-        console.log("[Cmd:findCurrentFileReferences] Triggered.");
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) { 
-            vscode.window.showWarningMessage(t('No active editor.')); 
-            return; 
-        }
-        
+        cancellable: true
+    }, async (progress, token) => {
         const document = editor.document;
-        // if (document.languageId !== 'yaml') { vscode.window.showWarningMessage("Команда работает только для YAML."); return; }
-
-        let targetName: string | undefined;
-        const lineCount = document.lineCount;
-        const nameRegex = /^\s*Имя:\s*\"(.+?)\"\s*$/;
-        for (let i = 0; i < lineCount; i++) {
-            const line = document.lineAt(i); 
-            const nameMatch = line.text.match(nameRegex);
-            if (nameMatch) { 
-                targetName = nameMatch[1]; 
-                break; 
-            }
-        }
-        
-        if (!targetName) { 
-            vscode.window.showInformationMessage(t('Could not find "Name: \"...\"" in the current file.')); 
-            return; 
-        }
-
-        progress.report({ increment: 50, message: t('Searching for references to "{0}"...', targetName) });
-
-        console.log(`[Cmd:findCurrentFileReferences] Calling findScenarioReferences for "${targetName}"...`);
-        const locations = await findScenarioReferences(targetName); // Вызов из navigationUtils
-        if (!locations?.length) { 
-            vscode.window.showInformationMessage(t('References to "{0}" not found.', targetName)); 
-            return; 
-        }
-
-        progress.report({ increment: 75, message: t('Found {0} references', locations.length.toString()) });
-
-        // Формируем QuickPickItems
-        const quickPickItems: (vscode.QuickPickItem & { location: vscode.Location })[] = await Promise.all(
-            locations.map(async loc => {
-               let description = ''; 
-               try { 
-                   const doc = await vscode.workspace.openTextDocument(loc.uri); 
-                   description = doc.lineAt(loc.range.start.line).text.trim(); 
-               } catch { 
-                   description = 'N/A'; 
-               }
-               return { 
-                   label: `$(file-code) ${path.basename(loc.uri.fsPath)}:${loc.range.start.line + 1}`, 
-                   description, 
-                   detail: loc.uri.fsPath, 
-                   location: loc 
-               };
-           })
+        const definitionIds = await resolveProjectDefinitionIdsAtPosition(
+            document,
+            editor.selection.active,
+            definitionResolver,
+            token
         );
-        
-        progress.report({ increment: 100, message: t('Select reference to open') });
-        
-        const pickedItem = await vscode.window.showQuickPick(quickPickItems, { 
-            matchOnDescription: true, 
-            matchOnDetail: true, 
-            placeHolder: t('References to "{0}":', targetName) 
+        if (token.isCancellationRequested) {
+            return;
+        }
+        if (definitionIds.length === 0) {
+            vscode.window.showInformationMessage(t('Project definition not found at the current position.'));
+            return;
+        }
+
+        const view = await definitionResolver.getView(document.uri);
+        const targetName = definitionIds
+            .map(definitionId => view.byId.get(definitionId)?.template)
+            .filter((value): value is string => !!value)
+            .join(', ');
+        progress.report({ increment: 25, message: t('Searching for references to "{0}"...', targetName) });
+
+        const locationsByKey = new Map<string, vscode.Location>();
+        for (const definitionId of definitionIds) {
+            const locations = await referenceService.findReferences(
+                definitionId,
+                document.uri,
+                { includeDeclaration: false },
+                token
+            );
+            locations.forEach(location => {
+                const key = [
+                    location.uri.toString(),
+                    location.range.start.line,
+                    location.range.start.character,
+                    location.range.end.line,
+                    location.range.end.character
+                ].join(':');
+                locationsByKey.set(key, location);
+            });
+        }
+        if (token.isCancellationRequested) {
+            return;
+        }
+        const locations = Array.from(locationsByKey.values());
+        if (locations.length === 0) {
+            vscode.window.showInformationMessage(t('References to "{0}" not found.', targetName));
+            return;
+        }
+
+        progress.report({ increment: 50, message: t('Found {0} references', locations.length.toString()) });
+        const quickPickItems: (vscode.QuickPickItem & { location: vscode.Location })[] = await Promise.all(
+            locations.map(async location => {
+                let description = '';
+                try {
+                    const referencedDocument = await vscode.workspace.openTextDocument(location.uri);
+                    description = referencedDocument.lineAt(location.range.start.line).text.trim();
+                } catch {
+                    description = 'N/A';
+                }
+                return {
+                    label: `$(file-code) ${path.basename(location.uri.fsPath)}:${location.range.start.line + 1}`,
+                    description,
+                    detail: location.uri.fsPath,
+                    location
+                };
+            })
+        );
+        if (token.isCancellationRequested) {
+            return;
+        }
+        progress.report({ increment: 25, message: t('Select reference to open') });
+
+        const pickedItem = await vscode.window.showQuickPick(quickPickItems, {
+            matchOnDescription: true,
+            matchOnDetail: true,
+            placeHolder: t('References to "{0}":', targetName)
         });
-        
-        if (pickedItem) {
-            try {
-                const doc = await vscode.workspace.openTextDocument(pickedItem.location.uri);
-                await vscode.window.showTextDocument(doc, { selection: pickedItem.location.range, preview: false });
-            } catch (err) { 
-                console.error(`[Cmd:findCurrentFileReferences] Error opening picked location:`, err); 
-                vscode.window.showErrorMessage(t('Failed to open location.')); 
-            }
+        if (!pickedItem) {
+            return;
+        }
+        try {
+            const referencedDocument = await vscode.workspace.openTextDocument(pickedItem.location.uri);
+            await vscode.window.showTextDocument(referencedDocument, {
+                selection: pickedItem.location.range,
+                preview: false
+            });
+        } catch (error) {
+            console.error('[Cmd:findCurrentFileReferences] Error opening picked location:', error);
+            vscode.window.showErrorMessage(t('Failed to open location.'));
         }
     });
 }
