@@ -714,9 +714,9 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 );
                 const russianDoc = new vscode.MarkdownString();
                 russianDoc.appendMarkdown(`**Описание:**\n\n${russianStepDescription}\n\n`);
-                russianDoc.appendMarkdown(`\`${russianSnippet.displayText}\``);
+                russianDoc.appendCodeblock(russianSnippet.displayText, 'gherkin');
                 if (stepText) {
-                    russianDoc.appendMarkdown(`\n\n\`${englishSnippet.displayText}\``);
+                    russianDoc.appendCodeblock(englishSnippet.displayText, 'gherkin');
                 }
                 russianItem.documentation = russianDoc;
                 russianItem.detail = 'Gherkin Step (1C) - Russian';
@@ -742,9 +742,9 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 );
                 const englishDoc = new vscode.MarkdownString();
                 englishDoc.appendMarkdown(`**Description:**\n\n${stepDescription}\n\n`);
-                englishDoc.appendMarkdown(`\`${englishSnippet.displayText}\``);
+                englishDoc.appendCodeblock(englishSnippet.displayText, 'gherkin');
                 if (russianStepText) {
-                    englishDoc.appendMarkdown(`\n\n\`${russianSnippet.displayText}\``);
+                    englishDoc.appendCodeblock(russianSnippet.displayText, 'gherkin');
                 }
                 item.documentation = englishDoc;
                 item.detail = 'Gherkin Step (1C) - English';
