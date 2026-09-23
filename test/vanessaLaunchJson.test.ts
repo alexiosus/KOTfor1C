@@ -4,6 +4,7 @@ import {
     applyAdditionalVanessaParameters,
     applyGlobalVanessaVariables,
     findObjectKeyByAlias,
+    getVanessaParameterAliases,
     getJsonValueAtPointer,
     parseAdditionalParameterPointer,
     resolveExistingPointerByAliases,
@@ -54,6 +55,11 @@ test('alias resolution uses current Vanessa aliases and preserves unknown keys',
     assert.equal(findObjectKeyByAlias(source, 'customsetting'), 'CustomSetting');
     assert.equal(findObjectKeyByAlias(source, 'UnknownSetting'), null);
     assert.deepEqual(resolveExistingPointerByAliases(source, ['ВерсияVA']), ['VersionVA']);
+    assert.deepEqual(getVanessaParameterAliases('librarycatalogs'), [
+        'librarycatalogs',
+        'КаталогиБиблиотек'
+    ]);
+    assert.deepEqual(getVanessaParameterAliases('CustomSetting'), ['CustomSetting']);
 });
 
 test('additional Vanessa parameters resolve aliases, preserve existing types and clone input', () => {

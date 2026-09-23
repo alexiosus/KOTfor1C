@@ -292,7 +292,7 @@ export function parseAdditionalParameterPointer(rawKey: string): Array<string | 
     return pointer.length > 0 ? pointer : null;
 }
 
-function getAdditionalParamAliasCandidates(rawKey: string): string[] {
+export function getVanessaParameterAliases(rawKey: string): readonly string[] {
     const key = rawKey.trim();
     if (!key) {
         return [];
@@ -302,7 +302,7 @@ function getAdditionalParamAliasCandidates(rawKey: string): string[] {
     if (!fromIndex?.size) {
         return [key];
     }
-    return Array.from(new Set([key, ...Array.from(fromIndex)]));
+    return Object.freeze(Array.from(new Set([key, ...Array.from(fromIndex)])));
 }
 
 export function findObjectKeyByAlias(container: unknown, rawKey: string): string | null {
@@ -325,7 +325,7 @@ export function findObjectKeyByAlias(container: unknown, rawKey: string): string
         }
     }
 
-    const aliases = getAdditionalParamAliasCandidates(rawKey)
+    const aliases = getVanessaParameterAliases(rawKey)
         .map(alias => alias.trim().toLowerCase())
         .filter(alias => alias.length > 0);
     const aliasSet = new Set(aliases);
