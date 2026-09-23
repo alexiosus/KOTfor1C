@@ -15,6 +15,22 @@ export interface BuiltInStepDefinition {
     readonly en?: StepTextVariant;
 }
 
+const RUSSIAN_STEP_CATEGORY_DESCRIPTION = 'Категория шагов';
+const ENGLISH_STEP_CATEGORY_DESCRIPTION = 'Steps category';
+
+export function isStepCategoryDefinition(
+    step: Pick<BuiltInStepDefinition, 'ru' | 'en'>
+): boolean {
+    return step.ru?.description === RUSSIAN_STEP_CATEGORY_DESCRIPTION
+        || step.en?.description === ENGLISH_STEP_CATEGORY_DESCRIPTION;
+}
+
+export function executableStepDefinitions(
+    steps: readonly BuiltInStepDefinition[]
+): readonly BuiltInStepDefinition[] {
+    return steps.filter(step => !isStepCategoryDefinition(step));
+}
+
 export interface BuiltInStepCatalog {
     readonly schemaVersion: 1;
     readonly vanessaVersion: string;

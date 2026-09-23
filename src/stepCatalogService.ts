@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import type * as vscode from 'vscode';
 import { parseLegacyStepsHtml } from './legacyStepCatalog';
 import {
+    executableStepDefinitions,
     ResolvedStepCatalog,
     sha256Hex
 } from './stepCatalog';
@@ -94,7 +95,7 @@ function resolveVersionedCatalog(
         requestedVersion,
         catalogVersion: result.catalog.vanessaVersion,
         source: result.source,
-        steps: result.catalog.steps
+        steps: executableStepDefinitions(result.catalog.steps)
     };
 }
 

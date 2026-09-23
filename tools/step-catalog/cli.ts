@@ -80,6 +80,7 @@ async function main(): Promise<void> {
     process.stdout.write(
         `Generated Vanessa ${catalog.vanessaVersion} catalog: ${report.stepCount} steps, `
         + `${report.excludedSyntaxRows} syntax rows excluded, `
+        + `${report.categoryCount} categories separated, `
         + `${report.duplicateEnglishPatterns.length} duplicate English patterns reported.\n`
     );
 }

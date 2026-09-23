@@ -22,6 +22,15 @@
   <rowsItem>
     <index>2</index>
     <row>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Файлы</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Категория шагов</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Files</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Steps category</v8:content></v8:item></tl></c></c>
+    </row>
+  </rowsItem>
+  <rowsItem>
+    <index>3</index>
+    <row>
       <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>&#1048; поле &lt;Имя&gt; равно &quot;Значение&quot;</v8:content></v8:item></tl></c></c>
       <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Проверяет значение &amp; заголовок</v8:content></v8:item></tl></c></c>
       <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>And field &lt;Name&gt; equals &quot;Value&quot;</v8:content></v8:item></tl></c></c>
@@ -29,7 +38,7 @@
     </row>
   </rowsItem>
   <rowsItem>
-    <index>3</index>
+    <index>4</index>
     <row>
       <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>И только русский шаг</v8:content></v8:item></tl></c></c>
       <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Описание

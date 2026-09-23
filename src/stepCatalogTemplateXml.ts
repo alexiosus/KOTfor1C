@@ -5,6 +5,8 @@ import {
     BuiltInStepCatalog,
     BuiltInStepDefinition,
     createStepDefinitionId,
+    executableStepDefinitions,
+    isStepCategoryDefinition,
     normalizeStepCatalogText,
     parseBuiltInStepCatalog,
     parseStepCatalogIndex,
@@ -28,8 +30,14 @@ const MINIMUM_PRECEDING_STEP_RATIO = 0.9;
 
 export interface VanessaTemplateParseResult {
     readonly steps: readonly BuiltInStepDefinition[];
+    readonly categories: readonly StepCategoryTranslation[];
     readonly sourceRows: number;
     readonly excludedSyntaxRows: number;
+}
+
+export interface StepCategoryTranslation {
+    readonly ru?: string;
+    readonly en?: string;
 }
 
 export interface GenerateCatalogOptions {
@@ -49,6 +57,7 @@ export interface StepCatalogGenerationReport extends StepCatalogCompatibilityRep
     readonly vanessaVersion: string;
     readonly sourceRows: number;
     readonly excludedSyntaxRows: number;
+    readonly categoryCount: number;
     readonly stepCount: number;
     readonly russianStepCount: number;
     readonly englishStepCount: number;
@@ -195,6 +204,7 @@ export function parseVanessaStepTemplateXml(xml: string): VanessaTemplateParseRe
     }
 
     const steps: BuiltInStepDefinition[] = [];
+    const categories: StepCategoryTranslation[] = [];
     let excludedSyntaxRows = 0;
     for (let index = 1; index < rowsItems.length; index++) {
         const [russianPattern, russianDescription, englishPattern, englishDescription]
@@ -212,6 +222,13 @@ export function parseVanessaStepTemplateXml(xml: string): VanessaTemplateParseRe
         if (!ru && !en) {
             throw new Error(`Vanessa template row ${index} has no Russian or English step pattern.`);
         }
+        if (isStepCategoryDefinition({ ru, en })) {
+            categories.push({
+                ...(ru ? { ru: ru.pattern } : {}),
+                ...(en ? { en: en.pattern } : {})
+            });
+            continue;
+        }
         steps.push({
             id: createStepDefinitionId(ru?.pattern, en?.pattern),
             ru,
@@ -221,6 +238,7 @@ export function parseVanessaStepTemplateXml(xml: string): VanessaTemplateParseRe
 
     return {
         steps,
+        categories,
         sourceRows: rowsItems.length - 1,
         excludedSyntaxRows
     };
@@ -297,6 +315,7 @@ export function createStepCatalogGenerationReport(
         vanessaVersion: catalog.vanessaVersion,
         sourceRows: parsed.sourceRows,
         excludedSyntaxRows: parsed.excludedSyntaxRows,
+        categoryCount: parsed.categories.length,
         stepCount: catalog.steps.length,
         russianStepCount: catalog.steps.filter(step => step.ru !== undefined).length,
         englishStepCount: catalog.steps.filter(step => step.en !== undefined).length,
@@ -355,7 +374,16 @@ export async function writeCatalogPublication(
         .sort(compareVersions)
         .at(-1);
     if (precedingVersion) {
-        const precedingCount = existingIndex!.catalogs[precedingVersion].stepCount;
+        const precedingEntry = existingIndex!.catalogs[precedingVersion];
+        const precedingCatalogBytes = await readOptional(
+            path.join(publicationRoot, precedingEntry.path)
+        );
+        const precedingCount = precedingCatalogBytes
+            ? executableStepDefinitions(parseBuiltInStepCatalog(
+                JSON.parse(precedingCatalogBytes.toString('utf8')),
+                precedingVersion
+            ).steps).length
+            : precedingEntry.stepCount;
         if (validatedCatalog.steps.length < precedingCount * MINIMUM_PRECEDING_STEP_RATIO) {
             throw new Error(
                 `Refusing material step-count drop from ${precedingCount} in Vanessa `

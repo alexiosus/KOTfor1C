@@ -49,6 +49,22 @@ function createCatalog(version = VERSION, suffix = ''): BuiltInStepCatalog {
     };
 }
 
+function withCategoryMetadata(catalog: BuiltInStepCatalog): BuiltInStepCatalog {
+    const ruPattern = 'Файлы';
+    const enPattern = 'Files';
+    return {
+        ...catalog,
+        steps: [
+            {
+                id: createStepDefinitionId(ruPattern, enPattern),
+                ru: { pattern: ruPattern, description: 'Категория шагов' },
+                en: { pattern: enPattern, description: 'Steps category' }
+            },
+            ...catalog.steps
+        ]
+    };
+}
+
 function downloadedResult(catalog: BuiltInStepCatalog): VersionedCatalogResult {
     return {
         catalog,
@@ -161,6 +177,18 @@ test('concurrent first requests for one folder share the exact cached catalog re
     assert.equal(firstResult.source, 'versioned-cache');
     assert.equal(secondResult.source, 'versioned-cache');
     assert.equal(firstResult.identity, secondResult.identity);
+});
+
+test('versioned category metadata is not exposed as IntelliSense steps', async () => {
+    const catalog = withCategoryMetadata(createCatalog());
+    const fixture = createCoordinator({
+        getCachedExactCatalog: async () => cachedResult(catalog)
+    });
+
+    const resolved = await fixture.coordinator.getCatalog('file:///workspace/test.yaml');
+
+    assert.equal(resolved.source, 'versioned-cache');
+    assert.deepEqual(resolved.steps.map(step => step.ru?.pattern), ['И пауза 1']);
 });
 
 test('first offline request returns bundled catalog without waiting for remote completion', async () => {

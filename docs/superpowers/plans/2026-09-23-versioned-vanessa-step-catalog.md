@@ -889,3 +889,9 @@ Expected: every email is `48015759+alexiosus@users.noreply.github.com` and the w
 - [ ] **Step 6: Push and update the pull request**
 
 Push `codex/reliability-foundation`, update the PR description with the versioned-catalog architecture, performance effect, offline fallback, test evidence, and post-merge catalog bootstrap instructions. Attach the PR to the task after the push.
+
+### Deferred Follow-up: Visual Step Library
+
+Build a separate native VS Code step browser after the versioned catalog rollout. Vanessa category rows (`Категория шагов` / `Steps category`) are translation metadata, not executable steps; keep them out of IntelliSense. The browser should instead group real steps by their hierarchical `ТипШага` path (for example, `Файлы.Удаление файлов.Очистка каталога`), support search and step insertion, and show descriptions without requiring `steps.htm`.
+
+The translation `Template.xml` contains category names but not the step-to-category relationship. Before implementing the browser, extend the catalog source with category paths obtained from Vanessa source definitions or Vanessa's JSON export (`section` / `category`). Treat this as a separately designed feature rather than inferring ownership from row order.

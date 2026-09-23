@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { sha256Hex } from '../src/stepCatalog';
+import { createStepDefinitionId, sha256Hex } from '../src/stepCatalog';
 import {
     compareCatalogWithLegacyHtml,
     createStepCatalogGenerationReport,
@@ -27,13 +27,14 @@ function replaceFirstDataRow(xml: string, replacement: string): string {
     return `${xml.slice(0, start)}${replacement}${xml.slice(end + '</rowsItem>'.length)}`;
 }
 
-test('official template parser keeps executable rows and excludes header and syntax rows', () => {
+test('official template parser separates category translations from executable steps', () => {
     const xml = readFixture('step-catalog/Template.xml');
     const result = parseVanessaStepTemplateXml(xml);
 
-    assert.equal(result.sourceRows, 3);
+    assert.equal(result.sourceRows, 4);
     assert.equal(result.steps.length, 2);
     assert.equal(result.excludedSyntaxRows, 1);
+    assert.deepEqual(result.categories, [{ ru: 'Файлы', en: 'Files' }]);
     assert.equal(result.steps[0].ru?.pattern, 'И поле <Имя> равно "Значение"');
     assert.equal(result.steps[0].en?.description, 'Checks value & title');
     assert.equal(result.steps[1].en, undefined);
@@ -146,8 +147,9 @@ test('generation report records source counts and duplicate language patterns', 
     };
     const report = createStepCatalogGenerationReport(parsed, duplicatedCatalog, compatibility);
 
-    assert.equal(report.sourceRows, 3);
+    assert.equal(report.sourceRows, 4);
     assert.equal(report.excludedSyntaxRows, 1);
+    assert.equal(report.categoryCount, 1);
     assert.equal(report.stepCount, 3);
     assert.deepEqual(report.duplicateRussianPatterns, ['И только русский шаг']);
     assert.deepEqual(report.duplicateEnglishPatterns, ['And field <Name> equals "Value"']);
@@ -216,4 +218,48 @@ test('publication rejects a material step-count drop from the preceding version'
         () => readFile(path.join(root, generationOptions.version, 'catalog.json')),
         /ENOENT/
     );
+});
+
+test('publication compares against executable preceding steps instead of category metadata', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kot-step-catalog-'));
+    const { catalog, report } = generatedFixture();
+    const precedingVersion = '1.2.043.27';
+    const categoryRu = 'Файлы';
+    const categoryEn = 'Files';
+    const precedingCatalog = {
+        ...catalog,
+        vanessaVersion: precedingVersion,
+        source: { ...catalog.source, ref: precedingVersion },
+        steps: [
+            ...catalog.steps,
+            {
+                id: createStepDefinitionId(categoryRu, categoryEn),
+                ru: { pattern: categoryRu, description: 'Категория шагов' },
+                en: { pattern: categoryEn, description: 'Steps category' }
+            }
+        ]
+    };
+    const precedingDirectory = path.join(root, precedingVersion);
+    await mkdir(precedingDirectory, { recursive: true });
+    await writeFile(
+        path.join(precedingDirectory, 'catalog.json'),
+        serializeStepCatalogJson(precedingCatalog)
+    );
+    await writeFile(path.join(root, 'index.json'), `${JSON.stringify({
+        schemaVersion: 1,
+        generatedAt: '2026-09-21T00:00:00.000Z',
+        catalogs: {
+            [precedingVersion]: {
+                path: `${precedingVersion}/catalog.json`,
+                sha256: 'a'.repeat(64),
+                stepCount: 3,
+                sourceCommit: 'a'.repeat(40)
+            }
+        }
+    })}\n`);
+
+    await writeCatalogPublication(root, catalog, report);
+
+    const published = await readFile(path.join(root, generationOptions.version, 'catalog.json'));
+    assert.equal(JSON.parse(published.toString('utf8')).steps.length, 2);
 });
