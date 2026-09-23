@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { collectTreeWithConcurrencyLimit, mapWithConcurrencyLimit } from '../src/boundedConcurrency';
+import {
+    collectTreeWithConcurrencyLimit,
+    ConcurrencyCancelledError,
+    mapWithConcurrencyLimit,
+    runWithConcurrencyLimit
+} from '../src/boundedConcurrency';
 
 test('limits concurrent work and preserves input order', async () => {
     let active = 0;
@@ -83,4 +88,45 @@ test('tree collection does not start child-directory reads after cancellation', 
 
     assert.deepEqual(visited, ['root']);
     assert.deepEqual(files, ['root/scen.yaml']);
+});
+
+test('runWithConcurrencyLimit stops scheduling after cancellation and rejects partial results', async () => {
+    let cancelled = false;
+    const started: number[] = [];
+
+    await assert.rejects(
+        runWithConcurrencyLimit([1, 2, 3, 4], 2, async value => {
+            started.push(value);
+            if (started.length === 2) {
+                cancelled = true;
+            }
+            await new Promise(resolve => setImmediate(resolve));
+            return value;
+        }, { shouldCancel: () => cancelled }),
+        ConcurrencyCancelledError
+    );
+
+    assert.deepEqual(started, [1, 2]);
+});
+
+test('runWithConcurrencyLimit periodically yields without exceeding its concurrency bound', async () => {
+    let active = 0;
+    let maxActive = 0;
+    let yields = 0;
+    const result = await runWithConcurrencyLimit([1, 2, 3, 4, 5], 2, async value => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise(resolve => setImmediate(resolve));
+        active -= 1;
+        return value * 2;
+    }, {
+        yieldEvery: 2,
+        yieldControl: async () => {
+            yields += 1;
+        }
+    });
+
+    assert.deepEqual(result, [2, 4, 6, 8, 10]);
+    assert.equal(maxActive, 2);
+    assert.equal(yields >= 2, true);
 });
