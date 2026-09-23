@@ -1,4 +1,5 @@
 import * as path from 'path';
+import type * as vscode from 'vscode';
 import type { TestInfo } from './types';
 
 type PathApi = Pick<typeof path, 'dirname' | 'isAbsolute' | 'relative' | 'resolve' | 'sep'>;
@@ -87,6 +88,12 @@ export interface ScenarioCatalog {
     readonly byName: ReadonlyMap<string, readonly TestInfo[]>;
     readonly byUri: ReadonlyMap<string, TestInfo>;
     readonly primaryByName: ReadonlyMap<string, TestInfo>;
+}
+
+export interface ScenarioCatalogProvider {
+    getScenarioCatalog(): ScenarioCatalog | null;
+    ensureFreshScenarioCatalog(): Promise<ScenarioCatalog>;
+    readonly onDidUpdateScenarioCatalog: vscode.Event<ScenarioCatalog | null>;
 }
 
 export type ScenarioResolution =

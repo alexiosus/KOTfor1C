@@ -2,7 +2,10 @@
 import { getTranslator } from './localization';
 import * as path from 'path';
 import { TestInfo } from './types';
-import { resolveScenarioByName, type ScenarioCatalog } from './scenarioCatalog';
+import {
+    resolveScenarioByName,
+    type ScenarioCatalogProvider
+} from './scenarioCatalog';
 import {
     buildVariableReferenceText,
     extractSavedVariableFromStepLine,
@@ -37,9 +40,7 @@ interface StepDefinition {
 const PLACEHOLDER_REGEX = /"%\d+\s+[^"]*"|'%\d+\s+[^']*'/g;
 const STEP_LITERAL_REGEX = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\[[A-Za-zА-Яа-яЁё0-9_-]+\]/g;
 
-interface ScenarioCacheProvider {
-    getScenarioCatalog(): ScenarioCatalog | null;
-    ensureFreshScenarioCatalog(): Promise<ScenarioCatalog>;
+interface ScenarioCacheProvider extends ScenarioCatalogProvider {
     isFailedFeatureLine?(documentUri: vscode.Uri, lineIndex: number): boolean;
 }
 
