@@ -587,6 +587,11 @@
         "category": "%cmd.category%"
       },
       {
+        "command": "kotTestToolkit.createExportScenario",
+        "title": "%cmd.createExportScenario.title%",
+        "category": "%cmd.category%"
+      },
+      {
         "command": "kotTestToolkit.manageSystemFunctions",
         "title": "%cmd.manageSystemFunctions.title%",
         "category": "%cmd.category%"

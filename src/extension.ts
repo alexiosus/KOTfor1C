@@ -91,6 +91,10 @@ import {
     ProjectDefinitionReferenceService,
     type ProjectDefinitionReferenceSearchRoot
 } from './projectDefinitionReferences';
+import {
+    createExportScenarioCommand,
+    type ExportScenarioLibraryRoot
+} from './exportScenarioCommand';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -218,6 +222,54 @@ function createProjectDefinitionIndexService(
         yieldControl: () => new Promise(resolve => setImmediate(resolve)),
         log: message => console.warn(`[ProjectDefinitionIndex] ${message}`)
     });
+}
+
+async function loadExportScenarioLibraryRoots(
+    context: vscode.ExtensionContext,
+    resourceUriValue?: string
+): Promise<readonly ExportScenarioLibraryRoot[]> {
+    const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+    let resourceFolder: vscode.WorkspaceFolder | undefined;
+    if (resourceUriValue) {
+        try {
+            resourceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.parse(resourceUriValue));
+        } catch {
+            // Fall back to all workspace folders for a stale Quick Fix resource.
+        }
+    }
+    const folders = resourceFolder ? [resourceFolder] : workspaceFolders;
+    if (folders.length === 0) {
+        return [];
+    }
+    const { YamlParametersManager } = await import('./yamlParametersManager.js');
+    const profile = await YamlParametersManager.getInstance(context).loadActiveProfileSnapshot();
+    const result: ExportScenarioLibraryRoot[] = [];
+    const seen = new Set<string>();
+    for (const folder of folders) {
+        const configuration = resolveProjectLibraryConfiguration({
+            workspaceFolderPath: folder.uri.fsPath,
+            workspaceFolderUri: folder.uri.toString(),
+            profileId: profile.id,
+            buildParameters: profile.buildParameters,
+            additionalVanessaParameters: profile.additionalVanessaParameters
+        });
+        for (const rootPath of configuration.libraryRootPaths) {
+            const uri = vscode.Uri.file(rootPath).toString();
+            if (seen.has(uri)) {
+                continue;
+            }
+            seen.add(uri);
+            result.push(Object.freeze({
+                uri,
+                label: workspaceFolders.length > 1
+                    ? `${folder.name}: ${path.basename(rootPath) || rootPath}`
+                    : path.basename(rootPath) || rootPath,
+                workspaceFolderUri: folder.uri.toString(),
+                profileId: profile.id
+            }));
+        }
+    }
+    return Object.freeze(result);
 }
 
 function createProjectDefinitionReferenceService(
@@ -1187,6 +1239,16 @@ export function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.createMainScenario', async () => {
             const { handleCreateMainScenario } = await loadScenarioCreator();
             await handleCreateMainScenario(context);
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.createExportScenario', async (seed?: unknown) => {
+            const t = await getTranslator(context.extensionUri);
+            await createExportScenarioCommand(seed, {
+                index: projectDefinitionIndex,
+                loadLibraryRoots: resourceUri => loadExportScenarioLibraryRoots(context, resourceUri),
+                translate: t
+            });
         }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
