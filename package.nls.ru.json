@@ -20,7 +20,9 @@
   "config.phaseSwitcher.autoAddNewScenariosToFavorites.description": "Автоматически добавлять новые созданные сценарии в избранное.",
 
   "config.autoCollapseOnOpen.description": "Автоматически сворачивать секции 'ВложенныеСценарии' и 'ПараметрыСценария' при открытии файла.",
-  "config.stepsExternalUrl.description": "URL для загрузки файла steps.htm с определениями шагов Gherkin. Оставьте пустым, чтобы использовать файл из расширения.",
+  "config.stepsVanessaVersion.description": "Точная версия Vanessa Automation для этой папки workspace (например, 1.2.043.28). Оставьте пустым для определения по changelog рядом с runVanessa.vanessaEpfPath.",
+  "config.stepsCatalogIndexUrl.description": "HTTPS URL индекса неизменяемых версионных каталогов шагов Vanessa.",
+  "config.stepsExternalUrl.description": "URL устаревшего HTML-источника шагов Gherkin. Используется только как fallback, если точный версионный каталог недоступен; оставьте пустым для встроенной резервной библиотеки.",
   "config.autoFillNestedScenariosOnSave.description": "Автоматически заполнять секцию 'ВложенныеСценарии' недостающими сценариями при сохранении YAML файлов.",
   "config.autoFillScenarioParametersOnSave.description": "Автоматически заполнять секцию 'ПараметрыСценария' недостающими параметрами при сохранении YAML файлов.",
   "config.autoReplaceTabsWithSpacesOnSave.description": "Автоматически заменять табуляции на 4 пробела при сохранении YAML файлов.",

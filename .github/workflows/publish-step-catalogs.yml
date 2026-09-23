@@ -1,0 +1,153 @@
+name: Publish Vanessa step catalogs
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact Vanessa release tag (empty selects the latest stable release)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-step-catalogs
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out generator sources
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify the catalog generator
+        run: |
+          npm run compile-tests
+          node --test out/test/stepCatalogGenerator.test.js
+
+      - name: Resolve and download the Vanessa release
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version || '' }}
+        run: |
+          set -euo pipefail
+          TAG="$REQUESTED_VERSION"
+          if [[ -z "$TAG" ]]; then
+            TAG="$(curl --fail --silent --show-error --location \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              https://api.github.com/repos/Pr-Mex/vanessa-automation/releases/latest \
+              | node -e 'let data=""; process.stdin.on("data", chunk => data += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(data).tag_name));')"
+          fi
+          VERSION="${TAG#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid Vanessa release tag: $TAG" >&2
+            exit 1
+          fi
+
+          REFERENCE_ROOT="$RUNNER_TEMP/vanessa-reference"
+          SOURCE_ROOT="$RUNNER_TEMP/vanessa-source"
+          git clone --filter=blob:none --no-checkout --depth 1 --branch "$TAG" \
+            https://github.com/Pr-Mex/vanessa-automation.git "$REFERENCE_ROOT"
+          git -C "$REFERENCE_ROOT" checkout --detach
+          COMMIT="$(git -C "$REFERENCE_ROOT" rev-parse HEAD)"
+          SOURCE_TIMESTAMP="$(git -C "$REFERENCE_ROOT" show -s --format=%cI HEAD)"
+          if [[ ! "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Could not resolve Vanessa tag $TAG to a commit." >&2
+            exit 1
+          fi
+
+          mkdir -p "$SOURCE_ROOT"
+          curl --fail --silent --show-error --location \
+            "https://github.com/Pr-Mex/vanessa-automation/archive/${COMMIT}.tar.gz" \
+            --output "$RUNNER_TEMP/vanessa-source.tar.gz"
+          tar -xzf "$RUNNER_TEMP/vanessa-source.tar.gz" --strip-components=1 -C "$SOURCE_ROOT"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+          echo "timestamp=$SOURCE_TIMESTAMP" >> "$GITHUB_OUTPUT"
+          echo "root=$SOURCE_ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare append-only publication branch
+        env:
+          PUBLICATION_ROOT: ${{ runner.temp }}/step-catalog-publication
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin step-catalogs >/dev/null 2>&1; then
+            git fetch --depth 1 origin step-catalogs:refs/remotes/origin/step-catalogs
+            git worktree add --detach "$PUBLICATION_ROOT" refs/remotes/origin/step-catalogs
+          else
+            git worktree add --detach "$PUBLICATION_ROOT" HEAD
+            git -C "$PUBLICATION_ROOT" switch --orphan catalog-publication
+            git -C "$PUBLICATION_ROOT" rm -r --ignore-unmatch .
+          fi
+
+      - name: Generate, validate, and publish catalog
+        env:
+          PUBLICATION_ROOT: ${{ runner.temp }}/step-catalog-publication
+          VERSION: ${{ steps.source.outputs.version }}
+          SOURCE_TAG: ${{ steps.source.outputs.tag }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
+          SOURCE_TIMESTAMP: ${{ steps.source.outputs.timestamp }}
+          SOURCE_ROOT: ${{ steps.source.outputs.root }}
+        run: |
+          set -euo pipefail
+          npm run generate:step-catalog -- \
+            --source "$SOURCE_ROOT" \
+            --version "$VERSION" \
+            --ref "$SOURCE_TAG" \
+            --commit "$SOURCE_COMMIT" \
+            --source-timestamp "$SOURCE_TIMESTAMP" \
+            --publication-root "$PUBLICATION_ROOT" \
+            --legacy-html res/steps.htm
+
+          node - "$PUBLICATION_ROOT" "$VERSION" "$SOURCE_COMMIT" <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const [root, version, sourceCommit] = process.argv.slice(2);
+          const index = JSON.parse(fs.readFileSync(path.join(root, 'index.json'), 'utf8'));
+          const entry = index.catalogs?.[version];
+          const catalogBytes = fs.readFileSync(path.join(root, version, 'catalog.json'));
+          const catalog = JSON.parse(catalogBytes.toString('utf8'));
+          const report = JSON.parse(fs.readFileSync(path.join(root, version, 'generation-report.json'), 'utf8'));
+          const digest = crypto.createHash('sha256').update(catalogBytes).digest('hex');
+          if (!entry || entry.path !== `${version}/catalog.json` || entry.sha256 !== digest) {
+            throw new Error('Generated catalog index entry is invalid.');
+          }
+          if (entry.sourceCommit !== sourceCommit || entry.stepCount !== catalog.steps.length) {
+            throw new Error('Generated catalog metadata does not match its source or contents.');
+          }
+          if (report.stepCount !== catalog.steps.length || report.duplicateStepIds.length !== 0) {
+            throw new Error('Generated catalog report is invalid.');
+          }
+          NODE
+
+          git -C "$PUBLICATION_ROOT" config user.name "Alexey Eremeev"
+          git -C "$PUBLICATION_ROOT" config user.email "48015759+alexiosus@users.noreply.github.com"
+          git -C "$PUBLICATION_ROOT" add index.json \
+            "$VERSION/catalog.json" \
+            "$VERSION/generation-report.json"
+          if git -C "$PUBLICATION_ROOT" diff --cached --quiet; then
+            echo "Catalog $VERSION is already published without changes."
+            exit 0
+          fi
+          git -C "$PUBLICATION_ROOT" commit -m "catalog: publish Vanessa ${VERSION}"
+          git -C "$PUBLICATION_ROOT" push origin HEAD:step-catalogs

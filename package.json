@@ -190,17 +190,33 @@
       {
         "title": "%config.diagnosticsSettings.title%",
         "properties": {
+          "kotTestToolkit.steps.vanessaVersion": {
+            "type": "string",
+            "default": "",
+            "scope": "resource",
+            "pattern": "^(|v?\\d+\\.\\d+\\.\\d+\\.\\d+)$",
+            "description": "%config.stepsVanessaVersion.description%",
+            "order": 1
+          },
+          "kotTestToolkit.steps.catalogIndexUrl": {
+            "type": "string",
+            "default": "https://raw.githubusercontent.com/alexiosus/KOTfor1C/step-catalogs/index.json",
+            "scope": "resource",
+            "description": "%config.stepsCatalogIndexUrl.description%",
+            "order": 2
+          },
           "kotTestToolkit.steps.externalUrl": {
             "type": "string",
-            "default": "https://raw.githubusercontent.com/alexiosus/KOTfor1C/main/res/steps.htm",
+            "default": "",
+            "scope": "resource",
             "description": "%config.stepsExternalUrl.description%",
-            "order": 1
+            "order": 3
           },
           "kotTestToolkit.editor.checkRelatedParentScenarios": {
             "type": "boolean",
             "default": true,
             "description": "%config.checkRelatedParentScenarios.description%",
-            "order": 2
+            "order": 4
           }
         }
       },

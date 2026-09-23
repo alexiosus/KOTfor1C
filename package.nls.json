@@ -20,7 +20,9 @@
   "config.phaseSwitcher.autoAddNewScenariosToFavorites.description": "Automatically add newly created scenarios to favorites.",
 
   "config.autoCollapseOnOpen.description": "Automatically collapse 'NestedScenarios' ('ВложенныеСценарии') and 'ScenarioParameters' ('ПараметрыСценария') sections when opening a file.",
-  "config.stepsExternalUrl.description": "URL to download steps.htm with Gherkin step definitions. Leave empty to use the file from the extension.",
+  "config.stepsVanessaVersion.description": "Exact Vanessa Automation version for this workspace folder (for example, 1.2.043.28). Leave empty to detect it from the changelog next to runVanessa.vanessaEpfPath.",
+  "config.stepsCatalogIndexUrl.description": "HTTPS URL of the immutable versioned Vanessa step catalog index.",
+  "config.stepsExternalUrl.description": "Legacy HTML fallback URL for Gherkin step definitions. It is used only when an exact versioned catalog is unavailable; leave empty to use the bundled fallback.",
   "config.autoFillNestedScenariosOnSave.description": "Automatically fill 'NestedScenarios' section with missing scenarios when saving YAML files.",
   "config.autoFillScenarioParametersOnSave.description": "Automatically fill 'ScenarioParameters' section with missing parameters when saving YAML files.",
   "config.autoReplaceTabsWithSpacesOnSave.description": "Automatically replace tabs with 4 spaces when saving YAML files.",
