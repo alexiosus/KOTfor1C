@@ -745,7 +745,10 @@ export function activate(context: vscode.ExtensionContext) {
         )
     );
 
-    const scenarioDiagnosticsProvider = new ScenarioDiagnosticsProvider(phaseSwitcherProvider, hoverProvider);
+    const scenarioDiagnosticsProvider = new ScenarioDiagnosticsProvider(
+        phaseSwitcherProvider,
+        projectDefinitionResolver
+    );
     context.subscriptions.push(
         scenarioDiagnosticsProvider,
         vscode.languages.registerCodeActionsProvider(

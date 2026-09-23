@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { DriveHoverProvider } from './hoverProvider';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { TestInfo } from './types';
 import { isScenarioYamlFile } from './yamlValidator';
@@ -15,6 +14,12 @@ import {
     type ScenarioValidationOptions as ValidationOptions
 } from './scenarioValidationPolicy';
 import { calculateLevenshteinSimilarity } from './stringSimilarity';
+import type {
+    ProjectDefinition,
+    ProjectDefinitionKind,
+    ProjectDefinitionView
+} from './projectDefinition';
+import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 
 const DIAGNOSTIC_SOURCE = 'KOT for 1C';
 const CODE_UNCLOSED_IF = 'kotTestToolkit.unclosedIf';
@@ -23,7 +28,7 @@ const CODE_UNCLOSED_TRY = 'kotTestToolkit.unclosedTry';
 const CODE_UNCLOSED_QUOTE = 'kotTestToolkit.unclosedQuote';
 const CODE_UNKNOWN_STEP = 'kotTestToolkit.unknownStep';
 const CODE_UNKNOWN_SCENARIO = 'kotTestToolkit.unknownScenario';
-const CODE_AMBIGUOUS_SCENARIO = 'kotTestToolkit.ambiguousScenario';
+const CODE_AMBIGUOUS_DEFINITION = 'kotTestToolkit.ambiguousDefinition';
 const CODE_EXTRA_SCENARIO_PARAM = 'kotTestToolkit.extraScenarioParameter';
 const CODE_MISSING_SCENARIO_PARAM = 'kotTestToolkit.missingScenarioParameter';
 const CODE_MISSING_QUOTES = 'kotTestToolkit.missingQuotes';
@@ -72,7 +77,7 @@ interface DiagnosticMessages {
     fixAll: string;
     unknownStep: string;
     unknownScenario: string;
-    ambiguousScenario: string;
+    ambiguousDefinition: string;
     maybeDidYouMeanHeader: string;
     extraScenarioParameter: string;
     missingScenarioParameters: string;
@@ -95,7 +100,7 @@ function buildMessages(): DiagnosticMessages {
         fixAll: vscode.l10n.t('KOT - Fix scenario issues'),
         unknownStep: vscode.l10n.t('Unknown Gherkin step.'),
         unknownScenario: vscode.l10n.t('Unknown nested scenario call.'),
-        ambiguousScenario: vscode.l10n.t('Scenario name resolves to multiple files:'),
+        ambiguousDefinition: vscode.l10n.t('Call resolves to multiple project definitions:'),
         maybeDidYouMeanHeader: vscode.l10n.t('Maybe you meant:'),
         extraScenarioParameter: vscode.l10n.t('Extra parameter for called scenario: {0}.'),
         missingScenarioParameters: vscode.l10n.t('Missing parameters for called scenario:'),
@@ -454,20 +459,67 @@ function buildMissingParameterInsertion(
     };
 }
 
-function findClosestStrings(input: string, candidates: string[], max: number): string[] {
-    const normalizedInput = input.trim().toLowerCase();
+const SUGGESTION_YIELD_EVERY = 64;
+const GHERKIN_SUGGESTION_PREFIX = /^(?:\s*)(?:\*\s*)?(?:К\s+тому\s+же|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Но|И|If|Дано)\s+/iu;
+
+function normalizeSuggestionText(value: string): string {
+    return value
+        .replace(GHERKIN_SUGGESTION_PREFIX, '')
+        .trim()
+        .toLocaleLowerCase();
+}
+
+async function findClosestDefinitions(
+    definitionResolver: ProjectDefinitionResolver,
+    resource: vscode.Uri,
+    input: string,
+    max: number,
+    shouldCancel: () => boolean,
+    includeKind: (kind: ProjectDefinitionKind) => boolean,
+    currentView?: ProjectDefinitionView
+): Promise<string[]> {
+    if (shouldCancel()) {
+        return [];
+    }
+
+    const normalizedInput = normalizeSuggestionText(input);
     if (!normalizedInput) {
         return [];
     }
 
-    return candidates
-        .map(candidate => {
-            const normalizedCandidate = candidate.toLowerCase();
-            const score = calculateLevenshteinSimilarity(normalizedInput, normalizedCandidate);
-            return { candidate, score };
-        })
-        .filter(item => item.score >= 0.3)
-        .sort((a, b) => b.score - a.score)
+    const view = currentView ?? await definitionResolver.getView(resource);
+    if (shouldCancel()) {
+        return [];
+    }
+
+    const bestByTemplate = new Map<string, { candidate: string; score: number }>();
+    for (let index = 0; index < view.all.length; index++) {
+        if (shouldCancel()) {
+            return [];
+        }
+        const definition = view.all[index];
+        if (!includeKind(definition.kind)) {
+            continue;
+        }
+        const normalizedCandidate = normalizeSuggestionText(definition.template);
+        const score = calculateLevenshteinSimilarity(normalizedInput, normalizedCandidate);
+        if (score >= 0.3) {
+            const current = bestByTemplate.get(definition.template);
+            if (!current || score > current.score) {
+                bestByTemplate.set(definition.template, { candidate: definition.template, score });
+            }
+        }
+        if ((index + 1) % SUGGESTION_YIELD_EVERY === 0) {
+            await new Promise<void>(resolve => setImmediate(resolve));
+        }
+    }
+
+    if (shouldCancel()) {
+        return [];
+    }
+    return Array.from(bestByTemplate.values())
+        .sort((left, right) => right.score - left.score
+            || left.candidate.localeCompare(right.candidate, undefined, { sensitivity: 'base' }))
         .slice(0, Math.max(1, max))
         .map(item => item.candidate);
 }
@@ -644,6 +696,42 @@ function formatMultilineListMessage(header: string, items: string[]): string {
     return `${header}\n- ${items.join('\n- ')}\n`;
 }
 
+function definitionLocation(definition: ProjectDefinition): ProjectDefinition['definitionLocation'] | undefined {
+    return definition.definitionLocation ?? definition.implementationLocation;
+}
+
+function createAmbiguousDefinitionDiagnostic(
+    document: vscode.TextDocument,
+    line: number,
+    message: string,
+    definitions: readonly ProjectDefinition[]
+): vscode.Diagnostic {
+    const diagnostic = createDiagnostic(
+        document,
+        line,
+        formatMultilineListMessage(message, definitions.map(definition => definition.sourceLabel)),
+        vscode.DiagnosticSeverity.Error,
+        CODE_AMBIGUOUS_DEFINITION
+    );
+    diagnostic.relatedInformation = definitions.flatMap(definition => {
+        const location = definitionLocation(definition);
+        if (!location) {
+            return [];
+        }
+        return [new vscode.DiagnosticRelatedInformation(
+            new vscode.Location(
+                vscode.Uri.parse(location.uri),
+                new vscode.Range(
+                    new vscode.Position(location.range.start.line, location.range.start.character),
+                    new vscode.Position(location.range.end.line, location.range.end.character)
+                )
+            ),
+            definition.sourceLabel
+        )];
+    });
+    return diagnostic;
+}
+
 function normalizeScenarioCode(value: string | undefined): string {
     return (value || '').trim();
 }
@@ -672,7 +760,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
 
     constructor(
         private readonly phaseSwitcherProvider: PhaseSwitcherProvider,
-        private readonly hoverProvider: DriveHoverProvider
+        private readonly definitionResolver: ProjectDefinitionResolver
     ) {
         this.subscriptions.push(
             vscode.workspace.onDidOpenTextDocument(document => {
@@ -712,6 +800,12 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             this.phaseSwitcherProvider.onDidUpdateScenarioCatalog(() => {
                 this.resetDependencyGraph();
                 this.rebuildDuplicateScenarioCodeDiagnosticsFromCache();
+                const activeDocument = vscode.window.activeTextEditor?.document;
+                if (activeDocument) {
+                    this.scheduleValidation(activeDocument, 150, CHANGE_VALIDATION_OPTIONS);
+                }
+            }),
+            this.definitionResolver.onDidChangeView(() => {
                 const activeDocument = vscode.window.activeTextEditor?.document;
                 if (activeDocument) {
                     this.scheduleValidation(activeDocument, 150, CHANGE_VALIDATION_OPTIONS);
@@ -809,13 +903,59 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 continue;
             }
 
+            if (diagnostic.code === CODE_UNKNOWN_STEP || diagnostic.code === CODE_UNKNOWN_SCENARIO) {
+                const invocation = document.lineAt(diagnostic.range.start.line).text.trim();
+                const seed = {
+                    invocation,
+                    language: scenarioLanguage,
+                    documentUri: document.uri.toString(),
+                    range: {
+                        start: {
+                            line: diagnostic.range.start.line,
+                            character: diagnostic.range.start.character
+                        },
+                        end: {
+                            line: diagnostic.range.end.line,
+                            character: diagnostic.range.end.character
+                        }
+                    }
+                };
+                const exportAction = new vscode.CodeAction(
+                    vscode.l10n.t('Create export scenario from this invocation'),
+                    vscode.CodeActionKind.QuickFix
+                );
+                exportAction.command = {
+                    command: 'kotTestToolkit.createExportScenario',
+                    title: exportAction.title,
+                    arguments: [seed]
+                };
+                exportAction.diagnostics = [diagnostic];
+                exportAction.isPreferred = diagnostic.code === CODE_UNKNOWN_SCENARIO;
+                actions.push(exportAction);
+
+                const userStepAction = new vscode.CodeAction(
+                    vscode.l10n.t('Create user step from this invocation'),
+                    vscode.CodeActionKind.QuickFix
+                );
+                userStepAction.command = {
+                    command: 'kotTestToolkit.createUserStep',
+                    title: userStepAction.title,
+                    arguments: [seed]
+                };
+                userStepAction.diagnostics = [diagnostic];
+                userStepAction.isPreferred = diagnostic.code === CODE_UNKNOWN_STEP;
+                actions.push(userStepAction);
+            }
+
             if (diagnostic.code === CODE_UNKNOWN_STEP) {
                 const lineText = document.lineAt(diagnostic.range.start.line).text.trim();
-                const suggestions = await this.hoverProvider.getStepSuggestions(
+                const suggestions = await findClosestDefinitions(
+                    this.definitionResolver,
                     document.uri,
                     lineText,
                     3,
-                    shouldCancel
+                    shouldCancel,
+                    kind => kind !== 'nestedScenario'
                 );
                 if (shouldCancel()) {
                     return [];
@@ -851,8 +991,17 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 }
                 const indent = match[1];
                 const unknownName = match[3].trim();
-                const catalog = this.phaseSwitcherProvider.getScenarioCatalog();
-                const suggestions = findClosestStrings(unknownName, Array.from(catalog?.byName.keys() || []), 3);
+                const suggestions = await findClosestDefinitions(
+                    this.definitionResolver,
+                    document.uri,
+                    unknownName,
+                    3,
+                    shouldCancel,
+                    kind => kind === 'nestedScenario'
+                );
+                if (shouldCancel()) {
+                    return [];
+                }
                 for (const suggestion of suggestions) {
                     const action = new vscode.CodeAction(
                         vscode.l10n.t('Replace with: {0}', suggestion),
@@ -1332,6 +1481,16 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         if (shouldCancel()) {
             return;
         }
+        let definitionView: ProjectDefinitionView;
+        try {
+            definitionView = await this.definitionResolver.getView(document.uri);
+        } catch (error) {
+            console.error('[ScenarioDiagnostics] Failed to load project definitions for validation:', error);
+            return;
+        }
+        if (shouldCancel()) {
+            return;
+        }
         const hasScenarioCache = (scenarioCatalog?.byName.size || 0) > 0;
         const scenarioCallBlocks = parseScenarioCallBlocks(document, bodyRange);
         const validatedScenarioCallBlocks: ScenarioCallBlock[] = [];
@@ -1400,101 +1559,109 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
 
         // Scenario calls checks
         for (const block of scenarioCallBlocks) {
-            const resolution = scenarioCatalog
-                ? resolveScenarioByName(scenarioCatalog, block.name)
-                : { kind: 'missing' as const, name: block.name };
-            if (resolution.kind === 'ambiguous') {
-                validatedScenarioCallBlocks.push(block);
+            const lineText = document.lineAt(block.line).text.trim();
+            const definitionResolution = await this.definitionResolver.resolve(
+                document.uri,
+                lineText,
+                definitionView
+            );
+            if (shouldCancel()) {
+                return;
+            }
+
+            if (definitionResolution.kind === 'ambiguous') {
                 scenarioCallLineSet.add(block.line);
                 block.parameters.forEach(param => scenarioParamLineSet.add(param.line));
-                const diagnostic = createDiagnostic(
+                const definitions = definitionResolution.matches.map(match => match.definition);
+                if (definitions.some(definition => definition.kind === 'nestedScenario')) {
+                    validatedScenarioCallBlocks.push(block);
+                }
+                diagnostics.push(createAmbiguousDefinitionDiagnostic(
                     document,
                     block.line,
-                    formatMultilineListMessage(
-                        this.messages.ambiguousScenario,
-                        resolution.scenarios.map(item => item.relativePath || item.yamlFileUri.fsPath)
-                    ),
-                    vscode.DiagnosticSeverity.Error,
-                    CODE_AMBIGUOUS_SCENARIO
-                );
-                diagnostic.relatedInformation = resolution.scenarios.map(item => new vscode.DiagnosticRelatedInformation(
-                    new vscode.Location(item.yamlFileUri, new vscode.Position(0, 0)),
-                    item.relativePath || item.yamlFileUri.fsPath
+                    this.messages.ambiguousDefinition,
+                    definitions
                 ));
-                diagnostics.push(diagnostic);
                 continue;
             }
-            const scenarioInfo = resolution.kind === 'unique' ? resolution.scenario : undefined;
-            const lineText = document.lineAt(block.line).text.trim();
+
+            if (definitionResolution.kind === 'unique') {
+                scenarioCallLineSet.add(block.line);
+                if (definitionResolution.match.definition.kind !== 'nestedScenario') {
+                    continue;
+                }
+            }
+
+            const scenarioResolution = definitionResolution.kind === 'unique' && scenarioCatalog
+                ? resolveScenarioByName(scenarioCatalog, block.name)
+                : null;
+            const scenarioInfo = scenarioResolution?.kind === 'unique'
+                ? scenarioResolution.scenario
+                : undefined;
             const includeScenarioSuggestions = options.includeScenarioSuggestions ?? options.includeSuggestions;
             const includeStepSuggestions = options.includeStepSuggestions ?? options.includeSuggestions;
-            const scenarioSuggestions = (!scenarioInfo && hasScenarioCache && includeScenarioSuggestions)
-                ? findClosestStrings(block.name, Array.from(scenarioCatalog?.byName.keys() || []), 3)
+            const scenarioSuggestions = (definitionResolution.kind === 'missing' && includeScenarioSuggestions)
+                ? await findClosestDefinitions(
+                    this.definitionResolver,
+                    document.uri,
+                    block.name,
+                    3,
+                    shouldCancel,
+                    kind => kind === 'nestedScenario',
+                    definitionView
+                )
                 : [];
+            if (shouldCancel()) {
+                return;
+            }
             const hasStrongScenarioNameMatch = scenarioSuggestions.length > 0
                 && getStringSimilarity(block.name, scenarioSuggestions[0]) >= 0.85;
 
             // Disambiguate step-like "And ..." lines to avoid false "unknown nested scenario" diagnostics.
-            if (!scenarioInfo && block.parameters.length === 0 && !hasStrongScenarioNameMatch) {
+            if (definitionResolution.kind === 'missing'
+                && block.parameters.length === 0
+                && !hasStrongScenarioNameMatch) {
                 const stepLikeSyntax = looksLikePotentialGherkinStep(block.name);
-
-                if (options.includeStepChecks || stepLikeSyntax) {
-                    const isKnownStep = await this.hoverProvider.isKnownStepLine(
-                        document.uri,
-                        lineText
-                    );
-                    if (isKnownStep) {
-                        continue;
-                    }
-                }
-
-                if (options.includeStepChecks && includeStepSuggestions) {
-                    const stepHints = await this.hoverProvider.getStepSuggestions(
-                        document.uri,
-                        lineText,
-                        1,
-                        shouldCancel
-                    );
-                    if (shouldCancel()) {
-                        return;
-                    }
-                    if (stepHints.length > 0) {
-                        continue;
-                    }
-                } else if (stepLikeSyntax) {
-                    // Lightweight pass without full step validation:
-                    // if it looks like a step and isn't known, emit step diagnostic instead of unknown scenario.
-                    if (!includeStepSuggestions) {
-                        continue;
-                    }
-                    const stepHints = await this.hoverProvider.getStepSuggestions(
+                const stepHints = includeStepSuggestions
+                    ? await findClosestDefinitions(
+                        this.definitionResolver,
                         document.uri,
                         lineText,
                         3,
-                        shouldCancel
-                    );
-                    if (shouldCancel()) {
-                        return;
-                    }
-                    const likelyMissingQuotes = looksLikeMissingQuotes(lineText, stepHints);
-                    const suggestions = stepHints.map(suggestion => applyStepSuggestionWithOriginalValues(lineText, suggestion));
-                    const suffix = formatSuggestionListSuffix(this.messages, suggestions);
+                        shouldCancel,
+                        kind => kind !== 'nestedScenario',
+                        definitionView
+                    )
+                    : [];
+                if (shouldCancel()) {
+                    return;
+                }
+                if (stepLikeSyntax || stepHints.length > 0) {
+                    scenarioCallLineSet.add(block.line);
+                    if (options.includeStepChecks) {
+                        const likelyMissingQuotes = looksLikeMissingQuotes(lineText, stepHints);
+                        const suggestions = stepHints.map(suggestion => applyStepSuggestionWithOriginalValues(lineText, suggestion));
+                        const suffix = formatSuggestionListSuffix(this.messages, suggestions);
 
-                    diagnostics.push(createDiagnostic(
-                        document,
-                        block.line,
-                        likelyMissingQuotes
-                            ? `${this.messages.missingQuotesLikely}${suffix}`
-                            : `${this.messages.unknownStep}${suffix}`,
-                        likelyMissingQuotes ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error,
-                        CODE_UNKNOWN_STEP
-                    ));
+                        diagnostics.push(createDiagnostic(
+                            document,
+                            block.line,
+                            likelyMissingQuotes
+                                ? `${this.messages.missingQuotesLikely}${suffix}`
+                                : `${this.messages.unknownStep}${suffix}`,
+                            likelyMissingQuotes ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error,
+                            CODE_UNKNOWN_STEP
+                        ));
+                    }
                     continue;
                 }
             }
 
             const likelyStepPrefix = /^(Я|I|When|Then|Given|Если|Когда|Тогда|Но)\b/i.test(block.name);
-            const isScenarioCall = !!scenarioInfo || block.parameters.length > 0 || !likelyStepPrefix || hasStrongScenarioNameMatch;
+            const isScenarioCall = definitionResolution.kind === 'unique'
+                || block.parameters.length > 0
+                || !likelyStepPrefix
+                || hasStrongScenarioNameMatch;
             if (!isScenarioCall) {
                 continue;
             }
@@ -1504,7 +1671,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             block.parameters.forEach(param => scenarioParamLineSet.add(param.line));
 
             if (!scenarioInfo) {
-                if (!hasScenarioCache) {
+                if (definitionResolution.kind === 'unique') {
                     for (const param of block.parameters) {
                         const trimmedValue = param.value.trim();
                         if (trimmedValue.length > 0 && !isValidScenarioParameterValue(trimmedValue)) {
@@ -1591,18 +1758,37 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     continue;
                 }
 
-                const isKnown = await this.hoverProvider.isKnownStepLine(document.uri, trimmed);
-                if (isKnown) {
+                const definitionResolution = await this.definitionResolver.resolve(
+                    document.uri,
+                    trimmed,
+                    definitionView
+                );
+                if (shouldCancel()) {
+                    return;
+                }
+                if (definitionResolution.kind === 'unique') {
+                    continue;
+                }
+                if (definitionResolution.kind === 'ambiguous') {
+                    diagnostics.push(createAmbiguousDefinitionDiagnostic(
+                        document,
+                        line,
+                        this.messages.ambiguousDefinition,
+                        definitionResolution.matches.map(match => match.definition)
+                    ));
                     continue;
                 }
 
                 const shouldIncludeStepSuggestions = options.includeStepSuggestions ?? options.includeSuggestions;
                 const rawSuggestions = shouldIncludeStepSuggestions
-                    ? await this.hoverProvider.getStepSuggestions(
+                    ? await findClosestDefinitions(
+                        this.definitionResolver,
                         document.uri,
                         trimmed,
                         3,
-                        shouldCancel
+                        shouldCancel,
+                        kind => kind !== 'nestedScenario',
+                        definitionView
                     )
                     : [];
                 if (shouldCancel()) {

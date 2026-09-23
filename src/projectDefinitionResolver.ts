@@ -249,9 +249,10 @@ export class ProjectDefinitionResolver implements DisposableLike {
 
     async resolve(
         resource: vscode.Uri | undefined,
-        invocation: string
+        invocation: string,
+        view?: ProjectDefinitionView
     ): Promise<ProjectDefinitionResolution> {
-        return resolveProjectInvocation(await this.getView(resource), invocation);
+        return resolveProjectInvocation(view ?? await this.getView(resource), invocation);
     }
 
     dispose(): void {
