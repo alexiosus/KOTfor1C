@@ -10,6 +10,9 @@ function projectFile(relativePath: string): string {
 test('catalog workflow is append-only, serialized, and uses noreply commit identity', () => {
     const source = projectFile('.github/workflows/publish-step-catalogs.yml');
 
+    assert.match(source, /runs-on: ubuntu-24\.04/);
+    assert.match(source, /uses: actions\/checkout@v7/);
+    assert.match(source, /uses: actions\/setup-node@v7/);
     assert.match(source, /permissions:\s*\n\s*contents: write/);
     assert.match(source, /concurrency:/);
     assert.match(source, /cancel-in-progress: false/);
