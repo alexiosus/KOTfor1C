@@ -138,12 +138,21 @@ function scenarioLocation(scenario: TestInfo) {
 
 function nestedDefinition(scenario: TestInfo): ProjectDefinition {
     const uri = scenario.yamlFileUri.toString();
+    const parameters = (scenario.parameters ?? [])
+        .map(name => name.trim())
+        .filter(Boolean)
+        .map((name, index) => Object.freeze({
+            name,
+            index,
+            source: 'snippet' as const,
+            defaultValue: scenario.parameterDefaults?.[name]
+        }));
     return Object.freeze({
         id: uri,
         kind: 'nestedScenario',
         template: scenario.name,
         normalizedTemplate: normalizeProjectDefinitionTemplate(scenario.name),
-        parameters: templateParameters(scenario.name, scenario.parameters ?? []),
+        parameters: Object.freeze(parameters),
         description: scenario.scenarioDescription || undefined,
         sourceLabel: `Nested scenario (${scenario.relativePath || scenario.name})`,
         definitionLocation: scenarioLocation(scenario)

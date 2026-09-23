@@ -132,7 +132,11 @@ export function compileProjectDefinitionMatcher(
     const template = normalizeProjectDefinitionTemplate(
         definition.template.slice(templateRange.start, templateRange.end)
     );
-    const orderedParameters = Array.from(definition.parameters).sort((left, right) => left.index - right.index);
+    // Nested-scenario parameters live on the following assignment lines, not inside
+    // the scenario name matched on the current line.
+    const orderedParameters = definition.kind === 'nestedScenario'
+        ? []
+        : Array.from(definition.parameters).sort((left, right) => left.index - right.index);
     const literals: string[] = [];
     const placeholders: CompiledPlaceholder[] = [];
     let cursor = 0;

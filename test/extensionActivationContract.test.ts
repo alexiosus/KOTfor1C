@@ -54,13 +54,15 @@ test('completion and hover defer the YAML parameters manager', () => {
     }
 });
 
-test('activation shares one step catalog service across language providers', () => {
+test('activation shares one project definition resolver across language providers', () => {
     assert.equal(source.match(/new StepCatalogService\(/g)?.length, 1);
+    assert.equal(source.match(/new ProjectDefinitionResolver\(/g)?.length, 1);
     assert.match(
         source,
-        /new DriveCompletionProvider\(context,\s*stepCatalogService,/
+        /new DriveCompletionProvider\(context,\s*projectDefinitionResolver\)/
     );
-    assert.match(source, /new DriveHoverProvider\(\s*context,\s*stepCatalogService,/);
+    assert.match(source, /new DriveHoverProvider\(\s*context,\s*projectDefinitionResolver,/);
+    assert.match(source, /steps:\s*stepCatalogService/);
     assert.doesNotMatch(source, /completionProvider\.refreshSteps\(\)/);
     assert.doesNotMatch(source, /hoverProvider\.refreshSteps\(\)/);
 

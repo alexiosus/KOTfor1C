@@ -63,13 +63,20 @@ test('creates stable local ids from definition identity inputs', () => {
 test('matches exact nested scenarios after supported Russian and English keywords', () => {
     const definition = makeDefinition({
         kind: 'nestedScenario',
-        template: 'Open form (v2.0) [admin]?'
+        template: 'Open form (v2.0) [admin]?',
+        parameters: [
+            { name: 'Entity', index: 0, source: 'snippet' },
+            { name: 'Role', index: 1, source: 'snippet' }
+        ]
     });
     const view = createProjectDefinitionView('view-1', [definition]);
 
     for (const keyword of ['And', 'Given', 'When', 'Then', 'But', 'If', 'И', 'Допустим', 'Когда', 'Тогда', 'Но', 'Если']) {
         const result = resolveProjectInvocation(view, `  * ${keyword} ${definition.template}  `);
         assert.equal(result.kind, 'unique', keyword);
+        if (result.kind === 'unique') {
+            assert.deepEqual(result.match.arguments, []);
+        }
     }
 
     assert.equal(resolveProjectInvocation(view, `And ${definition.template} extra`).kind, 'missing');

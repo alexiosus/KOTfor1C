@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
 
-test('scenario completion logging does not grow with the number of matching scenarios', async () => {
+test('project definition completion logging does not grow with the number of matching definitions', async () => {
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
     const source = fs.readFileSync(path.join(process.cwd(), 'src', 'completionProvider.ts'), 'utf8');
     const compiled = ts.transpileModule(source, {
@@ -15,7 +15,12 @@ test('scenario completion logging does not grow with the number of matching scen
         CompletionItem: class {
             public constructor(public label: string, public kind: number) {}
         },
+        CompletionItemKind: { Snippet: 1 },
         CompletionList: class { public items: unknown[] = []; },
+        MarkdownString: class {
+            public appendMarkdown(): this { return this; }
+            public appendCodeblock(): this { return this; }
+        },
         Range: class {
             public constructor(
                 public startLine: number,
@@ -24,7 +29,8 @@ test('scenario completion logging does not grow with the number of matching scen
                 public endCharacter: number
             ) {}
         },
-        SnippetString: class {}
+        SnippetString: class { public constructor(public value = '') {} },
+        l10n: { t: (message: string) => message }
     };
     const moduleObject = { exports: {} as Record<string, unknown> };
     vm.runInNewContext(compiled, {
@@ -43,6 +49,12 @@ test('scenario completion logging does not grow with the number of matching scen
             if (specifier === './yamlValidator.js') {
                 return { isScenarioYamlFile: () => true };
             }
+            if (specifier === './blockKeywordParser') {
+                return { parseBlockKeyword: () => null, getBlockClosingKeyword: () => null };
+            }
+            if (specifier === './gherkinTableUtils') {
+                return { normalizeMultilineStepInsertText: (value: string) => value };
+            }
             return {};
         },
         console: { log: (...args: unknown[]) => logs.push(args.join(' ')) }
@@ -50,40 +62,37 @@ test('scenario completion logging does not grow with the number of matching scen
 
     const Provider = moduleObject.exports.DriveCompletionProvider as { prototype: object };
     const document = {
-        fileName: 'test.yaml',
-        uri: { toString: () => 'file:///test.yaml' },
-        lineAt: () => ({ text: '    ' })
+        fileName: 'test.feature',
+        uri: { toString: () => 'file:///test.feature' },
+        lineAt: () => ({ text: 'And ' })
     };
     const position = { line: 0, character: 4 };
 
     async function complete(count: number): Promise<{ itemCount: number; logCount: number }> {
         logs.length = 0;
         const provider = Object.create(Provider.prototype);
-        provider.scenarioCompletionsInitialized = true;
-        provider.scenarioCompletionEntries = Array.from({ length: count }, (_, index) => ({
-            item: { label: `Scenario ${index}`, kind: 1 },
-            scenario: { name: `Scenario ${index}` }
+        const definitions = Array.from({ length: count }, (_, index) => ({
+            id: `definition:${index}`,
+            kind: 'exportScenario',
+            template: `And Scenario ${index}`,
+            normalizedTemplate: `And Scenario ${index}`,
+            language: 'en',
+            parameters: [],
+            sourceLabel: `Scenario ${index}`
         }));
-        provider.catalogProvider = {
-            getCatalog: async () => ({ identity: 'test:empty', steps: [] })
-        };
-        provider.preparedGherkinStates = {
-            getOrCreate: () => ({
-                items: [],
-                semanticEntries: [],
-                idfByTerm: new Map(),
-                postingsByTerm: new Map(),
-                termsByPrefix: new Map(),
-                vectorScoreCache: new Map(),
-                languageByItem: new WeakMap()
+        provider.definitionResolver = {
+            getView: async () => ({
+                identity: `test:${count}`,
+                all: definitions,
+                byId: new Map(),
+                byNormalizedTemplate: new Map()
             })
         };
+        provider.preparedGherkinStates = {
+            getOrCreate: (_identity: string, factory: () => unknown) => factory()
+        };
         provider.isInScenarioTextBlock = () => true;
-        provider.getScenarioParameterDefaults = () => new Map();
-        provider.resolveScenarioCallInsertIndent = () => ({
-            baseIndent: '    ', firstLinePrefix: '', replacementStartCharacter: 4
-        });
-        provider.buildScenarioCallInsertText = () => 'Call scenario';
+        provider.fuzzyMatch = () => ({ matched: true, score: 1 });
 
         const result = await provider.provideCompletionItems(document, position, {}, {});
         return { itemCount: result.items.length, logCount: logs.length };

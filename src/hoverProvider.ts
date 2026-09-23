@@ -18,9 +18,13 @@ import {
     parseScenarioParameterDefinitions
 } from './scenarioParameterUtils';
 import { StepSuggestionIndex } from './stepSuggestionIndex';
-import type { BuiltInStepDefinition } from './stepCatalog';
-import type { StepCatalogProvider } from './stepCatalogService';
 import { PreparedStepStateCache } from './preparedStepStateCache';
+import type {
+    ProjectDefinition,
+    ProjectDefinitionMatch,
+    ProjectDefinitionResolution
+} from './projectDefinition';
+import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 
 // Интерфейс для хранения определений шагов и их описаний
 interface StepDefinition {
@@ -72,16 +76,14 @@ export class DriveHoverProvider implements vscode.HoverProvider {
 
     constructor(
         context: vscode.ExtensionContext,
-        private readonly catalogProvider: StepCatalogProvider,
+        private readonly definitionResolver: ProjectDefinitionResolver,
         private readonly scenarioCacheProvider?: ScenarioCacheProvider
     ) {
         this.context = context;
 
         this.context.subscriptions.push(
-            this.catalogProvider.onDidChangeCatalog(event => {
-                if (event.oldIdentity) {
-                    this.preparedStepStates.delete(event.oldIdentity);
-                }
+            this.definitionResolver.onDidChangeView(() => {
+                this.preparedStepStates.clear();
                 this.stepStateRequestsByDocument.clear();
             }),
             vscode.workspace.onDidSaveTextDocument(document => {
@@ -109,18 +111,11 @@ export class DriveHoverProvider implements vscode.HoverProvider {
      * Проверяет, известен ли шаг по текущей библиотеке шагов.
      */
     public async isKnownStepLine(documentUri: vscode.Uri, lineText: string): Promise<boolean> {
-        const state = await this.getStepState(documentUri);
         const trimmed = lineText.trim();
         if (!trimmed) {
             return false;
         }
-        return state.definitions.some(stepDef => {
-            try {
-                return this.matchLineToPattern(trimmed, stepDef, state.regexByTemplate);
-            } catch {
-                return false;
-            }
-        });
+        return (await this.definitionResolver.resolve(documentUri, trimmed)).kind !== 'missing';
     }
 
     /**
@@ -144,10 +139,10 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         }
 
         let request!: Promise<HoverStepState>;
-        request = this.catalogProvider.getCatalog(documentUri)
-            .then(catalog => this.preparedStepStates.getOrCreate(
-                catalog.identity,
-                () => this.buildStepState(catalog.steps)
+        request = this.definitionResolver.getView(documentUri)
+            .then(view => this.preparedStepStates.getOrCreate(
+                view.identity,
+                () => this.buildStepState(view.all)
             ))
             .finally(() => {
                 setImmediate(() => {
@@ -160,37 +155,13 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         return request;
     }
 
-    private buildStepState(steps: readonly BuiltInStepDefinition[]): HoverStepState {
+    private buildStepState(projectDefinitions: readonly ProjectDefinition[]): HoverStepState {
         const definitions: StepDefinition[] = [];
-        for (const step of steps) {
-            const russianStepPattern = step.ru?.pattern ?? '';
-            const russianStepDescription = step.ru?.description ?? '';
-            const englishStepPattern = step.en?.pattern ?? '';
-            const englishStepDescription = step.en?.description ?? '';
-
-            if (englishStepPattern) {
-                const englishStepDef = this.createStepDefinition(
-                    englishStepPattern,
-                    englishStepDescription
-                );
-                if (russianStepPattern && russianStepPattern !== englishStepPattern) {
-                    const russianData = this.createStepDefinition(
-                        russianStepPattern,
-                        russianStepDescription
-                    );
-                    Object.assign(englishStepDef, {
-                        russianPattern: russianData.pattern,
-                        russianFirstLine: russianData.firstLine,
-                        russianSegments: russianData.segments,
-                        russianDescription: russianData.description,
-                        russianStartsWithPlaceholder: russianData.startsWithPlaceholder
-                    });
-                }
-                definitions.push(englishStepDef);
-            } else if (russianStepPattern) {
+        for (const definition of projectDefinitions) {
+            if (definition.template) {
                 definitions.push(this.createStepDefinition(
-                    russianStepPattern,
-                    russianStepDescription
+                    definition.template,
+                    definition.description ?? ''
                 ));
             }
         }
@@ -1129,6 +1100,90 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         return new vscode.Hover(content, keyPathInfo.range);
     }
 
+    private getProjectDefinitionKindLabel(definition: ProjectDefinition): string {
+        switch (definition.kind) {
+            case 'userStep':
+                return 'User step';
+            case 'exportScenario':
+                return 'Export scenario';
+            case 'nestedScenario':
+                return 'Nested scenario';
+            default:
+                return 'Built-in Vanessa step';
+        }
+    }
+
+    private appendProjectDefinitionMatch(
+        content: vscode.MarkdownString,
+        match: ProjectDefinitionMatch,
+        resourceUri: vscode.Uri,
+        includeHeading: boolean
+    ): boolean {
+        const definition = match.definition;
+        if (includeHeading) {
+            content.appendMarkdown(`### ${this.getProjectDefinitionKindLabel(definition)}\n\n`);
+        } else {
+            content.appendMarkdown(`**${this.getProjectDefinitionKindLabel(definition)}**\n\n`);
+        }
+        content.appendMarkdown(`**Source:** \`${definition.sourceLabel}\`\n\n`);
+        if (definition.category) {
+            content.appendMarkdown(`**Category:** \`${definition.category}\`\n\n`);
+        }
+        if (definition.description) {
+            content.appendMarkdown('**Description:**\n\n');
+            this.appendCompactMultilineText(content, definition.description);
+            content.appendMarkdown('\n\n');
+        }
+        if (definition.parameters.length > 0) {
+            const valuesByIndex = new Map(match.arguments.map(argument => [argument.parameter.index, argument.value]));
+            const parameters = definition.parameters.map(parameter => {
+                const value = valuesByIndex.get(parameter.index);
+                return value === undefined
+                    ? `\`${parameter.name}\``
+                    : `\`${parameter.name}\` = \`${value}\``;
+            });
+            content.appendMarkdown(`**Parameters:** ${parameters.join(', ')}\n\n`);
+        }
+        content.appendCodeblock(definition.template, 'gherkin');
+
+        if (!definition.definitionLocation) {
+            return false;
+        }
+        const commandArgument = [{
+            definitionId: definition.id,
+            resourceUri: resourceUri.toString()
+        }];
+        const commandUri = `command:kotTestToolkit.openProjectDefinition?${encodeURIComponent(JSON.stringify(commandArgument))}`;
+        content.appendMarkdown(`\n[Open definition](${commandUri})`);
+        return true;
+    }
+
+    private renderProjectDefinitionHover(
+        resolution: Exclude<ProjectDefinitionResolution, { kind: 'missing' }>,
+        resourceUri: vscode.Uri
+    ): vscode.Hover {
+        const matches = resolution.kind === 'unique' ? [resolution.match] : resolution.matches;
+        const content = new vscode.MarkdownString();
+        if (resolution.kind === 'ambiguous') {
+            content.appendMarkdown(`**Multiple project definitions (${matches.length})**\n\n`);
+        }
+        let hasCommandLink = false;
+        matches.forEach((match, index) => {
+            if (index > 0) {
+                content.appendMarkdown('\n\n---\n\n');
+            }
+            hasCommandLink = this.appendProjectDefinitionMatch(
+                content,
+                match,
+                resourceUri,
+                resolution.kind === 'ambiguous'
+            ) || hasCommandLink;
+        });
+        content.isTrusted = hasCommandLink;
+        content.supportThemeIcons = true;
+        return new vscode.Hover(content);
+    }
+
     public async provideHover(
         document: vscode.TextDocument,
         position: vscode.Position,
@@ -1183,58 +1238,11 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             return null;
         }
 
-        const scenarioCallHover = await this.provideScenarioCallHover(lineText);
-        if (scenarioCallHover) {
-            return scenarioCallHover;
-        }
-
-        const stepState = await this.getStepState(document.uri);
-        if (token.isCancellationRequested || stepState.definitions.length === 0) {
+        const resolution = await this.definitionResolver.resolve(document.uri, lineText);
+        if (token.isCancellationRequested || resolution.kind === 'missing') {
             return null;
         }
-        
-        for (const stepDef of stepState.definitions) {
-            if (token.isCancellationRequested) {
-                return null;
-            }
-            try {
-                if (this.matchLineToPattern(
-                    lineText,
-                    stepDef,
-                    stepState.regexByTemplate
-                )) {
-                    const content = new vscode.MarkdownString();
-                    const isRussianInput = this.isRussianText(lineText);
-                    const descriptionText = isRussianInput && stepDef.russianDescription
-                        ? stepDef.russianDescription
-                        : stepDef.description || stepDef.russianDescription || '';
-                    const descriptionHeader = isRussianInput && stepDef.russianDescription
-                        ? 'Описание'
-                        : 'Description';
-
-                    const lineLiterals = this.extractStepArgumentLiterals(lineText);
-                    const primaryExample = this.applyLineLiteralsToTemplate(stepDef.pattern, lineLiterals);
-                    const secondaryTemplate = stepDef.russianPattern;
-                    const secondaryExample = secondaryTemplate
-                        ? this.applyLineLiteralsToTemplate(secondaryTemplate, lineLiterals)
-                        : null;
-
-                    content.appendMarkdown(`**${descriptionHeader}:**\n\n`);
-                    this.appendCompactMultilineText(content, descriptionText);
-                    content.appendMarkdown('\n\n');
-                    content.appendMarkdown(`---\n\n\`${primaryExample}\``);
-                    if (secondaryExample && secondaryExample !== primaryExample) {
-                        content.appendMarkdown(`\n\n\`${secondaryExample}\``);
-                    }
-
-                    return new vscode.Hover(content);
-                }
-            } catch (error) {
-                console.error(`[DriveHoverProvider] Ошибка сопоставления строки "${lineText}" с "${stepDef.firstLine}": ${error}`);
-            }
-        }
-        
-        return null;
+        return this.renderProjectDefinitionHover(resolution, document.uri);
     }
 
     private appendCompactMultilineText(markdown: vscode.MarkdownString, text: string): void {

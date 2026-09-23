@@ -25,6 +25,7 @@ export interface ProjectDefinitionParameter {
     readonly name: string;
     readonly index: number;
     readonly source: 'quoted' | 'outline' | 'snippet';
+    readonly defaultValue?: string;
 }
 
 export interface ProjectDefinition {

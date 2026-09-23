@@ -72,6 +72,7 @@ function isDefinition(value: unknown): value is ProjectDefinition {
         && typeof parameter.name === 'string'
         && Number.isInteger(parameter.index)
         && ['quoted', 'outline', 'snippet'].includes(parameter.source as string)
+        && (parameter.defaultValue === undefined || typeof parameter.defaultValue === 'string')
     );
     return parametersAreValid
         && (value.language === undefined || value.language === 'ru' || value.language === 'en')

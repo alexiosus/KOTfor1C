@@ -70,6 +70,13 @@ import {
     parseScenarioParameterDefinitions
 } from './scenarioParameterUtils';
 import { createDeferredLoader, createDeferredResourceLoader } from './deferredLoader';
+import { ProjectDefinitionIndexService } from './projectDefinitionIndexService';
+import {
+    ProjectDefinitionCache,
+    resolveProjectDefinitionCacheDirectory
+} from './projectDefinitionCache';
+import { resolveProjectLibraryConfiguration } from './projectLibraryRoots';
+import { ProjectDefinitionResolver } from './projectDefinitionResolver';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -125,6 +132,79 @@ const FEATURE_SCENARIO_HEADER_REGEX = /^(?:Scenario|Сценарий|Scenario Ou
 const FEATURE_SCENARIO_BLOCK_BREAK_REGEX = /^(?:Feature|Функционал|Rule|Правило|Examples|Примеры)\s*:?/i;
 const FEATURE_NON_STEP_LINE_REGEX = /^(?:Feature|Функционал|Rule|Правило|Scenario|Сценарий|Scenario Outline|Структура сценария|Examples|Примеры|Scenarios|Сценарии)\s*:/i;
 const FORM_EXPLORER_SUGGEST_RELEVANT_LINE_REGEX = /(window|окн(?:о|а|у|е|ом)?|form|форм(?:а|ы|у|е|ой)?|table|таблиц|grid|spreadsheet\s+document|табличн(?:ый|ого)?\s+документ|field|поле|attribute|атрибут|реквизит|checkbox|флаг|radio\s*button|переключател|drop-?down|dropdown|выпадающ|html\s+(?:document\s+)?field|form\s+item\s+addition|дополнени(?:е|я)\s+формы|button|кнопк|hyperlink|link|гиперссыл|submenu|подменю|element|элемент(?:\s+формы)?|group|групп)/i;
+const PROJECT_DEFINITION_PARSER_VERSION = '1';
+
+function createProjectDefinitionIndexService(
+    context: vscode.ExtensionContext
+): ProjectDefinitionIndexService {
+    const workspaceFolderCount = vscode.workspace.workspaceFolders?.length ?? 0;
+    return new ProjectDefinitionIndexService({
+        parserVersion: PROJECT_DEFINITION_PARSER_VERSION,
+        fileSystem: {
+            async readDirectory(directoryPath) {
+                const entries = await fs.promises.readdir(directoryPath, { withFileTypes: true });
+                return entries
+                    .filter(entry => entry.isDirectory() || entry.isFile())
+                    .map(entry => ({
+                        name: entry.name,
+                        type: entry.isDirectory() ? 'directory' as const : 'file' as const
+                    }));
+            },
+            async stat(filePath) {
+                const value = await fs.promises.stat(filePath);
+                return { size: value.size, mtimeMs: value.mtimeMs };
+            },
+            readFile: filePath => fs.promises.readFile(filePath, 'utf8'),
+            realpath: filePath => fs.promises.realpath(filePath)
+        },
+        cacheFactory: configuration => new ProjectDefinitionCache(
+            resolveProjectDefinitionCacheDirectory({
+                storagePath: workspaceFolderCount <= 1 ? context.storageUri?.fsPath : undefined,
+                globalStoragePath: context.globalStorageUri.fsPath,
+                workspaceFolderUri: configuration.workspaceFolderUri
+            })
+        ),
+        watch: (rootPath, callbacks) => {
+            const watcher = vscode.workspace.createFileSystemWatcher(
+                new vscode.RelativePattern(rootPath, '**/*.{feature,bsl,epf}')
+            );
+            watcher.onDidCreate(uri => callbacks.create(uri.fsPath));
+            watcher.onDidChange(uri => callbacks.change(uri.fsPath));
+            watcher.onDidDelete(uri => callbacks.delete(uri.fsPath));
+            return watcher;
+        },
+        loadConfigurations: async () => {
+            const folders = vscode.workspace.workspaceFolders ?? [];
+            if (folders.length === 0) {
+                return [];
+            }
+            const { YamlParametersManager } = await import('./yamlParametersManager.js');
+            const profile = await YamlParametersManager.getInstance(context).loadActiveProfileSnapshot();
+            return folders.map(folder => {
+                const resolved = resolveProjectLibraryConfiguration({
+                    workspaceFolderPath: folder.uri.fsPath,
+                    workspaceFolderUri: folder.uri.toString(),
+                    profileId: profile.id,
+                    buildParameters: profile.buildParameters,
+                    additionalVanessaParameters: profile.additionalVanessaParameters
+                });
+                return {
+                    identity: resolved.identity,
+                    workspaceFolderPath: resolved.workspaceFolderPath,
+                    workspaceFolderUri: folder.uri.toString(),
+                    profileId: resolved.profileId,
+                    libraryRootPaths: resolved.libraryRootPaths,
+                    warnings: resolved.warnings
+                };
+            });
+        },
+        directoryConcurrency: 8,
+        readConcurrency: 4,
+        yieldEvery: 24,
+        yieldControl: () => new Promise(resolve => setImmediate(resolve)),
+        log: message => console.warn(`[ProjectDefinitionIndex] ${message}`)
+    });
+}
 
 function escapeRegexLiteral(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -581,12 +661,17 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // --- Регистрация Провайдеров Языковых Функций (Автодополнение и Подсказки) ---
-    const completionProvider = new DriveCompletionProvider(context, stepCatalogService, async () => {
-        await phaseSwitcherProvider.ensureFreshScenarioCatalog();
+    const projectDefinitionIndex = createProjectDefinitionIndexService(context);
+    const projectDefinitionResolver = new ProjectDefinitionResolver({
+        local: projectDefinitionIndex,
+        scenarios: phaseSwitcherProvider,
+        steps: stepCatalogService
     });
+    context.subscriptions.push(projectDefinitionIndex, projectDefinitionResolver);
+    const completionProvider = new DriveCompletionProvider(context, projectDefinitionResolver);
     const hoverProvider = new DriveHoverProvider(
         context,
-        stepCatalogService,
+        projectDefinitionResolver,
         phaseSwitcherProvider
     );
     const completionAndHoverSelector: vscode.DocumentSelector = [
@@ -658,16 +743,6 @@ export function activate(context: vscode.ExtensionContext) {
                 providedDropEditKinds: [vscode.DocumentDropOrPasteEditKind.Text.append('kotFavoriteScenario')]
             }
         )
-    );
-
-    // Автодополнение использует полный каталог, чтобы определения-дубли не терялись.
-    context.subscriptions.push(
-        phaseSwitcherProvider.onDidUpdateScenarioCatalog(catalog => {
-            completionProvider.updateScenarioCompletions(catalog);
-            console.log(catalog
-                ? '[Extension] Scenario completions updated based on the scenario catalog.'
-                : '[Extension] Scenario completions invalidated with the scenario catalog.');
-        })
     );
 
     const scenarioDiagnosticsProvider = new ScenarioDiagnosticsProvider(phaseSwitcherProvider, hoverProvider);
@@ -2313,6 +2388,7 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    projectDefinitionIndex.start();
     console.log('kotTestToolkit commands and providers registered.');
 }
 

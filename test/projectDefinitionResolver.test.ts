@@ -31,12 +31,13 @@ function uri(value: string): vscode.Uri {
     return { toString: () => value } as vscode.Uri;
 }
 
-function scenario(name: string, target: string, relativePath: string): TestInfo {
+function scenario(name: string, target: string, relativePath: string, parameters: string[] = []): TestInfo {
     return {
         name,
         yamlFileUri: uri(target),
         relativePath,
-        scenarioDescription: `Description of ${name}`
+        scenarioDescription: `Description of ${name}`,
+        parameters
     };
 }
 
@@ -166,7 +167,7 @@ test('composes all four definition kinds and preserves localized built-in varian
         localDefinition('export', 'exportScenario', 'Экспортный сценарий', 'file:///workspace-a/exports.feature')
     ]);
     const scenarios = buildScenarioCatalog([
-        scenario('Вложенный сценарий', 'file:///workspace-a/nested/scen.yaml', 'nested')
+        scenario('Вложенный сценарий', 'file:///workspace-a/nested/scen.yaml', 'nested', ['Пользователь'])
     ]);
     const { resolver } = createHarness({ local, scenarios });
 
@@ -181,6 +182,10 @@ test('composes all four definition kinds and preserves localized built-in varian
     assert.equal(view.all.filter(item => item.kind === 'builtInStep').length, 2);
     assert.equal(view.all.find(item => item.kind === 'nestedScenario')?.definitionLocation?.uri,
         'file:///workspace-a/nested/scen.yaml');
+    assert.deepEqual(
+        view.all.find(item => item.kind === 'nestedScenario')?.parameters.map(item => item.name),
+        ['Пользователь']
+    );
 });
 
 test('uses resource-specific built-in catalogs while local definitions are unavailable', async () => {

@@ -90,22 +90,30 @@ test('multiline step documentation renders each localized template as a code blo
 
     const Provider = moduleObject.exports.DriveCompletionProvider as { prototype: object };
     const provider = Object.create(Provider.prototype);
-    provider.scenarioCompletionsInitialized = true;
-    provider.scenarioCompletionEntries = [];
-    provider.catalogProvider = {
-        getCatalog: async () => ({
+    provider.definitionResolver = {
+        getView: async () => ({
             identity: 'test:multiline',
-            steps: [{
-                id: 'multiline-table-step',
-                ru: {
-                    pattern: 'Если таблица содержит колонки Тогда\n    | Колонка1 |\n    | Колонка2 |',
-                    description: 'Проверяет колонки таблицы.'
-                },
-                en: {
-                    pattern: 'If table contains columns Then\n    | Column1 |\n    | Column2 |',
-                    description: 'Checks table columns.'
-                }
-            }]
+            all: [{
+                id: 'multiline-table-step:ru',
+                kind: 'builtInStep',
+                template: 'Если таблица содержит колонки Тогда\n    | Колонка1 |\n    | Колонка2 |',
+                normalizedTemplate: 'Если таблица содержит колонки Тогда | Колонка1 | | Колонка2 |',
+                language: 'ru',
+                parameters: [],
+                description: 'Проверяет колонки таблицы.',
+                sourceLabel: 'Vanessa 1.0 (RU)'
+            }, {
+                id: 'multiline-table-step:en',
+                kind: 'builtInStep',
+                template: 'If table contains columns Then\n    | Column1 |\n    | Column2 |',
+                normalizedTemplate: 'If table contains columns Then | Column1 | | Column2 |',
+                language: 'en',
+                parameters: [],
+                description: 'Checks table columns.',
+                sourceLabel: 'Vanessa 1.0 (EN)'
+            }],
+            byId: new Map(),
+            byNormalizedTemplate: new Map()
         })
     };
     provider.preparedGherkinStates = {
@@ -122,7 +130,7 @@ test('multiline step documentation renders each localized template as a code blo
     };
     const position = { line: 0, character: 8 };
     const result = await provider.provideCompletionItems(document, position, {}, {});
-    const englishItem = result.items.find((item: { detail?: string }) => item.detail?.endsWith('English'));
+    const englishItem = result.items.find((item: { detail?: string }) => item.detail?.includes('English'));
     assert.ok(englishItem);
 
     const documentation = englishItem.documentation.value as string;
