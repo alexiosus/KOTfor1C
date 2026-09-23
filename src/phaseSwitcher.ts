@@ -6313,6 +6313,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 createScenarioTitle: this.t('Create scenario'),
                 createMainScenario: this.t('Main scenario'),
                 createNestedScenario: this.t('Nested scenario'),
+                createExportScenario: this.t('Export scenario'),
+                createUserStep: this.t('User step'),
                 maintenanceMenuTitle: this.t('More actions'),
                 repairScenariosTitle: this.t('Repair scenario files'),
                 reloadTestsFromDisk: this.t('Reload tests from disk'),
@@ -6690,6 +6692,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 case 'createNestedScenario':
                     console.log("[PhaseSwitcherProvider] Received createNestedScenario command from webview.");
                     vscode.commands.executeCommand('kotTestToolkit.createNestedScenario');
+                    return;
+                case 'createExportScenario':
+                    console.log("[PhaseSwitcherProvider] Received createExportScenario command from webview.");
+                    vscode.commands.executeCommand('kotTestToolkit.createExportScenario');
+                    return;
+                case 'createUserStep':
+                    console.log("[PhaseSwitcherProvider] Received createUserStep command from webview.");
+                    vscode.commands.executeCommand('kotTestToolkit.createUserStep');
                     return;
                 case 'createFirstLaunchZip':
                     console.log("[PhaseSwitcherProvider] Received createFirstLaunchZip command from webview.");

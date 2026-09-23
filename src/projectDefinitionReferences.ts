@@ -143,6 +143,10 @@ export class ProjectDefinitionReferenceService {
         this.#options = options;
     }
 
+    dispose(): void {
+        this.#cache.clear();
+    }
+
     async findReferences(
         definitionId: string,
         resource: vscode.Uri | undefined,

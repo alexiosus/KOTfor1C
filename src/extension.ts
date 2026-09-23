@@ -868,7 +868,11 @@ export function activate(context: vscode.ExtensionContext) {
         context,
         projectDefinitionResolver
     );
-    context.subscriptions.push(projectDefinitionIndex, projectDefinitionResolver);
+    context.subscriptions.push(
+        projectDefinitionIndex,
+        projectDefinitionResolver,
+        projectDefinitionReferenceService
+    );
     const completionProvider = new DriveCompletionProvider(context, projectDefinitionResolver);
     const hoverProvider = new DriveHoverProvider(
         context,

@@ -63,6 +63,8 @@
     const addScenarioDropdownContent = document.getElementById('addScenarioDropdownContent');
     const createMainScenarioFromDropdownBtn = document.getElementById('createMainScenarioFromDropdownBtn');
     const createNestedScenarioFromDropdownBtn = document.getElementById('createNestedScenarioFromDropdownBtn');
+    const createExportScenarioFromDropdownBtn = document.getElementById('createExportScenarioFromDropdownBtn');
+    const createUserStepFromDropdownBtn = document.getElementById('createUserStepFromDropdownBtn');
     const scenarioRepairDropdownBtn = document.getElementById('scenarioRepairDropdownBtn');
     const scenarioRepairDropdownContent = document.getElementById('scenarioRepairDropdownContent');
     const reloadTestsFromDiskFromDropdownBtn = document.getElementById('reloadTestsFromDiskFromDropdownBtn');
@@ -3402,6 +3404,26 @@
                 event.preventDefault();
                 log('Create Nested Scenario from dropdown clicked.');
                 vscode.postMessage({ command: 'createNestedScenario' });
+                addScenarioDropdownBtn.closest('.dropdown-container')?.classList.remove('show');
+                resetAddScenarioDropdownPosition();
+            });
+        }
+
+        if (createExportScenarioFromDropdownBtn) {
+            createExportScenarioFromDropdownBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                log('Create Export Scenario from dropdown clicked.');
+                vscode.postMessage({ command: 'createExportScenario' });
+                addScenarioDropdownBtn.closest('.dropdown-container')?.classList.remove('show');
+                resetAddScenarioDropdownPosition();
+            });
+        }
+
+        if (createUserStepFromDropdownBtn) {
+            createUserStepFromDropdownBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                log('Create User Step from dropdown clicked.');
+                vscode.postMessage({ command: 'createUserStep' });
                 addScenarioDropdownBtn.closest('.dropdown-container')?.classList.remove('show');
                 resetAddScenarioDropdownPosition();
             });

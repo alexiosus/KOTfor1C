@@ -73,6 +73,25 @@ test('activation shares one project definition resolver across language provider
     assert.equal(refreshSource.match(/stepCatalogService\.refresh\(/g)?.length, 1);
 });
 
+test('activation registers and disposes the complete project-definition graph before background start', () => {
+    assert.equal(source.match(/createProjectDefinitionIndexService\(context\)/g)?.length, 1);
+    assert.equal(source.match(/new ProjectDefinitionProvider\(/g)?.length, 1);
+    assert.equal(source.match(/new ProjectDefinitionReferenceProvider\(/g)?.length, 1);
+    assert.match(
+        source,
+        /context\.subscriptions\.push\(\s*projectDefinitionIndex,\s*projectDefinitionResolver,\s*projectDefinitionReferenceService\s*\)/
+    );
+
+    const definitionRegistration = source.indexOf('vscode.languages.registerDefinitionProvider(');
+    const referenceRegistration = source.indexOf('vscode.languages.registerReferenceProvider(');
+    const backgroundStart = source.indexOf('projectDefinitionIndex.start();');
+    assert.ok(definitionRegistration >= 0);
+    assert.ok(referenceRegistration >= 0);
+    assert.ok(backgroundStart > definitionRegistration);
+    assert.ok(backgroundStart > referenceRegistration);
+    assert.doesNotMatch(source, /await\s+projectDefinitionIndex\.ensureReady\(/);
+});
+
 test('Form Explorer reuses the shared step catalog service without an HTML fetcher', () => {
     assert.match(source, /new FormExplorerPanel\(context, stepCatalogService\)/);
     assert.doesNotMatch(formExplorerStepSuggestionsSource, /stepsFetcher|getStepsHtml/);

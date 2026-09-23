@@ -5,6 +5,8 @@
   "Create scenario": "Create scenario",
   "Main scenario": "Main scenario",
   "Nested scenario": "Nested scenario",
+  "Export scenario": "Export scenario",
+  "User step": "User step",
   "System function": "System function",
   "Select system function for the new scenario": "Select system function for the new scenario",
   "Select system function for the scenario header": "Select system function for the scenario header",
