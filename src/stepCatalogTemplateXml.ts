@@ -24,6 +24,7 @@ const EXPECTED_HEADER = [
 ] as const;
 const RUSSIAN_SYNTAX_DESCRIPTION = 'Специальный текст';
 const ENGLISH_SYNTAX_DESCRIPTION = 'Special text';
+const MINIMUM_PRECEDING_STEP_RATIO = 0.9;
 
 export interface VanessaTemplateParseResult {
     readonly steps: readonly BuiltInStepDefinition[];
@@ -125,6 +126,50 @@ function createVariant(pattern: string, description: string): StepTextVariant | 
     return { pattern, description };
 }
 
+function validatePatternPlaceholders(pattern: string, language: 'ru' | 'en'): void {
+    for (const match of pattern.matchAll(/%(\d+)/g)) {
+        const digits = match[1];
+        const placeholderIndex = match.index;
+        if (placeholderIndex === undefined) {
+            continue;
+        }
+        if (digits.startsWith('0') || Number(digits) < 1) {
+            throw new Error(
+                `Step pattern (${language}) contains an invalid placeholder number: %${digits}.`
+            );
+        }
+        const afterDigits = placeholderIndex + match[0].length;
+        if (!/\s/.test(pattern[afterDigits] || '')) {
+            throw new Error(
+                `Step pattern (${language}) contains an invalid placeholder without a hint separator: %${digits}.`
+            );
+        }
+
+        const lineStart = pattern.lastIndexOf('\n', placeholderIndex) + 1;
+        const lineEndCandidate = pattern.indexOf('\n', afterDigits);
+        const lineEnd = lineEndCandidate === -1 ? pattern.length : lineEndCandidate;
+        const before = pattern.slice(lineStart, placeholderIndex);
+        const openingQuote = before.match(/(["'])\s*$/)?.[1];
+        if (!openingQuote || pattern.indexOf(openingQuote, afterDigits) >= lineEnd) {
+            throw new Error(
+                `Step pattern (${language}) contains an invalid placeholder outside matching quotes: %${digits}.`
+            );
+        }
+    }
+}
+
+function compareVersions(left: string, right: string): number {
+    const leftParts = left.split('.').map(Number);
+    const rightParts = right.split('.').map(Number);
+    for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index++) {
+        const difference = (leftParts[index] || 0) - (rightParts[index] || 0);
+        if (difference !== 0) {
+            return difference;
+        }
+    }
+    return 0;
+}
+
 export function parseVanessaStepTemplateXml(xml: string): VanessaTemplateParseResult {
     const root = parse(xml);
     const document = root.querySelector('document');
@@ -185,6 +230,14 @@ export function generateBuiltInStepCatalog(
     parsed: VanessaTemplateParseResult,
     options: GenerateCatalogOptions
 ): BuiltInStepCatalog {
+    for (const step of parsed.steps) {
+        if (step.ru) {
+            validatePatternPlaceholders(step.ru.pattern, 'ru');
+        }
+        if (step.en) {
+            validatePatternPlaceholders(step.en.pattern, 'en');
+        }
+    }
     const steps = [...parsed.steps].sort((left, right) => {
         return compareText(left.ru?.pattern || '', right.ru?.pattern || '')
             || compareText(left.en?.pattern || '', right.en?.pattern || '')
@@ -292,6 +345,26 @@ export async function writeCatalogPublication(
 
     const catalogText = serializeStepCatalogJson(validatedCatalog);
     const reportText = serializeJson(report);
+    const indexPath = path.join(publicationRoot, 'index.json');
+    const existingIndexBytes = await readOptional(indexPath);
+    const existingIndex = existingIndexBytes
+        ? parseStepCatalogIndex(JSON.parse(existingIndexBytes.toString('utf8')))
+        : undefined;
+    const precedingVersion = Object.keys(existingIndex?.catalogs || {})
+        .filter(version => compareVersions(version, validatedCatalog.vanessaVersion) < 0)
+        .sort(compareVersions)
+        .at(-1);
+    if (precedingVersion) {
+        const precedingCount = existingIndex!.catalogs[precedingVersion].stepCount;
+        if (validatedCatalog.steps.length < precedingCount * MINIMUM_PRECEDING_STEP_RATIO) {
+            throw new Error(
+                `Refusing material step-count drop from ${precedingCount} in Vanessa `
+                + `${precedingVersion} to ${validatedCatalog.steps.length} in `
+                + `${validatedCatalog.vanessaVersion} (more than 10%).`
+            );
+        }
+    }
+
     const versionDirectory = path.join(publicationRoot, validatedCatalog.vanessaVersion);
     const catalogPath = path.join(versionDirectory, 'catalog.json');
     const reportPath = path.join(versionDirectory, 'generation-report.json');
@@ -318,11 +391,6 @@ export async function writeCatalogPublication(
         await writeFile(catalogPath, catalogText, { flag: 'wx' });
     }
 
-    const indexPath = path.join(publicationRoot, 'index.json');
-    const existingIndexBytes = await readOptional(indexPath);
-    const existingIndex = existingIndexBytes
-        ? parseStepCatalogIndex(JSON.parse(existingIndexBytes.toString('utf8')))
-        : undefined;
     const catalogs = {
         ...existingIndex?.catalogs,
         [validatedCatalog.vanessaVersion]: {

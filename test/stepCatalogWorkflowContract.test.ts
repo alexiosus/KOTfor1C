@@ -52,3 +52,11 @@ test('versioned catalog settings are folder scoped and legacy HTML is opt-in', (
     assert.equal(properties['kotTestToolkit.steps.externalUrl'].default, '');
     assert.equal(properties['kotTestToolkit.steps.externalUrl'].order, 3);
 });
+
+test('generator build output and development inputs are excluded from the VSIX', () => {
+    const ignore = projectFile('.vscodeignore');
+
+    assert.match(ignore, /^out\/tools\/\*\*$/m);
+    assert.match(ignore, /^tools\/step-catalog\/\*\*$/m);
+    assert.match(ignore, /^test\/fixtures\/step-catalog\/\*\*$/m);
+});

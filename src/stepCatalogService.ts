@@ -120,6 +120,7 @@ export class WorkspaceStepCatalogCoordinator {
     private readonly exactCatalogs = new Map<string, ResolvedStepCatalog>();
     private readonly exactLookups = new Map<string, Promise<VersionedCatalogResult | null>>();
     private readonly backgroundTasks = new Set<Promise<void>>();
+    private readonly catalogLoads = new Map<string, Promise<ResolvedStepCatalog>>();
     private readonly customFallbacks = new Map<string, Promise<ResolvedStepCatalog | null>>();
     private bundledFallback: Promise<ResolvedStepCatalog> | undefined;
 
@@ -133,6 +134,25 @@ export class WorkspaceStepCatalogCoordinator {
     public async getCatalog(documentUri?: string): Promise<ResolvedStepCatalog> {
         const folder = this.dependencies.getWorkspaceFolder(documentUri);
         const folderKey = folder?.uri ?? '<no-workspace-folder>';
+        const existingLoad = this.catalogLoads.get(folderKey);
+        if (existingLoad) {
+            return existingLoad;
+        }
+
+        let trackedLoad!: Promise<ResolvedStepCatalog>;
+        trackedLoad = this.resolveCatalog(folder, folderKey).finally(() => {
+            if (this.catalogLoads.get(folderKey) === trackedLoad) {
+                this.catalogLoads.delete(folderKey);
+            }
+        });
+        this.catalogLoads.set(folderKey, trackedLoad);
+        return trackedLoad;
+    }
+
+    private async resolveCatalog(
+        folder: WorkspaceStepCatalogFolder | undefined,
+        folderKey: string
+    ): Promise<ResolvedStepCatalog> {
         const configuration = this.dependencies.getConfiguration(folder?.uri);
         const versionResolution = await this.resolveVersion(folder, configuration);
         const indexUrl = configuration.catalogIndexUrl.trim() || DEFAULT_CATALOG_INDEX_URL;
@@ -166,11 +186,22 @@ export class WorkspaceStepCatalogCoordinator {
             }
         }
 
-        const fallback = await this.getFallback(configuration.externalUrl, requestedVersion);
+        const fallback = await this.getBundledFallback(requestedVersion);
         if (!this.isCurrentGeneration(folderKey, generation)) {
             return this.states.get(folderKey)?.catalog ?? fallback;
         }
         this.states.set(folderKey, { selectionKey, generation, catalog: fallback });
+
+        if (configuration.externalUrl.trim()) {
+            this.startCustomFallbackLookup({
+                folderKey,
+                workspaceFolderUri: folder?.uri,
+                selectionKey,
+                generation,
+                externalUrl: configuration.externalUrl,
+                requestedVersion
+            });
+        }
 
         if (requestedVersion) {
             this.startExactLookup({
@@ -196,6 +227,7 @@ export class WorkspaceStepCatalogCoordinator {
             const folderKey = folder?.uri ?? '<no-workspace-folder>';
             const oldIdentity = this.states.get(folderKey)?.catalog.identity;
             const generation = this.nextGeneration(folderKey);
+            this.catalogLoads.delete(folderKey);
             this.states.delete(folderKey);
             const configuration = this.dependencies.getConfiguration(folder?.uri);
             const resolution = await this.resolveVersion(folder, configuration, true);
@@ -247,6 +279,7 @@ export class WorkspaceStepCatalogCoordinator {
                 this.nextGeneration(folderKey);
             }
             this.states.clear();
+            this.catalogLoads.clear();
         }
         this.versionByFingerprint.clear();
         this.exactLookups.clear();
@@ -261,6 +294,7 @@ export class WorkspaceStepCatalogCoordinator {
 
     private invalidateFolder(folderKey: string): void {
         this.nextGeneration(folderKey);
+        this.catalogLoads.delete(folderKey);
         this.states.delete(folderKey);
     }
 
@@ -341,27 +375,66 @@ export class WorkspaceStepCatalogCoordinator {
     ): Promise<ResolvedStepCatalog> {
         const normalizedExternalUrl = externalUrl.trim();
         if (normalizedExternalUrl) {
-            let customPromise = this.customFallbacks.get(normalizedExternalUrl);
-            if (!customPromise) {
-                customPromise = this.dependencies.readCustomHtml(normalizedExternalUrl)
-                    .then(html => resolveLegacyCatalog(html, 'custom-html'))
-                    .catch(error => {
-                        this.dependencies.warn('Failed to load custom legacy steps HTML.', error);
-                        return null;
-                    });
-                this.customFallbacks.set(normalizedExternalUrl, customPromise);
-            }
-            const custom = await customPromise;
+            const custom = await this.getCustomFallback(normalizedExternalUrl);
             if (custom) {
                 return { ...custom, requestedVersion };
             }
         }
 
+        return this.getBundledFallback(requestedVersion);
+    }
+
+    private getCustomFallback(externalUrl: string): Promise<ResolvedStepCatalog | null> {
+        let customPromise = this.customFallbacks.get(externalUrl);
+        if (!customPromise) {
+            customPromise = this.dependencies.readCustomHtml(externalUrl)
+                .then(html => resolveLegacyCatalog(html, 'custom-html'))
+                .catch(error => {
+                    this.dependencies.warn('Failed to load custom legacy steps HTML.', error);
+                    return null;
+                });
+            this.customFallbacks.set(externalUrl, customPromise);
+        }
+        return customPromise;
+    }
+
+    private async getBundledFallback(requestedVersion?: string): Promise<ResolvedStepCatalog> {
         if (!this.bundledFallback) {
             this.bundledFallback = this.dependencies.readBundledHtml()
                 .then(html => resolveLegacyCatalog(html, 'bundled-html'));
         }
         return { ...(await this.bundledFallback), requestedVersion };
+    }
+
+    private startCustomFallbackLookup(input: {
+        readonly folderKey: string;
+        readonly workspaceFolderUri?: string;
+        readonly selectionKey: string;
+        readonly generation: number;
+        readonly externalUrl: string;
+        readonly requestedVersion?: string;
+    }): void {
+        let task!: Promise<void>;
+        task = this.getCustomFallback(input.externalUrl.trim()).then(result => {
+            if (!result) {
+                return;
+            }
+            const state = this.states.get(input.folderKey);
+            if (
+                !this.isCurrentGeneration(input.folderKey, input.generation)
+                || state?.selectionKey !== input.selectionKey
+                || state.catalog.source !== 'bundled-html'
+            ) {
+                return;
+            }
+            const catalog = { ...result, requestedVersion: input.requestedVersion };
+            const oldIdentity = state.catalog.identity;
+            state.catalog = catalog;
+            this.emitIfChanged(input.workspaceFolderUri, oldIdentity, catalog.identity);
+        }).finally(() => {
+            this.backgroundTasks.delete(task);
+        });
+        this.backgroundTasks.add(task);
     }
 
     private startExactLookup(input: {

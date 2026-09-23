@@ -103,6 +103,27 @@ test('catalog generation sorts definitions and uses only deterministic source me
     assert.equal(serializeStepCatalogJson(catalog), serializeStepCatalogJson(catalog));
 });
 
+test('catalog generation rejects structurally invalid placeholders', () => {
+    const parsed = parseVanessaStepTemplateXml(readFixture('step-catalog/Template.xml'));
+    for (const pattern of [
+        'И поле "%0 Имя" равно "Значение"',
+        'И поле %1 Имя равно "Значение"',
+        'И поле "%1Имя" равно "Значение"'
+    ]) {
+        const invalid = {
+            ...parsed,
+            steps: parsed.steps.map((step, index) => index === 0
+                ? { ...step, ru: { ...step.ru!, pattern } }
+                : step)
+        };
+
+        assert.throws(
+            () => generateBuiltInStepCatalog(invalid, generationOptions),
+            /invalid placeholder/
+        );
+    }
+});
+
 test('compatibility report lists every normalized legacy pattern missing from generated data', () => {
     const { compatibility } = generatedFixture();
 
@@ -169,4 +190,30 @@ test('publication writes exact catalog bytes and a sorted digest index', async (
     assert.deepEqual(Object.keys(index.catalogs), [generationOptions.version, '1.2.043.30']);
     assert.equal(index.catalogs[generationOptions.version].stepCount, 2);
     assert.equal(index.catalogs[generationOptions.version].sha256, sha256Hex(catalogBytes));
+});
+
+test('publication rejects a material step-count drop from the preceding version', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kot-step-catalog-'));
+    const { catalog, report } = generatedFixture();
+    await writeFile(path.join(root, 'index.json'), `${JSON.stringify({
+        schemaVersion: 1,
+        generatedAt: '2026-09-21T00:00:00.000Z',
+        catalogs: {
+            '1.2.043.27': {
+                path: '1.2.043.27/catalog.json',
+                sha256: 'a'.repeat(64),
+                stepCount: 100,
+                sourceCommit: 'a'.repeat(40)
+            }
+        }
+    })}\n`);
+
+    await assert.rejects(
+        () => writeCatalogPublication(root, catalog, report),
+        /material step-count drop/
+    );
+    await assert.rejects(
+        () => readFile(path.join(root, generationOptions.version, 'catalog.json')),
+        /ENOENT/
+    );
 });

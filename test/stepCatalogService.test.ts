@@ -57,6 +57,10 @@ function downloadedResult(catalog: BuiltInStepCatalog): VersionedCatalogResult {
     };
 }
 
+function cachedResult(catalog: BuiltInStepCatalog): VersionedCatalogResult {
+    return { ...downloadedResult(catalog), source: 'versioned-cache' };
+}
+
 interface CoordinatorFixtureOptions {
     readonly folders?: readonly WorkspaceStepCatalogFolder[];
     readonly configuration?: Partial<WorkspaceStepCatalogConfiguration>;
@@ -64,6 +68,11 @@ interface CoordinatorFixtureOptions {
     readonly customHtml?: string;
     readonly changelog?: string;
     readonly changelogMtime?: number;
+    readonly readCustomHtml?: (url: string) => Promise<string>;
+    readonly getCachedExactCatalog?: (
+        indexUrl: string,
+        version: string
+    ) => Promise<VersionedCatalogResult | null>;
     readonly getExactCatalog?: (
         indexUrl: string,
         version: string
@@ -73,6 +82,7 @@ interface CoordinatorFixtureOptions {
 function createCoordinator(options: CoordinatorFixtureOptions = {}): {
     coordinator: WorkspaceStepCatalogCoordinator;
     dependencies: WorkspaceStepCatalogDependencies;
+    cachedExactCalls: Array<{ indexUrl: string; version: string }>;
     exactCalls: Array<{ indexUrl: string; version: string }>;
     setConfiguration(value: Partial<WorkspaceStepCatalogConfiguration>): void;
     setChangelog(value: string, mtime: number): void;
@@ -87,6 +97,7 @@ function createCoordinator(options: CoordinatorFixtureOptions = {}): {
     };
     let changelog = options.changelog ?? `# Changelog\n## ${VERSION}\n`;
     let changelogMtime = options.changelogMtime ?? 100;
+    const cachedExactCalls: Array<{ indexUrl: string; version: string }> = [];
     const exactCalls: Array<{ indexUrl: string; version: string }> = [];
 
     const dependencies: WorkspaceStepCatalogDependencies = {
@@ -104,8 +115,12 @@ function createCoordinator(options: CoordinatorFixtureOptions = {}): {
             : null,
         readTextFile: async () => changelog,
         readBundledHtml: async () => options.bundledHtml ?? LEGACY_HTML,
-        readCustomHtml: async () => options.customHtml ?? LEGACY_HTML,
-        getCachedExactCatalog: async () => null,
+        readCustomHtml: url => options.readCustomHtml?.(url)
+            ?? Promise.resolve(options.customHtml ?? LEGACY_HTML),
+        getCachedExactCatalog: async (indexUrl, version) => {
+            cachedExactCalls.push({ indexUrl, version });
+            return options.getCachedExactCatalog?.(indexUrl, version) ?? null;
+        },
         getExactCatalog: async (indexUrl, version) => {
             exactCalls.push({ indexUrl, version });
             return options.getExactCatalog?.(indexUrl, version) ?? null;
@@ -120,6 +135,7 @@ function createCoordinator(options: CoordinatorFixtureOptions = {}): {
     return {
         coordinator: new WorkspaceStepCatalogCoordinator(dependencies),
         dependencies,
+        cachedExactCalls,
         exactCalls,
         setConfiguration(value) {
             configuration = { ...configuration, ...value };
@@ -130,6 +146,22 @@ function createCoordinator(options: CoordinatorFixtureOptions = {}): {
         }
     };
 }
+
+test('concurrent first requests for one folder share the exact cached catalog resolution', async () => {
+    const cached = deferred<VersionedCatalogResult | null>();
+    const catalog = createCatalog();
+    const fixture = createCoordinator({ getCachedExactCatalog: () => cached.promise });
+
+    const first = fixture.coordinator.getCatalog('file:///workspace/first.yaml');
+    const second = fixture.coordinator.getCatalog('file:///workspace/second.yaml');
+    cached.resolve(cachedResult(catalog));
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    assert.equal(fixture.cachedExactCalls.length, 1);
+    assert.equal(firstResult.source, 'versioned-cache');
+    assert.equal(secondResult.source, 'versioned-cache');
+    assert.equal(firstResult.identity, secondResult.identity);
+});
 
 test('first offline request returns bundled catalog without waiting for remote completion', async () => {
     const remote = deferred<VersionedCatalogResult | null>();
@@ -185,6 +217,48 @@ test('invalid custom HTML falls through to the bundled catalog', async () => {
     const resolved = await coordinator.getCatalog('file:///workspace/a.yaml');
     assert.equal(resolved.source, 'bundled-html');
     assert.equal(resolved.steps[0].ru?.pattern, 'И пауза 1');
+    await coordinator.whenIdle();
+});
+
+test('custom legacy HTML never blocks the first bundled catalog result', async () => {
+    const custom = deferred<string>();
+    const { coordinator } = createCoordinator({
+        configuration: { vanessaVersion: '', externalUrl: 'https://custom.example/steps.htm' },
+        changelog: '# Unknown\n',
+        readCustomHtml: () => custom.promise
+    });
+
+    const resolved = await Promise.race([
+        coordinator.getCatalog('file:///workspace/a.yaml'),
+        new Promise<never>((_, reject) => setTimeout(
+            () => reject(new Error('bundled fallback waited for custom HTML')),
+            50
+        ))
+    ]);
+    assert.equal(resolved.source, 'bundled-html');
+});
+
+test('background custom HTML replaces only the bundled fallback and emits a change', async () => {
+    const custom = deferred<string>();
+    const { coordinator } = createCoordinator({
+        configuration: { vanessaVersion: '', externalUrl: 'https://custom.example/steps.htm' },
+        changelog: '# Unknown\n',
+        readCustomHtml: () => custom.promise
+    });
+    const events: WorkspaceStepCatalogChangeEvent[] = [];
+    coordinator.onDidChangeCatalog(event => events.push(event));
+
+    assert.equal(
+        (await coordinator.getCatalog('file:///workspace/a.yaml')).source,
+        'bundled-html'
+    );
+    custom.resolve(LEGACY_HTML.replace('И пауза 1', 'И пауза 2'));
+    await coordinator.whenIdle();
+
+    const resolved = await coordinator.getCatalog('file:///workspace/a.yaml');
+    assert.equal(resolved.source, 'custom-html');
+    assert.equal(resolved.steps[0].ru?.pattern, 'И пауза 2');
+    assert.equal(events.length, 1);
 });
 
 test('folders using the same version reuse one background exact lookup', async () => {
