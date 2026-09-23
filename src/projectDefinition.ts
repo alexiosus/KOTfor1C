@@ -61,6 +61,8 @@ export interface ProjectDefinitionFileRecord {
 
 export interface ProjectDefinitionSnapshot {
     readonly identity: string;
+    readonly configurationIdentity: string;
+    readonly parserVersion: string;
     readonly workspaceFolderUri: string;
     readonly profileId: string;
     readonly generation: number;
@@ -69,6 +71,7 @@ export interface ProjectDefinitionSnapshot {
     readonly warnings: readonly ProjectDefinitionWarning[];
     readonly byId: ReadonlyMap<string, ProjectDefinition>;
     readonly byNormalizedTemplate: ReadonlyMap<string, readonly ProjectDefinition[]>;
+    readonly bySourceUri: ReadonlyMap<string, readonly ProjectDefinition[]>;
 }
 
 export interface ProjectDefinitionView {
