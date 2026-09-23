@@ -95,6 +95,8 @@ import {
     createExportScenarioCommand,
     type ExportScenarioLibraryRoot
 } from './exportScenarioCommand';
+import { resolveVanessaTemplateRoot } from './userStepCreator';
+import type { UserStepLibraryRoot } from './userStepCommands';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -144,6 +146,9 @@ const loadFormExplorerBuilder = createDeferredLoader(
 );
 const loadOneCPlatform = createDeferredLoader(
     () => import('./oneCPlatform.js')
+);
+const loadUserStepCommands = createDeferredLoader(
+    () => import('./userStepCommands.js')
 );
 const GHERKIN_STEP_LINE_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\b/i;
 const FEATURE_SCENARIO_HEADER_REGEX = /^(?:Scenario|Сценарий|Scenario Outline|Структура сценария|Background|Предыстория)\s*:/i;
@@ -266,6 +271,64 @@ async function loadExportScenarioLibraryRoots(
                     : path.basename(rootPath) || rootPath,
                 workspaceFolderUri: folder.uri.toString(),
                 profileId: profile.id
+            }));
+        }
+    }
+    return Object.freeze(result);
+}
+
+async function loadUserStepLibraryRoots(
+    context: vscode.ExtensionContext,
+    resourceUriValue?: string
+): Promise<readonly UserStepLibraryRoot[]> {
+    const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+    let resourceFolder: vscode.WorkspaceFolder | undefined;
+    if (resourceUriValue) {
+        try {
+            resourceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.parse(resourceUriValue));
+        } catch {
+            // Fall back to all workspace folders for a stale Quick Fix resource.
+        }
+    }
+    const folders = resourceFolder ? [resourceFolder] : workspaceFolders;
+    if (folders.length === 0) {
+        return [];
+    }
+    const { YamlParametersManager } = await import('./yamlParametersManager.js');
+    const profile = await YamlParametersManager.getInstance(context).loadActiveProfileSnapshot();
+    const result: UserStepLibraryRoot[] = [];
+    const seen = new Set<string>();
+    for (const folder of folders) {
+        const configuration = resolveProjectLibraryConfiguration({
+            workspaceFolderPath: folder.uri.fsPath,
+            workspaceFolderUri: folder.uri.toString(),
+            profileId: profile.id,
+            buildParameters: profile.buildParameters,
+            additionalVanessaParameters: profile.additionalVanessaParameters
+        });
+        const configuredVanessaEpfPath = vscode.workspace
+            .getConfiguration('kotTestToolkit', folder.uri)
+            .get<string>('runVanessa.vanessaEpfPath', '');
+        const templateRoot = resolveVanessaTemplateRoot({
+            workspaceFolderPath: folder.uri.fsPath,
+            buildParameters: profile.buildParameters,
+            configuredVanessaEpfPath
+        });
+        for (const rootPath of configuration.libraryRootPaths) {
+            const uri = vscode.Uri.file(rootPath).toString();
+            if (seen.has(uri)) {
+                continue;
+            }
+            seen.add(uri);
+            result.push(Object.freeze({
+                path: rootPath,
+                uri,
+                label: workspaceFolders.length > 1
+                    ? `${folder.name}: ${path.basename(rootPath) || rootPath}`
+                    : path.basename(rootPath) || rootPath,
+                workspaceFolderUri: folder.uri.toString(),
+                profileId: profile.id,
+                templateRoot
             }));
         }
     }
@@ -1247,6 +1310,34 @@ export function activate(context: vscode.ExtensionContext) {
             await createExportScenarioCommand(seed, {
                 index: projectDefinitionIndex,
                 loadLibraryRoots: resourceUri => loadExportScenarioLibraryRoots(context, resourceUri),
+                translate: t
+            });
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.createUserStep', async (seed?: unknown) => {
+            const t = await getTranslator(context.extensionUri);
+            const { createUserStepCommand } = await loadUserStepCommands();
+            try {
+                await createUserStepCommand(seed, {
+                    context,
+                    index: projectDefinitionIndex,
+                    loadLibraryRoots: resourceUri => loadUserStepLibraryRoots(context, resourceUri),
+                    translate: t
+                });
+            } catch (error) {
+                vscode.window.showErrorMessage(t('Could not create the user step: {0}', String(error)));
+            }
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.buildUserStepLibrary', async (request?: unknown) => {
+            const t = await getTranslator(context.extensionUri);
+            const { buildUserStepLibraryCommand } = await loadUserStepCommands();
+            await buildUserStepLibraryCommand(request, {
+                context,
+                index: projectDefinitionIndex,
+                loadLibraryRoots: resourceUri => loadUserStepLibraryRoots(context, resourceUri),
                 translate: t
             });
         }

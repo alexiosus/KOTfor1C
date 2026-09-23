@@ -115,6 +115,8 @@
   "cmd.createNestedScenario.title": "KOT - Создать вложенный сценарий",
   "cmd.createMainScenario.title": "KOT - Создать главный сценарий",
   "cmd.createExportScenario.title": "KOT - Создать экспортный сценарий",
+  "cmd.createUserStep.title": "KOT - Создать пользовательский шаг",
+  "cmd.buildUserStepLibrary.title": "KOT - Собрать библиотеку пользовательских шагов",
   "cmd.manageSystemFunctions.title": "KOT - Управление функциями системы",
   "cmd.manageEtalonBases.title": "KOT - Управление эталонными базами",
   "cmd.managePlatforms.title": "KOT - Управление платформами 1С",

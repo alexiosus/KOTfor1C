@@ -115,6 +115,8 @@
   "cmd.createNestedScenario.title": "KOT - Create nested scenario",
   "cmd.createMainScenario.title": "KOT - Create main scenario",
   "cmd.createExportScenario.title": "KOT - Create exported scenario",
+  "cmd.createUserStep.title": "KOT - Create user step",
+  "cmd.buildUserStepLibrary.title": "KOT - Build user-step library",
   "cmd.manageSystemFunctions.title": "KOT - Manage system functions",
   "cmd.manageEtalonBases.title": "KOT - Manage etalon bases",
   "cmd.managePlatforms.title": "KOT - Manage 1C platforms",

@@ -592,6 +592,16 @@
         "category": "%cmd.category%"
       },
       {
+        "command": "kotTestToolkit.createUserStep",
+        "title": "%cmd.createUserStep.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.buildUserStepLibrary",
+        "title": "%cmd.buildUserStepLibrary.title%",
+        "category": "%cmd.category%"
+      },
+      {
         "command": "kotTestToolkit.manageSystemFunctions",
         "title": "%cmd.manageSystemFunctions.title%",
         "category": "%cmd.category%"
