@@ -532,10 +532,12 @@ export function activate(context: vscode.ExtensionContext) {
     setExtensionUri(context.extensionUri);
     notifyIfUpdated(context).catch(e => console.error('[Extension] notifyIfUpdated error:', e));
     initializeScenarioScanRoot(context);
+    const stepCatalogService = new StepCatalogService(context, vscode);
+    context.subscriptions.push(stepCatalogService);
     const loadFormExplorerPanel = createDeferredResourceLoader(
         async () => {
             const { FormExplorerPanel } = await import('./formExplorerPanel.js');
-            return new FormExplorerPanel(context);
+            return new FormExplorerPanel(context, stepCatalogService);
         },
         panel => context.subscriptions.push(panel)
     );
@@ -579,8 +581,6 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // --- Регистрация Провайдеров Языковых Функций (Автодополнение и Подсказки) ---
-    const stepCatalogService = new StepCatalogService(context, vscode);
-    context.subscriptions.push(stepCatalogService);
     const completionProvider = new DriveCompletionProvider(context, stepCatalogService, async () => {
         await phaseSwitcherProvider.ensureFreshScenarioCatalog();
     });

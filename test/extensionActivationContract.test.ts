@@ -12,6 +12,10 @@ const hoverProviderSource = fs.readFileSync(
     path.join(process.cwd(), 'src', 'hoverProvider.ts'),
     'utf8'
 );
+const formExplorerStepSuggestionsSource = fs.readFileSync(
+    path.join(process.cwd(), 'src', 'formExplorerStepSuggestions.ts'),
+    'utf8'
+);
 const phaseSwitcherSource = fs.readFileSync(
     path.join(process.cwd(), 'src', 'phaseSwitcher.ts'),
     'utf8'
@@ -65,6 +69,12 @@ test('activation shares one step catalog service across language providers', () 
     assert.ok(refreshStart >= 0 && refreshEnd > refreshStart);
     const refreshSource = source.slice(refreshStart, refreshEnd);
     assert.equal(refreshSource.match(/stepCatalogService\.refresh\(/g)?.length, 1);
+});
+
+test('Form Explorer reuses the shared step catalog service without an HTML fetcher', () => {
+    assert.match(source, /new FormExplorerPanel\(context, stepCatalogService\)/);
+    assert.doesNotMatch(formExplorerStepSuggestionsSource, /stepsFetcher|getStepsHtml/);
+    assert.match(formExplorerStepSuggestionsSource, /catalogProvider\.getCatalog\(\)/);
 });
 
 test('phase switcher defers infobase management helpers', () => {
