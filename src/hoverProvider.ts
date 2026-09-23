@@ -1146,7 +1146,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         }
         content.appendCodeblock(definition.template, 'gherkin');
 
-        if (!definition.definitionLocation) {
+        if (!definition.implementationLocation && !definition.definitionLocation) {
             return false;
         }
         const commandArgument = [{

@@ -17,6 +17,9 @@ import {
     getSectionInsertion,
     ScenarioYamlDocument
 } from './scenarioYamlDocument';
+import { normalizeProjectDefinitionTemplate } from './projectDefinition';
+import { pickProjectDefinition } from './projectDefinitionNavigation';
+import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 import JSZip = require('jszip');
 
 function isAmbiguousScenarioName(catalog: ScenarioCatalog | null, name: string): boolean {
@@ -413,7 +416,7 @@ export async function openNestedScenarioFromFeatureHandler(
  */
 export async function openScenarioByNameHandler(
     scenarioName: string,
-    phaseSwitcherProvider: PhaseSwitcherProvider
+    definitionResolver: ProjectDefinitionResolver
 ): Promise<boolean> {
     const normalizedName = scenarioName.trim();
     if (!normalizedName) {
@@ -422,28 +425,22 @@ export async function openScenarioByNameHandler(
 
     const t = await getTranslator(getExtensionUri());
     const activeDocument = vscode.window.activeTextEditor?.document;
-    const scenarioCatalog = await phaseSwitcherProvider.ensureFreshScenarioCatalog();
-    const targetUri = await findFileByName(normalizedName, scenarioCatalog);
-
-    if (!targetUri) {
-        if (!isAmbiguousScenarioName(scenarioCatalog, normalizedName)) {
-            vscode.window.showInformationMessage(t('File for "{0}" not found.', normalizedName));
-        }
+    const normalizedTemplate = normalizeProjectDefinitionTemplate(normalizedName).toLocaleLowerCase();
+    const view = await definitionResolver.getView(activeDocument?.uri);
+    const definitions = view.all.filter(definition =>
+        definition.kind === 'nestedScenario'
+        && normalizeProjectDefinitionTemplate(definition.template).toLocaleLowerCase() === normalizedTemplate
+    );
+    if (definitions.length === 0) {
+        vscode.window.showInformationMessage(t('File for "{0}" not found.', normalizedName));
         return false;
     }
-
-    if (activeDocument && targetUri.fsPath === activeDocument.uri.fsPath) {
-        return true;
-    }
-
-    try {
-        const docToOpen = await vscode.workspace.openTextDocument(targetUri);
-        await vscode.window.showTextDocument(docToOpen, { preview: false, preserveFocus: false });
-        return true;
-    } catch (error: any) {
-        vscode.window.showErrorMessage(t('Failed to open file: {0}', error.message || error));
-        return false;
-    }
+    return pickProjectDefinition(
+        definitions,
+        activeDocument?.uri,
+        definitionResolver,
+        vscode.l10n.t('Multiple scenarios named "{0}"', normalizedName)
+    );
 }
 
 /**

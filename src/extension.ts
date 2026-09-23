@@ -77,6 +77,10 @@ import {
 } from './projectDefinitionCache';
 import { resolveProjectLibraryConfiguration } from './projectLibraryRoots';
 import { ProjectDefinitionResolver } from './projectDefinitionResolver';
+import {
+    openProjectDefinitionHandler,
+    ProjectDefinitionProvider
+} from './projectDefinitionNavigation';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -704,6 +708,12 @@ export function activate(context: vscode.ExtensionContext) {
         )
     );
     context.subscriptions.push(
+        vscode.languages.registerDefinitionProvider(
+            completionAndHoverSelector,
+            new ProjectDefinitionProvider(projectDefinitionResolver)
+        )
+    );
+    context.subscriptions.push(
         vscode.languages.registerDocumentDropEditProvider(
             { pattern: '**/*.yaml', scheme: 'file' },
             {
@@ -964,7 +974,28 @@ export function activate(context: vscode.ExtensionContext) {
             if (typeof scenarioName !== 'string') {
                 return;
             }
-            await openScenarioByNameHandler(scenarioName, phaseSwitcherProvider);
+            await openScenarioByNameHandler(scenarioName, projectDefinitionResolver);
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.openProjectDefinition',
+        async (argument: unknown, resourceUriValue?: unknown) => {
+            const definitionId = typeof argument === 'string'
+                ? argument
+                : argument && typeof argument === 'object' && 'definitionId' in argument
+                    ? (argument as { definitionId?: unknown }).definitionId
+                    : undefined;
+            const resourceUri = typeof argument === 'object' && argument && 'resourceUri' in argument
+                ? (argument as { resourceUri?: unknown }).resourceUri
+                : resourceUriValue;
+            if (typeof definitionId !== 'string') {
+                return;
+            }
+            await openProjectDefinitionHandler(
+                definitionId,
+                typeof resourceUri === 'string' ? resourceUri : undefined,
+                projectDefinitionResolver
+            );
         }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(

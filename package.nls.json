@@ -109,6 +109,7 @@
 
   "cmd.category": "KOT for 1C",
   "cmd.openSubscenario.title": "KOT - Open scenario",
+  "cmd.openProjectDefinition.title": "KOT - Open project definition",
   "cmd.openNestedScenarioFromFeature.title": "KOT - Open nested scenario from feature",
   "cmd.findCurrentFileReferences.title": "KOT - Find references to current scenario",
   "cmd.createNestedScenario.title": "KOT - Create nested scenario",

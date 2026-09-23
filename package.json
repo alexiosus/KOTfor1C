@@ -567,6 +567,11 @@
         "category": "%cmd.category%"
       },
       {
+        "command": "kotTestToolkit.openProjectDefinition",
+        "title": "%cmd.openProjectDefinition.title%",
+        "category": "%cmd.category%"
+      },
+      {
         "command": "kotTestToolkit.findCurrentFileReferences",
         "title": "%cmd.findCurrentFileReferences.title%",
         "category": "%cmd.category%"
@@ -990,6 +995,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "kotTestToolkit.openProjectDefinition",
+          "when": "false"
+        },
         {
           "command": "kotTestToolkit.refreshGherkinSteps",
           "when": "true"
