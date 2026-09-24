@@ -156,6 +156,34 @@ test('accepts scenario parameter references for quoted Vanessa placeholders', ()
     );
 });
 
+test('matches an empty quoted value for a Vanessa placeholder', () => {
+    const definition = makeDefinition({
+        kind: 'builtInStep',
+        template: 'And I repeat "%1 10" times',
+        parameters: [
+            { name: '10', index: 0, source: 'quoted' }
+        ]
+    });
+    const invocation = 'And I repeat "" times';
+
+    const result = resolveProjectInvocation(
+        createProjectDefinitionView('view-empty-quoted', [definition]),
+        invocation
+    );
+
+    assert.equal(result.kind, 'unique');
+    if (result.kind === 'unique') {
+        assert.equal(result.match.arguments[0].value, '');
+        assert.equal(
+            invocation.slice(
+                result.match.arguments[0].start,
+                result.match.arguments[0].end
+            ),
+            ''
+        );
+    }
+});
+
 test('uses the next repeated literal as the boundary of each parameter', () => {
     const definition = makeDefinition({
         template: 'сравниваю <Лево> с <Право> с результатом',

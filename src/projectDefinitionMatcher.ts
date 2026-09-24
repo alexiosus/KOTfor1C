@@ -184,9 +184,11 @@ export function compileProjectDefinitionMatcher(
                 const placeholder = placeholders[index];
                 let argumentStart = position;
                 let argumentEnd = position;
+                let acceptsEmpty = false;
                 if (placeholder.quote) {
                     const quote = normalized.value[position];
                     if (quote === '"' || quote === "'") {
+                        acceptsEmpty = true;
                         argumentStart = position + 1;
                         const closingQuote = normalized.value.indexOf(quote, argumentStart);
                         if (closingQuote < 0) {
@@ -222,7 +224,7 @@ export function compileProjectDefinitionMatcher(
                     position = argumentEnd;
                 }
 
-                if (argumentEnd <= argumentStart) {
+                if (argumentEnd < argumentStart || (!acceptsEmpty && argumentEnd === argumentStart)) {
                     return null;
                 }
                 const range = originalRange(normalized, argumentStart, argumentEnd);
