@@ -6,6 +6,7 @@ import {
     getScenarioRuntimeKey,
     migrateLegacyScenarioValues,
     migrateLegacySelectionStates,
+    planDisabledScenarioTestFileMoves,
     projectScenarioBuildSelection,
     applyScenarioRuntimeRenamePlanToRecord,
     removeRuntimeKey,
@@ -144,6 +145,37 @@ test('build projection isolates a disabled duplicate without filtering out the e
             isolatedDisabledKeys: ['file:///b/scen.yaml'],
             enabledKeyByName: { Duplicate: 'file:///a/scen.yaml' }
         }
+    );
+});
+
+test('disabled test-file moves distinguish duplicate-name isolation from legacy mode', () => {
+    assert.deepEqual(
+        planDisabledScenarioTestFileMoves(
+            false,
+            ['file:///disabled-a/scen.yaml', 'file:///disabled-b/scen.yaml'],
+            ['file:///disabled-b/scen.yaml']
+        ),
+        {
+            mode: 'duplicate-name-isolation',
+            scenarioKeys: ['file:///disabled-b/scen.yaml']
+        }
+    );
+
+    assert.deepEqual(
+        planDisabledScenarioTestFileMoves(
+            true,
+            ['file:///disabled-a/scen.yaml', 'file:///disabled-b/scen.yaml'],
+            ['file:///disabled-b/scen.yaml']
+        ),
+        {
+            mode: 'legacy',
+            scenarioKeys: ['file:///disabled-a/scen.yaml', 'file:///disabled-b/scen.yaml']
+        }
+    );
+
+    assert.deepEqual(
+        planDisabledScenarioTestFileMoves(false, ['file:///disabled/scen.yaml'], []),
+        { mode: 'none', scenarioKeys: [] }
     );
 });
 

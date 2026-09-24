@@ -24,12 +24,14 @@ import {
     getScenarioRuntimeKey,
     migrateLegacyScenarioValues,
     migrateLegacySelectionStates,
+    planDisabledScenarioTestFileMoves,
     projectScenarioBuildSelection,
     remapRuntimeKey,
     resolveConfirmedScenarioRuntimeRenames,
     resolveScenarioRuntimeTarget,
     resolveUniqueRuntimeKeyByName,
     validateEnabledScenarioKeys,
+    type DisabledScenarioTestFileMovePlan,
     type ScenarioRuntimeKey,
     type ScenarioRuntimeRenamePlan,
     type ScenarioRuntimeTarget
@@ -228,6 +230,7 @@ interface LegacyTemporarilyMovedTestFile {
 interface LegacyTemporarilyMovedTestFilesResult {
     temporaryRootUri: vscode.Uri | null;
     movedFiles: LegacyTemporarilyMovedTestFile[];
+    mode: Exclude<DisabledScenarioTestFileMovePlan['mode'], 'none'> | null;
 }
 
 interface FavoriteScenarioEntry {
@@ -1187,7 +1190,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        throw new Error(this.t('Unable to allocate temporary path for legacy disabled test file move: {0}', targetUri.fsPath));
+        throw new Error(this.t('Unable to allocate temporary path for disabled test file move: {0}', targetUri.fsPath));
     }
 
     private async temporarilyMoveDisabledScenarioTestFilesForBuild(
@@ -1196,13 +1199,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         outputChannel: vscode.OutputChannel,
         requiredIsolationKeys: readonly ScenarioRuntimeKey[] = []
     ): Promise<LegacyTemporarilyMovedTestFilesResult> {
-        const scenarioKeysToMove = this.isLegacyDisabledTestsMoveOnBuildEnabled()
-            ? disabledScenarioKeys
-            : [...requiredIsolationKeys];
-        if (scenarioKeysToMove.length === 0) {
+        const movePlan = planDisabledScenarioTestFileMoves(
+            this.isLegacyDisabledTestsMoveOnBuildEnabled(),
+            disabledScenarioKeys,
+            requiredIsolationKeys
+        );
+        if (movePlan.mode === 'none') {
             return {
                 temporaryRootUri: null,
-                movedFiles: []
+                movedFiles: [],
+                mode: null
             };
         }
 
@@ -1210,7 +1216,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (!catalog) {
             return {
                 temporaryRootUri: null,
-                movedFiles: []
+                movedFiles: [],
+                mode: null
             };
         }
 
@@ -1219,7 +1226,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         try {
             await vscode.workspace.fs.createDirectory(temporaryRootUri);
-            for (const scenarioKey of scenarioKeysToMove) {
+            for (const scenarioKey of movePlan.scenarioKeys) {
                 const scenarioInfo = catalog.byUri.get(scenarioKey);
                 if (!scenarioInfo) {
                     continue;
@@ -1251,12 +1258,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         } catch (error: any) {
             await this.restoreTemporarilyMovedDisabledScenarioFiles(temporaryRootUri, movedFiles, outputChannel);
-            throw new Error(this.t('Failed to move disabled test files in legacy mode: {0}', error?.message || String(error)));
+            const failureMessage = movePlan.mode === 'legacy'
+                ? this.t('Failed to move disabled test files in legacy mode: {0}', error?.message || String(error))
+                : this.t('Failed to isolate disabled same-name scenario test files before build: {0}', error?.message || String(error));
+            throw new Error(failureMessage);
         }
 
         return {
             temporaryRootUri,
-            movedFiles
+            movedFiles,
+            mode: movePlan.mode
         };
     }
 
@@ -1272,7 +1283,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
             this.outputAdvanced(
                 outputChannel,
-                this.t('Failed to delete legacy temp directory: {0}', error?.message || String(error))
+                this.t('Failed to delete disabled-test isolation temp directory: {0}', error?.message || String(error))
             );
         }
     }
@@ -1312,13 +1323,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (restoreFailures.length > 0) {
             const warningMessage = temporaryRootUri
                 ? this.t(
-                    'Some legacy-moved test files were not restored automatically. Temporary files were kept at {0}. See Output for details.',
+                    'Some temporarily moved test files were not restored automatically. Temporary files were kept at {0}. See Output for details.',
                     temporaryRootUri.fsPath
                 )
-                : this.t('Some legacy-moved test files were not restored automatically. See Output for details.');
+                : this.t('Some temporarily moved test files were not restored automatically. See Output for details.');
             this.outputError(
                 outputChannel,
-                this.t('Failed to restore {0} temporarily moved legacy test file(s).', String(restoreFailures.length)),
+                this.t('Failed to restore {0} temporarily moved test file(s).', String(restoreFailures.length)),
                 new Error(restoreFailures.join('\n'))
             );
             vscode.window.showWarningMessage(warningMessage);
@@ -7445,6 +7456,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             let featureFileDirUri: vscode.Uri; // Объявляем здесь, чтобы была доступна в конце
             let legacyTemporaryRootUri: vscode.Uri | null = null;
             let temporarilyMovedLegacyFiles: LegacyTemporarilyMovedTestFile[] = [];
+            let disabledTestFileMoveMode: LegacyTemporarilyMovedTestFilesResult['mode'] = null;
             try {
                 progress.report({ increment: 0, message: this.t('Preparing...') });
                 this.outputInfo(outputChannel, this.t('Starting build process...'));
@@ -7552,14 +7564,18 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 );
                 legacyTemporaryRootUri = legacyMoveResult.temporaryRootUri;
                 temporarilyMovedLegacyFiles = legacyMoveResult.movedFiles;
+                disabledTestFileMoveMode = legacyMoveResult.mode;
                 if (temporarilyMovedLegacyFiles.length > 0) {
-                    this.outputInfo(
-                        outputChannel,
-                        this.t(
+                    const message = disabledTestFileMoveMode === 'legacy'
+                        ? this.t(
                             'Legacy mode: temporarily moved {0} disabled test file(s) before build.',
                             String(temporarilyMovedLegacyFiles.length)
                         )
-                    );
+                        : this.t(
+                            'Build isolation: temporarily moved {0} disabled same-name scenario test file(s) before build.',
+                            String(temporarilyMovedLegacyFiles.length)
+                        );
+                    this.outputInfo(outputChannel, message);
                 }
                 
                 this.outputAdvanced(outputChannel, this.t('yaml_parameters.json generated at {0}', localSettingsPath.fsPath));
@@ -7835,16 +7851,20 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         outputChannel
                     );
                     if (movedCount > 0 && restoreFailures === 0) {
-                        this.outputInfo(
-                            outputChannel,
-                            this.t(
+                        const message = disabledTestFileMoveMode === 'legacy'
+                            ? this.t(
                                 'Legacy mode: restored {0} temporarily moved disabled test file(s) after build.',
                                 String(movedCount)
                             )
-                        );
+                            : this.t(
+                                'Build isolation: restored {0} temporarily moved disabled same-name scenario test file(s) after build.',
+                                String(movedCount)
+                            );
+                        this.outputInfo(outputChannel, message);
                     }
                     legacyTemporaryRootUri = null;
                     temporarilyMovedLegacyFiles = [];
+                    disabledTestFileMoveMode = null;
                 }
             }
         });

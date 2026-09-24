@@ -27,6 +27,11 @@ export interface ScenarioBuildSelectionProjection {
     enabledKeyByName: Record<string, ScenarioRuntimeKey>;
 }
 
+export type DisabledScenarioTestFileMovePlan =
+    | { mode: 'none'; scenarioKeys: [] }
+    | { mode: 'legacy'; scenarioKeys: ScenarioRuntimeKey[] }
+    | { mode: 'duplicate-name-isolation'; scenarioKeys: ScenarioRuntimeKey[] };
+
 export interface ScenarioRuntimeRenameCandidate {
     oldKey: ScenarioRuntimeKey;
     newKey: ScenarioRuntimeKey;
@@ -169,6 +174,28 @@ export function projectScenarioBuildSelection(
         isolatedDisabledKeys,
         enabledKeyByName
     };
+}
+
+export function planDisabledScenarioTestFileMoves(
+    legacyModeEnabled: boolean,
+    disabledScenarioKeys: readonly ScenarioRuntimeKey[],
+    requiredIsolationKeys: readonly ScenarioRuntimeKey[]
+): DisabledScenarioTestFileMovePlan {
+    if (legacyModeEnabled) {
+        return {
+            mode: 'legacy',
+            scenarioKeys: [...disabledScenarioKeys]
+        };
+    }
+
+    if (requiredIsolationKeys.length > 0) {
+        return {
+            mode: 'duplicate-name-isolation',
+            scenarioKeys: [...requiredIsolationKeys]
+        };
+    }
+
+    return { mode: 'none', scenarioKeys: [] };
 }
 
 export function buildUniqueCaseInsensitiveNameLookup(
