@@ -155,7 +155,7 @@ const FEATURE_SCENARIO_HEADER_REGEX = /^(?:Scenario|Сценарий|Scenario Ou
 const FEATURE_SCENARIO_BLOCK_BREAK_REGEX = /^(?:Feature|Функционал|Rule|Правило|Examples|Примеры)\s*:?/i;
 const FEATURE_NON_STEP_LINE_REGEX = /^(?:Feature|Функционал|Rule|Правило|Scenario|Сценарий|Scenario Outline|Структура сценария|Examples|Примеры|Scenarios|Сценарии)\s*:/i;
 const FORM_EXPLORER_SUGGEST_RELEVANT_LINE_REGEX = /(window|окн(?:о|а|у|е|ом)?|form|форм(?:а|ы|у|е|ой)?|table|таблиц|grid|spreadsheet\s+document|табличн(?:ый|ого)?\s+документ|field|поле|attribute|атрибут|реквизит|checkbox|флаг|radio\s*button|переключател|drop-?down|dropdown|выпадающ|html\s+(?:document\s+)?field|form\s+item\s+addition|дополнени(?:е|я)\s+формы|button|кнопк|hyperlink|link|гиперссыл|submenu|подменю|element|элемент(?:\s+формы)?|group|групп)/i;
-const PROJECT_DEFINITION_PARSER_VERSION = '1';
+const PROJECT_DEFINITION_PARSER_VERSION = '2';
 
 function createProjectDefinitionIndexService(
     context: vscode.ExtensionContext
@@ -220,6 +220,10 @@ function createProjectDefinitionIndexService(
                     warnings: resolved.warnings
                 };
             });
+        },
+        watchConfigurations: async listener => {
+            const { YamlParametersManager } = await import('./yamlParametersManager.js');
+            return YamlParametersManager.getInstance(context).onDidChangeActiveProfile(listener);
         },
         directoryConcurrency: 8,
         readConcurrency: 4,
@@ -1164,7 +1168,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        'kotTestToolkit.openSubscenario', (editor, edit) => openSubscenarioHandler(editor, edit, phaseSwitcherProvider)
+        'kotTestToolkit.openSubscenario', (editor, edit) => openSubscenarioHandler(editor, edit, projectDefinitionResolver)
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         'kotTestToolkit.generateScenarioDescriptionWithAi',
@@ -1180,7 +1184,7 @@ export function activate(context: vscode.ExtensionContext) {
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         'kotTestToolkit.openNestedScenarioFromFeature',
-        (editor, edit) => openNestedScenarioFromFeatureHandler(editor, edit, phaseSwitcherProvider)
+        (editor, edit) => openNestedScenarioFromFeatureHandler(editor, edit, projectDefinitionResolver)
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openScenarioByName',
@@ -1349,6 +1353,10 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.refreshPhaseSwitcher',
         async (options?: { refreshCache?: boolean }) => {
+            if (options?.refreshCache === true) {
+                await projectDefinitionIndex.reloadConfigurations();
+                await projectDefinitionIndex.waitForIdle();
+            }
             await phaseSwitcherProvider.refreshFromExternalStateChange({
                 refreshCache: options?.refreshCache === true
             });

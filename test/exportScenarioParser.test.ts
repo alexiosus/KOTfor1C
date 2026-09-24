@@ -83,3 +83,29 @@ test('export definitions match calls through the shared matcher', () => {
         assert.deepEqual(resolution.match.arguments.map(item => item.value), ['Order', 'Administrator']);
     }
 });
+
+test('uses export scenario step type as the Gherkin prefix instead of category metadata', () => {
+    const source = [
+        '# language: en',
+        '',
+        '@ExportScenarios',
+        'Feature: Drive test synchronization',
+        '',
+        'Scenario: "WindowName" window is opened and ready for input',
+        '    @steptype: Then',
+        '    @description: Waits until the window is ready.',
+        '',
+        '    Then "WindowName" window is opened'
+    ].join('\n');
+
+    const result = parseExportScenarios(
+        source,
+        context('file:///workspace/libraries/WaitWindowReadyForInput.feature')
+    );
+
+    assert.equal(
+        result.definitions[0].template,
+        'Then "WindowName" window is opened and ready for input'
+    );
+    assert.equal(result.definitions[0].category, undefined);
+});

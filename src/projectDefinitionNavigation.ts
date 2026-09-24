@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import type {
     ProjectDefinition,
     ProjectDefinitionLocation,
-    ProjectDefinitionMatch
+    ProjectDefinitionMatch,
+    ProjectDefinitionResolution
 } from './projectDefinition';
 import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 
@@ -125,4 +126,37 @@ export async function pickProjectDefinition(
         return false;
     }
     return openProjectDefinitionHandler(picked.definitionId, resourceUri, resolver);
+}
+
+function scenarioDefinitions(
+    resolution: ProjectDefinitionResolution
+): readonly ProjectDefinition[] {
+    if (resolution.kind === 'missing') {
+        return [];
+    }
+    const matches = resolution.kind === 'unique' ? [resolution.match] : resolution.matches;
+    return matches
+        .map(match => match.definition)
+        .filter(definition =>
+            definition.kind === 'nestedScenario' || definition.kind === 'exportScenario'
+        );
+}
+
+export async function openScenarioDefinitionForInvocation(
+    invocation: string,
+    resourceUri: vscode.Uri | undefined,
+    resolver: ProjectDefinitionResolver,
+    options: {
+        readonly title?: string;
+        readonly missingMessage?: string;
+    } = {}
+): Promise<boolean> {
+    const definitions = scenarioDefinitions(await resolver.resolve(resourceUri, invocation));
+    if (definitions.length === 0) {
+        if (options.missingMessage) {
+            vscode.window.showInformationMessage(options.missingMessage);
+        }
+        return false;
+    }
+    return pickProjectDefinition(definitions, resourceUri, resolver, options.title);
 }

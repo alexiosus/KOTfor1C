@@ -6469,8 +6469,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     await this._sendInitialState(webviewView.webview);
                     return;
                 case 'refreshData': 
-                    this.invalidateScenarioCatalog(true);
-                    await this._sendInitialState(webviewView.webview);
+                    await vscode.commands.executeCommand(
+                        'kotTestToolkit.refreshPhaseSwitcher',
+                        { refreshCache: true }
+                    );
                     return;
                 case 'refreshVanessaSteps':
                     await vscode.commands.executeCommand('kotTestToolkit.refreshGherkinSteps');

@@ -323,6 +323,50 @@ test('start schedules configuration loading without waiting for it', async () =>
     assert.deepEqual(service.getSnapshot()?.definitions.map(item => item.template), ['Started']);
 });
 
+test('configuration changes reload the latest active profile without restarting the service', async () => {
+    const fileSystem = new MemoryFileSystem();
+    fileSystem.setFile('/workspace/initial/initial.feature', exportFeature('Initial profile'), 1);
+    fileSystem.setFile('/workspace/stale/stale.feature', exportFeature('Stale profile'), 1);
+    fileSystem.setFile('/workspace/current/current.feature', exportFeature('Current profile'), 1);
+    const staleLoad = deferred<readonly ProjectDefinitionIndexConfiguration[]>();
+    const currentLoad = deferred<readonly ProjectDefinitionIndexConfiguration[]>();
+    let loadCount = 0;
+    let configurationsChanged: (() => void) | undefined;
+    let subscriptionDisposed = false;
+    const service = new ProjectDefinitionIndexService({
+        parserVersion: 'parser-v1',
+        fileSystem,
+        cache: new MemoryCache(),
+        loadConfigurations: () => {
+            loadCount += 1;
+            if (loadCount === 1) {
+                return Promise.resolve([configuration('initial')]);
+            }
+            return loadCount === 2 ? staleLoad.promise : currentLoad.promise;
+        },
+        watchConfigurations: listener => {
+            configurationsChanged = listener;
+            return { dispose: () => { subscriptionDisposed = true; } };
+        }
+    });
+
+    service.start();
+    await service.waitForIdle();
+    assert.equal(service.getSnapshot()?.profileId, 'initial');
+    assert.equal(typeof configurationsChanged, 'function');
+
+    configurationsChanged?.();
+    configurationsChanged?.();
+    currentLoad.resolve([configuration('current')]);
+    staleLoad.resolve([configuration('stale')]);
+    await service.waitForIdle();
+
+    assert.equal(service.getSnapshot()?.profileId, 'current');
+    assert.deepEqual(service.getSnapshot()?.definitions.map(item => item.template), ['Current profile']);
+    service.dispose();
+    assert.equal(subscriptionDisposed, true);
+});
+
 test('ensureReady observes caller cancellation without publishing a partial snapshot', async () => {
     const fileSystem = new MemoryFileSystem();
     const gate = deferred<void>();

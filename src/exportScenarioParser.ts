@@ -70,7 +70,7 @@ interface MutableScenario {
     readonly titleRange: ProjectDefinitionRange;
     readonly declarationStart: number;
     readonly parameters: readonly ProjectDefinitionParameter[];
-    category?: string;
+    stepType?: string;
     descriptionLines: string[];
     explicitDescription?: string;
     bodyStarted: boolean;
@@ -87,6 +87,21 @@ interface DeclarationMatch {
 
 const LANGUAGE_DIRECTIVE = /^#\s*language\s*:\s*(ru|en)\b/iu;
 const EXPORT_TAG = '@exportscenarios';
+
+function exportScenarioTemplate(
+    title: string,
+    stepType: string | undefined,
+    keywords: GherkinDefinitionKeywords
+): string {
+    const normalizedStepType = stepType?.trim();
+    if (!normalizedStepType || isStepLine(title, keywords)) {
+        return title;
+    }
+    const canonicalStepType = keywords.steps.find(keyword =>
+        keyword.toLocaleLowerCase() === normalizedStepType.toLocaleLowerCase()
+    );
+    return canonicalStepType ? `${canonicalStepType} ${title}` : title;
+}
 
 function readLines(source: string): SourceLine[] {
     const lines: SourceLine[] = [];
@@ -264,21 +279,21 @@ export function parseExportScenarios(
         const description = (current.explicitDescription ?? current.descriptionLines.join('\n')).trim();
         let definition: ProjectDefinition | undefined;
         if (current.exported) {
+            const template = exportScenarioTemplate(current.title, current.stepType, keywords);
             const id = createLocalDefinitionId({
                 kind: 'exportScenario',
                 sourceUri: context.sourceUri,
                 range: current.titleRange,
-                signature: current.title
+                signature: template
             });
             definition = Object.freeze({
                 id,
                 kind: 'exportScenario',
-                template: current.title,
-                normalizedTemplate: normalizeProjectDefinitionTemplate(current.title),
+                template,
+                normalizedTemplate: normalizeProjectDefinitionTemplate(template),
                 language,
                 parameters: current.parameters,
                 description: description || undefined,
-                category: current.category,
                 sourceLabel: context.sourceLabel,
                 workspaceFolderUri: context.workspaceFolderUri,
                 profileId: context.profileId,
@@ -340,7 +355,7 @@ export function parseExportScenarios(
                 continue;
             }
             if (current && !current.bodyStarted && normalizedTag.startsWith('@steptype:')) {
-                current.category = trimmed
+                current.stepType = trimmed
                     .slice(trimmed.indexOf(':') + 1)
                     .trim();
                 continue;

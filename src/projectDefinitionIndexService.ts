@@ -94,6 +94,9 @@ export interface ProjectDefinitionIndexServiceOptions {
         callbacks: ProjectDefinitionWatcherCallbacks
     ) => DisposableLike;
     readonly loadConfigurations?: () => Promise<readonly ProjectDefinitionIndexConfiguration[]>;
+    readonly watchConfigurations?: (
+        listener: () => void
+    ) => DisposableLike | Promise<DisposableLike>;
     readonly directoryConcurrency?: number;
     readonly readConcurrency?: number;
     readonly yieldEvery?: number;
@@ -238,6 +241,9 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
     readonly #jobs = new Set<Promise<unknown>>();
     readonly #emitter = new SimpleEmitter<ProjectDefinitionSnapshotChangeEvent>();
     #generation = 0;
+    #configurationLoadGeneration = 0;
+    #configurationWatchStarted = false;
+    #configurationSubscription: DisposableLike | null = null;
     #disposed = false;
 
     readonly onDidChangeSnapshot = this.#emitter.event;
@@ -247,12 +253,46 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
     }
 
     start(): void {
-        if (this.#disposed || !this.#options.loadConfigurations) {
+        if (
+            this.#disposed
+            || this.#configurationWatchStarted
+            || !this.#options.loadConfigurations
+        ) {
             return;
         }
-        this.#track((async () => {
+        this.#configurationWatchStarted = true;
+        if (this.#options.watchConfigurations) {
+            this.#track((async () => {
+                try {
+                    const subscription = await this.#options.watchConfigurations?.(() => {
+                        void this.reloadConfigurations();
+                    });
+                    if (subscription) {
+                        if (this.#disposed) {
+                            subscription.dispose();
+                            return;
+                        }
+                        this.#configurationSubscription = subscription;
+                    }
+                } finally {
+                    if (!this.#disposed) {
+                        await this.reloadConfigurations();
+                    }
+                }
+            })());
+            return;
+        }
+        void this.reloadConfigurations();
+    }
+
+    reloadConfigurations(): Promise<void> {
+        if (this.#disposed || !this.#options.loadConfigurations) {
+            return Promise.resolve();
+        }
+        const generation = ++this.#configurationLoadGeneration;
+        return this.#track((async () => {
             const configurations = await this.#options.loadConfigurations?.() ?? [];
-            if (!this.#disposed) {
+            if (!this.#disposed && generation === this.#configurationLoadGeneration) {
                 this.setProfiles(configurations);
             }
         })());
@@ -332,6 +372,9 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
             return;
         }
         this.#disposed = true;
+        this.#configurationLoadGeneration += 1;
+        this.#configurationSubscription?.dispose();
+        this.#configurationSubscription = null;
         for (const coordinator of this.#coordinators.values()) {
             this.#cancelCoordinator(coordinator);
         }

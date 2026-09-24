@@ -259,14 +259,47 @@ test('picker opens the source selected by stable definition id', async () => {
     assert.equal(opened[0].selection?.start.line, 9);
 });
 
-test('legacy open-by-name handler delegates to project definition navigation', () => {
+test('context scenario navigation opens an exported scenario definition', async () => {
+    opened.length = 0;
+    const item = definition('export:ready', 'exportScenario', {
+        template: 'Then "WindowName" window is opened and ready for input',
+        definitionLocation: location('file:///repo/features/WaitWindowReadyForInput.feature', 5, 10, 60)
+    });
+    const view = {
+        identity: 'view',
+        all: [item],
+        byId: new Map([[item.id, item]]),
+        byNormalizedTemplate: new Map()
+    };
+    const resolver = {
+        resolve: async () => ({ kind: 'unique', match: match(item) }),
+        getView: async () => view
+    };
+    const exports = loadNavigationModule();
+    const openScenarioDefinitionForInvocation = exports.openScenarioDefinitionForInvocation as
+        | ((invocation: string, resource: unknown, resolver: object) => Promise<boolean>)
+        | undefined;
+
+    assert.equal(typeof openScenarioDefinitionForInvocation, 'function');
+    const result = await openScenarioDefinitionForInvocation?.(
+        'Then "Add indicator" window is opened and ready for input',
+        vscode.Uri.parse('file:///repo/current.yaml'),
+        resolver
+    );
+
+    assert.equal(result, true);
+    assert.equal(opened[0]?.uri, 'file:///repo/features/WaitWindowReadyForInput.feature');
+    assert.equal(opened[0]?.selection?.start.line, 5);
+});
+
+test('legacy open-by-name handler delegates to scenario definition navigation', () => {
     const source = fs.readFileSync(path.join(process.cwd(), 'src', 'commandHandlers.ts'), 'utf8');
     const start = source.indexOf('export async function openScenarioByNameHandler(');
     const end = source.indexOf('\n}\n', start) + 2;
     const handler = source.slice(start, end);
 
     assert.match(handler, /ProjectDefinitionResolver/);
-    assert.match(handler, /pickProjectDefinition/);
+    assert.match(handler, /openScenarioDefinitionForInvocation/);
     assert.doesNotMatch(handler, /findFileByName|ensureFreshScenarioCatalog/);
 });
 

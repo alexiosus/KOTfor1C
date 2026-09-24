@@ -17,8 +17,7 @@ import {
     getSectionInsertion,
     ScenarioYamlDocument
 } from './scenarioYamlDocument';
-import { normalizeProjectDefinitionTemplate } from './projectDefinition';
-import { pickProjectDefinition } from './projectDefinitionNavigation';
+import { openScenarioDefinitionForInvocation } from './projectDefinitionNavigation';
 import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 import {
     resolveProjectDefinitionIdsAtPosition,
@@ -319,7 +318,11 @@ export async function openCurrentScenarioFilesFolderHandler(textEditor: vscode.T
  * Обработчик команды открытия вложенного сценария.
  * Ищет файл сценария по имени и открывает его в редакторе.
  */
-export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit, phaseSwitcherProvider: PhaseSwitcherProvider) {
+export async function openSubscenarioHandler(
+    textEditor: vscode.TextEditor,
+    edit: vscode.TextEditorEdit,
+    definitionResolver: ProjectDefinitionResolver
+) {
     const t = await getTranslator(getExtensionUri());
     
     await vscode.window.withProgress({
@@ -330,7 +333,9 @@ export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit
         const document = textEditor.document;
         const position = textEditor.selection.active;
         const line = document.lineAt(position.line);
-        const lineMatch = line.text.match(/^(\s*)(?:And|Then|When|И|Когда|Тогда)\s+(.*)/i);
+        const lineMatch = line.text.match(
+            /^(\s*)(?:\*\s*)?(?:К\s+тому\s+же|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Но|И|If|Дано)\s+(.*)/iu
+        );
         
         if (!lineMatch) { 
             return; 
@@ -356,21 +361,17 @@ export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit
         
         progress.report({ increment: 25, message: t('Opening scenario file...') });
         
-        const scenarioCatalog = await phaseSwitcherProvider.ensureFreshScenarioCatalog();
-        const targetUri = await findFileByName(scenarioNameFromLine, scenarioCatalog);
-        if (targetUri && targetUri.fsPath !== document.uri.fsPath) {
-            console.log(`[Cmd:openSubscenario] Target found: ${targetUri.fsPath}. Opening...`);
-            try {
-                const docToOpen = await vscode.workspace.openTextDocument(targetUri);
-                await vscode.window.showTextDocument(docToOpen, { preview: false, preserveFocus: false });
-                progress.report({ increment: 100, message: t('Scenario file opened successfully.') });
-            } catch (error: any) { 
-                console.error(`[Cmd:openSubscenario] Error opening ${targetUri.fsPath}:`, error); 
-                vscode.window.showErrorMessage(t('Failed to open file: {0}', error.message || error)); 
+        const opened = await openScenarioDefinitionForInvocation(
+            line.text,
+            document.uri,
+            definitionResolver,
+            {
+                title: vscode.l10n.t('Multiple scenarios named "{0}"', scenarioNameFromLine),
+                missingMessage: t('File for "{0}" not found.', scenarioNameFromLine)
             }
-        } else if (!isAmbiguousScenarioName(scenarioCatalog, scenarioNameFromLine)) {
-            console.log("[Cmd:openSubscenario] Target not found."); 
-            vscode.window.showInformationMessage(t('File for "{0}" not found.', scenarioNameFromLine)); 
+        );
+        if (opened) {
+            progress.report({ increment: 100, message: t('Scenario file opened successfully.') });
         }
     });
 }
@@ -383,7 +384,7 @@ export async function openSubscenarioHandler(textEditor: vscode.TextEditor, edit
 export async function openNestedScenarioFromFeatureHandler(
     textEditor: vscode.TextEditor,
     edit: vscode.TextEditorEdit,
-    phaseSwitcherProvider: PhaseSwitcherProvider
+    definitionResolver: ProjectDefinitionResolver
 ): Promise<void> {
     const t = await getTranslator(getExtensionUri());
     const document = textEditor.document;
@@ -397,21 +398,15 @@ export async function openNestedScenarioFromFeatureHandler(
         return;
     }
 
-    const scenarioCatalog = await phaseSwitcherProvider.ensureFreshScenarioCatalog();
-    const targetUri = await findFileByName(context.scenarioName, scenarioCatalog);
-    if (!targetUri) {
-        if (!isAmbiguousScenarioName(scenarioCatalog, context.scenarioName)) {
-            vscode.window.showInformationMessage(t('File for "{0}" not found.', context.scenarioName));
+    await openScenarioDefinitionForInvocation(
+        document.lineAt(context.scenarioLine).text,
+        document.uri,
+        definitionResolver,
+        {
+            title: vscode.l10n.t('Multiple scenarios named "{0}"', context.scenarioName),
+            missingMessage: t('File for "{0}" not found.', context.scenarioName)
         }
-        return;
-    }
-
-    try {
-        const docToOpen = await vscode.workspace.openTextDocument(targetUri);
-        await vscode.window.showTextDocument(docToOpen, { preview: false, preserveFocus: false });
-    } catch (error: any) {
-        vscode.window.showErrorMessage(t('Failed to open file: {0}', error?.message || String(error)));
-    }
+    );
 }
 
 /**
@@ -429,21 +424,14 @@ export async function openScenarioByNameHandler(
 
     const t = await getTranslator(getExtensionUri());
     const activeDocument = vscode.window.activeTextEditor?.document;
-    const normalizedTemplate = normalizeProjectDefinitionTemplate(normalizedName).toLocaleLowerCase();
-    const view = await definitionResolver.getView(activeDocument?.uri);
-    const definitions = view.all.filter(definition =>
-        definition.kind === 'nestedScenario'
-        && normalizeProjectDefinitionTemplate(definition.template).toLocaleLowerCase() === normalizedTemplate
-    );
-    if (definitions.length === 0) {
-        vscode.window.showInformationMessage(t('File for "{0}" not found.', normalizedName));
-        return false;
-    }
-    return pickProjectDefinition(
-        definitions,
+    return openScenarioDefinitionForInvocation(
+        normalizedName,
         activeDocument?.uri,
         definitionResolver,
-        vscode.l10n.t('Multiple scenarios named "{0}"', normalizedName)
+        {
+            title: vscode.l10n.t('Multiple scenarios named "{0}"', normalizedName),
+            missingMessage: t('File for "{0}" not found.', normalizedName)
+        }
     );
 }
 
