@@ -37,6 +37,7 @@ export interface ProjectDefinition {
     readonly parameters: readonly ProjectDefinitionParameter[];
     readonly description?: string;
     readonly category?: string;
+    readonly usageExample?: string;
     readonly sourceLabel: string;
     readonly workspaceFolderUri?: string;
     readonly profileId?: string;

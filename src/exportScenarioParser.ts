@@ -70,10 +70,17 @@ interface MutableScenario {
     readonly titleRange: ProjectDefinitionRange;
     readonly declarationStart: number;
     readonly parameters: readonly ProjectDefinitionParameter[];
-    stepType?: string;
+    category?: string;
+    usageExample?: string;
     descriptionLines: string[];
     explicitDescription?: string;
     bodyStarted: boolean;
+}
+
+interface ScenarioMetadata {
+    readonly category?: string;
+    readonly description?: string;
+    readonly usageExample?: string;
 }
 
 type DeclarationKind = 'feature' | 'scenario' | 'outline' | 'background' | 'examples';
@@ -88,19 +95,26 @@ interface DeclarationMatch {
 const LANGUAGE_DIRECTIVE = /^#\s*language\s*:\s*(ru|en)\b/iu;
 const EXPORT_TAG = '@exportscenarios';
 
-function exportScenarioTemplate(
-    title: string,
-    stepType: string | undefined,
-    keywords: GherkinDefinitionKeywords
-): string {
-    const normalizedStepType = stepType?.trim();
-    if (!normalizedStepType || isStepLine(title, keywords)) {
-        return title;
+function parseScenarioMetadata(value: string): ScenarioMetadata | null {
+    const separator = value.indexOf(':');
+    if (separator < 0) {
+        return null;
     }
-    const canonicalStepType = keywords.steps.find(keyword =>
-        keyword.toLocaleLowerCase() === normalizedStepType.toLocaleLowerCase()
-    );
-    return canonicalStepType ? `${canonicalStepType} ${title}` : title;
+    const tag = value.slice(0, separator).trim().toLocaleLowerCase();
+    const metadataValue = value.slice(separator + 1).trim();
+    switch (tag) {
+        case '@steptype':
+        case '@типшага':
+            return { category: metadataValue };
+        case '@description':
+        case '@описание':
+            return { description: metadataValue };
+        case '@exampleofuse':
+        case '@примериспользования':
+            return { usageExample: metadataValue };
+        default:
+            return null;
+    }
 }
 
 function readLines(source: string): SourceLine[] {
@@ -265,6 +279,7 @@ export function parseExportScenarios(
     let language = context.defaultLanguage;
     let keywords = getGherkinDefinitionKeywords(language);
     let pendingTags: string[] = [];
+    let pendingScenarioMetadata: ScenarioMetadata = {};
     let feature: ExportFeatureMetadata | null = null;
     let current: MutableScenario | null = null;
     let docStringDelimiter: '"""' | '```' | null = null;
@@ -279,7 +294,7 @@ export function parseExportScenarios(
         const description = (current.explicitDescription ?? current.descriptionLines.join('\n')).trim();
         let definition: ProjectDefinition | undefined;
         if (current.exported) {
-            const template = exportScenarioTemplate(current.title, current.stepType, keywords);
+            const template = current.title;
             const id = createLocalDefinitionId({
                 kind: 'exportScenario',
                 sourceUri: context.sourceUri,
@@ -294,6 +309,8 @@ export function parseExportScenarios(
                 language,
                 parameters: current.parameters,
                 description: description || undefined,
+                category: current.category || undefined,
+                usageExample: current.usageExample || undefined,
                 sourceLabel: context.sourceLabel,
                 workspaceFolderUri: context.workspaceFolderUri,
                 profileId: context.profileId,
@@ -349,15 +366,18 @@ export function parseExportScenarios(
             continue;
         }
         if (trimmed.startsWith('@')) {
-            const normalizedTag = trimmed.toLocaleLowerCase();
-            if (current && !current.bodyStarted && normalizedTag.startsWith('@description:')) {
-                current.explicitDescription = trimmed.slice(trimmed.indexOf(':') + 1).trim();
-                continue;
-            }
-            if (current && !current.bodyStarted && normalizedTag.startsWith('@steptype:')) {
-                current.stepType = trimmed
-                    .slice(trimmed.indexOf(':') + 1)
-                    .trim();
+            const metadata = parseScenarioMetadata(trimmed);
+            if (metadata) {
+                if (current && !current.bodyStarted) {
+                    current.category = metadata.category ?? current.category;
+                    current.explicitDescription = metadata.description ?? current.explicitDescription;
+                    current.usageExample = metadata.usageExample ?? current.usageExample;
+                } else {
+                    pendingScenarioMetadata = {
+                        ...pendingScenarioMetadata,
+                        ...metadata
+                    };
+                }
                 continue;
             }
             pendingTags.push(...parseTags(trimmed));
@@ -369,6 +389,7 @@ export function parseExportScenarios(
             finalizeScenario(line.start);
             const tags = Object.freeze(pendingTags.slice());
             pendingTags = [];
+            pendingScenarioMetadata = {};
             feature = Object.freeze({
                 title: declaration.title,
                 tags,
@@ -404,14 +425,19 @@ export function parseExportScenarios(
                 titleRange: rangeForLine(line, declaration.titleStart, declaration.titleEnd),
                 declarationStart: line.start,
                 parameters: extractParameters(declaration.title),
+                category: pendingScenarioMetadata.category,
+                explicitDescription: pendingScenarioMetadata.description,
+                usageExample: pendingScenarioMetadata.usageExample,
                 descriptionLines: [],
                 bodyStarted: false
             };
+            pendingScenarioMetadata = {};
             continue;
         }
         if (declaration?.kind === 'background') {
             finalizeScenario(line.start);
             pendingTags = [];
+            pendingScenarioMetadata = {};
             continue;
         }
         if (declaration?.kind === 'examples') {
@@ -419,6 +445,7 @@ export function parseExportScenarios(
                 current.bodyStarted = true;
             }
             pendingTags = [];
+            pendingScenarioMetadata = {};
             continue;
         }
 

@@ -20,6 +20,7 @@ const SEMANTIC_STEP_PREFIX = '!';
 const FORM_EXPLORER_INITIAL_SUGGEST_COMMAND = 'editor.action.triggerSuggest';
 const FORM_EXPLORER_ADVANCE_ARGUMENT_COMMAND = 'kotTestToolkit.completion.advanceFormExplorerArgument';
 const GHERKIN_KEYWORD_PREFIX_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\s+/i;
+const GHERKIN_KEYWORD_CAPTURE_REGEX = /^(?:\*\s*)?(and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\s+/i;
 const OPTIONAL_GHERKIN_PREFIX_FRAGMENT = String.raw`(?:(?:\*\s*)?(?:And|But|Then|When|Given|If|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?`;
 const VARIABLE_ASSIGNMENT_VERB_FRAGMENT = String.raw`(?:save|store|remember|read|create|determine|define|generate|wait|execute|put|retrieve|get|copy|запоминаю|сохраняю|читаю|создаю|определяю|генерирую|ожидаю|выполняю|вставляю|получаю|копирую)`;
 const OPTIONAL_TRAILING_ANNOTATION_FRAGMENT = String.raw`(?:\s+\([^)]*\))?\s*$`;
@@ -108,6 +109,18 @@ interface StepTemplateSnippetData {
     displayText: string;
     snippetText: string;
     hasPlaceholders: boolean;
+}
+
+function buildCallableDefinitionText(
+    preferredText: string,
+    typedKeyword: string,
+    fallbackKeyword: string
+): string {
+    const normalizedText = preferredText.trim();
+    const match = GHERKIN_KEYWORD_CAPTURE_REGEX.exec(normalizedText);
+    const body = match ? normalizedText.slice(match[0].length) : normalizedText;
+    const keyword = typedKeyword.trim() || match?.[1] || fallbackKeyword;
+    return body ? `${keyword} ${body}` : keyword;
 }
 
 interface FormExplorerElementCompletionCandidate {
@@ -730,13 +743,16 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             if (!template) {
                 continue;
             }
-            const normalizedDefinition = { ...definition, template };
+            const completionTemplate = definition.kind === 'exportScenario' && definition.usageExample
+                ? this.normalizeLineBreaks(definition.usageExample)
+                : template;
+            const normalizedDefinition = { ...definition, template: completionTemplate };
             const snippet = buildProjectDefinitionSnippetData(normalizedDefinition);
             const label: vscode.CompletionItemLabel | string = (definitionCounts.get(definition.normalizedTemplate) ?? 0) > 1
                 ? { label: snippet.displayText, description: definition.sourceLabel }
                 : snippet.displayText;
             const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Snippet);
-            const language = definition.language ?? this.inferStepLanguageFromText(template);
+            const language = definition.language ?? this.inferStepLanguageFromText(completionTemplate);
             const description = this.normalizeLineBreaks(definition.description ?? '');
             const documentation = new vscode.MarkdownString();
             documentation.appendMarkdown(language === 'ru' ? '**Описание:**\n\n' : '**Description:**\n\n');
@@ -905,7 +921,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         }
 
         const indentation = lineStartMatch[1] || ''; // Отступы в начале строки
-        const keywordInLine = (lineStartMatch[2] || '').toLowerCase(); // Найденное ключевое слово Gherkin (или пусто, если его нет)
+        const typedKeywordInLine = lineStartMatch[2] || '';
+        const keywordInLine = typedKeywordInLine.toLowerCase(); // Найденное ключевое слово Gherkin (или пусто, если его нет)
         const gherkinPrefixInLine = lineStartMatch[0]; // Полный префикс с отступом и ключевым словом, например "    And "
 
         // Текст, который пользователь ввел ПОСЛЕ отступов (и возможно, ключевого слова Gherkin)
@@ -924,7 +941,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 indentation,
                 semanticQuery,
                 textToMatchAgainst,
-                scenarioLanguage
+                scenarioLanguage,
+                typedKeywordInLine
             );
         }
 
@@ -939,12 +957,15 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             const itemKeywordMatch = itemFullText.match(itemStartPatternGherkin);
             const itemKeywordFromStep = itemKeywordMatch ? itemKeywordMatch[0].trim().toLowerCase() : ''; // Ключевое слово из элемента
             const itemTextAfterKeywordInItem = itemKeywordMatch ? itemFullText.substring(itemKeywordMatch[0].length) : itemFullText; // Текст элемента после ключевого слова
+            const definition = gherkinState.definitionByItem.get(baseItem);
+            const isCallableScenario = definition?.kind === 'nestedScenario'
+                || definition?.kind === 'exportScenario';
 
             // Фильтруем по совпадению ключевого слова, если оно есть в строке пользователя
             // Если в строке пользователя нет ключевого слова, то itemKeywordFromStep должен быть пустым (или мы должны предлагать все типы шагов)
             // Для простоты: если пользователь ввел ключевое слово, оно должно совпадать с ключевым словом шага.
             // Если пользователь не ввел ключевое слово, предлагаем все шаги, но matching будет по тексту после ключевого слова шага.
-            if (keywordInLine && itemKeywordFromStep && keywordInLine !== itemKeywordFromStep) {
+            if (keywordInLine && itemKeywordFromStep && keywordInLine !== itemKeywordFromStep && !isCallableScenario) {
                 return;
             }
 
@@ -955,9 +976,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
             const matchResult = this.fuzzyMatch(itemTextForMatching, textToMatchAgainst);
             if (matchResult.matched) {
-                const definition = gherkinState.definitionByItem.get(baseItem);
-                const completionText = definition?.kind === 'nestedScenario'
-                    ? `${scenarioCallKeyword} ${itemFullText}`
+                const completionText = isCallableScenario
+                    ? buildCallableDefinitionText(itemFullText, typedKeywordInLine, scenarioCallKeyword)
                     : itemFullText;
                 const completionLabel: vscode.CompletionItemLabel | string = typeof baseItem.label === 'string'
                     ? completionText
@@ -978,15 +998,22 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 completionItem.insertText = definition?.kind === 'nestedScenario'
                     ? this.buildNestedScenarioCompletionInsertText(
                         definition,
-                        scenarioCallKeyword,
+                        typedKeywordInLine || scenarioCallKeyword,
                         this.getScenarioParameterDefaults(document)
                     )
-                    : this.buildStepCompletionInsertText(
-                        itemFullText,
-                        indentation,
-                        itemLanguage,
-                        baseItem.insertText
-                    );
+                    : definition?.kind === 'exportScenario'
+                        ? this.buildExportScenarioCompletionInsertText(
+                            definition,
+                            completionText,
+                            indentation,
+                            itemLanguage
+                        )
+                        : this.buildStepCompletionInsertText(
+                            itemFullText,
+                            indentation,
+                            itemLanguage,
+                            baseItem.insertText
+                        );
                 if (completionItem.insertText instanceof vscode.SnippetString) {
                     completionItem.command = {
                         title: vscode.l10n.t('Suggest'),
@@ -2295,6 +2322,27 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         );
     }
 
+    private buildExportScenarioCompletionInsertText(
+        definition: ProjectDefinition,
+        completionText: string,
+        indentation: string,
+        language: ScenarioLanguage | null
+    ): string | vscode.SnippetString {
+        const snippet = buildProjectDefinitionSnippetData({
+            ...definition,
+            template: completionText
+        });
+        const baseInsertText = snippet.hasPlaceholders
+            ? new vscode.SnippetString(snippet.snippetText)
+            : snippet.displayText;
+        return this.buildStepCompletionInsertText(
+            completionText,
+            indentation,
+            language,
+            baseInsertText
+        );
+    }
+
     private cloneCompletionInsertText(
         insertText: string | vscode.SnippetString | undefined,
         fallbackText: string
@@ -2640,7 +2688,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         indentation: string,
         semanticQuery: string,
         typedSemanticInput: string,
-        preferredLanguage: ScenarioLanguage
+        preferredLanguage: ScenarioLanguage,
+        typedKeyword: string
     ): vscode.CompletionList {
         // Re-query semantic results as user types so relevance does not depend on
         // whether a trailing space/trigger character was entered.
@@ -2707,8 +2756,11 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             const baseItem = result.entry.item;
             const itemFullText = result.entry.itemText;
             const definition = state.definitionByItem.get(baseItem);
-            const completionText = definition?.kind === 'nestedScenario'
-                ? `${getScenarioCallKeyword(preferredLanguage)} ${itemFullText}`
+            const scenarioCallKeyword = getScenarioCallKeyword(preferredLanguage);
+            const isCallableScenario = definition?.kind === 'nestedScenario'
+                || definition?.kind === 'exportScenario';
+            const completionText = isCallableScenario
+                ? buildCallableDefinitionText(itemFullText, typedKeyword, scenarioCallKeyword)
                 : itemFullText;
             const completionLabel: vscode.CompletionItemLabel | string = typeof baseItem.label === 'string'
                 ? completionText
@@ -2729,14 +2781,21 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             completionItem.insertText = definition?.kind === 'nestedScenario'
                 ? this.buildNestedScenarioCompletionInsertText(
                     definition,
-                    getScenarioCallKeyword(preferredLanguage)
+                    typedKeyword || scenarioCallKeyword
                 )
-                : this.buildStepCompletionInsertText(
-                    itemFullText,
-                    indentation,
-                    result.entry.language,
-                    baseItem.insertText
-                );
+                : definition?.kind === 'exportScenario'
+                    ? this.buildExportScenarioCompletionInsertText(
+                        definition,
+                        completionText,
+                        indentation,
+                        result.entry.language
+                    )
+                    : this.buildStepCompletionInsertText(
+                        itemFullText,
+                        indentation,
+                        result.entry.language,
+                        baseItem.insertText
+                    );
             if (completionItem.insertText instanceof vscode.SnippetString) {
                 completionItem.command = {
                     title: vscode.l10n.t('Suggest'),

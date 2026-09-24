@@ -13,6 +13,7 @@ interface Definition {
     parameters: readonly unknown[];
     description?: string;
     category?: string;
+    usageExample?: string;
     sourceLabel: string;
     definitionLocation?: {
         uri: string;
@@ -278,6 +279,73 @@ test('nested scenario completion preserves the call keyword and parameter block'
     assert.match(item.insertText.value, /Role\s+= \$\{2:/);
 });
 
+test('export scenario completion preserves a typed keyword instead of its usage example keyword', async () => {
+    const exports = loadProvider('completionProvider.ts');
+    const Provider = exports.DriveCompletionProvider as { prototype: object };
+    const exported = definition({
+        id: 'export:window-ready',
+        kind: 'exportScenario',
+        template: '"WindowName" window is opened and ready for input',
+        usageExample: 'Then "Add indicator" window is opened and ready for input',
+        sourceLabel: 'Project exports (Libraries)',
+        language: 'en',
+        parameters: [{ name: 'WindowName', index: 0, source: 'quoted' }]
+    });
+    const provider = Object.create(Provider.prototype);
+    provider.definitionResolver = {
+        getView: async () => ({
+            identity: 'view:export', all: [exported],
+            byId: new Map([[exported.id, exported]]), byNormalizedTemplate: new Map()
+        })
+    };
+    provider.preparedGherkinStates = { getOrCreate: (_identity: string, factory: () => unknown) => factory() };
+    provider.isInScenarioTextBlock = () => true;
+    provider.fuzzyMatch = () => ({ matched: true, score: 1 });
+    provider.getScenarioParameterDefaults = () => new Map();
+
+    const result = await provider.provideCompletionItems(
+        {
+            fileName: 'test.feature', languageId: 'gherkin',
+            uri: { toString: () => 'file:///test.feature' },
+            lineAt: () => ({ text: 'And window' })
+        },
+        { line: 0, character: 10 },
+        { isCancellationRequested: false },
+        {}
+    );
+
+    assert.equal(result.items.length, 1);
+    const item = result.items[0] as { label: string | { label: string }; insertText: SnippetString };
+    assert.equal(
+        typeof item.label === 'string' ? item.label : item.label.label,
+        'And "Add indicator" window is opened and ready for input'
+    );
+    assert.equal(
+        item.insertText.value,
+        'And "${1:WindowName}" window is opened and ready for input'
+    );
+
+    const withoutTypedKeyword = await provider.provideCompletionItems(
+        {
+            fileName: 'test.feature', languageId: 'gherkin',
+            uri: { toString: () => 'file:///test.feature' },
+            lineAt: () => ({ text: 'window' })
+        },
+        { line: 0, character: 6 },
+        { isCancellationRequested: false },
+        {}
+    );
+    const preferredItem = withoutTypedKeyword.items[0] as {
+        label: string | { label: string };
+        insertText: SnippetString;
+    };
+    assert.equal(
+        typeof preferredItem.label === 'string' ? preferredItem.label : preferredItem.label.label,
+        'Then "Add indicator" window is opened and ready for input'
+    );
+    assert.match(preferredItem.insertText.value, /^Then /u);
+});
+
 test('hover renders every ambiguous definition with its source and open link', async () => {
     const exports = loadProvider('hoverProvider.ts');
     const Provider = exports.DriveHoverProvider as { prototype: object };
@@ -293,6 +361,7 @@ test('hover renders every ambiguous definition with its source and open link', a
         definition({
             id: 'export:b', kind: 'exportScenario', template: 'And shared step',
             sourceLabel: 'Export scenario /features/b.feature', description: 'Exported scenario',
+            category: 'Project.Shared', usageExample: 'Then shared step',
             definitionLocation: {
                 uri: 'file:///repo/features/b.feature',
                 range: { start: { line: 8, character: 0 }, end: { line: 8, character: 15 } }
@@ -323,6 +392,8 @@ test('hover renders every ambiguous definition with its source and open link', a
     const markdown = hover.contents.value as string;
     assert.match(markdown, /User library \/steps\/a\.feature/);
     assert.match(markdown, /Export scenario \/features\/b\.feature/);
+    assert.match(markdown, /Project\.Shared/);
+    assert.match(markdown, /Then shared step/);
     assert.equal((markdown.match(/command:kotTestToolkit\.openProjectDefinition/g) ?? []).length, 2);
 });
 

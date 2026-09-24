@@ -73,18 +73,21 @@ test('parses scenario-level English exports, outlines and warnings while ignorin
 test('export definitions match calls through the shared matcher', () => {
     const source = fs.readFileSync(path.join(fixtureRoot, 'export-en.feature'), 'utf8');
     const result = parseExportScenarios(source, context('file:///workspace/libraries/export-en.feature'));
-    const resolution = resolveProjectInvocation(
-        createProjectDefinitionView('exports', result.definitions),
-        'And I open Order as "Administrator"'
-    );
+    const view = createProjectDefinitionView('exports', result.definitions);
+    for (const keyword of ['And', 'When', 'Then']) {
+        const resolution = resolveProjectInvocation(
+            view,
+            `${keyword} I open Order as "Administrator"`
+        );
 
-    assert.equal(resolution.kind, 'unique');
-    if (resolution.kind === 'unique') {
-        assert.deepEqual(resolution.match.arguments.map(item => item.value), ['Order', 'Administrator']);
+        assert.equal(resolution.kind, 'unique');
+        if (resolution.kind === 'unique') {
+            assert.deepEqual(resolution.match.arguments.map(item => item.value), ['Order', 'Administrator']);
+        }
     }
 });
 
-test('uses export scenario step type as the Gherkin prefix instead of category metadata', () => {
+test('parses English Vanessa metadata after the scenario declaration', () => {
     const source = [
         '# language: en',
         '',
@@ -92,8 +95,9 @@ test('uses export scenario step type as the Gherkin prefix instead of category m
         'Feature: Drive test synchronization',
         '',
         'Scenario: "WindowName" window is opened and ready for input',
-        '    @steptype: Then',
+        '    @steptype: Windows.Readiness',
         '    @description: Waits until the window is ready.',
+        '    @exampleofuse: Then "Add indicator" window is opened and ready for input',
         '',
         '    Then "WindowName" window is opened'
     ].join('\n');
@@ -105,7 +109,41 @@ test('uses export scenario step type as the Gherkin prefix instead of category m
 
     assert.equal(
         result.definitions[0].template,
-        'Then "WindowName" window is opened and ready for input'
+        '"WindowName" window is opened and ready for input'
     );
-    assert.equal(result.definitions[0].category, undefined);
+    assert.equal(result.definitions[0].category, 'Windows.Readiness');
+    assert.equal(result.definitions[0].description, 'Waits until the window is ready.');
+    assert.equal(
+        result.definitions[0].usageExample,
+        'Then "Add indicator" window is opened and ready for input'
+    );
+});
+
+test('parses Russian Vanessa metadata before the scenario declaration', () => {
+    const source = [
+        '# language: ru',
+        '',
+        '@ExportScenarios',
+        'Функциональность: Синхронизация тестов',
+        '',
+        '@типшага: МоиПодсценарии.Окна',
+        '@описание: Ожидает готовность окна.',
+        '@примериспользования: И окно "Добавление показателя" готово к вводу',
+        'Сценарий: окно "ИмяОкна" готово к вводу',
+        '',
+        '    Тогда открылось окно "ИмяОкна"'
+    ].join('\n');
+
+    const result = parseExportScenarios(
+        source,
+        { ...context('file:///workspace/libraries/ОжиданиеОкна.feature'), defaultLanguage: 'ru' }
+    );
+
+    assert.equal(result.definitions[0].template, 'окно "ИмяОкна" готово к вводу');
+    assert.equal(result.definitions[0].category, 'МоиПодсценарии.Окна');
+    assert.equal(result.definitions[0].description, 'Ожидает готовность окна.');
+    assert.equal(
+        result.definitions[0].usageExample,
+        'И окно "Добавление показателя" готово к вводу'
+    );
 });

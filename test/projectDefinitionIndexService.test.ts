@@ -404,16 +404,36 @@ test('persistent cache round-trips valid records and rejects incompatible or mal
             size: 10,
             mtimeMs: 20,
             parserVersion: 'parser-v1',
-            definitions: [],
+            definitions: [{
+                id: 'export:a',
+                kind: 'exportScenario',
+                template: 'window "Name" is ready',
+                normalizedTemplate: 'window "Name" is ready',
+                language: 'en',
+                parameters: [],
+                usageExample: 'Then window "Main" is ready',
+                sourceLabel: 'Project exports'
+            }],
             warnings: []
         };
         await cache.save('configuration-a', 'parser-v1', [fileRecord]);
 
-        assert.equal((await cache.load('configuration-a', 'parser-v1'))?.length, 1);
+        const loaded = await cache.load('configuration-a', 'parser-v1');
+        assert.equal(loaded?.length, 1);
+        assert.equal(loaded?.[0].definitions[0].usageExample, 'Then window "Main" is ready');
         assert.equal(await cache.load('configuration-b', 'parser-v1'), null);
         assert.equal(await cache.load('configuration-a', 'parser-v2'), null);
         assert.equal(parseProjectDefinitionCache('{bad json', 'configuration-a', 'parser-v1'), null);
         assert.equal(parseProjectDefinitionCache(JSON.stringify({ schemaVersion: 1 }), 'configuration-a', 'parser-v1'), null);
+        assert.equal(parseProjectDefinitionCache(JSON.stringify({
+            schemaVersion: 1,
+            configurationIdentity: 'configuration-a',
+            parserVersion: 'parser-v1',
+            records: [{
+                ...fileRecord,
+                definitions: [{ ...fileRecord.definitions[0], usageExample: 42 }]
+            }]
+        }), 'configuration-a', 'parser-v1'), null);
     } finally {
         await fs.rm(directory, { recursive: true, force: true });
     }

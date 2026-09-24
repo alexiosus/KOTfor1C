@@ -78,6 +78,7 @@ function isDefinition(value: unknown): value is ProjectDefinition {
         && (value.language === undefined || value.language === 'ru' || value.language === 'en')
         && (value.description === undefined || typeof value.description === 'string')
         && (value.category === undefined || typeof value.category === 'string')
+        && (value.usageExample === undefined || typeof value.usageExample === 'string')
         && (value.workspaceFolderUri === undefined || typeof value.workspaceFolderUri === 'string')
         && (value.profileId === undefined || typeof value.profileId === 'string')
         && (value.libraryRootUri === undefined || typeof value.libraryRootUri === 'string')
