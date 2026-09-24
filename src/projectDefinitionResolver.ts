@@ -61,31 +61,14 @@ class SimpleEmitter<T> implements DisposableLike {
     }
 }
 
-function quotedParameterHints(template: string): string[] {
-    const hints: string[] = [];
-    for (let index = 0; index < template.length; index++) {
-        const quote = template[index];
-        if (quote !== '"' && quote !== "'") {
-            continue;
-        }
-        const end = template.indexOf(quote, index + 1);
-        if (end < 0) {
-            break;
-        }
-        hints.push(template.slice(index + 1, end));
-        index = end;
-    }
-    return hints;
-}
-
-function templateParameters(
-    template: string,
-    suppliedNames: readonly string[] = []
-): readonly ProjectDefinitionParameter[] {
-    return Object.freeze(quotedParameterHints(template).map((hint, index) => {
-        const catalogHint = /^%\d+\s+(.+)$/u.exec(hint)?.[1]?.trim();
+function templateParameters(template: string): readonly ProjectDefinitionParameter[] {
+    const invocationLine = template.split(/\r\n|\r|\n/u, 1)[0] ?? template;
+    return Object.freeze(Array.from(
+        invocationLine.matchAll(/(["'])\s*%\d+\s+([^"']*?)\s*\1/gu)
+    ).map((match, index) => {
+        const catalogHint = match[2]?.trim();
         return Object.freeze({
-            name: suppliedNames[index] || catalogHint || hint || `Parameter${index + 1}`,
+            name: catalogHint || `Parameter${index + 1}`,
             index,
             source: 'quoted' as const
         });

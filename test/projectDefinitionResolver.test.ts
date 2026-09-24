@@ -188,6 +188,54 @@ test('composes all four definition kinds and preserves localized built-in varian
     );
 });
 
+test('keeps only positional placeholders as parameters of a multiline built-in step', async () => {
+    const pattern = [
+        'And I go to line in "%1 TableName" table',
+        '| \'Name\' |',
+        '| \'Item1\' |'
+    ].join('\n');
+    const multilineCatalog: ResolvedStepCatalog = {
+        identity: 'multiline-catalog',
+        catalogVersion: 'test',
+        source: 'bundled-html',
+        steps: [{
+            id: 'multiline-table-step',
+            en: { pattern, description: 'Moves to the matching table line.' }
+        }]
+    };
+    const { resolver } = createHarness({ catalogs: new Map([['a', multilineCatalog]]) });
+
+    const view = await resolver.getView(uri('file:///workspace-a/test.feature'));
+    const definition = view.all.find(item => item.id === 'multiline-table-step:en');
+
+    assert.deepEqual(definition?.parameters.map(item => item.name), ['TableName']);
+});
+
+test('matches the invocation line of a multiline built-in step and retains its full template', async () => {
+    const pattern = [
+        'And I go to line in "%1 TableName" table',
+        '| \'Name\' |',
+        '| \'Item1\' |'
+    ].join('\n');
+    const multilineCatalog: ResolvedStepCatalog = {
+        identity: 'multiline-catalog',
+        catalogVersion: 'test',
+        source: 'bundled-html',
+        steps: [{
+            id: 'multiline-table-step',
+            en: { pattern, description: 'Moves to the matching table line.' }
+        }]
+    };
+    const { resolver } = createHarness({ catalogs: new Map([['a', multilineCatalog]]) });
+    const resource = uri('file:///workspace-a/test.feature');
+
+    const view = await resolver.getView(resource);
+    const resolution = await resolver.resolve(resource, 'And I go to line in "List" table', view);
+
+    assert.equal(resolution.kind, 'unique');
+    assert.equal(view.all.find(item => item.id === 'multiline-table-step:en')?.template, pattern);
+});
+
 test('uses resource-specific built-in catalogs while local definitions are unavailable', async () => {
     const catalogs = new Map([
         ['a', catalog('catalog-a', 'A-only')],

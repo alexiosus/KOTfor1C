@@ -136,6 +136,26 @@ test('matches Vanessa positional placeholders and outline placeholders in order'
     assert.deepEqual(outlineResult?.arguments.map(item => item.value), ['Контрагент', 'Администратор']);
 });
 
+test('accepts scenario parameter references for quoted Vanessa placeholders', () => {
+    const definition = makeDefinition({
+        kind: 'builtInStep',
+        template: 'And I save "%1 Expression" in "%2 VariableName" variable',
+        parameters: [
+            { name: 'Expression', index: 0, source: 'quoted' },
+            { name: 'VariableName', index: 1, source: 'quoted' }
+        ]
+    });
+    const invocation = 'And I save [Filters] in "Filters" variable';
+
+    const match = compileProjectDefinitionMatcher(definition).match(invocation);
+
+    assert.deepEqual(match?.arguments.map(item => item.value), ['Filters', 'Filters']);
+    assert.deepEqual(
+        match?.arguments.map(item => invocation.slice(item.start, item.end)),
+        ['Filters', 'Filters']
+    );
+});
+
 test('uses the next repeated literal as the boundary of each parameter', () => {
     const definition = makeDefinition({
         template: 'сравниваю <Лево> с <Право> с результатом',

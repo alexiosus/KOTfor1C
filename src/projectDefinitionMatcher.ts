@@ -8,6 +8,7 @@ import {
 } from './projectDefinition';
 
 const GHERKIN_PREFIX = /^(?:\s*)(?:\*\s*)?(?:К\s+тому\s+же|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Но|И|If|Дано)\s+/iu;
+const BRACKET_PARAMETER_NAME = /^[A-Za-zА-Яа-яЁё0-9_-]+$/u;
 
 interface NormalizedText {
     readonly value: string;
@@ -128,9 +129,12 @@ function originalRange(
 export function compileProjectDefinitionMatcher(
     definition: ProjectDefinition
 ): CompiledProjectDefinitionMatcher {
-    const templateRange = stripGherkinPrefix(definition.template);
+    const matchingTemplate = definition.kind === 'builtInStep'
+        ? (definition.template.split(/\r\n|\r|\n/u, 1)[0] ?? definition.template)
+        : definition.template;
+    const templateRange = stripGherkinPrefix(matchingTemplate);
     const template = normalizeProjectDefinitionTemplate(
-        definition.template.slice(templateRange.start, templateRange.end)
+        matchingTemplate.slice(templateRange.start, templateRange.end)
     );
     // Nested-scenario parameters live on the following assignment lines, not inside
     // the scenario name matched on the current line.
@@ -182,16 +186,29 @@ export function compileProjectDefinitionMatcher(
                 let argumentEnd = position;
                 if (placeholder.quote) {
                     const quote = normalized.value[position];
-                    if (quote !== '"' && quote !== "'") {
+                    if (quote === '"' || quote === "'") {
+                        argumentStart = position + 1;
+                        const closingQuote = normalized.value.indexOf(quote, argumentStart);
+                        if (closingQuote < 0) {
+                            return null;
+                        }
+                        argumentEnd = closingQuote;
+                        position = closingQuote + 1;
+                    } else if (quote === '[') {
+                        argumentStart = position + 1;
+                        const closingBracket = normalized.value.indexOf(']', argumentStart);
+                        if (closingBracket < 0) {
+                            return null;
+                        }
+                        const parameterName = normalized.value.slice(argumentStart, closingBracket);
+                        if (!BRACKET_PARAMETER_NAME.test(parameterName)) {
+                            return null;
+                        }
+                        argumentEnd = closingBracket;
+                        position = closingBracket + 1;
+                    } else {
                         return null;
                     }
-                    argumentStart = position + 1;
-                    const closingQuote = normalized.value.indexOf(quote, argumentStart);
-                    if (closingQuote < 0) {
-                        return null;
-                    }
-                    argumentEnd = closingQuote;
-                    position = closingQuote + 1;
                 } else {
                     const nextLiteral = foldedLiterals[index + 1];
                     if (nextLiteral) {
