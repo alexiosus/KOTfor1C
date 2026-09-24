@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
     deriveExportScenarioDraft,
     planExportScenarioEdit,
+    planExportScenarioMetadataEdit,
     type ExportScenarioEditPlan,
     type ExportScenarioEditSource
 } from '../src/exportScenarioCreator';
@@ -150,5 +151,100 @@ test('rejects a plan against a concurrently changed document version', () => {
             title: 'Call'
         }),
         /document changed/iu
+    );
+});
+
+test('adds an English metadata tag before the selected exported scenario with matching indentation', () => {
+    const original = [
+        '# language: en',
+        '@ExportScenarios',
+        'Feature: Shared calls',
+        '',
+        '  Scenario: Existing call',
+        '      Given ready'
+    ].join('\n');
+    const plan = planExportScenarioMetadataEdit(source(original), {
+        expectedVersion: 7,
+        scenarioStart: { line: 4, character: 0 },
+        kind: 'category',
+        value: 'Windows.Readiness'
+    });
+
+    assert.equal(applyPlan(original, plan), [
+        '# language: en',
+        '@ExportScenarios',
+        'Feature: Shared calls',
+        '',
+        '  @steptype: Windows.Readiness',
+        '  Scenario: Existing call',
+        '      Given ready'
+    ].join('\n'));
+});
+
+test('adds Russian metadata without changing BOM, CRLF or the missing final newline', () => {
+    const original = [
+        '\uFEFF# language: ru',
+        '@ExportScenarios',
+        'Функциональность: Общие вызовы',
+        '',
+        '\tСценарий: Открыть карточку',
+        '\t\tДано готово'
+    ].join('\r\n');
+    const plan = planExportScenarioMetadataEdit({ ...source(original), defaultLanguage: 'ru' }, {
+        expectedVersion: 7,
+        scenarioStart: { line: 4, character: 0 },
+        kind: 'usageExample',
+        value: 'И я открываю карточку'
+    });
+    const result = applyPlan(original, plan);
+
+    assert.equal(result, original.replace(
+        '\tСценарий: Открыть карточку',
+        '\t@примериспользования: И я открываю карточку\r\n\tСценарий: Открыть карточку'
+    ));
+    assert.equal(result.startsWith('\uFEFF'), true);
+    assert.equal(result.endsWith('\r\n'), false);
+});
+
+test('refuses duplicate, multiline and concurrently stale metadata edits', () => {
+    const original = [
+        '# language: en',
+        '@ExportScenarios',
+        'Feature: Shared calls',
+        '',
+        '@description: Already documented',
+        'Scenario: Existing call',
+        '    Given ready'
+    ].join('\n');
+    const baseRequest = {
+        expectedVersion: 7,
+        scenarioStart: { line: 5, character: 0 },
+        kind: 'description' as const
+    };
+
+    assert.throws(
+        () => planExportScenarioMetadataEdit(source(original), { ...baseRequest, value: 'Replacement' }),
+        /already has.*description/iu
+    );
+    assert.throws(
+        () => planExportScenarioMetadataEdit(source(original), {
+            ...baseRequest,
+            kind: 'category',
+            value: 'First\nSecond'
+        }),
+        /single line/iu
+    );
+    assert.throws(
+        () => planExportScenarioMetadataEdit(source(original, 8), { ...baseRequest, value: 'Documentation' }),
+        /document changed/iu
+    );
+    assert.throws(
+        () => planExportScenarioMetadataEdit(source(original), {
+            ...baseRequest,
+            scenarioStart: { line: 5, character: 1 },
+            kind: 'category',
+            value: 'Windows'
+        }),
+        /no longer available/iu
     );
 });

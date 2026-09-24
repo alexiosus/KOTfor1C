@@ -35,6 +35,20 @@ export interface ExportScenarioEditPlan {
     };
 }
 
+export type ExportScenarioMetadataKind = 'category' | 'description' | 'usageExample';
+
+export interface ExportScenarioMetadataEditRequest {
+    readonly expectedVersion: number;
+    readonly scenarioStart: { readonly line: number; readonly character: number };
+    readonly kind: ExportScenarioMetadataKind;
+    readonly value: string;
+}
+
+export interface ExportScenarioMetadataEditPlan {
+    readonly documentVersion: number;
+    readonly edits: readonly ExportScenarioTextEdit[];
+}
+
 export interface ExportScenarioCommandSeed {
     readonly invocation?: string;
     readonly language?: ScenarioLanguage;
@@ -270,4 +284,58 @@ export function planExportScenarioEdit(
     const titleStart = insertedAt + prefix.length + scenarioIndent.length + scenarioKeyword.length + 2;
     const cursorOffset = insertedAt + prefix.length + scenarioLine.length + parsed.eol.length + bodyIndent.length;
     return frozenPlan(source.version, edits, result, titleStart, title.length, cursorOffset);
+}
+
+const METADATA_TAGS: Readonly<Record<ScenarioLanguage, Readonly<Record<ExportScenarioMetadataKind, string>>>> = {
+    en: {
+        category: '@steptype',
+        description: '@description',
+        usageExample: '@exampleofuse'
+    },
+    ru: {
+        category: '@типшага',
+        description: '@описание',
+        usageExample: '@примериспользования'
+    }
+};
+
+export function planExportScenarioMetadataEdit(
+    source: ExportScenarioEditSource,
+    request: ExportScenarioMetadataEditRequest
+): ExportScenarioMetadataEditPlan {
+    if (source.version !== request.expectedVersion) {
+        throw new Error('The document changed while export scenario metadata was being added. Please retry.');
+    }
+    const value = request.value.trim();
+    if (!value) {
+        throw new Error('Export scenario metadata must not be empty.');
+    }
+    if (/[\r\n]/u.test(value)) {
+        throw new Error('Export scenario metadata must fit on a single line.');
+    }
+
+    const parsed = parseExportScenarios(source.text, source);
+    const scenario = parsed.scenarios.find(candidate =>
+        candidate.exported
+        && candidate.declarationRange.start.line === request.scenarioStart.line
+        && candidate.declarationRange.start.character === request.scenarioStart.character
+    );
+    if (!scenario) {
+        throw new Error('The selected exported scenario is no longer available.');
+    }
+    if (scenario.metadata[request.kind] !== undefined) {
+        throw new Error(`The exported scenario already has ${request.kind} metadata.`);
+    }
+
+    const indentation = leadingWhitespace(lineAt(source.text, scenario.declarationRange.start.line));
+    const tag = METADATA_TAGS[parsed.language][request.kind];
+    const edit = Object.freeze({
+        startOffset: scenario.metadataInsertion.offset,
+        endOffset: scenario.metadataInsertion.offset,
+        newText: `${indentation}${tag}: ${value}${parsed.eol}`
+    });
+    return Object.freeze({
+        documentVersion: source.version,
+        edits: Object.freeze([edit])
+    });
 }

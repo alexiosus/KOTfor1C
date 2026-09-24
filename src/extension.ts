@@ -95,6 +95,11 @@ import {
     createExportScenarioCommand,
     type ExportScenarioLibraryRoot
 } from './exportScenarioCommand';
+import {
+    addExportScenarioMetadataCommand,
+    EXPORT_SCENARIO_METADATA_COMMAND,
+    ExportScenarioMetadataCodeLensProvider
+} from './exportScenarioMetadataCodeLens';
 import { resolveVanessaTemplateRoot } from './userStepCreator';
 import type { UserStepLibraryRoot } from './userStepCommands';
 
@@ -919,6 +924,12 @@ export function activate(context: vscode.ExtensionContext) {
         )
     );
     context.subscriptions.push(
+        vscode.languages.registerCodeLensProvider(
+            { pattern: '**/*.feature', scheme: 'file' },
+            new ExportScenarioMetadataCodeLensProvider(context.extensionUri)
+        )
+    );
+    context.subscriptions.push(
         vscode.languages.registerReferenceProvider(
             [
                 { pattern: '**/*.yaml', scheme: 'file' },
@@ -1322,6 +1333,15 @@ export function activate(context: vscode.ExtensionContext) {
             await createExportScenarioCommand(seed, {
                 index: projectDefinitionIndex,
                 loadLibraryRoots: resourceUri => loadExportScenarioLibraryRoots(context, resourceUri),
+                translate: t
+            });
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        EXPORT_SCENARIO_METADATA_COMMAND, async (target?: unknown) => {
+            const t = await getTranslator(context.extensionUri);
+            await addExportScenarioMetadataCommand(target, {
+                index: projectDefinitionIndex,
                 translate: t
             });
         }

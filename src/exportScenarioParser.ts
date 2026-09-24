@@ -36,6 +36,8 @@ export interface ExportScenarioDeclaration {
     readonly titleRange: ProjectDefinitionRange;
     readonly declarationRange: ProjectDefinitionRange;
     readonly description: string;
+    readonly metadata: ExportScenarioMetadata;
+    readonly metadataInsertion: { readonly offset: number; readonly line: number; readonly character: number };
     readonly definitionId?: string;
 }
 
@@ -77,7 +79,7 @@ interface MutableScenario {
     bodyStarted: boolean;
 }
 
-interface ScenarioMetadata {
+export interface ExportScenarioMetadata {
     readonly category?: string;
     readonly description?: string;
     readonly usageExample?: string;
@@ -95,7 +97,7 @@ interface DeclarationMatch {
 const LANGUAGE_DIRECTIVE = /^#\s*language\s*:\s*(ru|en)\b/iu;
 const EXPORT_TAG = '@exportscenarios';
 
-function parseScenarioMetadata(value: string): ScenarioMetadata | null {
+function parseScenarioMetadata(value: string): ExportScenarioMetadata | null {
     const separator = value.indexOf(':');
     if (separator < 0) {
         return null;
@@ -279,7 +281,7 @@ export function parseExportScenarios(
     let language = context.defaultLanguage;
     let keywords = getGherkinDefinitionKeywords(language);
     let pendingTags: string[] = [];
-    let pendingScenarioMetadata: ScenarioMetadata = {};
+    let pendingScenarioMetadata: ExportScenarioMetadata = {};
     let feature: ExportFeatureMetadata | null = null;
     let current: MutableScenario | null = null;
     let docStringDelimiter: '"""' | '```' | null = null;
@@ -332,6 +334,15 @@ export function parseExportScenarios(
                 end: positionAtOffset(source, endOffset)
             },
             description,
+            metadata: Object.freeze({
+                category: current.category,
+                description: current.explicitDescription,
+                usageExample: current.usageExample
+            }),
+            metadataInsertion: Object.freeze({
+                offset: current.declarationStart,
+                ...positionAtOffset(source, current.declarationStart)
+            }),
             definitionId: definition?.id
         }));
         current = null;

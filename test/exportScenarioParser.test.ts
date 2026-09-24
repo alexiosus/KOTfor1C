@@ -117,6 +117,16 @@ test('parses English Vanessa metadata after the scenario declaration', () => {
         result.definitions[0].usageExample,
         'Then "Add indicator" window is opened and ready for input'
     );
+    assert.deepEqual(result.scenarios[0].metadata, {
+        category: 'Windows.Readiness',
+        description: 'Waits until the window is ready.',
+        usageExample: 'Then "Add indicator" window is opened and ready for input'
+    });
+    assert.deepEqual(result.scenarios[0].metadataInsertion, {
+        offset: source.indexOf('Scenario:'),
+        line: 5,
+        character: 0
+    });
 });
 
 test('parses Russian Vanessa metadata before the scenario declaration', () => {
@@ -146,4 +156,14 @@ test('parses Russian Vanessa metadata before the scenario declaration', () => {
         result.definitions[0].usageExample,
         'И окно "Добавление показателя" готово к вводу'
     );
+    assert.deepEqual(result.scenarios[0].metadata, {
+        category: 'МоиПодсценарии.Окна',
+        description: 'Ожидает готовность окна.',
+        usageExample: 'И окно "Добавление показателя" готово к вводу'
+    });
+    assert.deepEqual(result.scenarios[0].metadataInsertion, {
+        offset: source.indexOf('Сценарий:'),
+        line: 8,
+        character: 0
+    });
 });
