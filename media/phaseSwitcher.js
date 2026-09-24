@@ -1377,7 +1377,7 @@
         }
         if (existingCheckbox instanceof HTMLInputElement) {
             existingCheckbox.id = `chk-${viewState.safeName}`;
-            existingCheckbox.name = viewState.name;
+            existingCheckbox.name = viewState.scenarioKey;
             existingCheckbox.setAttribute('data-default', String(viewState.defaultState));
             return;
         }

@@ -59,6 +59,20 @@ test('scenario protocol rejects incomplete runtime identities', () => {
     );
 });
 
+test('run-state refresh preserves URI-backed checkbox identity', () => {
+    const syncFunctionStart = phaseSwitcherWebviewSource.indexOf('    function syncScenarioLeadingControl(');
+    const nextFunctionStart = phaseSwitcherWebviewSource.indexOf(
+        '    function syncScenarioProgress(',
+        syncFunctionStart
+    );
+    assert.notEqual(syncFunctionStart, -1);
+    assert.notEqual(nextFunctionStart, -1);
+
+    const syncFunctionSource = phaseSwitcherWebviewSource.slice(syncFunctionStart, nextFunctionStart);
+    assert.match(syncFunctionSource, /existingCheckbox\.name = viewState\.scenarioKey;/);
+    assert.doesNotMatch(syncFunctionSource, /existingCheckbox\.name = viewState\.name;/);
+});
+
 test('demo run state is overlaid by exact scenario URI key', () => {
     assert.match(
         phaseSwitcherWebviewSource,
