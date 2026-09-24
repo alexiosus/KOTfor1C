@@ -1206,13 +1206,17 @@ export function activate(context: vscode.ExtensionContext) {
             const resourceUri = typeof argument === 'object' && argument && 'resourceUri' in argument
                 ? (argument as { resourceUri?: unknown }).resourceUri
                 : resourceUriValue;
+            const capturedLocation = typeof argument === 'object' && argument && 'location' in argument
+                ? (argument as { location?: unknown }).location
+                : undefined;
             if (typeof definitionId !== 'string') {
                 return;
             }
             await openProjectDefinitionHandler(
                 definitionId,
                 typeof resourceUri === 'string' ? resourceUri : undefined,
-                projectDefinitionResolver
+                projectDefinitionResolver,
+                capturedLocation
             );
         }
     ));

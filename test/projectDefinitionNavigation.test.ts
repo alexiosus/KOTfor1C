@@ -259,6 +259,38 @@ test('picker opens the source selected by stable definition id', async () => {
     assert.equal(opened[0].selection?.start.line, 9);
 });
 
+test('stale hover target opens its captured location after the definition view changes', async () => {
+    opened.length = 0;
+    const capturedLocation = location('file:///repo/tests/CRM/000014181/scen.yaml', 2, 8, 54);
+    const resolver = {
+        getView: async () => ({
+            identity: 'refreshed-view',
+            all: [],
+            byId: new Map(),
+            byNormalizedTemplate: new Map()
+        })
+    };
+    const exports = loadNavigationModule();
+    const openProjectDefinitionHandler = exports.openProjectDefinitionHandler as (
+        definitionId: string,
+        resource: unknown,
+        resolver: object,
+        capturedLocation?: DefinitionLocation
+    ) => Promise<boolean>;
+
+    const result = await openProjectDefinitionHandler(
+        'file:///repo/tests/CRM/000014181/scen.yaml',
+        vscode.Uri.parse('file:///repo/tests/caller.yaml'),
+        resolver,
+        capturedLocation
+    );
+
+    assert.equal(result, true);
+    assert.equal(opened.length, 1);
+    assert.equal(opened[0].uri, capturedLocation.uri);
+    assert.equal(opened[0].selection?.start.line, 2);
+});
+
 test('context scenario navigation opens an exported scenario definition', async () => {
     opened.length = 0;
     const item = definition('export:ready', 'exportScenario', {

@@ -1151,7 +1151,8 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         }
         const commandArgument = [{
             definitionId: definition.id,
-            resourceUri: resourceUri.toString()
+            resourceUri: resourceUri.toString(),
+            location: definition.implementationLocation ?? definition.definitionLocation
         }];
         const commandUri = `command:kotTestToolkit.openProjectDefinition?${encodeURIComponent(JSON.stringify(commandArgument))}`;
         content.appendMarkdown(`\n[Open definition](${commandUri})`);

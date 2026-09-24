@@ -11,6 +11,34 @@ function navigableLocation(definition: ProjectDefinition): ProjectDefinitionLoca
     return definition.implementationLocation ?? definition.definitionLocation;
 }
 
+function capturedLocation(value: unknown): ProjectDefinitionLocation | undefined {
+    if (!value || typeof value !== 'object') {
+        return undefined;
+    }
+    const candidate = value as {
+        uri?: unknown;
+        range?: {
+            start?: { line?: unknown; character?: unknown };
+            end?: { line?: unknown; character?: unknown };
+        };
+    };
+    const positions = [candidate.range?.start, candidate.range?.end];
+    if (
+        typeof candidate.uri !== 'string'
+        || candidate.uri.trim().length === 0
+        || positions.some(position =>
+            !position
+            || !Number.isInteger(position.line)
+            || !Number.isInteger(position.character)
+            || Number(position.line) < 0
+            || Number(position.character) < 0
+        )
+    ) {
+        return undefined;
+    }
+    return value as ProjectDefinitionLocation;
+}
+
 function toRange(location: ProjectDefinitionLocation): vscode.Range {
     return new vscode.Range(
         new vscode.Position(location.range.start.line, location.range.start.character),
@@ -82,19 +110,25 @@ export class ProjectDefinitionProvider implements vscode.DefinitionProvider {
 export async function openProjectDefinitionHandler(
     definitionId: string,
     resourceUri: vscode.Uri | string | undefined,
-    resolver: ProjectDefinitionResolver
+    resolver: ProjectDefinitionResolver,
+    capturedLocationValue?: unknown
 ): Promise<boolean> {
     const resource = typeof resourceUri === 'string'
         ? vscode.Uri.parse(resourceUri)
         : resourceUri;
     const definition = (await resolver.getView(resource)).byId.get(definitionId);
-    if (!definition) {
-        vscode.window.showInformationMessage(vscode.l10n.t('Project definition is no longer available.'));
+    if (definition) {
+        const location = navigableLocation(definition);
+        if (location) {
+            return openLocation(location);
+        }
+        vscode.window.showInformationMessage(vscode.l10n.t('This definition has no project source location.'));
         return false;
     }
-    const location = navigableLocation(definition);
+
+    const location = capturedLocation(capturedLocationValue);
     if (!location) {
-        vscode.window.showInformationMessage(vscode.l10n.t('This definition has no project source location.'));
+        vscode.window.showInformationMessage(vscode.l10n.t('Project definition is no longer available.'));
         return false;
     }
     return openLocation(location);

@@ -325,3 +325,54 @@ test('hover renders every ambiguous definition with its source and open link', a
     assert.match(markdown, /Export scenario \/features\/b\.feature/);
     assert.equal((markdown.match(/command:kotTestToolkit\.openProjectDefinition/g) ?? []).length, 2);
 });
+
+test('hover open command captures the nested scenario location', async () => {
+    const exports = loadProvider('hoverProvider.ts');
+    const Provider = exports.DriveHoverProvider as { prototype: object };
+    const targetLocation = {
+        uri: 'file:///repo/tests/CRM/000014181/scen.yaml',
+        range: { start: { line: 2, character: 8 }, end: { line: 2, character: 54 } }
+    };
+    const nested = definition({
+        id: targetLocation.uri,
+        kind: 'nestedScenario',
+        template: 'I create indicator widget for business pulse',
+        sourceLabel: 'Nested scenario (CRM/000014181)',
+        definitionLocation: targetLocation
+    });
+    const provider = Object.create(Provider.prototype);
+    provider.definitionResolver = {
+        resolve: async () => ({
+            kind: 'unique',
+            match: { definition: nested, invocationRange: { start: 4, end: 48 }, arguments: [] }
+        })
+    };
+    provider.provideYamlFieldHover = async () => null;
+    provider.isFeatureDocument = () => true;
+    provider.isInScenarioTextBlock = () => true;
+    provider.provideVariableHover = async () => null;
+
+    const hover = await provider.provideHover(
+        {
+            fileName: 'caller.feature', languageId: 'gherkin',
+            uri: { toString: () => 'file:///repo/tests/caller.feature' },
+            lineAt: () => ({ text: 'And I create indicator widget for business pulse' })
+        },
+        { line: 0, character: 12 },
+        { isCancellationRequested: false }
+    );
+    assert.ok(hover);
+    const encodedArguments = /command:kotTestToolkit\.openProjectDefinition\?([^)]*)/u.exec(
+        hover.contents.value as string
+    )?.[1];
+    assert.ok(encodedArguments);
+    const [argument] = JSON.parse(decodeURIComponent(encodedArguments)) as Array<{
+        definitionId: string;
+        resourceUri: string;
+        location?: Definition['definitionLocation'];
+    }>;
+
+    assert.equal(argument.definitionId, targetLocation.uri);
+    assert.equal(argument.resourceUri, 'file:///repo/tests/caller.feature');
+    assert.deepEqual(argument.location, targetLocation);
+});
