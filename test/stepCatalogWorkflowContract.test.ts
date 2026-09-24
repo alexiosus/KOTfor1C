@@ -63,3 +63,24 @@ test('generator build output and development inputs are excluded from the VSIX',
     assert.match(ignore, /^tools\/step-catalog\/\*\*$/m);
     assert.match(ignore, /^test\/fixtures\/step-catalog\/\*\*$/m);
 });
+
+test('tests, internal plans, agent settings, and build configs are excluded from the VSIX', () => {
+    const ignore = projectFile('.vscodeignore');
+
+    for (const developmentOnlyPath of [
+        '.claude/**',
+        '.github/**',
+        '.superpowers/**',
+        'docs/superpowers/**',
+        'test/**',
+        'tests/**',
+        'eslint.config.mjs',
+        'tsconfig.json'
+    ]) {
+        assert.equal(
+            ignore.split(/\r?\n/u).includes(developmentOnlyPath),
+            true,
+            `${developmentOnlyPath} must not be published in the VSIX`
+        );
+    }
+});
