@@ -113,6 +113,10 @@ interface DiscoveredSource {
     readonly rootPath: string;
 }
 
+interface WatchedSource extends DiscoveredSource {
+    readonly aliasPaths: readonly string[];
+}
+
 interface EnumerationResult {
     readonly sources: readonly DiscoveredSource[];
     readonly epfPaths: readonly string[];
@@ -195,15 +199,16 @@ function sameFileIdentity(
         && record.parserVersion === parserVersion;
 }
 
-function rootForFile(
-    configuration: ProjectDefinitionIndexConfiguration,
-    filePath: string
-): string | undefined {
-    const normalizedFile = normalizedPath(filePath);
-    return configuration.libraryRootPaths.find(root => {
-        const normalizedRoot = normalizedPath(root);
-        return normalizedFile === normalizedRoot || normalizedFile.startsWith(`${normalizedRoot}${path.sep}`);
-    });
+function relativePathWithin(rootPath: string, filePath: string): string | null {
+    const relative = path.relative(path.resolve(rootPath), path.resolve(filePath));
+    if (
+        relative === '..'
+        || relative.startsWith(`..${path.sep}`)
+        || path.isAbsolute(relative)
+    ) {
+        return null;
+    }
+    return relative;
 }
 
 function sourceLibraryNames(sourcePaths: Iterable<string>): Set<string> {
@@ -710,20 +715,26 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
         if (!this.#isCurrent(coordinator) || !coordinator.snapshot) {
             return;
         }
-        const rootPath = rootForFile(coordinator.configuration, filePath);
-        if (!rootPath) {
+        const source = await this.#resolveWatchedSource(coordinator, filePath);
+        if (!source) {
             return;
         }
         const record = await this.#readSourceRecord(
             coordinator,
-            { filePath, rootPath },
+            source,
             new Map()
         );
         if (!this.#isCurrent(coordinator) || !coordinator.snapshot) {
             return;
         }
-        coordinator.sourcePaths.add(normalizedPath(filePath));
+        for (const aliasPath of source.aliasPaths) {
+            coordinator.sourcePaths.delete(normalizedPath(aliasPath));
+        }
+        coordinator.sourcePaths.add(normalizedPath(source.filePath));
         const records = new Map([...coordinator.snapshot.files.values()].map(item => [item.uri, item]));
+        for (const aliasPath of source.aliasPaths) {
+            records.delete(fileUri(aliasPath));
+        }
         records.set(record.uri, record);
         const snapshot = buildProjectDefinitionSnapshot({
             configurationIdentity: coordinator.configuration.identity,
@@ -746,9 +757,15 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
         if (!this.#isCurrent(coordinator) || !coordinator.snapshot) {
             return;
         }
-        coordinator.sourcePaths.delete(normalizedPath(filePath));
-        const deletedUri = fileUri(filePath);
-        const records = [...coordinator.snapshot.files.values()].filter(record => record.uri !== deletedUri);
+        const source = await this.#resolveWatchedSource(coordinator, filePath);
+        if (!source) {
+            return;
+        }
+        const deletedUris = new Set(source.aliasPaths.map(fileUri));
+        for (const aliasPath of source.aliasPaths) {
+            coordinator.sourcePaths.delete(normalizedPath(aliasPath));
+        }
+        const records = [...coordinator.snapshot.files.values()].filter(record => !deletedUris.has(record.uri));
         const snapshot = buildProjectDefinitionSnapshot({
             configurationIdentity: coordinator.configuration.identity,
             workspaceFolderUri: coordinator.configuration.workspaceFolderUri,
@@ -764,6 +781,53 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
             this.#options.parserVersion,
             records
         );
+    }
+
+    async #resolveWatchedSource(
+        coordinator: FolderCoordinator,
+        filePath: string
+    ): Promise<WatchedSource | null> {
+        const eventPath = path.resolve(filePath);
+        let physicalFilePath = eventPath;
+        try {
+            physicalFilePath = await this.#options.fileSystem.realpath(eventPath);
+        } catch {
+            // Deleted files are resolved below from the still-existing library root.
+        }
+
+        for (const configuredRoot of coordinator.configuration.libraryRootPaths) {
+            const configuredRootPath = path.resolve(configuredRoot);
+            let physicalRootPath = configuredRootPath;
+            try {
+                physicalRootPath = await this.#options.fileSystem.realpath(configuredRootPath);
+            } catch {
+                // The configured spelling remains usable when the root cannot be canonicalized.
+            }
+
+            const relativePath = relativePathWithin(configuredRootPath, eventPath)
+                ?? relativePathWithin(physicalRootPath, physicalFilePath)
+                ?? relativePathWithin(physicalRootPath, eventPath)
+                ?? relativePathWithin(configuredRootPath, physicalFilePath);
+            if (relativePath === null) {
+                continue;
+            }
+
+            const derivedPhysicalPath = path.resolve(physicalRootPath, relativePath);
+            const resolvedFilePath = relativePathWithin(physicalRootPath, physicalFilePath) !== null
+                ? physicalFilePath
+                : derivedPhysicalPath;
+            return {
+                filePath: resolvedFilePath,
+                rootPath: physicalRootPath,
+                aliasPaths: Object.freeze(Array.from(new Set([
+                    eventPath,
+                    physicalFilePath,
+                    path.resolve(configuredRootPath, relativePath),
+                    derivedPhysicalPath
+                ])))
+            };
+        }
+        return null;
     }
 
     #publishInventoryOnly(coordinator: FolderCoordinator): void {

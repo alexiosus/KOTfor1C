@@ -33,6 +33,7 @@ interface MemoryFile {
 
 class MemoryFileSystem implements ProjectDefinitionFileSystem {
     readonly files = new Map<string, MemoryFile>();
+    readonly realpathAliases = new Map<string, string>();
     readonly directoryReads: string[] = [];
     readonly fileReads: string[] = [];
     activeDirectoryReads = 0;
@@ -44,6 +45,15 @@ class MemoryFileSystem implements ProjectDefinitionFileSystem {
 
     setFile(filePath: string, content: string, mtimeMs = Date.now()): void {
         this.files.set(path.posix.normalize(filePath), { content, mtimeMs });
+    }
+
+    setRealpathAlias(aliasPath: string, physicalPath: string): void {
+        this.realpathAliases.set(path.posix.normalize(aliasPath), path.posix.normalize(physicalPath));
+    }
+
+    private physicalPath(filePath: string): string {
+        const normalized = path.posix.normalize(filePath);
+        return this.realpathAliases.get(normalized) ?? normalized;
     }
 
     deleteFile(filePath: string): void {
@@ -75,7 +85,7 @@ class MemoryFileSystem implements ProjectDefinitionFileSystem {
     }
 
     async stat(filePath: string) {
-        const file = this.files.get(path.posix.normalize(filePath));
+        const file = this.files.get(this.physicalPath(filePath));
         if (!file) {
             throw new Error(`ENOENT: ${filePath}`);
         }
@@ -83,7 +93,7 @@ class MemoryFileSystem implements ProjectDefinitionFileSystem {
     }
 
     async readFile(filePath: string) {
-        const normalized = path.posix.normalize(filePath);
+        const normalized = this.physicalPath(filePath);
         const file = this.files.get(normalized);
         if (!file) {
             throw new Error(`ENOENT: ${filePath}`);
@@ -99,7 +109,7 @@ class MemoryFileSystem implements ProjectDefinitionFileSystem {
     }
 
     async realpath(value: string): Promise<string> {
-        return path.posix.normalize(value);
+        return this.physicalPath(value);
     }
 }
 
@@ -240,6 +250,61 @@ test('watcher create, change, and delete update only the affected source file', 
     await service.waitForIdle();
     assert.deepEqual(service.getSnapshot()?.definitions.map(item => item.template), ['Created']);
     assert.equal(fileSystem.fileReads.filter(item => item === secondPath).length, 1);
+});
+
+test('watcher change replaces a scanned file reached through another filesystem alias', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const watches = new WatchHarness();
+    const aliasRoot = '/alias/libraries';
+    const physicalRoot = '/physical/libraries';
+    const aliasFile = `${aliasRoot}/Drive/WaitWindowReadyForInput.feature`;
+    const physicalFile = `${physicalRoot}/Drive/WaitWindowReadyForInput.feature`;
+    fileSystem.setRealpathAlias(aliasRoot, physicalRoot);
+    fileSystem.setRealpathAlias(aliasFile, physicalFile);
+    fileSystem.setFile(physicalFile, exportFeature('Window is ready'), 1);
+    const service = createService(fileSystem, { watches });
+    service.startProfile(configuration('active', aliasRoot));
+    await service.waitForIdle();
+
+    assert.equal(service.getSnapshot()?.definitions.length, 1);
+    const callbacks = watches.callbacks.get(aliasRoot);
+    assert.ok(callbacks);
+
+    fileSystem.setFile(physicalFile, exportFeature('Window is ready after save'), 2);
+    callbacks.change(aliasFile);
+    await service.waitForIdle();
+
+    assert.deepEqual(
+        service.getSnapshot()?.definitions.map(item => item.template),
+        ['Window is ready after save']
+    );
+    assert.deepEqual(
+        [...(service.getSnapshot()?.files.keys() ?? [])],
+        ['file:///physical/libraries/Drive/WaitWindowReadyForInput.feature']
+    );
+});
+
+test('watcher delete removes a scanned file reached through another filesystem alias', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const watches = new WatchHarness();
+    const aliasRoot = '/alias/libraries';
+    const physicalRoot = '/physical/libraries';
+    const aliasFile = `${aliasRoot}/Drive/WaitWindowReadyForInput.feature`;
+    const physicalFile = `${physicalRoot}/Drive/WaitWindowReadyForInput.feature`;
+    fileSystem.setRealpathAlias(aliasRoot, physicalRoot);
+    fileSystem.setFile(physicalFile, exportFeature('Window is ready'), 1);
+    const service = createService(fileSystem, { watches });
+    service.startProfile(configuration('active', aliasRoot));
+    await service.waitForIdle();
+
+    const callbacks = watches.callbacks.get(aliasRoot);
+    assert.ok(callbacks);
+    fileSystem.deleteFile(physicalFile);
+    callbacks.delete(aliasFile);
+    await service.waitForIdle();
+
+    assert.equal(service.getSnapshot()?.definitions.length, 0);
+    assert.equal(service.getSnapshot()?.files.size, 0);
 });
 
 test('profile changes dispose old watchers and suppress stale completed scans', async () => {
