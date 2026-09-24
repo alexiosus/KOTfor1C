@@ -17,6 +17,23 @@ function scenario(name: string, relativePath: string, uri: string, scenarioCode?
     };
 }
 
+function windowsScenario(
+    name: string,
+    relativePath: string,
+    uri: string,
+    fsPath: string,
+    scenarioCode?: string
+): TestInfo {
+    return {
+        ...scenario(name, relativePath, uri, scenarioCode),
+        yamlFileUri: {
+            scheme: 'file',
+            fsPath,
+            toString: () => uri
+        } as TestInfo['yamlFileUri']
+    };
+}
+
 test('preserves duplicate definitions and chooses a stable compatibility primary', () => {
     const second = scenario('Duplicate', 'z/second', 'file:///z/scen.yaml');
     const first = scenario('Duplicate', 'a/first', 'file:///a/scen.yaml');
@@ -75,6 +92,70 @@ test('upserts by URI and removal keeps the other duplicate', () => {
     const removed = removeScenarioFromCatalogByUri(updated, 'file:///same/scen.yaml');
     assert.deepEqual(removed.byName.get('New'), [other]);
     assert.equal(removed.byUri.has('file:///same/scen.yaml'), false);
+});
+
+test('collapses case-only Windows URI aliases into one scenario definition', () => {
+    const original = windowsScenario(
+        'test',
+        'Parent scenarios/test',
+        'file:///C:/Repo/Tests/Parent%20scenarios/test/scen.yaml',
+        'C:\\Repo\\Tests\\Parent scenarios\\test\\scen.yaml'
+    );
+    const alias = windowsScenario(
+        'test',
+        'Parent scenarios/test',
+        'file:///c:/repo/tests/parent%20scenarios/test/scen.yaml',
+        'c:\\repo\\tests\\parent scenarios\\test\\scen.yaml'
+    );
+
+    const catalog = buildScenarioCatalog([original, alias]);
+
+    assert.equal(catalog.all.length, 1);
+    assert.equal(catalog.byName.get('test')?.length, 1);
+    assert.equal(catalog.all[0].yamlFileUri.toString(), original.yamlFileUri.toString());
+    assert.equal(catalog.byUri.get(alias.yamlFileUri.toString()), catalog.all[0]);
+});
+
+test('case-only Windows URI upsert updates metadata without changing the stable key', () => {
+    const original = windowsScenario(
+        'Old name',
+        'Parent scenarios/test',
+        'file:///C:/Repo/Tests/Parent%20scenarios/test/scen.yaml',
+        'C:\\Repo\\Tests\\Parent scenarios\\test\\scen.yaml',
+        'old'
+    );
+    const refreshedAlias = windowsScenario(
+        'test',
+        'Parent scenarios/test',
+        'file:///c:/repo/tests/parent%20scenarios/test/scen.yaml',
+        'c:\\repo\\tests\\parent scenarios\\test\\scen.yaml',
+        'new'
+    );
+
+    const catalog = upsertScenarioInCatalog(buildScenarioCatalog([original]), refreshedAlias);
+
+    assert.equal(catalog.all.length, 1);
+    assert.equal(catalog.all[0].name, 'test');
+    assert.equal(catalog.all[0].scenarioCode, 'new');
+    assert.equal(catalog.all[0].yamlFileUri.toString(), original.yamlFileUri.toString());
+    assert.equal(catalog.byUri.get(refreshedAlias.yamlFileUri.toString()), catalog.all[0]);
+});
+
+test('case-only Windows URI removal deletes the matching stable definition', () => {
+    const original = windowsScenario(
+        'test',
+        'Parent scenarios/test',
+        'file:///C:/Repo/Tests/Parent%20scenarios/test/scen.yaml',
+        'C:\\Repo\\Tests\\Parent scenarios\\test\\scen.yaml'
+    );
+    const catalog = buildScenarioCatalog([original]);
+
+    const removed = removeScenarioFromCatalogByUri(
+        catalog,
+        'file:///c:/repo/tests/parent%20scenarios/test/scen.yaml'
+    );
+
+    assert.equal(removed.all.length, 0);
 });
 
 test('keeps 1885 definitions in 1878 name buckets', () => {

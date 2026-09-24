@@ -108,16 +108,126 @@ function compareDefinitions(left: TestInfo, right: TestInfo): number {
         || left.yamlFileUri.toString().localeCompare(right.yamlFileUri.toString());
 }
 
+function decodeUriComponentSafely(value: string): string {
+    try {
+        return decodeURIComponent(value);
+    } catch {
+        return value;
+    }
+}
+
+function windowsPathComparisonKey(value: string): string {
+    const normalized = path.win32
+        .normalize(value.replace(/^\/(?=[A-Za-z]:[\\/])/, ''))
+        .replace(/\\/g, '/')
+        .toLowerCase();
+    return `windows-file:${normalized}`;
+}
+
+function serializedScenarioUriComparisonKey(value: string): string {
+    const decoded = decodeUriComponentSafely(value.trim()).replace(/\\/g, '/');
+    const drivePath = /^file:\/+([A-Za-z]:\/.*)$/i.exec(decoded);
+    if (drivePath) {
+        return windowsPathComparisonKey(drivePath[1]);
+    }
+
+    const uncPath = /^file:\/\/([^/]+\/.*)$/i.exec(decoded);
+    if (uncPath) {
+        return windowsPathComparisonKey(`//${uncPath[1]}`);
+    }
+
+    return `uri:${value.trim()}`;
+}
+
+function scenarioUriComparisonKey(uri: TestInfo['yamlFileUri']): string {
+    const serializedKey = serializedScenarioUriComparisonKey(uri.toString());
+    if (serializedKey.startsWith('windows-file:')) {
+        return serializedKey;
+    }
+
+    const fsPath = uri.fsPath || '';
+    if (
+        uri.scheme === 'file'
+        && (
+            /^[A-Za-z]:[\\/]/.test(fsPath)
+            || /^\\\\/.test(fsPath)
+            || /^\/\//.test(fsPath)
+        )
+    ) {
+        return windowsPathComparisonKey(fsPath);
+    }
+
+    return serializedKey;
+}
+
+class ScenarioUriLookup implements ReadonlyMap<string, TestInfo> {
+    private readonly exact = new Map<string, TestInfo>();
+    private readonly byComparisonKey = new Map<string, TestInfo>();
+
+    public readonly [Symbol.toStringTag] = 'ScenarioUriLookup';
+
+    constructor(scenarios: readonly TestInfo[]) {
+        for (const scenario of scenarios) {
+            this.exact.set(scenario.yamlFileUri.toString(), scenario);
+            this.byComparisonKey.set(scenarioUriComparisonKey(scenario.yamlFileUri), scenario);
+        }
+    }
+
+    public get size(): number {
+        return this.exact.size;
+    }
+
+    public get(key: string): TestInfo | undefined {
+        return this.exact.get(key)
+            ?? this.byComparisonKey.get(serializedScenarioUriComparisonKey(key));
+    }
+
+    public has(key: string): boolean {
+        return this.get(key) !== undefined;
+    }
+
+    public entries(): MapIterator<[string, TestInfo]> {
+        return this.exact.entries();
+    }
+
+    public keys(): MapIterator<string> {
+        return this.exact.keys();
+    }
+
+    public values(): MapIterator<TestInfo> {
+        return this.exact.values();
+    }
+
+    public forEach(
+        callbackfn: (value: TestInfo, key: string, map: ReadonlyMap<string, TestInfo>) => void,
+        thisArg?: unknown
+    ): void {
+        this.exact.forEach((value, key) => callbackfn.call(thisArg, value, key, this));
+    }
+
+    public [Symbol.iterator](): MapIterator<[string, TestInfo]> {
+        return this.entries();
+    }
+}
+
 export function buildScenarioCatalog(scenarios: readonly TestInfo[]): ScenarioCatalog {
-    const all = scenarios
-        .filter(item => item.name.length > 0)
-        .slice()
-        .sort(compareDefinitions);
+    const uniqueByUri = new Map<string, TestInfo>();
+    for (const scenario of scenarios) {
+        if (!scenario.name.length) {
+            continue;
+        }
+
+        const comparisonKey = scenarioUriComparisonKey(scenario.yamlFileUri);
+        if (!uniqueByUri.has(comparisonKey)) {
+            uniqueByUri.set(comparisonKey, scenario);
+        }
+    }
+
+    const all = [...uniqueByUri.values()].sort(compareDefinitions);
     const byName = new Map<string, TestInfo[]>();
-    const byUri = new Map<string, TestInfo>();
+    const byUri = new ScenarioUriLookup(all);
 
     for (const scenario of all) {
-        byUri.set(scenario.yamlFileUri.toString(), scenario);
         const bucket = byName.get(scenario.name) || [];
         bucket.push(scenario);
         byName.set(scenario.name, bucket);
@@ -143,13 +253,21 @@ export function resolveScenarioByName(catalog: ScenarioCatalog, name: string): S
 }
 
 export function upsertScenarioInCatalog(catalog: ScenarioCatalog, scenario: TestInfo): ScenarioCatalog {
-    const uriKey = scenario.yamlFileUri.toString();
+    const comparisonKey = scenarioUriComparisonKey(scenario.yamlFileUri);
+    const existing = catalog.all.find(item => scenarioUriComparisonKey(item.yamlFileUri) === comparisonKey);
+    const replacement = existing
+        && existing.yamlFileUri.toString() !== scenario.yamlFileUri.toString()
+        ? { ...scenario, yamlFileUri: existing.yamlFileUri }
+        : scenario;
     return buildScenarioCatalog([
-        ...catalog.all.filter(item => item.yamlFileUri.toString() !== uriKey),
-        scenario
+        ...catalog.all.filter(item => scenarioUriComparisonKey(item.yamlFileUri) !== comparisonKey),
+        replacement
     ]);
 }
 
 export function removeScenarioFromCatalogByUri(catalog: ScenarioCatalog, uriKey: string): ScenarioCatalog {
-    return buildScenarioCatalog(catalog.all.filter(item => item.yamlFileUri.toString() !== uriKey));
+    const comparisonKey = serializedScenarioUriComparisonKey(uriKey);
+    return buildScenarioCatalog(
+        catalog.all.filter(item => scenarioUriComparisonKey(item.yamlFileUri) !== comparisonKey)
+    );
 }
