@@ -42,6 +42,7 @@ class MemoryFileSystem implements ProjectDefinitionFileSystem {
     maxFileReads = 0;
     delay = false;
     blockedDirectory?: { path: string; gate: ReturnType<typeof deferred<void>> };
+    blockedRealpath?: { path: string; gate: ReturnType<typeof deferred<void>> };
 
     setFile(filePath: string, content: string, mtimeMs = Date.now()): void {
         this.files.set(path.posix.normalize(filePath), { content, mtimeMs });
@@ -109,6 +110,9 @@ class MemoryFileSystem implements ProjectDefinitionFileSystem {
     }
 
     async realpath(value: string): Promise<string> {
+        if (this.blockedRealpath?.path === path.posix.normalize(value)) {
+            await this.blockedRealpath.gate.promise;
+        }
         return this.physicalPath(value);
     }
 }
@@ -220,6 +224,102 @@ test('reuses exact cached records and reads only changed files', async () => {
         'И живой шаг'
     ]);
     assert.equal(cache.saves >= 2, true);
+});
+
+test('routes an open file from an external configured library to its workspace profile', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const root = '/external/vanessa/features/Libraries';
+    const featurePath = `${root}/Drive/exports.feature`;
+    fileSystem.setFile(featurePath, exportFeature('External export'), 1);
+    const service = createService(fileSystem);
+    service.startProfile(configuration('active', root));
+    await service.waitForIdle();
+
+    const snapshot = await service.ensureReady(`file://${featurePath}`);
+
+    assert.equal(snapshot.workspaceFolderUri, 'file:///workspace');
+    assert.deepEqual(snapshot.definitions.map(item => item.template), ['External export']);
+});
+
+test('prefers workspace ownership over another workspace configured library root', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const service = createService(fileSystem);
+    service.startProfile({
+        ...configuration('workspace-a', '/workspace/a/libraries'),
+        workspaceFolderPath: '/workspace/a',
+        workspaceFolderUri: 'file:///workspace/a'
+    });
+    service.startProfile({
+        ...configuration('workspace-b', '/workspace/a/features'),
+        workspaceFolderPath: '/workspace/b',
+        workspaceFolderUri: 'file:///workspace/b'
+    });
+    await service.waitForIdle();
+
+    const snapshot = await service.ensureReady('file:///workspace/a/features/open.feature');
+
+    assert.equal(snapshot.profileId, 'workspace-a');
+});
+
+test('matches case-only aliases of a Windows workspace URI', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const service = createService(fileSystem);
+    service.startProfile({
+        ...configuration('windows', '/workspace/windows-libraries'),
+        workspaceFolderPath: 'C:\\Workspace',
+        workspaceFolderUri: 'file:///C:/Workspace'
+    });
+    await service.waitForIdle();
+
+    const snapshot = await service.ensureReady('file:///c:/workspace/features/open.feature');
+
+    assert.equal(snapshot.profileId, 'windows');
+});
+
+test('routes a physical library file when its configured root is a filesystem alias', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const aliasRoot = '/alias/libraries';
+    const physicalRoot = '/physical/libraries';
+    fileSystem.setRealpathAlias(aliasRoot, physicalRoot);
+    const service = createService(fileSystem);
+    service.startProfile(configuration('active', aliasRoot));
+    await service.waitForIdle();
+
+    const snapshot = await service.ensureReady('file:///physical/libraries/Drive/open.feature');
+
+    assert.equal(snapshot.profileId, 'active');
+});
+
+test('cancels canonical library routing without waiting for a blocked realpath', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const service = createService(fileSystem);
+    service.startProfile(configuration('active', '/alias/libraries'));
+    await service.waitForIdle();
+    const gate = deferred<void>();
+    const resourcePath = '/physical/libraries/Drive/open.feature';
+    fileSystem.blockedRealpath = { path: resourcePath, gate };
+    const listeners = new Set<() => void>();
+    const token = {
+        isCancellationRequested: false,
+        onCancellationRequested(listener: () => void) {
+            listeners.add(listener);
+            return { dispose: () => listeners.delete(listener) };
+        }
+    };
+
+    const ready = service.ensureReady(`file://${resourcePath}`, token);
+    token.isCancellationRequested = true;
+    for (const listener of [...listeners]) {
+        listener();
+    }
+    const outcome = await Promise.race([
+        ready.then(() => 'resolved', error => error instanceof Error ? error.message : String(error)),
+        new Promise<string>(resolve => setImmediate(() => resolve('still waiting')))
+    ]);
+    gate.resolve();
+    await ready.catch(() => undefined);
+
+    assert.match(outcome, /cancelled/i);
 });
 
 test('watcher create, change, and delete update only the affected source file', async () => {

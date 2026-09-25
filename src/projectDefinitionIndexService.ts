@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
     collectTreeWithConcurrencyLimit,
     ConcurrencyCancelledError,
@@ -180,6 +180,31 @@ function fileUri(filePath: string): string {
     return pathToFileURL(path.resolve(filePath)).toString();
 }
 
+function routingUri(value: string): string {
+    const isWindowsFileUri = /^file:\/\/\/[a-z](?::|%3a)\//iu.test(value);
+    return process.platform === 'win32' || isWindowsFileUri
+        ? value.toLocaleLowerCase()
+        : value;
+}
+
+function routingPrefixLength(value: string, prefix: string): number {
+    const comparableValue = routingUri(value);
+    const comparablePrefix = routingUri(prefix);
+    return comparableValue === comparablePrefix
+        || comparableValue.startsWith(
+            comparablePrefix.endsWith('/') ? comparablePrefix : `${comparablePrefix}/`
+        )
+        ? comparablePrefix.length
+        : -1;
+}
+
+function physicalPathPrefixLength(value: string, prefix: string): number {
+    const relative = path.relative(prefix, value);
+    const matches = relative === ''
+        || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+    return matches ? normalizedPath(prefix).length : -1;
+}
+
 function sourceLabel(extension: string, rootPath: string): string {
     const rootName = path.basename(rootPath) || rootPath;
     return extension === '.feature'
@@ -349,13 +374,19 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
         resource?: { toString(): string } | string,
         token?: CancellationTokenLike
     ): Promise<ProjectDefinitionSnapshot> {
-        const coordinator = this.#coordinatorFor(resource);
+        this.#throwIfCancellationRequested(token);
+        let coordinator = this.#coordinatorFor(resource);
+        if (!coordinator && resource) {
+            const value = typeof resource === 'string' ? resource : resource.toString();
+            coordinator = await this.#awaitCancellation(
+                this.#coordinatorForPhysicalResource(value, token),
+                token
+            );
+        }
         if (!coordinator) {
             throw new Error('No project definition configuration is available for this resource.');
         }
-        if (token?.isCancellationRequested) {
-            throw new ConcurrencyCancelledError();
-        }
+        this.#throwIfCancellationRequested(token);
         if (coordinator.job) {
             await this.#awaitCancellation(coordinator.job, token);
         }
@@ -403,12 +434,73 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
             return this.#coordinators.values().next().value;
         }
         const value = typeof resource === 'string' ? resource : resource.toString();
-        return [...this.#coordinators.values()]
-            .filter(item => value === item.configuration.workspaceFolderUri
-                || value.startsWith(`${item.configuration.workspaceFolderUri}/`))
-            .sort((left, right) =>
-                right.configuration.workspaceFolderUri.length - left.configuration.workspaceFolderUri.length
-            )[0];
+        const findBestMatch = (
+            prefixesFor: (item: FolderCoordinator) => readonly string[]
+        ): FolderCoordinator | undefined => [...this.#coordinators.values()]
+            .map(item => {
+                const prefixes = prefixesFor(item);
+                const matchLength = prefixes.reduce((longest, prefix) => {
+                    return Math.max(longest, routingPrefixLength(value, prefix));
+                }, -1);
+                return { item, matchLength };
+            })
+            .filter(candidate => candidate.matchLength >= 0)
+            .sort((left, right) => right.matchLength - left.matchLength)[0]?.item;
+
+        return findBestMatch(item => [item.configuration.workspaceFolderUri])
+            ?? findBestMatch(item => item.configuration.libraryRootPaths.map(fileUri));
+    }
+
+    async #coordinatorForPhysicalResource(
+        resourceUri: string,
+        token?: CancellationTokenLike
+    ): Promise<FolderCoordinator | undefined> {
+        let resourcePath: string;
+        try {
+            this.#throwIfCancellationRequested(token);
+            resourcePath = await this.#options.fileSystem.realpath(fileURLToPath(resourceUri));
+            this.#throwIfCancellationRequested(token);
+        } catch {
+            this.#throwIfCancellationRequested(token);
+            return undefined;
+        }
+
+        const findBestMatch = async (
+            pathsFor: (item: FolderCoordinator) => readonly string[]
+        ): Promise<FolderCoordinator | undefined> => {
+            const candidates: Array<{ item: FolderCoordinator; matchLength: number }> = [];
+            for (const item of this.#coordinators.values()) {
+                this.#throwIfCancellationRequested(token);
+                let matchLength = -1;
+                for (const candidatePath of pathsFor(item)) {
+                    try {
+                        this.#throwIfCancellationRequested(token);
+                        const physicalPath = await this.#options.fileSystem.realpath(candidatePath);
+                        this.#throwIfCancellationRequested(token);
+                        matchLength = Math.max(
+                            matchLength,
+                            physicalPathPrefixLength(resourcePath, physicalPath)
+                        );
+                    } catch {
+                        this.#throwIfCancellationRequested(token);
+                        // An unavailable root cannot own the requested resource.
+                    }
+                }
+                if (matchLength >= 0) {
+                    candidates.push({ item, matchLength });
+                }
+            }
+            return candidates.sort((left, right) => right.matchLength - left.matchLength)[0]?.item;
+        };
+
+        return await findBestMatch(item => [item.configuration.workspaceFolderPath])
+            ?? await findBestMatch(item => item.configuration.libraryRootPaths);
+    }
+
+    #throwIfCancellationRequested(token?: CancellationTokenLike): void {
+        if (token?.isCancellationRequested) {
+            throw new ConcurrencyCancelledError();
+        }
     }
 
     #cacheRecords(snapshot: ProjectDefinitionSnapshot | null): readonly ProjectDefinitionFileRecord[] {
