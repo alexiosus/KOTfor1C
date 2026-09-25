@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
     buildExportScenarioMetadataActions,
+    canonicalizeExportScenarioDocumentUri,
+    collectAvailableExportScenarioCategories,
     collectExportScenarioCategories,
     EXPORT_SCENARIO_METADATA_COMMAND,
     getExportScenarioMetadataInputDefault
@@ -73,6 +75,44 @@ test('collects sorted unique export-scenario categories case-insensitively', () 
     ]);
 
     assert.deepEqual(categories, ['Forms', 'Windows.Readiness']);
+});
+
+test('uses live current-document categories instead of stale indexed categories reached through an alias', async () => {
+    const editorUri = 'file:///alias/exports.feature';
+    const physicalUri = 'file:///physical/exports.feature';
+    const currentUri = await canonicalizeExportScenarioDocumentUri(
+        '/alias/exports.feature',
+        editorUri,
+        async () => '/physical/exports.feature'
+    );
+    const indexed = [
+        {
+            kind: 'exportScenario' as const,
+            category: 'Legacy',
+            definitionLocation: { uri: physicalUri }
+        },
+        {
+            kind: 'exportScenario' as const,
+            category: 'Forms',
+            definitionLocation: { uri: 'file:///workspace/other.feature' }
+        }
+    ];
+
+    assert.deepEqual(collectAvailableExportScenarioCategories(
+        indexed,
+        [{ kind: 'exportScenario', category: 'Windows.Readiness' }],
+        currentUri
+    ), ['Forms', 'Windows.Readiness']);
+    assert.deepEqual(collectAvailableExportScenarioCategories(indexed, [], currentUri), ['Forms']);
+});
+
+test('keeps the editor URI when resolving its physical path fails', async () => {
+    const editorUri = 'file:///missing/exports.feature';
+    assert.equal(await canonicalizeExportScenarioDocumentUri(
+        '/missing/exports.feature',
+        editorUri,
+        async () => { throw new Error('missing'); }
+    ), editorUri);
 });
 
 test('prefills only usage examples with the feature-language call keyword', () => {

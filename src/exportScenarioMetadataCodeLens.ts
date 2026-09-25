@@ -1,3 +1,4 @@
+import { promises as fs } from 'node:fs';
 import * as vscode from 'vscode';
 import {
     planExportScenarioMetadataEdit,
@@ -6,7 +7,8 @@ import {
 } from './exportScenarioCreator';
 import {
     buildExportScenarioMetadataActions,
-    collectExportScenarioCategories,
+    canonicalizeExportScenarioDocumentUri,
+    collectAvailableExportScenarioCategories,
     EXPORT_SCENARIO_METADATA_COMMAND,
     getExportScenarioMetadataInputDefault,
     type ExportScenarioMetadataCommandTarget
@@ -14,6 +16,7 @@ import {
 import { parseExportScenarios } from './exportScenarioParser';
 import { getScenarioLanguageForDocument } from './gherkinLanguage';
 import { getTranslator, type Translator } from './localization';
+import type { ProjectDefinition } from './projectDefinition';
 import type { ProjectDefinitionIndexProvider } from './projectDefinitionIndexService';
 
 export interface ExportScenarioMetadataCommandServices {
@@ -87,16 +90,27 @@ async function promptNewValue(
 
 async function promptCategory(
     resource: vscode.Uri,
+    currentDocumentDefinitions: readonly ProjectDefinition[],
     services: ExportScenarioMetadataCommandServices,
     t: Translator
 ): Promise<string | undefined> {
-    let categories: readonly string[] = [];
+    let indexedDefinitions: readonly ProjectDefinition[] = [];
     try {
         const snapshot = await services.index.ensureReady(resource);
-        categories = collectExportScenarioCategories(snapshot.definitions);
+        indexedDefinitions = snapshot.definitions;
     } catch {
         // Metadata editing remains available even while the project index is unavailable.
     }
+    const currentDocumentUri = await canonicalizeExportScenarioDocumentUri(
+        resource.fsPath,
+        resource.toString(),
+        fs.realpath
+    );
+    const categories = collectAvailableExportScenarioCategories(
+        indexedDefinitions,
+        currentDocumentDefinitions,
+        currentDocumentUri
+    );
     if (categories.length === 0) {
         return promptNewValue('category', '', t);
     }
@@ -186,7 +200,7 @@ export async function addExportScenarioMetadataCommand(
     }
 
     const value = rawTarget.kind === 'category'
-        ? await promptCategory(uri, services, t)
+        ? await promptCategory(uri, parsed.definitions, services, t)
         : await promptNewValue(
             rawTarget.kind,
             getExportScenarioMetadataInputDefault(rawTarget.kind, scenario.title, parsed.language),

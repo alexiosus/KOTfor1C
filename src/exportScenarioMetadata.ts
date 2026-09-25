@@ -1,3 +1,5 @@
+import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
     type ExportScenarioEditSource,
     type ExportScenarioMetadataKind
@@ -23,6 +25,11 @@ export interface ExportScenarioMetadataAction {
 }
 
 type Translate = (message: string, ...args: string[]) => string;
+type CategorizedDefinition = {
+    readonly kind: ProjectDefinitionKind;
+    readonly category?: string;
+    readonly definitionLocation?: { readonly uri: string };
+};
 
 const ACTION_TITLES: Readonly<Record<ExportScenarioMetadataKind, string>> = {
     category: '+ Category',
@@ -67,7 +74,7 @@ export function buildExportScenarioMetadataActions(
 }
 
 export function collectExportScenarioCategories(
-    definitions: readonly { readonly kind: ProjectDefinitionKind; readonly category?: string }[]
+    definitions: readonly CategorizedDefinition[]
 ): readonly string[] {
     const unique = new Map<string, string>();
     for (const definition of definitions) {
@@ -86,6 +93,29 @@ export function collectExportScenarioCategories(
     return Object.freeze([...unique.values()].sort((left, right) =>
         left.localeCompare(right, undefined, { sensitivity: 'base' }) || left.localeCompare(right)
     ));
+}
+
+export function collectAvailableExportScenarioCategories(
+    indexedDefinitions: readonly CategorizedDefinition[],
+    currentDocumentDefinitions: readonly CategorizedDefinition[],
+    currentDocumentUri: string
+): readonly string[] {
+    const otherDocuments = indexedDefinitions.filter(definition =>
+        definition.definitionLocation?.uri !== currentDocumentUri
+    );
+    return collectExportScenarioCategories([...otherDocuments, ...currentDocumentDefinitions]);
+}
+
+export async function canonicalizeExportScenarioDocumentUri(
+    filePath: string,
+    fallbackUri: string,
+    realpath: (value: string) => Promise<string>
+): Promise<string> {
+    try {
+        return pathToFileURL(path.resolve(await realpath(filePath))).toString();
+    } catch {
+        return fallbackUri;
+    }
 }
 
 export function getExportScenarioMetadataInputDefault(
