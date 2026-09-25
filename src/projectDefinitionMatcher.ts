@@ -9,6 +9,7 @@ import {
 
 const GHERKIN_PREFIX = /^(?:\s*)(?:\*\s*)?(?:К\s+тому\s+же|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Но|И|If|Дано)\s+/iu;
 const BRACKET_PARAMETER_NAME = /^[A-Za-zА-Яа-яЁё0-9_-]+$/u;
+const UNQUOTED_NUMERIC_LITERAL = /^[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)$/u;
 
 interface NormalizedText {
     readonly value: string;
@@ -109,6 +110,23 @@ function findOutlineToken(
         : null;
 }
 
+function isEscaped(value: string, index: number): boolean {
+    let backslashes = 0;
+    for (let cursor = index - 1; cursor >= 0 && value[cursor] === '\\'; cursor--) {
+        backslashes++;
+    }
+    return backslashes % 2 === 1;
+}
+
+function findClosingQuote(value: string, quote: string, from: number): number {
+    for (let index = from; index < value.length; index++) {
+        if (value[index] === quote && !isEscaped(value, index)) {
+            return index;
+        }
+    }
+    return -1;
+}
+
 function originalRange(
     normalized: NormalizedText,
     normalizedStart: number,
@@ -190,7 +208,7 @@ export function compileProjectDefinitionMatcher(
                     if (quote === '"' || quote === "'") {
                         acceptsEmpty = true;
                         argumentStart = position + 1;
-                        const closingQuote = normalized.value.indexOf(quote, argumentStart);
+                        const closingQuote = findClosingQuote(normalized.value, quote, argumentStart);
                         if (closingQuote < 0) {
                             return null;
                         }
@@ -209,7 +227,18 @@ export function compileProjectDefinitionMatcher(
                         argumentEnd = closingBracket;
                         position = closingBracket + 1;
                     } else {
-                        return null;
+                        const nextLiteral = foldedLiterals[index + 1];
+                        argumentEnd = nextLiteral
+                            ? normalizedFolded.indexOf(nextLiteral, position)
+                            : normalized.value.length;
+                        if (argumentEnd < position) {
+                            return null;
+                        }
+                        const candidate = normalized.value.slice(position, argumentEnd);
+                        if (!UNQUOTED_NUMERIC_LITERAL.test(candidate)) {
+                            return null;
+                        }
+                        position = argumentEnd;
                     }
                 } else {
                     const nextLiteral = foldedLiterals[index + 1];

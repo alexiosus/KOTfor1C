@@ -184,6 +184,73 @@ test('matches an empty quoted value for a Vanessa placeholder', () => {
     }
 });
 
+test('accepts an unquoted numeric literal for a quoted Vanessa placeholder', () => {
+    const definition = makeDefinition({
+        kind: 'builtInStep',
+        template: 'And I wait "%1 WindowName" window closing in "%2 600" seconds',
+        parameters: [
+            { name: 'WindowName', index: 0, source: 'quoted' },
+            { name: '600', index: 1, source: 'quoted' }
+        ]
+    });
+    const invocation = 'And I wait "ASUS RT-AC1200 (Stock level control setting) \\*" window closing in 20 seconds';
+
+    const match = compileProjectDefinitionMatcher(definition).match(invocation);
+
+    assert.deepEqual(match?.arguments.map(item => item.value), [
+        'ASUS RT-AC1200 (Stock level control setting) \\*',
+        '20'
+    ]);
+});
+
+test('does not accept an unquoted non-numeric literal for a quoted Vanessa placeholder', () => {
+    const definition = makeDefinition({
+        kind: 'builtInStep',
+        template: 'And I wait "%1 WindowName" window closing in "%2 600" seconds',
+        parameters: [
+            { name: 'WindowName', index: 0, source: 'quoted' },
+            { name: '600', index: 1, source: 'quoted' }
+        ]
+    });
+
+    const match = compileProjectDefinitionMatcher(definition)
+        .match('And I wait "Window" window closing in twenty seconds');
+
+    assert.equal(match, null);
+});
+
+test('keeps escaped quotes inside a quoted Vanessa placeholder', () => {
+    const definition = makeDefinition({
+        kind: 'builtInStep',
+        template: 'Then I wait that in user messages the "%1 RequiredValue" substring will appear in "%2 30" seconds',
+        parameters: [
+            { name: 'RequiredValue', index: 0, source: 'quoted' },
+            { name: '30', index: 1, source: 'quoted' }
+        ]
+    });
+    const invocation = String.raw`Then I wait that in user messages the "\"Calculation method\" is required in row 1 of the \"Costs\" list." substring will appear in "5" seconds`;
+
+    const match = compileProjectDefinitionMatcher(definition).match(invocation);
+
+    assert.deepEqual(match?.arguments.map(item => item.value), [
+        String.raw`\"Calculation method\" is required in row 1 of the \"Costs\" list.`,
+        '5'
+    ]);
+});
+
+test('rejects a quoted Vanessa placeholder without an unescaped closing quote', () => {
+    const definition = makeDefinition({
+        kind: 'builtInStep',
+        template: 'And I enter "%1 Value"',
+        parameters: [{ name: 'Value', index: 0, source: 'quoted' }]
+    });
+
+    const match = compileProjectDefinitionMatcher(definition)
+        .match(String.raw`And I enter "unfinished\"`);
+
+    assert.equal(match, null);
+});
+
 test('uses the next repeated literal as the boundary of each parameter', () => {
     const definition = makeDefinition({
         template: 'сравниваю <Лево> с <Право> с результатом',

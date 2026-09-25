@@ -751,6 +751,10 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     private readonly subscriptions: vscode.Disposable[] = [];
     private readonly validationTimers = new Map<string, NodeJS.Timeout>();
     private readonly relatedValidationTimers = new Map<string, NodeJS.Timeout>();
+    private readonly rawDiagnosticsByUri = new Map<string, {
+        uri: vscode.Uri;
+        diagnostics: readonly vscode.Diagnostic[];
+    }>();
     private dependencyGraphSource: ScenarioCatalog | null = null;
     private readonly scenarioNameByUri = new Map<string, string>();
     private readonly scenarioUrisByName = new Map<string, vscode.Uri[]>();
@@ -786,16 +790,23 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             vscode.workspace.onDidDeleteFiles(event => {
                 this.resetDependencyGraph();
                 event.files.forEach(uri => {
-                    this.diagnostics.delete(uri);
+                    this.deleteDiagnostics(uri);
                     this.duplicateCodeDiagnostics.delete(uri);
                 });
             }),
             vscode.workspace.onDidRenameFiles(event => {
                 this.resetDependencyGraph();
                 event.files.forEach(({ oldUri }) => {
-                    this.diagnostics.delete(oldUri);
+                    this.deleteDiagnostics(oldUri);
                     this.duplicateCodeDiagnostics.delete(oldUri);
                 });
+            }),
+            vscode.workspace.onDidChangeConfiguration(event => {
+                if (!event.affectsConfiguration('kotTestToolkit.diagnostics.ignoredCodes')) {
+                    return;
+                }
+                this.republishDiagnostics();
+                this.rebuildDuplicateScenarioCodeDiagnosticsFromCache();
             }),
             this.phaseSwitcherProvider.onDidUpdateScenarioCatalog(() => {
                 this.resetDependencyGraph();
@@ -844,6 +855,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             clearTimeout(timer);
         }
         this.relatedValidationTimers.clear();
+        this.rawDiagnosticsByUri.clear();
         this.resetDependencyGraph();
         this.diagnostics.dispose();
         this.duplicateCodeDiagnostics.dispose();
@@ -1139,6 +1151,51 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         return config.get<boolean>('editor.checkRelatedParentScenarios', true);
     }
 
+    private getIgnoredDiagnosticCodes(uri: vscode.Uri): ReadonlySet<string> {
+        const configured = vscode.workspace
+            .getConfiguration('kotTestToolkit', uri)
+            .get<unknown[]>('diagnostics.ignoredCodes', []);
+        if (!Array.isArray(configured)) {
+            return new Set();
+        }
+        return new Set(configured.flatMap(value => {
+            if (typeof value !== 'string') {
+                return [];
+            }
+            const code = value.trim();
+            return code ? [code] : [];
+        }));
+    }
+
+    private filterIgnoredDiagnostics(
+        uri: vscode.Uri,
+        diagnostics: readonly vscode.Diagnostic[]
+    ): vscode.Diagnostic[] {
+        const ignoredCodes = this.getIgnoredDiagnosticCodes(uri);
+        if (ignoredCodes.size === 0) {
+            return [...diagnostics];
+        }
+        return diagnostics.filter(diagnostic =>
+            typeof diagnostic.code !== 'string' || !ignoredCodes.has(diagnostic.code)
+        );
+    }
+
+    private publishDiagnostics(uri: vscode.Uri, diagnostics: readonly vscode.Diagnostic[]): void {
+        this.rawDiagnosticsByUri.set(uri.toString(), { uri, diagnostics: [...diagnostics] });
+        this.diagnostics.set(uri, this.filterIgnoredDiagnostics(uri, diagnostics));
+    }
+
+    private deleteDiagnostics(uri: vscode.Uri): void {
+        this.rawDiagnosticsByUri.delete(uri.toString());
+        this.diagnostics.delete(uri);
+    }
+
+    private republishDiagnostics(): void {
+        for (const { uri, diagnostics } of this.rawDiagnosticsByUri.values()) {
+            this.diagnostics.set(uri, this.filterIgnoredDiagnostics(uri, diagnostics));
+        }
+    }
+
     private rebuildDuplicateScenarioCodeDiagnosticsFromCache(): void {
         const catalog = this.phaseSwitcherProvider.getScenarioCatalog();
         this.duplicateCodeDiagnostics.clear();
@@ -1199,7 +1256,10 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         }
 
         for (const { uri, diagnostics } of diagnosticsByUri.values()) {
-            this.duplicateCodeDiagnostics.set(uri, diagnostics);
+            const visibleDiagnostics = this.filterIgnoredDiagnostics(uri, diagnostics);
+            if (visibleDiagnostics.length > 0) {
+                this.duplicateCodeDiagnostics.set(uri, visibleDiagnostics);
+            }
         }
     }
 
@@ -1348,11 +1408,11 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         }
 
         const scopeUriSet = new Set(workspaceScenarioUris.map(uri => uri.toString()));
-        this.diagnostics.forEach((uri, _diagnostics) => {
+        for (const { uri } of this.rawDiagnosticsByUri.values()) {
             if (uri.scheme === 'file' && !scopeUriSet.has(uri.toString())) {
-                this.diagnostics.delete(uri);
+                this.deleteDiagnostics(uri);
             }
-        });
+        }
 
         for (let index = 0; index < workspaceScenarioUris.length; index++) {
             const uri = workspaceScenarioUris[index];
@@ -1459,13 +1519,13 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             return;
         }
         if (!isScenarioYamlFile(document)) {
-            this.diagnostics.delete(document.uri);
+            this.deleteDiagnostics(document.uri);
             return;
         }
 
         const bodyRange = getScenarioBodyRange(document);
         if (!bodyRange) {
-            this.diagnostics.delete(document.uri);
+            this.deleteDiagnostics(document.uri);
             return;
         }
 
@@ -1650,7 +1710,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                                 ? `${this.messages.missingQuotesLikely}${suffix}`
                                 : `${this.messages.unknownStep}${suffix}`,
                             likelyMissingQuotes ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error,
-                            CODE_UNKNOWN_STEP
+                            likelyMissingQuotes ? CODE_MISSING_QUOTES : CODE_UNKNOWN_STEP
                         ));
                     }
                     continue;
@@ -1805,7 +1865,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                         ? `${this.messages.missingQuotesLikely}${suffix}`
                         : `${this.messages.unknownStep}${suffix}`,
                     likelyMissingQuotes ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error,
-                    CODE_UNKNOWN_STEP
+                    likelyMissingQuotes ? CODE_MISSING_QUOTES : CODE_UNKNOWN_STEP
                 ));
             }
         }
@@ -1851,7 +1911,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         }
 
         if (!shouldCancel()) {
-            this.diagnostics.set(document.uri, diagnostics);
+            this.publishDiagnostics(document.uri, diagnostics);
         }
     }
 }

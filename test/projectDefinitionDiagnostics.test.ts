@@ -127,7 +127,7 @@ function similarity(left: string, right: string): number {
     return 1 - rows[left.length][right.length] / Math.max(left.length, right.length, 1);
 }
 
-function loadDiagnosticsModule(): Record<string, unknown> {
+function loadDiagnosticsModule(ignoredDiagnosticCodes: readonly string[] = []): Record<string, unknown> {
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
     const source = fs.readFileSync(path.join(process.cwd(), 'src', 'scenarioDiagnostics.ts'), 'utf8');
     const compiled = ts.transpileModule(source, {
@@ -135,12 +135,23 @@ function loadDiagnosticsModule(): Record<string, unknown> {
     }).outputText;
     const moduleObject = { exports: {} as Record<string, unknown> };
 
+    const vscodeApi = {
+        ...vscode,
+        workspace: {
+            getConfiguration: () => ({
+                get: <T>(key: string, fallback: T): T => key === 'diagnostics.ignoredCodes'
+                    ? [...ignoredDiagnosticCodes] as T
+                    : fallback
+            })
+        }
+    };
+
     vm.runInNewContext(compiled, {
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
             if (specifier === 'vscode') {
-                return vscode;
+                return vscodeApi;
             }
             if (specifier === 'path') {
                 return path;
@@ -252,8 +263,8 @@ const messages = {
     duplicateScenarioCode: 'Duplicate code.'
 };
 
-function createProvider(resolver: object) {
-    const exports = loadDiagnosticsModule();
+function createProvider(resolver: object, ignoredDiagnosticCodes: readonly string[] = []) {
+    const exports = loadDiagnosticsModule(ignoredDiagnosticCodes);
     const Provider = exports.ScenarioDiagnosticsProvider as { prototype: object };
     const published = new Map<string, Diagnostic[]>();
     const provider = Object.create(Provider.prototype) as {
@@ -262,11 +273,13 @@ function createProvider(resolver: object) {
         messages: typeof messages;
         phaseSwitcherProvider: object;
         definitionResolver: object;
+        rawDiagnosticsByUri: Map<string, { uri: unknown; diagnostics: Diagnostic[] }>;
         validateDocument: (
             document: ReturnType<typeof documentWithLine>,
             options: object,
             shouldCancel?: () => boolean
         ) => Promise<void>;
+        republishDiagnostics: () => void;
         provideCodeActions: (...args: any[]) => Promise<CodeAction[]>;
     };
     provider.diagnostics = {
@@ -275,6 +288,7 @@ function createProvider(resolver: object) {
     };
     provider.duplicateCodeDiagnostics = { set: () => undefined, delete: () => undefined };
     provider.messages = messages;
+    provider.rawDiagnosticsByUri = new Map();
     provider.phaseSwitcherProvider = {
         ensureFreshScenarioCatalog: async () => ({ all: [], byName: new Map() }),
         getScenarioCatalog: () => ({ all: [], byName: new Map() })
@@ -363,6 +377,73 @@ test('missing project definition produces the existing unknown-step diagnostic',
 
     const diagnostics = published.get(document.uri.toString()) ?? [];
     assert.ok(diagnostics.some(item => item.code === 'kotTestToolkit.unknownStep'));
+});
+
+test('probable missing step quotes use the missing-quotes diagnostic code', async () => {
+    const candidate = {
+        ...definition('builtInStep'),
+        template: 'And I choose "%1 Value"',
+        normalizedTemplate: 'And I choose "%1 Value"'
+    };
+    const { provider, published } = createProvider({
+        resolve: async () => ({ kind: 'missing', invocation: 'And I choose value' }),
+        getView: async () => ({
+            identity: 'quoted-candidate',
+            all: [candidate],
+            byId: new Map(),
+            byNormalizedTemplate: new Map()
+        })
+    });
+    const document = documentWithLine('And I choose value');
+
+    await provider.validateDocument(document, fullValidation);
+
+    const diagnostics = published.get(document.uri.toString()) ?? [];
+    assert.equal(diagnostics.length, 1);
+    assert.equal(diagnostics[0].code, 'kotTestToolkit.missingQuotes');
+});
+
+test('does not publish diagnostics whose codes are ignored in configuration', async () => {
+    const { provider, published } = createProvider({
+        resolve: async () => ({ kind: 'missing', invocation: 'And missing "value"' }),
+        getView: async () => ({ identity: 'empty', all: [], byId: new Map(), byNormalizedTemplate: new Map() })
+    }, ['kotTestToolkit.unknownStep']);
+    const document = documentWithLine('And missing "value"');
+
+    await provider.validateDocument(document, {
+        includeSuggestions: false,
+        includeStepChecks: true,
+        includeStepSuggestions: false,
+        includeScenarioSuggestions: false
+    });
+
+    const diagnostics = published.get(document.uri.toString()) ?? [];
+    assert.equal(diagnostics.some(item => item.code === 'kotTestToolkit.unknownStep'), false);
+});
+
+test('reapplies changed ignored diagnostic codes without validating the document again', async () => {
+    const ignoredDiagnosticCodes: string[] = [];
+    const { provider, published } = createProvider({
+        resolve: async () => ({ kind: 'missing', invocation: 'And missing "value"' }),
+        getView: async () => ({ identity: 'empty', all: [], byId: new Map(), byNormalizedTemplate: new Map() })
+    }, ignoredDiagnosticCodes);
+    const document = documentWithLine('And missing "value"');
+
+    await provider.validateDocument(document, {
+        includeSuggestions: false,
+        includeStepChecks: true,
+        includeStepSuggestions: false,
+        includeScenarioSuggestions: false
+    });
+    assert.equal((published.get(document.uri.toString()) ?? []).length, 1);
+
+    ignoredDiagnosticCodes.push('kotTestToolkit.unknownStep');
+    provider.republishDiagnostics();
+    assert.equal((published.get(document.uri.toString()) ?? []).length, 0);
+
+    ignoredDiagnosticCodes.length = 0;
+    provider.republishDiagnostics();
+    assert.equal((published.get(document.uri.toString()) ?? []).length, 1);
 });
 
 test('similarity lookup stops when the request is cancelled', async () => {

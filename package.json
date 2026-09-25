@@ -212,11 +212,37 @@
             "description": "%config.stepsExternalUrl.description%",
             "order": 3
           },
+          "kotTestToolkit.diagnostics.ignoredCodes": {
+            "type": "array",
+            "default": [],
+            "scope": "resource",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "kotTestToolkit.unclosedIf",
+                "kotTestToolkit.unclosedDo",
+                "kotTestToolkit.unclosedTry",
+                "kotTestToolkit.unclosedQuote",
+                "kotTestToolkit.unknownStep",
+                "kotTestToolkit.unknownScenario",
+                "kotTestToolkit.ambiguousDefinition",
+                "kotTestToolkit.extraScenarioParameter",
+                "kotTestToolkit.missingScenarioParameter",
+                "kotTestToolkit.missingQuotes",
+                "kotTestToolkit.incompleteBlock",
+                "kotTestToolkit.defaultDescription",
+                "kotTestToolkit.duplicateScenarioCode"
+              ]
+            },
+            "description": "%config.diagnostics.ignoredCodes.description%",
+            "order": 4
+          },
           "kotTestToolkit.editor.checkRelatedParentScenarios": {
             "type": "boolean",
             "default": true,
             "description": "%config.checkRelatedParentScenarios.description%",
-            "order": 4
+            "order": 5
           }
         }
       },

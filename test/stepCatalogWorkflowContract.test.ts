@@ -56,6 +56,22 @@ test('versioned catalog settings are folder scoped and legacy HTML is opt-in', (
     assert.equal(properties['kotTestToolkit.steps.externalUrl'].order, 3);
 });
 
+test('diagnostic codes can be ignored with a resource-scoped configuration', () => {
+    const packageJson = JSON.parse(projectFile('package.json'));
+    const diagnostics = packageJson.contributes.configuration.find(
+        (section: { title: string }) => section.title === '%config.diagnosticsSettings.title%'
+    );
+    const setting = diagnostics.properties['kotTestToolkit.diagnostics.ignoredCodes'];
+
+    assert.equal(setting.type, 'array');
+    assert.equal(setting.scope, 'resource');
+    assert.deepEqual(setting.default, []);
+    assert.equal(setting.uniqueItems, true);
+    assert.ok(setting.items.enum.includes('kotTestToolkit.missingQuotes'));
+    assert.ok(setting.items.enum.includes('kotTestToolkit.unknownStep'));
+    assert.ok(setting.items.enum.includes('kotTestToolkit.duplicateScenarioCode'));
+});
+
 test('generator build output and development inputs are excluded from the VSIX', () => {
     const ignore = projectFile('.vscodeignore');
 
