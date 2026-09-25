@@ -3,13 +3,17 @@
 
 (function() {
     const vscode = acquireVsCodeApi();
+    const scenarioProtocol = globalThis.PhaseSwitcherProtocol;
+    if (!scenarioProtocol) {
+        throw new Error('PhaseSwitcherProtocol is not loaded');
+    }
 
     // === Глобальные переменные состояния ===
     let testDataByPhase = {};
     let initialTestStates = {};
     let currentCheckboxStates = {};
     let testDefaultStates = {};
-    let testInfoByName = new Map();
+    let testInfoByKey = new Map();
     let phaseExpandedState = {}; 
     let runArtifacts = {};
     let affectedMainScenarioNames = new Set();
@@ -59,6 +63,8 @@
     const addScenarioDropdownContent = document.getElementById('addScenarioDropdownContent');
     const createMainScenarioFromDropdownBtn = document.getElementById('createMainScenarioFromDropdownBtn');
     const createNestedScenarioFromDropdownBtn = document.getElementById('createNestedScenarioFromDropdownBtn');
+    const createExportScenarioFromDropdownBtn = document.getElementById('createExportScenarioFromDropdownBtn');
+    const createUserStepFromDropdownBtn = document.getElementById('createUserStepFromDropdownBtn');
     const scenarioRepairDropdownBtn = document.getElementById('scenarioRepairDropdownBtn');
     const scenarioRepairDropdownContent = document.getElementById('scenarioRepairDropdownContent');
     const reloadTestsFromDiskFromDropdownBtn = document.getElementById('reloadTestsFromDiskFromDropdownBtn');
@@ -198,18 +204,30 @@
                     return;
                 }
                 groupItems.forEach(testInfo => {
-                    if (testInfo && typeof testInfo.name === 'string' && testInfo.name) {
-                        nextIndex.set(testInfo.name, testInfo);
+                    const scenarioKey = scenarioProtocol.getScenarioKey(testInfo);
+                    if (scenarioKey) {
+                        nextIndex.set(scenarioKey, testInfo);
                     }
                 });
             });
         }
-        testInfoByName = nextIndex;
+        testInfoByKey = nextIndex;
     }
 
-    function getTestInfoByName(name) {
-        return typeof name === 'string' && name
-            ? (testInfoByName.get(name) || null)
+    function getTestInfoByKey(key) {
+        return typeof key === 'string' && key
+            ? (testInfoByKey.get(key) || null)
+            : null;
+    }
+
+    function getScenarioCommandFromElement(command, element, extra = {}) {
+        if (!(element instanceof Element)) {
+            return null;
+        }
+        const scenarioKey = element.getAttribute('data-key') || '';
+        const testInfo = getTestInfoByKey(scenarioKey);
+        return testInfo
+            ? scenarioProtocol.createScenarioCommand(command, testInfo, extra)
             : null;
     }
 
@@ -269,9 +287,10 @@
 
                     if (Array.isArray(testsInPhase)) {
                         testsInPhase.forEach(testInfo => {
-                            if (testInfo && initialTestStates[testInfo.name] !== 'disabled') {
+                            const scenarioKey = scenarioProtocol.getScenarioKey(testInfo);
+                            if (scenarioKey && initialTestStates[scenarioKey] !== 'disabled') {
                                 totalInPhase++;
-                                if (currentCheckboxStates[testInfo.name]) {
+                                if (currentCheckboxStates[scenarioKey]) {
                                     enabledCount++;
                                 }
                             }
@@ -520,8 +539,8 @@
         const runButtons = phaseTreeContainer.querySelectorAll('.run-scenario-btn');
         runButtons.forEach(button => {
             if (button instanceof HTMLButtonElement) {
-                const scenarioName = button.getAttribute('data-name') || '';
-                const runInfo = scenarioName && runArtifacts ? runArtifacts[scenarioName] : null;
+                const scenarioKey = button.getAttribute('data-key') || '';
+                const runInfo = scenarioKey && runArtifacts ? runArtifacts[scenarioKey] : null;
                 const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
                 const isBlockingRunInProgress = runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false;
                 button.disabled = isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact;
@@ -578,7 +597,7 @@
         if (!(phaseTreeContainer instanceof HTMLElement)) {
             return;
         }
-        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-name]');
+        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-key]');
         scenarioLabels.forEach(label => {
             if (!(label instanceof HTMLElement)) return;
             label.classList.remove('affected-main-scenario');
@@ -1131,7 +1150,7 @@
 
         return `
             <div class="item-container">
-                <label class="checkbox-item${viewState.isAffectedMainScenario ? ' affected-main-scenario' : ''}" id="label-${viewState.safeName}" data-name="${viewState.escapedNameAttr}" title="${viewState.escapedTitleAttr}">
+                <label class="checkbox-item${viewState.isAffectedMainScenario ? ' affected-main-scenario' : ''}" id="label-${viewState.safeName}" data-key="${viewState.escapedScenarioKeyAttr}" data-name="${viewState.escapedNameAttr}" data-uri="${viewState.escapedFileUriAttr}" title="${viewState.escapedTitleAttr}">
                     ${viewState.leadingControlHtml}
                     <span class="checkbox-label-text">${viewState.name}</span>
                     ${viewState.progressHtml}
@@ -1148,16 +1167,24 @@
             return null;
         }
 
+        const scenarioKey = scenarioProtocol.getScenarioKey(testInfo);
+        if (!scenarioKey) {
+            return null;
+        }
         const name = testInfo.name;
         const relativePath = testInfo.relativePath || '';
         const defaultState = !!testInfo.defaultState;
-        const safeName = name.replace(/[^a-zA-Z0-9_\\-]/g, '_');
+        const safeName = scenarioKey.replace(/[^a-zA-Z0-9_\\-]/g, '_');
+        const escapedScenarioKeyAttr = escapeHtmlAttr(scenarioKey);
         const escapedNameAttr = escapeHtmlAttr(name);
         const escapedTitleAttr = escapeHtmlAttr(relativePath);
         const fileUriString = testInfo.yamlFileUriString || '';
+        const escapedFileUriAttr = escapeHtmlAttr(fileUriString);
         const isAffectedMainScenario = affectedMainScenarioNames.has(name);
         const escapedIconTitle = escapeHtmlAttr((window.__loc?.openScenarioFileTitle || 'Open scenario file {0}').replace('{0}', name));
-        const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
+        const runInfo = runArtifacts && typeof runArtifacts === 'object'
+            ? runArtifacts[scenarioKey]
+            : null;
         const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
         const runStatus = runInfo?.runStatus || 'idle';
         const shouldShowRunIndicator = hasRunArtifact || runStatus !== 'idle';
@@ -1234,7 +1261,7 @@
             : `<input
                         type="checkbox"
                         id="chk-${safeName}"
-                        name="${escapedNameAttr}"
+                        name="${escapedScenarioKeyAttr}"
                         data-default="${defaultState}">`;
         const progressHtml = hasLineProgress
             ? `<span class="scenario-run-progress has-hover-counter" title="${escapeHtmlAttr(progressTitle)}">
@@ -1244,29 +1271,33 @@
             : '';
 
         const openButtonHtml = fileUriString
-            ? `<button class="open-scenario-btn" data-name="${escapedNameAttr}" title="${escapedIconTitle}">
+            ? `<button class="open-scenario-btn" data-key="${escapedScenarioKeyAttr}" data-name="${escapedNameAttr}" data-uri="${escapedFileUriAttr}" title="${escapedIconTitle}">
                    <span class="codicon codicon-circle-small-filled open-scenario-icon-idle"></span>
                    <span class="codicon codicon-edit open-scenario-icon-edit"></span>
                </button>`
             : '';
 
         const runButtonHtml = shouldShowRunIndicator && !isBlockingRunInProgress
-            ? `<button class="${runButtonClass}" data-name="${escapedNameAttr}" title="${escapedRunTitle}"${runButtonDisabledAttr}>
+            ? `<button class="${runButtonClass}" data-key="${escapedScenarioKeyAttr}" data-name="${escapedNameAttr}" data-uri="${escapedFileUriAttr}" title="${escapedRunTitle}"${runButtonDisabledAttr}>
                    ${runButtonIconHtml}
                </button>`
             : '';
         const runLogButtonHtml = canOpenFailedStepInFeature
-            ? `<button class="run-scenario-log-btn" data-name="${escapedNameAttr}" title="${runStepTitle}">
+            ? `<button class="run-scenario-log-btn" data-key="${escapedScenarioKeyAttr}" data-name="${escapedNameAttr}" data-uri="${escapedFileUriAttr}" title="${runStepTitle}">
                    <span class="codicon codicon-go-to-file"></span>
                </button>`
             : '';
 
         return {
             name,
+            scenarioKey,
             relativePath,
             defaultState,
             safeName,
+            escapedScenarioKeyAttr,
             escapedNameAttr,
+            escapedFileUriAttr,
+            fileUriString,
             escapedTitleAttr,
             isAffectedMainScenario,
             isRunInProgress,
@@ -1346,7 +1377,7 @@
         }
         if (existingCheckbox instanceof HTMLInputElement) {
             existingCheckbox.id = `chk-${viewState.safeName}`;
-            existingCheckbox.name = viewState.name;
+            existingCheckbox.name = viewState.scenarioKey;
             existingCheckbox.setAttribute('data-default', String(viewState.defaultState));
             return;
         }
@@ -1414,6 +1445,18 @@
         if (desiredName !== null) {
             existingButton.setAttribute('data-name', desiredName);
         }
+        const desiredKey = desiredButton.getAttribute('data-key');
+        if (desiredKey !== null) {
+            existingButton.setAttribute('data-key', desiredKey);
+        } else {
+            existingButton.removeAttribute('data-key');
+        }
+        const desiredUri = desiredButton.getAttribute('data-uri');
+        if (desiredUri !== null) {
+            existingButton.setAttribute('data-uri', desiredUri);
+        } else {
+            existingButton.removeAttribute('data-uri');
+        }
         existingButton.innerHTML = desiredButton.innerHTML;
     }
 
@@ -1422,19 +1465,21 @@
             return;
         }
 
-        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-name]');
+        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-key]');
         scenarioLabels.forEach(label => {
             if (!(label instanceof HTMLElement)) {
                 return;
             }
-            const scenarioName = label.getAttribute('data-name') || '';
-            const testInfo = getTestInfoByName(scenarioName);
+            const scenarioKey = label.getAttribute('data-key') || '';
+            const testInfo = getTestInfoByKey(scenarioKey);
             const viewState = buildScenarioViewState(testInfo);
             if (!viewState) {
                 return;
             }
 
             label.title = viewState.relativePath;
+            label.setAttribute('data-key', viewState.scenarioKey);
+            label.setAttribute('data-uri', viewState.fileUriString);
             label.classList.toggle('affected-main-scenario', viewState.isAffectedMainScenario);
             syncScenarioLeadingControl(label, viewState);
             syncScenarioProgress(label, viewState);
@@ -1485,9 +1530,10 @@
 
             if (Array.isArray(testsInPhase)) {
                 testsInPhase.forEach(testInfo => {
-                    if (testInfo && initialTestStates[testInfo.name] !== 'disabled') {
+                    const scenarioKey = scenarioProtocol.getScenarioKey(testInfo);
+                    if (scenarioKey && initialTestStates[scenarioKey] !== 'disabled') {
                         totalInPhase++;
-                        if (currentCheckboxStates[testInfo.name]) {
+                        if (currentCheckboxStates[scenarioKey]) {
                             enabledCount++;
                         }
                     }
@@ -1823,10 +1869,10 @@
             return;
         }
         log(`Open scenario button clicked for: ${name}`);
-        vscode.postMessage({
-            command: 'openScenario',
-            name: name
-        });
+        const message = getScenarioCommandFromElement('openScenario', button);
+        if (message) {
+            vscode.postMessage(message);
+        }
     }
 
     function handleRunScenarioClick(event) {
@@ -1841,16 +1887,19 @@
             log('ERROR: Run scenario button clicked without data-name attribute!');
             return;
         }
-        const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
+        const scenarioKey = button.getAttribute('data-key') || '';
+        const runInfo = runArtifacts && typeof runArtifacts === 'object'
+            ? runArtifacts[scenarioKey]
+            : null;
         if (runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false) {
             log(`Run request ignored for "${name}" because run is already in progress.`);
             return;
         }
         log(`Run scenario button clicked: ${name}`);
-        vscode.postMessage({
-            command: 'runScenarioInVanessa',
-            name
-        });
+        const message = getScenarioCommandFromElement('runScenarioInVanessa', button);
+        if (message) {
+            vscode.postMessage(message);
+        }
     }
 
     function handleRunLogClick(event) {
@@ -1866,10 +1915,10 @@
             return;
         }
         log(`Run step button clicked for: ${name}`);
-        vscode.postMessage({
-            command: 'openScenarioRunStepInFeature',
-            name
-        });
+        const message = getScenarioCommandFromElement('openScenarioRunStepInFeature', button);
+        if (message) {
+            vscode.postMessage(message);
+        }
     }
 
     function handleScenarioRowClick(event) {
@@ -1891,8 +1940,10 @@
         if (!name) {
             return;
         }
-
-        const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
+        const scenarioKey = row.getAttribute('data-key') || '';
+        const runInfo = runArtifacts && typeof runArtifacts === 'object'
+            ? runArtifacts[scenarioKey]
+            : null;
         const runStatus = runInfo?.runStatus || 'idle';
         if (runStatus !== 'running' && runStatus !== 'failed') {
             return;
@@ -1902,18 +1953,18 @@
         event.stopPropagation();
         if (runStatus === 'running') {
             log(`Running scenario row clicked, opening current step in feature: ${name}`);
-            vscode.postMessage({
-                command: 'openScenarioRunStepInFeature',
-                name
-            });
+            const message = getScenarioCommandFromElement('openScenarioRunStepInFeature', row);
+            if (message) {
+                vscode.postMessage(message);
+            }
             return;
         }
 
         log(`Failed scenario row clicked, opening scenario yaml: ${name}`);
-        vscode.postMessage({
-            command: 'openScenario',
-            name
-        });
+        const message = getScenarioCommandFromElement('openScenario', row);
+        if (message) {
+            vscode.postMessage(message);
+        }
     }
 
     function closeRunModeMenu() {
@@ -2122,12 +2173,21 @@
 
     function handleScenarioContextMenu(event) {
         if (!(event.currentTarget instanceof HTMLElement)) return;
-        const name = event.currentTarget.getAttribute('data-name');
+        const scenarioRow = event.currentTarget;
+        const name = scenarioRow.getAttribute('data-name');
         if (!name) return;
+        const scenarioKey = scenarioRow.getAttribute('data-key') || '';
+        const testInfo = getTestInfoByKey(scenarioKey);
+        if (!testInfo) return;
+        const postScenarioCommand = (command, extra = {}) => {
+            vscode.postMessage(scenarioProtocol.createScenarioCommand(command, testInfo, extra));
+        };
 
         event.preventDefault();
         event.stopPropagation();
-        const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
+        const runInfo = runArtifacts && typeof runArtifacts === 'object'
+            ? runArtifacts[scenarioKey]
+            : null;
         const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
         const hasFeatureArtifact = !!(runInfo && runInfo.featurePath);
         const hasOriginalJsonArtifact = !!(runInfo && runInfo.jsonPath);
@@ -2161,12 +2221,12 @@
             {
                 icon: 'codicon-edit',
                 label: window.__loc?.openScenarioTitle || 'Open scenario',
-                onClick: () => vscode.postMessage({ command: 'openScenario', name })
+                onClick: () => postScenarioCommand('openScenario')
             },
             {
                 icon: 'codicon-settings-gear',
                 label: window.__loc?.openTestSettingsTitle || 'Open test settings',
-                onClick: () => vscode.postMessage({ command: 'openMainScenarioTestSettings', name })
+                onClick: () => postScenarioCommand('openMainScenarioTestSettings')
             },
             { separator: true },
             {
@@ -2174,14 +2234,14 @@
                 label: runLabel,
                 title: runDisabled ? runUnavailable : runHint,
                 disabled: runDisabled,
-                onClick: () => vscode.postMessage({ command: 'runScenarioInVanessa', name })
+                onClick: () => postScenarioCommand('runScenarioInVanessa')
             },
             {
                 icon: 'codicon-go-to-file',
                 label: openFeatureLabel,
                 title: hasFeatureArtifact ? openFeatureHint : openFeatureUnavailable,
                 disabled: !hasFeatureArtifact,
-                onClick: () => vscode.postMessage({ command: 'openScenarioFeatureInEditor', name })
+                onClick: () => postScenarioCommand('openScenarioFeatureInEditor')
             },
             {
                 icon: 'codicon-file-code',
@@ -2193,14 +2253,14 @@
                         label: openBuiltJsonLabel,
                         title: hasOriginalJsonArtifact ? openBuiltJsonHint : openBuiltJsonUnavailable,
                         disabled: !hasOriginalJsonArtifact,
-                        onClick: () => vscode.postMessage({ command: 'openScenarioJsonArtifactInEditor', name, variant: 'original' })
+                        onClick: () => postScenarioCommand('openScenarioJsonArtifactInEditor', { variant: 'original' })
                     },
                     {
                         icon: 'codicon-file-code',
                         label: openCombinedJsonLabel,
                         title: hasCombinedJsonArtifact ? openCombinedJsonHint : openCombinedJsonUnavailable,
                         disabled: !hasCombinedJsonArtifact,
-                        onClick: () => vscode.postMessage({ command: 'openScenarioJsonArtifactInEditor', name, variant: 'combined' })
+                        onClick: () => postScenarioCommand('openScenarioJsonArtifactInEditor', { variant: 'combined' })
                     }
                 ]
             },
@@ -2209,14 +2269,14 @@
                 label: openRunLogLabel,
                 title: canOpenRunLog ? openRunLogHint : openRunLogUnavailable,
                 disabled: !canOpenRunLog,
-                onClick: () => vscode.postMessage({ command: 'openRunScenarioLog', name })
+                onClick: () => postScenarioCommand('openRunScenarioLog')
             },
             {
                 icon: 'codicon-list-flat',
                 label: watchLiveOutputLabel,
                 title: isRunInProgress ? watchLiveOutputHint : watchLiveOutputUnavailable,
                 disabled: !isRunInProgress,
-                onClick: () => vscode.postMessage({ command: 'watchRunScenarioLog', name })
+                onClick: () => postScenarioCommand('watchRunScenarioLog')
             },
             {
                 separator: true
@@ -2224,19 +2284,21 @@
             {
                 icon: 'codicon-rename',
                 label: window.__loc?.renameScenarioTitle || 'Rename scenario',
-                onClick: () => vscode.postMessage({ command: 'renameScenario', name })
+                onClick: () => postScenarioCommand('renameScenario')
             },
             {
                 icon: 'codicon-trash',
                 label: window.__loc?.deleteMainScenarioTitle || 'Delete main scenario',
-                onClick: () => vscode.postMessage({ command: 'deleteMainScenario', name })
+                onClick: () => postScenarioCommand('deleteMainScenario')
             }
         ], `scenario:${name}`);
     }
 
-    function showRunModeMenu(anchorButton, scenarioName, options = {}) {
+    function showRunModeMenu(anchorButton, scenarioKey, options = {}) {
         const includeManual = options?.includeManual !== false;
-        const menuScope = scenarioName || '__top__';
+        const scenarioInfo = getTestInfoByKey(scenarioKey);
+        const scenarioName = scenarioInfo?.name || '';
+        const menuScope = scenarioKey || '__top__';
         if (activeRunModeMenu && activeRunModeMenu.getAttribute('data-scenario') === menuScope) {
             closeRunModeMenu();
             return;
@@ -2255,7 +2317,7 @@
         const autoHint = window.__loc?.runScenarioModeAutomaticHint || 'Runs scenario with StartFeaturePlayer and waits for completion.';
         const manualHint = window.__loc?.runScenarioModeManualHint || 'Opens Vanessa for manual debugging without StartFeaturePlayer.';
         const canRunAuto = scenarioName ? true : hasRunnableArtifacts();
-        const runInfo = scenarioName && runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[scenarioName] : null;
+        const runInfo = scenarioKey && runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[scenarioKey] : null;
         const hasFeatureArtifact = !!(scenarioName && runInfo && runInfo.featurePath);
 
         const autoItem = document.createElement('button');
@@ -2276,11 +2338,8 @@
                 return;
             }
             closeRunModeMenu();
-            if (scenarioName) {
-                vscode.postMessage({
-                    command: 'runScenarioInVanessa',
-                    name: scenarioName
-                });
+            if (scenarioInfo) {
+                vscode.postMessage(scenarioProtocol.createScenarioCommand('runScenarioInVanessa', scenarioInfo));
             } else {
                 vscode.postMessage({
                     command: 'runScenarioViaPicker',
@@ -2298,11 +2357,8 @@
             e.preventDefault();
             e.stopPropagation();
             closeRunModeMenu();
-            if (scenarioName) {
-                vscode.postMessage({
-                    command: 'openScenarioInVanessaManual',
-                    name: scenarioName
-                });
+            if (scenarioInfo) {
+                vscode.postMessage(scenarioProtocol.createScenarioCommand('openScenarioInVanessaManual', scenarioInfo));
             } else {
                 vscode.postMessage({
                     command: 'runScenarioViaPicker',
@@ -2316,7 +2372,7 @@
             menu.appendChild(manualItem);
         }
 
-        if (scenarioName) {
+        if (scenarioInfo) {
             const openFeatureLabel = window.__loc?.runScenarioModeOpenFeature || 'Open feature in editor';
             const openFeatureHint = window.__loc?.runScenarioModeOpenFeatureHint || 'Opens built feature file for this scenario in editor.';
             const openFeatureUnavailable = window.__loc?.runScenarioNoFeatureArtifact || 'Feature artifact is not available for this scenario.';
@@ -2338,10 +2394,7 @@
                     return;
                 }
                 closeRunModeMenu();
-                vscode.postMessage({
-                    command: 'openScenarioFeatureInEditor',
-                    name: scenarioName
-                });
+                vscode.postMessage(scenarioProtocol.createScenarioCommand('openScenarioFeatureInEditor', scenarioInfo));
             });
             menu.appendChild(openFeatureItem);
         }
@@ -2484,7 +2537,7 @@
             }
         });
 
-        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-name]');
+        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-key]');
         scenarioLabels.forEach(label => {
             if (!(label instanceof HTMLElement)) return;
             label.removeEventListener('contextmenu', handleScenarioContextMenu);
@@ -2502,8 +2555,8 @@
         const runButtons = phaseTreeContainer.querySelectorAll('.run-scenario-btn');
         runButtons.forEach(btn => {
             if (!(btn instanceof HTMLButtonElement)) return;
-            const scenarioName = btn.getAttribute('data-name') || '';
-            const runInfo = scenarioName && runArtifacts ? runArtifacts[scenarioName] : null;
+            const scenarioKey = btn.getAttribute('data-key') || '';
+            const runInfo = runArtifacts ? runArtifacts[scenarioKey] : null;
             const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
             const isBlockingRunInProgress = runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false;
             btn.disabled = isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact;
@@ -2566,9 +2619,10 @@
 
             if (Array.isArray(testsInPhase)) {
                 testsInPhase.forEach(testInfo => {
-                    if (testInfo && initialTestStates[testInfo.name] !== 'disabled') {
+                    const scenarioKey = scenarioProtocol.getScenarioKey(testInfo);
+                    if (scenarioKey && initialTestStates[scenarioKey] !== 'disabled') {
                         totalInPhase++;
-                        if (currentCheckboxStates[testInfo.name]) {
+                        if (currentCheckboxStates[scenarioKey]) {
                             enabledCount++;
                         }
                     }
@@ -2696,12 +2750,12 @@
                     Object.keys(testDataByPhase).forEach(phaseName => {
                         if (Array.isArray(testDataByPhase[phaseName])) {
                             testDataByPhase[phaseName].forEach(info => {
-                                const name = info.name;
-                                if (name && initialTestStates.hasOwnProperty(name)) {
-                                    if (initialTestStates[name] !== 'disabled') {
-                                        currentCheckboxStates[name] = initialTestStates[name] === 'checked';
+                                const scenarioKey = scenarioProtocol.getScenarioKey(info);
+                                if (scenarioKey && initialTestStates.hasOwnProperty(scenarioKey)) {
+                                    if (initialTestStates[scenarioKey] !== 'disabled') {
+                                        currentCheckboxStates[scenarioKey] = initialTestStates[scenarioKey] === 'checked';
                                     }
-                                    testDefaultStates[name] = !!info.defaultState;
+                                    testDefaultStates[scenarioKey] = !!info.defaultState;
                                 }
                             });
                         }
@@ -2822,9 +2876,10 @@
                     const pattern = groupIdx === 0 ? patternA : groupIdx === 1 ? patternB : patternC;
                     scenarios.forEach((info, i) => {
                         const name = info?.name;
-                        if (!name) { return; }
+                        const scenarioKey = scenarioProtocol.getScenarioKey(info);
+                        if (!name || !scenarioKey) { return; }
                         const stateKey = i < pattern.length ? pattern[i] : 'idle-no-button';
-                        demoOverlay[name] = buildDemoRunArtifact(name, stateKey);
+                        demoOverlay[scenarioKey] = buildDemoRunArtifact(name, stateKey);
                     });
                 });
 
@@ -2842,12 +2897,13 @@
 
             case 'setDemoState': {
                 isDemoMode = true;
+                const scenarioKey = message.key;
                 const name = message.name;
                 const stateKey = message.stateKey;
-                if (!name || !stateKey) { break; }
+                if (!scenarioKey || !name || !stateKey) { break; }
                 const artifact = buildDemoRunArtifact(name, stateKey);
                 if (!artifact) { break; }
-                runArtifacts = Object.assign({}, runArtifacts, { [name]: artifact });
+                runArtifacts = Object.assign({}, runArtifacts, { [scenarioKey]: artifact });
                 updateTopRunButtonState();
                 if (settings.switcherEnabled && testDataByPhase && Object.keys(testDataByPhase).length > 0) {
                     updateVisibleScenarioRunState();
@@ -3348,6 +3404,26 @@
                 event.preventDefault();
                 log('Create Nested Scenario from dropdown clicked.');
                 vscode.postMessage({ command: 'createNestedScenario' });
+                addScenarioDropdownBtn.closest('.dropdown-container')?.classList.remove('show');
+                resetAddScenarioDropdownPosition();
+            });
+        }
+
+        if (createExportScenarioFromDropdownBtn) {
+            createExportScenarioFromDropdownBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                log('Create Export Scenario from dropdown clicked.');
+                vscode.postMessage({ command: 'createExportScenario' });
+                addScenarioDropdownBtn.closest('.dropdown-container')?.classList.remove('show');
+                resetAddScenarioDropdownPosition();
+            });
+        }
+
+        if (createUserStepFromDropdownBtn) {
+            createUserStepFromDropdownBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                log('Create User Step from dropdown clicked.');
+                vscode.postMessage({ command: 'createUserStep' });
                 addScenarioDropdownBtn.closest('.dropdown-container')?.classList.remove('show');
                 resetAddScenarioDropdownPosition();
             });

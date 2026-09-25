@@ -1,0 +1,165 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import test from 'node:test';
+import vm from 'node:vm';
+import { collectTreeWithConcurrencyLimit, mapWithConcurrencyLimit } from '../src/boundedConcurrency';
+import { buildScenarioCatalog } from '../src/scenarioCatalog';
+
+test('scanner overlaps 32 descriptor reads and reports read diagnostics', async () => {
+    const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
+    const source = fs.readFileSync(path.join(process.cwd(), 'src', 'workspaceScanner.ts'), 'utf8');
+    const compiled = ts.transpileModule(source, {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+    }).outputText;
+
+    const root = path.join(path.sep, 'scan');
+    const descriptorName = 'scen.yaml';
+    let activeReads = 0;
+    let maxActiveReads = 0;
+    let activeDirectoryReads = 0;
+    let maxActiveDirectoryReads = 0;
+    let totalDirectoryReads = 0;
+    let fallbackReads = 0;
+    let clockMs = 0;
+    let canonicalPathCalls = 0;
+    let cancelAfterRoot = false;
+    let cancelled = false;
+    const logs: string[] = [];
+    const makeUri = (fsPath: string) => ({
+        fsPath,
+        scheme: 'file',
+        toString: () => `file://${fsPath}`
+    });
+    const canonicalPath = (filePath: string) => {
+        canonicalPathCalls += 1;
+        clockMs += 3;
+        return filePath;
+    };
+    const realpathSync = Object.assign(canonicalPath, {
+        native: canonicalPath
+    });
+    const fakeFs = {
+        realpathSync,
+        promises: {
+            stat: async () => ({ isDirectory: () => true }),
+            readdir: async (directory: string) => {
+                activeDirectoryReads += 1;
+                totalDirectoryReads += 1;
+                maxActiveDirectoryReads = Math.max(maxActiveDirectoryReads, activeDirectoryReads);
+                await new Promise(resolve => setImmediate(resolve));
+                clockMs += 1;
+                activeDirectoryReads -= 1;
+                if (directory === root) {
+                    if (cancelAfterRoot) {
+                        cancelled = true;
+                    }
+                    return Array.from({ length: 40 }, (_, index) => ({
+                        name: `scenario-${index}`,
+                        isDirectory: () => true,
+                        isFile: () => false
+                    }));
+                }
+                return [{ name: descriptorName, isDirectory: () => false, isFile: () => true }];
+            },
+            readFile: async (filePath: string) => {
+                activeReads += 1;
+                maxActiveReads = Math.max(maxActiveReads, activeReads);
+                await new Promise(resolve => setImmediate(resolve));
+                clockMs += 1;
+                activeReads -= 1;
+                if (path.basename(path.dirname(filePath)) === 'scenario-3') {
+                    throw new Error('Use VS Code file system provider');
+                }
+                return path.basename(path.dirname(filePath));
+            }
+        }
+    };
+    const vscode = {
+        Uri: { file: makeUri },
+        workspace: {
+            asRelativePath: () => 'outside-relative',
+            fs: {
+                readFile: async () => {
+                    fallbackReads += 1;
+                    return Buffer.from('scenario-3');
+                }
+            }
+        },
+        CancellationError: class extends Error {}
+    };
+    const moduleObject = { exports: {} as Record<string, unknown> };
+    vm.runInNewContext(compiled, {
+        module: moduleObject,
+        exports: moduleObject.exports,
+        Buffer,
+        process,
+        performance: { now: () => clockMs },
+        console: { log: (message: string) => logs.push(message) },
+        require: (specifier: string) => {
+            switch (specifier) {
+                case 'vscode': return vscode;
+                case 'fs': return fakeFs;
+                case 'path': return path;
+                case './boundedConcurrency': return { collectTreeWithConcurrencyLimit, mapWithConcurrencyLimit };
+                case './scenarioCatalog': return { buildScenarioCatalog };
+                case './scenarioScanRoot': return {
+                    resolveScenarioScanRootFsPath: () => root,
+                    getScenarioScanRootPath: () => root
+                };
+                case './scenarioDescriptor': return {
+                    parseTestInfoFromScenarioSource: (name: string, uri: ReturnType<typeof makeUri>, relativePath: string) => {
+                        clockMs += 2;
+                        return { name, yamlFileUri: uri, relativePath };
+                    }
+                };
+                default: throw new Error(`Unexpected dependency: ${specifier}`);
+            }
+        }
+    });
+
+    const scan = moduleObject.exports.scanWorkspaceForScenarioCatalog as
+        (uri: ReturnType<typeof makeUri>, token?: { readonly isCancellationRequested: boolean }) =>
+            Promise<ReturnType<typeof buildScenarioCatalog>>;
+    const catalog = await scan(makeUri(root));
+
+    assert.equal(catalog.all.length, 40);
+    assert.equal(catalog.byName.size, 40);
+    assert.equal(catalog.byName.get('scenario-7')?.[0].relativePath, 'scenario-7');
+    assert.equal(maxActiveReads, 32);
+    assert.equal(maxActiveDirectoryReads, 16);
+    assert.equal(totalDirectoryReads, 41);
+    assert.equal(fallbackReads, 1);
+    assert.equal(canonicalPathCalls, 0);
+    const directoryMetrics = logs[0].match(/directories \d+ ms, directory reads (\d+), p50 (\d+) ms, p95 (\d+) ms, max in flight (\d+);/);
+    assert.ok(directoryMetrics);
+    assert.equal(Number(directoryMetrics[1]), 41);
+    assert.ok(Number(directoryMetrics[2]) > 0);
+    assert.ok(Number(directoryMetrics[3]) >= Number(directoryMetrics[2]));
+    assert.equal(Number(directoryMetrics[4]), 16);
+    const metrics = logs[0].match(/read p50 (\d+) ms, p95 (\d+) ms, path (\d+) ms, parse (\d+) ms, fallback attempts (\d+)/);
+    assert.ok(metrics);
+    assert.ok(Number(metrics[1]) > 0);
+    assert.ok(Number(metrics[2]) > Number(metrics[1]));
+    assert.equal(Number(metrics[3]), 0);
+    assert.equal(Number(metrics[4]), 80);
+    assert.equal(Number(metrics[5]), 1);
+
+    const readScenarioInfo = moduleObject.exports.readScenarioInfo as
+        (fileUri: ReturnType<typeof makeUri>, scanRootUri: ReturnType<typeof makeUri>) =>
+            Promise<{ relativePath: string } | null>;
+    const incremental = await readScenarioInfo(makeUri(path.join(root, 'scenario-7', descriptorName)), makeUri(root));
+    assert.equal(incremental?.relativePath, 'scenario-7');
+    assert.equal(canonicalPathCalls, 2);
+
+    const outside = await readScenarioInfo(makeUri(path.join(path.sep, 'outside', descriptorName)), makeUri(root));
+    assert.equal(outside?.relativePath, 'outside-relative');
+    assert.equal(canonicalPathCalls, 4);
+
+    cancelAfterRoot = true;
+    await assert.rejects(
+        scan(makeUri(root), { get isCancellationRequested() { return cancelled; } }),
+        error => error instanceof vscode.CancellationError
+    );
+    assert.equal(totalDirectoryReads, 42);
+});

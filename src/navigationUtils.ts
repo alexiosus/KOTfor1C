@@ -1,120 +1,59 @@
 ﻿import * as vscode from 'vscode';
-import * as path from 'path'; // Используется для path.basename в логах или QuickPick
-import { findScenarioDescriptorUris, findYamlFilesUnderScanDir, readTextFileFast } from './workspaceScanner';
+import { scanWorkspaceForScenarioCatalog } from './workspaceScanner';
+import { resolveScenarioByName, type ScenarioCatalog } from './scenarioCatalog';
+import type { TestInfo } from './types';
 
 /**
- * Асинхронно ищет первый YAML файл в папке tests,
- * содержащий строку 'Имя: "searchText"'.
+ * Разрешает имя сценария через каталог и предлагает выбрать файл при дублировании.
  * @param searchText Текст имени для поиска (значение из кавычек).
- * @returns Promise с Uri найденного файла или null.
+ * @returns URI выбранного определения либо null, если оно не найдено или выбор отменён.
  */
-export async function findFileByName(searchText: string, testCache?: Map<string, import('./types').TestInfo> | null): Promise<vscode.Uri | null> {
-    // Try cache-based lookup first for performance
-    if (testCache) {
-        const cachedTestInfo = testCache.get(searchText);
-        if (cachedTestInfo) {
-            console.log(`[findFileByName] Cache hit for "${searchText}": ${cachedTestInfo.yamlFileUri.fsPath}`);
-            return cachedTestInfo.yamlFileUri;
+async function pickScenarioDefinition(
+    name: string,
+    definitions: readonly TestInfo[]
+): Promise<TestInfo | undefined> {
+    const picked = await vscode.window.showQuickPick(
+        definitions.map(scenario => ({
+            label: scenario.relativePath || scenario.name,
+            description: scenario.scenarioCode || scenario.uid,
+            detail: scenario.yamlFileUri.fsPath,
+            scenario
+        })),
+        {
+            title: vscode.l10n.t('Multiple scenarios named "{0}"', name),
+            ignoreFocusOut: true
         }
-        console.log(`[findFileByName] Cache miss for "${searchText}", falling back to file system search`);
-    } else {
-        console.log(`[findFileByName] No cache available for "${searchText}", using file system search`);
-    }
+    );
+    return picked?.scenario;
+}
 
-    // Fallback to original file system search
+export async function findFileByName(
+    searchText: string,
+    scenarioCatalog?: ScenarioCatalog | null
+): Promise<vscode.Uri | null> {
+    let catalog = scenarioCatalog || null;
     const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders) {
+    if (!catalog && (!workspaceFolders || workspaceFolders.length === 0)) {
         console.warn("[findFileByName] Рабочая область не открыта.");
         return null;
     }
-    try {
-        const workspaceRootUri = workspaceFolders[0].uri;
-        const fileUris = await findScenarioDescriptorUris(workspaceRootUri);
-        // console.log(`[findFileByName] Found ${fileUris.length} potential YAML files to check for "${searchText}".`);
-
-        for (const fileUri of fileUris) {
-            try {
-                const content = await readTextFileFast(fileUri);
-                // Ищем строку Имя: "..." с точным совпадением имени
-                const nameMatch = content.match(/Имя:\s*\"(.+?)\"/); // Находим первое вхождение
-                if (nameMatch && nameMatch[1] === searchText) {
-                     console.log(`[findFileByName] Match found for "${searchText}": ${fileUri.fsPath}`);
-                    return fileUri; // Возвращаем URI первого найденного файла
-                }
-            } catch (readError: any) {
-                 // Игнорируем ошибки чтения отдельных файлов
-                 // console.error(`[findFileByName] Error reading ${fileUri.fsPath}: ${readError.message}`);
-            }
-        }
-    } catch (findError: any) {
-         console.error(`[findFileByName] Error during vscode.workspace.findFiles: ${findError.message || findError}`);
-    }
-
-    console.log(`[findFileByName] No file found containing 'Имя: "${searchText}"'`);
-    return null; // Файл не найден
-}
-
-/**
- * Асинхронно ищет все вызовы вложенного сценария во всех YAML файлах в папке tests.
- * Поддерживаются ключевые слова: And, И, Допустим.
- * @param targetName Имя сценария для поиска ссылок (значение из поля "Имя:").
- * @param token Токен отмены операции (опционально).
- * @returns Promise с массивом найденных местоположений (vscode.Location).
- */
-export async function findScenarioReferences(targetName: string, token?: vscode.CancellationToken): Promise<vscode.Location[]> {
-    console.log(`[findScenarioReferences] Searching for nested scenario references: "${targetName}"...`);
-    const locations: vscode.Location[] = [];
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders) {
-        console.warn("[findScenarioReferences] Рабочая область не открыта.");
-        return locations; // Возвращаем пустой массив
-    }
 
     try {
-        const workspaceRootUri = workspaceFolders[0].uri;
-        const potentialFiles = await findYamlFilesUnderScanDir(workspaceRootUri, token);
-        console.log(`[findScenarioReferences] Found ${potentialFiles.length} potential files to search within.`);
-
-        // Экранируем специальные символы Regex в targetName на всякий случай
-        const escapedTargetName = targetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        // Ищем строку вида "<отступ><ключевое слово><пробелы><имя сценария>".
-        // \s*$ позволяет наличие пробелов в конце строки, но ничего другого.
-        const usageRegex = new RegExp(`^(\\s*)(And|И|Допустим)(\\s+)(${escapedTargetName})\\s*$`, 'i');
-
-        for (const fileUri of potentialFiles) {
-            if (token?.isCancellationRequested) {
-                 console.log("[findScenarioReferences] Search cancelled by token.");
-                 break;
-            }
-            try {
-                const fileContent = await readTextFileFast(fileUri);
-                const lines = fileContent.split('\n');
-
-                for (let i = 0; i < lines.length; i++) {
-                    const currentLineText = lines[i];
-                    const usageMatch = currentLineText.match(usageRegex);
-
-                    if (usageMatch) {
-                        const leadingSpaces = usageMatch[1].length;
-                        const keyword = usageMatch[2];
-                        const spacesAfterKeyword = usageMatch[3];
-                        const nameInLine = usageMatch[4];
-                        const startChar = leadingSpaces + keyword.length + spacesAfterKeyword.length;
-                        const endChar = startChar + nameInLine.length;
-
-                        const usageRange = new vscode.Range(i, startChar, i, endChar);
-                        locations.push(new vscode.Location(fileUri, usageRange));
-                        // console.log(`[findScenarioReferences] Found reference in ${fileUri.fsPath} at line ${i + 1}`);
-                    }
-                }
-            } catch (readErr: any) {
-                 // console.error(`[findScenarioReferences] Error reading ${fileUri.fsPath}: ${readErr.message}`);
-            }
+        if (!catalog) {
+            catalog = await scanWorkspaceForScenarioCatalog(workspaceFolders![0].uri);
         }
-    } catch (findErr: any) {
-         console.error(`[findScenarioReferences] Error during vscode.workspace.findFiles: ${findErr.message || findErr}`);
+
+        const resolution = resolveScenarioByName(catalog, searchText);
+        if (resolution.kind === 'unique') {
+            return resolution.scenario.yamlFileUri;
+        }
+        if (resolution.kind === 'ambiguous') {
+            return (await pickScenarioDefinition(searchText, resolution.scenarios))?.yamlFileUri || null;
+        }
+    } catch (error: any) {
+        console.error(`[findFileByName] Error while resolving scenario: ${error.message || error}`);
     }
 
-    console.log(`[findScenarioReferences] Found ${locations.length} reference locations for "${targetName}".`);
-    return locations; // Возвращаем массив найденных Location
+    console.log(`[findFileByName] No scenario definition found for "${searchText}".`);
+    return null;
 }

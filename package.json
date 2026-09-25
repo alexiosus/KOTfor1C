@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/alexiosus/KOTfor1C",
-  "version": "2.7.1",
+  "version": "2.8.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -190,17 +190,59 @@
       {
         "title": "%config.diagnosticsSettings.title%",
         "properties": {
+          "kotTestToolkit.steps.vanessaVersion": {
+            "type": "string",
+            "default": "",
+            "scope": "resource",
+            "pattern": "^(|v?\\d+\\.\\d+\\.\\d+\\.\\d+)$",
+            "description": "%config.stepsVanessaVersion.description%",
+            "order": 1
+          },
+          "kotTestToolkit.steps.catalogIndexUrl": {
+            "type": "string",
+            "default": "https://raw.githubusercontent.com/alexiosus/KOTfor1C/step-catalogs/index.json",
+            "scope": "resource",
+            "description": "%config.stepsCatalogIndexUrl.description%",
+            "order": 2
+          },
           "kotTestToolkit.steps.externalUrl": {
             "type": "string",
-            "default": "https://raw.githubusercontent.com/alexiosus/KOTfor1C/main/res/steps.htm",
+            "default": "",
+            "scope": "resource",
             "description": "%config.stepsExternalUrl.description%",
-            "order": 1
+            "order": 3
+          },
+          "kotTestToolkit.diagnostics.ignoredCodes": {
+            "type": "array",
+            "default": [],
+            "scope": "resource",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "kotTestToolkit.unclosedIf",
+                "kotTestToolkit.unclosedDo",
+                "kotTestToolkit.unclosedTry",
+                "kotTestToolkit.unclosedQuote",
+                "kotTestToolkit.unknownStep",
+                "kotTestToolkit.unknownScenario",
+                "kotTestToolkit.ambiguousDefinition",
+                "kotTestToolkit.extraScenarioParameter",
+                "kotTestToolkit.missingScenarioParameter",
+                "kotTestToolkit.missingQuotes",
+                "kotTestToolkit.incompleteBlock",
+                "kotTestToolkit.defaultDescription",
+                "kotTestToolkit.duplicateScenarioCode"
+              ]
+            },
+            "description": "%config.diagnostics.ignoredCodes.description%",
+            "order": 4
           },
           "kotTestToolkit.editor.checkRelatedParentScenarios": {
             "type": "boolean",
             "default": true,
             "description": "%config.checkRelatedParentScenarios.description%",
-            "order": 2
+            "order": 5
           }
         }
       },
@@ -551,6 +593,11 @@
         "category": "%cmd.category%"
       },
       {
+        "command": "kotTestToolkit.openProjectDefinition",
+        "title": "%cmd.openProjectDefinition.title%",
+        "category": "%cmd.category%"
+      },
+      {
         "command": "kotTestToolkit.findCurrentFileReferences",
         "title": "%cmd.findCurrentFileReferences.title%",
         "category": "%cmd.category%"
@@ -563,6 +610,21 @@
       {
         "command": "kotTestToolkit.createMainScenario",
         "title": "%cmd.createMainScenario.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.createExportScenario",
+        "title": "%cmd.createExportScenario.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.createUserStep",
+        "title": "%cmd.createUserStep.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.buildUserStepLibrary",
+        "title": "%cmd.buildUserStepLibrary.title%",
         "category": "%cmd.category%"
       },
       {
@@ -975,6 +1037,10 @@
       ],
       "commandPalette": [
         {
+          "command": "kotTestToolkit.openProjectDefinition",
+          "when": "false"
+        },
+        {
           "command": "kotTestToolkit.refreshGherkinSteps",
           "when": "true"
         },
@@ -1208,12 +1274,19 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run copy-codicons && npm run esbuild-base -- --minify",
+    "vscode:prepublish": "npm run check && npm run copy-codicons && npm run esbuild-base -- --minify",
     "compile": "npm run copy-codicons && npm run esbuild-base -- --sourcemap",
     "watch": "npm run copy-codicons && npm run esbuild-base -- --sourcemap --watch",
     "copy-codicons": "cpy node_modules/@vscode/codicons/dist/codicon.css node_modules/@vscode/codicons/dist/codicon.ttf media --flat",
     "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
-    "test": "echo \"No automated tests configured\""
+    "compile-tests": "node tools/cleanTestOutput.cjs && esbuild test/*.test.ts --bundle --outdir=out/test --platform=node --format=cjs --sourcemap",
+    "test": "npm run compile-tests && node --test out/test/*.test.js",
+    "check:types": "tsc --noEmit && tsc -p tsconfig.tools.json --noEmit",
+    "lint": "eslint src test tools/step-catalog --max-warnings 0",
+    "check": "npm run check:types && npm run lint && npm test",
+    "verify:yaml-corpus": "esbuild ./src/scenarioYamlCorpusVerifier.ts --bundle --outfile=out/scenarioYamlCorpusVerifier.js --format=cjs --platform=node && node out/scenarioYamlCorpusVerifier.js",
+    "build:step-catalog-tool": "esbuild ./tools/step-catalog/cli.ts --bundle --outfile=out/tools/step-catalog.js --platform=node --format=cjs",
+    "generate:step-catalog": "npm run build:step-catalog-tool && node out/tools/step-catalog.js"
   },
   "devDependencies": {
     "@types/node": "20.x",
@@ -1223,12 +1296,14 @@
     "@typescript-eslint/parser": "^8.28.0",
     "@vscode/codicons": "^0.0.44",
     "cpy-cli": "^5.0.0",
+    "esbuild": "^0.28.2",
     "eslint": "^9.23.0",
     "typescript": "^5.8.2"
   },
   "dependencies": {
     "jszip": "^3.10.1",
     "node-html-parser": "^7.0.1",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.1",
+    "yaml": "^2.9.1"
   }
 }

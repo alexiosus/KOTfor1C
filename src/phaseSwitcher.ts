@@ -3,18 +3,46 @@ import * as cp from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs'; 
 import * as os from 'os';
-import { scanWorkspaceForTests, resolveScanDirFsPath } from './workspaceScanner';
+import { readScenarioInfo, scanWorkspaceForScenarioCatalog, resolveScanDirFsPath } from './workspaceScanner';
 import { TestInfo } from './types';
-import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
-import { migrateLegacyPhaseSwitcherMetadata, parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
-import { parseKotScenarioDescription } from './kotMetadataDescription';
+import { LazyScenarioCatalog } from './lazyScenarioCatalog';
+import {
+    buildScenarioCatalog,
+    removeScenarioFromCatalogByUri,
+    ScenarioDirectoryIndex,
+    type ScenarioCatalog,
+    upsertScenarioInCatalog
+} from './scenarioCatalog';
+import {
+    resolveScenarioRenameTarget,
+    resolveScenarioTarget,
+    type ScenarioTarget
+} from './scenarioIdentity';
+import {
+    applyScenarioRuntimeRenamePlanToRecord,
+    buildUniqueCaseInsensitiveNameLookup,
+    getScenarioRuntimeKey,
+    migrateLegacyScenarioValues,
+    migrateLegacySelectionStates,
+    planDisabledScenarioTestFileMoves,
+    projectScenarioBuildSelection,
+    remapRuntimeKey,
+    resolveConfirmedScenarioRuntimeRenames,
+    resolveScenarioRuntimeTarget,
+    resolveUniqueRuntimeKeyByName,
+    validateEnabledScenarioKeys,
+    type DisabledScenarioTestFileMovePlan,
+    type ScenarioRuntimeKey,
+    type ScenarioRuntimeRenamePlan,
+    type ScenarioRuntimeTarget
+} from './scenarioRuntimeIdentity';
+import { migrateLegacyPhaseSwitcherMetadata } from './phaseSwitcherMetadata';
+import { parseTestInfoFromScenarioSource } from './scenarioDescriptor';
 import type { YamlParameter } from './yamlParametersManager';
 import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
 import { isScenarioYamlFile } from './yamlValidator';
 import { findFileByName } from './navigationUtils';
 import { getFeatureNestedScenarioContextAtLine } from './featureNestedScenarioUtils';
-import { registerInfobaseInLauncher, resolveLauncherInfobaseNameByPath } from './infobasePicker';
-import { pickManagedInfobasePath, promptNewInfobaseTarget, updateManagedInfobaseMetadata } from './infobaseManager';
 import {
     buildFileInfobaseConnectionArgument,
     buildInfobaseConnectionArgument,
@@ -34,13 +62,10 @@ import {
     resolveEtalonBaseDtFilePath,
     resolveModelDbSettingsFilePathFromParameters
 } from './etalonBases';
-import {
-    ensureSharedStartupInfobaseReady,
-    getSharedStartupInfobaseOutputChannel,
-    type EnsureSharedStartupInfobaseResult,
-    type SharedStartupInfobaseAuthentication
+import type {
+    EnsureSharedStartupInfobaseResult,
+    SharedStartupInfobaseAuthentication
 } from './startupInfobase';
-import { resolveOneCDesignerExePath, resolveOneCPlatformForLaunch } from './oneCPlatform';
 import { getScenarioScanRootPath } from './scenarioScanRoot';
 import { parseYamlSectionFieldValues } from './yamlHeaderFields';
 import {
@@ -53,6 +78,50 @@ import {
     getTestReviewReportState,
     openSavedTestReviewReport
 } from './testReviewAiReport';
+import { buildDirectSpawnCommand } from './directProcessLaunch';
+import { readFileTail, readFileTailSync } from './fileTailReader';
+import { formatProcessCommandForDisplay } from './processCommandDisplay';
+import { applyPreparedFileWrites } from './preparedFileWrites';
+import { createDeferredLoader } from './deferredLoader';
+import {
+    areScenarioNamesEqual,
+    extractFailedStepDetails,
+    extractFailedSummaryFromLogLine,
+    extractFeatureLineNumberFromRunLogLine,
+    extractFeaturePathFromRunLogLine,
+    extractLastStepLocation,
+    extractScenarioNameFromRunLogLine
+} from './vanessaRunLog';
+import {
+    applyAdditionalVanessaParameters,
+    applyGlobalVanessaVariables,
+    findObjectKeyByAlias,
+    getJsonValueAtPointer,
+    setJsonValueAtPointer,
+    type AdditionalLaunchVanessaParameter,
+    type JsonValue
+} from './vanessaLaunchJson';
+import {
+    planNestedScenarioRenameInChunks,
+    planScenarioGroupRename,
+    planScenarioIdentityRename,
+    updateScenarioDisplayNameInScenarioContent,
+    updateScenarioDisplayNameInTestConfigContent
+} from './scenarioYamlMutations';
+import { resolveWorkspaceSettingPath } from './vanessaVersion';
+
+const loadInfobaseManager = createDeferredLoader(
+    () => import('./infobaseManager.js')
+);
+const loadInfobasePicker = createDeferredLoader(
+    () => import('./infobasePicker.js')
+);
+const loadStartupInfobase = createDeferredLoader(
+    () => import('./startupInfobase.js')
+);
+const loadOneCPlatform = createDeferredLoader(
+    () => import('./oneCPlatform.js')
+);
 
 // --- Вспомогательная функция для Nonce ---
 function getNonce(): string {
@@ -85,6 +154,7 @@ class BuildCancelledError extends Error {
 }
 
 interface ScenarioBuildArtifact {
+    scenarioKey: ScenarioRuntimeKey;
     scenarioName: string;
     sourceUri: vscode.Uri;
     featurePath?: string;
@@ -121,6 +191,7 @@ interface FeatureLineCountCacheEntry {
 }
 
 interface ScenarioExecutionState {
+    scenarioName: string;
     status: 'running' | 'passed' | 'failed';
     updatedAt: number;
     message?: string;
@@ -128,6 +199,7 @@ interface ScenarioExecutionState {
 }
 
 interface ScenarioLaunchContext {
+    scenarioName: string;
     targetKind: 'feature' | 'json';
     targetPath: string;
     launchMode: 'builtIn' | 'template';
@@ -136,8 +208,12 @@ interface ScenarioLaunchContext {
 
 interface MainScenarioSelectionSnapshot {
     total: number;
+    enabledKeys: ScenarioRuntimeKey[];
+    disabledKeys: ScenarioRuntimeKey[];
     enabledNames: string[];
     disabledNames: string[];
+    isolatedDisabledKeys: ScenarioRuntimeKey[];
+    enabledKeyByName: Record<string, ScenarioRuntimeKey>;
 }
 
 interface BuildScenarioFilterDecision {
@@ -154,6 +230,7 @@ interface LegacyTemporarilyMovedTestFile {
 interface LegacyTemporarilyMovedTestFilesResult {
     temporaryRootUri: vscode.Uri | null;
     movedFiles: LegacyTemporarilyMovedTestFile[];
+    mode: Exclude<DisabledScenarioTestFileMovePlan['mode'], 'none'> | null;
 }
 
 interface FavoriteScenarioEntry {
@@ -166,16 +243,32 @@ interface FavoriteQuickPickItem extends vscode.QuickPickItem {
     favorite: FavoriteScenarioEntry;
 }
 
+interface ScenarioArtifactQuickPickItem extends vscode.QuickPickItem {
+    scenarioKey: ScenarioRuntimeKey;
+}
+
 interface PhaseSwitcherWebviewTestInfo {
+    scenarioKey: ScenarioRuntimeKey;
     name: string;
     relativePath: string;
     defaultState?: boolean;
     order?: number;
     scenarioCode?: string;
-    yamlFileUriString?: string;
+    yamlFileUriString: string;
+}
+
+interface MainScenarioSelectionStateStorageV2 {
+    version: 2;
+    byKey: Record<ScenarioRuntimeKey, boolean>;
+}
+
+interface ScenarioCustomInfobaseStorageV2 {
+    version: 2;
+    byKey: Record<ScenarioRuntimeKey, string>;
 }
 
 interface LiveRunLogWatcherState {
+    scenarioKey: ScenarioRuntimeKey;
     scenarioName: string;
     runLogPath: string;
     outputChannel: vscode.OutputChannel;
@@ -187,6 +280,7 @@ interface LiveRunLogWatcherState {
 }
 
 interface LiveFeatureStepTrackerState {
+    scenarioKey: ScenarioRuntimeKey;
     scenarioName: string;
     runLogPath: string;
     timer: NodeJS.Timeout;
@@ -200,6 +294,7 @@ interface LiveFeatureStepTrackerState {
 }
 
 interface ExternalTrackedRunState {
+    scenarioKey: ScenarioRuntimeKey;
     scenarioName: string;
     expectedScenarioName?: string;
     runLogPath: string;
@@ -235,6 +330,7 @@ interface ScenarioDisplayedRunState {
 }
 
 interface RunningFeatureStepHighlight {
+    scenarioKey: ScenarioRuntimeKey;
     scenarioName: string;
     featurePath: string;
     featurePathCompareKey: string;
@@ -244,6 +340,7 @@ interface RunningFeatureStepHighlight {
 }
 
 interface FailedFeatureStepHighlight {
+    scenarioKey: ScenarioRuntimeKey;
     scenarioName: string;
     featurePath: string;
     featurePathCompareKey: string;
@@ -303,12 +400,6 @@ interface VanessaRuntimeLogSnapshot {
 
 type VanessaInfobaseSource = 'jsonOrSettings' | 'lastCustom' | 'newCustom';
 
-interface AdditionalLaunchVanessaParameter {
-    key: string;
-    value: string;
-    overrideExisting: boolean;
-}
-
 interface VanessaLaunchOverlayParameters {
     additionalParameters: AdditionalLaunchVanessaParameter[];
     globalVariables: AdditionalLaunchVanessaParameter[];
@@ -319,111 +410,6 @@ interface VanessaTestClientDefaults {
     computerName: string;
     port: string;
 }
-
-const VANESSA_PARAM_ALIAS_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
-    ['ВерсияVA', 'VersionVA'],
-    ['КаталогФич', 'featurepath'],
-    ['КаталогПроекта', 'projectpath'],
-    ['КаталогиБиблиотек', 'librarycatalogs'],
-    ['СписокТеговИсключение', 'ignoretags'],
-    ['СписокТеговОтбор', 'filtertags'],
-    ['СписокСценариевДляВыполнения', 'scenariofilter'],
-    ['ЯзыкГенератораGherkin', 'gherkinlanguage'],
-    ['ДобавлятьПриНакликиванииМетаИнформацию', 'addmetainformationclicking'],
-    ['ИскатьЭлементыФормыПоИмени', 'searchformelementsbyname'],
-    ['ПоказыватьОкноОстановкиЗаписиДействийПользователя', 'ShowWindowToStopRecordingUserActions'],
-    ['ИспользоватьКомпонентуVanessaExt', 'useaddin'],
-    ['ИспользоватьПарсерGherkinИзКомпонентыVanessaExt', 'usethegherkinparserfromthevanessaextaddin'],
-    ['ПоискФайловСПомощьюКомпонентыVanessaExt', 'SearchingForFilesUsingTheVanessaExtComponent'],
-    ['ЗавершатьРаботуЕслиНеПолучилосьВыполнитьТихуюУстановкуКомпоненты', 'QuitIfSilentInstallationAddinFails'],
-    ['КаталогИнструментов', 'instrpath'],
-    ['КаталогВременныхФайлов', 'TemporaryFilesDirectory'],
-    ['ЗапускатьКлиентТестированияСМаксимизированнымОкном', 'runtestclientwithmaximizedwindow'],
-    ['МодальноеОкноПриЗапускеТестКлиентаЭтоОшибка', 'modalwindowwhenstartingtestclientiserror'],
-    ['ВыполнятьПопыткуПереподключенияЕслиПроцессТестКлиентаНеНайден', 'starttestclientsessionagainonconnectionifitsprocessisnotfound'],
-    ['ЗакрыватьКлиентТестированияПринудительно', 'forceclosetestclient'],
-    ['ТаймаутПередПринудительнымЗакрытиемТестКлиента', 'timeoutbeforeforciblyclosingtestclient'],
-    ['ПутьКadb', 'PathToadb'],
-    ['ДелатьЛогВыполненияСценариевВЖР', 'logtogr'],
-    ['ЗвуковоеОповещениеПриОкончанииВыполненияСценария', 'soundnotificationwhenscriptends'],
-    ['ВыполнятьШагиАсинхронно', 'makestepsasync'],
-    ['ИнтервалВыполненияШагаЗаданныйПользователем', 'SpacingStepSpecifiedUser'],
-    ['ОстановкаПриВозникновенииОшибки', 'stoponerror'],
-    ['ПоказыватьНомерСтрокиДереваПриВозникновенииОшибки', 'showrownumberonerror'],
-    ['ПриравниватьPendingКFailed', 'pendingequalfailed'],
-    ['БезопасноеВыполнениеШагов', 'safeexecutionofsteps'],
-    ['ТаймаутДляАсинхронныхШагов', 'timeoutforasynchronoussteps'],
-    ['КоличествоСекундПоискаОкна', 'timetofindwindow'],
-    ['КоличествоПопытокВыполненияДействия', 'numberofattemptstoperformanaction'],
-    ['ТаймаутЗапуска1С', 'testclienttimeout'],
-    ['ПаузаПриОткрытииОкна', 'pauseonwindowopening'],
-    ['ВыгружатьСтатусВыполненияСценариевВФайл', 'createlogs'],
-    ['ПутьКФайлуДляВыгрузкиСтатусаВыполненияСценариев', 'logpath'],
-    ['ИмяТекущейСборки', 'NameCurrentBuild'],
-    ['ЗагрузкаФичПриОткрытии', 'DownloadFeaturesOpen'],
-    ['ДелатьЛогВыполненияСценариевВТекстовыйФайл', 'logtotext'],
-    ['ВыводитьЛогВКонсоль', 'outputloginconsole'],
-    ['ВыводитьВЛогВыполнениеШагов', 'logstepstotext'],
-    ['ПодробныйЛогВыполненияСценариев', 'fulllog'],
-    ['ИмяФайлаЛогВыполненияСценариев', 'textlogname'],
-    ['ДелатьОтчетВФорматеАллюр', 'allurecreatereport'],
-    ['КаталогВыгрузкиAllure', 'allurepath'],
-    ['КаталогВыгрузкиAllureБазовый', 'allurepathbase'],
-    ['ПодставлятьВОтчетеAllureЗначенияПеременных', 'setvariablevaluesinstepsallurereport'],
-    ['ДанныеАллюрМеток', 'DataAllureMarks'],
-    ['ДелатьОтчетВФорматеjUnit', 'junitcreatereport'],
-    ['КаталогВыгрузкиjUnit', 'junitpath'],
-    ['СкриншотыjUnit', 'junitscreenshots'],
-    ['ДелатьОтчетВФорматеСППР', 'ModelingCreateReport'],
-    ['КаталогВыгрузкиСППР', 'modelingreportpath'],
-    ['ИмяКонфигурацииСППР', 'ModelingConfigurationName'],
-    ['ВерсияКонфигурацииСППР', 'ModelingConfigurationVersion'],
-    ['ДелатьОтчетВФорматеCucumberJson', 'cucumbercreatereport'],
-    ['КаталогВыгрузкиCucumberJson', 'cucumberreportpath'],
-    ['ДелатьЛогОшибокВТекстовыйФайл', 'logerrorstotext'],
-    ['СобиратьДанныеОСостоянииАктивнойФормыПриОшибке', 'getactiveformdataonerror'],
-    ['СобиратьДанныеОСостоянииВсехФормПриОшибке', 'getallformsdataonerror'],
-    ['СобиратьДанныеОЗначенияхПеременных', 'CollectDataOnVariableValues'],
-    ['ДелатьСкриншотПриВозникновенииОшибки', 'onerrorscreenshot'],
-    ['СниматьСкриншотКаждогоОкна1С', 'onerrorscreenshoteverywindow'],
-    ['ИспользоватьВнешнююКомпонентуДляСкриншотов', 'useaddinforscreencapture'],
-    ['СпособСнятияСкриншотовВнешнейКомпонентой', 'screencaptureaddinmethod'],
-    ['КаталогВыгрузкиСкриншотов', 'outputscreenshot'],
-    ['ИмяКаталогаЛогОшибок', 'texterrorslogname'],
-    ['ОткрыватьНачальнуюСтраницуПриЗапуске', 'OpenStartPageAtStartup'],
-    ['ВыполнитьСценарии', 'ExecuteScenarios', 'RunScenarios'],
-    ['ЗавершитьРаботуСистемы', 'CloseSystemOnComplete', 'QuitSystemOnComplete'],
-    ['ЗакрытьTestClientПослеЗапускаСценариев', 'CloseTestClientAfterScenarioRun', 'CloseTestClient', 'closetestclient'],
-    ['ПутьКИнфобазе', 'PathToInfobase'],
-    ['ВыполнениеСценариев', 'RunningScripts'],
-    ['КлиентТестирования', 'TestClient'],
-    ['КлиентыТестирования', 'ДанныеКлиентовТестирования', 'datatestclients'],
-    ['ПортЗапускаТестКлиента', 'PortTestClient'],
-    ['ДопПараметры', 'AddItionalParameters'],
-    ['ТипКлиента', 'ClientType'],
-    ['ИмяКомпьютера', 'ComputerName'],
-    ['Имя', 'Name'],
-    ['Синоним', 'Synonym']
-];
-
-const VANESSA_PARAM_ALIAS_INDEX = (() => {
-    const index = new Map<string, Set<string>>();
-    for (const group of VANESSA_PARAM_ALIAS_GROUPS) {
-        const normalizedGroup = Array.from(new Set(group
-            .map(key => key.trim())
-            .filter(key => key.length > 0)));
-        if (normalizedGroup.length < 2) {
-            continue;
-        }
-        const normalizedLookup = normalizedGroup.map(key => key.toLowerCase());
-        for (const lookupKey of normalizedLookup) {
-            const bucket = index.get(lookupKey) ?? new Set<string>();
-            normalizedGroup.forEach(key => bucket.add(key));
-            index.set(lookupKey, bucket);
-        }
-    }
-    return index;
-})();
 
 
 /**
@@ -439,32 +425,35 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _extensionUri: vscode.Uri;
     private _context: vscode.ExtensionContext;
 
-    private _testCache: Map<string, TestInfo> | null = null;
     private _isScanning: boolean = false;
-    private _cacheDirty: boolean = false;
-    private _cacheRefreshPromise: Promise<void> | null = null;
-    private _cacheRefreshTimer: NodeJS.Timeout | null = null;
+    private readonly _scenarioCatalogState = new LazyScenarioCatalog(() => this.loadScenarioCatalog());
+    private _scenarioDirectoryIndexCache: {
+        catalog: ScenarioCatalog;
+        scanRootPath: string;
+        index: ScenarioDirectoryIndex;
+    } | null = null;
     private _aiReportStateRefreshTimer: NodeJS.Timeout | null = null;
     private _isBuildInProgress: boolean = false;
     private _isScenarioRepairInProgress: boolean = false;
     private _isScenarioRepairCancelling: boolean = false;
     private _buildCancellationRequested: boolean = false;
     private _activeBuildProcesses: Set<cp.ChildProcess> = new Set();
-    private _scenarioBuildArtifacts: Map<string, ScenarioBuildArtifact> = new Map();
-    private _staleBuiltScenarioNames: Set<string> = new Set();
-    private _scenarioExecutionStates: Map<string, ScenarioExecutionState> = new Map();
-    private _scenarioLastLaunchContexts: Map<string, ScenarioLaunchContext> = new Map();
-    private _liveRunLogWatchers: Map<string, LiveRunLogWatcherState> = new Map();
-    private _liveFeatureStepTrackers: Map<string, LiveFeatureStepTrackerState> = new Map();
-    private _externalTrackedRunsByScenario: Map<string, Map<string, ExternalTrackedRunState>> = new Map();
-    private _activeTrackedRunKeyByScenario: Map<string, string> = new Map();
+    private _scenarioBuildArtifacts: Map<ScenarioRuntimeKey, ScenarioBuildArtifact> = new Map();
+    private _staleBuiltScenarioNames: Set<ScenarioRuntimeKey> = new Set();
+    private _scenarioExecutionStates: Map<ScenarioRuntimeKey, ScenarioExecutionState> = new Map();
+    private _scenarioLastLaunchContexts: Map<ScenarioRuntimeKey, ScenarioLaunchContext> = new Map();
+    private _liveRunLogWatchers: Map<ScenarioRuntimeKey, LiveRunLogWatcherState> = new Map();
+    private _liveFeatureStepTrackers: Map<ScenarioRuntimeKey, LiveFeatureStepTrackerState> = new Map();
+    private _externalTrackedRunsByScenario: Map<ScenarioRuntimeKey, Map<string, ExternalTrackedRunState>> = new Map();
+    private _activeTrackedRunKeyByScenario: Map<ScenarioRuntimeKey, string> = new Map();
+    private _vanessaRuntimeLogMonitorEnabled: boolean = false;
     private _vanessaRuntimeLogMonitorTimer: NodeJS.Timeout | null = null;
     private _vanessaRuntimeLogMonitorStartedAt: number = Date.now();
     private _vanessaRuntimeLogSnapshots: Map<string, VanessaRuntimeLogSnapshot> = new Map();
     private _vanessaInfobaseAuthCache: Map<string, VanessaInfobaseAuthentication> = new Map();
     private _isVanessaRuntimeLogMonitorPolling: boolean = false;
-    private _runningFeatureStepHighlights: Map<string, RunningFeatureStepHighlight> = new Map();
-    private _failedFeatureStepHighlights: Map<string, FailedFeatureStepHighlight> = new Map();
+    private _runningFeatureStepHighlights: Map<ScenarioRuntimeKey, RunningFeatureStepHighlight> = new Map();
+    private _failedFeatureStepHighlights: Map<ScenarioRuntimeKey, FailedFeatureStepHighlight> = new Map();
     private _runningFeatureStepDecorationType!: vscode.TextEditorDecorationType;
     private _completedFeatureStepDecorationType!: vscode.TextEditorDecorationType;
     private _failedFeatureStepDecorationType!: vscode.TextEditorDecorationType;
@@ -480,21 +469,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _runOutputChannel: vscode.OutputChannel | undefined;
     private _langOverride: 'System' | 'English' | 'Русский' = 'System';
     private _ruBundle: Record<string, string> | null = null;
-    private _mainScenarioSelectionStates: Record<string, boolean> | null = null;
+    private _mainScenarioSelectionStates: Record<ScenarioRuntimeKey, boolean> | null = null;
     
-    // Этот промис будет хранить состояние первоначального сканирования.
-    // Он создается один раз при вызове initializeTestCache.
-    public initializationPromise: Promise<void> | null = null;
+    private _onDidUpdateScenarioCatalog = new vscode.EventEmitter<ScenarioCatalog | null>();
+    public readonly onDidUpdateScenarioCatalog = this._onDidUpdateScenarioCatalog.event;
 
-    // Событие, которое будет генерироваться после обновления _testCache
-    private _onDidUpdateTestCache: vscode.EventEmitter<Map<string, TestInfo> | null> = new vscode.EventEmitter<Map<string, TestInfo> | null>();
-    public readonly onDidUpdateTestCache: vscode.Event<Map<string, TestInfo> | null> = this._onDidUpdateTestCache.event;
+    public getScenarioCatalog(): ScenarioCatalog | null {
+        return this._scenarioCatalogState.isDirty ? null : this._scenarioCatalogState.current;
+    }
 
-    /**
-     * Публичный геттер для доступа к кешу тестов.
-     */
-    public getTestCache(): Map<string, TestInfo> | null {
-        return this._testCache;
+    public getScenarioDefinitions(name: string): readonly TestInfo[] {
+        return this.getScenarioCatalog()?.byName.get(name) || [];
     }
 
     public isFailedFeatureLine(documentUri: vscode.Uri, lineIndex: number): boolean {
@@ -554,13 +539,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    /**
-     * Обеспечивает актуальность кеша перед операциями, чувствительными к свежим данным.
-     */
-    public async ensureFreshTestCache(): Promise<void> {
-        await this.initializeTestCache();
-        if (this._cacheDirty || this._testCache === null) {
-            await this.refreshTestCacheFromDisk('ensureFreshTestCache');
+    public async ensureFreshScenarioCatalog(): Promise<ScenarioCatalog> {
+        const previousCatalog = this._scenarioCatalogState.current;
+        this._isScanning = true;
+        try {
+            const catalog = await this._scenarioCatalogState.ensureLoaded();
+            if (catalog !== previousCatalog) {
+                this.publishScenarioCatalog(catalog);
+            }
+            return catalog;
+        } finally {
+            this._isScanning = false;
         }
     }
 
@@ -570,8 +559,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     public async refreshFromExternalStateChange(options?: { refreshCache?: boolean }): Promise<void> {
         if (options?.refreshCache) {
-            this._testCache = null;
-            this._cacheDirty = true;
+            this.invalidateScenarioCatalog(true);
         }
 
         // After a scan-root change the active editor may now qualify (or stop qualifying)
@@ -713,32 +701,32 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private getTrackedRunsMapForScenario(
-        scenarioName: string,
+        scenarioKey: ScenarioRuntimeKey,
         options?: { createIfMissing?: boolean }
     ): Map<string, ExternalTrackedRunState> | undefined {
-        const existing = this._externalTrackedRunsByScenario.get(scenarioName);
+        const existing = this._externalTrackedRunsByScenario.get(scenarioKey);
         if (existing || !options?.createIfMissing) {
             return existing;
         }
         const created = new Map<string, ExternalTrackedRunState>();
-        this._externalTrackedRunsByScenario.set(scenarioName, created);
+        this._externalTrackedRunsByScenario.set(scenarioKey, created);
         return created;
     }
 
-    private getActiveTrackedRunForScenario(scenarioName: string): ExternalTrackedRunState | undefined {
-        const runKey = this._activeTrackedRunKeyByScenario.get(scenarioName);
+    private getActiveTrackedRunForScenario(scenarioKey: ScenarioRuntimeKey): ExternalTrackedRunState | undefined {
+        const runKey = this._activeTrackedRunKeyByScenario.get(scenarioKey);
         if (!runKey) {
             return undefined;
         }
-        return this.getTrackedRunsMapForScenario(scenarioName)?.get(runKey);
+        return this.getTrackedRunsMapForScenario(scenarioKey)?.get(runKey);
     }
 
-    private isTrackedRunSelectedForScenario(scenarioName: string): boolean {
-        return !!this.getActiveTrackedRunForScenario(scenarioName);
+    private isTrackedRunSelectedForScenario(scenarioKey: ScenarioRuntimeKey): boolean {
+        return !!this.getActiveTrackedRunForScenario(scenarioKey);
     }
 
-    private getTrackedRunCountForScenario(scenarioName: string): number {
-        return this.getTrackedRunsMapForScenario(scenarioName)?.size || 0;
+    private getTrackedRunCountForScenario(scenarioKey: ScenarioRuntimeKey): number {
+        return this.getTrackedRunsMapForScenario(scenarioKey)?.size || 0;
     }
 
     private remapUriAfterRename(
@@ -783,74 +771,94 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return !!(testInfo?.tabName && testInfo.tabName.trim().length > 0);
     }
 
-    private getMainScenariosFromCache(): TestInfo[] {
-        if (!this._testCache || this._testCache.size === 0) {
-            return [];
-        }
-        return Array.from(this._testCache.values()).filter(info => this.isMainScenario(info));
+    private getMainScenariosFromCatalog(): TestInfo[] {
+        return (this.getScenarioCatalog()?.all ?? []).filter(info => this.isMainScenario(info));
     }
 
-    private getStoredMainScenarioSelectionStates(): Record<string, boolean> {
+    private readStoredMainScenarioSelectionStates(): {
+        legacyByName: Record<string, boolean>;
+        currentByKey: Record<ScenarioRuntimeKey, boolean>;
+        isVersion2: boolean;
+    } {
         if (this._mainScenarioSelectionStates) {
-            return { ...this._mainScenarioSelectionStates };
+            return {
+                legacyByName: {},
+                currentByKey: { ...this._mainScenarioSelectionStates },
+                isVersion2: true
+            };
         }
 
-        const raw = this._context.workspaceState.get<Record<string, unknown>>(
+        const raw = this._context.workspaceState.get<unknown>(
             PhaseSwitcherProvider.mainScenarioSelectionStatesCacheKey,
             {}
-        ) || {};
-
-        const normalized: Record<string, boolean> = {};
-        for (const [scenarioName, state] of Object.entries(raw)) {
-            const trimmedName = scenarioName.trim();
-            if (!trimmedName || typeof state !== 'boolean') {
-                continue;
-            }
-            normalized[trimmedName] = state;
+        );
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            return { legacyByName: {}, currentByKey: {}, isVersion2: false };
         }
 
-        this._mainScenarioSelectionStates = normalized;
-        return { ...normalized };
+        const candidate = raw as Partial<MainScenarioSelectionStateStorageV2>;
+        if (candidate.version === 2
+            && candidate.byKey
+            && typeof candidate.byKey === 'object'
+            && !Array.isArray(candidate.byKey)) {
+            const currentByKey: Record<ScenarioRuntimeKey, boolean> = {};
+            for (const [key, state] of Object.entries(candidate.byKey)) {
+                const trimmedKey = key.trim();
+                if (trimmedKey && typeof state === 'boolean') {
+                    currentByKey[trimmedKey] = state;
+                }
+            }
+            this._mainScenarioSelectionStates = currentByKey;
+            return { legacyByName: {}, currentByKey: { ...currentByKey }, isVersion2: true };
+        }
+
+        const legacyByName: Record<string, boolean> = {};
+        for (const [name, state] of Object.entries(raw)) {
+            const trimmedName = name.trim();
+            if (trimmedName && typeof state === 'boolean') {
+                legacyByName[trimmedName] = state;
+            }
+        }
+        return { legacyByName, currentByKey: {}, isVersion2: false };
     }
 
-    private async saveMainScenarioSelectionStates(states: Record<string, boolean>): Promise<void> {
-        const normalized: Record<string, boolean> = {};
-        for (const [scenarioName, state] of Object.entries(states)) {
-            const trimmedName = scenarioName.trim();
-            if (!trimmedName) {
-                continue;
+    private async saveMainScenarioSelectionStates(
+        states: Record<ScenarioRuntimeKey, boolean>
+    ): Promise<void> {
+        const normalized: Record<ScenarioRuntimeKey, boolean> = {};
+        for (const [key, state] of Object.entries(states)) {
+            const trimmedKey = key.trim();
+            if (trimmedKey) {
+                normalized[trimmedKey] = !!state;
             }
-            normalized[trimmedName] = !!state;
         }
 
         this._mainScenarioSelectionStates = normalized;
+        const stored: MainScenarioSelectionStateStorageV2 = {
+            version: 2,
+            byKey: normalized
+        };
         await this._context.workspaceState.update(
             PhaseSwitcherProvider.mainScenarioSelectionStatesCacheKey,
-            normalized
+            stored
         );
     }
 
-    private async getMainScenarioSelectionStates(mainScenarios?: TestInfo[]): Promise<Record<string, boolean>> {
-        const scenarios = mainScenarios ?? this.getMainScenariosFromCache();
-        const persisted = this.getStoredMainScenarioSelectionStates();
-        const next: Record<string, boolean> = {};
-
-        for (const scenarioInfo of scenarios) {
-            const scenarioName = scenarioInfo.name.trim();
-            if (!scenarioName) {
-                continue;
-            }
-            if (Object.prototype.hasOwnProperty.call(persisted, scenarioName)) {
-                next[scenarioName] = !!persisted[scenarioName];
-                continue;
-            }
-            next[scenarioName] = scenarioInfo.defaultState === true;
-        }
-
-        const persistedKeys = Object.keys(persisted);
+    private async getMainScenarioSelectionStates(
+        mainScenarios?: TestInfo[]
+    ): Promise<Record<ScenarioRuntimeKey, boolean>> {
+        const scenarios = mainScenarios ?? this.getMainScenariosFromCatalog();
+        const stored = this.readStoredMainScenarioSelectionStates();
+        const next = migrateLegacySelectionStates(
+            buildScenarioCatalog(scenarios),
+            stored.legacyByName,
+            stored.currentByKey
+        );
+        const persistedKeys = Object.keys(stored.currentByKey);
         const nextKeys = Object.keys(next);
-        const shouldPersist = persistedKeys.length !== nextKeys.length
-            || nextKeys.some(key => persisted[key] !== next[key]);
+        const shouldPersist = !stored.isVersion2
+            || persistedKeys.length !== nextKeys.length
+            || nextKeys.some(key => stored.currentByKey[key] !== next[key]);
 
         if (shouldPersist) {
             await this.saveMainScenarioSelectionStates(next);
@@ -859,12 +867,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return next;
     }
 
-    private async updateMainScenarioSelectionStates(states: Record<string, boolean>): Promise<void> {
+    private async updateMainScenarioSelectionStates(
+        states: Record<ScenarioRuntimeKey, boolean>
+    ): Promise<void> {
         if (!states || typeof states !== 'object') {
             return;
         }
 
-        const scenarios = this.getMainScenariosFromCache();
+        const scenarios = this.getMainScenariosFromCatalog();
         if (scenarios.length === 0) {
             return;
         }
@@ -872,16 +882,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const next = await this.getMainScenarioSelectionStates(scenarios);
         let changed = false;
         for (const scenarioInfo of scenarios) {
-            const scenarioName = scenarioInfo.name.trim();
-            if (!scenarioName || !Object.prototype.hasOwnProperty.call(states, scenarioName)) {
+            const scenarioKey = getScenarioRuntimeKey(scenarioInfo);
+            if (!Object.prototype.hasOwnProperty.call(states, scenarioKey)) {
                 continue;
             }
 
-            const nextState = !!states[scenarioName];
-            if (next[scenarioName] === nextState) {
+            const nextState = !!states[scenarioKey];
+            if (next[scenarioKey] === nextState) {
                 continue;
             }
-            next[scenarioName] = nextState;
+            next[scenarioKey] = nextState;
             changed = true;
         }
 
@@ -892,72 +902,187 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         await this.saveMainScenarioSelectionStates(next);
     }
 
-    private async renameMainScenarioSelectionState(oldScenarioName: string, newScenarioName: string): Promise<void> {
-        const trimmedOldName = oldScenarioName.trim();
-        const trimmedNewName = newScenarioName.trim();
-        if (!trimmedOldName || !trimmedNewName || trimmedOldName === trimmedNewName) {
+    private async removeMainScenarioSelectionState(scenarioKey: ScenarioRuntimeKey): Promise<void> {
+        const trimmedScenarioKey = scenarioKey.trim();
+        if (!trimmedScenarioKey) {
             return;
         }
 
-        const states = this.getStoredMainScenarioSelectionStates();
-        if (!Object.prototype.hasOwnProperty.call(states, trimmedOldName)) {
+        const stored = this.readStoredMainScenarioSelectionStates();
+        const states = stored.isVersion2
+            ? stored.currentByKey
+            : await this.getMainScenarioSelectionStates();
+        if (!Object.prototype.hasOwnProperty.call(states, trimmedScenarioKey)) {
             return;
         }
 
-        const oldValue = !!states[trimmedOldName];
-        delete states[trimmedOldName];
-        states[trimmedNewName] = oldValue;
+        delete states[trimmedScenarioKey];
         await this.saveMainScenarioSelectionStates(states);
     }
 
-    private async removeMainScenarioSelectionState(scenarioName: string): Promise<void> {
-        const trimmedScenarioName = scenarioName.trim();
-        if (!trimmedScenarioName) {
+    private async removeMainScenarioSelectionStatesForUris(uris: readonly vscode.Uri[]): Promise<void> {
+        if (uris.length === 0) {
             return;
         }
+        const stored = this.readStoredMainScenarioSelectionStates();
+        const states = stored.isVersion2
+            ? stored.currentByKey
+            : await this.getMainScenarioSelectionStates();
+        let changed = false;
+        for (const key of Object.keys(states)) {
+            let scenarioUri: vscode.Uri;
+            try {
+                scenarioUri = vscode.Uri.parse(key);
+            } catch {
+                continue;
+            }
+            if (!uris.some(uri => this.areUrisEqual(uri, scenarioUri)
+                || (uri.scheme === 'file'
+                    && scenarioUri.scheme === 'file'
+                    && this.isPathInside(uri.fsPath, scenarioUri.fsPath)))) {
+                continue;
+            }
+            delete states[key];
+            changed = true;
+        }
+        if (changed) {
+            await this.saveMainScenarioSelectionStates(states);
+        }
+    }
 
-        const states = this.getStoredMainScenarioSelectionStates();
-        if (!Object.prototype.hasOwnProperty.call(states, trimmedScenarioName)) {
+    private captureMainScenarioSelectionStatesForRename(
+        catalog: ScenarioCatalog | null
+    ): Record<ScenarioRuntimeKey, boolean> | null {
+        const stored = this.readStoredMainScenarioSelectionStates();
+        if (stored.isVersion2) {
+            return stored.currentByKey;
+        }
+        if (!catalog) {
+            return null;
+        }
+        const mainCatalog = buildScenarioCatalog(catalog.all.filter(scenario => this.isMainScenario(scenario)));
+        return migrateLegacySelectionStates(mainCatalog, stored.legacyByName, {});
+    }
+
+    private async applyMainScenarioSelectionRenamePlan(
+        states: Readonly<Record<ScenarioRuntimeKey, boolean>> | null,
+        plan: ScenarioRuntimeRenamePlan
+    ): Promise<void> {
+        if (!states) {
             return;
         }
+        const affected = [...plan.remappedKeys.keys(), ...plan.removedKeys]
+            .some(key => Object.prototype.hasOwnProperty.call(states, key));
+        if (!affected) {
+            return;
+        }
+        await this.saveMainScenarioSelectionStates(
+            applyScenarioRuntimeRenamePlanToRecord(states, plan)
+        );
+    }
 
-        delete states[trimmedScenarioName];
-        await this.saveMainScenarioSelectionStates(states);
+    private applyScenarioRuntimeRenamePlan(
+        plan: ScenarioRuntimeRenamePlan,
+        refreshedCatalog: ScenarioCatalog
+    ): void {
+        let changed = false;
+        for (const removedKey of plan.removedKeys) {
+            changed = this.disposeScenarioRuntimeKey(removedKey) || changed;
+        }
+        for (const [oldKey, newKey] of plan.remappedKeys) {
+            const hadRuntimeState = this.getKnownScenarioRuntimeKeys().has(oldKey);
+            const scenarioInfo = refreshedCatalog.byUri.get(newKey);
+            const artifact = this._scenarioBuildArtifacts.get(oldKey);
+            if (artifact) {
+                this._scenarioBuildArtifacts.delete(oldKey);
+                this._scenarioBuildArtifacts.set(newKey, {
+                    ...artifact,
+                    scenarioKey: newKey,
+                    scenarioName: scenarioInfo?.name || artifact.scenarioName,
+                    sourceUri: scenarioInfo?.yamlFileUri || vscode.Uri.parse(newKey)
+                });
+            }
+            if (this._staleBuiltScenarioNames.delete(oldKey)) {
+                this._staleBuiltScenarioNames.add(newKey);
+            }
+            this._scenarioExecutionStates = remapRuntimeKey(this._scenarioExecutionStates, oldKey, newKey);
+            this._scenarioLastLaunchContexts = remapRuntimeKey(this._scenarioLastLaunchContexts, oldKey, newKey);
+            this._liveRunLogWatchers = remapRuntimeKey(this._liveRunLogWatchers, oldKey, newKey);
+            this._liveFeatureStepTrackers = remapRuntimeKey(this._liveFeatureStepTrackers, oldKey, newKey);
+            this._externalTrackedRunsByScenario = remapRuntimeKey(this._externalTrackedRunsByScenario, oldKey, newKey);
+            this._activeTrackedRunKeyByScenario = remapRuntimeKey(this._activeTrackedRunKeyByScenario, oldKey, newKey);
+            this._runningFeatureStepHighlights = remapRuntimeKey(this._runningFeatureStepHighlights, oldKey, newKey);
+            this._failedFeatureStepHighlights = remapRuntimeKey(this._failedFeatureStepHighlights, oldKey, newKey);
+            const nextScenarioName = scenarioInfo?.name;
+            const executionState = this._scenarioExecutionStates.get(newKey);
+            if (executionState && nextScenarioName) {
+                executionState.scenarioName = nextScenarioName;
+            }
+            const launchContext = this._scenarioLastLaunchContexts.get(newKey);
+            if (launchContext && nextScenarioName) {
+                launchContext.scenarioName = nextScenarioName;
+            }
+            const records = [
+                this._liveRunLogWatchers.get(newKey),
+                this._liveFeatureStepTrackers.get(newKey),
+                this._runningFeatureStepHighlights.get(newKey),
+                this._failedFeatureStepHighlights.get(newKey)
+            ];
+            records.forEach(record => {
+                if (record) {
+                    record.scenarioKey = newKey;
+                    if (nextScenarioName) {
+                        record.scenarioName = nextScenarioName;
+                    }
+                }
+            });
+            this._externalTrackedRunsByScenario.get(newKey)?.forEach(record => {
+                record.scenarioKey = newKey;
+                if (nextScenarioName) {
+                    record.scenarioName = nextScenarioName;
+                }
+            });
+            changed = hadRuntimeState || changed;
+        }
+        if (changed) {
+            this.sendRunArtifactsStateToWebview();
+        }
+    }
+
+    private getKnownScenarioRuntimeKeys(): Set<ScenarioRuntimeKey> {
+        return new Set<ScenarioRuntimeKey>([
+            ...this._scenarioBuildArtifacts.keys(),
+            ...this._scenarioExecutionStates.keys(),
+            ...this._scenarioLastLaunchContexts.keys(),
+            ...this._liveRunLogWatchers.keys(),
+            ...this._liveFeatureStepTrackers.keys(),
+            ...this._externalTrackedRunsByScenario.keys(),
+            ...this._activeTrackedRunKeyByScenario.keys(),
+            ...this._runningFeatureStepHighlights.keys(),
+            ...this._failedFeatureStepHighlights.keys()
+        ]);
+    }
+
+    private disposeScenarioRuntimeKey(scenarioKey: ScenarioRuntimeKey): boolean {
+        const hadState = this.getKnownScenarioRuntimeKeys().has(scenarioKey);
+        this._scenarioBuildArtifacts.delete(scenarioKey);
+        this._staleBuiltScenarioNames.delete(scenarioKey);
+        this._scenarioExecutionStates.delete(scenarioKey);
+        this._scenarioLastLaunchContexts.delete(scenarioKey);
+        this.stopFeatureStepTracker(scenarioKey);
+        this.clearFailedFeatureStepHighlight(scenarioKey);
+        this.clearTrackedRunLogWatchersForScenario(scenarioKey);
+        this.stopLiveRunLogWatcher(scenarioKey, { disposeChannel: true });
+        this._activeTrackedRunKeyByScenario.delete(scenarioKey);
+        this._runningFeatureStepHighlights.delete(scenarioKey);
+        this._failedFeatureStepHighlights.delete(scenarioKey);
+        return hadState;
     }
 
     private async getMainScenarioSelectionSnapshotForBuild(): Promise<MainScenarioSelectionSnapshot> {
-        const mainScenarios = this.getMainScenariosFromCache();
-        if (mainScenarios.length === 0) {
-            return {
-                total: 0,
-                enabledNames: [],
-                disabledNames: []
-            };
-        }
-
+        const mainScenarios = this.getMainScenariosFromCatalog();
         const selectionStates = await this.getMainScenarioSelectionStates(mainScenarios);
-        const enabledNames: string[] = [];
-        const disabledNames: string[] = [];
-        for (const scenarioInfo of mainScenarios) {
-            const scenarioName = scenarioInfo.name.trim();
-            if (!scenarioName) {
-                continue;
-            }
-            if (selectionStates[scenarioName] === true) {
-                enabledNames.push(scenarioName);
-            } else {
-                disabledNames.push(scenarioName);
-            }
-        }
-
-        enabledNames.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
-        disabledNames.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
-
-        return {
-            total: mainScenarios.length,
-            enabledNames,
-            disabledNames
-        };
+        return projectScenarioBuildSelection(mainScenarios, selectionStates);
     }
 
     private buildScenarioFilterDecision(snapshot: MainScenarioSelectionSnapshot): BuildScenarioFilterDecision {
@@ -1065,25 +1190,34 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        throw new Error(this.t('Unable to allocate temporary path for legacy disabled test file move: {0}', targetUri.fsPath));
+        throw new Error(this.t('Unable to allocate temporary path for disabled test file move: {0}', targetUri.fsPath));
     }
 
     private async temporarilyMoveDisabledScenarioTestFilesForBuild(
         workspaceRootUri: vscode.Uri,
-        disabledScenarioNames: string[],
-        outputChannel: vscode.OutputChannel
+        disabledScenarioKeys: ScenarioRuntimeKey[],
+        outputChannel: vscode.OutputChannel,
+        requiredIsolationKeys: readonly ScenarioRuntimeKey[] = []
     ): Promise<LegacyTemporarilyMovedTestFilesResult> {
-        if (!this.isLegacyDisabledTestsMoveOnBuildEnabled()) {
+        const movePlan = planDisabledScenarioTestFileMoves(
+            this.isLegacyDisabledTestsMoveOnBuildEnabled(),
+            disabledScenarioKeys,
+            requiredIsolationKeys
+        );
+        if (movePlan.mode === 'none') {
             return {
                 temporaryRootUri: null,
-                movedFiles: []
+                movedFiles: [],
+                mode: null
             };
         }
 
-        if (!this._testCache || this._testCache.size === 0 || disabledScenarioNames.length === 0) {
+        const catalog = this.getScenarioCatalog();
+        if (!catalog) {
             return {
                 temporaryRootUri: null,
-                movedFiles: []
+                movedFiles: [],
+                mode: null
             };
         }
 
@@ -1092,11 +1226,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         try {
             await vscode.workspace.fs.createDirectory(temporaryRootUri);
-            for (const scenarioName of disabledScenarioNames) {
-                const scenarioInfo = this._testCache.get(scenarioName);
+            for (const scenarioKey of movePlan.scenarioKeys) {
+                const scenarioInfo = catalog.byUri.get(scenarioKey);
                 if (!scenarioInfo) {
                     continue;
                 }
+                const scenarioName = scenarioInfo.name;
 
                 const testYamlFiles = await this.collectScenarioTestYamlFiles(scenarioInfo);
                 if (testYamlFiles.length === 0) {
@@ -1123,12 +1258,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         } catch (error: any) {
             await this.restoreTemporarilyMovedDisabledScenarioFiles(temporaryRootUri, movedFiles, outputChannel);
-            throw new Error(this.t('Failed to move disabled test files in legacy mode: {0}', error?.message || String(error)));
+            const failureMessage = movePlan.mode === 'legacy'
+                ? this.t('Failed to move disabled test files in legacy mode: {0}', error?.message || String(error))
+                : this.t('Failed to isolate disabled same-name scenario test files before build: {0}', error?.message || String(error));
+            throw new Error(failureMessage);
         }
 
         return {
             temporaryRootUri,
-            movedFiles
+            movedFiles,
+            mode: movePlan.mode
         };
     }
 
@@ -1144,7 +1283,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
             this.outputAdvanced(
                 outputChannel,
-                this.t('Failed to delete legacy temp directory: {0}', error?.message || String(error))
+                this.t('Failed to delete disabled-test isolation temp directory: {0}', error?.message || String(error))
             );
         }
     }
@@ -1184,13 +1323,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (restoreFailures.length > 0) {
             const warningMessage = temporaryRootUri
                 ? this.t(
-                    'Some legacy-moved test files were not restored automatically. Temporary files were kept at {0}. See Output for details.',
+                    'Some temporarily moved test files were not restored automatically. Temporary files were kept at {0}. See Output for details.',
                     temporaryRootUri.fsPath
                 )
-                : this.t('Some legacy-moved test files were not restored automatically. See Output for details.');
+                : this.t('Some temporarily moved test files were not restored automatically. See Output for details.');
             this.outputError(
                 outputChannel,
-                this.t('Failed to restore {0} temporarily moved legacy test file(s).', String(restoreFailures.length)),
+                this.t('Failed to restore {0} temporarily moved test file(s).', String(restoreFailures.length)),
                 new Error(restoreFailures.join('\n'))
             );
             vscode.window.showWarningMessage(warningMessage);
@@ -1222,7 +1361,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const activeUri = this._activeScenarioUriForHighlight;
-        if (!activeUri || !this._testCache || this._testCache.size === 0) {
+        const catalog = this.getScenarioCatalog();
+        if (!activeUri || !catalog || catalog.all.length === 0) {
             return [];
         }
 
@@ -1241,7 +1381,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         while (queue.length > 0) {
             const currentScenarioName = queue.shift()!;
-            if (this.isMainScenario(this._testCache.get(currentScenarioName))) {
+            if ((catalog.byName.get(currentScenarioName) || []).some(info => this.isMainScenario(info))) {
                 affectedMainScenarioNames.add(currentScenarioName);
             }
 
@@ -1353,83 +1493,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             || baseName === 'test.feature';
     }
 
-    private parseNestedScenarioNamesFromText(documentText: string): string[] {
-        const names: string[] = [];
-        const sectionRegex = /ВложенныеСценарии:\s*([\s\S]*?)(?=\n(?![ \t])[А-Яа-яЁёA-Za-z]+:|\n*$)/;
-        const match = sectionRegex.exec(documentText);
-        if (!match || !match[1]) {
-            return names;
-        }
-
-        const nameRegex = /^\s*ИмяСценария:\s*"([^"]+)"/gm;
-        let nameMatch: RegExpExecArray | null;
-        while ((nameMatch = nameRegex.exec(match[1])) !== null) {
-            const name = nameMatch[1].trim();
-            if (name.length > 0) {
-                names.push(name);
-            }
-        }
-
-        return names;
-    }
-
-    private extractScenarioHeaderFields(documentText: string): {
-        name: string | null;
-        uid: string | null;
-        scenarioCode: string | null;
-        scenarioCodeLine: number | null;
-        scenarioCodeLineStartCharacter: number | null;
-        scenarioCodeLineEndCharacter: number | null;
-    } {
-        let name: string | null = null;
-        let uid: string | null = null;
-        let scenarioCode: string | null = null;
-        let scenarioCodeLine: number | null = null;
-        let scenarioCodeLineStartCharacter: number | null = null;
-        let scenarioCodeLineEndCharacter: number | null = null;
-        const lines = documentText.split(/\r\n|\r|\n/);
-
-        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-            const line = lines[lineIndex];
-            if (!name) {
-                const nameMatch = line.match(/^\s*Имя:\s*"(.+?)"\s*$/);
-                if (nameMatch?.[1]) {
-                    name = nameMatch[1].trim();
-                }
-            }
-
-            if (!uid) {
-                const uidMatch = line.match(/^\s*UID:\s*"(.+?)"\s*$/);
-                if (uidMatch?.[1]) {
-                    uid = uidMatch[1].trim();
-                }
-            }
-
-            if (!scenarioCode) {
-                const codeMatch = line.match(/^\s*Код:\s*"(.+?)"\s*$/);
-                if (codeMatch?.[1]) {
-                    scenarioCode = codeMatch[1].trim();
-                    scenarioCodeLine = lineIndex;
-                    scenarioCodeLineStartCharacter = Math.max(0, line.search(/\S|$/));
-                    scenarioCodeLineEndCharacter = line.length;
-                }
-            }
-
-            if (name && uid && scenarioCode) {
-                break;
-            }
-        }
-
-        return {
-            name,
-            uid,
-            scenarioCode,
-            scenarioCodeLine,
-            scenarioCodeLineStartCharacter,
-            scenarioCodeLineEndCharacter
-        };
-    }
-
     private computeRelativePathForScenarioFile(fileUri: vscode.Uri): string {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders || workspaceFolders.length === 0) {
@@ -1447,48 +1510,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private buildTestInfoFromDocument(document: vscode.TextDocument): TestInfo | null {
-        const documentText = document.getText();
-        const {
-            name,
-            uid,
-            scenarioCode,
-            scenarioCodeLine,
-            scenarioCodeLineStartCharacter,
-            scenarioCodeLineEndCharacter
-        } = this.extractScenarioHeaderFields(documentText);
-        if (!name) {
-            return null;
-        }
-
-        const nestedScenarioNames = this.parseNestedScenarioNamesFromText(documentText);
-        const defaultsMap = parseScenarioParameterDefaults(documentText);
-        const phaseSwitcherMetadata = parsePhaseSwitcherMetadata(documentText);
-        const scenarioDescription = parseKotScenarioDescription(documentText);
-        const parameters = defaultsMap.size > 0 ? Array.from(defaultsMap.keys()) : undefined;
-        const parameterDefaults = defaultsMap.size > 0 ? Object.fromEntries(defaultsMap.entries()) : undefined;
-
-        const testInfo: TestInfo = {
-            name,
-            yamlFileUri: document.uri,
-            relativePath: this.computeRelativePathForScenarioFile(document.uri),
-            parameters,
-            parameterDefaults,
-            nestedScenarioNames: nestedScenarioNames.length > 0 ? [...new Set(nestedScenarioNames)] : undefined,
-            uid: uid || undefined,
-            scenarioDescription: scenarioDescription || undefined,
-            scenarioCode: scenarioCode || undefined,
-            scenarioCodeLine: scenarioCodeLine ?? undefined,
-            scenarioCodeLineStartCharacter: scenarioCodeLineStartCharacter ?? undefined,
-            scenarioCodeLineEndCharacter: scenarioCodeLineEndCharacter ?? undefined
-        };
-
-        if (phaseSwitcherMetadata.hasTab) {
-            testInfo.tabName = phaseSwitcherMetadata.tabName;
-            testInfo.defaultState = phaseSwitcherMetadata.defaultState !== undefined ? phaseSwitcherMetadata.defaultState : false;
-            testInfo.order = phaseSwitcherMetadata.order !== undefined ? phaseSwitcherMetadata.order : Infinity;
-        }
-
-        return testInfo;
+        return parseTestInfoFromScenarioSource(
+            document.getText(),
+            document.uri,
+            this.computeRelativePathForScenarioFile(document.uri)
+        );
     }
 
     private areStringArraysEqual(left?: string[], right?: string[]): boolean {
@@ -1546,139 +1572,263 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         try {
+            const catalog = this.getScenarioCatalog();
+            if (!catalog) {
+                return false;
+            }
+
             const updatedInfo = this.buildTestInfoFromDocument(document);
-            if (!this._testCache) {
-                this._testCache = new Map<string, TestInfo>();
-            }
-
             const uriKey = document.uri.toString();
-            let changed = false;
-
-            for (const [cachedName, cachedInfo] of this._testCache) {
-                if (cachedInfo.yamlFileUri.toString() === uriKey && (!updatedInfo || cachedName !== updatedInfo.name)) {
-                    this._testCache.delete(cachedName);
-                    changed = true;
-                }
+            const existing = catalog.byUri.get(uriKey);
+            if ((!existing && !updatedInfo) || (existing && updatedInfo && this.isSameTestInfo(existing, updatedInfo))) {
+                return true;
             }
 
-            if (updatedInfo) {
-                const existing = this._testCache.get(updatedInfo.name);
-                if (!existing || !this.isSameTestInfo(existing, updatedInfo)) {
-                    this._testCache.set(updatedInfo.name, updatedInfo);
-                    changed = true;
-                }
+            const updated = this._scenarioCatalogState.update(current => updatedInfo
+                ? upsertScenarioInCatalog(current, updatedInfo)
+                : removeScenarioFromCatalogByUri(current, uriKey));
+            const nextCatalog = this._scenarioCatalogState.current;
+            if (updated && nextCatalog) {
+                this.publishScenarioCatalog(nextCatalog);
             }
-
-            if (changed) {
-                this._onDidUpdateTestCache.fire(this._testCache);
-            }
-
-            return true;
+            return updated;
         } catch (error) {
             console.error('[PhaseSwitcherProvider] Failed to incrementally update scenario cache entry:', error);
             return false;
         }
     }
 
-    private markCacheDirtyAndScheduleRefresh(reason: string, immediate: boolean = false): void {
-        this._cacheDirty = true;
-        if (this._cacheRefreshTimer) {
-            clearTimeout(this._cacheRefreshTimer);
-            this._cacheRefreshTimer = null;
+    private async upsertScenarioCacheEntriesFromUris(uris: readonly vscode.Uri[]): Promise<boolean> {
+        const catalog = this.getScenarioCatalog();
+        const workspaceRootUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+        if (!catalog || !workspaceRootUri) {
+            return false;
         }
 
-        const delay = immediate ? 0 : 500;
-        this._cacheRefreshTimer = setTimeout(() => {
-            this.refreshTestCacheFromDisk(reason).catch(error => {
-                console.error('[PhaseSwitcherProvider] Scheduled cache refresh failed:', error);
-            });
-        }, delay);
+        const scenarioUris = uris.filter(uri =>
+            path.basename(uri.fsPath).toLowerCase() === 'scen.yaml' && this.shouldTrackUriForCache(uri)
+        );
+        if (scenarioUris.length !== uris.filter(uri => this.shouldTrackUriForCache(uri)).length) {
+            return false;
+        }
+
+        const scanRootUri = vscode.Uri.file(resolveScanDirFsPath(workspaceRootUri));
+        let nextCatalog = catalog;
+        for (const uri of scenarioUris) {
+            const scenarioInfo = await readScenarioInfo(uri, scanRootUri);
+            if (!scenarioInfo) {
+                return false;
+            }
+            nextCatalog = upsertScenarioInCatalog(nextCatalog, scenarioInfo);
+        }
+
+        if (nextCatalog === catalog) {
+            return true;
+        }
+        const updated = this._scenarioCatalogState.update(() => nextCatalog);
+        if (updated) {
+            this.publishScenarioCatalog(nextCatalog);
+        }
+        return updated;
+    }
+
+    private removeScenarioCacheEntriesForUris(uris: readonly vscode.Uri[]): boolean {
+        const catalog = this.getScenarioCatalog();
+        if (!catalog) {
+            return false;
+        }
+
+        let nextCatalog = catalog;
+        for (const uri of uris.filter(candidate => this.shouldTrackUriForCache(candidate))) {
+            const normalizedPath = path.resolve(uri.fsPath);
+            if (path.basename(normalizedPath).toLowerCase() === 'scen.yaml') {
+                nextCatalog = removeScenarioFromCatalogByUri(nextCatalog, uri.toString());
+                continue;
+            }
+
+            for (const scenario of nextCatalog.all) {
+                if (this.isPathInside(normalizedPath, path.resolve(scenario.yamlFileUri.fsPath))) {
+                    nextCatalog = removeScenarioFromCatalogByUri(nextCatalog, scenario.yamlFileUri.toString());
+                }
+            }
+        }
+
+        const updated = this._scenarioCatalogState.update(() => nextCatalog);
+        if (updated) {
+            this.publishScenarioCatalog(nextCatalog);
+        }
+        return updated;
+    }
+
+    private async updateScenarioCacheEntriesForRenames(
+        files: readonly { oldUri: vscode.Uri; newUri: vscode.Uri }[]
+    ): Promise<boolean> {
+        const catalog = this.getScenarioCatalog();
+        const workspaceRootUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+        if (!catalog || !workspaceRootUri) {
+            return false;
+        }
+
+        const affectedFiles = files.filter(({ oldUri, newUri }) =>
+            this.shouldTrackUriForCache(oldUri) || this.shouldTrackUriForCache(newUri)
+        );
+        if (affectedFiles.some(({ oldUri, newUri }) =>
+            path.basename(oldUri.fsPath).toLowerCase() !== 'scen.yaml'
+            || path.basename(newUri.fsPath).toLowerCase() !== 'scen.yaml'
+        )) {
+            return false;
+        }
+
+        const scanRootUri = vscode.Uri.file(resolveScanDirFsPath(workspaceRootUri));
+        let nextCatalog = catalog;
+        for (const { oldUri, newUri } of affectedFiles) {
+            nextCatalog = removeScenarioFromCatalogByUri(nextCatalog, oldUri.toString());
+            if (this.shouldTrackUriForCache(newUri)) {
+                const scenarioInfo = await readScenarioInfo(newUri, scanRootUri);
+                if (!scenarioInfo) {
+                    return false;
+                }
+                nextCatalog = upsertScenarioInCatalog(nextCatalog, scenarioInfo);
+            }
+        }
+
+        const updated = this._scenarioCatalogState.update(() => nextCatalog);
+        if (updated) {
+            this.publishScenarioCatalog(nextCatalog);
+        }
+        return updated;
+    }
+
+    private buildScenarioRuntimeRenameCandidates(
+        files: readonly { oldUri: vscode.Uri; newUri: vscode.Uri }[],
+        scenarioKeys: Iterable<ScenarioRuntimeKey>
+    ): Array<{ oldKey: ScenarioRuntimeKey; newKey: ScenarioRuntimeKey }> {
+        const candidates = new Map<ScenarioRuntimeKey, ScenarioRuntimeKey>();
+        for (const oldKey of scenarioKeys) {
+            let oldScenarioUri: vscode.Uri;
+            try {
+                oldScenarioUri = vscode.Uri.parse(oldKey);
+            } catch {
+                continue;
+            }
+            let nextScenarioUri = oldScenarioUri;
+            for (const { oldUri, newUri } of files) {
+                nextScenarioUri = this.remapUriAfterRename(nextScenarioUri, oldUri, newUri)
+                    ?? nextScenarioUri;
+            }
+            const newKey = nextScenarioUri.toString();
+            if (newKey !== oldKey) {
+                candidates.set(oldKey, newKey);
+            }
+        }
+        return [...candidates].map(([oldKey, newKey]) => ({ oldKey, newKey }));
+    }
+
+    private async handleScenarioFilesRenamed(
+        files: readonly { oldUri: vscode.Uri; newUri: vscode.Uri }[]
+    ): Promise<void> {
+        const previousCatalog = this.getScenarioCatalog();
+        const selectionStates = this.captureMainScenarioSelectionStatesForRename(previousCatalog);
+        const customInfobasePaths = this.captureScenarioCustomInfobasePathsForRename(previousCatalog);
+        const affectsCatalog = files.some(({ oldUri, newUri }) =>
+            this.shouldTrackUriForCache(oldUri) || this.shouldTrackUriForCache(newUri)
+        );
+        let refreshedCatalog = previousCatalog;
+        if (affectsCatalog) {
+            try {
+                const updated = await this.updateScenarioCacheEntriesForRenames(files);
+                if (!updated) {
+                    this.invalidateScenarioCatalog();
+                    refreshedCatalog = await this.ensureFreshScenarioCatalog();
+                } else {
+                    refreshedCatalog = this.getScenarioCatalog();
+                }
+            } catch (error) {
+                console.error('[PhaseSwitcherProvider] Failed to rename scenario catalog entries:', error);
+                this.invalidateScenarioCatalog();
+                return;
+            }
+        }
+        if (!refreshedCatalog) {
+            return;
+        }
+
+        const candidateKeys = new Set<ScenarioRuntimeKey>([
+            ...(previousCatalog?.all.map(getScenarioRuntimeKey) ?? []),
+            ...Object.keys(selectionStates ?? {}),
+            ...Object.keys(customInfobasePaths ?? {}),
+            ...this.getKnownScenarioRuntimeKeys()
+        ]);
+        const renamePlan = resolveConfirmedScenarioRuntimeRenames(
+            this.buildScenarioRuntimeRenameCandidates(files, candidateKeys),
+            refreshedCatalog
+        );
+        try {
+            await this.applyMainScenarioSelectionRenamePlan(selectionStates, renamePlan);
+        } catch (error) {
+            console.error('[PhaseSwitcherProvider] Failed to remap scenario selection state:', error);
+        }
+        try {
+            await this.applyScenarioCustomInfobaseRenamePlan(customInfobasePaths, renamePlan);
+        } catch (error) {
+            console.error('[PhaseSwitcherProvider] Failed to remap scenario infobase state:', error);
+        }
+
+        this.applyScenarioRuntimeRenamePlan(renamePlan, refreshedCatalog);
+
+        if (!this._activeScenarioUriForHighlight) {
+            return;
+        }
+        let remappedUri: vscode.Uri | null = this._activeScenarioUriForHighlight;
+        let changed = false;
+        for (const { oldUri, newUri } of files) {
+            if (!remappedUri) {
+                break;
+            }
+            const nextUri = this.remapUriAfterRename(remappedUri, oldUri, newUri);
+            if (!nextUri || this.areUrisEqual(remappedUri, nextUri)) {
+                continue;
+            }
+            remappedUri = nextUri;
+            changed = true;
+        }
+        if (changed) {
+            this._activeScenarioUriForHighlight = remappedUri && this.shouldUseUriForAffectedScenarioHighlight(remappedUri)
+                ? remappedUri
+                : null;
+            this.sendAffectedMainScenariosToWebview(true);
+        }
+    }
+
+    private publishScenarioCatalog(catalog: ScenarioCatalog): void {
+        this._scenarioCatalogState.replace(catalog);
+        this._onDidUpdateScenarioCatalog.fire(catalog);
+    }
+
+    private invalidateScenarioCatalog(clearPublishedCache: boolean = false): void {
+        this._scenarioCatalogState.invalidate();
+        if (clearPublishedCache) {
+            this._onDidUpdateScenarioCatalog.fire(null);
+        }
+    }
+
+    private async loadScenarioCatalog(): Promise<ScenarioCatalog> {
+        const workspaceRootUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+        if (!workspaceRootUri) {
+            return buildScenarioCatalog([]);
+        }
+        return scanWorkspaceForScenarioCatalog(workspaceRootUri);
     }
 
     private async refreshTestCacheFromDisk(reason: string): Promise<void> {
-        if (this._cacheRefreshPromise) {
-            await this._cacheRefreshPromise;
-            return;
-        }
-
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders || workspaceFolders.length === 0) {
-            this._testCache = null;
-            this._cacheDirty = false;
-            this._onDidUpdateTestCache.fire(this._testCache);
-            return;
-        }
-
-        const workspaceRootUri = workspaceFolders[0].uri;
         console.log(`[PhaseSwitcherProvider] Refreshing test cache from disk. Reason: ${reason}`);
-
-        this._cacheRefreshPromise = (async () => {
-            this._isScanning = true;
-            try {
-                this._testCache = await scanWorkspaceForTests(workspaceRootUri);
-                this._cacheDirty = false;
-                this._onDidUpdateTestCache.fire(this._testCache);
-                console.log(`[PhaseSwitcherProvider] Cache refreshed. Total scenarios: ${this._testCache?.size || 0}`);
-            } catch (scanError) {
-                console.error('[PhaseSwitcherProvider] Error during cache refresh:', scanError);
-            } finally {
-                this._isScanning = false;
-                this._cacheRefreshPromise = null;
-            }
-        })();
-
-        await this._cacheRefreshPromise;
+        this.invalidateScenarioCatalog();
+        const catalog = await this.ensureFreshScenarioCatalog();
+        console.log(`[PhaseSwitcherProvider] Cache refreshed. Total definitions: ${catalog.all.length}`);
     }
 
-    /**
-     * Инициализирует кеш тестов. Этот метод теперь идемпотентный:
-     * он выполняет сканирование только один раз и возвращает один и тот же промис
-     * при последующих вызовах.
-     */
-    public initializeTestCache(): Promise<void> {
-        if (this.initializationPromise) {
-            console.log("[PhaseSwitcherProvider:initializeTestCache] Initialization already started or completed.");
-            return this.initializationPromise;
-        }
-
-        console.log("[PhaseSwitcherProvider:initializeTestCache] Starting initial cache load...");
-        // Создаем и сохраняем промис. IIFE (Immediately Invoked Function Expression)
-        // немедленно запускает асинхронную операцию.
-        this.initializationPromise = (async () => {
-            if (this._isScanning) {
-                // Эта проверка на всякий случай, с новой логикой она не должна срабатывать.
-                console.log("[PhaseSwitcherProvider:initializeTestCache] Scan was already in progress.");
-                return;
-            }
-
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            if (!workspaceFolders || workspaceFolders.length === 0) {
-                console.log("[PhaseSwitcherProvider:initializeTestCache] No workspace folder, skipping cache initialization.");
-                this._testCache = null;
-                this._cacheDirty = false;
-                this._onDidUpdateTestCache.fire(this._testCache);
-                return;
-            }
-
-            const workspaceRootUri = workspaceFolders[0].uri;
-            this._isScanning = true;
-            try {
-                this._testCache = await scanWorkspaceForTests(workspaceRootUri);
-                this._cacheDirty = false;
-                console.log(`[PhaseSwitcherProvider:initializeTestCache] Initial cache loaded with ${this._testCache?.size || 0} scenarios`);
-                this._onDidUpdateTestCache.fire(this._testCache);
-            } catch (scanError: any) {
-                console.error("[PhaseSwitcherProvider:initializeTestCache] Error during initial scan:", scanError);
-                this._testCache = null;
-                this._cacheDirty = true;
-                this._onDidUpdateTestCache.fire(this._testCache);
-            } finally {
-                this._isScanning = false;
-                console.log("[PhaseSwitcherProvider:initializeTestCache] Initial scan finished.");
-            }
-        })();
-
-        return this.initializationPromise;
+    public async initializeTestCache(): Promise<void> {
+        await this.ensureFreshScenarioCatalog();
     }
 
 
@@ -1686,7 +1836,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this._extensionUri = extensionUri;
         this._context = context;
         console.log("[PhaseSwitcherProvider] Initialized.");
-        this._buildOutputChannel = vscode.window.createOutputChannel("KOT Test Assembly");
         this._runningFeatureStepDecorationType = vscode.window.createTextEditorDecorationType({
             isWholeLine: true,
             backgroundColor: new vscode.ThemeColor('editor.wordHighlightStrongBackground'),
@@ -1730,6 +1879,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this._scenarioLastLaunchContexts.clear();
                 this.stopAllFeatureStepTrackers();
                 this.stopAllTrackedRunLogWatchers();
+                this.disposeAllLiveRunLogWatchers();
             }
             if (e.affectsConfiguration('kotTestToolkit.runVanessa.liveLogRefreshSeconds')) {
                 this.rearmLiveFeatureStepTrackerTimers();
@@ -1751,7 +1901,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         }));
 
-        context.subscriptions.push(this.onDidUpdateTestCache(() => {
+        context.subscriptions.push(this.onDidUpdateScenarioCatalog(() => {
             this.sendAffectedMainScenariosToWebview();
         }));
 
@@ -1791,7 +1941,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             if (shouldTrackCache) {
                 const updatedIncrementally = this.upsertScenarioCacheEntryFromDocument(document);
                 if (!updatedIncrementally) {
-                    this.markCacheDirtyAndScheduleRefresh(`save:${path.basename(document.uri.fsPath)}`);
+                    this.invalidateScenarioCatalog();
                 }
             }
 
@@ -1824,28 +1974,46 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }));
 
         context.subscriptions.push(vscode.workspace.onDidCreateFiles(event => {
-            if (event.files.some(uri => this.shouldTrackUriForCache(uri))) {
-                this.markCacheDirtyAndScheduleRefresh('createFiles');
+            if (!event.files.some(uri => this.shouldTrackUriForCache(uri))) {
+                return;
             }
+            void this.upsertScenarioCacheEntriesFromUris(event.files).then(updated => {
+                if (!updated) {
+                    this.invalidateScenarioCatalog();
+                }
+            }).catch(error => {
+                console.error('[PhaseSwitcherProvider] Failed to add scenario cache entries:', error);
+                this.invalidateScenarioCatalog();
+            });
         }));
 
         context.subscriptions.push(vscode.workspace.onDidDeleteFiles(event => {
+            this.removeScenarioCustomInfobasePathsForUris(event.files);
+            void this.removeMainScenarioSelectionStatesForUris(event.files).catch(error => {
+                console.error('[PhaseSwitcherProvider] Failed to remove scenario selection state:', error);
+            });
             if (event.files.some(uri => this.shouldTrackUriForCache(uri))) {
-                this.markCacheDirtyAndScheduleRefresh('deleteFiles');
+                const updated = this.removeScenarioCacheEntriesForUris(event.files);
+                if (!updated) {
+                    this.invalidateScenarioCatalog();
+                }
             }
 
-            const deletedUris = new Set(event.files.map(uri => uri.toString()));
-            if (deletedUris.size > 0 && this._scenarioBuildArtifacts.size > 0) {
+            if (event.files.length > 0) {
                 let changed = false;
-                for (const [scenarioName, artifact] of this._scenarioBuildArtifacts) {
-                    if (deletedUris.has(artifact.sourceUri.toString())) {
-                        this._scenarioBuildArtifacts.delete(scenarioName);
-                        this._staleBuiltScenarioNames.delete(scenarioName);
-                        this._scenarioExecutionStates.delete(scenarioName);
-                        this.clearFailedFeatureStepHighlight(scenarioName);
-                        this.stopFeatureStepTracker(scenarioName);
-                        this.clearTrackedRunLogWatchersForScenario(scenarioName);
-                        changed = true;
+                for (const scenarioKey of this.getKnownScenarioRuntimeKeys()) {
+                    let scenarioUri: vscode.Uri;
+                    try {
+                        scenarioUri = vscode.Uri.parse(scenarioKey);
+                    } catch {
+                        continue;
+                    }
+                    const wasDeleted = event.files.some(uri => this.areUrisEqual(uri, scenarioUri)
+                        || (uri.scheme === 'file'
+                            && scenarioUri.scheme === 'file'
+                            && this.isPathInside(uri.fsPath, scenarioUri.fsPath)));
+                    if (wasDeleted) {
+                        changed = this.disposeScenarioRuntimeKey(scenarioKey) || changed;
                     }
                 }
                 if (changed) {
@@ -1855,43 +2023,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }));
 
         context.subscriptions.push(vscode.workspace.onDidRenameFiles(event => {
-            const affectsCache = event.files.some(({ oldUri, newUri }) =>
-                this.shouldTrackUriForCache(oldUri) || this.shouldTrackUriForCache(newUri)
-            );
-            if (affectsCache) {
-                this.markCacheDirtyAndScheduleRefresh('renameFiles');
-            }
-
-            if (this._activeScenarioUriForHighlight) {
-                let remappedUri: vscode.Uri | null = this._activeScenarioUriForHighlight;
-                let changed = false;
-                for (const { oldUri, newUri } of event.files) {
-                    if (!remappedUri) {
-                        break;
-                    }
-
-                    const nextUri = this.remapUriAfterRename(remappedUri, oldUri, newUri);
-                    if (!nextUri || this.areUrisEqual(remappedUri, nextUri)) {
-                        continue;
-                    }
-
-                    remappedUri = nextUri;
-                    changed = true;
-                }
-
-                if (changed) {
-                    this._activeScenarioUriForHighlight = remappedUri && this.shouldUseUriForAffectedScenarioHighlight(remappedUri)
-                        ? remappedUri
-                        : null;
-                    this.sendAffectedMainScenariosToWebview(true);
-                }
-            }
+            void this.handleScenarioFilesRenamed(event.files);
         }));
 
         context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => {
-            this._testCache = null;
-            this._cacheDirty = true;
-            this.initializationPromise = null;
+            this.invalidateScenarioCatalog(true);
             this._startupArtifactsRestoreAttempted = false;
             this._scenarioBuildArtifacts.clear();
             this._staleBuiltScenarioNames.clear();
@@ -1899,17 +2035,23 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._scenarioLastLaunchContexts.clear();
             this.stopAllFeatureStepTrackers();
             this.stopAllTrackedRunLogWatchers();
+            this.disposeAllLiveRunLogWatchers();
             this._activeScenarioUriForHighlight = null;
             this._lastHighlightedMainScenarioNames.clear();
             this.resetVanessaRuntimeLogMonitorState({ clearAutoDetectedRuns: true });
-            this.markCacheDirtyAndScheduleRefresh('workspaceFoldersChanged', true);
             this.sendRunArtifactsStateToWebview();
             this.handleActiveEditorChanged(vscode.window.activeTextEditor);
+            if (this._view?.visible) {
+                void this._sendInitialState(this._view.webview);
+            }
         }));
 
         const gitHeadWatcher = vscode.workspace.createFileSystemWatcher('**/.git/HEAD');
         const onGitBranchChanged = (): void => {
-            this.markCacheDirtyAndScheduleRefresh('gitBranchChanged');
+            this.invalidateScenarioCatalog();
+            if (this._view?.visible) {
+                void this._sendInitialState(this._view.webview);
+            }
             if (this._aiReportStateRefreshTimer) {
                 clearTimeout(this._aiReportStateRefreshTimer);
             }
@@ -1927,14 +2069,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         context.subscriptions.push({
             dispose: () => {
-                if (this._cacheRefreshTimer) {
-                    clearTimeout(this._cacheRefreshTimer);
-                    this._cacheRefreshTimer = null;
-                }
                 if (this._aiReportStateRefreshTimer) {
                     clearTimeout(this._aiReportStateRefreshTimer);
                     this._aiReportStateRefreshTimer = null;
                 }
+                this._vanessaRuntimeLogMonitorEnabled = false;
                 this.stopVanessaRuntimeLogMonitor();
                 this.stopAllFeatureStepTrackers();
                 this.stopAllTrackedRunLogWatchers();
@@ -1945,8 +2084,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this._runOutputChannel = undefined;
             }
         });
-
-        this.startVanessaRuntimeLogMonitor();
     }
 
     private async loadLocalizationBundleIfNeeded(): Promise<void> {
@@ -2088,390 +2225,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.outputInfo(outputChannel, this.t('Run log for "{0}": {1}', scenarioName, absoluteLogPath));
     }
 
-    private normalizeLeadingTabsForYaml(line: string): string {
-        return line.replace(/^\t+/, tabs => '    '.repeat(tabs.length));
-    }
-
-    private getYamlIndent(line: string): number {
-        const normalized = this.normalizeLeadingTabsForYaml(line);
-        const match = normalized.match(/^(\s*)/);
-        return match ? match[1].length : 0;
-    }
-
-    private isIgnorableYamlLine(line: string): boolean {
-        const trimmed = line.replace(/^\uFEFF/, '').trim();
-        return trimmed.length === 0 || trimmed.startsWith('#');
-    }
-
-    private isYamlKeyLine(trimmedNoBom: string): boolean {
-        return /^[^:#][^:]*:\s*(.*)$/.test(trimmedNoBom);
-    }
-
-    private findYamlSectionEnd(
-        lines: string[],
-        startIndex: number,
-        startIndent: number,
-        maxExclusive: number = lines.length
-    ): number {
-        for (let index = startIndex + 1; index < maxExclusive; index++) {
-            const line = lines[index];
-            if (this.isIgnorableYamlLine(line)) {
-                continue;
-            }
-
-            const indent = this.getYamlIndent(line);
-            const trimmedNoBom = line.replace(/^\uFEFF/, '').trim();
-            if (indent <= startIndent && this.isYamlKeyLine(trimmedNoBom)) {
-                return index;
-            }
-        }
-        return maxExclusive;
-    }
-
-    private escapeYamlDoubleQuotedScalar(value: string): string {
-        return value
-            .replace(/\\/g, '\\\\')
-            .replace(/"/g, '\\"');
-    }
-
-    private updateScenarioGroupInMetadataContent(
-        content: string,
-        groupName: string
-    ): { changed: boolean; content: string } {
-        const lineEnding = content.includes('\r\n') ? '\r\n' : '\n';
-        const lines = content.split(/\r\n|\r|\n/);
-        const escapedGroupName = this.escapeYamlDoubleQuotedScalar(groupName);
-        let changed = false;
-
-        let kotStart = -1;
-        for (let index = 0; index < lines.length; index++) {
-            const line = lines[index];
-            const trimmedNoBom = line.replace(/^\uFEFF/, '').trim();
-            if (this.getYamlIndent(line) === 0 && trimmedNoBom === 'KOTМетаданные:') {
-                kotStart = index;
-                break;
-            }
-        }
-        if (kotStart === -1) {
-            return { changed: false, content };
-        }
-
-        const kotIndent = this.getYamlIndent(lines[kotStart]);
-        let kotEnd = this.findYamlSectionEnd(lines, kotStart, kotIndent);
-        const phaseIndentText = ' '.repeat(kotIndent + 4);
-        const keyIndentText = ' '.repeat(kotIndent + 8);
-
-        let phaseStart = -1;
-        for (let index = kotStart + 1; index < kotEnd; index++) {
-            const line = lines[index];
-            if (this.isIgnorableYamlLine(line)) {
-                continue;
-            }
-
-            const trimmedNoBom = line.replace(/^\uFEFF/, '').trim();
-            if (trimmedNoBom === 'PhaseSwitcher:' && this.getYamlIndent(line) > kotIndent) {
-                phaseStart = index;
-                break;
-            }
-        }
-
-        if (phaseStart === -1) {
-            lines.splice(kotEnd, 0, `${phaseIndentText}PhaseSwitcher:`, `${keyIndentText}Tab: "${escapedGroupName}"`);
-            changed = true;
-            kotEnd = this.findYamlSectionEnd(lines, kotStart, kotIndent);
-            phaseStart = kotEnd - 2;
-        }
-
-        const phaseIndent = this.getYamlIndent(lines[phaseStart]);
-        const phaseEnd = this.findYamlSectionEnd(lines, phaseStart, phaseIndent, kotEnd);
-        let tabLineIndex = -1;
-        for (let index = phaseStart + 1; index < phaseEnd; index++) {
-            const line = lines[index];
-            if (this.isIgnorableYamlLine(line) || this.getYamlIndent(line) <= phaseIndent) {
-                continue;
-            }
-            if (/^Tab:\s*(.*)$/.test(line.replace(/^\uFEFF/, '').trim())) {
-                tabLineIndex = index;
-                break;
-            }
-        }
-
-        if (tabLineIndex === -1) {
-            lines.splice(phaseStart + 1, 0, `${' '.repeat(phaseIndent + 4)}Tab: "${escapedGroupName}"`);
-            changed = true;
-        } else {
-            const tabIndent = ' '.repeat(this.getYamlIndent(lines[tabLineIndex]));
-            const nextLine = `${tabIndent}Tab: "${escapedGroupName}"`;
-            if (lines[tabLineIndex] !== nextLine) {
-                lines[tabLineIndex] = nextLine;
-                changed = true;
-            }
-        }
-
-        return {
-            changed,
-            content: changed ? lines.join(lineEnding) : content
-        };
-    }
-
-    private updateScenarioDisplayNameInScenarioContent(
-        content: string,
-        scenarioName: string,
-        scenarioCode?: string
-    ): { changed: boolean; content: string } {
-        const lineEnding = content.includes('\r\n') ? '\r\n' : '\n';
-        const lines = content.split(/\r\n|\r|\n/);
-        const escapedScenarioName = this.escapeYamlDoubleQuotedScalar(scenarioName);
-        const escapedScenarioCode = typeof scenarioCode === 'string'
-            ? this.escapeYamlDoubleQuotedScalar(scenarioCode)
-            : undefined;
-        let changed = false;
-
-        let scenarioDataStart = -1;
-        for (let index = 0; index < lines.length; index++) {
-            const line = lines[index];
-            if (this.getYamlIndent(line) === 0 && line.replace(/^\uFEFF/, '').trim() === 'ДанныеСценария:') {
-                scenarioDataStart = index;
-                break;
-            }
-        }
-        if (scenarioDataStart === -1) {
-            return { changed: false, content };
-        }
-
-        const sectionIndent = this.getYamlIndent(lines[scenarioDataStart]);
-        const sectionEnd = this.findYamlSectionEnd(lines, scenarioDataStart, sectionIndent);
-        for (let index = scenarioDataStart + 1; index < sectionEnd; index++) {
-            const line = lines[index];
-            if (this.isIgnorableYamlLine(line)) {
-                continue;
-            }
-            if (this.getYamlIndent(line) <= sectionIndent) {
-                continue;
-            }
-            const nameMatch = line.match(/^(\s*Имя:\s*).*/);
-            if (nameMatch) {
-                const replacement = `${nameMatch[1]}"${escapedScenarioName}"`;
-                if (line !== replacement) {
-                    lines[index] = replacement;
-                    changed = true;
-                }
-                continue;
-            }
-
-            if (escapedScenarioCode !== undefined) {
-                const codeMatch = line.match(/^(\s*Код:\s*).*/);
-                if (codeMatch) {
-                    const replacement = `${codeMatch[1]}"${escapedScenarioCode}"`;
-                    if (line !== replacement) {
-                        lines[index] = replacement;
-                        changed = true;
-                    }
-                }
-            }
-        }
-
-        return {
-            changed,
-            content: changed ? lines.join(lineEnding) : content
-        };
-    }
-
-    private updateScenarioDisplayNameInTestConfigContent(
-        content: string,
-        scenarioName: string,
-        scenarioCode?: string
-    ): { changed: boolean; content: string } {
-        const lineEnding = content.includes('\r\n') ? '\r\n' : '\n';
-        const lines = content.split(/\r\n|\r|\n/);
-        const escapedScenarioName = this.escapeYamlDoubleQuotedScalar(scenarioName);
-        const escapedScenarioCode = typeof scenarioCode === 'string'
-            ? this.escapeYamlDoubleQuotedScalar(scenarioCode)
-            : undefined;
-        let changed = false;
-
-        for (let index = 0; index < lines.length; index++) {
-            const line = lines[index];
-            const match = line.match(/^(\s*)(Имя|СценарийНаименование|Код):\s*(.*)$/);
-            if (!match) {
-                continue;
-            }
-
-            const key = match[2];
-            if (key === 'Код' && escapedScenarioCode === undefined) {
-                continue;
-            }
-            const replacementValue = key === 'Код' && escapedScenarioCode !== undefined
-                ? escapedScenarioCode
-                : escapedScenarioName;
-            const replacement = `${match[1]}${key}: "${replacementValue}"`;
-            if (line !== replacement) {
-                lines[index] = replacement;
-                changed = true;
-            }
-        }
-
-        return {
-            changed,
-            content: changed ? lines.join(lineEnding) : content
-        };
-    }
-
-    private updateNestedScenarioNameReferencesInScenarioContent(
-        content: string,
-        oldScenarioName: string,
-        newScenarioName: string
-    ): {
-        changed: boolean;
-        content: string;
-        updatedCallCount: number;
-        updatedNestedSectionCount: number;
-    } {
-        const previousName = oldScenarioName.trim();
-        const nextName = newScenarioName.trim();
-        if (!previousName || !nextName || previousName === nextName) {
-            return {
-                changed: false,
-                content,
-                updatedCallCount: 0,
-                updatedNestedSectionCount: 0
-            };
-        }
-
-        const lineEnding = content.includes('\r\n') ? '\r\n' : '\n';
-        const lines = content.split(/\r\n|\r|\n/);
-        let changed = false;
-        let updatedCallCount = 0;
-        let updatedNestedSectionCount = 0;
-
-        let textSectionStart = -1;
-        let nestedSectionStart = -1;
-        const textSectionHeaderRegex = /^ТекстСценария:\s*(\|[-+]?)?\s*$/;
-        const nestedSectionHeaderRegex = /^ВложенныеСценарии:\s*$/;
-        for (let index = 0; index < lines.length; index++) {
-            const line = lines[index];
-            const trimmedNoBom = line.replace(/^\uFEFF/, '').trim();
-            if (this.getYamlIndent(line) !== 0) {
-                continue;
-            }
-            if (textSectionStart === -1 && textSectionHeaderRegex.test(trimmedNoBom)) {
-                textSectionStart = index;
-                continue;
-            }
-            if (nestedSectionStart === -1 && nestedSectionHeaderRegex.test(trimmedNoBom)) {
-                nestedSectionStart = index;
-            }
-            if (textSectionStart !== -1 && nestedSectionStart !== -1) {
-                break;
-            }
-        }
-
-        if (textSectionStart !== -1) {
-            const textIndent = this.getYamlIndent(lines[textSectionStart]);
-            const textEnd = this.findYamlSectionEnd(lines, textSectionStart, textIndent);
-            const callLineRegex = /^(\s*)(And|Then|When|Given|But|Но|Тогда|Когда|Если|И|К тому же|Допустим|Дано)(\s+)(.*)$/i;
-
-            for (let index = textSectionStart + 1; index < textEnd; index++) {
-                const line = lines[index];
-                if (this.isIgnorableYamlLine(line)) {
-                    continue;
-                }
-                if (this.getYamlIndent(line) <= textIndent) {
-                    continue;
-                }
-
-                const match = line.match(callLineRegex);
-                if (!match) {
-                    continue;
-                }
-
-                const body = match[4] || '';
-                const bodyMatch = body.match(/^(.*?)(\s+#.*)?$/);
-                const rawMainPart = bodyMatch?.[1] ?? body;
-                const commentPart = bodyMatch?.[2] ?? '';
-                if (rawMainPart.trim() !== previousName) {
-                    continue;
-                }
-
-                const leadingWhitespace = rawMainPart.match(/^\s*/)?.[0] ?? '';
-                const trailingWhitespace = rawMainPart.match(/\s*$/)?.[0] ?? '';
-                const nextBody = `${leadingWhitespace}${nextName}${trailingWhitespace}${commentPart}`;
-                const replacement = `${match[1]}${match[2]}${match[3]}${nextBody}`;
-                if (replacement !== line) {
-                    lines[index] = replacement;
-                    changed = true;
-                    updatedCallCount++;
-                }
-            }
-        }
-
-        if (nestedSectionStart !== -1) {
-            const nestedIndent = this.getYamlIndent(lines[nestedSectionStart]);
-            const nestedEnd = this.findYamlSectionEnd(lines, nestedSectionStart, nestedIndent);
-            const escapedNewName = this.escapeYamlDoubleQuotedScalar(nextName);
-            const escapedNewNameSingleQuoted = nextName.replace(/'/g, "''");
-
-            for (let index = nestedSectionStart + 1; index < nestedEnd; index++) {
-                const line = lines[index];
-                if (this.isIgnorableYamlLine(line)) {
-                    continue;
-                }
-                if (this.getYamlIndent(line) <= nestedIndent) {
-                    continue;
-                }
-
-                const doubleQuotedMatch = line.match(/^(\s*ИмяСценария:\s*)"([^"]*)"\s*$/);
-                if (doubleQuotedMatch) {
-                    if ((doubleQuotedMatch[2] || '').trim() !== previousName) {
-                        continue;
-                    }
-                    const replacement = `${doubleQuotedMatch[1]}"${escapedNewName}"`;
-                    if (replacement !== line) {
-                        lines[index] = replacement;
-                        changed = true;
-                        updatedNestedSectionCount++;
-                    }
-                    continue;
-                }
-
-                const singleQuotedMatch = line.match(/^(\s*ИмяСценария:\s*)'([^']*)'\s*$/);
-                if (singleQuotedMatch) {
-                    if ((singleQuotedMatch[2] || '').trim() !== previousName) {
-                        continue;
-                    }
-                    const replacement = `${singleQuotedMatch[1]}'${escapedNewNameSingleQuoted}'`;
-                    if (replacement !== line) {
-                        lines[index] = replacement;
-                        changed = true;
-                        updatedNestedSectionCount++;
-                    }
-                    continue;
-                }
-
-                const plainMatch = line.match(/^(\s*ИмяСценария:\s*)([^#\n]+?)\s*$/);
-                if (!plainMatch) {
-                    continue;
-                }
-                if ((plainMatch[2] || '').trim() !== previousName) {
-                    continue;
-                }
-                const replacement = `${plainMatch[1]}"${escapedNewName}"`;
-                if (replacement !== line) {
-                    lines[index] = replacement;
-                    changed = true;
-                    updatedNestedSectionCount++;
-                }
-            }
-        }
-
-        return {
-            changed,
-            content: changed ? lines.join(lineEnding) : content,
-            updatedCallCount,
-            updatedNestedSectionCount
-        };
-    }
-
     private getLiveRunLogRefreshIntervalMs(): number {
         const seconds = vscode.workspace
             .getConfiguration('kotTestToolkit')
@@ -2497,34 +2250,40 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private rearmLiveFeatureStepTrackerTimers(): void {
         const intervalMs = this.getLiveRunLogRefreshIntervalMs();
-        for (const [scenarioName, tracker] of this._liveFeatureStepTrackers.entries()) {
+        for (const tracker of this._liveFeatureStepTrackers.values()) {
             clearInterval(tracker.timer);
-            tracker.timer = setInterval(() => this.pollFeatureStepTracker(scenarioName), intervalMs);
+            tracker.timer = setInterval(() => void this.pollFeatureStepTracker(tracker.scenarioKey), intervalMs);
         }
     }
 
     private rearmLiveRunLogWatcherTimers(): void {
         const intervalMs = this.getLiveRunLogRefreshIntervalMs();
-        for (const [scenarioName, watcher] of this._liveRunLogWatchers.entries()) {
+        for (const watcher of this._liveRunLogWatchers.values()) {
             clearInterval(watcher.timer);
-            watcher.timer = setInterval(() => this.pollLiveRunLogWatcher(scenarioName), intervalMs);
+            watcher.timer = setInterval(() => void this.pollLiveRunLogWatcher(watcher.scenarioKey), intervalMs);
         }
     }
 
     private rearmTrackedRunWatcherTimers(): void {
         const intervalMs = this.getLiveRunLogRefreshIntervalMs();
-        for (const [scenarioName, runsMap] of this._externalTrackedRunsByScenario.entries()) {
+        for (const runsMap of this._externalTrackedRunsByScenario.values()) {
             for (const [runLogKey, tracker] of runsMap.entries()) {
                 if (!tracker.timer) {
                     continue;
                 }
                 clearInterval(tracker.timer);
-                tracker.timer = setInterval(() => this.pollTrackedRunLogWatcher(scenarioName, runLogKey), intervalMs);
+                tracker.timer = setInterval(
+                    () => void this.pollTrackedRunLogWatcher(tracker.scenarioKey, runLogKey),
+                    intervalMs
+                );
             }
         }
     }
 
     private startVanessaRuntimeLogMonitor(): void {
+        if (!this._vanessaRuntimeLogMonitorEnabled) {
+            return;
+        }
         if (this._vanessaRuntimeLogMonitorTimer) {
             return;
         }
@@ -2578,7 +2337,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private clearAutoDetectedTrackedRuns(): void {
         let changed = false;
 
-        for (const [scenarioName, trackedRuns] of this._externalTrackedRunsByScenario.entries()) {
+        for (const [scenarioKey, trackedRuns] of this._externalTrackedRunsByScenario.entries()) {
             const runKeysToRemove = Array.from(trackedRuns.entries())
                 .filter(([, tracker]) => tracker.origin === 'autoDetected')
                 .map(([runKey]) => runKey);
@@ -2595,12 +2354,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 changed = true;
             }
 
-            const activeRunKey = this._activeTrackedRunKeyByScenario.get(scenarioName);
+            const activeRunKey = this._activeTrackedRunKeyByScenario.get(scenarioKey);
             if (activeRunKey && !trackedRuns.has(activeRunKey)) {
-                this._activeTrackedRunKeyByScenario.delete(scenarioName);
+                this._activeTrackedRunKeyByScenario.delete(scenarioKey);
             }
             if (trackedRuns.size === 0) {
-                this._externalTrackedRunsByScenario.delete(scenarioName);
+                this._externalTrackedRunsByScenario.delete(scenarioKey);
             }
         }
 
@@ -2612,14 +2371,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private findTrackedRunByRunLogKey(
         runLogKey: string
     ): {
-        scenarioName: string;
+        scenarioKey: ScenarioRuntimeKey;
         tracker: ExternalTrackedRunState;
     } | null {
-        for (const [scenarioName, trackedRuns] of this._externalTrackedRunsByScenario.entries()) {
+        for (const [scenarioKey, trackedRuns] of this._externalTrackedRunsByScenario.entries()) {
             const tracker = trackedRuns.get(runLogKey);
             if (tracker) {
                 return {
-                    scenarioName,
+                    scenarioKey,
                     tracker
                 };
             }
@@ -2637,34 +2396,34 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return false;
         }
 
-        const { scenarioName, tracker } = located;
-        const trackedRuns = this.getTrackedRunsMapForScenario(scenarioName);
+        const { scenarioKey, tracker } = located;
+        const trackedRuns = this.getTrackedRunsMapForScenario(scenarioKey);
         if (!trackedRuns || !trackedRuns.has(runLogKey)) {
             return false;
         }
 
-        const wasActive = this._activeTrackedRunKeyByScenario.get(scenarioName) === runLogKey;
+        const wasActive = this._activeTrackedRunKeyByScenario.get(scenarioKey) === runLogKey;
         this.stopTrackedRunTimer(tracker);
         trackedRuns.delete(runLogKey);
 
         if (trackedRuns.size === 0) {
-            this._externalTrackedRunsByScenario.delete(scenarioName);
+            this._externalTrackedRunsByScenario.delete(scenarioKey);
         }
 
         if (wasActive) {
-            this.setActiveTrackedRunForScenario(scenarioName, undefined, {
+            this.setActiveTrackedRunForScenario(scenarioKey, undefined, {
                 refreshHighlights: true,
                 notifyWebview: false
             });
         } else {
-            this.refreshScenarioHighlightsBySelectedRunSource(scenarioName);
+            this.refreshScenarioHighlightsBySelectedRunSource(scenarioKey);
         }
 
         this.outputAdvanced(
             this.getRunOutputChannel(),
             reason === 'missing'
-                ? this.t('Auto-detected Vanessa run tracking stopped for "{0}" because the run log disappeared.', scenarioName)
-                : this.t('Auto-detected Vanessa run tracking stopped for "{0}" after inactivity timeout.', scenarioName)
+                ? this.t('Auto-detected Vanessa run tracking stopped for "{0}" because the run log disappeared.', tracker.scenarioName)
+                : this.t('Auto-detected Vanessa run tracking stopped for "{0}" after inactivity timeout.', tracker.scenarioName)
         );
         this.sendRunArtifactsStateToWebview();
         return true;
@@ -2677,24 +2436,22 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const exactNamesByLowercase = new Map<string, string>();
         const normalizedNames = new Map<string, string[]>();
 
-        if (!this._testCache || this._testCache.size === 0) {
+        const catalog = this.getScenarioCatalog();
+        if (!catalog) {
             return {
                 exactNamesByLowercase,
                 normalizedNames
             };
         }
 
-        for (const scenarioName of this._testCache.keys()) {
-            const scenarioInfo = this._testCache.get(scenarioName);
-            if (!this.isMainScenario(scenarioInfo)) {
-                continue;
-            }
+        const eligibleNames = [...catalog.byName.entries()]
+            .filter(([, definitions]) => definitions.length === 1 && this.isMainScenario(definitions[0]))
+            .map(([scenarioName]) => scenarioName);
+        for (const [lower, scenarioName] of buildUniqueCaseInsensitiveNameLookup(eligibleNames)) {
+            exactNamesByLowercase.set(lower, scenarioName);
+        }
 
-            const lower = scenarioName.toLowerCase();
-            if (!exactNamesByLowercase.has(lower)) {
-                exactNamesByLowercase.set(lower, scenarioName);
-            }
-
+        for (const scenarioName of eligibleNames) {
             const normalized = this.normalizeScenarioLookupKey(scenarioName);
             if (!normalized) {
                 continue;
@@ -2713,19 +2470,23 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private resolveScenarioForAutoDetectedVanessaLog(
         runLogPath: string
     ): {
+        scenarioKey: ScenarioRuntimeKey;
         scenarioName: string;
         initialFeaturePath?: string;
         expectedScenarioName?: string;
     } | null {
-        if (!this._testCache || this._testCache.size === 0) {
+        const catalog = this.getScenarioCatalog();
+        if (!catalog) {
             return null;
         }
 
         const parsed = this.parseTrackingSessionFromLogFile(runLogPath);
         if (parsed?.session.expectedScenarioName) {
-            const scenarioInfo = this._testCache.get(parsed.session.expectedScenarioName);
+            const scenarioKey = resolveUniqueRuntimeKeyByName(catalog, parsed.session.expectedScenarioName);
+            const scenarioInfo = scenarioKey ? catalog.byUri.get(scenarioKey) : undefined;
             if (this.isMainScenario(scenarioInfo)) {
                 return {
+                    scenarioKey: scenarioKey!,
                     scenarioName: parsed.session.expectedScenarioName,
                     initialFeaturePath: parsed.session.featurePath,
                     expectedScenarioName: parsed.session.expectedScenarioName
@@ -2751,14 +2512,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 continue;
             }
 
-            const scenarioInfo = this._testCache.get(resolvedScenarioName);
+            const scenarioKey = resolveUniqueRuntimeKeyByName(catalog, resolvedScenarioName);
+            const scenarioInfo = scenarioKey ? catalog.byUri.get(scenarioKey) : undefined;
             if (!this.isMainScenario(scenarioInfo)) {
                 continue;
             }
 
             return {
+                scenarioKey: scenarioKey!,
                 scenarioName: resolvedScenarioName,
-                initialFeaturePath: featurePathFromLog || this._scenarioBuildArtifacts.get(resolvedScenarioName)?.featurePath,
+                initialFeaturePath: featurePathFromLog || this.getScenarioBuildArtifact(resolvedScenarioName, scenarioKey!)?.featurePath,
                 expectedScenarioName: resolvedScenarioName
             };
         }
@@ -2766,13 +2529,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return null;
     }
 
-    private shouldAutoActivateTrackedRun(scenarioName: string, runLogKey: string): boolean {
-        const internalState = this._scenarioExecutionStates.get(scenarioName);
+    private shouldAutoActivateTrackedRun(scenarioKey: ScenarioRuntimeKey, runLogKey: string): boolean {
+        const internalState = this._scenarioExecutionStates.get(scenarioKey);
         if (internalState?.status === 'running') {
             return false;
         }
 
-        const activeTrackedRun = this.getActiveTrackedRunForScenario(scenarioName);
+        const activeTrackedRun = this.getActiveTrackedRunForScenario(scenarioKey);
         if (!activeTrackedRun) {
             return true;
         }
@@ -2913,13 +2676,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
 
                 this.startTrackedRunLogWatcher(
+                    resolvedScenario.scenarioKey,
                     resolvedScenario.scenarioName,
                     runLogPath,
                     {
                         initialFeaturePath: resolvedScenario.initialFeaturePath,
                         expectedScenarioName: resolvedScenario.expectedScenarioName,
                         origin: 'autoDetected',
-                        activate: this.shouldAutoActivateTrackedRun(resolvedScenario.scenarioName, runLogKey),
+                        activate: this.shouldAutoActivateTrackedRun(resolvedScenario.scenarioKey, runLogKey),
                         restartForFreshRun: true
                     }
                 );
@@ -2938,297 +2702,37 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private extractFeaturePathFromRunLogLine(line: string): string | undefined {
-        const match = line.match(/^\s*(?:Фича|Feature|ПолныйПутьКФиче|FullPathToFeature)\s*:\s*(.+?)\s*$/i);
-        if (!match || !match[1]) {
-            return undefined;
-        }
-
-        const featurePath = this.stripWrappingQuotes(match[1]);
-        return featurePath.length > 0 ? featurePath : undefined;
-    }
-
-    private extractFeatureLineNumberFromRunLogLine(line: string): number | undefined {
-        const match = line.match(/\((\d+)\)\s*\.?\s*(?:Шаг|Step)\s*:/i)
-            || line.match(/^\s*(?:НомерСтрокиФичи|FeatureLineNumber)\s*:\s*(\d+)\s*$/i)
-            // Some external logs emit step line index without "Step:" marker.
-            || line.match(/\((\d+)\)\s*(?:Given|When|Then|And|But|Но|Тогда|Когда|Если|И|К\s+тому\s+же|Допустим|Дано|Пусть)\b/i)
-            || line.match(/^\s*(\d+)\s*[\)\.]\s*(?:Шаг|Step)\s*:/i)
-            || line.match(/^\s*(\d+)\s*[\)\.]\s*(?:Given|When|Then|And|But|Но|Тогда|Когда|Если|И|К\s+тому\s+же|Допустим|Дано|Пусть)\b/i);
-        if (!match || !match[1]) {
-            return undefined;
-        }
-
-        const lineNumber = Number(match[1]);
-        if (!Number.isFinite(lineNumber) || lineNumber <= 0) {
-            return undefined;
-        }
-
-        return Math.floor(lineNumber);
-    }
-
-    private extractScenarioNameFromRunLogLine(line: string): string | undefined {
-        const match = line.match(/^\s*(?:Сценарий|Scenario|ИмяСценария|ScenarioName)\s*:\s*(.+?)\s*$/i);
-        if (!match || !match[1]) {
-            return undefined;
-        }
-
-        const scenarioName = this.stripWrappingQuotes(match[1]);
-        return scenarioName.length > 0 ? scenarioName : undefined;
-    }
-
-    private areScenarioNamesEqual(left: string | undefined, right: string | undefined): boolean {
-        if (!left || !right) {
-            return false;
-        }
-        return this.stripWrappingQuotes(left).trim().toLowerCase() === this.stripWrappingQuotes(right).trim().toLowerCase();
-    }
-
-    private isRunLogLineForScenario(
-        normalizedScenarioName: string | undefined,
-        currentScenarioNameFromLog: string | undefined,
-        hasScenarioMarkers: boolean
-    ): boolean {
-        if (!normalizedScenarioName) {
-            return true;
-        }
-        if (currentScenarioNameFromLog) {
-            return this.areScenarioNamesEqual(currentScenarioNameFromLog, normalizedScenarioName);
-        }
-        return !hasScenarioMarkers;
-    }
-
-    private isFailedStepLogLine(line: string): boolean {
-        const trimmed = line.trim();
-        if (!trimmed) {
-            return false;
-        }
-        if (/^Failed:\s*/i.test(trimmed)) {
-            return true;
-        }
-        return /^(?:Шаг|Step)\s*\(.+?\)\s*(?:не\s+выполнен|failed|is\s+not\s+executed|was\s+not\s+executed)/i.test(trimmed);
-    }
-
-    private extractFailedSummaryFromLogLine(
-        line: string
-    ): { failedCount?: number; summaryLine: string } | null {
-        const trimmed = line.trim();
-        if (!/^Failed:\s*/i.test(trimmed)) {
-            return null;
-        }
-
-        const valuePart = trimmed.replace(/^Failed:\s*/i, '').trim();
-        const countMatch = valuePart.match(/-?\d+/);
-        if (!countMatch) {
-            return { summaryLine: trimmed };
-        }
-
-        const count = Number(countMatch[0]);
-        if (!Number.isFinite(count)) {
-            return { summaryLine: trimmed };
-        }
-
-        return {
-            failedCount: Math.floor(count),
-            summaryLine: trimmed
-        };
-    }
-
-    private collectFailedStepLogBlock(lines: string[], startIndex: number): string[] {
-        const block: string[] = [];
-        const maxLines = 400;
-
-        for (let index = startIndex; index < lines.length && block.length < maxLines; index++) {
-            const rawLine = lines[index];
-            const line = rawLine.replace(/\t/g, '    ').trimEnd();
-            const trimmed = line.trim();
-
-            if (index > startIndex) {
-                const isNewStepEntry = /^\s*\d{1,2}\/\d{1,2}\/\d{4}.*\(\d+\)\s*\.?\s*(?:Шаг|Step)\s*:/i.test(trimmed);
-                const isFeatureHeader = /^\s*(?:Фича|Feature)\s*:/i.test(trimmed);
-                const isScenarioHeader = /^\s*(?:Сценарий|Scenario)\s*:/i.test(trimmed);
-                if (isNewStepEntry || isFeatureHeader || isScenarioHeader) {
-                    break;
-                }
-            }
-
-            block.push(line);
-            if (/^\s*ErrorFileJson\s*:/i.test(trimmed)) {
-                break;
-            }
-        }
-
-        while (block.length > 0 && block[block.length - 1].trim().length === 0) {
-            block.pop();
-        }
-        return block;
-    }
-
-    private formatFailedStepSummaryFromLogBlock(block: string[]): string | undefined {
-        if (!block.length) {
-            return undefined;
-        }
-        const failedLine = block.find(line => /^Failed:\s*/i.test(line.trim()))?.trim();
-        if (failedLine) {
-            return failedLine;
-        }
-
-        const failedStepLine = block.find(line => /^(?:Шаг|Step)\s*\(.+?\)\s*(?:не\s+выполнен|failed|is\s+not\s+executed|was\s+not\s+executed)/i.test(line.trim()))?.trim();
-        if (failedStepLine) {
-            return failedStepLine;
-        }
-
-        const firstNonEmptyLine = block.find(line => line.trim().length > 0)?.trim();
-        return firstNonEmptyLine;
-    }
-
-    private formatFailedStepDetailsFromLogBlock(block: string[]): string | undefined {
-        if (!block.length) {
-            return undefined;
-        }
-
-        const stepLogLineRegex = /^\s*\d{1,2}\/\d{1,2}\/\d{4}.*\(\d+\)\s*\.?\s*(?:Шаг|Step)\s*:/i;
-        const failedStepLineRegex = /^(?:Шаг|Step)\s*\(.+?\)\s*(?:не\s+выполнен|failed|is\s+not\s+executed|was\s+not\s+executed)/i;
-        const failedLineRegex = /^Failed:\s*/i;
-
-        const filtered: string[] = [];
-        let previousNonEmptyTrimmed: string | undefined;
-
-        for (const line of block) {
-            const trimmed = line.trim();
-            if (stepLogLineRegex.test(trimmed)) {
-                continue;
-            }
-            if (failedStepLineRegex.test(trimmed)) {
-                continue;
-            }
-            if (failedLineRegex.test(trimmed)) {
-                continue;
-            }
-
-            if (!trimmed) {
-                if (filtered.length > 0 && filtered[filtered.length - 1].trim().length > 0) {
-                    filtered.push('');
-                }
-                continue;
-            }
-
-            if (trimmed === previousNonEmptyTrimmed) {
-                continue;
-            }
-
-            filtered.push(line);
-            previousNonEmptyTrimmed = trimmed;
-        }
-
-        while (filtered.length > 0 && filtered[0].trim().length === 0) {
-            filtered.shift();
-        }
-        while (filtered.length > 0 && filtered[filtered.length - 1].trim().length === 0) {
-            filtered.pop();
-        }
-
-        const details = filtered.join('\n').trim();
-        return details.length > 0 ? details : undefined;
-    }
-
-    private formatFailedStepDescriptionFromLogBlock(block: string[]): string | undefined {
-        if (!block.length) {
-            return undefined;
-        }
-
-        const failedStepLineRegex = /^(?:Шаг|Step)\s*\((.+?)\)\s*(?:не\s+выполнен|failed|is\s+not\s+executed|was\s+not\s+executed)/i;
-        const stepLogLineRegex = /^\s*\d{1,2}\/\d{1,2}\/\d{4}.*\(\d+\)\s*\.?\s*(?:Шаг|Step)\s*:\s*(.+)$/i;
-
-        for (const line of block) {
-            const trimmed = line.trim();
-            const failedStepMatch = trimmed.match(failedStepLineRegex);
-            if (failedStepMatch?.[1]) {
-                const description = failedStepMatch[1].trim();
-                if (description.length > 0) {
-                    return description;
-                }
-            }
-        }
-
-        for (const line of block) {
-            const trimmed = line.trim();
-            const stepLogMatch = trimmed.match(stepLogLineRegex);
-            if (stepLogMatch?.[1]) {
-                const description = stepLogMatch[1].trim();
-                if (description.length > 0) {
-                    return description;
-                }
-            }
-        }
-
-        return undefined;
-    }
-
-    private extractFailedStepDetailsFromRunLog(
+    private readFailedStepDetailsFromRunLog(
         runLogPath: string,
         scenarioName?: string,
         startOffset?: number
     ): { failureSummary?: string; failureDetails?: string; failureStepDescription?: string } | null {
-        if (!runLogPath || !fs.existsSync(runLogPath)) {
+        if (!runLogPath) {
             return null;
         }
 
         let content = '';
         try {
-            const fileBuffer = fs.readFileSync(runLogPath);
-            const normalizedStartOffset = Number.isFinite(startOffset)
-                ? Math.max(0, Math.floor(startOffset as number))
-                : 0;
-            const safeStartOffset = normalizedStartOffset >= fileBuffer.byteLength
-                ? 0
-                : normalizedStartOffset;
-            content = fileBuffer.subarray(safeStartOffset).toString('utf8');
+            const tail = readFileTailSync(runLogPath, startOffset ?? 0);
+            if (!tail) {
+                return null;
+            }
+            content = tail.content.toString('utf8');
         } catch {
             return null;
         }
 
-        const lines = content.split(/\r\n|\r|\n/);
-        const normalizedScenarioName = scenarioName?.trim();
-        let currentScenarioNameFromLog: string | undefined;
-        let hasScenarioMarkers = false;
-        let latestFailureBlock: string[] = [];
-
-        for (let index = 0; index < lines.length; index++) {
-            const line = lines[index];
-            const scenarioNameFromLine = this.extractScenarioNameFromRunLogLine(line);
-            if (scenarioNameFromLine) {
-                hasScenarioMarkers = true;
-                currentScenarioNameFromLog = scenarioNameFromLine;
-            }
-
-            if (!this.isRunLogLineForScenario(normalizedScenarioName, currentScenarioNameFromLog, hasScenarioMarkers)) {
-                continue;
-            }
-
-            if (this.isFailedStepLogLine(line)) {
-                latestFailureBlock = this.collectFailedStepLogBlock(lines, index);
-            }
-        }
-
-        if (!latestFailureBlock.length) {
-            return null;
-        }
-
-        return {
-            failureSummary: this.formatFailedStepSummaryFromLogBlock(latestFailureBlock),
-            failureDetails: this.formatFailedStepDetailsFromLogBlock(latestFailureBlock),
-            failureStepDescription: this.formatFailedStepDescriptionFromLogBlock(latestFailureBlock)
-        };
+        return extractFailedStepDetails(content, { scenarioName });
     }
 
-    private clearFailedFeatureStepHighlight(scenarioName: string): void {
-        if (this._failedFeatureStepHighlights.delete(scenarioName)) {
+    private clearFailedFeatureStepHighlight(scenarioKey: ScenarioRuntimeKey): void {
+        if (this._failedFeatureStepHighlights.delete(scenarioKey)) {
             this.applyRunningFeatureStepDecorations();
         }
     }
 
     private setFailedFeatureStepHighlight(
+        scenarioKey: ScenarioRuntimeKey,
         scenarioName: string,
         featurePath: string,
         featureLineNumber: number,
@@ -3245,7 +2749,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const runLogPath = details?.runLogPath?.trim();
-        this._failedFeatureStepHighlights.set(scenarioName, {
+        this._failedFeatureStepHighlights.set(scenarioKey, {
+            scenarioKey,
             scenarioName,
             featurePath,
             featurePathCompareKey,
@@ -3260,7 +2765,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private clearFeatureStepHighlightsForScenarios(
-        scenarioNames: Iterable<string>,
+        scenarioKeys: Iterable<ScenarioRuntimeKey>,
         options?: {
             clearRunning?: boolean;
             clearFailed?: boolean;
@@ -3271,11 +2776,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         let runningChanged = false;
         let failedChanged = false;
 
-        for (const scenarioName of scenarioNames) {
-            if (clearRunning && this._runningFeatureStepHighlights.delete(scenarioName)) {
+        for (const scenarioKey of scenarioKeys) {
+            if (clearRunning && this._runningFeatureStepHighlights.delete(scenarioKey)) {
                 runningChanged = true;
             }
-            if (clearFailed && this._failedFeatureStepHighlights.delete(scenarioName)) {
+            if (clearFailed && this._failedFeatureStepHighlights.delete(scenarioKey)) {
                 failedChanged = true;
             }
         }
@@ -3299,20 +2804,20 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         let runningChanged = false;
-        for (const [scenarioName, highlight] of this._runningFeatureStepHighlights) {
+        for (const [scenarioKey, highlight] of this._runningFeatureStepHighlights) {
             if (highlight.featurePathCompareKey !== featurePathCompareKey) {
                 continue;
             }
-            this._runningFeatureStepHighlights.delete(scenarioName);
+            this._runningFeatureStepHighlights.delete(scenarioKey);
             runningChanged = true;
         }
 
         let failedChanged = false;
-        for (const [scenarioName, highlight] of this._failedFeatureStepHighlights) {
+        for (const [scenarioKey, highlight] of this._failedFeatureStepHighlights) {
             if (highlight.featurePathCompareKey !== featurePathCompareKey) {
                 continue;
             }
-            this._failedFeatureStepHighlights.delete(scenarioName);
+            this._failedFeatureStepHighlights.delete(scenarioKey);
             failedChanged = true;
         }
 
@@ -3328,8 +2833,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.applyRunningFeatureStepDecorations();
     }
 
-    private finalizeRunningFeatureStepHighlight(scenarioName: string): void {
-        const highlight = this._runningFeatureStepHighlights.get(scenarioName);
+    private finalizeRunningFeatureStepHighlight(scenarioKey: ScenarioRuntimeKey): void {
+        const highlight = this._runningFeatureStepHighlights.get(scenarioKey);
         if (!highlight) {
             return;
         }
@@ -3351,88 +2856,43 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.applyRunningFeatureStepDecorations();
     }
 
-    private extractLastStepLocationFromRunLog(
+    private readLastStepLocationFromRunLog(
         runLogPath: string,
         scenarioName?: string,
         startOffset?: number
     ): { featurePath?: string; featureLineNumber?: number } | null {
-        if (!runLogPath || !fs.existsSync(runLogPath)) {
+        if (!runLogPath) {
             return null;
         }
 
         let content = '';
         try {
-            const fileBuffer = fs.readFileSync(runLogPath);
-            const normalizedStartOffset = Number.isFinite(startOffset)
-                ? Math.max(0, Math.floor(startOffset as number))
-                : 0;
-            const safeStartOffset = normalizedStartOffset >= fileBuffer.byteLength
-                ? 0
-                : normalizedStartOffset;
-            content = fileBuffer.subarray(safeStartOffset).toString('utf8');
+            const tail = readFileTailSync(runLogPath, startOffset ?? 0);
+            if (!tail) {
+                return null;
+            }
+            content = tail.content.toString('utf8');
         } catch {
             return null;
         }
 
-        const lines = content.split(/\r\n|\r|\n/);
-        const normalizedScenarioName = scenarioName?.trim();
-        let featurePath: string | undefined;
-        let featureLineNumber: number | undefined;
-        let currentFeaturePathFromLog: string | undefined;
-        let currentScenarioNameFromLog: string | undefined;
-        let currentScenarioFeaturePathFromLog: string | undefined;
-        let hasScenarioMarkers = false;
-        for (const line of lines) {
-            const pathFromLine = this.extractFeaturePathFromRunLogLine(line);
-            if (pathFromLine) {
-                currentFeaturePathFromLog = pathFromLine;
-                if (!normalizedScenarioName) {
-                    featurePath = pathFromLine;
-                }
-            }
-
-            const scenarioNameFromLine = this.extractScenarioNameFromRunLogLine(line);
-            if (scenarioNameFromLine) {
-                hasScenarioMarkers = true;
-                currentScenarioNameFromLog = scenarioNameFromLine;
-                currentScenarioFeaturePathFromLog = currentFeaturePathFromLog;
-            }
-
-            const lineNumber = this.extractFeatureLineNumberFromRunLogLine(line);
-            if (lineNumber) {
-                if (!this.isRunLogLineForScenario(normalizedScenarioName, currentScenarioNameFromLog, hasScenarioMarkers)) {
-                    continue;
-                }
-                if (normalizedScenarioName) {
-                    if (currentScenarioFeaturePathFromLog) {
-                        featurePath = currentScenarioFeaturePathFromLog;
-                    } else if (currentFeaturePathFromLog) {
-                        featurePath = currentFeaturePathFromLog;
-                    }
-                }
-                featureLineNumber = lineNumber;
-            }
-        }
-
-        if (!featureLineNumber) {
-            return null;
-        }
-
-        return {
-            featurePath,
-            featureLineNumber
-        };
+        return extractLastStepLocation(content, { scenarioName });
     }
 
-    private captureFailedStepHighlight(scenarioName: string, runLogPath?: string): void {
-        const tracker = this._liveFeatureStepTrackers.get(scenarioName);
+    private captureFailedStepHighlight(
+        scenarioKey: ScenarioRuntimeKey,
+        scenarioName: string,
+        runLogPath?: string
+    ): void {
+        const tracker = this._liveFeatureStepTrackers.get(scenarioKey);
         const failedDetails = runLogPath
-            ? this.extractFailedStepDetailsFromRunLog(runLogPath, scenarioName, tracker?.startOffset)
+            ? this.readFailedStepDetailsFromRunLog(runLogPath, scenarioName, tracker?.startOffset)
             : null;
 
-        const runningHighlight = this._runningFeatureStepHighlights.get(scenarioName);
+        const runningHighlight = this._runningFeatureStepHighlights.get(scenarioKey);
         if (runningHighlight && runningHighlight.featureLineNumber > 0) {
             this.setFailedFeatureStepHighlight(
+                scenarioKey,
                 scenarioName,
                 runningHighlight.featurePath,
                 runningHighlight.featureLineNumber,
@@ -3447,10 +2907,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const fromRunLog = runLogPath
-            ? this.extractLastStepLocationFromRunLog(runLogPath, scenarioName, tracker?.startOffset)
+            ? this.readLastStepLocationFromRunLog(runLogPath, scenarioName, tracker?.startOffset)
             : null;
         const featurePath = fromRunLog?.featurePath
-            || this._scenarioBuildArtifacts.get(scenarioName)?.featurePath
+            || this.getScenarioBuildArtifact(scenarioName, scenarioKey)?.featurePath
             || '';
         const featureLineNumber = fromRunLog?.featureLineNumber;
         if (!featurePath || !featureLineNumber) {
@@ -3458,6 +2918,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         this.setFailedFeatureStepHighlight(
+            scenarioKey,
             scenarioName,
             featurePath,
             featureLineNumber,
@@ -3589,16 +3050,22 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         });
     }
 
-    private setRunningFeatureStepHighlight(scenarioName: string, featurePath: string, featureLineNumber: number): void {
+    private setRunningFeatureStepHighlight(
+        scenarioKey: ScenarioRuntimeKey,
+        scenarioName: string,
+        featurePath: string,
+        featureLineNumber: number
+    ): void {
         const featurePathCompareKey = this.normalizeFilePathForComparison(featurePath);
         if (!featurePathCompareKey || featureLineNumber <= 0) {
             return;
         }
         const now = Date.now();
 
-        const previous = this._runningFeatureStepHighlights.get(scenarioName);
+        const previous = this._runningFeatureStepHighlights.get(scenarioKey);
         if (!previous || previous.featurePathCompareKey !== featurePathCompareKey) {
-            this._runningFeatureStepHighlights.set(scenarioName, {
+            this._runningFeatureStepHighlights.set(scenarioKey, {
+                scenarioKey,
                 scenarioName,
                 featurePath,
                 featurePathCompareKey,
@@ -3625,8 +3092,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.sendRunArtifactsStateToWebview();
     }
 
-    private clearRunningFeatureStepHighlight(scenarioName: string): void {
-        if (this._runningFeatureStepHighlights.delete(scenarioName)) {
+    private clearRunningFeatureStepHighlight(scenarioKey: ScenarioRuntimeKey): void {
+        if (this._runningFeatureStepHighlights.delete(scenarioKey)) {
             if (this._runningFeatureStepHighlights.size === 0) {
                 this._runningFeatureStepRevealGuardByEditorUri.clear();
                 this._lastAutoFollowLineByEditorUri.clear();
@@ -3838,31 +3305,31 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private applyFeatureStepSyncLogLine(tracker: LiveFeatureStepTrackerState, line: string): void {
-        const featurePathFromLine = this.extractFeaturePathFromRunLogLine(line);
+        const featurePathFromLine = extractFeaturePathFromRunLogLine(line);
         if (featurePathFromLine) {
             tracker.currentFeaturePathFromLog = featurePathFromLine;
         }
 
-        const scenarioNameFromLine = this.extractScenarioNameFromRunLogLine(line);
+        const scenarioNameFromLine = extractScenarioNameFromRunLogLine(line);
         if (scenarioNameFromLine) {
             tracker.currentScenarioNameFromLog = scenarioNameFromLine;
-            if (this.areScenarioNamesEqual(scenarioNameFromLine, tracker.scenarioName)) {
+            if (areScenarioNamesEqual(scenarioNameFromLine, tracker.scenarioName)) {
                 tracker.featurePathFromLog = tracker.currentFeaturePathFromLog || tracker.featurePathFromLog;
             }
         }
 
-        const featureLineNumber = this.extractFeatureLineNumberFromRunLogLine(line);
+        const featureLineNumber = extractFeatureLineNumberFromRunLogLine(line);
         if (!featureLineNumber) {
             return;
         }
 
         if (tracker.currentScenarioNameFromLog
-            && !this.areScenarioNamesEqual(tracker.currentScenarioNameFromLog, tracker.scenarioName)) {
+            && !areScenarioNamesEqual(tracker.currentScenarioNameFromLog, tracker.scenarioName)) {
             return;
         }
 
         const expectedFeaturePath = tracker.featurePathFromLog
-            || this._scenarioBuildArtifacts.get(tracker.scenarioName)?.featurePath
+            || this.getScenarioBuildArtifact(tracker.scenarioName, tracker.scenarioKey)?.featurePath
             || '';
         if (!expectedFeaturePath) {
             return;
@@ -3881,34 +3348,39 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        if (this.isTrackedRunSelectedForScenario(tracker.scenarioName)) {
+        if (this.isTrackedRunSelectedForScenario(tracker.scenarioKey)) {
             return;
         }
 
-        this.setRunningFeatureStepHighlight(tracker.scenarioName, expectedFeaturePath, featureLineNumber);
+        this.setRunningFeatureStepHighlight(
+            tracker.scenarioKey,
+            tracker.scenarioName,
+            expectedFeaturePath,
+            featureLineNumber
+        );
     }
 
     private stopFeatureStepTracker(
-        scenarioName: string,
+        scenarioKey: ScenarioRuntimeKey,
         options?: {
             preserveHighlight?: boolean;
         }
     ): void {
-        const tracker = this._liveFeatureStepTrackers.get(scenarioName);
+        const tracker = this._liveFeatureStepTrackers.get(scenarioKey);
         if (tracker) {
             clearInterval(tracker.timer);
-            this._liveFeatureStepTrackers.delete(scenarioName);
+            this._liveFeatureStepTrackers.delete(scenarioKey);
         }
         if (options?.preserveHighlight) {
-            this.finalizeRunningFeatureStepHighlight(scenarioName);
+            this.finalizeRunningFeatureStepHighlight(scenarioKey);
             return;
         }
-        this.clearRunningFeatureStepHighlight(scenarioName);
+        this.clearRunningFeatureStepHighlight(scenarioKey);
     }
 
     private stopAllFeatureStepTrackers(): void {
-        for (const scenarioName of Array.from(this._liveFeatureStepTrackers.keys())) {
-            this.stopFeatureStepTracker(scenarioName);
+        for (const scenarioKey of Array.from(this._liveFeatureStepTrackers.keys())) {
+            this.stopFeatureStepTracker(scenarioKey);
         }
         let decorationsChanged = false;
         if (this._failedFeatureStepHighlights.size > 0) {
@@ -3927,34 +3399,34 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private pollFeatureStepTracker(scenarioName: string): void {
-        const tracker = this._liveFeatureStepTrackers.get(scenarioName);
+    private async pollFeatureStepTracker(scenarioKey: ScenarioRuntimeKey): Promise<void> {
+        const tracker = this._liveFeatureStepTrackers.get(scenarioKey);
         if (!tracker || tracker.isPolling) {
             return;
         }
         tracker.isPolling = true;
 
         try {
-            const runState = this._scenarioExecutionStates.get(scenarioName);
+            const runState = this._scenarioExecutionStates.get(scenarioKey);
             const isRunning = runState?.status === 'running';
-            if (!fs.existsSync(tracker.runLogPath)) {
+            const tail = await readFileTail(tracker.runLogPath, tracker.lastLength);
+            if (this._liveFeatureStepTrackers.get(scenarioKey) !== tracker) {
+                return;
+            }
+            if (!tail) {
                 if (!isRunning) {
-                    this.stopFeatureStepTracker(scenarioName, { preserveHighlight: true });
+                    this.stopFeatureStepTracker(scenarioKey, { preserveHighlight: true });
                 }
                 return;
             }
 
-            const fileBuffer = fs.readFileSync(tracker.runLogPath);
-            const currentLength = fileBuffer.byteLength;
-            if (currentLength < tracker.lastLength) {
-                tracker.lastLength = 0;
+            if (tail.wasTruncated) {
                 tracker.startOffset = 0;
                 tracker.pendingTail = '';
             }
 
-            if (currentLength > tracker.lastLength) {
-                const deltaBuffer = fileBuffer.subarray(tracker.lastLength);
-                const chunk = deltaBuffer.toString('utf8');
+            if (tail.content.byteLength > 0) {
+                const chunk = tail.content.toString('utf8');
                 const chunkWithPendingTail = tracker.pendingTail + chunk;
                 const endsWithNewline = /\r?\n$/.test(chunkWithPendingTail);
                 const lines = chunkWithPendingTail.split(/\r\n|\r|\n/);
@@ -3966,23 +3438,26 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 for (const line of lines) {
                     this.applyFeatureStepSyncLogLine(tracker, line);
                 }
-                tracker.lastLength = currentLength;
             }
+            tracker.lastLength = tail.currentLength;
 
             if (!isRunning) {
-                this.stopFeatureStepTracker(scenarioName, { preserveHighlight: true });
+                this.stopFeatureStepTracker(scenarioKey, { preserveHighlight: true });
             }
+        } catch (error) {
+            console.error(`[PhaseSwitcherProvider] Failed to poll run log for "${tracker.scenarioName}":`, error);
         } finally {
             tracker.isPolling = false;
         }
     }
 
     private startFeatureStepTracker(
+        scenarioKey: ScenarioRuntimeKey,
         scenarioName: string,
         runLogPath?: string,
         initialFeaturePath?: string
     ): void {
-        this.stopFeatureStepTracker(scenarioName);
+        this.stopFeatureStepTracker(scenarioKey);
 
         const normalizedRunLogPath = runLogPath?.trim();
         if (!normalizedRunLogPath) {
@@ -3997,10 +3472,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             startOffset = 0;
         }
 
-        const tracker: LiveFeatureStepTrackerState = {
+        let tracker: LiveFeatureStepTrackerState;
+        tracker = {
+            scenarioKey,
             scenarioName,
             runLogPath: normalizedRunLogPath,
-            timer: setInterval(() => this.pollFeatureStepTracker(scenarioName), this.getLiveRunLogRefreshIntervalMs()),
+            timer: setInterval(
+                () => void this.pollFeatureStepTracker(tracker.scenarioKey),
+                this.getLiveRunLogRefreshIntervalMs()
+            ),
             startOffset,
             lastLength: startOffset,
             pendingTail: '',
@@ -4009,8 +3489,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             currentFeaturePathFromLog: undefined,
             currentScenarioNameFromLog: undefined
         };
-        this._liveFeatureStepTrackers.set(scenarioName, tracker);
-        this.pollFeatureStepTracker(scenarioName);
+        this._liveFeatureStepTrackers.set(scenarioKey, tracker);
+        void this.pollFeatureStepTracker(scenarioKey);
     }
 
     private stopTrackedRunTimer(tracker: ExternalTrackedRunState): void {
@@ -4020,17 +3500,27 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private refreshScenarioHighlightsBySelectedRunSource(scenarioName: string): void {
-        const activeTrackedRun = this.getActiveTrackedRunForScenario(scenarioName);
+    private refreshScenarioHighlightsBySelectedRunSource(scenarioKey: ScenarioRuntimeKey): void {
+        const activeTrackedRun = this.getActiveTrackedRunForScenario(scenarioKey);
+        const runState = this._scenarioExecutionStates.get(scenarioKey);
+        const scenarioName = activeTrackedRun?.scenarioName
+            || runState?.scenarioName
+            || this.getScenarioNameForRuntimeKey(scenarioKey);
+        if (!scenarioName) {
+            this.clearFailedFeatureStepHighlight(scenarioKey);
+            this.clearRunningFeatureStepHighlight(scenarioKey);
+            return;
+        }
         if (activeTrackedRun) {
             if (activeTrackedRun.status === 'failed') {
                 const featurePath = activeTrackedRun.latestFeaturePath
-                    || this._scenarioBuildArtifacts.get(scenarioName)?.featurePath
+                    || this.getScenarioBuildArtifact(scenarioName, scenarioKey)?.featurePath
                     || '';
                 const featureLineNumber = activeTrackedRun.latestFeatureLineNumber;
-                this.finalizeRunningFeatureStepHighlight(scenarioName);
+                this.finalizeRunningFeatureStepHighlight(scenarioKey);
                 if (featurePath && featureLineNumber && featureLineNumber > 0) {
                     this.setFailedFeatureStepHighlight(
+                        scenarioKey,
                         scenarioName,
                         featurePath,
                         featureLineNumber,
@@ -4042,72 +3532,72 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         }
                     );
                 } else {
-                    this.clearFailedFeatureStepHighlight(scenarioName);
+                    this.clearFailedFeatureStepHighlight(scenarioKey);
                 }
                 return;
             }
 
-            this.clearFailedFeatureStepHighlight(scenarioName);
+            this.clearFailedFeatureStepHighlight(scenarioKey);
             if (activeTrackedRun.latestFeaturePath && activeTrackedRun.latestFeatureLineNumber) {
                 this.setRunningFeatureStepHighlight(
+                    scenarioKey,
                     scenarioName,
                     activeTrackedRun.latestFeaturePath,
                     activeTrackedRun.latestFeatureLineNumber
                 );
             } else if (activeTrackedRun.status === 'passed') {
-                this.finalizeRunningFeatureStepHighlight(scenarioName);
+                this.finalizeRunningFeatureStepHighlight(scenarioKey);
             } else {
-                this.clearRunningFeatureStepHighlight(scenarioName);
+                this.clearRunningFeatureStepHighlight(scenarioKey);
             }
             return;
         }
 
-        const runState = this._scenarioExecutionStates.get(scenarioName);
         if (runState?.status === 'running') {
-            this.clearFailedFeatureStepHighlight(scenarioName);
+            this.clearFailedFeatureStepHighlight(scenarioKey);
             if (runState.runLogPath) {
-                const fromRunLog = this.extractLastStepLocationFromRunLog(runState.runLogPath, scenarioName);
+                const fromRunLog = this.readLastStepLocationFromRunLog(runState.runLogPath, scenarioName);
                 const featurePath = fromRunLog?.featurePath
-                    || this._scenarioBuildArtifacts.get(scenarioName)?.featurePath;
+                    || this.getScenarioBuildArtifact(scenarioName, scenarioKey)?.featurePath;
                 const featureLineNumber = fromRunLog?.featureLineNumber;
                 if (featurePath && featureLineNumber) {
-                    this.setRunningFeatureStepHighlight(scenarioName, featurePath, featureLineNumber);
+                    this.setRunningFeatureStepHighlight(scenarioKey, scenarioName, featurePath, featureLineNumber);
                 }
             }
             return;
         }
 
         if (runState?.status === 'failed') {
-            this.captureFailedStepHighlight(scenarioName, runState.runLogPath);
-            this.finalizeRunningFeatureStepHighlight(scenarioName);
+            this.captureFailedStepHighlight(scenarioKey, scenarioName, runState.runLogPath);
+            this.finalizeRunningFeatureStepHighlight(scenarioKey);
             return;
         }
 
         if (runState?.status === 'passed') {
-            this.clearFailedFeatureStepHighlight(scenarioName);
-            this.finalizeRunningFeatureStepHighlight(scenarioName);
+            this.clearFailedFeatureStepHighlight(scenarioKey);
+            this.finalizeRunningFeatureStepHighlight(scenarioKey);
             return;
         }
 
-        this.clearFailedFeatureStepHighlight(scenarioName);
-        this.clearRunningFeatureStepHighlight(scenarioName);
+        this.clearFailedFeatureStepHighlight(scenarioKey);
+        this.clearRunningFeatureStepHighlight(scenarioKey);
     }
 
     private setActiveTrackedRunForScenario(
-        scenarioName: string,
+        scenarioKey: ScenarioRuntimeKey,
         runLogKey?: string,
         options?: { refreshHighlights?: boolean; notifyWebview?: boolean }
     ): void {
-        const trackedRuns = this.getTrackedRunsMapForScenario(scenarioName);
+        const trackedRuns = this.getTrackedRunsMapForScenario(scenarioKey);
         if (!trackedRuns || trackedRuns.size === 0 || !runLogKey || !trackedRuns.has(runLogKey)) {
-            this._activeTrackedRunKeyByScenario.delete(scenarioName);
+            this._activeTrackedRunKeyByScenario.delete(scenarioKey);
         } else {
-            this._activeTrackedRunKeyByScenario.set(scenarioName, runLogKey);
+            this._activeTrackedRunKeyByScenario.set(scenarioKey, runLogKey);
         }
 
-        this.stopLiveRunLogWatcher(scenarioName, { disposeChannel: true });
+        this.stopLiveRunLogWatcher(scenarioKey, { disposeChannel: true });
         if (options?.refreshHighlights !== false) {
-            this.refreshScenarioHighlightsBySelectedRunSource(scenarioName);
+            this.refreshScenarioHighlightsBySelectedRunSource(scenarioKey);
         }
         if (options?.notifyWebview !== false) {
             this.sendRunArtifactsStateToWebview();
@@ -4115,36 +3605,36 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private applyTrackedRunStepSyncLogLine(tracker: ExternalTrackedRunState, line: string): void {
-        const featurePathFromLine = this.extractFeaturePathFromRunLogLine(line);
+        const featurePathFromLine = extractFeaturePathFromRunLogLine(line);
         if (featurePathFromLine) {
             tracker.currentFeaturePathFromLog = featurePathFromLine;
         }
 
-        const scenarioNameFromLine = this.extractScenarioNameFromRunLogLine(line);
+        const scenarioNameFromLine = extractScenarioNameFromRunLogLine(line);
         if (scenarioNameFromLine) {
             tracker.currentScenarioNameFromLog = scenarioNameFromLine;
             if (!tracker.expectedScenarioName) {
                 if (!tracker.featurePathFromLog) {
                     tracker.featurePathFromLog = tracker.currentFeaturePathFromLog || tracker.featurePathFromLog;
                 }
-            } else if (this.areScenarioNamesEqual(scenarioNameFromLine, tracker.expectedScenarioName)) {
+            } else if (areScenarioNamesEqual(scenarioNameFromLine, tracker.expectedScenarioName)) {
                 tracker.featurePathFromLog = tracker.currentFeaturePathFromLog || tracker.featurePathFromLog;
             }
         }
 
-        const featureLineNumber = this.extractFeatureLineNumberFromRunLogLine(line);
+        const featureLineNumber = extractFeatureLineNumberFromRunLogLine(line);
         if (!featureLineNumber) {
             return;
         }
 
         if (tracker.expectedScenarioName
             && tracker.currentScenarioNameFromLog
-            && !this.areScenarioNamesEqual(tracker.currentScenarioNameFromLog, tracker.expectedScenarioName)) {
+            && !areScenarioNamesEqual(tracker.currentScenarioNameFromLog, tracker.expectedScenarioName)) {
             return;
         }
 
         const expectedFeaturePath = tracker.featurePathFromLog
-            || this._scenarioBuildArtifacts.get(tracker.scenarioName)?.featurePath
+            || this.getScenarioBuildArtifact(tracker.scenarioName, tracker.scenarioKey)?.featurePath
             || '';
         if (!expectedFeaturePath) {
             return;
@@ -4164,10 +3654,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         tracker.latestFeatureLineNumber = featureLineNumber;
         tracker.updatedAt = Date.now();
 
-        const isActiveTrackedRun = this.getActiveTrackedRunForScenario(tracker.scenarioName)?.runLogKey === tracker.runLogKey;
+        const isActiveTrackedRun = this.getActiveTrackedRunForScenario(tracker.scenarioKey)?.runLogKey === tracker.runLogKey;
         if (isActiveTrackedRun && tracker.status === 'running') {
-            this.clearFailedFeatureStepHighlight(tracker.scenarioName);
+            this.clearFailedFeatureStepHighlight(tracker.scenarioKey);
             this.setRunningFeatureStepHighlight(
+                tracker.scenarioKey,
                 tracker.scenarioName,
                 expectedFeaturePath,
                 featureLineNumber
@@ -4179,31 +3670,31 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.stopTrackedRunTimer(tracker);
     }
 
-    private pollTrackedRunLogWatcher(scenarioName: string, runLogKey: string): void {
-        const tracker = this.getTrackedRunsMapForScenario(scenarioName)?.get(runLogKey);
+    private async pollTrackedRunLogWatcher(scenarioKey: ScenarioRuntimeKey, runLogKey: string): Promise<void> {
+        const tracker = this.getTrackedRunsMapForScenario(scenarioKey)?.get(runLogKey);
         if (!tracker || tracker.isPolling) {
             return;
         }
         tracker.isPolling = true;
 
         try {
-            if (!fs.existsSync(tracker.runLogPath)) {
+            const tail = await readFileTail(tracker.runLogPath, tracker.lastLength);
+            if (this.getTrackedRunsMapForScenario(scenarioKey)?.get(runLogKey) !== tracker) {
+                return;
+            }
+            if (!tail) {
                 return;
             }
 
-            const fileBuffer = fs.readFileSync(tracker.runLogPath);
-            const currentLength = fileBuffer.byteLength;
-            if (currentLength < tracker.lastLength) {
-                tracker.lastLength = 0;
+            if (tail.wasTruncated) {
                 tracker.startOffset = 0;
                 tracker.pendingTail = '';
             }
 
             let hasStateChanges = false;
             let hasNewLines = false;
-            if (currentLength > tracker.lastLength) {
-                const deltaBuffer = fileBuffer.subarray(tracker.lastLength);
-                const chunk = deltaBuffer.toString('utf8');
+            if (tail.content.byteLength > 0) {
+                const chunk = tail.content.toString('utf8');
                 const chunkWithPendingTail = tracker.pendingTail + chunk;
                 const endsWithNewline = /\r?\n$/.test(chunkWithPendingTail);
                 const lines = chunkWithPendingTail.split(/\r\n|\r|\n/);
@@ -4217,7 +3708,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const previousStatus = tracker.status;
                 for (const line of lines) {
                     this.applyTrackedRunStepSyncLogLine(tracker, line);
-                    const failedSummary = this.extractFailedSummaryFromLogLine(line);
+                    const failedSummary = extractFailedSummaryFromLogLine(line);
                     if (!failedSummary) {
                         continue;
                     }
@@ -4231,12 +3722,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     tracker.updatedAt = Date.now();
                 }
                 hasStateChanges = previousStatus !== tracker.status;
-                tracker.lastLength = currentLength;
             }
+            tracker.lastLength = tail.currentLength;
 
             if (tracker.status === 'failed'
                 && (!tracker.failureSummary || !tracker.failureDetails || !tracker.failureStepDescription)) {
-                const failedDetails = this.extractFailedStepDetailsFromRunLog(
+                const failedDetails = this.readFailedStepDetailsFromRunLog(
                     tracker.runLogPath,
                     tracker.expectedScenarioName,
                     tracker.startOffset
@@ -4246,9 +3737,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 tracker.failureStepDescription = failedDetails?.failureStepDescription;
             }
 
-            const isActiveTrackedRun = this.getActiveTrackedRunForScenario(scenarioName)?.runLogKey === runLogKey;
+            const isActiveTrackedRun = this.getActiveTrackedRunForScenario(scenarioKey)?.runLogKey === runLogKey;
             if (isActiveTrackedRun) {
-                this.refreshScenarioHighlightsBySelectedRunSource(scenarioName);
+                this.refreshScenarioHighlightsBySelectedRunSource(scenarioKey);
             }
 
             if (tracker.status !== 'running') {
@@ -4258,12 +3749,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             if (hasStateChanges || (hasNewLines && isActiveTrackedRun)) {
                 this.sendRunArtifactsStateToWebview();
             }
+        } catch (error) {
+            console.error(`[PhaseSwitcherProvider] Failed to poll tracked run log for "${tracker.scenarioName}":`, error);
         } finally {
             tracker.isPolling = false;
         }
     }
 
     private startTrackedRunLogWatcher(
+        scenarioKey: ScenarioRuntimeKey,
         scenarioName: string,
         runLogPath: string,
         options?: {
@@ -4277,7 +3771,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const normalizedRunLogPath = runLogPath.trim();
         const runLogKey = this.getRunLogTrackingKey(normalizedRunLogPath);
         const trackedRuns = this.getTrackedRunsMapForScenario(
-            scenarioName,
+            scenarioKey,
             { createIfMissing: true }
         )!;
         const existing = trackedRuns.get(runLogKey);
@@ -4306,23 +3800,24 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 existing.failureStepDescription = undefined;
                 this.stopTrackedRunTimer(existing);
                 existing.timer = setInterval(
-                    () => this.pollTrackedRunLogWatcher(scenarioName, runLogKey),
+                    () => void this.pollTrackedRunLogWatcher(existing.scenarioKey, runLogKey),
                     this.getLiveRunLogRefreshIntervalMs()
                 );
             } else if (!existing.timer && existing.status === 'running') {
                 existing.timer = setInterval(
-                    () => this.pollTrackedRunLogWatcher(scenarioName, runLogKey),
+                    () => void this.pollTrackedRunLogWatcher(existing.scenarioKey, runLogKey),
                     this.getLiveRunLogRefreshIntervalMs()
                 );
             }
             if (options?.activate !== false) {
-                this.setActiveTrackedRunForScenario(scenarioName, runLogKey);
+                this.setActiveTrackedRunForScenario(scenarioKey, runLogKey);
             }
-            this.pollTrackedRunLogWatcher(scenarioName, runLogKey);
+            void this.pollTrackedRunLogWatcher(scenarioKey, runLogKey);
             return existing;
         }
 
         const tracker: ExternalTrackedRunState = {
+            scenarioKey,
             scenarioName,
             expectedScenarioName: options?.expectedScenarioName?.trim() || undefined,
             runLogPath: normalizedRunLogPath,
@@ -4347,45 +3842,44 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         };
 
         tracker.timer = setInterval(
-            () => this.pollTrackedRunLogWatcher(scenarioName, runLogKey),
+            () => void this.pollTrackedRunLogWatcher(tracker.scenarioKey, runLogKey),
             this.getLiveRunLogRefreshIntervalMs()
         );
         trackedRuns.set(runLogKey, tracker);
         if (options?.activate !== false) {
-            this.setActiveTrackedRunForScenario(scenarioName, runLogKey, { refreshHighlights: true, notifyWebview: false });
+            this.setActiveTrackedRunForScenario(scenarioKey, runLogKey, { refreshHighlights: true, notifyWebview: false });
         }
-        this.pollTrackedRunLogWatcher(scenarioName, runLogKey);
+        void this.pollTrackedRunLogWatcher(scenarioKey, runLogKey);
         this.sendRunArtifactsStateToWebview();
         return tracker;
     }
 
-    private clearTrackedRunLogWatchersForScenario(scenarioName: string): void {
-        const trackedRuns = this.getTrackedRunsMapForScenario(scenarioName);
-        if (!trackedRuns) {
-            return;
+    private clearTrackedRunLogWatchersForScenario(scenarioKey: ScenarioRuntimeKey): void {
+        const trackedRuns = this.getTrackedRunsMapForScenario(scenarioKey);
+        if (trackedRuns) {
+            for (const tracker of trackedRuns.values()) {
+                this.stopTrackedRunTimer(tracker);
+            }
+            trackedRuns.clear();
         }
-
-        for (const tracker of trackedRuns.values()) {
-            this.stopTrackedRunTimer(tracker);
-        }
-        trackedRuns.clear();
-        this._externalTrackedRunsByScenario.delete(scenarioName);
-        this._activeTrackedRunKeyByScenario.delete(scenarioName);
-        this.stopLiveRunLogWatcher(scenarioName, { disposeChannel: true });
-        this.refreshScenarioHighlightsBySelectedRunSource(scenarioName);
+        this._externalTrackedRunsByScenario.delete(scenarioKey);
+        this._activeTrackedRunKeyByScenario.delete(scenarioKey);
+        this.stopLiveRunLogWatcher(scenarioKey, { disposeChannel: true });
+        this.refreshScenarioHighlightsBySelectedRunSource(scenarioKey);
     }
 
     private stopAllTrackedRunLogWatchers(): void {
-        for (const scenarioName of Array.from(this._externalTrackedRunsByScenario.keys())) {
-            this.clearTrackedRunLogWatchersForScenario(scenarioName);
+        for (const scenarioKey of Array.from(this._externalTrackedRunsByScenario.keys())) {
+            this.clearTrackedRunLogWatchersForScenario(scenarioKey);
         }
     }
 
     private getScenarioDisplayedRunState(
+        scenarioKey: ScenarioRuntimeKey,
         scenarioName: string,
         artifact?: ScenarioBuildArtifact
     ): ScenarioDisplayedRunState {
-        const activeTrackedRun = this.getActiveTrackedRunForScenario(scenarioName);
+        const activeTrackedRun = this.getActiveTrackedRunForScenario(scenarioKey);
         if (activeTrackedRun) {
             const progressCurrentLine = activeTrackedRun.latestFeatureLineNumber;
             let progressTotalLines: number | undefined;
@@ -4415,10 +3909,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             };
         }
 
-        const executionState = this._scenarioExecutionStates.get(scenarioName);
+        const executionState = this._scenarioExecutionStates.get(scenarioKey);
         const rawRunStatus = executionState?.status || 'idle';
         const runLogPath = executionState?.runLogPath?.trim();
-        const runningHighlight = this._runningFeatureStepHighlights.get(scenarioName);
+        const runningHighlight = this._runningFeatureStepHighlights.get(scenarioKey);
         let progressCurrentLine: number | undefined;
         let progressTotalLines: number | undefined;
         let progressPercent: number | undefined;
@@ -4444,36 +3938,36 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         };
     }
 
-    private getSelectedRunLogPathForScenario(scenarioName: string): string | undefined {
-        const activeTrackedRun = this.getActiveTrackedRunForScenario(scenarioName);
+    private getSelectedRunLogPathForScenario(scenarioKey: ScenarioRuntimeKey): string | undefined {
+        const activeTrackedRun = this.getActiveTrackedRunForScenario(scenarioKey);
         if (activeTrackedRun?.runLogPath) {
             return activeTrackedRun.runLogPath;
         }
-        return this._scenarioExecutionStates.get(scenarioName)?.runLogPath?.trim();
+        return this._scenarioExecutionStates.get(scenarioKey)?.runLogPath?.trim();
     }
 
-    private getSelectedRunStatusForScenario(scenarioName: string): 'idle' | 'running' | 'passed' | 'failed' {
-        const activeTrackedRun = this.getActiveTrackedRunForScenario(scenarioName);
+    private getSelectedRunStatusForScenario(scenarioKey: ScenarioRuntimeKey): 'idle' | 'running' | 'passed' | 'failed' {
+        const activeTrackedRun = this.getActiveTrackedRunForScenario(scenarioKey);
         if (activeTrackedRun) {
             return activeTrackedRun.status;
         }
-        return this._scenarioExecutionStates.get(scenarioName)?.status || 'idle';
+        return this._scenarioExecutionStates.get(scenarioKey)?.status || 'idle';
     }
 
     private stopLiveRunLogWatcher(
-        scenarioName: string,
+        scenarioKey: ScenarioRuntimeKey,
         options?: {
             appendMessage?: string;
             disposeChannel?: boolean;
         }
     ): void {
-        const watcher = this._liveRunLogWatchers.get(scenarioName);
+        const watcher = this._liveRunLogWatchers.get(scenarioKey);
         if (!watcher) {
             return;
         }
 
         clearInterval(watcher.timer);
-        this._liveRunLogWatchers.delete(scenarioName);
+        this._liveRunLogWatchers.delete(scenarioKey);
 
         if (watcher.pendingTail) {
             watcher.outputChannel.appendLine(watcher.pendingTail);
@@ -4489,33 +3983,37 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private disposeAllLiveRunLogWatchers(): void {
-        for (const scenarioName of Array.from(this._liveRunLogWatchers.keys())) {
-            this.stopLiveRunLogWatcher(scenarioName, { disposeChannel: true });
+        for (const scenarioKey of Array.from(this._liveRunLogWatchers.keys())) {
+            this.stopLiveRunLogWatcher(scenarioKey, { disposeChannel: true });
         }
     }
 
-    private pollLiveRunLogWatcher(scenarioName: string): void {
-        const watcher = this._liveRunLogWatchers.get(scenarioName);
+    private async pollLiveRunLogWatcher(scenarioKey: ScenarioRuntimeKey): Promise<void> {
+        const watcher = this._liveRunLogWatchers.get(scenarioKey);
         if (!watcher || watcher.isPolling) {
             return;
         }
         watcher.isPolling = true;
 
         try {
-            const selectedRunLogPath = this.getSelectedRunLogPathForScenario(scenarioName)?.trim();
-            const isRunning = this.getSelectedRunStatusForScenario(scenarioName) === 'running';
+            const selectedRunLogPath = this.getSelectedRunLogPathForScenario(scenarioKey)?.trim();
+            const isRunning = this.getSelectedRunStatusForScenario(scenarioKey) === 'running';
             if (selectedRunLogPath) {
                 const selectedKey = this.getRunLogTrackingKey(selectedRunLogPath);
                 const watcherKey = this.getRunLogTrackingKey(watcher.runLogPath);
                 if (selectedKey !== watcherKey) {
-                    this.stopLiveRunLogWatcher(scenarioName, {
-                        appendMessage: this.t('Live run log watcher stopped for "{0}".', scenarioName)
+                    this.stopLiveRunLogWatcher(scenarioKey, {
+                        appendMessage: this.t('Live run log watcher stopped for "{0}".', watcher.scenarioName)
                     });
                     return;
                 }
             }
 
-            if (!fs.existsSync(watcher.runLogPath)) {
+            const tail = await readFileTail(watcher.runLogPath, watcher.lastLength);
+            if (this._liveRunLogWatchers.get(scenarioKey) !== watcher) {
+                return;
+            }
+            if (!tail) {
                 if (!watcher.missingFileNotified) {
                     watcher.missingFileNotified = true;
                     this.outputInfo(
@@ -4525,25 +4023,20 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
 
                 if (!isRunning) {
-                    this.stopLiveRunLogWatcher(scenarioName, {
-                        appendMessage: this.t('Live run log watcher stopped for "{0}".', scenarioName)
+                    this.stopLiveRunLogWatcher(scenarioKey, {
+                        appendMessage: this.t('Live run log watcher stopped for "{0}".', watcher.scenarioName)
                     });
                 }
                 return;
             }
 
             watcher.missingFileNotified = false;
-            const fileBuffer = fs.readFileSync(watcher.runLogPath);
-            const currentLength = fileBuffer.byteLength;
-
-            if (currentLength < watcher.lastLength) {
-                watcher.lastLength = 0;
+            if (tail.wasTruncated) {
                 watcher.pendingTail = '';
             }
 
-            if (currentLength > watcher.lastLength) {
-                const deltaBuffer = fileBuffer.subarray(watcher.lastLength);
-                const chunk = deltaBuffer.toString('utf8');
+            if (tail.content.byteLength > 0) {
+                const chunk = tail.content.toString('utf8');
                 const chunkWithPendingTail = watcher.pendingTail + chunk;
                 const endsWithNewline = /\r?\n$/.test(chunkWithPendingTail);
                 const lines = chunkWithPendingTail.split(/\r\n|\r|\n/);
@@ -4555,26 +4048,30 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 for (const line of lines) {
                     watcher.outputChannel.appendLine(line);
                 }
-                watcher.lastLength = currentLength;
             }
+            watcher.lastLength = tail.currentLength;
 
             if (!isRunning) {
-                this.stopLiveRunLogWatcher(scenarioName, {
-                    appendMessage: this.t('Live run log watcher stopped for "{0}".', scenarioName)
+                this.stopLiveRunLogWatcher(scenarioKey, {
+                    appendMessage: this.t('Live run log watcher stopped for "{0}".', watcher.scenarioName)
                 });
             }
         } catch (error: any) {
             this.outputAdvanced(
                 watcher.outputChannel,
-                this.t('Live run log polling failed for "{0}": {1}', scenarioName, error?.message || String(error))
+                this.t('Live run log polling failed for "{0}": {1}', watcher.scenarioName, error?.message || String(error))
             );
         } finally {
             watcher.isPolling = false;
         }
     }
 
-    private async openLiveRunLog(scenarioName: string): Promise<void> {
-        const runStatus = this.getSelectedRunStatusForScenario(scenarioName);
+    private async openLiveRunLog(scenarioName: string, scenarioKey?: ScenarioRuntimeKey): Promise<void> {
+        const runtimeKey = this.resolveRuntimeKeyForScenario(scenarioName, scenarioKey);
+        if (!runtimeKey) {
+            return;
+        }
+        const runStatus = this.getSelectedRunStatusForScenario(runtimeKey);
         if (runStatus !== 'running') {
             vscode.window.showInformationMessage(
                 this.t('Scenario "{0}" is not running. Live log is unavailable.', scenarioName)
@@ -4582,7 +4079,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const runLogPath = this.getSelectedRunLogPathForScenario(scenarioName)?.trim();
+        const runLogPath = this.getSelectedRunLogPathForScenario(runtimeKey)?.trim();
         if (!runLogPath) {
             vscode.window.showWarningMessage(
                 this.t('Run log path is not available for scenario "{0}".', scenarioName)
@@ -4590,12 +4087,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const existingWatcher = this._liveRunLogWatchers.get(scenarioName);
+        const existingWatcher = this._liveRunLogWatchers.get(runtimeKey);
         if (existingWatcher) {
             const existingKey = this.getRunLogTrackingKey(existingWatcher.runLogPath);
             const requestedKey = this.getRunLogTrackingKey(runLogPath);
             if (existingKey !== requestedKey) {
-                this.stopLiveRunLogWatcher(scenarioName, { disposeChannel: true });
+                this.stopLiveRunLogWatcher(runtimeKey, { disposeChannel: true });
             } else {
                 existingWatcher.outputChannel.show(true);
                 return;
@@ -4608,19 +4105,24 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.outputInfo(outputChannel, this.t('Live run log watcher started for "{0}".', scenarioName));
         this.outputInfo(outputChannel, this.t('Run log file: {0}', runLogPath));
 
-        const watcher: LiveRunLogWatcherState = {
+        let watcher: LiveRunLogWatcherState;
+        watcher = {
+            scenarioKey: runtimeKey,
             scenarioName,
             runLogPath,
             outputChannel,
-            timer: setInterval(() => this.pollLiveRunLogWatcher(scenarioName), this.getLiveRunLogRefreshIntervalMs()),
+            timer: setInterval(
+                () => void this.pollLiveRunLogWatcher(watcher.scenarioKey),
+                this.getLiveRunLogRefreshIntervalMs()
+            ),
             lastLength: 0,
             pendingTail: '',
             missingFileNotified: false,
             isPolling: false
         };
-        this._liveRunLogWatchers.set(scenarioName, watcher);
+        this._liveRunLogWatchers.set(runtimeKey, watcher);
 
-        this.pollLiveRunLogWatcher(scenarioName);
+        void this.pollLiveRunLogWatcher(runtimeKey);
         outputChannel.show(true);
     }
 
@@ -4686,16 +4188,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private findScenarioByUriInCache(uri: vscode.Uri): TestInfo | undefined {
-        if (!this._testCache || this._testCache.size === 0) {
-            return undefined;
-        }
-
-        for (const testInfo of this._testCache.values()) {
-            if (this.areUrisEqual(testInfo.yamlFileUri, uri)) {
-                return testInfo;
-            }
-        }
-        return undefined;
+        return this.getScenarioCatalog()?.byUri.get(uri.toString());
     }
 
     private collectMainScenarioTestConfigUris(scenarioDirectory: string): vscode.Uri[] {
@@ -4730,19 +4223,21 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return exactMatch || (testConfigUris.length === 1 ? testConfigUris[0] : null);
     }
 
-    private cleanupDeletedScenarioRuntimeState(scenarioName: string): void {
+    private cleanupDeletedScenarioRuntimeState(
+        scenarioName: string,
+        scenarioKey?: ScenarioRuntimeKey
+    ): void {
         const trimmedScenarioName = scenarioName.trim();
         if (!trimmedScenarioName) {
             return;
         }
 
-        this._scenarioBuildArtifacts.delete(trimmedScenarioName);
-        this._staleBuiltScenarioNames.delete(trimmedScenarioName);
-        this._scenarioExecutionStates.delete(trimmedScenarioName);
-        this._scenarioLastLaunchContexts.delete(trimmedScenarioName);
-        this.clearFailedFeatureStepHighlight(trimmedScenarioName);
-        this.stopFeatureStepTracker(trimmedScenarioName);
-        this.clearTrackedRunLogWatchersForScenario(trimmedScenarioName);
+        const catalog = this.getScenarioCatalog();
+        const artifactKey = scenarioKey
+            || (catalog ? resolveUniqueRuntimeKeyByName(catalog, trimmedScenarioName) : null);
+        if (artifactKey) {
+            this.disposeScenarioRuntimeKey(artifactKey);
+        }
     }
 
     private async removeFavoriteEntriesUnderDirectory(directoryUri: vscode.Uri): Promise<void> {
@@ -4891,7 +4386,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return null;
         }
 
-        await this.ensureFreshTestCache();
+        await this.ensureFreshScenarioCatalog();
 
         let scenarioInfo = this.findScenarioByUriInCache(scenarioUri);
         if (!scenarioInfo) {
@@ -5008,7 +4503,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         if (!options?.skipEnsureFreshCache) {
-            await this.ensureFreshTestCache();
+            await this.ensureFreshScenarioCatalog();
         }
         let changed = false;
         const nextEntries: FavoriteScenarioEntry[] = [];
@@ -5102,7 +4597,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return false;
         }
 
-        await this.ensureFreshTestCache();
+        await this.ensureFreshScenarioCatalog();
         const scenarioInfo = this.findScenarioByUriInCache(uri);
         const nextEntry = scenarioInfo
             ? this.buildFavoriteEntryFromTestInfo(scenarioInfo)
@@ -5351,8 +4846,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        await this.ensureFreshTestCache();
-        if (!this._testCache || this._testCache.size === 0) {
+        const catalog = await this.ensureFreshScenarioCatalog();
+        if (catalog.all.length === 0) {
             vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
             return;
         }
@@ -5383,7 +4878,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const currentCodeLower = currentCode.toLowerCase();
         const knownLowerCodes = new Set<string>(
-            Array.from(this._testCache.values())
+            catalog.all
                 .map(item => (item.scenarioCode || '').trim().toLowerCase())
                 .filter(code => code.length > 0 && code !== currentCodeLower)
         );
@@ -5434,14 +4929,23 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const rawScenarioContent = Buffer.from(
-            await vscode.workspace.fs.readFile(scenarioYamlUriBeforeRename)
-        ).toString('utf8');
-        const updatedScenarioContent = this.updateScenarioDisplayNameInScenarioContent(
-            rawScenarioContent,
-            scenarioInfo.name,
-            newCode
-        );
+        let rawScenarioContent: string;
+        let updatedScenarioContent: ReturnType<typeof updateScenarioDisplayNameInScenarioContent>;
+        try {
+            rawScenarioContent = Buffer.from(
+                await vscode.workspace.fs.readFile(scenarioYamlUriBeforeRename)
+            ).toString('utf8');
+            updatedScenarioContent = updateScenarioDisplayNameInScenarioContent(
+                rawScenarioContent,
+                scenarioInfo.name,
+                newCode
+            );
+        } catch (error: any) {
+            vscode.window.showErrorMessage(
+                this.t('Failed to change nested scenario code for "{0}": {1}', scenarioInfo.name, error?.message || String(error))
+            );
+            return;
+        }
         if (!updatedScenarioContent.changed) {
             vscode.window.showWarningMessage(this.t('No files were updated for scenario "{0}".', scenarioInfo.name));
             return;
@@ -5461,11 +4965,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 );
             }
 
-            await vscode.workspace.fs.writeFile(
-                scenarioYamlUriAfterRename,
-                Buffer.from(updatedScenarioContent.content, 'utf8')
-            );
-            changedFiles++;
+            changedFiles += await applyPreparedFileWrites([{
+                key: scenarioYamlUriAfterRename,
+                before: rawScenarioContent,
+                after: updatedScenarioContent.content
+            }], async (uri, content) => {
+                await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+            });
         } catch (error: any) {
             if (scenarioDirectoryRenamed) {
                 try {
@@ -5539,8 +5045,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        await this.ensureFreshTestCache();
-        if (!this._testCache || this._testCache.size === 0) {
+        const catalog = await this.ensureFreshScenarioCatalog();
+        if (catalog.all.length === 0) {
             vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
             return;
         }
@@ -5571,7 +5077,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const currentLowerName = currentName.toLowerCase();
         const knownLowerNames = new Set<string>(
-            Array.from(this._testCache.keys())
+            Array.from(catalog.byName.keys())
                 .map(name => name.trim().toLowerCase())
                 .filter(name => name.length > 0 && name !== currentLowerName)
         );
@@ -5602,7 +5108,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const uniqueScenarioUris = new Map<string, vscode.Uri>();
-        for (const item of this._testCache.values()) {
+        for (const item of catalog.all) {
             uniqueScenarioUris.set(item.yamlFileUri.toString(), item.yamlFileUri);
         }
         const scenarioUris = Array.from(uniqueScenarioUris.values());
@@ -5628,40 +5134,38 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const affectedScenarioNames = new Set<string>([currentName, newName]);
 
         try {
+            const renameSources: Array<{
+                key: vscode.Uri;
+                content: string;
+                renameSelf: boolean;
+            }> = [];
             for (const scenarioUri of scenarioUris) {
                 const originalContent = Buffer.from(await vscode.workspace.fs.readFile(scenarioUri)).toString('utf8');
-                let nextContent = originalContent;
-                let fileChanged = false;
+                renameSources.push({
+                    key: scenarioUri,
+                    content: originalContent,
+                    renameSelf: this.areUrisEqual(scenarioUri, scenarioInfo.yamlFileUri)
+                });
+            }
 
-                if (this.areUrisEqual(scenarioUri, scenarioInfo.yamlFileUri)) {
-                    const renamedSelf = this.updateScenarioDisplayNameInScenarioContent(nextContent, newName);
-                    if (renamedSelf.changed) {
-                        nextContent = renamedSelf.content;
-                        fileChanged = true;
-                    }
+            const renamePlan = await planNestedScenarioRenameInChunks(renameSources, currentName, newName);
+            changedFiles = await applyPreparedFileWrites(
+                renamePlan.map(planned => ({
+                    key: planned.key,
+                    before: planned.before,
+                    after: planned.content
+                })),
+                async (uri, content) => {
+                    await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
                 }
-
-                const renamedReferences = this.updateNestedScenarioNameReferencesInScenarioContent(
-                    nextContent,
-                    currentName,
-                    newName
-                );
-                if (renamedReferences.changed) {
-                    nextContent = renamedReferences.content;
-                    fileChanged = true;
-                }
-
-                updatedCalls += renamedReferences.updatedCallCount;
-                updatedNestedSectionEntries += renamedReferences.updatedNestedSectionCount;
-
-                if (!fileChanged || nextContent === originalContent) {
+            );
+            for (const planned of renamePlan) {
+                updatedCalls += planned.updatedCallCount;
+                updatedNestedSectionEntries += planned.updatedNestedSectionCount;
+                if (!planned.changed) {
                     continue;
                 }
-
-                await vscode.workspace.fs.writeFile(scenarioUri, Buffer.from(nextContent, 'utf8'));
-                changedFiles++;
-
-                for (const affectedName of this.getScenarioNamesRelatedToUri(scenarioUri)) {
+                for (const affectedName of this.getScenarioNamesRelatedToUri(planned.key)) {
                     affectedScenarioNames.add(affectedName);
                 }
             }
@@ -5714,6 +5218,100 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         );
     }
 
+    private async resolveScenarioOperationTarget(
+        target: ScenarioTarget,
+        options: { requireUnambiguousName?: boolean } = {}
+    ): Promise<TestInfo | null> {
+        const catalog = await this.ensureFreshScenarioCatalog();
+        const resolution = options.requireUnambiguousName
+            ? resolveScenarioRenameTarget(catalog, target)
+            : resolveScenarioTarget(catalog, target);
+        if (resolution.kind === 'unique') {
+            return resolution.scenario;
+        }
+
+        if (resolution.kind === 'ambiguous') {
+            const paths = resolution.scenarios
+                .map(item => item.relativePath || item.yamlFileUri.fsPath)
+                .join('\n');
+            vscode.window.showErrorMessage(
+                `${this.t('Action cancelled: scenario "{0}" resolves to multiple files:', target.name)}\n${paths}`
+            );
+            return null;
+        }
+
+        vscode.window.showWarningMessage(
+            this.t('Scenario "{0}" was not found or its file identity is stale.', target.name)
+        );
+        return null;
+    }
+
+    private async resolveScenarioRuntimeOperationTarget(
+        target: ScenarioRuntimeTarget
+    ): Promise<TestInfo | null> {
+        const catalog = await this.ensureFreshScenarioCatalog();
+        const resolution = resolveScenarioRuntimeTarget(catalog, target);
+        if (resolution.kind === 'unique') {
+            return resolution.scenario;
+        }
+
+        const displayName = target.name?.trim() || '';
+        if (resolution.kind === 'ambiguous') {
+            const paths = resolution.scenarios
+                .map(item => item.relativePath || item.yamlFileUri.fsPath)
+                .join('\n');
+            vscode.window.showErrorMessage(
+                `${this.t('Action cancelled: scenario "{0}" resolves to multiple files:', displayName)}\n${paths}`
+            );
+            return null;
+        }
+
+        vscode.window.showWarningMessage(
+            this.t('Scenario "{0}" was not found or its file identity is stale.', displayName)
+        );
+        return null;
+    }
+
+    private getScenarioBuildArtifact(
+        scenarioName: string,
+        scenarioKey?: ScenarioRuntimeKey
+    ): ScenarioBuildArtifact | undefined {
+        const normalizedName = scenarioName.trim();
+        if (scenarioKey) {
+            const artifact = this._scenarioBuildArtifacts.get(scenarioKey);
+            return artifact?.scenarioName === normalizedName ? artifact : undefined;
+        }
+
+        const catalog = this.getScenarioCatalog();
+        if (!catalog) {
+            return undefined;
+        }
+        const uniqueKey = resolveUniqueRuntimeKeyByName(catalog, normalizedName);
+        return uniqueKey ? this._scenarioBuildArtifacts.get(uniqueKey) : undefined;
+    }
+
+    private resolveRuntimeKeyForScenario(
+        scenarioName: string,
+        scenarioKey?: ScenarioRuntimeKey
+    ): ScenarioRuntimeKey | null {
+        const normalizedName = scenarioName.trim();
+        if (scenarioKey) {
+            const catalogScenario = this.getScenarioCatalog()?.byUri.get(scenarioKey);
+            const artifact = this._scenarioBuildArtifacts.get(scenarioKey);
+            const actualName = catalogScenario?.name || artifact?.scenarioName;
+            return actualName === normalizedName ? scenarioKey : null;
+        }
+        const catalog = this.getScenarioCatalog();
+        return catalog ? resolveUniqueRuntimeKeyByName(catalog, normalizedName) : null;
+    }
+
+    private getScenarioNameForRuntimeKey(scenarioKey: ScenarioRuntimeKey): string | null {
+        return this.getScenarioCatalog()?.byUri.get(scenarioKey)?.name
+            || this._scenarioBuildArtifacts.get(scenarioKey)?.scenarioName
+            || this._scenarioExecutionStates.get(scenarioKey)?.scenarioName
+            || null;
+    }
+
     public async renameScenarioForActiveEditor(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
@@ -5727,19 +5325,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        await this.ensureFreshTestCache();
-        if (!this._testCache || this._testCache.size === 0) {
-            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
-            return;
-        }
-
-        const scenarioInfo = this.findScenarioByUriInCache(document.uri);
+        const catalog = await this.ensureFreshScenarioCatalog();
+        const scenarioInfo = catalog.byUri.get(document.uri.toString());
         if (!scenarioInfo) {
             vscode.window.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
             return;
         }
 
-        await this.renameScenario(scenarioInfo.name);
+        await this.renameScenario({ name: scenarioInfo.name, uri: document.uri.toString() });
     }
 
     public async openMainScenarioTestSettingsForActiveEditor(): Promise<void> {
@@ -5755,19 +5348,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        await this.ensureFreshTestCache();
-        if (!this._testCache || this._testCache.size === 0) {
-            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
-            return;
-        }
-
-        const scenarioInfo = this.findScenarioByUriInCache(document.uri);
+        const catalog = await this.ensureFreshScenarioCatalog();
+        const scenarioInfo = catalog.byUri.get(document.uri.toString());
         if (!scenarioInfo) {
             vscode.window.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
             return;
         }
 
-        await this.openMainScenarioTestSettings(scenarioInfo.name);
+        await this.openMainScenarioTestSettings({ name: scenarioInfo.name, uri: document.uri.toString() });
     }
 
     private async renameGroup(groupName: string): Promise<void> {
@@ -5776,13 +5364,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        await this.ensureFreshTestCache();
-        if (!this._testCache || this._testCache.size === 0) {
+        const catalog = await this.ensureFreshScenarioCatalog();
+        if (catalog.all.length === 0) {
             vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
             return;
         }
 
-        const groupScenarios = Array.from(this._testCache.values()).filter(info =>
+        const groupScenarios = catalog.all.filter(info =>
             this.isMainScenario(info) && (info.tabName || '').trim() === trimmedGroupName
         );
         if (groupScenarios.length === 0) {
@@ -5831,23 +5419,42 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             'editor.enableLegacyMetadataMigrationForMainScenarios',
             false
         ) && autoEnsureKotMetadataEnabled;
-        for (const scenarioInfo of groupScenarios) {
-            try {
+        try {
+            const groupRenameSources: Array<{
+                key: vscode.Uri;
+                content: string;
+                preparedContent: string;
+            }> = [];
+            for (const scenarioInfo of groupScenarios) {
                 const rawContent = Buffer.from(await vscode.workspace.fs.readFile(scenarioInfo.yamlFileUri)).toString('utf8');
                 const contentForUpdate = autoEnsureKotMetadataEnabled
                     ? migrateLegacyPhaseSwitcherMetadata(rawContent, {
                         migrateLegacyPhaseSwitcherTags: legacyMetadataMigrationForMainScenariosEnabled
                     }).content
                     : rawContent;
-                const updated = this.updateScenarioGroupInMetadataContent(contentForUpdate, newGroupName);
-                if (!updated.changed) {
-                    continue;
-                }
-                await vscode.workspace.fs.writeFile(scenarioInfo.yamlFileUri, Buffer.from(updated.content, 'utf8'));
-                changedFiles++;
-            } catch (error) {
-                console.error('[PhaseSwitcherProvider] Failed to rename group in file:', scenarioInfo.yamlFileUri.fsPath, error);
+                groupRenameSources.push({
+                    key: scenarioInfo.yamlFileUri,
+                    content: rawContent,
+                    preparedContent: contentForUpdate
+                });
             }
+
+            const renamePlan = planScenarioGroupRename(groupRenameSources, newGroupName);
+            changedFiles = await applyPreparedFileWrites(
+                renamePlan.map(planned => ({
+                    key: planned.key,
+                    before: planned.before,
+                    after: planned.content
+                })),
+                async (uri, content) => {
+                    await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+                }
+            );
+        } catch (error: any) {
+            vscode.window.showErrorMessage(
+                this.t('Failed to rename group "{0}": {1}', trimmedGroupName, error?.message || String(error))
+            );
+            return;
         }
 
         if (changedFiles === 0) {
@@ -5867,30 +5474,27 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         );
     }
 
-    private async renameScenario(scenarioName: string): Promise<void> {
-        const trimmedScenarioName = scenarioName.trim();
+    private async renameScenario(target: ScenarioTarget): Promise<void> {
+        const trimmedScenarioName = target.name.trim();
         if (!trimmedScenarioName) {
             return;
         }
 
-        await this.ensureFreshTestCache();
-        if (!this._testCache || this._testCache.size === 0) {
-            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
-            return;
-        }
-
-        const scenarioInfo = this._testCache.get(trimmedScenarioName);
+        const scenarioInfo = await this.resolveScenarioOperationTarget(
+            { ...target, name: trimmedScenarioName },
+            { requireUnambiguousName: true }
+        );
         if (!scenarioInfo) {
-            vscode.window.showWarningMessage(this.t('Scenario "{0}" was not found in cache.', trimmedScenarioName));
             return;
         }
         const isMainScenario = this.isMainScenario(scenarioInfo);
 
+        const catalog = await this.ensureFreshScenarioCatalog();
         const knownLowerNames = new Set<string>(
-            Array.from(this._testCache.keys()).map(name => name.trim().toLowerCase())
+            catalog.all.map(item => item.name.trim().toLowerCase())
         );
         const knownLowerCodes = new Set<string>(
-            Array.from(this._testCache.values())
+            catalog.all
                 .map(item => (item.scenarioCode || '').trim().toLowerCase())
                 .filter(code => code.length > 0)
         );
@@ -6004,14 +5608,58 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
+        type IdentityMutationTarget = {
+            kind: 'scenario' | 'test';
+            fileName: string;
+        };
+        let identityMutationPlan: ReturnType<typeof planScenarioIdentityRename<IdentityMutationTarget>>;
+        try {
+            const identitySources: Array<{
+                key: IdentityMutationTarget;
+                content: string;
+                kind: 'scenario' | 'test';
+            }> = [{
+                key: {
+                    kind: 'scenario',
+                    fileName: path.basename(scenarioInfo.yamlFileUri.fsPath)
+                },
+                kind: 'scenario',
+                content: Buffer.from(
+                    await vscode.workspace.fs.readFile(scenarioInfo.yamlFileUri)
+                ).toString('utf8')
+            }];
+            for (const testConfigUri of testConfigUris) {
+                identitySources.push({
+                    key: {
+                        kind: 'test',
+                        fileName: path.basename(testConfigUri.fsPath)
+                    },
+                    kind: 'test',
+                    content: Buffer.from(
+                        await vscode.workspace.fs.readFile(testConfigUri)
+                    ).toString('utf8')
+                });
+            }
+            identityMutationPlan = planScenarioIdentityRename(
+                identitySources,
+                newScenarioName,
+                nextScenarioCode
+            );
+        } catch (error: any) {
+            vscode.window.showErrorMessage(
+                this.t('Failed to rename scenario "{0}": {1}', trimmedScenarioName, error?.message || String(error))
+            );
+            return;
+        }
+
         const oldScenarioUriString = scenarioInfo.yamlFileUri.toString();
         let scenarioYamlUriAfterRename = scenarioInfo.yamlFileUri;
         let currentTestDirectory = testDirectory;
 
         let changedFiles = 0;
+        let scenarioDirectoryRenamed = false;
+        let mainTestFileRenamed = false;
         try {
-            let scenarioDirectoryRenamed = false;
-
             if (directoryWillBeRenamed) {
                 await vscode.workspace.fs.rename(scenarioDirectoryUri, targetScenarioDirectoryUri, { overwrite: false });
                 scenarioDirectoryRenamed = true;
@@ -6026,65 +5674,55 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const sourceTestFileUri = vscode.Uri.file(path.join(currentTestDirectory, mainTestFileRename.fromFileName));
                 const targetTestFileUri = vscode.Uri.file(path.join(currentTestDirectory, mainTestFileRename.toFileName));
                 if (!this.areUrisEqual(sourceTestFileUri, targetTestFileUri)) {
-                    try {
-                        await vscode.workspace.fs.rename(sourceTestFileUri, targetTestFileUri, { overwrite: false });
-                        changedFiles++;
-                    } catch (renameMainTestFileError) {
-                        if (scenarioDirectoryRenamed) {
-                            try {
-                                await vscode.workspace.fs.rename(targetScenarioDirectoryUri, scenarioDirectoryUri, { overwrite: false });
-                                scenarioYamlUriAfterRename = scenarioInfo.yamlFileUri;
-                                currentTestDirectory = testDirectory;
-                                changedFiles = Math.max(0, changedFiles - 1);
-                            } catch (rollbackError) {
-                                console.error('[PhaseSwitcherProvider] Failed to rollback scenario directory rename:', rollbackError);
-                            }
-                        }
-                        throw renameMainTestFileError;
-                    }
+                    await vscode.workspace.fs.rename(sourceTestFileUri, targetTestFileUri, { overwrite: false });
+                    mainTestFileRenamed = true;
+                    changedFiles++;
                 }
             }
 
-            const currentTestConfigUris: vscode.Uri[] = [];
-            if (fs.existsSync(currentTestDirectory) && fs.statSync(currentTestDirectory).isDirectory()) {
-                for (const entry of fs.readdirSync(currentTestDirectory, { withFileTypes: true })) {
-                    if (!entry.isFile()) {
-                        continue;
-                    }
-                    if (!/\.yaml$/i.test(entry.name)) {
-                        continue;
-                    }
-                    currentTestConfigUris.push(vscode.Uri.file(path.join(currentTestDirectory, entry.name)));
+            const preparedWrites = identityMutationPlan.map(planned => {
+                let targetUri = scenarioYamlUriAfterRename;
+                if (planned.key.kind === 'test') {
+                    const targetFileName = mainTestFileRename
+                        && planned.key.fileName === mainTestFileRename.fromFileName
+                        ? mainTestFileRename.toFileName
+                        : planned.key.fileName;
+                    targetUri = vscode.Uri.file(path.join(currentTestDirectory, targetFileName));
                 }
-            }
-
-            const rawScenarioContent = Buffer.from(await vscode.workspace.fs.readFile(scenarioYamlUriAfterRename)).toString('utf8');
-            const updatedScenarioContent = this.updateScenarioDisplayNameInScenarioContent(
-                rawScenarioContent,
-                newScenarioName,
-                nextScenarioCode
-            );
-            if (updatedScenarioContent.changed) {
-                await vscode.workspace.fs.writeFile(scenarioYamlUriAfterRename, Buffer.from(updatedScenarioContent.content, 'utf8'));
-                changedFiles++;
-            }
-
-            for (const testConfigUri of currentTestConfigUris) {
-                const rawTestContent = Buffer.from(await vscode.workspace.fs.readFile(testConfigUri)).toString('utf8');
-                const updatedTestContent = this.updateScenarioDisplayNameInTestConfigContent(
-                    rawTestContent,
-                    newScenarioName,
-                    nextScenarioCode
-                );
-                if (!updatedTestContent.changed) {
-                    continue;
-                }
-                await vscode.workspace.fs.writeFile(testConfigUri, Buffer.from(updatedTestContent.content, 'utf8'));
-                changedFiles++;
-            }
+                return { key: targetUri, before: planned.before, after: planned.content };
+            });
+            changedFiles += await applyPreparedFileWrites(preparedWrites, async (uri, content) => {
+                await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+            });
         } catch (error: any) {
+            const rollbackErrors: unknown[] = [];
+            if (mainTestFileRenamed && mainTestFileRename) {
+                try {
+                    await vscode.workspace.fs.rename(
+                        vscode.Uri.file(path.join(currentTestDirectory, mainTestFileRename.toFileName)),
+                        vscode.Uri.file(path.join(currentTestDirectory, mainTestFileRename.fromFileName)),
+                        { overwrite: false }
+                    );
+                } catch (rollbackError) {
+                    rollbackErrors.push(rollbackError);
+                }
+            }
+            if (scenarioDirectoryRenamed) {
+                try {
+                    await vscode.workspace.fs.rename(targetScenarioDirectoryUri, scenarioDirectoryUri, { overwrite: false });
+                } catch (rollbackError) {
+                    rollbackErrors.push(rollbackError);
+                }
+            }
+            const displayedError = rollbackErrors.length > 0
+                ? new AggregateError([error, ...rollbackErrors], 'Rename rollback was incomplete')
+                : error;
             vscode.window.showErrorMessage(
-                this.t('Failed to rename scenario "{0}": {1}', trimmedScenarioName, error?.message || String(error))
+                this.t(
+                    'Failed to rename scenario "{0}": {1}',
+                    trimmedScenarioName,
+                    displayedError?.message || String(displayedError)
+                )
             );
             return;
         }
@@ -6111,8 +5749,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (favoritesChanged) {
             await this.saveFavoriteEntries(favorites);
         }
-        if (isMainScenario) {
-            await this.renameMainScenarioSelectionState(trimmedScenarioName, newScenarioName);
+        if (oldScenarioUriString !== scenarioYamlUriAfterRename.toString()) {
+            await this.handleScenarioFilesRenamed([{
+                oldUri: scenarioInfo.yamlFileUri,
+                newUri: scenarioYamlUriAfterRename
+            }]);
         }
 
         this.markBuiltArtifactsAsStale([trimmedScenarioName, newScenarioName]);
@@ -6129,21 +5770,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         );
     }
 
-    private async openMainScenarioTestSettings(scenarioName: string): Promise<void> {
-        const trimmedScenarioName = scenarioName.trim();
+    private async openMainScenarioTestSettings(target: ScenarioTarget): Promise<void> {
+        const trimmedScenarioName = target.name.trim();
         if (!trimmedScenarioName) {
             return;
         }
 
-        await this.ensureFreshTestCache();
-        if (!this._testCache || this._testCache.size === 0) {
-            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
-            return;
-        }
-
-        const scenarioInfo = this._testCache.get(trimmedScenarioName);
+        const scenarioInfo = await this.resolveScenarioOperationTarget({ ...target, name: trimmedScenarioName });
         if (!scenarioInfo) {
-            vscode.window.showWarningMessage(this.t('Scenario "{0}" was not found in cache.', trimmedScenarioName));
             return;
         }
 
@@ -6166,21 +5800,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async deleteMainScenario(scenarioName: string): Promise<void> {
-        const trimmedScenarioName = scenarioName.trim();
+    private async deleteMainScenario(target: ScenarioTarget): Promise<void> {
+        const trimmedScenarioName = target.name.trim();
         if (!trimmedScenarioName) {
             return;
         }
 
-        await this.ensureFreshTestCache();
-        if (!this._testCache || this._testCache.size === 0) {
-            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
-            return;
-        }
-
-        const scenarioInfo = this._testCache.get(trimmedScenarioName);
+        const scenarioInfo = await this.resolveScenarioOperationTarget({ ...target, name: trimmedScenarioName });
         if (!scenarioInfo) {
-            vscode.window.showWarningMessage(this.t('Scenario "{0}" was not found in cache.', trimmedScenarioName));
             return;
         }
 
@@ -6234,9 +5861,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
+        this.removeScenarioCustomInfobasePathsForUris([vscode.Uri.file(scenarioDirectory)]);
         await this.removeFavoriteEntriesUnderDirectory(vscode.Uri.file(scenarioDirectory));
-        await this.removeMainScenarioSelectionState(trimmedScenarioName);
-        this.cleanupDeletedScenarioRuntimeState(trimmedScenarioName);
+        await this.removeMainScenarioSelectionState(getScenarioRuntimeKey(scenarioInfo));
+        this.cleanupDeletedScenarioRuntimeState(trimmedScenarioName, getScenarioRuntimeKey(scenarioInfo));
         this.sendRunArtifactsStateToWebview();
         await this.refreshTestCacheFromDisk('deleteMainScenario');
         this.pruneScenarioBuildArtifactsByCache();
@@ -6363,13 +5991,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     public async refreshPanelData() {
         if (this._view && this._view.webview && this._view.visible) {
             console.log("[PhaseSwitcherProvider] Refreshing panel data programmatically...");
-            this._testCache = null;
-            this._cacheDirty = true;
+            this.invalidateScenarioCatalog(true);
             await this._sendInitialState(this._view.webview);
         } else {
             console.log("[PhaseSwitcherProvider] Panel not visible or not resolved, cannot refresh programmatically yet. Will refresh on next resolve/show.");
             // Можно установить флаг, чтобы _sendInitialState вызвался при следующем resolveWebviewView или onDidChangeVisibility
-            this._cacheDirty = true;
+            this.invalidateScenarioCatalog();
         }
     }
 
@@ -6379,7 +6006,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        await this.ensureFreshTestCache();
+        await this.ensureFreshScenarioCatalog();
         await this.restoreScenarioBuildArtifactsFromDiskIfNeeded(workspaceRootUri);
         if (this._scenarioBuildArtifacts.size === 0) {
             return;
@@ -6403,8 +6030,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const scenarios = Array.from(this._scenarioBuildArtifacts.keys());
-        scenarios.sort((a, b) => {
+        const scenarioKeys = Array.from(this._scenarioBuildArtifacts.keys());
+        scenarioKeys.sort((a, b) => {
+            const nameA = this._scenarioBuildArtifacts.get(a)?.scenarioName || '';
+            const nameB = this._scenarioBuildArtifacts.get(b)?.scenarioName || '';
             const statusA = this._scenarioExecutionStates.get(a)?.status || 'idle';
             const statusB = this._scenarioExecutionStates.get(b)?.status || 'idle';
             const failedA = statusA === 'failed' ? 1 : 0;
@@ -6412,14 +6041,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             if (failedA !== failedB) {
                 return failedB - failedA;
             }
-            return a.localeCompare(b);
+            return nameA.localeCompare(nameB);
         });
 
-        const quickPickItems = scenarios.map(name => {
-            const executionState = this._scenarioExecutionStates.get(name);
+        const quickPickItems: ScenarioArtifactQuickPickItem[] = scenarioKeys.map(scenarioKey => {
+            const artifact = this._scenarioBuildArtifacts.get(scenarioKey)!;
+            const executionState = this._scenarioExecutionStates.get(scenarioKey);
             const status = executionState?.status || 'idle';
-            const stale = this._staleBuiltScenarioNames.has(name);
-            const artifact = this._scenarioBuildArtifacts.get(name);
+            const stale = this._staleBuiltScenarioNames.has(scenarioKey);
             const modes = [
                 artifact?.featurePath ? 'feature' : '',
                 artifact?.jsonPath ? 'json' : ''
@@ -6433,9 +6062,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         : this.t('Ready to run')));
             const staleSuffix = stale ? ` • ${this.t('Build is stale')}` : '';
             return {
-                label: name,
+                label: artifact.scenarioName,
                 description: `${statusText}${staleSuffix}`,
-                detail: modes ? this.t('Artifacts: {0}', modes) : undefined
+                detail: modes ? this.t('Artifacts: {0}', modes) : undefined,
+                scenarioKey
             };
         });
 
@@ -6450,7 +6080,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        await this.openScenarioInVanessaManual(picked.label);
+        await this.openScenarioInVanessaManual(picked.label, picked.scenarioKey);
     }
 
     private async pickScenarioForVanessaRun(): Promise<void> {
@@ -6467,8 +6097,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const scenarios = Array.from(this._scenarioBuildArtifacts.keys());
-        scenarios.sort((a, b) => {
+        const scenarioKeys = Array.from(this._scenarioBuildArtifacts.keys());
+        scenarioKeys.sort((a, b) => {
+            const nameA = this._scenarioBuildArtifacts.get(a)?.scenarioName || '';
+            const nameB = this._scenarioBuildArtifacts.get(b)?.scenarioName || '';
             const statusA = this._scenarioExecutionStates.get(a)?.status || 'idle';
             const statusB = this._scenarioExecutionStates.get(b)?.status || 'idle';
             const failedA = statusA === 'failed' ? 1 : 0;
@@ -6476,14 +6108,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             if (failedA !== failedB) {
                 return failedB - failedA;
             }
-            return a.localeCompare(b);
+            return nameA.localeCompare(nameB);
         });
 
-        const quickPickItems = scenarios.map(name => {
-            const executionState = this._scenarioExecutionStates.get(name);
+        const quickPickItems: ScenarioArtifactQuickPickItem[] = scenarioKeys.map(scenarioKey => {
+            const artifact = this._scenarioBuildArtifacts.get(scenarioKey)!;
+            const executionState = this._scenarioExecutionStates.get(scenarioKey);
             const status = executionState?.status || 'idle';
-            const stale = this._staleBuiltScenarioNames.has(name);
-            const artifact = this._scenarioBuildArtifacts.get(name);
+            const stale = this._staleBuiltScenarioNames.has(scenarioKey);
             const modes = [
                 artifact?.featurePath ? 'feature' : '',
                 artifact?.jsonPath ? 'json' : ''
@@ -6497,9 +6129,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         : this.t('Ready to run')));
             const staleSuffix = stale ? ` • ${this.t('Build is stale')}` : '';
             return {
-                label: name,
+                label: artifact.scenarioName,
                 description: `${statusText}${staleSuffix}`,
-                detail: modes ? this.t('Artifacts: {0}', modes) : undefined
+                detail: modes ? this.t('Artifacts: {0}', modes) : undefined,
+                scenarioKey
             };
         });
 
@@ -6514,7 +6147,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        await this.runScenarioInVanessa(picked.label);
+        await this.runScenarioInVanessa(picked.label, picked.scenarioKey);
     }
 
     private async openVanessaStandaloneDebug(): Promise<void> {
@@ -6530,6 +6163,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const workspaceRootPath = workspaceFolder.uri.fsPath;
+        const { resolveOneCPlatformForLaunch } = await loadOneCPlatform();
         const selectedPlatform = await resolveOneCPlatformForLaunch(this.t.bind(this), {
             placeHolder: this.t('Select 1C platform for Vanessa launch')
         });
@@ -6580,12 +6214,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const launchOverlay = await this.loadVanessaLaunchOverlayParameters();
-        const launchJson: Record<string, unknown> = {};
+        let launchJson: JsonValue = {};
         if (launchOverlay.additionalParameters.length > 0) {
-            this.applyAdditionalVanessaParameters(launchJson, launchOverlay.additionalParameters);
+            launchJson = applyAdditionalVanessaParameters(launchJson, launchOverlay.additionalParameters).value;
         }
         if (launchOverlay.globalVariables.length > 0) {
-            this.applyGlobalVanessaVariables(launchJson, launchOverlay.globalVariables);
+            launchJson = applyGlobalVanessaVariables(launchJson, launchOverlay.globalVariables).value;
         }
 
         const tempDir = path.join(os.tmpdir(), 'kot-test-toolkit', 'vanessa');
@@ -6604,8 +6238,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const args = [
             ...this.buildStartupParams(startupInfobase.infobaseDirectory, startupInfobase.authentication),
             '/Execute',
-            `"${vanessaEpfPath}"`,
-            `/C"${vaCommand}"`,
+            vanessaEpfPath,
+            '/C',
+            vaCommand,
             '/TESTMANAGER'
         ];
 
@@ -6645,13 +6280,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     public async resolveWebviewView(
         webviewView: vscode.WebviewView,
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         context: vscode.WebviewViewResolveContext,
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         _token: vscode.CancellationToken,
     ) {
         console.log("[PhaseSwitcherProvider] Resolving webview view...");
         this._view = webviewView;
+        this._vanessaRuntimeLogMonitorEnabled = true;
+        this.startVanessaRuntimeLogMonitor();
 
         webviewView.webview.options = {
             enableScripts: true,
@@ -6664,6 +6299,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         await this.loadLocalizationBundleIfNeeded();
         const nonce = getNonce();
         const styleUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'phaseSwitcher.css'));
+        const protocolScriptUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'phaseSwitcherProtocol.js'));
         const scriptUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'phaseSwitcher.js'));
         const htmlTemplateUri = vscode.Uri.joinPath(this._extensionUri, 'media', 'phaseSwitcher.html');
         const codiconsUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'codicon.css'));
@@ -6673,6 +6309,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             let htmlContent = Buffer.from(htmlBytes).toString('utf-8');
             htmlContent = htmlContent.replace(/\$\{nonce\}/g, nonce);
             htmlContent = htmlContent.replace('${stylesUri}', styleUri.toString());
+            htmlContent = htmlContent.replace('${protocolScriptUri}', protocolScriptUri.toString());
             htmlContent = htmlContent.replace('${scriptUri}', scriptUri.toString());
             htmlContent = htmlContent.replace('${codiconsUri}', codiconsUri.toString());
             htmlContent = htmlContent.replace(/\$\{webview.cspSource\}/g, webviewView.webview.cspSource);
@@ -6687,6 +6324,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 createScenarioTitle: this.t('Create scenario'),
                 createMainScenario: this.t('Main scenario'),
                 createNestedScenario: this.t('Nested scenario'),
+                createExportScenario: this.t('Export scenario'),
+                createUserStep: this.t('User step'),
                 maintenanceMenuTitle: this.t('More actions'),
                 repairScenariosTitle: this.t('Repair scenario files'),
                 reloadTestsFromDisk: this.t('Reload tests from disk'),
@@ -6825,6 +6464,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         webviewView.webview.onDidReceiveMessage(async message => {
+            const runtimeTargetFromMessage = (): ScenarioRuntimeTarget => ({
+                key: typeof message.key === 'string' && message.key.trim() ? message.key.trim() : undefined,
+                name: typeof message.name === 'string' && message.name.trim() ? message.name.trim() : undefined,
+                uri: typeof message.uri === 'string' && message.uri.trim() ? message.uri.trim() : undefined
+            });
             switch (message.command) {
                 case 'updateScenarioSelectionStates':
                     if (!message.data || typeof message.data !== 'object') {
@@ -6836,9 +6480,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     await this._sendInitialState(webviewView.webview);
                     return;
                 case 'refreshData': 
-                    this._testCache = null;
-                    this._cacheDirty = true;
-                    await this._sendInitialState(webviewView.webview);
+                    await vscode.commands.executeCommand(
+                        'kotTestToolkit.refreshPhaseSwitcher',
+                        { refreshCache: true }
+                    );
                     return;
                 case 'refreshVanessaSteps':
                     await vscode.commands.executeCommand('kotTestToolkit.refreshGherkinSteps');
@@ -6878,16 +6523,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     return;
                 case 'openScenario':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
-                        const scenarioName = message.name.trim();
-                        const testInfo = this._testCache?.get(scenarioName);
-                        const targetUri = testInfo?.yamlFileUri || await findFileByName(scenarioName, this._testCache);
-                        if (!targetUri) {
-                            vscode.window.showWarningMessage(this.t('Scenario "{0}" not found or its path is not defined.', scenarioName));
+                        const scenarioInfo = await this.resolveScenarioRuntimeOperationTarget(runtimeTargetFromMessage());
+                        if (!scenarioInfo) {
                             return;
                         }
 
                         try {
-                            const doc = await vscode.workspace.openTextDocument(targetUri);
+                            const doc = await vscode.workspace.openTextDocument(scenarioInfo.yamlFileUri);
                             await vscode.window.showTextDocument(doc, { preview: false });
                         } catch (error: any) {
                             console.error(`[PhaseSwitcherProvider] Error opening scenario file: ${error.message || error}`);
@@ -6897,34 +6539,56 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     return;
                 case 'runScenarioInVanessa':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
-                        await this.runScenarioInVanessa(message.name.trim());
+                        const scenarioInfo = await this.resolveScenarioRuntimeOperationTarget(runtimeTargetFromMessage());
+                        if (scenarioInfo) {
+                            await this.runScenarioInVanessa(scenarioInfo.name, getScenarioRuntimeKey(scenarioInfo));
+                        }
                     }
                     return;
                 case 'openRunScenarioLog':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
-                        await this.openRunScenarioLog(message.name.trim());
+                        const scenarioInfo = await this.resolveScenarioRuntimeOperationTarget(runtimeTargetFromMessage());
+                        if (scenarioInfo) {
+                            await this.openRunScenarioLog(scenarioInfo.name, getScenarioRuntimeKey(scenarioInfo));
+                        }
                     }
                     return;
                 case 'openScenarioRunStepInFeature':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
-                        await this.openScenarioRunStepInFeature(message.name.trim());
+                        const scenarioInfo = await this.resolveScenarioRuntimeOperationTarget(runtimeTargetFromMessage());
+                        if (scenarioInfo) {
+                            await this.openScenarioRunStepInFeature(scenarioInfo.name, getScenarioRuntimeKey(scenarioInfo));
+                        }
                     }
                     return;
                 case 'watchRunScenarioLog':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
-                        await this.openLiveRunLog(message.name.trim());
+                        const scenarioInfo = await this.resolveScenarioRuntimeOperationTarget(runtimeTargetFromMessage());
+                        if (scenarioInfo) {
+                            await this.openLiveRunLog(scenarioInfo.name, getScenarioRuntimeKey(scenarioInfo));
+                        }
                     }
                     return;
                 case 'openScenarioFeatureInEditor':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
-                        await this.openScenarioFeatureInEditor(message.name.trim());
+                        const scenarioInfo = await this.resolveScenarioRuntimeOperationTarget(runtimeTargetFromMessage());
+                        if (scenarioInfo) {
+                            await this.openScenarioFeatureInEditor(scenarioInfo.name, getScenarioRuntimeKey(scenarioInfo));
+                        }
                     }
                     return;
                 case 'openScenarioJsonArtifactInEditor':
                     if (typeof message.name === 'string'
                         && message.name.trim().length > 0
                         && (message.variant === 'original' || message.variant === 'combined')) {
-                        await this.openScenarioJsonArtifactInEditor(message.name.trim(), message.variant);
+                        const scenarioInfo = await this.resolveScenarioRuntimeOperationTarget(runtimeTargetFromMessage());
+                        if (scenarioInfo) {
+                            await this.openScenarioJsonArtifactInEditor(
+                                scenarioInfo.name,
+                                message.variant,
+                                getScenarioRuntimeKey(scenarioInfo)
+                            );
+                        }
                     }
                     return;
                 case 'renameGroup':
@@ -6934,17 +6598,35 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     return;
                 case 'renameScenario':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
-                        await this.renameScenario(message.name.trim());
+                        const scenarioInfo = await this.resolveScenarioRuntimeOperationTarget(runtimeTargetFromMessage());
+                        if (scenarioInfo) {
+                            await this.renameScenario({
+                                name: scenarioInfo.name,
+                                uri: getScenarioRuntimeKey(scenarioInfo)
+                            });
+                        }
                     }
                     return;
                 case 'openMainScenarioTestSettings':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
-                        await this.openMainScenarioTestSettings(message.name.trim());
+                        const scenarioInfo = await this.resolveScenarioRuntimeOperationTarget(runtimeTargetFromMessage());
+                        if (scenarioInfo) {
+                            await this.openMainScenarioTestSettings({
+                                name: scenarioInfo.name,
+                                uri: getScenarioRuntimeKey(scenarioInfo)
+                            });
+                        }
                     }
                     return;
                 case 'deleteMainScenario':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
-                        await this.deleteMainScenario(message.name.trim());
+                        const scenarioInfo = await this.resolveScenarioRuntimeOperationTarget(runtimeTargetFromMessage());
+                        if (scenarioInfo) {
+                            await this.deleteMainScenario({
+                                name: scenarioInfo.name,
+                                uri: getScenarioRuntimeKey(scenarioInfo)
+                            });
+                        }
                     }
                     return;
                 case 'openFavoriteScenarios':
@@ -6974,7 +6656,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     return;
                 case 'openScenarioInVanessaManual':
                     if (typeof message.name === 'string' && message.name.trim().length > 0) {
-                        await this.openScenarioInVanessaManual(message.name.trim());
+                        const scenarioInfo = await this.resolveScenarioRuntimeOperationTarget(runtimeTargetFromMessage());
+                        if (scenarioInfo) {
+                            await this.openScenarioInVanessaManual(scenarioInfo.name, getScenarioRuntimeKey(scenarioInfo));
+                        }
                     }
                     return;
                 case 'openSettings':
@@ -7020,6 +6705,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 case 'createNestedScenario':
                     console.log("[PhaseSwitcherProvider] Received createNestedScenario command from webview.");
                     vscode.commands.executeCommand('kotTestToolkit.createNestedScenario');
+                    return;
+                case 'createExportScenario':
+                    console.log("[PhaseSwitcherProvider] Received createExportScenario command from webview.");
+                    vscode.commands.executeCommand('kotTestToolkit.createExportScenario');
+                    return;
+                case 'createUserStep':
+                    console.log("[PhaseSwitcherProvider] Received createUserStep command from webview.");
+                    vscode.commands.executeCommand('kotTestToolkit.createUserStep');
                     return;
                 case 'createFirstLaunchZip':
                     console.log("[PhaseSwitcherProvider] Received createFirstLaunchZip command from webview.");
@@ -7071,21 +6764,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             vscode.window.showErrorMessage(this.t('Please open a project folder.'));
             webview.postMessage({ command: 'loadInitialState', error: this.t('Project folder is not open') });
             webview.postMessage({ command: 'updateStatus', text: this.t('Error: Project folder is not open') });
-            this._testCache = null; 
-            this._onDidUpdateTestCache.fire(this._testCache); // Уведомляем об отсутствии данных
+            this.invalidateScenarioCatalog(true);
             return;
         }
         const workspaceRootUri = workspaceFolders[0].uri;
-
-        if (this._testCache === null && this.initializationPromise) {
-            console.log("[PhaseSwitcherProvider:_sendInitialState] Waiting for initial cache warmup after webview render...");
-            try {
-                await this.initializationPromise;
-                console.log("[PhaseSwitcherProvider:_sendInitialState] Initial cache warmup completed.");
-            } catch (error) {
-                console.error("[PhaseSwitcherProvider:_sendInitialState] Initial cache warmup failed:", error);
-            }
-        }
 
         // Check if first launch folder exists (independent of test cache)
         const projectPaths = this.getProjectPaths(workspaceRootUri);
@@ -7100,21 +6782,20 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        // Use existing cache if available, otherwise scan (or refresh stale cache)
-        if (this._testCache === null || this._cacheDirty) {
-            const reason = this._testCache === null
-                ? "cache is empty"
-                : "cache marked as dirty";
-            console.log(`[PhaseSwitcherProvider:_sendInitialState] Refreshing cache because ${reason}.`);
+        // Use the published catalog if available, otherwise scan.
+        let catalog = this.getScenarioCatalog();
+        if (!catalog) {
+            console.log('[PhaseSwitcherProvider:_sendInitialState] Refreshing scenario catalog.');
             try {
-                await this.refreshTestCacheFromDisk('_sendInitialState');
+                catalog = await this.ensureFreshScenarioCatalog();
             } catch (scanError: any) {
                 console.error("[PhaseSwitcherProvider:_sendInitialState] Error during cache refresh:", scanError);
                 vscode.window.showErrorMessage(this.t('Error scanning scenario files: {0}', scanError.message || scanError));
-                this._testCache = null;
+                this.invalidateScenarioCatalog(true);
+                catalog = null;
             }
         } else {
-            console.log(`[PhaseSwitcherProvider:_sendInitialState] Using existing cache with ${this._testCache.size} scenarios`);
+            console.log(`[PhaseSwitcherProvider:_sendInitialState] Using existing catalog with ${catalog.all.length} definitions`);
         }
 
         let states: { [key: string]: 'checked' | 'unchecked' | 'disabled' } = {};
@@ -7124,24 +6805,25 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         let testsForPhaseSwitcherCount = 0;
 
 
-        if (this._testCache) {
+        if (catalog) {
             status = this.t('Checking test state...');
             webview.postMessage({ command: 'updateStatus', text: status });
 
-            const testsForPhaseSwitcherProcessing = this.getMainScenariosFromCache();
+            const testsForPhaseSwitcherProcessing = this.getMainScenariosFromCatalog();
             testsForPhaseSwitcherCount = testsForPhaseSwitcherProcessing.length;
             const savedSelectionStates = await this.getMainScenarioSelectionStates(testsForPhaseSwitcherProcessing);
 
             for (const info of testsForPhaseSwitcherProcessing) {
-                const isChecked = savedSelectionStates[info.name] === true;
-                states[info.name] = isChecked ? 'checked' : 'unchecked';
+                const scenarioKey = getScenarioRuntimeKey(info);
+                const isChecked = savedSelectionStates[scenarioKey] === true;
+                states[scenarioKey] = isChecked ? 'checked' : 'unchecked';
                 if (isChecked) {
                     checkedCount++;
                 }
             }
             
             // Группируем и сортируем данные только для тех тестов, что идут в UI
-            tabDataForUI = this._groupAndSortTestData(new Map(testsForPhaseSwitcherProcessing.map(info => [info.name, info])));
+            tabDataForUI = this._groupAndSortTestData(testsForPhaseSwitcherProcessing);
 
 
             status = this.t('State loaded: \n{0} / {1} enabled', String(checkedCount), String(testsForPhaseSwitcherCount));
@@ -7198,10 +6880,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 scenarioRepairInProgress: this._isScenarioRepairInProgress,
                 scenarioRepairCancelling: this._isScenarioRepairCancelling
             },
-            error: !this._testCache ? status : undefined // Ошибка, если _testCache пуст
+            error: !catalog ? status : undefined
         });
         // Enable controls only if there are tests and no build is running
-        const hasTests = !!this._testCache && testsForPhaseSwitcherCount > 0;
+        const hasTests = !!catalog && testsForPhaseSwitcherCount > 0;
         if (this._isBuildInProgress) {
             webview.postMessage({
                 command: 'updateStatus',
@@ -7222,9 +6904,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 enableControls: hasTests
             });
         }
-
-        // Генерируем событие с ПОЛНЫМ кэшем для других компонентов (например, CompletionProvider)
-        this._onDidUpdateTestCache.fire(this._testCache);
 
         void this.restoreScenarioBuildArtifactsFromDiskIfNeeded(workspaceRootUri)
             .then(() => {
@@ -7251,8 +6930,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         progressTitle: string,
         showProgressNotification: boolean = true
     ): Promise<EnsureSharedStartupInfobaseResult | null> {
+        const startupInfobase = await loadStartupInfobase();
         try {
-            return await ensureSharedStartupInfobaseReady(this._context, oneCClientPath, {
+            return await startupInfobase.ensureSharedStartupInfobaseReady(this._context, oneCClientPath, {
                 showOutputPanel: false,
                 showProgressNotification,
                 progressTitle
@@ -7265,7 +6945,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 openOutput
             ).then(selection => {
                 if (selection === openOutput) {
-                    getSharedStartupInfobaseOutputChannel().show(true);
+                    startupInfobase.getSharedStartupInfobaseOutputChannel().show(true);
                 }
             });
             return null;
@@ -7449,7 +7129,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (this._scenarioBuildArtifacts.size > 0) {
             return;
         }
-        if (!this._testCache || this._testCache.size === 0) {
+        const catalog = this.getScenarioCatalog();
+        if (!catalog || catalog.all.length === 0) {
             return;
         }
         this._startupArtifactsRestoreAttempted = true;
@@ -7495,13 +7176,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     /**
      * Builds СборкаТекстовСценариев /C command with custom parameters and ErrorFolder
      */
-    private buildBuildScenarioBddCommand(jsonParamsPath: string, resultFilePath: string, logFilePath: string, errorFolderPath: string): string {
+    private buildBuildScenarioBddArgs(jsonParamsPath: string, resultFilePath: string, logFilePath: string, errorFolderPath: string): string[] {
         // Ensure ErrorFolder path ends with a slash
         const errorFolderWithSlash = errorFolderPath.endsWith(path.sep) ? errorFolderPath : errorFolderPath + path.sep;
 
         const command = `СобратьСценарии;JsonParams=${jsonParamsPath};ResultFile=${resultFilePath};LogFile=${logFilePath};ErrorFolder=${errorFolderWithSlash}`;
 
-        return `/C"${command}"`;
+        return ['/C', command];
     }
 
     /**
@@ -7619,7 +7300,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 for (const testsuiteMatch of testsuiteMatches) {
                     // Extract test name and remove "Компиляция настройки сценария" prefix
                     const nameMatch = testsuiteMatch.match(/name="(?:Компиляция настройки сценария )?([^"]*)"/);
-                    if (!nameMatch) continue;
+                    if (!nameMatch) {
+                        continue;
+                    }
                     
                     const testName = nameMatch[1];
                     
@@ -7773,6 +7456,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             let featureFileDirUri: vscode.Uri; // Объявляем здесь, чтобы была доступна в конце
             let legacyTemporaryRootUri: vscode.Uri | null = null;
             let temporarilyMovedLegacyFiles: LegacyTemporarilyMovedTestFile[] = [];
+            let disabledTestFileMoveMode: LegacyTemporarilyMovedTestFilesResult['mode'] = null;
             try {
                 progress.report({ increment: 0, message: this.t('Preparing...') });
                 this.outputInfo(outputChannel, this.t('Starting build process...'));
@@ -7785,6 +7469,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const workspaceRootUri = workspaceFolders[0].uri;
                 const workspaceRootPath = workspaceRootUri.fsPath;
 
+                const { resolveOneCPlatformForLaunch } = await loadOneCPlatform();
                 const selectedPlatform = await resolveOneCPlatformForLaunch(this.t.bind(this), {
                     promptUser: false
                 });
@@ -7813,9 +7498,21 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 
                 const { YamlParametersManager } = await import('./yamlParametersManager.js');
                 const yamlParametersManager = YamlParametersManager.getInstance(this._context);
-                await this.ensureFreshTestCache();
+                await this.ensureFreshScenarioCatalog();
                 const baseBuildParameters = await yamlParametersManager.loadParameters();
                 const selectionSnapshot = await this.getMainScenarioSelectionSnapshotForBuild();
+                const catalog = await this.ensureFreshScenarioCatalog();
+                const selectionValidation = validateEnabledScenarioKeys(catalog, selectionSnapshot.enabledKeys);
+                if (selectionValidation.kind === 'ambiguous') {
+                    const message = this.t(
+                        'Build cancelled: more than one enabled scenario is named "{0}". Disable all but one definition.',
+                        selectionValidation.name
+                    );
+                    this.outputError(outputChannel, message);
+                    vscode.window.showErrorMessage(message);
+                    sendStatus(message, true, 'assemble');
+                    return;
+                }
                 const filterDecision = this.buildScenarioFilterDecision(selectionSnapshot);
                 const effectiveBuildParameters = this.applyScenarioFilterToBuildParameters(baseBuildParameters, filterDecision);
 
@@ -7861,19 +7558,24 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 ensureBuildNotCancelled();
                 const legacyMoveResult = await this.temporarilyMoveDisabledScenarioTestFilesForBuild(
                     workspaceRootUri,
-                    selectionSnapshot.disabledNames,
-                    outputChannel
+                    selectionSnapshot.disabledKeys,
+                    outputChannel,
+                    selectionSnapshot.isolatedDisabledKeys
                 );
                 legacyTemporaryRootUri = legacyMoveResult.temporaryRootUri;
                 temporarilyMovedLegacyFiles = legacyMoveResult.movedFiles;
+                disabledTestFileMoveMode = legacyMoveResult.mode;
                 if (temporarilyMovedLegacyFiles.length > 0) {
-                    this.outputInfo(
-                        outputChannel,
-                        this.t(
+                    const message = disabledTestFileMoveMode === 'legacy'
+                        ? this.t(
                             'Legacy mode: temporarily moved {0} disabled test file(s) before build.',
                             String(temporarilyMovedLegacyFiles.length)
                         )
-                    );
+                        : this.t(
+                            'Build isolation: temporarily moved {0} disabled same-name scenario test file(s) before build.',
+                            String(temporarilyMovedLegacyFiles.length)
+                        );
+                    this.outputInfo(outputChannel, message);
                 }
                 
                 this.outputAdvanced(outputChannel, this.t('yaml_parameters.json generated at {0}', localSettingsPath.fsPath));
@@ -7892,8 +7594,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
                 const yamlBuildParams = [
                     ...this.buildStartupParams(startupInfobase.infobaseDirectory, startupInfobase.authentication),
-                    `/Execute`, `"${buildScenarioBddEpfPath}"`,
-                    this.buildBuildScenarioBddCommand(localSettingsPath.fsPath, yamlBuildResultFileUri.fsPath, yamlBuildLogFileUri.fsPath, buildErrorsPathUri.fsPath)
+                    '/Execute',
+                    buildScenarioBddEpfPath,
+                    ...this.buildBuildScenarioBddArgs(localSettingsPath.fsPath, yamlBuildResultFileUri.fsPath, yamlBuildLogFileUri.fsPath, buildErrorsPathUri.fsPath)
                 ];
                 ensureBuildNotCancelled();
                 // BuildScenarioBdd rewrites output artifacts, so stale run buttons must be removed immediately.
@@ -7915,7 +7618,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         throw new Error(this.t('YAML build error. See log: {0}', yamlBuildLogFileUri.fsPath));
                     }
                 } catch (e: any) {
-                     if (e.code === 'FileNotFound') throw new Error(this.t('Build result file {0} not found after waiting.', yamlBuildResultFileUri.fsPath));
+                     if (e.code === 'FileNotFound') {
+                         throw new Error(this.t('Build result file {0} not found after waiting.', yamlBuildResultFileUri.fsPath));
+                     }
                      throw e; 
                 }
                 this.outputInfo(outputChannel, this.t('YAML build successful.'));
@@ -7943,7 +7648,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
 
                 ensureBuildNotCancelled();
-                await this.updateScenarioBuildArtifacts(featureFiles, featureFileDirUri);
+                await this.updateScenarioBuildArtifacts(
+                    featureFiles,
+                    featureFileDirUri,
+                    selectionSnapshot.enabledKeyByName
+                );
                 await this.ensureUniqueVanessaRuntimePathsForArtifacts(outputChannel, workspaceRootPath);
                 await this.ensureCombinedScenarioJsonArtifacts(workspaceRootPath, outputChannel);
                 this.sendRunArtifactsStateToWebview();
@@ -8142,16 +7851,20 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         outputChannel
                     );
                     if (movedCount > 0 && restoreFailures === 0) {
-                        this.outputInfo(
-                            outputChannel,
-                            this.t(
+                        const message = disabledTestFileMoveMode === 'legacy'
+                            ? this.t(
                                 'Legacy mode: restored {0} temporarily moved disabled test file(s) after build.',
                                 String(movedCount)
                             )
-                        );
+                            : this.t(
+                                'Build isolation: restored {0} temporarily moved disabled same-name scenario test file(s) after build.',
+                                String(movedCount)
+                            );
+                        this.outputInfo(outputChannel, message);
                     }
                     legacyTemporaryRootUri = null;
                     temporarilyMovedLegacyFiles = [];
+                    disabledTestFileMoveMode = null;
                 }
             }
         });
@@ -8219,12 +7932,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             };
 
             this.outputInfo(outputChannel, this.t('Launching process: {0}', processName));
-            this.outputAdvanced(outputChannel, `Executing 1C process: ${processName} with args: ${args.join(' ')}`);
-            const command = exePath.includes(' ') && !exePath.startsWith('"') ? `"${exePath}"` : exePath;
+            this.outputAdvanced(
+                outputChannel,
+                `Executing 1C process: ${processName}: ${formatProcessCommandForDisplay(exePath, args)}`
+            );
+            const command = buildDirectSpawnCommand(exePath, args);
             
-            const child = cp.spawn(command, args, {
+            const child = cp.spawn(command.executable, command.args, {
                 cwd: cwd,
-                shell: true, 
+                shell: command.shell,
                 windowsHide: true
             });
             if (trackAsBuildProcess) {
@@ -8342,14 +8058,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     ): Promise<void> {
         const targetOutputChannel = outputChannel || this.getBuildOutputChannel();
         this.outputInfo(targetOutputChannel, this.t('Launching process: {0}', processName));
-        this.outputAdvanced(targetOutputChannel, `Executing detached 1C process: ${processName} with args: ${args.join(' ')}`);
+        this.outputAdvanced(
+            targetOutputChannel,
+            `Executing detached 1C process: ${processName}: ${formatProcessCommandForDisplay(exePath, args)}`
+        );
 
         return new Promise((resolve, reject) => {
             try {
-                const command = exePath.includes(' ') && !exePath.startsWith('"') ? `"${exePath}"` : exePath;
-                const child = cp.spawn(command, args, {
+                const command = buildDirectSpawnCommand(exePath, args);
+                const child = cp.spawn(command.executable, command.args, {
                     cwd,
-                    shell: true,
+                    shell: command.shell,
                     windowsHide: false,
                     detached: true,
                     stdio: 'ignore'
@@ -8373,22 +8092,23 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
      * Группирует и сортирует данные тестов для отображения в Test Manager.
      * Использует только тесты, у которых есть tabName.
      */
-    private _groupAndSortTestData(testCacheForUI: Map<string, TestInfo>): { [tabName: string]: PhaseSwitcherWebviewTestInfo[] } {
+    private _groupAndSortTestData(testCacheForUI: readonly TestInfo[]): { [tabName: string]: PhaseSwitcherWebviewTestInfo[] } {
         const grouped: { [tabName: string]: PhaseSwitcherWebviewTestInfo[] } = {};
         if (!testCacheForUI) {
             return grouped;
         }
 
-        for (const info of testCacheForUI.values()) {
+        for (const info of testCacheForUI) {
             // Убедимся, что tabName существует и является строкой для группировки
             if (info.tabName && typeof info.tabName === 'string' && info.tabName.trim() !== "") {
                 const infoForWebview: PhaseSwitcherWebviewTestInfo = {
+                    scenarioKey: getScenarioRuntimeKey(info),
                     name: info.name,
                     relativePath: info.relativePath,
                     defaultState: info.defaultState,
                     order: info.order,
                     scenarioCode: info.scenarioCode,
-                    yamlFileUriString: info.yamlFileUri?.toString()
+                    yamlFileUriString: info.yamlFileUri.toString()
                 };
 
                 if (!grouped[info.tabName]) { grouped[info.tabName] = []; }
@@ -8410,34 +8130,44 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private getScenarioNamesByUri(uri: vscode.Uri): string[] {
-        if (!this._testCache || this._testCache.size === 0) {
-            return [];
-        }
-
-        const scenarioNames: string[] = [];
-        for (const [scenarioName, testInfo] of this._testCache.entries()) {
-            if (this.areUrisEqual(testInfo.yamlFileUri, uri)) {
-                scenarioNames.push(scenarioName);
-            }
-        }
-        return scenarioNames;
+        const scenarioInfo = this.getScenarioCatalog()?.byUri.get(uri.toString());
+        return scenarioInfo ? [scenarioInfo.name] : [];
     }
 
     private getScenarioNamesRelatedToUri(uri: vscode.Uri): string[] {
         const names = new Set<string>(this.getScenarioNamesByUri(uri));
-        if (!this._testCache || this._testCache.size === 0 || uri.scheme !== 'file') {
+        const catalog = this.getScenarioCatalog();
+        if (!catalog || catalog.all.length === 0 || uri.scheme !== 'file') {
             return Array.from(names);
         }
 
-        const normalizedUriPath = path.resolve(uri.fsPath);
-        for (const [scenarioName, info] of this._testCache.entries()) {
-            if (info.yamlFileUri.scheme !== 'file') {
-                continue;
-            }
-            const scenarioDir = path.dirname(info.yamlFileUri.fsPath);
-            if (this.isPathInside(scenarioDir, normalizedUriPath)) {
-                names.add(scenarioName);
-            }
+        const workspaceRootUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+        if (!workspaceRootUri) {
+            return Array.from(names);
+        }
+
+        const scanRootPath = resolveScanDirFsPath(workspaceRootUri);
+        if (
+            !this._scenarioDirectoryIndexCache
+            || this._scenarioDirectoryIndexCache.catalog !== catalog
+            || this._scenarioDirectoryIndexCache.scanRootPath !== scanRootPath
+        ) {
+            this._scenarioDirectoryIndexCache = {
+                catalog,
+                scanRootPath,
+                index: new ScenarioDirectoryIndex(
+                    catalog.all
+                        .filter(info => info.yamlFileUri.scheme === 'file')
+                        .map(info => ({ name: info.name, filePath: info.yamlFileUri.fsPath })),
+                    scanRootPath,
+                    this.normalizeFsPathForComparison(scanRootPath)
+                )
+            };
+        }
+
+        const normalizedUriPath = this.normalizeFsPathForComparison(uri.fsPath);
+        for (const name of this._scenarioDirectoryIndexCache.index.getRelatedScenarioNames(normalizedUriPath)) {
+            names.add(name);
         }
 
         return Array.from(names);
@@ -8450,7 +8180,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const normalizedUriPath = path.resolve(uri.fsPath);
         const names = new Set<string>();
-        for (const [scenarioName, artifact] of this._scenarioBuildArtifacts.entries()) {
+        for (const artifact of this._scenarioBuildArtifacts.values()) {
             if (artifact.sourceUri.scheme !== 'file') {
                 continue;
             }
@@ -8458,7 +8188,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const sourcePath = path.resolve(artifact.sourceUri.fsPath);
             const scenarioDir = path.dirname(sourcePath);
             if (normalizedUriPath === sourcePath || this.isPathInside(scenarioDir, normalizedUriPath)) {
-                names.add(scenarioName);
+                names.add(artifact.scenarioName);
             }
         }
 
@@ -8470,43 +8200,44 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        if (!this._testCache || this._testCache.size === 0) {
+        const catalog = this.getScenarioCatalog();
+        if (!catalog || catalog.all.length === 0) {
             this._scenarioBuildArtifacts.clear();
             this._staleBuiltScenarioNames.clear();
             this._scenarioExecutionStates.clear();
             this._scenarioLastLaunchContexts.clear();
             this.stopAllFeatureStepTrackers();
             this.stopAllTrackedRunLogWatchers();
+            this.disposeAllLiveRunLogWatchers();
             return;
         }
 
-        for (const [scenarioName] of this._scenarioBuildArtifacts) {
-            const scenarioInfo = this._testCache.get(scenarioName);
+        for (const [scenarioKey, artifact] of this._scenarioBuildArtifacts) {
+            const scenarioInfo = catalog.byUri.get(scenarioKey);
             if (!scenarioInfo) {
-                this._scenarioBuildArtifacts.delete(scenarioName);
-                this._staleBuiltScenarioNames.delete(scenarioName);
-                this._scenarioExecutionStates.delete(scenarioName);
-                this._scenarioLastLaunchContexts.delete(scenarioName);
-                this.clearFailedFeatureStepHighlight(scenarioName);
-                this.stopFeatureStepTracker(scenarioName);
-                this.clearTrackedRunLogWatchersForScenario(scenarioName);
+                this._scenarioBuildArtifacts.delete(scenarioKey);
+                this._staleBuiltScenarioNames.delete(scenarioKey);
+                this._scenarioExecutionStates.delete(scenarioKey);
+                this._scenarioLastLaunchContexts.delete(scenarioKey);
+                this.clearFailedFeatureStepHighlight(scenarioKey);
+                this.stopFeatureStepTracker(scenarioKey);
+                this.clearTrackedRunLogWatchersForScenario(scenarioKey);
                 continue;
             }
 
-            const artifact = this._scenarioBuildArtifacts.get(scenarioName);
-            if (artifact) {
-                artifact.sourceUri = scenarioInfo.yamlFileUri;
-            }
+            artifact.sourceUri = scenarioInfo.yamlFileUri;
+            artifact.scenarioName = scenarioInfo.name;
         }
     }
 
     private buildCallersByCalleeFromCache(): Map<string, Set<string>> {
         const result = new Map<string, Set<string>>();
-        if (!this._testCache) {
+        const catalog = this.getScenarioCatalog();
+        if (!catalog) {
             return result;
         }
 
-        for (const [callerName, testInfo] of this._testCache.entries()) {
+        for (const testInfo of catalog.all) {
             const calledScenarios = testInfo.nestedScenarioNames || [];
             for (const calledScenarioRaw of calledScenarios) {
                 const calledScenario = calledScenarioRaw.trim();
@@ -8514,7 +8245,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     continue;
                 }
                 const callers = result.get(calledScenario) || new Set<string>();
-                callers.add(callerName);
+                callers.add(testInfo.name);
                 result.set(calledScenario, callers);
             }
         }
@@ -8545,11 +8276,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
             visited.add(scenarioName);
 
-            if (this._scenarioBuildArtifacts.has(scenarioName)) {
-                this._staleBuiltScenarioNames.add(scenarioName);
-                const executionState = this._scenarioExecutionStates.get(scenarioName);
+            const matchingArtifacts = [...this._scenarioBuildArtifacts.values()]
+                .filter(artifact => artifact.scenarioName === scenarioName);
+            for (const artifact of matchingArtifacts) {
+                this._staleBuiltScenarioNames.add(artifact.scenarioKey);
+                const executionState = this._scenarioExecutionStates.get(artifact.scenarioKey);
                 if (executionState && executionState.status !== 'running' && executionState.status !== 'failed') {
-                    this._scenarioExecutionStates.delete(scenarioName);
+                    this._scenarioExecutionStates.delete(artifact.scenarioKey);
                 }
             }
 
@@ -8569,68 +8302,79 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         scenarioName: string,
         status: 'idle' | 'running' | 'passed' | 'failed',
         message?: string,
-        runLogPath?: string
+        runLogPath?: string,
+        scenarioKey?: ScenarioRuntimeKey
     ): void {
+        const runtimeKey = this.resolveRuntimeKeyForScenario(scenarioName, scenarioKey);
+        if (!runtimeKey) {
+            return;
+        }
         const normalizedRunLogPath = runLogPath && runLogPath.trim().length > 0
             ? runLogPath.trim()
             : undefined;
 
         if (status === 'idle') {
-            if (!this.isTrackedRunSelectedForScenario(scenarioName)) {
-                this.stopFeatureStepTracker(scenarioName, { preserveHighlight: true });
+            if (!this.isTrackedRunSelectedForScenario(runtimeKey)) {
+                this.stopFeatureStepTracker(runtimeKey, { preserveHighlight: true });
             } else {
-                this.stopFeatureStepTracker(scenarioName);
+                this.stopFeatureStepTracker(runtimeKey);
             }
-            if (this._scenarioExecutionStates.delete(scenarioName)) {
-                this.stopLiveRunLogWatcher(scenarioName, {
+            if (this._scenarioExecutionStates.delete(runtimeKey)) {
+                this.stopLiveRunLogWatcher(runtimeKey, {
                     appendMessage: this.t('Live run log watcher stopped for "{0}".', scenarioName)
                 });
             }
-            this.refreshScenarioHighlightsBySelectedRunSource(scenarioName);
+            this.refreshScenarioHighlightsBySelectedRunSource(runtimeKey);
             this.sendRunArtifactsStateToWebview();
             return;
         }
 
-        this._scenarioExecutionStates.set(scenarioName, {
+        this._scenarioExecutionStates.set(runtimeKey, {
+            scenarioName,
             status,
             updatedAt: Date.now(),
             message: message && message.trim().length > 0 ? message.trim() : undefined,
             runLogPath: normalizedRunLogPath
         });
         if (status === 'running') {
-            this.setActiveTrackedRunForScenario(scenarioName, undefined, { refreshHighlights: false, notifyWebview: false });
-            this.stopLiveRunLogWatcher(scenarioName, {
+            this.setActiveTrackedRunForScenario(runtimeKey, undefined, { refreshHighlights: false, notifyWebview: false });
+            this.stopLiveRunLogWatcher(runtimeKey, {
                 disposeChannel: true
             });
-            this.clearRunningFeatureStepHighlight(scenarioName);
-            this.clearFailedFeatureStepHighlight(scenarioName);
+            this.clearRunningFeatureStepHighlight(runtimeKey);
+            this.clearFailedFeatureStepHighlight(runtimeKey);
             this.startFeatureStepTracker(
+                runtimeKey,
                 scenarioName,
                 normalizedRunLogPath,
-                this._scenarioBuildArtifacts.get(scenarioName)?.featurePath
+                this.getScenarioBuildArtifact(scenarioName, runtimeKey)?.featurePath
             );
         } else {
-            this.stopLiveRunLogWatcher(scenarioName, {
+            this.stopLiveRunLogWatcher(runtimeKey, {
                 appendMessage: this.t('Live run log watcher stopped for "{0}".', scenarioName)
             });
-            const trackedRunSelected = this.isTrackedRunSelectedForScenario(scenarioName);
+            const trackedRunSelected = this.isTrackedRunSelectedForScenario(runtimeKey);
             if (!trackedRunSelected) {
                 if (status === 'failed') {
-                    this.captureFailedStepHighlight(scenarioName, normalizedRunLogPath);
+                    this.captureFailedStepHighlight(runtimeKey, scenarioName, normalizedRunLogPath);
                 } else {
-                    this.clearFailedFeatureStepHighlight(scenarioName);
+                    this.clearFailedFeatureStepHighlight(runtimeKey);
                 }
             }
-            this.stopFeatureStepTracker(scenarioName, { preserveHighlight: true });
+            this.stopFeatureStepTracker(runtimeKey, { preserveHighlight: true });
             if (trackedRunSelected) {
-                this.refreshScenarioHighlightsBySelectedRunSource(scenarioName);
+                this.refreshScenarioHighlightsBySelectedRunSource(runtimeKey);
             }
         }
         this.sendRunArtifactsStateToWebview();
     }
 
-    private isScenarioRunInProgress(scenarioName: string): boolean {
-        return this._scenarioExecutionStates.get(scenarioName)?.status === 'running';
+    private isScenarioRunInProgress(
+        scenarioName: string,
+        scenarioKey?: ScenarioRuntimeKey
+    ): boolean {
+        const runtimeKey = this.resolveRuntimeKeyForScenario(scenarioName, scenarioKey);
+        return runtimeKey ? this._scenarioExecutionStates.get(runtimeKey)?.status === 'running' : false;
     }
 
     private hasAnyScenarioRunsInProgress(): boolean {
@@ -8691,27 +8435,34 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const state: Record<string, ScenarioRunState> = {};
         this.pruneScenarioBuildArtifactsByCache();
 
-        const scenarioNames = new Set<string>();
-        this._scenarioBuildArtifacts.forEach((_, scenarioName) => scenarioNames.add(scenarioName));
-        this._scenarioExecutionStates.forEach((_, scenarioName) => scenarioNames.add(scenarioName));
-        this._externalTrackedRunsByScenario.forEach((_, scenarioName) => scenarioNames.add(scenarioName));
+        const catalog = this.getScenarioCatalog();
+        if (!catalog) {
+            return state;
+        }
+        const scenarioKeys = new Set<ScenarioRuntimeKey>(this._scenarioBuildArtifacts.keys());
+        this._scenarioExecutionStates.forEach((_, scenarioKey) => scenarioKeys.add(scenarioKey));
+        this._externalTrackedRunsByScenario.forEach((_, scenarioKey) => scenarioKeys.add(scenarioKey));
 
-        for (const scenarioName of scenarioNames) {
-            const scenarioInfo = this._testCache?.get(scenarioName);
+        for (const scenarioKey of scenarioKeys) {
+            const scenarioInfo = catalog.byUri.get(scenarioKey);
             if (scenarioInfo && !this.isMainScenario(scenarioInfo)) {
                 continue;
             }
 
-            const artifact = this._scenarioBuildArtifacts.get(scenarioName);
-            const displayedRunState = this.getScenarioDisplayedRunState(scenarioName, artifact);
+            const artifact = this._scenarioBuildArtifacts.get(scenarioKey);
+            const scenarioName = artifact?.scenarioName || scenarioInfo?.name;
+            if (!scenarioName) {
+                continue;
+            }
+            const displayedRunState = this.getScenarioDisplayedRunState(scenarioKey, scenarioName, artifact);
             const rawRunStatus = displayedRunState.status;
-            const isStale = this._staleBuiltScenarioNames.has(scenarioName);
+            const isStale = this._staleBuiltScenarioNames.has(scenarioKey);
             const runStatus = isStale && rawRunStatus === 'failed' && displayedRunState.source !== 'tracked'
                 ? 'idle'
                 : rawRunStatus;
             const runLogPath = displayedRunState.runLogPath?.trim();
-            const trackedRunCount = this.getTrackedRunCountForScenario(scenarioName);
-            state[scenarioName] = {
+            const trackedRunCount = this.getTrackedRunCountForScenario(scenarioKey);
+            state[scenarioKey] = {
                 featurePath: artifact?.featurePath,
                 jsonPath: artifact?.jsonPath,
                 combinedJsonPath: artifact?.combinedJsonPath,
@@ -8743,32 +8494,172 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return 'json';
     }
 
-    private getCustomInfobasePathByScenarioMap(): Record<string, string> {
-        return this._context.workspaceState.get<Record<string, string>>(
+    private readStoredScenarioCustomInfobasePaths(): {
+        legacyByName: Record<string, string>;
+        currentByKey: Record<ScenarioRuntimeKey, string>;
+        isVersion2: boolean;
+    } {
+        const raw = this._context.workspaceState.get<unknown>(
             PhaseSwitcherProvider.runVanessaCustomInfobaseCacheKey,
             {}
         );
-    }
-
-    private getScenarioCustomInfobasePath(scenarioName: string): string | undefined {
-        const map = this.getCustomInfobasePathByScenarioMap();
-        const value = map[scenarioName];
-        if (!value || typeof value !== 'string') {
-            return undefined;
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            return { legacyByName: {}, currentByKey: {}, isVersion2: false };
         }
-        const trimmed = value.trim();
-        return trimmed.length > 0 ? trimmed : undefined;
+
+        const candidate = raw as Partial<ScenarioCustomInfobaseStorageV2>;
+        if (candidate.version === 2
+            && candidate.byKey
+            && typeof candidate.byKey === 'object'
+            && !Array.isArray(candidate.byKey)) {
+            const currentByKey: Record<ScenarioRuntimeKey, string> = {};
+            for (const [key, value] of Object.entries(candidate.byKey)) {
+                if (key.trim() && typeof value === 'string' && value.trim()) {
+                    currentByKey[key.trim()] = value.trim();
+                }
+            }
+            return { legacyByName: {}, currentByKey, isVersion2: true };
+        }
+
+        const legacyByName: Record<string, string> = {};
+        for (const [name, value] of Object.entries(raw)) {
+            if (name.trim() && typeof value === 'string' && value.trim()) {
+                legacyByName[name.trim()] = value.trim();
+            }
+        }
+        return { legacyByName, currentByKey: {}, isVersion2: false };
     }
 
-    private async saveScenarioCustomInfobasePath(scenarioName: string, infobasePath: string): Promise<void> {
-        const trimmedName = scenarioName.trim();
+    private async getScenarioCustomInfobasePaths(): Promise<Record<ScenarioRuntimeKey, string>> {
+        const stored = this.readStoredScenarioCustomInfobasePaths();
+        if (stored.isVersion2) {
+            return stored.currentByKey;
+        }
+        const catalog = await this.ensureFreshScenarioCatalog();
+        const launchableCatalog = buildScenarioCatalog(catalog.all.filter(scenario => this.isMainScenario(scenario)));
+        const migrated = migrateLegacyScenarioValues(
+            launchableCatalog,
+            stored.legacyByName,
+            stored.currentByKey
+        );
+        await this._context.workspaceState.update(
+            PhaseSwitcherProvider.runVanessaCustomInfobaseCacheKey,
+            { version: 2, byKey: migrated } satisfies ScenarioCustomInfobaseStorageV2
+        );
+        return migrated;
+    }
+
+    private async getScenarioCustomInfobasePath(scenarioKey: ScenarioRuntimeKey): Promise<string | undefined> {
+        const map = await this.getScenarioCustomInfobasePaths();
+        return map[scenarioKey]?.trim() || undefined;
+    }
+
+    private async saveScenarioCustomInfobasePath(
+        scenarioKey: ScenarioRuntimeKey,
+        infobasePath: string
+    ): Promise<void> {
+        const trimmedKey = scenarioKey.trim();
         const trimmedPath = infobasePath.trim();
-        if (!trimmedName || !trimmedPath) {
+        if (!trimmedKey || !trimmedPath) {
             return;
         }
-        const map = this.getCustomInfobasePathByScenarioMap();
-        map[trimmedName] = trimmedPath;
-        await this._context.workspaceState.update(PhaseSwitcherProvider.runVanessaCustomInfobaseCacheKey, map);
+        const map = await this.getScenarioCustomInfobasePaths();
+        map[trimmedKey] = trimmedPath;
+        await this._context.workspaceState.update(
+            PhaseSwitcherProvider.runVanessaCustomInfobaseCacheKey,
+            { version: 2, byKey: map } satisfies ScenarioCustomInfobaseStorageV2
+        );
+    }
+
+    private captureScenarioCustomInfobasePathsForRename(
+        catalog: ScenarioCatalog | null
+    ): Record<ScenarioRuntimeKey, string> | null {
+        const stored = this.readStoredScenarioCustomInfobasePaths();
+        if (stored.isVersion2) {
+            return stored.currentByKey;
+        }
+        if (!catalog) {
+            return null;
+        }
+        const launchableCatalog = buildScenarioCatalog(catalog.all.filter(scenario => this.isMainScenario(scenario)));
+        return migrateLegacyScenarioValues(launchableCatalog, stored.legacyByName, {});
+    }
+
+    private async applyScenarioCustomInfobaseRenamePlan(
+        paths: Readonly<Record<ScenarioRuntimeKey, string>> | null,
+        plan: ScenarioRuntimeRenamePlan
+    ): Promise<void> {
+        if (!paths) {
+            return;
+        }
+        const affected = [...plan.remappedKeys.keys(), ...plan.removedKeys]
+            .some(key => Object.prototype.hasOwnProperty.call(paths, key));
+        if (!affected) {
+            return;
+        }
+        await this._context.workspaceState.update(
+            PhaseSwitcherProvider.runVanessaCustomInfobaseCacheKey,
+            {
+                version: 2,
+                byKey: applyScenarioRuntimeRenamePlanToRecord(paths, plan)
+            } satisfies ScenarioCustomInfobaseStorageV2
+        );
+    }
+
+    private removeScenarioCustomInfobasePathsForUris(uris: readonly vscode.Uri[]): void {
+        const stored = this.readStoredScenarioCustomInfobasePaths();
+        if (stored.isVersion2) {
+            let changed = false;
+            for (const scenarioKey of Object.keys(stored.currentByKey)) {
+                let scenarioUri: vscode.Uri;
+                try {
+                    scenarioUri = vscode.Uri.parse(scenarioKey);
+                } catch {
+                    continue;
+                }
+                const matches = uris.some(uri => this.areUrisEqual(uri, scenarioUri)
+                    || (uri.scheme === 'file'
+                        && scenarioUri.scheme === 'file'
+                        && this.isPathInside(uri.fsPath, scenarioUri.fsPath)));
+                if (matches) {
+                    delete stored.currentByKey[scenarioKey];
+                    changed = true;
+                }
+            }
+            if (changed) {
+                void this._context.workspaceState.update(
+                    PhaseSwitcherProvider.runVanessaCustomInfobaseCacheKey,
+                    { version: 2, byKey: stored.currentByKey } satisfies ScenarioCustomInfobaseStorageV2
+                );
+            }
+            return;
+        }
+
+        const catalog = this.getScenarioCatalog();
+        if (!catalog) {
+            return;
+        }
+        const namesToRemove = new Set(
+            catalog.all
+                .filter(scenario => uris.some(uri => this.areUrisEqual(uri, scenario.yamlFileUri)
+                    || (uri.scheme === 'file'
+                        && scenario.yamlFileUri.scheme === 'file'
+                        && this.isPathInside(uri.fsPath, scenario.yamlFileUri.fsPath))))
+                .map(scenario => scenario.name)
+        );
+        let changed = false;
+        for (const name of namesToRemove) {
+            if (Object.prototype.hasOwnProperty.call(stored.legacyByName, name)) {
+                delete stored.legacyByName[name];
+                changed = true;
+            }
+        }
+        if (changed) {
+            void this._context.workspaceState.update(
+                PhaseSwitcherProvider.runVanessaCustomInfobaseCacheKey,
+                stored.legacyByName
+            );
+        }
     }
 
     private resolveScenarioLaunchTarget(
@@ -8827,12 +8718,19 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (!this._view?.webview) {
             return;
         }
-        const names = this._testCache ? [...this._testCache.keys()].sort() : [];
-        if (names.length === 0) {
+        const scenarioItems: ScenarioArtifactQuickPickItem[] = this.getMainScenariosFromCatalog()
+            .map(info => ({
+                label: info.name,
+                description: info.relativePath,
+                scenarioKey: getScenarioRuntimeKey(info)
+            }))
+            .sort((left, right) => left.label.localeCompare(right.label)
+                || (left.description ?? '').localeCompare(right.description ?? ''));
+        if (scenarioItems.length === 0) {
             vscode.window.showWarningMessage('No scenarios loaded in Test Manager');
             return;
         }
-        const scenarioPick = await vscode.window.showQuickPick(names, {
+        const scenarioPick = await vscode.window.showQuickPick(scenarioItems, {
             placeHolder: 'Select scenario'
         });
         if (!scenarioPick) {
@@ -8848,14 +8746,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             { label: 'idle-no-button',   description: 'No run button (not built)' },
         ];
         const statePick = await vscode.window.showQuickPick(stateItems, {
-            placeHolder: 'Select demo state for: ' + scenarioPick
+            placeHolder: 'Select demo state for: ' + scenarioPick.label
         });
         if (!statePick) {
             return;
         }
         this._view.webview.postMessage({
             command: 'setDemoState',
-            name: scenarioPick,
+            key: scenarioPick.scenarioKey,
+            name: scenarioPick.label,
             stateKey: statePick.label
         });
     }
@@ -9040,11 +8939,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return false;
     }
 
-    private async updateScenarioBuildArtifacts(featureFiles: vscode.Uri[], buildRootUri: vscode.Uri): Promise<void> {
+    private async updateScenarioBuildArtifacts(
+        featureFiles: vscode.Uri[],
+        buildRootUri: vscode.Uri,
+        enabledKeyByName?: Readonly<Record<string, ScenarioRuntimeKey>>
+    ): Promise<void> {
         const previousArtifacts = this._scenarioBuildArtifacts;
-        const staleScenarioNamesBeforeBuild = new Set<string>(this._staleBuiltScenarioNames);
+        const staleScenarioKeysBeforeBuild = new Set<ScenarioRuntimeKey>(this._staleBuiltScenarioNames);
         this.pruneScenarioBuildArtifactsByCache();
-        if (!this._testCache || this._testCache.size === 0) {
+        const catalog = this.getScenarioCatalog();
+        if (!catalog || catalog.all.length === 0) {
             this._scenarioBuildArtifacts.clear();
             this._staleBuiltScenarioNames.clear();
             this._scenarioExecutionStates.clear();
@@ -9063,11 +8967,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const exactNamesByLowercase = new Map<string, string>();
         const normalizedNames = new Map<string, string[]>();
-        for (const scenarioName of this._testCache.keys()) {
+        const lowercaseNames = new Map<string, string[]>();
+        const scenarioNamesForAssociation = enabledKeyByName
+            ? Object.keys(enabledKeyByName)
+            : [...catalog.byName.entries()]
+                .filter(([, definitions]) => definitions.length === 1)
+                .map(([scenarioName]) => scenarioName);
+        for (const scenarioName of scenarioNamesForAssociation) {
             const lower = scenarioName.toLowerCase();
-            if (!exactNamesByLowercase.has(lower)) {
-                exactNamesByLowercase.set(lower, scenarioName);
-            }
+            const lowercaseBucket = lowercaseNames.get(lower) ?? [];
+            lowercaseBucket.push(scenarioName);
+            lowercaseNames.set(lower, lowercaseBucket);
 
             const normalized = this.normalizeScenarioLookupKey(scenarioName);
             if (!normalized) {
@@ -9077,9 +8987,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             bucket.push(scenarioName);
             normalizedNames.set(normalized, bucket);
         }
+        for (const [lowercaseName, names] of lowercaseNames) {
+            if (names.length === 1) {
+                exactNamesByLowercase.set(lowercaseName, names[0]);
+            }
+        }
 
-        const nextArtifacts = new Map<string, ScenarioBuildArtifact>();
-        const featureBaseToScenario = new Map<string, string>();
+        const nextArtifacts = new Map<ScenarioRuntimeKey, ScenarioBuildArtifact>();
+        const featureBaseToScenarioKey = new Map<string, ScenarioRuntimeKey>();
         const builtAt = Date.now();
 
         for (const featureFileUri of featureFiles) {
@@ -9093,19 +9008,22 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 continue;
             }
 
-            const scenarioInfo = this._testCache.get(scenarioName);
-            if (!scenarioInfo) {
+            const scenarioKey = enabledKeyByName?.[scenarioName]
+                || resolveUniqueRuntimeKeyByName(catalog, scenarioName);
+            if (!scenarioKey) {
                 continue;
             }
+            const scenarioInfo = catalog.byUri.get(scenarioKey)!;
 
-            const existingArtifact = nextArtifacts.get(scenarioName) || {
+            const existingArtifact = nextArtifacts.get(scenarioKey) || {
+                scenarioKey,
                 scenarioName,
                 sourceUri: scenarioInfo.yamlFileUri,
                 builtAt
             };
             existingArtifact.featurePath = featureFileUri.fsPath;
-            nextArtifacts.set(scenarioName, existingArtifact);
-            featureBaseToScenario.set(path.basename(featureFileUri.fsPath, '.feature').toLowerCase(), scenarioName);
+            nextArtifacts.set(scenarioKey, existingArtifact);
+            featureBaseToScenarioKey.set(path.basename(featureFileUri.fsPath, '.feature').toLowerCase(), scenarioKey);
         }
 
         let jsonFiles: vscode.Uri[] = [];
@@ -9122,26 +9040,31 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 continue;
             }
 
-            let scenarioName = featureBaseToScenario.get(jsonFileName.toLowerCase()) || null;
-            if (!scenarioName) {
-                scenarioName = this.tryResolveScenarioByName(jsonFileName, exactNamesByLowercase, normalizedNames);
+            let scenarioKey = featureBaseToScenarioKey.get(jsonFileName.toLowerCase()) || null;
+            if (!scenarioKey) {
+                const scenarioName = this.tryResolveScenarioByName(jsonFileName, exactNamesByLowercase, normalizedNames);
+                scenarioKey = scenarioName
+                    ? (enabledKeyByName?.[scenarioName]
+                        || resolveUniqueRuntimeKeyByName(catalog, scenarioName))
+                    : null;
             }
-            if (!scenarioName) {
+            if (!scenarioKey) {
                 continue;
             }
 
-            const scenarioInfo = this._testCache.get(scenarioName);
+            const scenarioInfo = catalog.byUri.get(scenarioKey);
             if (!scenarioInfo) {
                 continue;
             }
 
-            const existingArtifact = nextArtifacts.get(scenarioName) || {
-                scenarioName,
+            const existingArtifact = nextArtifacts.get(scenarioKey) || {
+                scenarioKey,
+                scenarioName: scenarioInfo.name,
                 sourceUri: scenarioInfo.yamlFileUri,
                 builtAt
             };
             existingArtifact.jsonPath = jsonFileUri.fsPath;
-            nextArtifacts.set(scenarioName, existingArtifact);
+            nextArtifacts.set(scenarioKey, existingArtifact);
         }
 
         for (const artifact of nextArtifacts.values()) {
@@ -9155,35 +9078,35 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        const rebuiltScenarioNames = new Set<string>();
-        for (const [scenarioName, artifact] of nextArtifacts) {
-            if (this.wasScenarioArtifactRebuiltSince(previousArtifacts.get(scenarioName), artifact)) {
-                rebuiltScenarioNames.add(scenarioName);
+        const rebuiltScenarioKeys = new Set<ScenarioRuntimeKey>();
+        for (const [scenarioKey, artifact] of nextArtifacts) {
+            if (this.wasScenarioArtifactRebuiltSince(previousArtifacts.get(scenarioKey), artifact)) {
+                rebuiltScenarioKeys.add(scenarioKey);
             }
         }
 
         this._scenarioBuildArtifacts = nextArtifacts;
-        if (rebuiltScenarioNames.size > 0) {
-            this.clearFeatureStepHighlightsForScenarios(rebuiltScenarioNames);
+        if (rebuiltScenarioKeys.size > 0) {
+            this.clearFeatureStepHighlightsForScenarios(rebuiltScenarioKeys);
         }
         // Rebuilt stale scenarios should return to neutral run state (play icon).
         // This mirrors the behavior already used for previously passed scenarios.
-        for (const scenarioName of staleScenarioNamesBeforeBuild) {
-            if (nextArtifacts.has(scenarioName) && this._scenarioExecutionStates.get(scenarioName)?.status !== 'running') {
-                this._scenarioExecutionStates.delete(scenarioName);
-                this.clearFailedFeatureStepHighlight(scenarioName);
+        for (const scenarioKey of staleScenarioKeysBeforeBuild) {
+            if (nextArtifacts.has(scenarioKey) && this._scenarioExecutionStates.get(scenarioKey)?.status !== 'running') {
+                this._scenarioExecutionStates.delete(scenarioKey);
+                this.clearFailedFeatureStepHighlight(scenarioKey);
             }
         }
-        for (const scenarioName of Array.from(this._scenarioExecutionStates.keys())) {
-            if (!nextArtifacts.has(scenarioName)) {
-                this._scenarioExecutionStates.delete(scenarioName);
-                this.clearFailedFeatureStepHighlight(scenarioName);
-                this.clearTrackedRunLogWatchersForScenario(scenarioName);
+        for (const scenarioKey of Array.from(this._scenarioExecutionStates.keys())) {
+            if (!nextArtifacts.has(scenarioKey)) {
+                this._scenarioExecutionStates.delete(scenarioKey);
+                this.clearFailedFeatureStepHighlight(scenarioKey);
+                this.clearTrackedRunLogWatchersForScenario(scenarioKey);
             }
         }
-        for (const scenarioName of Array.from(this._scenarioLastLaunchContexts.keys())) {
-            if (!nextArtifacts.has(scenarioName)) {
-                this._scenarioLastLaunchContexts.delete(scenarioName);
+        for (const scenarioKey of Array.from(this._scenarioLastLaunchContexts.keys())) {
+            if (!nextArtifacts.has(scenarioKey)) {
+                this._scenarioLastLaunchContexts.delete(scenarioKey);
             }
         }
         this._staleBuiltScenarioNames.clear();
@@ -9206,10 +9129,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private resolvePathFromWorkspaceSetting(rawPath: string, workspaceRootPath: string): string {
-        if (path.isAbsolute(rawPath)) {
-            return rawPath;
-        }
-        return path.join(workspaceRootPath, rawPath);
+        return resolveWorkspaceSettingPath(rawPath, workspaceRootPath, path);
     }
 
     private parseInfobasePathFromConnectionString(value: string): string | null {
@@ -9219,37 +9139,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
         const extracted = (match[2] || match[3] || '').trim();
         return extracted.replace(/[\\/]+$/, '');
-    }
-
-    private getJsonValueAtPointer(root: any, pointer: Array<string | number>): any {
-        let current = root;
-        for (const segment of pointer) {
-            if (current === null || current === undefined) {
-                return undefined;
-            }
-            current = current[segment as any];
-        }
-        return current;
-    }
-
-    private setJsonValueAtPointer(root: any, pointer: Array<string | number>, value: any): void {
-        if (pointer.length === 0) {
-            return;
-        }
-
-        let current = root;
-        for (let index = 0; index < pointer.length - 1; index++) {
-            const segment = pointer[index];
-            if (current === null || current === undefined) {
-                return;
-            }
-            current = current[segment as any];
-        }
-
-        const lastSegment = pointer[pointer.length - 1];
-        if (current !== null && current !== undefined) {
-            current[lastSegment as any] = value;
-        }
     }
 
     private isCombinedScenarioJsonArtifactPath(filePath: string): boolean {
@@ -9277,10 +9166,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         let nextJsonText = sourceJsonRaw;
         try {
-            const parsedJson = JSON.parse(sourceJsonRaw);
+            let parsedJson = JSON.parse(sourceJsonRaw) as JsonValue;
             if (parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson)) {
-                this.applyAdditionalVanessaParameters(parsedJson, overlay.additionalParameters);
-                this.applyGlobalVanessaVariables(parsedJson, overlay.globalVariables);
+                parsedJson = applyAdditionalVanessaParameters(parsedJson, overlay.additionalParameters).value;
+                parsedJson = applyGlobalVanessaVariables(parsedJson, overlay.globalVariables).value;
                 nextJsonText = JSON.stringify(parsedJson, null, 2);
             }
         } catch {
@@ -9297,7 +9186,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         outputChannel?: vscode.OutputChannel
     ): Promise<void> {
         let updatedCount = 0;
-        for (const [scenarioName, artifact] of this._scenarioBuildArtifacts.entries()) {
+        for (const artifact of this._scenarioBuildArtifacts.values()) {
+            const scenarioName = artifact.scenarioName;
             const sourceJsonPath = artifact.jsonPath?.trim();
             if (!sourceJsonPath || !fs.existsSync(sourceJsonPath)) {
                 artifact.combinedJsonPath = undefined;
@@ -9443,7 +9333,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private resolveVanessaProfileNameFromJson(root: Record<string, unknown>): string {
-        const testProfileKey = this.findObjectKeyByAlias(root, 'ПрофильПользователяНастройкаТеста');
+        const testProfileKey = findObjectKeyByAlias(root, 'ПрофильПользователяНастройкаТеста');
         if (testProfileKey) {
             const testProfileValue = String(root[testProfileKey] || '').trim();
             if (testProfileValue) {
@@ -9451,7 +9341,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        const scenarioProfileKey = this.findObjectKeyByAlias(root, 'ПрофильПользователяСценарий');
+        const scenarioProfileKey = findObjectKeyByAlias(root, 'ПрофильПользователяСценарий');
         if (scenarioProfileKey) {
             return String(root[scenarioProfileKey] || '').trim();
         }
@@ -9460,7 +9350,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private ensureVanessaRootInfobasePath(root: Record<string, unknown>, connectionArgument: string): boolean {
-        const existingKey = this.findObjectKeyByAlias(root, 'ПутьКИнфобазе') ?? 'ПутьКИнфобазе';
+        const existingKey = findObjectKeyByAlias(root, 'ПутьКИнфобазе') ?? 'ПутьКИнфобазе';
         const currentValue = typeof root[existingKey] === 'string'
             ? String(root[existingKey] || '')
             : '';
@@ -9493,7 +9383,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     ): boolean {
         let changed = false;
         const ensureField = (alias: string, nextValue: string) => {
-            const key = this.findObjectKeyByAlias(clientEntry, alias) ?? alias;
+            const key = findObjectKeyByAlias(clientEntry, alias) ?? alias;
             const currentValue = typeof clientEntry[key] === 'string'
                 ? String(clientEntry[key] || '')
                 : '';
@@ -9505,19 +9395,19 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         };
 
         ensureField('ПутьКИнфобазе', connectionArgument);
-        if (!this.findObjectKeyByAlias(clientEntry, 'Имя')) {
+        if (!findObjectKeyByAlias(clientEntry, 'Имя')) {
             clientEntry.Имя = profileName;
             changed = true;
         }
-        if (!this.findObjectKeyByAlias(clientEntry, 'ТипКлиента')) {
+        if (!findObjectKeyByAlias(clientEntry, 'ТипКлиента')) {
             clientEntry.ТипКлиента = defaults.clientType;
             changed = true;
         }
-        if (!this.findObjectKeyByAlias(clientEntry, 'ИмяКомпьютера')) {
+        if (!findObjectKeyByAlias(clientEntry, 'ИмяКомпьютера')) {
             clientEntry.ИмяКомпьютера = defaults.computerName;
             changed = true;
         }
-        if (!this.findObjectKeyByAlias(clientEntry, 'ПортЗапускаТестКлиента')) {
+        if (!findObjectKeyByAlias(clientEntry, 'ПортЗапускаТестКлиента')) {
             clientEntry.ПортЗапускаТестКлиента = defaults.port;
             changed = true;
         }
@@ -9532,13 +9422,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     ): boolean {
         let changed = false;
         const profileName = this.resolveVanessaProfileNameFromJson(root);
-        const collectionKey = this.findObjectKeyByAlias(root, 'КлиентыТестирования')
-            ?? this.findObjectKeyByAlias(root, 'ДанныеКлиентовТестирования')
+        const collectionKey = findObjectKeyByAlias(root, 'КлиентыТестирования')
+            ?? findObjectKeyByAlias(root, 'ДанныеКлиентовТестирования')
             ?? 'КлиентыТестирования';
 
-        let clientsCollection = root[collectionKey];
-        if (!Array.isArray(clientsCollection)) {
-            clientsCollection = [];
+        const existingCollection = root[collectionKey];
+        const clientsCollection: unknown[] = Array.isArray(existingCollection)
+            ? existingCollection
+            : [];
+        if (!Array.isArray(existingCollection)) {
             root[collectionKey] = clientsCollection;
             changed = true;
         }
@@ -9581,345 +9473,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return changed;
     }
 
-    private parseAdditionalParameterPointer(rawKey: string): Array<string | number> | null {
-        const key = rawKey.trim();
-        if (!key) {
-            return null;
-        }
-
-        if (!key.includes('.') && !key.includes('[')) {
-            return [key];
-        }
-
-        const pointer: Array<string | number> = [];
-        for (const rawSegment of key.split('.')) {
-            const segment = rawSegment.trim();
-            if (!segment) {
-                return null;
-            }
-
-            const matcher = /([^[\]]+)|\[(\d+)\]/g;
-            let cursor = 0;
-            let hasMatch = false;
-            let match: RegExpExecArray | null;
-            while ((match = matcher.exec(segment)) !== null) {
-                if (match.index !== cursor) {
-                    return null;
-                }
-
-                hasMatch = true;
-                if (match[1] !== undefined) {
-                    const prop = match[1].trim();
-                    if (!prop) {
-                        return null;
-                    }
-                    pointer.push(prop);
-                } else {
-                    pointer.push(Number(match[2]));
-                }
-
-                cursor = matcher.lastIndex;
-            }
-
-            if (!hasMatch || cursor !== segment.length) {
-                return null;
-            }
-        }
-
-        return pointer.length > 0 ? pointer : null;
-    }
-
-    private getAdditionalParamAliasCandidates(rawKey: string): string[] {
-        const key = rawKey.trim();
-        if (!key) {
-            return [];
-        }
-
-        const normalized = key.toLowerCase();
-        const fromIndex = VANESSA_PARAM_ALIAS_INDEX.get(normalized);
-        if (!fromIndex || fromIndex.size === 0) {
-            return [key];
-        }
-
-        return Array.from(new Set([key, ...Array.from(fromIndex)]));
-    }
-
-    private findObjectKeyByAlias(container: unknown, rawKey: string): string | null {
-        if (!container || typeof container !== 'object' || Array.isArray(container)) {
-            return null;
-        }
-
-        const objectContainer = container as Record<string, unknown>;
-        if (Object.prototype.hasOwnProperty.call(objectContainer, rawKey)) {
-            return rawKey;
-        }
-
-        const normalizedInput = rawKey.trim().toLowerCase();
-        if (!normalizedInput) {
-            return null;
-        }
-
-        for (const key of Object.keys(objectContainer)) {
-            if (key.trim().toLowerCase() === normalizedInput) {
-                return key;
-            }
-        }
-
-        const aliases = this.getAdditionalParamAliasCandidates(rawKey)
-            .map(alias => alias.trim().toLowerCase())
-            .filter(alias => alias.length > 0);
-        if (!aliases.length) {
-            return null;
-        }
-        const aliasSet = new Set(aliases);
-
-        for (const key of Object.keys(objectContainer)) {
-            if (aliasSet.has(key.trim().toLowerCase())) {
-                return key;
-            }
-        }
-
-        return null;
-    }
-
-    private resolveExistingPointerByAliases(root: unknown, pointer: Array<string | number>): Array<string | number> | null {
-        let current = root as any;
-        const resolved: Array<string | number> = [];
-
-        for (const segment of pointer) {
-            if (typeof segment === 'number') {
-                if (!Array.isArray(current) || segment < 0 || segment >= current.length) {
-                    return null;
-                }
-                resolved.push(segment);
-                current = current[segment];
-                continue;
-            }
-
-            const resolvedKey = this.findObjectKeyByAlias(current, segment);
-            if (!resolvedKey) {
-                return null;
-            }
-
-            resolved.push(resolvedKey);
-            current = current[resolvedKey as any];
-        }
-
-        return resolved;
-    }
-
-    private resolveRootPointerByLeafAlias(root: unknown, pointer: Array<string | number>): Array<string | number> | null {
-        if (!root || typeof root !== 'object' || Array.isArray(root) || pointer.length < 2) {
-            return null;
-        }
-        if (pointer.some(segment => typeof segment === 'number')) {
-            return null;
-        }
-
-        const leaf = pointer[pointer.length - 1];
-        if (typeof leaf !== 'string') {
-            return null;
-        }
-
-        const resolvedRootKey = this.findObjectKeyByAlias(root, leaf);
-        if (!resolvedRootKey) {
-            return null;
-        }
-
-        return [resolvedRootKey];
-    }
-
-    private hasJsonValueAtPointer(root: any, pointer: Array<string | number>): boolean {
-        let current = root;
-        for (const segment of pointer) {
-            if (current === null || current === undefined || typeof current !== 'object') {
-                return false;
-            }
-            if (!Object.prototype.hasOwnProperty.call(current, segment as any)) {
-                return false;
-            }
-            current = current[segment as any];
-        }
-        return true;
-    }
-
-    private hasRootSpprTestClientsKey(root: unknown): boolean {
-        if (!root || typeof root !== 'object' || Array.isArray(root)) {
-            return false;
-        }
-        return Object.keys(root as Record<string, unknown>).some(key => key.trim().toLowerCase() === 'клиентытестирования');
-    }
-
-    private shouldSkipAdditionalParamForSpprClients(
-        root: unknown,
-        pointer: Array<string | number>
-    ): boolean {
-        if (!this.hasRootSpprTestClientsKey(root)) {
-            return false;
-        }
-
-        const stringSegments = pointer
-            .filter((segment): segment is string => typeof segment === 'string')
-            .map(segment => segment.trim().toLowerCase())
-            .filter(segment => segment.length > 0);
-        if (!stringSegments.length) {
-            return false;
-        }
-
-        const touchesClientsCollection = stringSegments.some(segment =>
-            segment === 'datatestclients'
-            || segment === 'клиентытестирования'
-            || segment === 'данныеклиентовтестирования'
-        );
-        if (!touchesClientsCollection) {
-            return false;
-        }
-
-        if (pointer.length === 1 && typeof pointer[0] === 'string') {
-            return false;
-        }
-
-        return true;
-    }
-
-    private ensureJsonPointerContainers(root: any, pointer: Array<string | number>): boolean {
-        if (!root || typeof root !== 'object' || pointer.length === 0) {
-            return false;
-        }
-
-        let current = root;
-        for (let index = 0; index < pointer.length - 1; index++) {
-            if (current === null || current === undefined || typeof current !== 'object') {
-                return false;
-            }
-
-            const segment = pointer[index];
-            const nextSegment = pointer[index + 1];
-            const currentValue = current[segment as any];
-            if (currentValue === null || currentValue === undefined || typeof currentValue !== 'object') {
-                current[segment as any] = typeof nextSegment === 'number' ? [] : {};
-            }
-            current = current[segment as any];
-        }
-
-        return current !== null && current !== undefined && typeof current === 'object';
-    }
-
-    private parseAdditionalParameterValue(rawValue: string, hasExisting: boolean, existingValue: unknown): unknown {
-        const source = String(rawValue ?? '');
-        const trimmed = source.trim();
-
-        const tryParseJson = (): { ok: boolean; value: unknown } => {
-            try {
-                return { ok: true, value: JSON.parse(trimmed) };
-            } catch {
-                return { ok: false, value: source };
-            }
-        };
-
-        if (hasExisting) {
-            if (typeof existingValue === 'string') {
-                return source;
-            }
-            if (typeof existingValue === 'number') {
-                const parsedNumber = Number(trimmed);
-                return Number.isFinite(parsedNumber) ? parsedNumber : source;
-            }
-            if (typeof existingValue === 'boolean') {
-                if (/^true$/i.test(trimmed)) {
-                    return true;
-                }
-                if (/^false$/i.test(trimmed)) {
-                    return false;
-                }
-                return source;
-            }
-            if (existingValue === null || typeof existingValue === 'object') {
-                const parsed = tryParseJson();
-                return parsed.ok ? parsed.value : source;
-            }
-            return source;
-        }
-
-        if (!trimmed) {
-            return source;
-        }
-
-        const shouldTryJsonParse =
-            trimmed.startsWith('{') ||
-            trimmed.startsWith('[') ||
-            trimmed === 'true' ||
-            trimmed === 'false' ||
-            trimmed === 'null' ||
-            /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(trimmed);
-        if (!shouldTryJsonParse) {
-            return source;
-        }
-
-        const parsed = tryParseJson();
-        return parsed.ok ? parsed.value : source;
-    }
-
-    private areJsonValuesEqual(left: unknown, right: unknown): boolean {
-        if (left === right) {
-            return true;
-        }
-
-        if (!left || !right || typeof left !== 'object' || typeof right !== 'object') {
-            return false;
-        }
-
-        try {
-            return JSON.stringify(left) === JSON.stringify(right);
-        } catch {
-            return false;
-        }
-    }
-
-    private applyAdditionalVanessaParameters(root: any, params: AdditionalLaunchVanessaParameter[]): number {
-        if (!root || typeof root !== 'object' || Array.isArray(root)) {
-            return 0;
-        }
-
-        let changed = 0;
-        for (const param of params) {
-            const key = (param.key || '').trim();
-            if (!key) {
-                continue;
-            }
-
-            const parsedPointer = this.parseAdditionalParameterPointer(key) ?? [key];
-            if (this.shouldSkipAdditionalParamForSpprClients(root, parsedPointer)) {
-                continue;
-            }
-            const existingPointer =
-                this.resolveExistingPointerByAliases(root, parsedPointer)
-                ?? this.resolveRootPointerByLeafAlias(root, parsedPointer);
-            const pointer = existingPointer ?? parsedPointer;
-            const hasExisting = this.hasJsonValueAtPointer(root, pointer);
-            if (hasExisting && !param.overrideExisting) {
-                continue;
-            }
-
-            if (!this.ensureJsonPointerContainers(root, pointer)) {
-                continue;
-            }
-
-            const existingValue = hasExisting ? this.getJsonValueAtPointer(root, pointer) : undefined;
-            const nextValue = this.parseAdditionalParameterValue(
-                String(param.value ?? ''),
-                hasExisting,
-                existingValue
-            );
-            const currentValue = this.getJsonValueAtPointer(root, pointer);
-            if (!this.areJsonValuesEqual(currentValue, nextValue)) {
-                this.setJsonValueAtPointer(root, pointer, nextValue);
-                changed++;
-            }
-        }
-        return changed;
-    }
-
     private async loadVanessaLaunchOverlayParameters(): Promise<VanessaLaunchOverlayParameters> {
         try {
             const { YamlParametersManager } = await import('./yamlParametersManager.js');
@@ -9939,80 +9492,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             console.warn('[PhaseSwitcherProvider] Failed to load additional Vanessa parameters:', error);
             return { additionalParameters: [], globalVariables: [] };
         }
-    }
-
-    private getGlobalVarsRootAliases(): string[] {
-        return ['GlobalVars', 'ГлобальныеПеременные', 'globalvariables', 'global_vars'];
-    }
-
-    private resolveGlobalVarsContainer(root: unknown): { key: string; value: Record<string, unknown> } | null {
-        if (!root || typeof root !== 'object' || Array.isArray(root)) {
-            return null;
-        }
-
-        const rootObj = root as Record<string, unknown>;
-        for (const alias of this.getGlobalVarsRootAliases()) {
-            const foundKey = this.findObjectKeyByAlias(rootObj, alias);
-            if (!foundKey) {
-                continue;
-            }
-
-            const currentValue = rootObj[foundKey];
-            if (currentValue && typeof currentValue === 'object' && !Array.isArray(currentValue)) {
-                return { key: foundKey, value: currentValue as Record<string, unknown> };
-            }
-
-            const replacement: Record<string, unknown> = {};
-            rootObj[foundKey] = replacement;
-            return { key: foundKey, value: replacement };
-        }
-
-        const defaultKey = 'GlobalVars';
-        const created: Record<string, unknown> = {};
-        rootObj[defaultKey] = created;
-        return { key: defaultKey, value: created };
-    }
-
-    private applyGlobalVanessaVariables(root: any, variables: AdditionalLaunchVanessaParameter[]): number {
-        if (!root || typeof root !== 'object' || Array.isArray(root)) {
-            return 0;
-        }
-        if (!Array.isArray(variables) || variables.length === 0) {
-            return 0;
-        }
-
-        const containerInfo = this.resolveGlobalVarsContainer(root);
-        if (!containerInfo) {
-            return 0;
-        }
-        const container = containerInfo.value;
-        let changed = 0;
-
-        for (const variable of variables) {
-            const key = (variable.key || '').trim();
-            if (!key) {
-                continue;
-            }
-
-            const resolvedKey = this.findObjectKeyByAlias(container, key) ?? key;
-            const hasExisting = Object.prototype.hasOwnProperty.call(container, resolvedKey);
-            if (hasExisting && !variable.overrideExisting) {
-                continue;
-            }
-
-            const existingValue = hasExisting ? container[resolvedKey] : undefined;
-            const nextValue = this.parseAdditionalParameterValue(
-                String(variable.value ?? ''),
-                hasExisting,
-                existingValue
-            );
-            if (!this.areJsonValuesEqual(existingValue, nextValue)) {
-                container[resolvedKey] = nextValue;
-                changed++;
-            }
-        }
-
-        return changed;
     }
 
     private getVanessaStatusFileKeySet(): Set<string> {
@@ -10124,16 +9603,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         let changed = false;
         for (const candidate of logPointers) {
-            const current = this.getJsonValueAtPointer(parsedJson, candidate.pointer);
+            const current = getJsonValueAtPointer(parsedJson, candidate.pointer);
             if (typeof current === 'string' && current !== logPath) {
-                this.setJsonValueAtPointer(parsedJson, candidate.pointer, logPath);
+                parsedJson = setJsonValueAtPointer(parsedJson, candidate.pointer, logPath);
                 changed = true;
             }
         }
         for (const candidate of statusPointers) {
-            const current = this.getJsonValueAtPointer(parsedJson, candidate.pointer);
+            const current = getJsonValueAtPointer(parsedJson, candidate.pointer);
             if (typeof current === 'string' && current !== statusPath) {
-                this.setJsonValueAtPointer(parsedJson, candidate.pointer, statusPath);
+                parsedJson = setJsonValueAtPointer(parsedJson, candidate.pointer, statusPath);
                 changed = true;
             }
         }
@@ -10151,7 +9630,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         workspaceRootPath: string
     ): Promise<void> {
         let updatedCount = 0;
-        for (const [scenarioName, artifact] of this._scenarioBuildArtifacts.entries()) {
+        for (const artifact of this._scenarioBuildArtifacts.values()) {
+            const scenarioName = artifact.scenarioName;
             const jsonPath = artifact.jsonPath;
             if (!jsonPath || !fs.existsSync(jsonPath)) {
                 continue;
@@ -10328,7 +9808,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         let latestFailedSummaryLine: string | undefined;
         let latestFailedCount: number | undefined;
         for (const line of logLines) {
-            const failedSummary = this.extractFailedSummaryFromLogLine(line);
+            const failedSummary = extractFailedSummaryFromLogLine(line);
             if (!failedSummary) {
                 continue;
             }
@@ -10372,10 +9852,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return { ok: true };
         }
         return this.validateRunLogForFailedSummary(runLogPath, outputChannel);
-    }
-
-    private formatOneCCommandForOutput(exePath: string, args: string[]): string {
-        return [this.quoteForShell(exePath), ...args.map(arg => this.quoteForShell(arg))].join(' ');
     }
 
     private appendVanessaInfobaseAuthenticationArgs(
@@ -10453,7 +9929,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     ): Promise<void> {
         const effectiveArgs = [...args, '/Out', outFilePath];
         this.outputInfo(outputChannel, this.t('Target infobase step: {0}', stepTitle));
-        this.outputAdvanced(outputChannel, this.t('Resolved 1C command: {0}', this.formatOneCCommandForOutput(designerExePath, effectiveArgs)));
+        this.outputAdvanced(
+            outputChannel,
+            this.t('Resolved 1C command: {0}', formatProcessCommandForDisplay(designerExePath, effectiveArgs))
+        );
 
         await new Promise<void>((resolve, reject) => {
             let stdout = '';
@@ -10649,6 +10128,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 return false;
             }
         }) || workspaceRootPath;
+        const { promptNewInfobaseTarget } = await loadInfobaseManager();
         const creationTarget = await promptNewInfobaseTarget(this._context, this.t.bind(this), {
             defaultName: scenarioName.trim() || safeScenarioName,
             defaultDirectoryPath: defaultDialogPath
@@ -10711,8 +10191,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         workspaceRootPath: string
     ): Promise<string | null> {
         try {
-            await this.ensureFreshTestCache();
-            const scenarioInfo = this._testCache?.get(scenarioName);
+            const catalog = await this.ensureFreshScenarioCatalog();
+            const scenarioKey = resolveUniqueRuntimeKeyByName(catalog, scenarioName);
+            const scenarioInfo = scenarioKey ? catalog.byUri.get(scenarioKey) : undefined;
             if (!scenarioInfo || !this.isMainScenario(scenarioInfo)) {
                 return null;
             }
@@ -10905,11 +10386,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private async promptVanessaInfobasePreparationPlan(
+        scenarioKey: ScenarioRuntimeKey,
         scenarioName: string,
         workspaceRootPath: string,
         jsonDefaultInfobasePath: string
     ): Promise<VanessaInfobasePreparationPlan | null> {
-        const lastSelectedInfobasePath = this.getScenarioCustomInfobasePath(scenarioName)?.trim() || '';
+        const lastSelectedInfobasePath = (await this.getScenarioCustomInfobasePath(scenarioKey))?.trim() || '';
         const quickPickItems: Array<vscode.QuickPickItem & {
             source: VanessaInfobasePreparationPlan['source'];
             infobasePath?: string;
@@ -10981,6 +10463,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         let targetInfobasePath = selection.infobasePath?.trim() || '';
         let launcherRegistrationName: string | undefined;
         if (selection.source === 'existing') {
+            const { pickManagedInfobasePath } = await loadInfobaseManager();
             const pickedPath = await pickManagedInfobasePath(this._context, this.t.bind(this), {
                 allowBuildOnly: false,
                 allowCreateNew: false,
@@ -11021,6 +10504,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
             recreateExistingInfobase = recreateSelection;
             if (recreateExistingInfobase) {
+                const { resolveLauncherInfobaseNameByPath } = await loadInfobasePicker();
                 const existingLauncherName = await resolveLauncherInfobaseNameByPath(targetInfobasePath);
                 if (existingLauncherName) {
                     launcherRegistrationName = existingLauncherName;
@@ -11081,6 +10565,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
+        const { updateManagedInfobaseMetadata } = await loadInfobaseManager();
         const runtimeDirectory = this.resolveVanessaRuntimeDirectory(workspaceRootPath);
         const logsDirectory = path.join(runtimeDirectory, 'infobase-setup-logs');
         const targetFileInfobasePath = getFileInfobasePath(plan.targetInfobasePath);
@@ -11285,6 +10770,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         outputChannel: vscode.OutputChannel
     ): Promise<void> {
         try {
+            const { registerInfobaseInLauncher } = await loadInfobasePicker();
             const registrationResult = await registerInfobaseInLauncher(infobasePath, launcherRegistrationName);
             if (registrationResult.status === 'added') {
                 this.outputInfo(
@@ -11325,6 +10811,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private async prepareVanessaLaunchContext(
+        scenarioKey: ScenarioRuntimeKey,
         scenarioName: string,
         jsonLaunchPath: string,
         startupInfobasePath: string,
@@ -11357,6 +10844,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             ? candidates[0].extractedPath
             : '';
         const plan = await this.promptVanessaInfobasePreparationPlan(
+            scenarioKey,
             scenarioName,
             workspaceRootPath,
             jsonDefaultInfobase
@@ -11376,7 +10864,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         );
 
         if (!shouldPatchInfobase && !needsTargetInfobasePreparation) {
-            await this.saveScenarioCustomInfobasePath(scenarioName, chosenScenarioInfobasePath);
+            await this.saveScenarioCustomInfobasePath(scenarioKey, chosenScenarioInfobasePath);
             return {
                 startupInfobasePath,
                 scenarioInfobasePath: chosenScenarioInfobasePath,
@@ -11394,7 +10882,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const outputChannel = this.getRunOutputChannel();
         await this.prepareTargetInfobaseForVanessa(plan, workspaceRootPath, outputChannel, designerExePath);
-        await this.saveScenarioCustomInfobasePath(scenarioName, chosenScenarioInfobasePath);
+        await this.saveScenarioCustomInfobasePath(scenarioKey, chosenScenarioInfobasePath);
 
         if (!shouldPatchInfobase) {
             return {
@@ -11405,11 +10893,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             };
         }
 
-        const patchedJson = JSON.parse(rawJson);
+        let patchedJson = JSON.parse(rawJson) as JsonValue;
         let infobaseChanged = false;
         if (shouldPatchInfobase) {
             for (const candidate of candidates) {
-                const currentValue = this.getJsonValueAtPointer(patchedJson, candidate.pointer);
+                const currentValue = getJsonValueAtPointer(patchedJson, candidate.pointer);
                 if (typeof currentValue !== 'string') {
                     continue;
                 }
@@ -11418,7 +10906,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     ? this.patchConnectionStringFilePath(currentValue, chosenScenarioInfobasePath)
                     : chosenScenarioInfobasePath;
                 if (nextValue !== currentValue) {
-                    this.setJsonValueAtPointer(patchedJson, candidate.pointer, nextValue);
+                    patchedJson = setJsonValueAtPointer(patchedJson, candidate.pointer, nextValue);
                     infobaseChanged = true;
                 }
             }
@@ -11464,6 +10952,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const workspaceRootPath = workspaceFolder.uri.fsPath;
+        const { resolveOneCDesignerExePath, resolveOneCPlatformForLaunch } = await loadOneCPlatform();
         const selectedPlatform = await resolveOneCPlatformForLaunch(this.t.bind(this), {
             placeHolder: this.t('Select 1C platform for Vanessa launch')
         });
@@ -11537,6 +11026,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const launchContext = await this.prepareVanessaLaunchContext(
+            artifact.scenarioKey,
             scenarioName,
             jsonLaunchPath,
             startupInfobase.infobaseDirectory,
@@ -11575,8 +11065,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const args = [
             ...this.buildStartupParams(startupInfobasePathForRun, startupInfobase.authentication),
             '/Execute',
-            `"${vanessaEpfPath}"`,
-            `/C"${vaCommand}"`,
+            vanessaEpfPath,
+            '/C',
+            vaCommand,
             '/TESTMANAGER'
         ];
 
@@ -11624,6 +11115,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
             }
 
+            const { updateManagedInfobaseMetadata } = await loadInfobaseManager();
             await updateManagedInfobaseMetadata(this._context, scenarioInfobasePath, {
                 displayName: path.basename(scenarioInfobasePath),
                 addRoles: ['vanessa'],
@@ -11644,25 +11136,28 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return 'started';
     }
 
-    private async openScenarioInVanessaManual(scenarioName: string): Promise<void> {
+    private async openScenarioInVanessaManual(
+        scenarioName: string,
+        scenarioKey?: ScenarioRuntimeKey
+    ): Promise<void> {
         if (this._isBuildInProgress) {
             vscode.window.showWarningMessage(this.t('Please wait for the current build to finish.'));
             return;
         }
 
-        if (this.isScenarioRunInProgress(scenarioName)) {
+        if (this.isScenarioRunInProgress(scenarioName, scenarioKey)) {
             vscode.window.showWarningMessage(this.t('Scenario "{0}" is already running.', scenarioName));
             return;
         }
 
         this.pruneScenarioBuildArtifactsByCache();
-        const artifact = this._scenarioBuildArtifacts.get(scenarioName);
+        const artifact = this.getScenarioBuildArtifact(scenarioName, scenarioKey);
         if (!artifact || (!artifact.featurePath && !artifact.jsonPath)) {
             vscode.window.showWarningMessage(this.t('No build artifacts found for scenario "{0}". Build tests first.', scenarioName));
             return;
         }
 
-        const lastLaunchContext = this._scenarioLastLaunchContexts.get(scenarioName);
+        const lastLaunchContext = this._scenarioLastLaunchContexts.get(artifact.scenarioKey);
         const launchTarget = this.resolveScenarioLaunchTarget(
             scenarioName,
             artifact,
@@ -11673,7 +11168,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        if (this._staleBuiltScenarioNames.has(scenarioName)) {
+        if (this._staleBuiltScenarioNames.has(artifact.scenarioKey)) {
             const continueOpen = this.t('Open anyway');
             const selection = await vscode.window.showWarningMessage(
                 this.t('Artifacts for "{0}" may be outdated because related scenarios changed after build.', scenarioName),
@@ -11748,7 +11243,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return undefined;
         }
 
-        for (const [scenarioName, artifact] of this._scenarioBuildArtifacts.entries()) {
+        for (const artifact of this._scenarioBuildArtifacts.values()) {
             const artifactFeaturePath = artifact.featurePath?.trim();
             if (!artifactFeaturePath) {
                 continue;
@@ -11759,10 +11254,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
             if (artifactFeatureKey === currentFeatureKey) {
                 return {
-                    sessionKey: scenarioName,
-                    displayName: scenarioName,
+                    sessionKey: artifact.scenarioKey,
+                    displayName: artifact.scenarioName,
                     featurePath: artifactFeaturePath,
-                    expectedScenarioName: scenarioName
+                    expectedScenarioName: artifact.scenarioName
                 };
             }
         }
@@ -11793,7 +11288,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return undefined;
         }
 
-        for (const [scenarioName, artifact] of this._scenarioBuildArtifacts.entries()) {
+        for (const artifact of this._scenarioBuildArtifacts.values()) {
             const artifactFeaturePath = artifact.featurePath?.trim();
             if (!artifactFeaturePath) {
                 continue;
@@ -11804,10 +11299,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
             if (artifactFeatureKey === featureKey) {
                 return {
-                    sessionKey: scenarioName,
-                    displayName: scenarioName,
+                    sessionKey: artifact.scenarioKey,
+                    displayName: artifact.scenarioName,
                     featurePath: artifactFeaturePath,
-                    expectedScenarioName: scenarioName
+                    expectedScenarioName: artifact.scenarioName
                 };
             }
         }
@@ -11844,10 +11339,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         let scenarioNameFromLog: string | undefined;
         for (const line of lines) {
             if (!featurePathFromLog) {
-                featurePathFromLog = this.extractFeaturePathFromRunLogLine(line);
+                featurePathFromLog = extractFeaturePathFromRunLogLine(line);
             }
             if (!scenarioNameFromLog) {
-                scenarioNameFromLog = this.extractScenarioNameFromRunLogLine(line);
+                scenarioNameFromLog = extractScenarioNameFromRunLogLine(line);
             }
             if (featurePathFromLog && scenarioNameFromLog) {
                 break;
@@ -12004,7 +11499,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const artifactFeaturePath = options.expectedScenarioName
-            ? this._scenarioBuildArtifacts.get(options.expectedScenarioName)?.featurePath
+            ? this.getScenarioBuildArtifact(options.expectedScenarioName)?.featurePath
             : undefined;
         const featurePath = options.featurePath?.trim() || artifactFeaturePath?.trim() || '';
         const featureBaseName = featurePath
@@ -12175,6 +11670,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const tracker = this.startTrackedRunLogWatcher(
             sessionKey,
+            displayName,
             runLogPath,
             {
                 initialFeaturePath: featurePath,
@@ -12208,7 +11704,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         tryAddCandidate(session.featurePath);
         tryAddCandidate(featurePathFromLog);
         if (session.expectedScenarioName) {
-            tryAddCandidate(this._scenarioBuildArtifacts.get(session.expectedScenarioName)?.featurePath);
+            tryAddCandidate(this.getScenarioBuildArtifact(session.expectedScenarioName)?.featurePath);
         }
 
         for (const candidatePath of candidatePaths) {
@@ -12357,19 +11853,26 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
         this.setActiveTrackedRunForScenario(sessionKey, runKey);
-        this.pollTrackedRunLogWatcher(sessionKey, runKey);
+        void this.pollTrackedRunLogWatcher(sessionKey, runKey);
     }
 
-    private async openRunScenarioLog(scenarioName: string): Promise<void> {
-        let runLogPath = this.getSelectedRunLogPathForScenario(scenarioName)?.trim();
+    private async openRunScenarioLog(
+        scenarioName: string,
+        scenarioKey?: ScenarioRuntimeKey
+    ): Promise<void> {
+        const runtimeKey = this.resolveRuntimeKeyForScenario(scenarioName, scenarioKey);
+        if (!runtimeKey) {
+            return;
+        }
+        let runLogPath = this.getSelectedRunLogPathForScenario(runtimeKey)?.trim();
         if (!runLogPath) {
-            const trackedRuns = this.getTrackedRunsMapForScenario(scenarioName);
+            const trackedRuns = this.getTrackedRunsMapForScenario(runtimeKey);
             if (trackedRuns && trackedRuns.size > 0) {
                 const fallbackRun = Array.from(trackedRuns.values())
                     .sort((left, right) => right.updatedAt - left.updatedAt)[0];
                 if (fallbackRun) {
                     this.setActiveTrackedRunForScenario(
-                        scenarioName,
+                        runtimeKey,
                         fallbackRun.runLogKey,
                         { refreshHighlights: true, notifyWebview: false }
                     );
@@ -12453,14 +11956,21 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async openScenarioRunStepInFeature(scenarioName: string): Promise<void> {
-        const failedHighlight = this._failedFeatureStepHighlights.get(scenarioName);
+    private async openScenarioRunStepInFeature(
+        scenarioName: string,
+        scenarioKey?: ScenarioRuntimeKey
+    ): Promise<void> {
+        const runtimeKey = this.resolveRuntimeKeyForScenario(scenarioName, scenarioKey);
+        if (!runtimeKey) {
+            return;
+        }
+        const failedHighlight = this._failedFeatureStepHighlights.get(runtimeKey);
         if (failedHighlight?.featureLineNumber && failedHighlight.featurePath) {
-            await this.openFailedStepInFeature(scenarioName);
+            await this.openFailedStepInFeature(scenarioName, scenarioKey);
             return;
         }
 
-        const runningHighlight = this._runningFeatureStepHighlights.get(scenarioName);
+        const runningHighlight = this._runningFeatureStepHighlights.get(runtimeKey);
         if (runningHighlight?.featureLineNumber && runningHighlight.featurePath) {
             const opened = await this.openFeatureAtLineInEditor(runningHighlight.featurePath, runningHighlight.featureLineNumber);
             if (opened) {
@@ -12468,13 +11978,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        await this.openScenarioFeatureInEditor(scenarioName);
+        await this.openScenarioFeatureInEditor(scenarioName, scenarioKey);
     }
 
-    private async openScenarioFeatureInEditor(scenarioName: string): Promise<void> {
+    private async openScenarioFeatureInEditor(
+        scenarioName: string,
+        scenarioKey?: ScenarioRuntimeKey
+    ): Promise<void> {
         this.pruneScenarioBuildArtifactsByCache();
 
-        const artifact = this._scenarioBuildArtifacts.get(scenarioName);
+        const artifact = this.getScenarioBuildArtifact(scenarioName, scenarioKey);
         const featurePath = artifact?.featurePath?.trim();
         if (!featurePath) {
             vscode.window.showWarningMessage(
@@ -12495,11 +12008,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private async openScenarioJsonArtifactInEditor(
         scenarioName: string,
-        variant: 'original' | 'combined'
+        variant: 'original' | 'combined',
+        scenarioKey?: ScenarioRuntimeKey
     ): Promise<void> {
         this.pruneScenarioBuildArtifactsByCache();
 
-        const artifact = this._scenarioBuildArtifacts.get(scenarioName);
+        const artifact = this.getScenarioBuildArtifact(scenarioName, scenarioKey);
         if (!artifact?.jsonPath) {
             vscode.window.showWarningMessage(
                 this.t('JSON artifact is not available for scenario "{0}". Build tests first.', scenarioName)
@@ -12552,9 +12066,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return false;
         }
 
-        const targetUri = await findFileByName(normalizedName, this.getTestCache());
+        const catalog = await this.ensureFreshScenarioCatalog();
+        const targetUri = await findFileByName(normalizedName, catalog);
         if (!targetUri) {
-            vscode.window.showInformationMessage(this.t('File for "{0}" not found.', normalizedName));
+            if ((catalog.byName.get(normalizedName)?.length || 0) <= 1) {
+                vscode.window.showInformationMessage(this.t('File for "{0}" not found.', normalizedName));
+            }
             return false;
         }
 
@@ -12570,9 +12087,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async openFailedStepInFeature(scenarioName: string): Promise<string | null> {
-        const failedHighlight = this._failedFeatureStepHighlights.get(scenarioName);
-        const fallbackFeaturePath = this._scenarioBuildArtifacts.get(scenarioName)?.featurePath?.trim() || '';
+    private async openFailedStepInFeature(
+        scenarioName: string,
+        scenarioKey?: ScenarioRuntimeKey
+    ): Promise<string | null> {
+        const runtimeKey = this.resolveRuntimeKeyForScenario(scenarioName, scenarioKey);
+        if (!runtimeKey) {
+            return null;
+        }
+        const failedHighlight = this._failedFeatureStepHighlights.get(runtimeKey);
+        const fallbackFeaturePath = this.getScenarioBuildArtifact(scenarioName, scenarioKey)?.featurePath?.trim() || '';
         const featurePath = failedHighlight?.featurePath || fallbackFeaturePath;
         const featureLineNumber = failedHighlight?.featureLineNumber;
 
@@ -12604,8 +12128,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async getFailedNestedScenarioName(scenarioName: string): Promise<string | null> {
-        const failedHighlight = this._failedFeatureStepHighlights.get(scenarioName);
+    private async getFailedNestedScenarioName(
+        scenarioName: string,
+        scenarioKey?: ScenarioRuntimeKey
+    ): Promise<string | null> {
+        const runtimeKey = this.resolveRuntimeKeyForScenario(scenarioName, scenarioKey);
+        if (!runtimeKey) {
+            return null;
+        }
+        const failedHighlight = this._failedFeatureStepHighlights.get(runtimeKey);
         const featurePath = failedHighlight?.featurePath?.trim();
         const featureLineNumber = failedHighlight?.featureLineNumber;
         if (!featurePath || !featureLineNumber || !fs.existsSync(featurePath)) {
@@ -12625,15 +12156,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private async showRunFailureMessageWithActions(
         scenarioName: string,
         errorMessage: string,
-        runLogPath?: string
+        runLogPath: string | undefined,
+        scenarioKey: ScenarioRuntimeKey
     ): Promise<void> {
         const openFailedStepAction = this.t('Open failed step');
         const openFailedNestedScenarioAction = this.t('Open failed nested scenario');
         const openRunLogAction = this.t('Open run log');
 
-        const hasFailedStep = this._failedFeatureStepHighlights.has(scenarioName);
+        const hasFailedStep = this._failedFeatureStepHighlights.has(scenarioKey);
         const nestedScenarioName = hasFailedStep
-            ? await this.getFailedNestedScenarioName(scenarioName)
+            ? await this.getFailedNestedScenarioName(scenarioName, scenarioKey)
             : null;
         const canOpenRunLog = !!(runLogPath && fs.existsSync(runLogPath));
 
@@ -12657,7 +12189,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         if (selection === openFailedStepAction) {
-            await this.openFailedStepInFeature(scenarioName);
+            await this.openFailedStepInFeature(scenarioName, scenarioKey);
             return;
         }
         if (selection === openFailedNestedScenarioAction && nestedScenarioName) {
@@ -12665,23 +12197,26 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
         if (selection === openRunLogAction) {
-            await this.openRunScenarioLog(scenarioName);
+            await this.openRunScenarioLog(scenarioName, scenarioKey);
         }
     }
 
-    private async runScenarioInVanessa(scenarioName: string): Promise<void> {
+    private async runScenarioInVanessa(
+        scenarioName: string,
+        scenarioKey?: ScenarioRuntimeKey
+    ): Promise<void> {
         if (this._isBuildInProgress) {
             vscode.window.showWarningMessage(this.t('Please wait for the current build to finish.'));
             return;
         }
 
-        if (this.isScenarioRunInProgress(scenarioName)) {
+        if (this.isScenarioRunInProgress(scenarioName, scenarioKey)) {
             vscode.window.showWarningMessage(this.t('Scenario "{0}" is already running.', scenarioName));
             return;
         }
 
         this.pruneScenarioBuildArtifactsByCache();
-        const artifact = this._scenarioBuildArtifacts.get(scenarioName);
+        const artifact = this.getScenarioBuildArtifact(scenarioName, scenarioKey);
         if (!artifact || (!artifact.featurePath && !artifact.jsonPath)) {
             vscode.window.showWarningMessage(this.t('No build artifacts found for scenario "{0}". Build tests first.', scenarioName));
             return;
@@ -12694,7 +12229,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const targetPath = launchTarget.targetPath;
         const targetKind = launchTarget.targetKind;
 
-        if (this._staleBuiltScenarioNames.has(scenarioName)) {
+        if (this._staleBuiltScenarioNames.has(artifact.scenarioKey)) {
             const continueRun = this.t('Run anyway');
             const selection = await vscode.window.showWarningMessage(
                 this.t('Artifacts for "{0}" may be outdated because related scenarios changed after build.', scenarioName),
@@ -12717,7 +12252,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             ? this.resolveVanessaLogPathFromJson(jsonPath, workspaceRootPath)
             : undefined;
 
-        this._scenarioLastLaunchContexts.set(scenarioName, {
+        this._scenarioLastLaunchContexts.set(artifact.scenarioKey, {
+            scenarioName,
             targetKind,
             targetPath,
             launchMode: launchModeUsed,
@@ -12727,32 +12263,37 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (this.shouldShowVanessaOutputPanel()) {
             outputChannel.show(true);
         }
-        this.setScenarioExecutionState(scenarioName, 'running', this.t('Run in progress'), runLogPath);
+        this.setScenarioExecutionState(scenarioName, 'running', this.t('Run in progress'), runLogPath, artifact.scenarioKey);
 
         if (!commandTemplate) {
             try {
                 const launchStatus = await this.runScenarioInVanessaBuiltIn(scenarioName, targetKind, targetPath, artifact);
                 if (launchStatus === 'started') {
-                    this.setScenarioExecutionState(scenarioName, 'passed', this.t('Last run passed'), runLogPath);
+                    this.setScenarioExecutionState(scenarioName, 'passed', this.t('Last run passed'), runLogPath, artifact.scenarioKey);
                     this.outputInfo(outputChannel, this.t('Scenario run finished successfully: "{0}"', scenarioName));
                     vscode.window.showInformationMessage(
                         this.t('Vanessa launch completed for scenario "{0}".', scenarioName)
                     );
                 } else if (launchStatus === 'skipped') {
-                    this.setScenarioExecutionState(scenarioName, 'idle');
+                    this.setScenarioExecutionState(scenarioName, 'idle', undefined, undefined, artifact.scenarioKey);
                     await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(targetPath));
                     vscode.window.showInformationMessage(
                         this.t('Built-in launch was skipped. Opened {0} artifact for "{1}".', targetKind, scenarioName)
                     );
                 } else {
-                    this.setScenarioExecutionState(scenarioName, 'idle');
+                    this.setScenarioExecutionState(scenarioName, 'idle', undefined, undefined, artifact.scenarioKey);
                 }
             } catch (error: any) {
                 const errorMessage = error?.message || String(error);
-                this.setScenarioExecutionState(scenarioName, 'failed', errorMessage, runLogPath);
+                this.setScenarioExecutionState(scenarioName, 'failed', errorMessage, runLogPath, artifact.scenarioKey);
                 this.outputError(outputChannel, this.t('Scenario run failed: "{0}" -> {1}', scenarioName, errorMessage), error);
                 this.appendScenarioRunLogReference(outputChannel, scenarioName, runLogPath);
-                await this.showRunFailureMessageWithActions(scenarioName, errorMessage, runLogPath);
+                await this.showRunFailureMessageWithActions(
+                    scenarioName,
+                    errorMessage,
+                    runLogPath,
+                    artifact.scenarioKey
+                );
             }
             return;
         }
@@ -12816,19 +12357,24 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
             }
 
-            this.setScenarioExecutionState(scenarioName, 'passed', this.t('Last run passed'), effectiveRunLogPath);
+            this.setScenarioExecutionState(scenarioName, 'passed', this.t('Last run passed'), effectiveRunLogPath, artifact.scenarioKey);
             this.outputInfo(outputChannel, this.t('Scenario run finished successfully: "{0}"', scenarioName));
             vscode.window.showInformationMessage(
                 this.t('Vanessa launch completed for scenario "{0}".', scenarioName)
             );
         } catch (error: any) {
             const errorMessage = error?.message || String(error);
-            this.setScenarioExecutionState(scenarioName, 'failed', errorMessage, effectiveRunLogPath);
+            this.setScenarioExecutionState(scenarioName, 'failed', errorMessage, effectiveRunLogPath, artifact.scenarioKey);
             this.appendProcessOutputTail(outputChannel, `Vanessa template launch (${scenarioName})`, templateStdoutData, templateStderrData);
             this.outputError(outputChannel, this.t('Vanessa launch failed: {0}', errorMessage), error);
             this.outputError(outputChannel, this.t('Scenario run failed: "{0}" -> {1}', scenarioName, errorMessage));
             this.appendScenarioRunLogReference(outputChannel, scenarioName, effectiveRunLogPath);
-            await this.showRunFailureMessageWithActions(scenarioName, errorMessage, effectiveRunLogPath);
+            await this.showRunFailureMessageWithActions(
+                scenarioName,
+                errorMessage,
+                effectiveRunLogPath,
+                artifact.scenarioKey
+            );
         }
     }
 

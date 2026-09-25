@@ -4310,9 +4310,7 @@ function buildScenarioAnalysisPrompt(
         extractTopLevelSection(documentText, 'ТекстСценария'),
         10
     );
-    const hasDeclaredOrUsedParameters = declaredParameters.size > 0 || usedPlaceholderLines.length > 0;
     const isStandaloneMainScenario = phaseSwitcherMetadata.hasTab;
-    const isParameterizedScenario = !isStandaloneMainScenario && hasDeclaredOrUsedParameters;
 
     return [
         'Проанализируй текущий YAML-сценарий KOT для 1С и составь описание для блока KOTМетаданные.Описание.',

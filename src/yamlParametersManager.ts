@@ -4,6 +4,17 @@ import * as fs from 'fs';
 import { getExtensionUri } from './appContext';
 import { updateScenarioScanRoot } from './scenarioScanRoot';
 import { getDefaultModelDbSettingsValue } from './etalonBases';
+import {
+    createActiveYamlParametersProfileSnapshot,
+    getActiveYamlParametersProfileChange,
+    type ActiveYamlParametersProfile,
+    type ActiveYamlParametersProfileChangeEvent
+} from './activeYamlParametersProfile';
+
+export type {
+    ActiveYamlParametersProfile,
+    ActiveYamlParametersProfileChangeEvent
+} from './activeYamlParametersProfile';
 
 // Ключ для хранения параметров в SecretStorage
 const YAML_PARAMETERS_KEY = 'kotTestToolkit.yamlParameters';
@@ -81,10 +92,13 @@ export class YamlParametersManager {
     private _context: vscode.ExtensionContext;
     private _langOverride: 'System' | 'English' | 'Русский' = 'System';
     private _ruBundle: Record<string, string> | null = null;
+    private readonly activeProfileChangeEmitter = new vscode.EventEmitter<ActiveYamlParametersProfileChangeEvent>();
+    public readonly onDidChangeActiveProfile = this.activeProfileChangeEmitter.event;
 
     private constructor(context: vscode.ExtensionContext) {
         this._context = context;
         this._extensionUri = getExtensionUri();
+        context.subscriptions.push(this.activeProfileChangeEmitter);
     }
 
     /**
@@ -953,6 +967,7 @@ export class YamlParametersManager {
     }
 
     private async saveParametersState(state: YamlParametersState): Promise<void> {
+        const previousState = await this.loadParametersState();
         const normalizedProfiles = this.normalizeProfiles(state.profiles);
         const activeProfileId = normalizedProfiles.some(profile => profile.id === state.activeProfileId)
             ? state.activeProfileId
@@ -963,6 +978,14 @@ export class YamlParametersManager {
             profiles: normalizedProfiles
         };
         await this._context.secrets.store(YAML_PARAMETERS_KEY, JSON.stringify(payload));
+
+        const change = getActiveYamlParametersProfileChange(previousState, {
+            activeProfileId,
+            profiles: normalizedProfiles
+        });
+        if (change) {
+            this.activeProfileChangeEmitter.fire(change);
+        }
     }
 
     /**
@@ -987,6 +1010,10 @@ export class YamlParametersManager {
     public async loadGlobalVanessaVariables(): Promise<GlobalVanessaVariable[]> {
         const state = await this.loadParametersState();
         return this.getActiveProfileFromState(state).globalVanessaVariables;
+    }
+
+    public async loadActiveProfileSnapshot(): Promise<ActiveYamlParametersProfile> {
+        return createActiveYamlParametersProfileSnapshot(await this.loadParametersState());
     }
 
     public async getProfilesSummary(): Promise<YamlParametersProfilesSummary> {

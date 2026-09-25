@@ -24,6 +24,7 @@ import type {
     StartFormExplorerBridgeCommandOptions,
     StartFormExplorerBridgeResult
 } from './formExplorerBridgeGenerator';
+import type { StepCatalogProvider } from './stepCatalogService';
 import { normalizeInfobaseReference } from './oneCInfobaseConnection';
 import {
     type ConfiguredOneCPlatform,
@@ -121,7 +122,10 @@ export class FormExplorerPanel implements vscode.Disposable {
     private processMonitorTimer: NodeJS.Timeout | null = null;
     private processStateRefreshPromise: Promise<boolean> | null = null;
 
-    constructor(private readonly context: vscode.ExtensionContext) {
+    constructor(
+        private readonly context: vscode.ExtensionContext,
+        private readonly stepCatalogProvider: StepCatalogProvider
+    ) {
         this.disposables.push(
             vscode.workspace.onDidChangeConfiguration(async event => {
                 const affectsSnapshotPath = event.affectsConfiguration('kotTestToolkit.formExplorer.snapshotPath');
@@ -143,6 +147,13 @@ export class FormExplorerPanel implements vscode.Disposable {
                 }
             })
         );
+        this.disposables.push(this.stepCatalogProvider.onDidChangeCatalog(() => {
+            this.lastSuggestedStepsFingerprint = null;
+            this.lastSnapshotFingerprint = null;
+            if (this.panel?.visible) {
+                void this.refreshSnapshot(true);
+            }
+        }));
     }
 
     public async open(): Promise<void> {
@@ -562,7 +573,13 @@ export class FormExplorerPanel implements vscode.Disposable {
         }
 
         try {
-            this.suggestedSteps = await suggestFormExplorerSteps(this.context, snapshot, selectedElement, 12, preferredLanguage);
+            this.suggestedSteps = await suggestFormExplorerSteps(
+                this.stepCatalogProvider,
+                snapshot,
+                selectedElement,
+                12,
+                preferredLanguage
+            );
             this.suggestedStepsForPath = selectedPath;
             this.suggestedStepsError = null;
         } catch (error) {

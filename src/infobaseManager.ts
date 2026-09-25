@@ -32,6 +32,7 @@ import {
     resolveOneCPlatformForLaunch
 } from './oneCPlatform';
 import { getSharedStartupInfobasePaths } from './startupInfobase';
+import { formatProcessCommandForDisplay } from './processCommandDisplay';
 
 const INFOBASE_MANAGER_OUTPUT_CHANNEL_NAME = 'KOT Infobase Manager';
 const INFOBASE_MANAGER_METADATA_KEY = 'infobaseManager.metadataByPath';
@@ -1547,12 +1548,6 @@ function getOutputTail(output: string, maxLength: number = 4000): string {
         : normalizedOutput.slice(-maxLength);
 }
 
-function formatCommandForOutput(exePath: string, args: string[]): string {
-    return [exePath, ...args]
-        .map(part => `"${part}"`)
-        .join(' ');
-}
-
 function appendInfobaseAuthenticationArgs(args: string[], authentication: InfobaseAuthentication | null): string[] {
     const username = (authentication?.username || '').trim();
     if (!username) {
@@ -1699,7 +1694,7 @@ async function runOneCCommand(
 ): Promise<void> {
     const effectiveArgs = [...args, '/Out', outFilePath];
     channel.appendLine(t('Infobase step: {0}', stepTitle));
-    channel.appendLine(t('Resolved 1C command: {0}', formatCommandForOutput(exePath, effectiveArgs)));
+    channel.appendLine(t('Resolved 1C command: {0}', formatProcessCommandForDisplay(exePath, effectiveArgs)));
 
     await new Promise<void>((resolve, reject) => {
         let stdout = '';
@@ -1808,7 +1803,7 @@ async function launchOneCDetached(
 ): Promise<void> {
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     channel.appendLine(t('Launching 1C process for infobase: {0}', infobasePath));
-    channel.appendLine(t('Resolved 1C command: {0}', formatCommandForOutput(exePath, args)));
+    channel.appendLine(t('Resolved 1C command: {0}', formatProcessCommandForDisplay(exePath, args)));
 
     await new Promise<void>((resolve, reject) => {
         try {

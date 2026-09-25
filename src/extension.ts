@@ -6,6 +6,7 @@ import * as os from 'node:os';
 import { promisify } from 'node:util';
 import { DriveCompletionProvider } from './completionProvider';
 import { DriveHoverProvider } from './hoverProvider';
+import { StepCatalogService } from './stepCatalogService';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
 import {
     openMxlFileFromTextHandler,
@@ -37,18 +38,12 @@ import {
 } from './commandHandlers';
 import { getTranslator } from './localization';
 import { setExtensionUri } from './appContext';
-import { getScenarioScanRootPath, initializeScenarioScanRoot, onDidChangeScenarioScanRoot } from './scenarioScanRoot';
 import {
-    handleCreateNestedScenario,
-    handleCreateMainScenario,
-    handleManageSystemFunctions,
-    handleChangeScenarioSystemFunctionFromEditor,
-    handleChangeTestSettingsScenarioFromEditor,
-    handleChangeTestSettingsEtalonBaseFromEditor,
-    handleChangeTestSettingsUserProfileFromEditor,
-    handleManageEtalonBases,
-    handleSyncTestSettingsFromScenario
-} from './scenarioCreator';
+    getScenarioScanRootPath,
+    initializeScenarioScanRoot,
+    onDidChangeScenarioScanRoot,
+    resolveScenarioScanRootFsPath
+} from './scenarioScanRoot';
 import { TestInfo } from './types'; // Импортируем TestInfo
 import { SettingsProvider } from './settingsProvider';
 import { ScenarioDiagnosticsProvider } from './scenarioDiagnostics';
@@ -59,36 +54,16 @@ import {
 } from './scenarioSyntaxHighlightProvider';
 import { isScenarioYamlFile } from './yamlValidator';
 import { ScenarioHeaderInlayHintsProvider } from './scenarioHeaderInlayHintsProvider';
-import { FormExplorerPanel } from './formExplorerPanel';
-import { InfobaseManagerPanel } from './infobaseManagerPanel';
 import { handleGenerateConfigurationDiffImpactReport } from './configurationDiffAiReport';
 import { handleGenerateScenarioDescriptionWithAi } from './scenarioAiDescription';
 import { handleReviewChangedTestsWithAi } from './testReviewAiReport';
-import {
-    type BuildFormExplorerExtensionCommandOptions,
-    handleBuildFormExplorerExtensionCfe,
-    handleGenerateFormExplorerExtension,
-    type InstallFormExplorerExtensionCommandOptions,
-    handleInstallFormExplorerExtension
+import type {
+    BuildFormExplorerExtensionCommandOptions,
+    InstallFormExplorerExtensionCommandOptions
 } from './formExplorerExtensionGenerator';
-import {
-    type StartFormExplorerBridgeCommandOptions,
-    handleStartFormExplorerBridge
+import type {
+    StartFormExplorerBridgeCommandOptions
 } from './formExplorerBridgeGenerator';
-import {
-    ensureFormExplorerBuilderInfobaseReady,
-    initializeFormExplorerRuntimeSidecars,
-    shouldPrepareFormExplorerBuilderInfobase
-} from './formExplorerBuilder';
-import {
-    ensureOneCPlatformsCatalogInitialized,
-    handleManagePlatforms
-} from './oneCPlatform';
-import {
-    ensureSharedStartupInfobaseReady,
-    getSharedStartupInfobaseOutputChannel,
-    shouldPrepareSharedStartupInfobase
-} from './startupInfobase';
 import {
     extractTopLevelKotMetadataBlock,
     migrateLegacyPhaseSwitcherMetadata,
@@ -99,6 +74,34 @@ import {
     normalizeScenarioCallParameterValue,
     parseScenarioParameterDefinitions
 } from './scenarioParameterUtils';
+import { createDeferredLoader, createDeferredResourceLoader } from './deferredLoader';
+import { ProjectDefinitionIndexService } from './projectDefinitionIndexService';
+import {
+    ProjectDefinitionCache,
+    resolveProjectDefinitionCacheDirectory
+} from './projectDefinitionCache';
+import { resolveProjectLibraryConfiguration } from './projectLibraryRoots';
+import { ProjectDefinitionResolver } from './projectDefinitionResolver';
+import {
+    openProjectDefinitionHandler,
+    ProjectDefinitionProvider
+} from './projectDefinitionNavigation';
+import {
+    ProjectDefinitionReferenceProvider,
+    ProjectDefinitionReferenceService,
+    type ProjectDefinitionReferenceSearchRoot
+} from './projectDefinitionReferences';
+import {
+    createExportScenarioCommand,
+    type ExportScenarioLibraryRoot
+} from './exportScenarioCommand';
+import {
+    addExportScenarioMetadataCommand,
+    EXPORT_SCENARIO_METADATA_COMMAND,
+    ExportScenarioMetadataCodeLensProvider
+} from './exportScenarioMetadataCodeLens';
+import { resolveVanessaTemplateRoot } from './userStepCreator';
+import type { UserStepLibraryRoot } from './userStepCommands';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -134,13 +137,280 @@ const pendingBackgroundScenarioFiles = new Set<string>();
 const kotDescriptionBlockLineRegex = /^Описание:\s*[|>][-+0-9]*\s*$/;
 const FAVORITE_SCENARIO_DROP_MIME = 'application/x-kot-favorite-scenario-uri';
 const execFileAsync = promisify(execFile);
-let builderWarmupInFlight: Promise<void> | null = null;
-let startupInfobaseWarmupInFlight: Promise<void> | null = null;
+const loadFormExplorerExtensionGenerator = createDeferredLoader(
+    () => import('./formExplorerExtensionGenerator.js')
+);
+const loadFormExplorerBridgeGenerator = createDeferredLoader(
+    () => import('./formExplorerBridgeGenerator.js')
+);
+const loadScenarioCreator = createDeferredLoader(
+    () => import('./scenarioCreator.js')
+);
+const loadFormExplorerBuilder = createDeferredLoader(
+    () => import('./formExplorerBuilder.js')
+);
+const loadOneCPlatform = createDeferredLoader(
+    () => import('./oneCPlatform.js')
+);
+const loadUserStepCommands = createDeferredLoader(
+    () => import('./userStepCommands.js')
+);
 const GHERKIN_STEP_LINE_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\b/i;
 const FEATURE_SCENARIO_HEADER_REGEX = /^(?:Scenario|Сценарий|Scenario Outline|Структура сценария|Background|Предыстория)\s*:/i;
 const FEATURE_SCENARIO_BLOCK_BREAK_REGEX = /^(?:Feature|Функционал|Rule|Правило|Examples|Примеры)\s*:?/i;
 const FEATURE_NON_STEP_LINE_REGEX = /^(?:Feature|Функционал|Rule|Правило|Scenario|Сценарий|Scenario Outline|Структура сценария|Examples|Примеры|Scenarios|Сценарии)\s*:/i;
 const FORM_EXPLORER_SUGGEST_RELEVANT_LINE_REGEX = /(window|окн(?:о|а|у|е|ом)?|form|форм(?:а|ы|у|е|ой)?|table|таблиц|grid|spreadsheet\s+document|табличн(?:ый|ого)?\s+документ|field|поле|attribute|атрибут|реквизит|checkbox|флаг|radio\s*button|переключател|drop-?down|dropdown|выпадающ|html\s+(?:document\s+)?field|form\s+item\s+addition|дополнени(?:е|я)\s+формы|button|кнопк|hyperlink|link|гиперссыл|submenu|подменю|element|элемент(?:\s+формы)?|group|групп)/i;
+const PROJECT_DEFINITION_PARSER_VERSION = '4';
+
+function createProjectDefinitionIndexService(
+    context: vscode.ExtensionContext
+): ProjectDefinitionIndexService {
+    const workspaceFolderCount = vscode.workspace.workspaceFolders?.length ?? 0;
+    return new ProjectDefinitionIndexService({
+        parserVersion: PROJECT_DEFINITION_PARSER_VERSION,
+        fileSystem: {
+            async readDirectory(directoryPath) {
+                const entries = await fs.promises.readdir(directoryPath, { withFileTypes: true });
+                return entries
+                    .filter(entry => entry.isDirectory() || entry.isFile())
+                    .map(entry => ({
+                        name: entry.name,
+                        type: entry.isDirectory() ? 'directory' as const : 'file' as const
+                    }));
+            },
+            async stat(filePath) {
+                const value = await fs.promises.stat(filePath);
+                return { size: value.size, mtimeMs: value.mtimeMs };
+            },
+            readFile: filePath => fs.promises.readFile(filePath, 'utf8'),
+            realpath: filePath => fs.promises.realpath(filePath)
+        },
+        cacheFactory: configuration => new ProjectDefinitionCache(
+            resolveProjectDefinitionCacheDirectory({
+                storagePath: workspaceFolderCount <= 1 ? context.storageUri?.fsPath : undefined,
+                globalStoragePath: context.globalStorageUri.fsPath,
+                workspaceFolderUri: configuration.workspaceFolderUri
+            })
+        ),
+        watch: (rootPath, callbacks) => {
+            const watcher = vscode.workspace.createFileSystemWatcher(
+                new vscode.RelativePattern(rootPath, '**/*.{feature,bsl,epf}')
+            );
+            watcher.onDidCreate(uri => callbacks.create(uri.fsPath));
+            watcher.onDidChange(uri => callbacks.change(uri.fsPath));
+            watcher.onDidDelete(uri => callbacks.delete(uri.fsPath));
+            return watcher;
+        },
+        loadConfigurations: async () => {
+            const folders = vscode.workspace.workspaceFolders ?? [];
+            if (folders.length === 0) {
+                return [];
+            }
+            const { YamlParametersManager } = await import('./yamlParametersManager.js');
+            const profile = await YamlParametersManager.getInstance(context).loadActiveProfileSnapshot();
+            return folders.map(folder => {
+                const resolved = resolveProjectLibraryConfiguration({
+                    workspaceFolderPath: folder.uri.fsPath,
+                    workspaceFolderUri: folder.uri.toString(),
+                    profileId: profile.id,
+                    buildParameters: profile.buildParameters,
+                    additionalVanessaParameters: profile.additionalVanessaParameters
+                });
+                return {
+                    identity: resolved.identity,
+                    workspaceFolderPath: resolved.workspaceFolderPath,
+                    workspaceFolderUri: folder.uri.toString(),
+                    profileId: resolved.profileId,
+                    libraryRootPaths: resolved.libraryRootPaths,
+                    warnings: resolved.warnings
+                };
+            });
+        },
+        watchConfigurations: async listener => {
+            const { YamlParametersManager } = await import('./yamlParametersManager.js');
+            return YamlParametersManager.getInstance(context).onDidChangeActiveProfile(listener);
+        },
+        directoryConcurrency: 8,
+        readConcurrency: 4,
+        yieldEvery: 24,
+        yieldControl: () => new Promise(resolve => setImmediate(resolve)),
+        log: message => console.warn(`[ProjectDefinitionIndex] ${message}`)
+    });
+}
+
+async function loadExportScenarioLibraryRoots(
+    context: vscode.ExtensionContext,
+    resourceUriValue?: string
+): Promise<readonly ExportScenarioLibraryRoot[]> {
+    const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+    let resourceFolder: vscode.WorkspaceFolder | undefined;
+    if (resourceUriValue) {
+        try {
+            resourceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.parse(resourceUriValue));
+        } catch {
+            // Fall back to all workspace folders for a stale Quick Fix resource.
+        }
+    }
+    const folders = resourceFolder ? [resourceFolder] : workspaceFolders;
+    if (folders.length === 0) {
+        return [];
+    }
+    const { YamlParametersManager } = await import('./yamlParametersManager.js');
+    const profile = await YamlParametersManager.getInstance(context).loadActiveProfileSnapshot();
+    const result: ExportScenarioLibraryRoot[] = [];
+    const seen = new Set<string>();
+    for (const folder of folders) {
+        const configuration = resolveProjectLibraryConfiguration({
+            workspaceFolderPath: folder.uri.fsPath,
+            workspaceFolderUri: folder.uri.toString(),
+            profileId: profile.id,
+            buildParameters: profile.buildParameters,
+            additionalVanessaParameters: profile.additionalVanessaParameters
+        });
+        for (const rootPath of configuration.libraryRootPaths) {
+            const uri = vscode.Uri.file(rootPath).toString();
+            if (seen.has(uri)) {
+                continue;
+            }
+            seen.add(uri);
+            result.push(Object.freeze({
+                uri,
+                label: workspaceFolders.length > 1
+                    ? `${folder.name}: ${path.basename(rootPath) || rootPath}`
+                    : path.basename(rootPath) || rootPath,
+                workspaceFolderUri: folder.uri.toString(),
+                profileId: profile.id
+            }));
+        }
+    }
+    return Object.freeze(result);
+}
+
+async function loadUserStepLibraryRoots(
+    context: vscode.ExtensionContext,
+    resourceUriValue?: string
+): Promise<readonly UserStepLibraryRoot[]> {
+    const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+    let resourceFolder: vscode.WorkspaceFolder | undefined;
+    if (resourceUriValue) {
+        try {
+            resourceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.parse(resourceUriValue));
+        } catch {
+            // Fall back to all workspace folders for a stale Quick Fix resource.
+        }
+    }
+    const folders = resourceFolder ? [resourceFolder] : workspaceFolders;
+    if (folders.length === 0) {
+        return [];
+    }
+    const { YamlParametersManager } = await import('./yamlParametersManager.js');
+    const profile = await YamlParametersManager.getInstance(context).loadActiveProfileSnapshot();
+    const result: UserStepLibraryRoot[] = [];
+    const seen = new Set<string>();
+    for (const folder of folders) {
+        const configuration = resolveProjectLibraryConfiguration({
+            workspaceFolderPath: folder.uri.fsPath,
+            workspaceFolderUri: folder.uri.toString(),
+            profileId: profile.id,
+            buildParameters: profile.buildParameters,
+            additionalVanessaParameters: profile.additionalVanessaParameters
+        });
+        const configuredVanessaEpfPath = vscode.workspace
+            .getConfiguration('kotTestToolkit', folder.uri)
+            .get<string>('runVanessa.vanessaEpfPath', '');
+        const templateRoot = resolveVanessaTemplateRoot({
+            workspaceFolderPath: folder.uri.fsPath,
+            buildParameters: profile.buildParameters,
+            configuredVanessaEpfPath
+        });
+        for (const rootPath of configuration.libraryRootPaths) {
+            const uri = vscode.Uri.file(rootPath).toString();
+            if (seen.has(uri)) {
+                continue;
+            }
+            seen.add(uri);
+            result.push(Object.freeze({
+                path: rootPath,
+                uri,
+                label: workspaceFolders.length > 1
+                    ? `${folder.name}: ${path.basename(rootPath) || rootPath}`
+                    : path.basename(rootPath) || rootPath,
+                workspaceFolderUri: folder.uri.toString(),
+                profileId: profile.id,
+                templateRoot
+            }));
+        }
+    }
+    return Object.freeze(result);
+}
+
+function createProjectDefinitionReferenceService(
+    context: vscode.ExtensionContext,
+    resolver: ProjectDefinitionResolver
+): ProjectDefinitionReferenceService {
+    return new ProjectDefinitionReferenceService({
+        resolver,
+        loadSearchRoots: async resource => {
+            const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+            const resourceFolder = resource ? vscode.workspace.getWorkspaceFolder(resource) : undefined;
+            const folders = resourceFolder ? [resourceFolder] : workspaceFolders;
+            if (folders.length === 0) {
+                return [];
+            }
+            const { YamlParametersManager } = await import('./yamlParametersManager.js');
+            const profile = await YamlParametersManager.getInstance(context).loadActiveProfileSnapshot();
+            const roots: ProjectDefinitionReferenceSearchRoot[] = [];
+            for (const folder of folders) {
+                const configuration = resolveProjectLibraryConfiguration({
+                    workspaceFolderPath: folder.uri.fsPath,
+                    workspaceFolderUri: folder.uri.toString(),
+                    profileId: profile.id,
+                    buildParameters: profile.buildParameters,
+                    additionalVanessaParameters: profile.additionalVanessaParameters
+                });
+                roots.push({
+                    path: resolveScenarioScanRootFsPath(folder.uri),
+                    extensions: ['.yaml', '.yml']
+                });
+                configuration.libraryRootPaths.forEach(rootPath => roots.push({
+                    path: rootPath,
+                    extensions: ['.feature']
+                }));
+                configuration.featureFolderPaths.forEach(rootPath => roots.push({
+                    path: rootPath,
+                    extensions: ['.feature']
+                }));
+            }
+            return roots;
+        },
+        fileSystem: {
+            async realpath(filePath) {
+                return fs.promises.realpath(filePath);
+            },
+            async readDirectory(directoryPath) {
+                const entries = await fs.promises.readdir(directoryPath, { withFileTypes: true });
+                return entries
+                    .filter(entry => entry.isDirectory() || entry.isFile())
+                    .map(entry => ({
+                        name: entry.name,
+                        type: entry.isDirectory() ? 'directory' as const : 'file' as const
+                    }));
+            },
+            async stat(filePath) {
+                const value = await fs.promises.stat(filePath);
+                return { size: value.size, mtimeMs: value.mtimeMs };
+            },
+            readFile: filePath => fs.promises.readFile(filePath, 'utf8'),
+            toUri: filePath => vscode.Uri.file(filePath).toString()
+        },
+        getOpenDocuments: () => vscode.workspace.textDocuments,
+        directoryConcurrency: 8,
+        readConcurrency: 4,
+        yieldEvery: 24,
+        yieldControl: () => new Promise(resolve => setImmediate(resolve)),
+        log: message => console.warn(`[ProjectDefinitionReferences] ${message}`)
+    });
+}
 
 function escapeRegexLiteral(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -292,108 +562,6 @@ async function ensureScenarioYamlLanguage(document: vscode.TextDocument): Promis
     } catch (error) {
         console.warn(`[Extension] Failed to switch scenario YAML to yaml mode for ${document.uri.fsPath}:`, error);
     }
-}
-
-async function ensureOneCClientPathConfigured(context: vscode.ExtensionContext): Promise<string | null> {
-    void context;
-    const platforms = await ensureOneCPlatformsCatalogInitialized();
-    return platforms[0]?.clientExePath || null;
-}
-
-async function warmUpFormExplorerBuilder(
-    context: vscode.ExtensionContext,
-    reason: 'startup' | 'configuration'
-): Promise<void> {
-    if (builderWarmupInFlight) {
-        return builderWarmupInFlight;
-    }
-
-    builderWarmupInFlight = (async () => {
-        await initializeFormExplorerRuntimeSidecars();
-        const oneCClientPath = (await ensureOneCPlatformsCatalogInitialized())[0]?.clientExePath || '';
-        if (!oneCClientPath || !fs.existsSync(oneCClientPath)) {
-            return;
-        }
-
-        if (!(await shouldPrepareFormExplorerBuilderInfobase())) {
-            return;
-        }
-
-        const t = await getTranslator(context.extensionUri);
-        try {
-            const showOutputPanel = vscode.workspace
-                .getConfiguration('kotTestToolkit.formExplorer')
-                .get<boolean>('showOutputPanel', false);
-            await ensureFormExplorerBuilderInfobaseReady(context, oneCClientPath, {
-                showOutputPanel,
-                showProgressNotification: true,
-                progressTitle: reason === 'startup'
-                    ? t('Preparing KOT Form Explorer builder infobase...')
-                    : t('Preparing KOT Form Explorer builder infobase after settings change...')
-            });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            const openOutput = t('Open Output');
-            vscode.window.showErrorMessage(
-                t('Failed to prepare KOT Form Explorer builder infobase: {0}', message),
-                openOutput
-            ).then(selection => {
-                if (selection === openOutput) {
-                    void vscode.commands.executeCommand('workbench.action.output.toggleOutput');
-                }
-            });
-        }
-    })().finally(() => {
-        builderWarmupInFlight = null;
-    });
-
-    return builderWarmupInFlight;
-}
-
-async function warmUpSharedStartupInfobase(
-    context: vscode.ExtensionContext,
-    reason: 'startup' | 'configuration'
-): Promise<void> {
-    if (startupInfobaseWarmupInFlight) {
-        return startupInfobaseWarmupInFlight;
-    }
-
-    startupInfobaseWarmupInFlight = (async () => {
-        const oneCClientPath = (await ensureOneCPlatformsCatalogInitialized())[0]?.clientExePath || '';
-        if (!oneCClientPath || !fs.existsSync(oneCClientPath)) {
-            return;
-        }
-
-        if (!(await shouldPrepareSharedStartupInfobase())) {
-            return;
-        }
-
-        const t = await getTranslator(context.extensionUri);
-        try {
-            await ensureSharedStartupInfobaseReady(context, oneCClientPath, {
-                showOutputPanel: false,
-                showProgressNotification: true,
-                progressTitle: reason === 'startup'
-                    ? t('Preparing shared startup infobase...')
-                    : t('Preparing shared startup infobase after settings change...')
-            });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            const openOutput = t('Open Output');
-            vscode.window.showErrorMessage(
-                t('Failed to prepare shared startup infobase: {0}', message),
-                openOutput
-            ).then(selection => {
-                if (selection === openOutput) {
-                    getSharedStartupInfobaseOutputChannel().show(true);
-                }
-            });
-        }
-    })().finally(() => {
-        startupInfobaseWarmupInFlight = null;
-    });
-
-    return startupInfobaseWarmupInFlight;
 }
 
 function hasTopLevelScenarioSection(documentText: string, sectionName: string): boolean {
@@ -611,8 +779,6 @@ function updateScenarioMetadataBlockSessionCache(document: vscode.TextDocument):
     scenarioMetadataBlockSessionCache.set(fileKey, metadataBlock);
 }
 
-const EXTERNAL_STEPS_URL_CONFIG_KEY = 'kotTestToolkit.steps.externalUrl'; // Ключ для отслеживания изменений
-
 async function notifyIfUpdated(context: vscode.ExtensionContext): Promise<void> {
     const currentVersion = context.extension.packageJSON.version as string | undefined;
     if (!currentVersion) {
@@ -652,18 +818,22 @@ export function activate(context: vscode.ExtensionContext) {
     setExtensionUri(context.extensionUri);
     notifyIfUpdated(context).catch(e => console.error('[Extension] notifyIfUpdated error:', e));
     initializeScenarioScanRoot(context);
-    const formExplorerPanel = new FormExplorerPanel(context);
-    const infobaseManagerPanel = new InfobaseManagerPanel(context);
-    context.subscriptions.push(formExplorerPanel);
-    context.subscriptions.push(infobaseManagerPanel);
-    void ensureOneCClientPathConfigured(context)
-        .then(() => Promise.all([
-            warmUpSharedStartupInfobase(context, 'startup'),
-        ]))
-        .catch(error => {
-            console.warn('[Extension] Failed to initialize 1C platform or startup/builder infobases.', error);
-        });
-
+    const stepCatalogService = new StepCatalogService(context, vscode);
+    context.subscriptions.push(stepCatalogService);
+    const loadFormExplorerPanel = createDeferredResourceLoader(
+        async () => {
+            const { FormExplorerPanel } = await import('./formExplorerPanel.js');
+            return new FormExplorerPanel(context, stepCatalogService);
+        },
+        panel => context.subscriptions.push(panel)
+    );
+    const loadInfobaseManagerPanel = createDeferredResourceLoader(
+        async () => {
+            const { InfobaseManagerPanel } = await import('./infobaseManagerPanel.js');
+            return new InfobaseManagerPanel(context);
+        },
+        panel => context.subscriptions.push(panel)
+    );
     // --- Регистрация Провайдера для Webview (Test Manager) ---
     const phaseSwitcherProvider = new PhaseSwitcherProvider(context.extensionUri, context);
     context.subscriptions.push(
@@ -696,14 +866,28 @@ export function activate(context: vscode.ExtensionContext) {
         )
     );
 
-    // Инициализируем кеш тестов сразу после активации для быстрого доступа
-    phaseSwitcherProvider.initializeTestCache().catch(error => {
-        console.error('[Extension] Error during eager cache initialization:', error);
-    });
-
     // --- Регистрация Провайдеров Языковых Функций (Автодополнение и Подсказки) ---
-    const completionProvider = new DriveCompletionProvider(context);
-    const hoverProvider = new DriveHoverProvider(context, phaseSwitcherProvider);
+    const projectDefinitionIndex = createProjectDefinitionIndexService(context);
+    const projectDefinitionResolver = new ProjectDefinitionResolver({
+        local: projectDefinitionIndex,
+        scenarios: phaseSwitcherProvider,
+        steps: stepCatalogService
+    });
+    const projectDefinitionReferenceService = createProjectDefinitionReferenceService(
+        context,
+        projectDefinitionResolver
+    );
+    context.subscriptions.push(
+        projectDefinitionIndex,
+        projectDefinitionResolver,
+        projectDefinitionReferenceService
+    );
+    const completionProvider = new DriveCompletionProvider(context, projectDefinitionResolver);
+    const hoverProvider = new DriveHoverProvider(
+        context,
+        projectDefinitionResolver,
+        phaseSwitcherProvider
+    );
     const completionAndHoverSelector: vscode.DocumentSelector = [
         { pattern: '**/*.yaml', scheme: 'file' },
         { pattern: '**/*.feature', scheme: 'file' }
@@ -731,6 +915,31 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.languages.registerHoverProvider(
             completionAndHoverSelector,
             hoverProvider
+        )
+    );
+    context.subscriptions.push(
+        vscode.languages.registerDefinitionProvider(
+            completionAndHoverSelector,
+            new ProjectDefinitionProvider(projectDefinitionResolver)
+        )
+    );
+    context.subscriptions.push(
+        vscode.languages.registerCodeLensProvider(
+            { pattern: '**/*.feature', scheme: 'file' },
+            new ExportScenarioMetadataCodeLensProvider(context.extensionUri)
+        )
+    );
+    context.subscriptions.push(
+        vscode.languages.registerReferenceProvider(
+            [
+                { pattern: '**/*.yaml', scheme: 'file' },
+                { pattern: '**/*.feature', scheme: 'file' },
+                { pattern: '**/*.bsl', scheme: 'file' }
+            ],
+            new ProjectDefinitionReferenceProvider(
+                projectDefinitionReferenceService,
+                projectDefinitionResolver
+            )
         )
     );
     context.subscriptions.push(
@@ -775,21 +984,10 @@ export function activate(context: vscode.ExtensionContext) {
         )
     );
 
-    // Подписываемся на событие обновления кэша тестов от PhaseSwitcherProvider
-    // и обновляем автодополнение сценариев
-    context.subscriptions.push(
-        phaseSwitcherProvider.onDidUpdateTestCache((testCache: Map<string, TestInfo> | null) => {
-            if (testCache) {
-                completionProvider.updateScenarioCompletions(testCache);
-                console.log('[Extension] Scenario completions updated based on PhaseSwitcher cache.');
-            } else {
-                completionProvider.updateScenarioCompletions(new Map());
-                console.log('[Extension] Scenario completions cleared due to null PhaseSwitcher cache.');
-            }
-        })
+    const scenarioDiagnosticsProvider = new ScenarioDiagnosticsProvider(
+        phaseSwitcherProvider,
+        projectDefinitionResolver
     );
-
-    const scenarioDiagnosticsProvider = new ScenarioDiagnosticsProvider(phaseSwitcherProvider, hoverProvider);
     context.subscriptions.push(
         scenarioDiagnosticsProvider,
         vscode.languages.registerCodeActionsProvider(
@@ -981,7 +1179,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        'kotTestToolkit.openSubscenario', (editor, edit) => openSubscenarioHandler(editor, edit, phaseSwitcherProvider)
+        'kotTestToolkit.openSubscenario', (editor, edit) => openSubscenarioHandler(editor, edit, projectDefinitionResolver)
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         'kotTestToolkit.generateScenarioDescriptionWithAi',
@@ -997,7 +1195,7 @@ export function activate(context: vscode.ExtensionContext) {
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         'kotTestToolkit.openNestedScenarioFromFeature',
-        (editor, edit) => openNestedScenarioFromFeatureHandler(editor, edit, phaseSwitcherProvider)
+        (editor, edit) => openNestedScenarioFromFeatureHandler(editor, edit, projectDefinitionResolver)
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openScenarioByName',
@@ -1005,7 +1203,32 @@ export function activate(context: vscode.ExtensionContext) {
             if (typeof scenarioName !== 'string') {
                 return;
             }
-            await openScenarioByNameHandler(scenarioName, phaseSwitcherProvider);
+            await openScenarioByNameHandler(scenarioName, projectDefinitionResolver);
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.openProjectDefinition',
+        async (argument: unknown, resourceUriValue?: unknown) => {
+            const definitionId = typeof argument === 'string'
+                ? argument
+                : argument && typeof argument === 'object' && 'definitionId' in argument
+                    ? (argument as { definitionId?: unknown }).definitionId
+                    : undefined;
+            const resourceUri = typeof argument === 'object' && argument && 'resourceUri' in argument
+                ? (argument as { resourceUri?: unknown }).resourceUri
+                : resourceUriValue;
+            const capturedLocation = typeof argument === 'object' && argument && 'location' in argument
+                ? (argument as { location?: unknown }).location
+                : undefined;
+            if (typeof definitionId !== 'string') {
+                return;
+            }
+            await openProjectDefinitionHandler(
+                definitionId,
+                typeof resourceUri === 'string' ? resourceUri : undefined,
+                projectDefinitionResolver,
+                capturedLocation
+            );
         }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
@@ -1093,31 +1316,98 @@ export function activate(context: vscode.ExtensionContext) {
         }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.createNestedScenario', () => handleCreateNestedScenario(context)
+        'kotTestToolkit.createNestedScenario', async () => {
+            const { handleCreateNestedScenario } = await loadScenarioCreator();
+            await handleCreateNestedScenario(context);
+        }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.createMainScenario', () => handleCreateMainScenario(context)
+        'kotTestToolkit.createMainScenario', async () => {
+            const { handleCreateMainScenario } = await loadScenarioCreator();
+            await handleCreateMainScenario(context);
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.createExportScenario', async (seed?: unknown) => {
+            const t = await getTranslator(context.extensionUri);
+            await createExportScenarioCommand(seed, {
+                index: projectDefinitionIndex,
+                loadLibraryRoots: resourceUri => loadExportScenarioLibraryRoots(context, resourceUri),
+                translate: t
+            });
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        EXPORT_SCENARIO_METADATA_COMMAND, async (target?: unknown) => {
+            const t = await getTranslator(context.extensionUri);
+            await addExportScenarioMetadataCommand(target, {
+                index: projectDefinitionIndex,
+                translate: t
+            });
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.createUserStep', async (seed?: unknown) => {
+            const t = await getTranslator(context.extensionUri);
+            const { createUserStepCommand } = await loadUserStepCommands();
+            try {
+                await createUserStepCommand(seed, {
+                    context,
+                    index: projectDefinitionIndex,
+                    loadLibraryRoots: resourceUri => loadUserStepLibraryRoots(context, resourceUri),
+                    translate: t
+                });
+            } catch (error) {
+                vscode.window.showErrorMessage(t('Could not create the user step: {0}', String(error)));
+            }
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.buildUserStepLibrary', async (request?: unknown) => {
+            const t = await getTranslator(context.extensionUri);
+            const { buildUserStepLibraryCommand } = await loadUserStepCommands();
+            await buildUserStepLibraryCommand(request, {
+                context,
+                index: projectDefinitionIndex,
+                loadLibraryRoots: resourceUri => loadUserStepLibraryRoots(context, resourceUri),
+                translate: t
+            });
+        }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.refreshPhaseSwitcher',
         async (options?: { refreshCache?: boolean }) => {
+            if (options?.refreshCache === true) {
+                await projectDefinitionIndex.reloadConfigurations();
+                await projectDefinitionIndex.waitForIdle();
+            }
             await phaseSwitcherProvider.refreshFromExternalStateChange({
                 refreshCache: options?.refreshCache === true
             });
         }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.manageSystemFunctions', () => handleManageSystemFunctions(context)
+        'kotTestToolkit.manageSystemFunctions', async () => {
+            const { handleManageSystemFunctions } = await loadScenarioCreator();
+            await handleManageSystemFunctions(context);
+        }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.manageEtalonBases', () => handleManageEtalonBases(context)
+        'kotTestToolkit.manageEtalonBases', async () => {
+            const { handleManageEtalonBases } = await loadScenarioCreator();
+            await handleManageEtalonBases(context);
+        }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.managePlatforms', () => handleManagePlatforms(context)
+        'kotTestToolkit.managePlatforms', async () => {
+            const { handleManagePlatforms } = await loadOneCPlatform();
+            await handleManagePlatforms(context);
+        }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.changeScenarioSystemFunctionFromEditor',
         async () => {
+            const { handleChangeScenarioSystemFunctionFromEditor } = await loadScenarioCreator();
             await handleChangeScenarioSystemFunctionFromEditor(context);
             await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
@@ -1125,6 +1415,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.changeTestSettingsScenarioFromEditor',
         async () => {
+            const { handleChangeTestSettingsScenarioFromEditor } = await loadScenarioCreator();
             await handleChangeTestSettingsScenarioFromEditor(context);
             await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
@@ -1132,6 +1423,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.changeTestSettingsEtalonBaseFromEditor',
         async () => {
+            const { handleChangeTestSettingsEtalonBaseFromEditor } = await loadScenarioCreator();
             await handleChangeTestSettingsEtalonBaseFromEditor(context);
             await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
@@ -1139,6 +1431,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.changeTestSettingsUserProfileFromEditor',
         async () => {
+            const { handleChangeTestSettingsUserProfileFromEditor } = await loadScenarioCreator();
             await handleChangeTestSettingsUserProfileFromEditor(context);
             await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
@@ -1146,6 +1439,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.syncTestSettingsFromScenario',
         async () => {
+            const { handleSyncTestSettingsFromScenario } = await loadScenarioCreator();
             await handleSyncTestSettingsFromScenario(context);
             await updateActiveScenarioContext(vscode.window.activeTextEditor);
         }
@@ -1160,7 +1454,11 @@ export function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.insertUid', insertUidHandler
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.findCurrentFileReferences', findCurrentFileReferencesHandler
+        'kotTestToolkit.findCurrentFileReferences',
+        () => findCurrentFileReferencesHandler(
+            projectDefinitionReferenceService,
+            projectDefinitionResolver
+        )
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         'kotTestToolkit.replaceTabsWithSpacesYaml', replaceTabsWithSpacesYamlHandler
@@ -1229,17 +1527,19 @@ export function activate(context: vscode.ExtensionContext) {
         }, async (progress) => {
             progress.report({ increment: 0, message: t('Loading Gherkin step definitions...') });
             try {
-                await completionProvider.refreshSteps(); // Обновляет только Gherkin шаги
-                progress.report({ increment: 50, message: t('Gherkin autocompletion update completed.') });
-                await hoverProvider.refreshSteps();
+                const catalogs = await stepCatalogService.refresh(
+                    vscode.window.activeTextEditor?.document.uri
+                );
                 progress.report({ increment: 100, message: t('Gherkin hints update completed.') });
-
-                // Для обновления автодополнения сценариев, мы полагаемся на событие от PhaseSwitcherProvider,
-                // которое должно сработать, если пользователь нажмет "Обновить" в панели Test Manager.
-                // Если нужно принудительное обновление сценариев здесь, то нужно будет вызвать
-                // логику сканирования сценариев и затем completionProvider.updateScenarioCompletions().
-                // Пока что команда `refreshGherkinSteps` обновляет только Gherkin.
-                // Обновление сценариев происходит через Test Manager UI.
+                const selected = catalogs[0];
+                if (selected) {
+                    vscode.window.showInformationMessage(t(
+                        'Steps library updated: version {0}, source {1}, {2} steps.',
+                        selected.requestedVersion ?? selected.catalogVersion,
+                        selected.source,
+                        String(selected.steps.length)
+                    ));
+                }
 
             } catch (error: any) {
                 console.error("[refreshGherkinSteps Command] Error during refresh:", error.message);
@@ -1280,11 +1580,6 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Слушатель изменения конфигурации
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async (event) => {
-        if (event.affectsConfiguration(EXTERNAL_STEPS_URL_CONFIG_KEY)) {
-            console.log(`[Extension] Configuration for '${EXTERNAL_STEPS_URL_CONFIG_KEY}' changed. Refreshing Gherkin steps.`);
-            await refreshGherkinStepsCommand();
-        }
-
         if (event.affectsConfiguration('kotTestToolkit.localization.languageOverride')) {
             console.log('[Extension] Language override setting changed. Prompting for reload.');
             const message = vscode.l10n.t('Language setting changed. Reload window to apply?');
@@ -1309,14 +1604,13 @@ export function activate(context: vscode.ExtensionContext) {
             || event.affectsConfiguration('kotTestToolkit.formExplorer.snapshotPath')
         ) {
             try {
+                const { initializeFormExplorerRuntimeSidecars } = await loadFormExplorerBuilder();
                 await initializeFormExplorerRuntimeSidecars();
                 if (event.affectsConfiguration('kotTestToolkit.platforms.catalog')) {
+                    const { ensureOneCPlatformsCatalogInitialized } = await loadOneCPlatform();
                     await ensureOneCPlatformsCatalogInitialized();
                 }
 
-                await Promise.all([
-                    warmUpSharedStartupInfobase(context, 'configuration'),
-                ]);
             } catch (error) {
                 console.warn('[Extension] Failed to react to 1C platform/Form Explorer configuration change.', error);
             }
@@ -1336,27 +1630,31 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openInfobaseManager',
         async () => {
-            await infobaseManagerPanel.open();
+            const panel = await loadInfobaseManagerPanel();
+            await panel.open();
         }
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openFormExplorer',
         async () => {
-            await formExplorerPanel.open();
+            const panel = await loadFormExplorerPanel();
+            await panel.open();
         }
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openFormExplorerForInfobase',
         async (options?: string | StartFormExplorerBridgeCommandOptions) => {
-            await formExplorerPanel.openAndStart(options);
+            const panel = await loadFormExplorerPanel();
+            await panel.openAndStart(options);
         }
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.generateFormExplorerExtension',
         async () => {
+            const { handleGenerateFormExplorerExtension } = await loadFormExplorerExtensionGenerator();
             await handleGenerateFormExplorerExtension(context);
         }
     ));
@@ -1364,6 +1662,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.buildFormExplorerExtensionCfe',
         async (options?: BuildFormExplorerExtensionCommandOptions) => {
+            const { handleBuildFormExplorerExtensionCfe } = await loadFormExplorerExtensionGenerator();
             await handleBuildFormExplorerExtensionCfe(context, options);
         }
     ));
@@ -1371,6 +1670,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.installFormExplorerExtension',
         async (options?: InstallFormExplorerExtensionCommandOptions) => {
+            const { handleInstallFormExplorerExtension } = await loadFormExplorerExtensionGenerator();
             await handleInstallFormExplorerExtension(context, options);
         }
     ));
@@ -1378,6 +1678,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.startFormExplorerInfobase',
         async (options?: string | StartFormExplorerBridgeCommandOptions) => {
+            const { handleStartFormExplorerBridge } = await loadFormExplorerBridgeGenerator();
             return await handleStartFormExplorerBridge(context, options);
         }
     ));
@@ -1385,6 +1686,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.startFormExplorerBridge',
         async (options?: string | StartFormExplorerBridgeCommandOptions) => {
+            const { handleStartFormExplorerBridge } = await loadFormExplorerBridgeGenerator();
             return await handleStartFormExplorerBridge(context, options);
         }
     ));
@@ -1709,11 +2011,9 @@ export function activate(context: vscode.ExtensionContext) {
         const failedFiles: ScenarioRepairFailure[] = [];
 
         try {
-            let testCache = phaseSwitcherProvider.getTestCache();
-            if (!testCache && nestedEnabled) {
-                await phaseSwitcherProvider.initializeTestCache();
-                testCache = phaseSwitcherProvider.getTestCache();
-            }
+            let scenarioCatalog = nestedEnabled
+                ? await phaseSwitcherProvider.ensureFreshScenarioCatalog()
+                : null;
 
             await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
@@ -1783,7 +2083,8 @@ export function activate(context: vscode.ExtensionContext) {
 
                                 const currentText = document.getText();
                                 if (nestedEnabled && shouldRefillNestedScenariosSection(currentText)) {
-                                    await clearAndFillNestedScenarios(document, true, testCache);
+                                    scenarioCatalog = phaseSwitcherProvider.getScenarioCatalog() || scenarioCatalog;
+                                    await clearAndFillNestedScenarios(document, true, scenarioCatalog);
                                 }
 
                                 if (paramsEnabled && shouldRefillScenarioParametersSection(document.getText())) {
@@ -2075,11 +2376,10 @@ export function activate(context: vscode.ExtensionContext) {
                     }
 
                     progress.report({ increment: 20, message: t('Refreshing scenario cache...') });
-                    await phaseSwitcherProvider.ensureFreshTestCache();
-                    const testCache = phaseSwitcherProvider.getTestCache();
+                    const scenarioCatalog = await phaseSwitcherProvider.ensureFreshScenarioCatalog();
 
                     progress.report({ increment: 15, message: t('Filling nested scenarios...') });
-                    if (await clearAndFillNestedScenarios(document!, true, testCache)) {
+                    if (await clearAndFillNestedScenarios(document!, true, scenarioCatalog)) {
                         completedOperations.push('nested');
                     }
 
@@ -2264,7 +2564,6 @@ export function activate(context: vscode.ExtensionContext) {
                     }, async (progress) => {
                         const totalSteps = enabledOperations.length;
                         const completedOperations: string[] = [];
-                        let testCache = phaseSwitcherProvider.getTestCache();
 
                         try {
                             // 1. Замена табов на пробелы
@@ -2324,12 +2623,9 @@ export function activate(context: vscode.ExtensionContext) {
                                 if (shouldUpsertScenarioCache) {
                                     phaseSwitcherProvider.upsertScenarioCacheEntryFromDocument(document);
                                 }
-                                testCache = phaseSwitcherProvider.getTestCache();
-                                if (!testCache) {
-                                    await phaseSwitcherProvider.initializeTestCache();
-                                    testCache = phaseSwitcherProvider.getTestCache();
-                                }
-                                const result = await clearAndFillNestedScenarios(document, true, testCache);
+                                const scenarioCatalog = phaseSwitcherProvider.getScenarioCatalog()
+                                    || await phaseSwitcherProvider.ensureFreshScenarioCatalog();
+                                const result = await clearAndFillNestedScenarios(document, true, scenarioCatalog);
                                 if (result) {
                                     completedOperations.push('nested');
                                 }
@@ -2414,10 +2710,7 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Инициализируем загрузку шагов Gherkin
-    completionProvider.refreshSteps();
-    hoverProvider.refreshSteps();
-
+    projectDefinitionIndex.start();
     console.log('kotTestToolkit commands and providers registered.');
 }
 
