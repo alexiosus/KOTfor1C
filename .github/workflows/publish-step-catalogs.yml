@@ -1,11 +1,6 @@
 name: Publish Vanessa step catalogs
 
 on:
-  push:
-    branches:
-      - codex/reliability-foundation
-    paths:
-      - .github/workflows/publish-step-catalogs.yml
   schedule:
     - cron: '17 3 * * 1'
   workflow_dispatch:
