@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-25
 
-**Status:** Draft for user review
+**Status:** Approved
 
 **Target branch:** `codex/reliability-foundation`
 
