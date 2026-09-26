@@ -30,6 +30,7 @@ export interface ProjectDefinitionParameter {
 
 export interface ProjectDefinition {
     readonly id: string;
+    readonly familyId?: string;
     readonly kind: ProjectDefinitionKind;
     readonly template: string;
     readonly normalizedTemplate: string;
@@ -37,6 +38,7 @@ export interface ProjectDefinition {
     readonly parameters: readonly ProjectDefinitionParameter[];
     readonly description?: string;
     readonly category?: string;
+    readonly categoryPath?: readonly string[];
     readonly usageExample?: string;
     readonly sourceLabel: string;
     readonly workspaceFolderUri?: string;

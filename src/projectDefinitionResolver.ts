@@ -81,14 +81,17 @@ function builtInVariant(
     language: 'ru' | 'en',
     variant: StepTextVariant
 ): ProjectDefinition {
+    const categoryPath = step.categoryPath?.[language];
     return Object.freeze({
         id: `${step.id}:${language}`,
+        familyId: step.id,
         kind: 'builtInStep',
         template: variant.pattern,
         normalizedTemplate: normalizeProjectDefinitionTemplate(variant.pattern),
         language,
         parameters: templateParameters(variant.pattern),
         description: variant.description || undefined,
+        ...(categoryPath ? { categoryPath: Object.freeze([...categoryPath]) } : {}),
         sourceLabel: `Vanessa ${catalog.catalogVersion} (${language.toLocaleUpperCase()})`
     });
 }

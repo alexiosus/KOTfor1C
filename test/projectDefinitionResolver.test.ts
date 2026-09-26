@@ -195,6 +195,45 @@ test('composes all four definition kinds and preserves localized built-in varian
     );
 });
 
+test('pairs localized built-in variants into a family and selects their category path', async () => {
+    const categorizedCatalog: ResolvedStepCatalog = {
+        identity: 'categorized-catalog',
+        catalogVersion: '1.2.3.4',
+        source: 'remote-cache',
+        steps: [{
+            id: 'open-form',
+            ru: { pattern: 'И открываю форму', description: 'Открывает форму.' },
+            en: { pattern: 'And I open form', description: 'Opens a form.' },
+            categoryPath: {
+                ru: ['Интерфейс', 'Формы'],
+                en: ['UI', 'Forms']
+            }
+        }]
+    };
+    const { resolver } = createHarness({
+        catalogs: new Map([['a', categorizedCatalog]])
+    });
+
+    const view = await resolver.getView(uri('file:///workspace-a/test.feature'));
+    const russian = view.byId.get('open-form:ru');
+    const english = view.byId.get('open-form:en');
+
+    assert.equal(russian?.familyId, 'open-form');
+    assert.equal(english?.familyId, 'open-form');
+    assert.deepEqual(russian?.categoryPath, ['Интерфейс', 'Формы']);
+    assert.deepEqual(english?.categoryPath, ['UI', 'Forms']);
+});
+
+test('keeps uncategorized schema-v1 built-ins without a category path', async () => {
+    const { resolver } = createHarness();
+    const view = await resolver.getView(uri('file:///workspace-a/test.feature'));
+
+    assert.equal(
+        view.all.find(item => item.kind === 'builtInStep')?.categoryPath,
+        undefined
+    );
+});
+
 test('keeps only positional placeholders as parameters of a multiline built-in step', async () => {
     const pattern = [
         'And I go to line in "%1 TableName" table',
