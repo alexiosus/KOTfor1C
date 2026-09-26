@@ -28,6 +28,42 @@ test('catalog parser accepts a valid exact-version catalog', () => {
     assert.equal(catalog.steps[0].ru?.pattern, 'И пауза 1');
 });
 
+test('catalog parser accepts optional localized category paths without changing the step id', () => {
+    const catalog = parseBuiltInStepCatalog({
+        ...validCatalog,
+        steps: [{
+            ...validCatalog.steps[0],
+            categoryPath: {
+                ru: ['Интерфейс', 'Формы'],
+                en: ['UI', 'Forms']
+            }
+        }]
+    });
+
+    assert.deepEqual(catalog.steps[0].categoryPath, {
+        ru: ['Интерфейс', 'Формы'],
+        en: ['UI', 'Forms']
+    });
+    assert.equal(catalog.steps[0].id, validCatalog.steps[0].id);
+    assert.equal(parseBuiltInStepCatalog(validCatalog).steps[0].categoryPath, undefined);
+});
+
+test('catalog parser rejects malformed optional category paths', () => {
+    for (const categoryPath of [
+        {},
+        { ru: [] },
+        { en: [] },
+        { ru: ['Интерфейс', ''] },
+        { en: ['UI', 1] },
+        { ru: 'Интерфейс' }
+    ]) {
+        assert.throws(() => parseBuiltInStepCatalog({
+            ...validCatalog,
+            steps: [{ ...validCatalog.steps[0], categoryPath }]
+        }), /category path/i);
+    }
+});
+
 test('catalog parser rejects a requested-version mismatch', () => {
     assert.throws(
         () => parseBuiltInStepCatalog(validCatalog, '1.2.043.27'),

@@ -19,16 +19,31 @@ test('catalog workflow is append-only, serialized, and uses noreply commit ident
     assert.match(source, /step-catalogs/);
     assert.match(source, /48015759\+alexiosus@users\.noreply\.github\.com/);
     assert.match(source, /npm run generate:step-catalog/);
+    assert.match(source, /--source-root "\$SOURCE_ROOT"/);
+    assert.match(source, /--timestamp "\$SOURCE_TIMESTAMP"/);
+    assert.match(source, /--output "\$PUBLICATION_ROOT"/);
+    assert.equal(source.match(/vanessa-automation\/archive\//g)?.length, 1);
+    assert.doesNotMatch(source, /git -C "\$REFERENCE_ROOT" checkout/);
+    assert.doesNotMatch(source, /1cv8|DumpExternalDataProcessorOrReportToFiles/i);
     assert.doesNotMatch(source, /--force|push --force/);
 });
 
 test('catalog workflow validates generated output before publishing only catalog artifacts', () => {
     const source = projectFile('.github/workflows/publish-step-catalogs.yml');
 
-    assert.match(source, /node --test out\/test\/stepCatalogGenerator\.test\.js/);
+    assert.match(source, /node --test[\s\S]*out\/test\/stepCatalogGenerator\.test\.js/);
     assert.match(source, /index\.json/);
     assert.match(source, /generation-report\.json/);
     assert.match(source, /catalog\.json/);
+    for (const reportField of [
+        'categorizedStepCount',
+        'uncategorizedStepCount',
+        'unmatchedRegistrationCount',
+        'conflictingCategoryMappings',
+        'untranslatableCategorySegments'
+    ]) {
+        assert.match(source, new RegExp(reportField));
+    }
     assert.match(source, /diff --cached --quiet/);
 });
 

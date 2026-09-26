@@ -38,7 +38,11 @@ jobs:
       - name: Verify the catalog generator
         run: |
           npm run compile-tests
-          node --test out/test/stepCatalogGenerator.test.js
+          node --test \
+            out/test/bslStepSourceParser.test.js \
+            out/test/stepCatalog.test.js \
+            out/test/stepCatalogCategories.test.js \
+            out/test/stepCatalogGenerator.test.js
 
       - name: Resolve and download the Vanessa release
         id: source
@@ -65,7 +69,6 @@ jobs:
           SOURCE_ROOT="$RUNNER_TEMP/vanessa-source"
           git clone --filter=blob:none --no-checkout --depth 1 --branch "$TAG" \
             https://github.com/Pr-Mex/vanessa-automation.git "$REFERENCE_ROOT"
-          git -C "$REFERENCE_ROOT" checkout --detach
           COMMIT="$(git -C "$REFERENCE_ROOT" rev-parse HEAD)"
           SOURCE_TIMESTAMP="$(git -C "$REFERENCE_ROOT" show -s --format=%cI HEAD)"
           if [[ ! "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
@@ -110,12 +113,12 @@ jobs:
         run: |
           set -euo pipefail
           npm run generate:step-catalog -- \
-            --source "$SOURCE_ROOT" \
+            --source-root "$SOURCE_ROOT" \
             --version "$VERSION" \
             --ref "$SOURCE_TAG" \
             --commit "$SOURCE_COMMIT" \
-            --source-timestamp "$SOURCE_TIMESTAMP" \
-            --publication-root "$PUBLICATION_ROOT" \
+            --timestamp "$SOURCE_TIMESTAMP" \
+            --output "$PUBLICATION_ROOT" \
             --legacy-html res/steps.htm
 
           node - "$PUBLICATION_ROOT" "$VERSION" "$SOURCE_COMMIT" <<'NODE'
@@ -137,6 +140,19 @@ jobs:
           }
           if (report.stepCount !== catalog.steps.length || report.duplicateStepIds.length !== 0) {
             throw new Error('Generated catalog report is invalid.');
+          }
+          const coverageFields = [
+            'categorizedStepCount',
+            'uncategorizedStepCount',
+            'unmatchedRegistrationCount',
+            'conflictingCategoryMappings',
+            'untranslatableCategorySegments'
+          ];
+          if (coverageFields.some(field => !(field in report))) {
+            throw new Error('Generated catalog category coverage report is incomplete.');
+          }
+          if (report.categorizedStepCount + report.uncategorizedStepCount !== catalog.steps.length) {
+            throw new Error('Generated catalog category coverage does not match its contents.');
           }
           NODE
 

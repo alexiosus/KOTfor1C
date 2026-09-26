@@ -620,7 +620,7 @@ export function parseStaticBslStepRegistrations(
             continue;
         }
         const args = splitArguments(significant.slice(index + 2, closeIndex));
-        if (!args || args.length < 5) {
+        if (!args || args.length < 4) {
             warnings.push({
                 uri: sourceUri,
                 message: 'Unsupported user-step registration argument list.',
@@ -636,7 +636,7 @@ export function parseStaticBslStepRegistrations(
         const snippet = evaluateStaticExpression(args[1], variables);
         const implementationName = evaluateStaticExpression(args[2], variables);
         const template = evaluateStaticExpression(args[3], variables);
-        const description = evaluateStaticExpression(args[4], variables);
+        const description = args[4] ? evaluateStaticExpression(args[4], variables) : '';
         const category = args[5] ? evaluateStaticExpression(args[5], variables) : '';
         if (
             snippet === null

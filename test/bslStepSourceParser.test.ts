@@ -149,6 +149,7 @@ test('evaluates concatenated static variables and supports RU and EN declaration
         '',
         'Процедура ПолучитьСписокТестов(Контекст)',
         '    ДобавитьШагВМассивТестов(Контекст, "БезКатегории()", "БезКатегории", "И шаг без категории", "Описание");',
+        '    ДобавитьШагВМассивТестов(Контекст, "БезОписания()", "БезОписания", "И шаг без описания");',
         'КонецПроцедуры'
     ].join('\n');
 
@@ -159,8 +160,10 @@ test('evaluates concatenated static variables and supports RU and EN declaration
         category: item.category
     })), [
         { template: 'And I open form', category: 'UI.Forms' },
-        { template: 'И шаг без категории', category: undefined }
+        { template: 'И шаг без категории', category: undefined },
+        { template: 'И шаг без описания', category: undefined }
     ]);
+    assert.equal(parsed.registrations[2].description, '');
 });
 
 test('skips a dynamic category with a focused warning while preserving neighboring registrations', () => {

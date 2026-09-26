@@ -15,6 +15,7 @@ import {
     StepTextVariant
 } from './stepCatalog';
 import { parseLegacyStepsHtml } from './legacyStepCatalog';
+import type { StepCategoryEnrichmentReport } from './stepCatalogCategories';
 
 const SPREADSHEET_NAMESPACE = 'http://v8.1c.ru/8.2/data/spreadsheet';
 const CORE_NAMESPACE = 'http://v8.1c.ru/8.1/data/core';
@@ -52,7 +53,8 @@ export interface StepCatalogCompatibilityReport {
     readonly missingLegacyEnPatterns: readonly string[];
 }
 
-export interface StepCatalogGenerationReport extends StepCatalogCompatibilityReport {
+export interface StepCatalogGenerationReport
+    extends StepCatalogCompatibilityReport, StepCategoryEnrichmentReport {
     readonly schemaVersion: 1;
     readonly vanessaVersion: string;
     readonly sourceRows: number;
@@ -308,8 +310,18 @@ export function compareCatalogWithLegacyHtml(
 export function createStepCatalogGenerationReport(
     parsed: VanessaTemplateParseResult,
     catalog: BuiltInStepCatalog,
-    compatibility: StepCatalogCompatibilityReport
+    compatibility: StepCatalogCompatibilityReport,
+    categoryEnrichment?: StepCategoryEnrichmentReport
 ): StepCatalogGenerationReport {
+    const categorizedStepCount = categoryEnrichment?.categorizedStepCount
+        ?? catalog.steps.filter(step => step.categoryPath !== undefined).length;
+    const categoryReport: StepCategoryEnrichmentReport = categoryEnrichment ?? {
+        categorizedStepCount,
+        uncategorizedStepCount: catalog.steps.length - categorizedStepCount,
+        unmatchedRegistrationCount: 0,
+        conflictingCategoryMappings: [],
+        untranslatableCategorySegments: []
+    };
     return {
         schemaVersion: 1,
         vanessaVersion: catalog.vanessaVersion,
@@ -326,6 +338,11 @@ export function createStepCatalogGenerationReport(
         duplicateEnglishPatterns: duplicateValues(
             catalog.steps.flatMap(step => step.en ? [step.en.pattern] : [])
         ),
+        categorizedStepCount: categoryReport.categorizedStepCount,
+        uncategorizedStepCount: categoryReport.uncategorizedStepCount,
+        unmatchedRegistrationCount: categoryReport.unmatchedRegistrationCount,
+        conflictingCategoryMappings: [...categoryReport.conflictingCategoryMappings],
+        untranslatableCategorySegments: [...categoryReport.untranslatableCategorySegments],
         missingLegacyRuPatterns: [...compatibility.missingLegacyRuPatterns],
         missingLegacyEnPatterns: [...compatibility.missingLegacyEnPatterns]
     };
@@ -358,6 +375,8 @@ export async function writeCatalogPublication(
     if (
         report.vanessaVersion !== validatedCatalog.vanessaVersion
         || report.stepCount !== validatedCatalog.steps.length
+        || report.categorizedStepCount + report.uncategorizedStepCount
+            !== validatedCatalog.steps.length
     ) {
         throw new Error('Generation report does not match the generated step catalog.');
     }

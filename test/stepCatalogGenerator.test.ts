@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createStepDefinitionId, sha256Hex } from '../src/stepCatalog';
+import { enrichStepCatalogCategories } from '../src/stepCatalogCategories';
 import {
     compareCatalogWithLegacyHtml,
     createStepCatalogGenerationReport,
@@ -80,14 +81,28 @@ const generationOptions = {
 
 function generatedFixture() {
     const parsed = parseVanessaStepTemplateXml(readFixture('step-catalog/Template.xml'));
-    const catalog = generateBuiltInStepCatalog(parsed, generationOptions);
+    const enrichment = enrichStepCatalogCategories({
+        steps: parsed.steps,
+        categoryTranslations: parsed.categories,
+        registrations: [{
+            template: 'И поле <Имя> равно "Значение"',
+            category: 'Файлы'
+        }]
+    });
+    const enrichedParsed = { ...parsed, steps: enrichment.steps };
+    const catalog = generateBuiltInStepCatalog(enrichedParsed, generationOptions);
     const compatibility = compareCatalogWithLegacyHtml(catalog, `
         <table>
           <tr class="R1"><td>И поле &lt;Имя&gt; равно "Значение"</td><td>Есть</td><td></td><td></td></tr>
           <tr class="R2"><td>  И старый шаг  </td><td>Нет</td><td>And legacy step</td><td>Missing</td></tr>
         </table>`);
-    const report = createStepCatalogGenerationReport(parsed, catalog, compatibility);
-    return { parsed, catalog, compatibility, report };
+    const report = createStepCatalogGenerationReport(
+        enrichedParsed,
+        catalog,
+        compatibility,
+        enrichment.report
+    );
+    return { parsed: enrichedParsed, catalog, compatibility, report, enrichment };
 }
 
 test('catalog generation sorts definitions and uses only deterministic source metadata', () => {
@@ -100,6 +115,10 @@ test('catalog generation sorts definitions and uses only deterministic source me
         catalog.steps.map(step => step.ru?.pattern),
         ['И поле <Имя> равно "Значение"', 'И только русский шаг']
     );
+    assert.deepEqual(catalog.steps[0].categoryPath, {
+        ru: ['Файлы'],
+        en: ['Files']
+    });
     assert.ok(serializeStepCatalogJson(catalog).endsWith('\n'));
     assert.equal(serializeStepCatalogJson(catalog), serializeStepCatalogJson(catalog));
 });
@@ -132,8 +151,8 @@ test('compatibility report lists every normalized legacy pattern missing from ge
     assert.deepEqual(compatibility.missingLegacyEnPatterns, ['And legacy step']);
 });
 
-test('generation report records source counts and duplicate language patterns', () => {
-    const { parsed, catalog, compatibility } = generatedFixture();
+test('generation report records source, duplicate, and category coverage data', () => {
+    const { parsed, catalog, compatibility, enrichment } = generatedFixture();
     const duplicatedCatalog = {
         ...catalog,
         steps: [
@@ -145,7 +164,15 @@ test('generation report records source counts and duplicate language patterns', 
             }
         ]
     };
-    const report = createStepCatalogGenerationReport(parsed, duplicatedCatalog, compatibility);
+    const report = createStepCatalogGenerationReport(
+        parsed,
+        duplicatedCatalog,
+        compatibility,
+        {
+            ...enrichment.report,
+            uncategorizedStepCount: 2
+        }
+    );
 
     assert.equal(report.sourceRows, 4);
     assert.equal(report.excludedSyntaxRows, 1);
@@ -153,6 +180,11 @@ test('generation report records source counts and duplicate language patterns', 
     assert.equal(report.stepCount, 3);
     assert.deepEqual(report.duplicateRussianPatterns, ['И только русский шаг']);
     assert.deepEqual(report.duplicateEnglishPatterns, ['And field <Name> equals "Value"']);
+    assert.equal(report.categorizedStepCount, 1);
+    assert.equal(report.uncategorizedStepCount, 2);
+    assert.equal(report.unmatchedRegistrationCount, 0);
+    assert.deepEqual(report.conflictingCategoryMappings, []);
+    assert.deepEqual(report.untranslatableCategorySegments, []);
 });
 
 test('publication refuses to replace an existing version with different bytes', async () => {

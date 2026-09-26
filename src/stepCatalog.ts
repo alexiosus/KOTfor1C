@@ -9,10 +9,16 @@ export interface StepTextVariant {
     readonly description: string;
 }
 
+export interface StepCategoryPath {
+    readonly ru?: readonly string[];
+    readonly en?: readonly string[];
+}
+
 export interface BuiltInStepDefinition {
     readonly id: string;
     readonly ru?: StepTextVariant;
     readonly en?: StepTextVariant;
+    readonly categoryPath?: StepCategoryPath;
 }
 
 const RUSSIAN_STEP_CATEGORY_DESCRIPTION = 'Категория шагов';
@@ -147,6 +153,40 @@ function parseStepVariant(value: unknown, label: string): StepTextVariant | unde
     };
 }
 
+function parseLocalizedCategoryPath(
+    value: unknown,
+    label: string
+): readonly string[] | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+    if (!Array.isArray(value) || value.length === 0) {
+        throw new Error(`${label} category path must be a non-empty array.`);
+    }
+    return value.map((segment, index) => {
+        if (typeof segment !== 'string' || segment.trim().length === 0) {
+            throw new Error(`${label} category path segment ${index} must be a non-empty string.`);
+        }
+        return normalizeStepCatalogText(segment);
+    });
+}
+
+function parseCategoryPath(value: unknown, label: string): StepCategoryPath | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+    const record = asRecord(value, `${label} category path`);
+    const ru = parseLocalizedCategoryPath(record.ru, `${label}.ru`);
+    const en = parseLocalizedCategoryPath(record.en, `${label}.en`);
+    if (!ru && !en) {
+        throw new Error(`${label} category path must contain a Russian or English path.`);
+    }
+    return {
+        ...(ru ? { ru } : {}),
+        ...(en ? { en } : {})
+    };
+}
+
 export function parseBuiltInStepCatalog(
     value: unknown,
     expectedVersion?: string
@@ -177,6 +217,10 @@ export function parseBuiltInStepCatalog(
         const step = asRecord(rawStep, `Step catalog step ${index}`);
         const ru = parseStepVariant(step.ru, `Step catalog step ${index}.ru`);
         const en = parseStepVariant(step.en, `Step catalog step ${index}.en`);
+        const categoryPath = parseCategoryPath(
+            step.categoryPath,
+            `Step catalog step ${index}`
+        );
         if (!ru && !en) {
             throw new Error(`Step catalog step ${index} must contain a Russian or English variant.`);
         }
@@ -191,7 +235,12 @@ export function parseBuiltInStepCatalog(
         }
         ids.add(id);
 
-        return { id, ru, en };
+        return {
+            id,
+            ru,
+            en,
+            ...(categoryPath ? { categoryPath } : {})
+        };
     });
 
     return {
