@@ -31,13 +31,20 @@ function uri(value: string): vscode.Uri {
     return { toString: () => value } as vscode.Uri;
 }
 
-function scenario(name: string, target: string, relativePath: string, parameters: string[] = []): TestInfo {
+function scenario(
+    name: string,
+    target: string,
+    relativePath: string,
+    parameters: string[] = [],
+    scenarioCategory?: string
+): TestInfo {
     return {
         name,
         yamlFileUri: uri(target),
         relativePath,
         scenarioDescription: `Description of ${name}`,
-        parameters
+        parameters,
+        scenarioCategory
     };
 }
 
@@ -294,6 +301,28 @@ test('produces deterministic origin labels and identities for reordered nested c
         ['Nested scenario (one)', 'Nested scenario (two)']
     );
     assert.equal(left.all.some(item => item.sourceLabel.includes('Vanessa')), true);
+});
+
+test('category-only scenario changes rebuild resolver identity and nested definition', async () => {
+    const target = 'file:///workspace-a/nested/scen.yaml';
+    const harness = createHarness({
+        scenarios: buildScenarioCatalog([
+            scenario('Create order', target, 'nested', [], 'Sales.Orders')
+        ])
+    });
+    const resource = uri('file:///workspace-a/test.feature');
+    const before = await harness.resolver.getView(resource);
+
+    harness.setScenarios(buildScenarioCatalog([
+        scenario('Create order', target, 'nested', [], 'Sales.Documents')
+    ]));
+    const after = await harness.resolver.getView(resource);
+
+    assert.notEqual(after.identity, before.identity);
+    assert.equal(
+        after.all.find(item => item.kind === 'nestedScenario')?.category,
+        'Sales.Documents'
+    );
 });
 
 test('emits view invalidation and rebuilds after a local snapshot change', async () => {

@@ -82,6 +82,25 @@ function validateEditedContent(content: string): string {
     return content;
 }
 
+function isSafePlainCategoryScalar(value: string): boolean {
+    return /^[\p{L}\p{N}_ .\/-]+$/u.test(value)
+        && !/^[?:-](?:\s|$)/u.test(value)
+        && !/:\s|\s#/u.test(value)
+        && !/^(?:null|true|false|yes|no|on|off|~|[-+]?\d+(?:\.\d+)?)$/iu.test(value);
+}
+
+function formatCategoryScalar(source: string, field: ScenarioYamlField, value: string): string {
+    const valueRange = requireEditableScalar(field, 'KOTМетаданные.Категория');
+    const raw = source.slice(valueRange.start, valueRange.end);
+    if (raw.startsWith("'")) {
+        return `'${value.replace(/'/g, "''")}'`;
+    }
+    if (raw.startsWith('"')) {
+        return JSON.stringify(value);
+    }
+    return isSafePlainCategoryScalar(value) ? value : JSON.stringify(value);
+}
+
 function updateScalarFields(
     source: string,
     sectionName: string,
@@ -173,6 +192,60 @@ export function updateScenarioGroupInMetadataContent(
         changed: true,
         content: validateEditedContent(
             source.slice(0, insertion.range.start) + insertion.text + source.slice(insertion.range.end)
+        )
+    };
+}
+
+export function updateScenarioCategoryInMetadataContent(
+    source: string,
+    category: string
+): ScenarioYamlContentMutation {
+    const normalizedCategory = category.trim();
+    if (!normalizedCategory) {
+        throw new Error('Scenario category must not be empty.');
+    }
+    if (/\r|\n/u.test(normalizedCategory)) {
+        throw new Error('Scenario category must fit on a single line.');
+    }
+
+    const document = ScenarioYamlDocument.parse(source);
+    document.requireValidForEdit();
+    const field = document.findField('KOTМетаданные', 'Категория');
+    if (field) {
+        const valueRange = requireEditableScalar(field, 'KOTМетаданные.Категория');
+        if (field.value === normalizedCategory) {
+            return { changed: false, content: source };
+        }
+        return {
+            changed: true,
+            content: validateEditedContent(applyReplacements(source, [{
+                range: valueRange,
+                text: formatCategoryScalar(source, field, normalizedCategory)
+            }]))
+        };
+    }
+
+    const metadata = document.findFieldAtPath(['KOTМетаданные']);
+    if (!metadata) {
+        return { changed: false, content: source };
+    }
+    if (metadata.ambiguous || metadata.valueKind !== 'mapping') {
+        throw new Error('Unsafe YAML edit: KOTМетаданные must be one mapping');
+    }
+    const insertion = getSectionInsertion(
+        source,
+        'KOTМетаданные',
+        `Категория: ${JSON.stringify(normalizedCategory)}`
+    );
+    if (!insertion) {
+        return { changed: false, content: source };
+    }
+    return {
+        changed: true,
+        content: validateEditedContent(
+            source.slice(0, insertion.range.start)
+            + insertion.text
+            + source.slice(insertion.range.end)
         )
     };
 }

@@ -22,6 +22,7 @@ export interface ParsedScenarioDescriptor {
     readonly parameterDefaults?: Readonly<Record<string, string>>;
     readonly nestedScenarioNames?: readonly string[];
     readonly scenarioDescription?: string;
+    readonly scenarioCategory?: string;
     readonly phaseSwitcher: {
         readonly hasTab: boolean;
         readonly tabName?: string;
@@ -102,6 +103,7 @@ export function parseScenarioDescriptor(source: string): ParsedScenarioDescripto
             .filter((value): value is string => typeof value === 'string')
     );
     const scenarioDescription = trimOptional(parseKotScenarioDescription(source));
+    const scenarioCategory = trimOptional(yaml.readScalar('KOTМетаданные', 'Категория'));
     const phaseSwitcher = parsePhaseSwitcherMetadata(source);
 
     return {
@@ -115,6 +117,7 @@ export function parseScenarioDescriptor(source: string): ParsedScenarioDescripto
             : undefined,
         nestedScenarioNames,
         scenarioDescription,
+        ...(scenarioCategory ? { scenarioCategory } : {}),
         phaseSwitcher: {
             hasTab: phaseSwitcher.hasTab,
             tabName: phaseSwitcher.tabName,
@@ -147,6 +150,9 @@ export function buildTestInfoFromScenarioDescriptor(
         uid: descriptor.uid,
         scenarioCode: descriptor.scenarioCode,
         scenarioDescription: descriptor.scenarioDescription,
+        ...(descriptor.scenarioCategory
+            ? { scenarioCategory: descriptor.scenarioCategory }
+            : {}),
         scenarioCodeLine: descriptor.scenarioCodeLine,
         scenarioCodeLineStartCharacter: descriptor.scenarioCodeLineStartCharacter,
         scenarioCodeLineEndCharacter: descriptor.scenarioCodeLineEndCharacter

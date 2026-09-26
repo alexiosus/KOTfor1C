@@ -10,7 +10,8 @@ import {
     updateNestedScenarioNameReferencesInScenarioContent,
     updateScenarioDisplayNameInScenarioContent,
     updateScenarioDisplayNameInTestConfigContent,
-    updateScenarioGroupInMetadataContent
+    updateScenarioGroupInMetadataContent,
+    updateScenarioCategoryInMetadataContent
 } from '../src/scenarioYamlMutations';
 
 function applyEdit(source: string, edit: SourceEdit): string {
@@ -400,6 +401,79 @@ test('scenario identity mutation updates only DataScenario scalar values', () =>
             ''
         ].join('\n')
     });
+});
+
+test('scenario category insertion preserves BOM, CRLF, comments, and PhaseSwitcher metadata', () => {
+    const source = '\uFEFFKOTМетаданные:\r\n'
+        + '    # keep this comment\r\n'
+        + '    Описание: test\r\n'
+        + '    PhaseSwitcher:\r\n'
+        + '        Tab: Регресс\r\n';
+
+    const result = updateScenarioCategoryInMetadataContent(source, 'Продажи.Заказы');
+
+    assert.equal(result.changed, true);
+    assert.equal(result.content.startsWith('\uFEFF'), true);
+    assert.match(result.content, /Категория: "Продажи\.Заказы"\r\n/);
+    assert.match(result.content, /# keep this comment\r\n/);
+    assert.match(result.content, /Tab: Регресс\r\n/);
+    assert.equal(result.content.replace(/\r\n/g, '').includes('\n'), false);
+});
+
+test('scenario category update preserves scalar style and inline comments', () => {
+    const cases = [
+        {
+            source: "KOTМетаданные:\n    Категория: 'Старая' # single\n",
+            expected: "Категория: 'Новая категория' # single"
+        },
+        {
+            source: 'KOTМетаданные:\n    Категория: "Старая" # double\n',
+            expected: 'Категория: "Новая категория" # double'
+        },
+        {
+            source: 'KOTМетаданные:\n    Категория: Старая # plain\n',
+            expected: 'Категория: Новая категория # plain'
+        }
+    ];
+
+    for (const item of cases) {
+        const result = updateScenarioCategoryInMetadataContent(item.source, 'Новая категория');
+        assert.equal(result.changed, true);
+        assert.match(result.content, new RegExp(item.expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+});
+
+test('scenario category mutation is idempotent and rejects an empty value', () => {
+    const source = 'KOTМетаданные:\n    Категория: "Продажи.Заказы"\n';
+
+    assert.deepEqual(updateScenarioCategoryInMetadataContent(source, '  Продажи.Заказы  '), {
+        changed: false,
+        content: source
+    });
+    assert.throws(
+        () => updateScenarioCategoryInMetadataContent(source, '   '),
+        /category must not be empty/i
+    );
+    assert.throws(
+        () => updateScenarioCategoryInMetadataContent(source, 'Sales\nOrders'),
+        /single line/i
+    );
+});
+
+test('scenario category mutation rejects ambiguous or non-mapping metadata', () => {
+    assert.throws(
+        () => updateScenarioCategoryInMetadataContent([
+            'KOTМетаданные:',
+            '    Категория: A',
+            '    Категория: B',
+            ''
+        ].join('\n'), 'C'),
+        /unambiguous scalar/i
+    );
+    assert.throws(
+        () => updateScenarioCategoryInMetadataContent('KOTМетаданные: []\n', 'C'),
+        /must be one mapping/i
+    );
 });
 
 test('test identity mutation does not rewrite matching keys outside DataTest', () => {

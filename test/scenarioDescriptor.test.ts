@@ -90,3 +90,32 @@ test('source adapter cannot borrow scenario identity from an unrelated section',
     assert.equal(info.scenarioCode, '000000001');
     assert.deepEqual(info.nestedScenarioNames, ['Nested one']);
 });
+
+test('scenario category is independent from the PhaseSwitcher tab', () => {
+    const descriptor = parseScenarioDescriptor([
+        'ДанныеСценария:',
+        '    Имя: Создать заказ',
+        'KOTМетаданные:',
+        '    Категория: "Продажи.Заказы"',
+        '    PhaseSwitcher:',
+        '        Tab: "Регресс"'
+    ].join('\n'));
+    const uri = { toString: () => 'file:///scenario/scen.yaml' } as TestInfo['yamlFileUri'];
+    const info = buildTestInfoFromScenarioDescriptor(descriptor, uri, 'Scenario');
+
+    assert.equal(descriptor.scenarioCategory, 'Продажи.Заказы');
+    assert.equal(descriptor.phaseSwitcher.tabName, 'Регресс');
+    assert.equal(info?.scenarioCategory, 'Продажи.Заказы');
+    assert.equal(info?.tabName, 'Регресс');
+});
+
+test('empty scenario category is treated as absent', () => {
+    const descriptor = parseScenarioDescriptor([
+        'ДанныеСценария:',
+        '    Имя: Без категории',
+        'KOTМетаданные:',
+        '    Категория: "   "'
+    ].join('\n'));
+
+    assert.equal(descriptor.scenarioCategory, undefined);
+});

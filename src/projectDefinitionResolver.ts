@@ -137,6 +137,7 @@ function nestedDefinition(scenario: TestInfo): ProjectDefinition {
         normalizedTemplate: normalizeProjectDefinitionTemplate(scenario.name),
         parameters: Object.freeze(parameters),
         description: scenario.scenarioDescription || undefined,
+        category: scenario.scenarioCategory || undefined,
         sourceLabel: `Nested scenario (${scenario.relativePath || scenario.name})`,
         definitionLocation: scenarioLocation(scenario)
     });
@@ -148,7 +149,8 @@ function scenarioIdentity(catalog: ScenarioCatalog): string {
         uri: scenario.yamlFileUri.toString(),
         name: scenario.name,
         parameters: scenario.parameters ?? [],
-        description: scenario.scenarioDescription ?? ''
+        description: scenario.scenarioDescription ?? '',
+        category: scenario.scenarioCategory ?? ''
     })).sort((left, right) =>
         left.uri.localeCompare(right.uri)
         || left.name.localeCompare(right.name)
