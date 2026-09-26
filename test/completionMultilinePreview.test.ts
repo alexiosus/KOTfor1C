@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import * as projectDefinitionSnippet from '../src/projectDefinitionSnippet';
 
 test('multiline step documentation renders each localized template as a code block', async () => {
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
@@ -82,6 +83,9 @@ test('multiline step documentation renders each localized template as a code blo
             }
             if (specifier === './gherkinTableUtils') {
                 return { normalizeMultilineStepInsertText: (value: string) => value };
+            }
+            if (specifier === './projectDefinitionSnippet') {
+                return projectDefinitionSnippet;
             }
             return {};
         },

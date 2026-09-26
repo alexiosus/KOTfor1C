@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import * as projectDefinitionSnippet from '../src/projectDefinitionSnippet';
 
 test('project definition completion logging does not grow with the number of matching definitions', async () => {
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
@@ -54,6 +55,9 @@ test('project definition completion logging does not grow with the number of mat
             }
             if (specifier === './gherkinTableUtils') {
                 return { normalizeMultilineStepInsertText: (value: string) => value };
+            }
+            if (specifier === './projectDefinitionSnippet') {
+                return projectDefinitionSnippet;
             }
             return {};
         },

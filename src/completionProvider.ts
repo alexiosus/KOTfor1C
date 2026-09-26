@@ -12,15 +12,18 @@ import {
 import { PreparedStepStateCache } from './preparedStepStateCache';
 import type { ProjectDefinition, ProjectDefinitionView } from './projectDefinition';
 import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
+import {
+    buildCallableDefinitionText,
+    buildProjectDefinitionInsertion,
+    buildProjectDefinitionSnippetData
+} from './projectDefinitionSnippet';
 
 const VARIABLE_REFERENCE_PREFIX_REGEX = /^[A-Za-zА-Яа-яЁё0-9_]*$/;
 const SCENARIO_BRACKET_PARAMETER_PREFIX_REGEX = /(^|[^\\])\[([A-Za-zА-Яа-яЁё0-9_-]*)$/;
-const STEP_TEMPLATE_PLACEHOLDER_REGEX = /%(\d+)\s+([^"'\r\n]+)/g;
 const SEMANTIC_STEP_PREFIX = '!';
 const FORM_EXPLORER_INITIAL_SUGGEST_COMMAND = 'editor.action.triggerSuggest';
 const FORM_EXPLORER_ADVANCE_ARGUMENT_COMMAND = 'kotTestToolkit.completion.advanceFormExplorerArgument';
 const GHERKIN_KEYWORD_PREFIX_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\s+/i;
-const GHERKIN_KEYWORD_CAPTURE_REGEX = /^(?:\*\s*)?(and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\s+/i;
 const OPTIONAL_GHERKIN_PREFIX_FRAGMENT = String.raw`(?:(?:\*\s*)?(?:And|But|Then|When|Given|If|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?`;
 const VARIABLE_ASSIGNMENT_VERB_FRAGMENT = String.raw`(?:save|store|remember|read|create|determine|define|generate|wait|execute|put|retrieve|get|copy|запоминаю|сохраняю|читаю|создаю|определяю|генерирую|ожидаю|выполняю|вставляю|получаю|копирую)`;
 const OPTIONAL_TRAILING_ANNOTATION_FRAGMENT = String.raw`(?:\s+\([^)]*\))?\s*$`;
@@ -105,24 +108,6 @@ interface QuotedTextCompletionContext {
     linePrefixBeforeQuote: string;
 }
 
-interface StepTemplateSnippetData {
-    displayText: string;
-    snippetText: string;
-    hasPlaceholders: boolean;
-}
-
-function buildCallableDefinitionText(
-    preferredText: string,
-    typedKeyword: string,
-    fallbackKeyword: string
-): string {
-    const normalizedText = preferredText.trim();
-    const match = GHERKIN_KEYWORD_CAPTURE_REGEX.exec(normalizedText);
-    const body = match ? normalizedText.slice(match[0].length) : normalizedText;
-    const keyword = typedKeyword.trim() || match?.[1] || fallbackKeyword;
-    return body ? `${keyword} ${body}` : keyword;
-}
-
 interface FormExplorerElementCompletionCandidate {
     path: string;
     name: string;
@@ -199,127 +184,6 @@ export function parseScenarioBracketParameterContext(linePrefix: string): Scenar
     return {
         startCharacter,
         typedPrefix
-    };
-}
-
-function escapeStepSnippetText(value: string): string {
-    return value
-        .replace(/\\/g, '\\\\')
-        .replace(/\$/g, '\\$')
-        .replace(/\}/g, '\\}');
-}
-
-function buildStepTemplateSnippetData(stepText: string): StepTemplateSnippetData {
-    if (!stepText) {
-        return {
-            displayText: '',
-            snippetText: '',
-            hasPlaceholders: false
-        };
-    }
-
-    let displayText = '';
-    let snippetText = '';
-    let lastIndex = 0;
-    let hasPlaceholders = false;
-    STEP_TEMPLATE_PLACEHOLDER_REGEX.lastIndex = 0;
-
-    let match: RegExpExecArray | null;
-    while ((match = STEP_TEMPLATE_PLACEHOLDER_REGEX.exec(stepText)) !== null) {
-        const matchStart = match.index;
-        const matchEnd = matchStart + match[0].length;
-        const placeholderIndex = Number.parseInt(match[1], 10);
-        if (!Number.isFinite(placeholderIndex) || placeholderIndex <= 0) {
-            continue;
-        }
-
-        const staticText = stepText.slice(lastIndex, matchStart);
-        displayText += staticText;
-        snippetText += escapeStepSnippetText(staticText);
-        snippetText += `\${${placeholderIndex}}`;
-        hasPlaceholders = true;
-        lastIndex = matchEnd;
-    }
-
-    const trailingText = stepText.slice(lastIndex);
-    displayText += trailingText;
-    snippetText += escapeStepSnippetText(trailingText);
-
-    return {
-        displayText,
-        snippetText,
-        hasPlaceholders
-    };
-}
-
-function escapeSnippetPlaceholderDefault(value: string): string {
-    return value.replace(/\\/g, '\\\\').replace(/\$/g, '\\$').replace(/}/g, '\\}');
-}
-
-function buildProjectDefinitionSnippetData(definition: ProjectDefinition): StepTemplateSnippetData {
-    const catalogSnippet = buildStepTemplateSnippetData(definition.template);
-    if (catalogSnippet.hasPlaceholders || definition.parameters.length === 0) {
-        return catalogSnippet;
-    }
-
-    const replacements: Array<{ start: number; end: number; index: number; name: string }> = [];
-    let quoteSearchStart = 0;
-    for (const parameter of [...definition.parameters].sort((left, right) => left.index - right.index)) {
-        if (parameter.source === 'outline') {
-            const marker = `<${parameter.name}>`;
-            const start = definition.template.indexOf(marker);
-            if (start >= 0) {
-                replacements.push({
-                    start,
-                    end: start + marker.length,
-                    index: parameter.index + 1,
-                    name: parameter.name
-                });
-            }
-            continue;
-        }
-
-        let opening = -1;
-        let closing = -1;
-        for (let index = quoteSearchStart; index < definition.template.length; index++) {
-            const quote = definition.template[index];
-            if (quote !== '"' && quote !== "'") {
-                continue;
-            }
-            const end = definition.template.indexOf(quote, index + 1);
-            if (end >= 0) {
-                opening = index;
-                closing = end;
-                quoteSearchStart = end + 1;
-            }
-            break;
-        }
-        if (opening >= 0 && closing > opening) {
-            replacements.push({
-                start: opening + 1,
-                end: closing,
-                index: parameter.index + 1,
-                name: parameter.name
-            });
-        }
-    }
-
-    if (replacements.length === 0) {
-        return catalogSnippet;
-    }
-    replacements.sort((left, right) => left.start - right.start);
-    let snippetText = '';
-    let cursor = 0;
-    for (const replacement of replacements) {
-        snippetText += escapeStepSnippetText(definition.template.slice(cursor, replacement.start));
-        snippetText += `\${${replacement.index}:${escapeSnippetPlaceholderDefault(replacement.name)}}`;
-        cursor = replacement.end;
-    }
-    snippetText += escapeStepSnippetText(definition.template.slice(cursor));
-    return {
-        displayText: definition.template,
-        snippetText,
-        hasPlaceholders: true
     };
 }
 
@@ -746,8 +610,9 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             const completionTemplate = definition.kind === 'exportScenario' && definition.usageExample
                 ? this.normalizeLineBreaks(definition.usageExample)
                 : template;
-            const normalizedDefinition = { ...definition, template: completionTemplate };
-            const snippet = buildProjectDefinitionSnippetData(normalizedDefinition);
+            const snippet = buildProjectDefinitionSnippetData(definition, {
+                preferredText: completionTemplate
+            });
             const label: vscode.CompletionItemLabel | string = (definitionCounts.get(definition.normalizedTemplate) ?? 0) > 1
                 ? { label: snippet.displayText, description: definition.sourceLabel }
                 : snippet.displayText;
@@ -816,22 +681,16 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         scenarioCallKeyword: string,
         defaults: ReadonlyMap<string, string> = new Map()
     ): string | vscode.SnippetString {
-        const firstLine = `${scenarioCallKeyword} ${definition.template}`;
-        if (definition.parameters.length === 0) {
-            return firstLine;
-        }
-
-        const ordered = [...definition.parameters].sort((left, right) => left.index - right.index);
-        const maxNameLength = ordered.reduce((maximum, parameter) =>
-            Math.max(maximum, parameter.name.length), 0);
-        let snippetText = firstLine;
-        ordered.forEach((parameter, index) => {
-            const defaultValue = parameter.defaultValue
-                ?? defaults.get(parameter.name)
-                ?? `"${parameter.name}"`;
-            snippetText += `\n    ${parameter.name.padEnd(maxNameLength, ' ')} = \${${index + 1}:${this.escapeSnippetDefaultValue(defaultValue)}}`;
+        const insertion = buildProjectDefinitionInsertion(definition, {
+            preferredText: definition.template,
+            typedKeyword: scenarioCallKeyword,
+            fallbackKeyword: scenarioCallKeyword,
+            language: definition.language ?? this.inferStepLanguageFromText(definition.template),
+            parameterDefaults: Object.fromEntries(defaults)
         });
-        return new vscode.SnippetString(snippetText);
+        return insertion.hasPlaceholders
+            ? new vscode.SnippetString(insertion.snippetText)
+            : insertion.displayText;
     }
 
     /**
@@ -1008,12 +867,15 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                             indentation,
                             itemLanguage
                         )
-                        : this.buildStepCompletionInsertText(
-                            itemFullText,
-                            indentation,
-                            itemLanguage,
-                            baseItem.insertText
-                        );
+                        : definition
+                            ? this.buildStepCompletionInsertText(
+                                definition,
+                                itemFullText,
+                                indentation,
+                                itemLanguage,
+                                baseItem.insertText
+                            )
+                            : this.cloneCompletionInsertText(baseItem.insertText, itemFullText);
                 if (completionItem.insertText instanceof vscode.SnippetString) {
                     completionItem.command = {
                         title: vscode.l10n.t('Suggest'),
@@ -2279,6 +2141,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     }
 
     private buildStepCompletionInsertText(
+        definition: ProjectDefinition,
         stepText: string,
         _indentation: string,
         language: ScenarioLanguage | null,
@@ -2291,17 +2154,15 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 ? resolvedInsertText.value
                 : resolvedInsertText
         );
-        const templateSnippet = buildStepTemplateSnippetData(normalizedInsertText);
-
-        // When base insert text was already a SnippetString (has ${N} tab stops from %N conversion),
-        // but buildStepTemplateSnippetData finds no %N-style placeholders (they're already ${N}),
-        // preserve the original snippet syntax rather than returning plain text.
-        const hasAnyPlaceholders = templateSnippet.hasPlaceholders || isAlreadySnippet;
-        const normalizedSnippetText = templateSnippet.hasPlaceholders
-            ? templateSnippet.snippetText
-            : isAlreadySnippet
-                ? normalizedInsertText
-                : escapeStepSnippetText(templateSnippet.displayText);
+        const templateSnippet = isAlreadySnippet
+            ? {
+                displayText: stepText,
+                snippetText: normalizedInsertText,
+                hasPlaceholders: true
+            }
+            : buildProjectDefinitionSnippetData(definition, {
+                preferredText: normalizedInsertText
+            });
 
         const openingBlockKeyword = parseBlockKeyword(normalizedInsertText);
         const closingKeyword = getBlockClosingKeyword(
@@ -2309,16 +2170,21 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             language ?? this.inferStepLanguageFromText(stepText)
         );
         if (!closingKeyword) {
-            return hasAnyPlaceholders
-                ? new vscode.SnippetString(normalizedSnippetText)
+            return templateSnippet.hasPlaceholders
+                ? new vscode.SnippetString(templateSnippet.snippetText)
                 : templateSnippet.displayText;
         }
 
         // VS Code keeps the base indentation of the insertion line for snippet newlines,
         // so only the relative block indent should be added here.
         const innerIndent = '    ';
+        const escapedClosingKeyword = buildProjectDefinitionSnippetData({
+            ...definition,
+            template: closingKeyword,
+            parameters: []
+        }).snippetText;
         return new vscode.SnippetString(
-            `${normalizedSnippetText}\n${innerIndent}$0\n${this.escapeSnippetText(closingKeyword)}`
+            `${templateSnippet.snippetText}\n${innerIndent}$0\n${escapedClosingKeyword}`
         );
     }
 
@@ -2328,14 +2194,18 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         indentation: string,
         language: ScenarioLanguage | null
     ): string | vscode.SnippetString {
-        const snippet = buildProjectDefinitionSnippetData({
-            ...definition,
-            template: completionText
+        const resolvedLanguage = language ?? this.inferStepLanguageFromText(completionText);
+        const snippet = buildProjectDefinitionInsertion(definition, {
+            preferredText: completionText,
+            fallbackKeyword: getScenarioCallKeyword(resolvedLanguage),
+            indentation,
+            language: resolvedLanguage
         });
         const baseInsertText = snippet.hasPlaceholders
             ? new vscode.SnippetString(snippet.snippetText)
             : snippet.displayText;
         return this.buildStepCompletionInsertText(
+            definition,
             completionText,
             indentation,
             language,
@@ -2790,12 +2660,15 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                         indentation,
                         result.entry.language
                     )
-                    : this.buildStepCompletionInsertText(
-                        itemFullText,
-                        indentation,
-                        result.entry.language,
-                        baseItem.insertText
-                    );
+                    : definition
+                        ? this.buildStepCompletionInsertText(
+                            definition,
+                            itemFullText,
+                            indentation,
+                            result.entry.language,
+                            baseItem.insertText
+                        )
+                        : this.cloneCompletionInsertText(baseItem.insertText, itemFullText);
             if (completionItem.insertText instanceof vscode.SnippetString) {
                 completionItem.command = {
                     title: vscode.l10n.t('Suggest'),
@@ -3020,14 +2893,4 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         return defaults;
     }
 
-    private escapeSnippetText(value: string): string {
-        return value
-            .replace(/\\/g, '\\\\')
-            .replace(/\$/g, '\\$')
-            .replace(/\}/g, '\\}');
-    }
-
-    private escapeSnippetDefaultValue(value: string): string {
-        return this.escapeSnippetText(value);
-    }
 }

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import * as projectDefinitionSnippet from '../src/projectDefinitionSnippet';
 
 interface Definition {
     id: string;
@@ -118,6 +119,9 @@ function loadProvider(fileName: string): Record<string, unknown> {
             }
             if (specifier === './gherkinTableUtils') {
                 return { normalizeMultilineStepInsertText: (value: string) => value };
+            }
+            if (specifier === './projectDefinitionSnippet') {
+                return projectDefinitionSnippet;
             }
             if (specifier === './yamlValidator.js') {
                 return { isScenarioYamlFile: () => true };
