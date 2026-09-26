@@ -114,6 +114,7 @@
   "cmd.openNestedScenarioFromFeature.title": "KOT - Открыть вложенный сценарий из feature",
   "cmd.findCurrentFileReferences.title": "KOT - Найти вызовы текущего сценария",
   "cmd.createNestedScenario.title": "KOT - Создать вложенный сценарий",
+  "cmd.setScenarioCategory.title": "KOT - Установить категорию вложенного сценария",
   "cmd.createMainScenario.title": "KOT - Создать главный сценарий",
   "cmd.createExportScenario.title": "KOT - Создать экспортный сценарий",
   "cmd.createUserStep.title": "KOT - Создать пользовательский шаг",

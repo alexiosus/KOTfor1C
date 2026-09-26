@@ -114,6 +114,7 @@
   "cmd.openNestedScenarioFromFeature.title": "KOT - Open nested scenario from feature",
   "cmd.findCurrentFileReferences.title": "KOT - Find references to current scenario",
   "cmd.createNestedScenario.title": "KOT - Create nested scenario",
+  "cmd.setScenarioCategory.title": "KOT - Set nested scenario category",
   "cmd.createMainScenario.title": "KOT - Create main scenario",
   "cmd.createExportScenario.title": "KOT - Create exported scenario",
   "cmd.createUserStep.title": "KOT - Create user step",

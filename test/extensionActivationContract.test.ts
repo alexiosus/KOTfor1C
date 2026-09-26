@@ -73,6 +73,19 @@ test('activation shares one project definition resolver across language provider
     assert.equal(refreshSource.match(/stepCatalogService\.refresh\(/g)?.length, 1);
 });
 
+test('activation shares nested scenario categories with CodeLens and creation', () => {
+    assert.match(source, /new ScenarioCategoryCodeLensProvider\(context\.extensionUri\)/);
+    assert.match(
+        source,
+        /SCENARIO_CATEGORY_COMMAND,[\s\S]*?setScenarioCategoryCommand\(target,[\s\S]*?resolver:\s*projectDefinitionResolver/
+    );
+    assert.match(
+        source,
+        /handleCreateNestedScenario\(context,[\s\S]*?existingCategories:/
+    );
+    assert.equal(source.match(/new ScenarioCategoryCodeLensProvider\(/g)?.length, 1);
+});
+
 test('activation registers and disposes the complete project-definition graph before background start', () => {
     assert.equal(source.match(/createProjectDefinitionIndexService\(context\)/g)?.length, 1);
     assert.equal(source.match(/new ProjectDefinitionProvider\(/g)?.length, 1);

@@ -25,6 +25,10 @@ import {
     parseYamlSectionFieldValues
 } from './yamlHeaderFields';
 import { isScenarioYamlUri } from './yamlValidator';
+import {
+    applyScenarioCategoryToTemplate,
+    validateScenarioCategoryValue
+} from './scenarioCategory';
 
 type ScenarioIndex = {
     names: Set<string>;
@@ -67,6 +71,16 @@ type PromptForSystemFunctionOptions = {
     forcePicker?: boolean;
     placeHolder?: string;
 };
+
+export interface CreateNestedScenarioOptions {
+    readonly existingCategories?: readonly string[];
+}
+
+type ScenarioCategoryQuickPickItem = vscode.QuickPickItem & (
+    | { entryKind: 'category'; category: string }
+    | { entryKind: 'create' }
+    | { entryKind: 'none' }
+);
 
 type SelectedEtalonBaseValues = {
     baseName: string;
@@ -1906,6 +1920,48 @@ async function promptForBooleanValue(
     return pickedValue?.value;
 }
 
+async function promptForScenarioCategory(
+    existingCategories: readonly string[],
+    t: (message: string, ...args: string[]) => string
+): Promise<string | undefined> {
+    const items: ScenarioCategoryQuickPickItem[] = [
+        ...existingCategories.map(category => ({
+            label: category,
+            entryKind: 'category' as const,
+            category
+        })),
+        {
+            label: `$(add) ${t('Create new category…')}`,
+            entryKind: 'create'
+        },
+        {
+            label: `$(circle-slash) ${t('No category')}`,
+            entryKind: 'none'
+        }
+    ];
+    const selected = await vscode.window.showQuickPick(items, {
+        title: t('Nested scenario category'),
+        placeHolder: t('Select an existing category, create a new one, or continue without a category'),
+        ignoreFocusOut: true
+    });
+    if (!selected) {
+        return undefined;
+    }
+    if (selected.entryKind === 'none') {
+        return '';
+    }
+    if (selected.entryKind === 'category') {
+        return selected.category;
+    }
+    const value = await vscode.window.showInputBox({
+        title: t('Nested scenario category'),
+        prompt: t('Enter a category for the nested scenario.'),
+        ignoreFocusOut: true,
+        validateInput: input => validateScenarioCategoryValue(input, t)
+    });
+    return value?.trim();
+}
+
 async function promptForScenarioHeaderValues(
     t: (message: string, ...args: string[]) => string,
     defaults: NewScenarioDefaults,
@@ -2186,7 +2242,10 @@ async function maybeAutoAddScenarioToFavorites(
  * Запрашивает имя, код, папку, создает папку с кодом, файл scen.yaml и папку files.
  * @param context Контекст расширения для доступа к ресурсам (шаблонам).
  */
-export async function handleCreateNestedScenario(context: vscode.ExtensionContext): Promise<void> {
+export async function handleCreateNestedScenario(
+    context: vscode.ExtensionContext,
+    options: CreateNestedScenarioOptions = {}
+): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     const config = vscode.workspace.getConfiguration('kotTestToolkit');
     const newScenarioDefaults = getNewScenarioDefaults(config);
@@ -2307,6 +2366,15 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
         return;
     }
 
+    const scenarioCategory = await promptForScenarioCategory(
+        options.existingCategories ?? [],
+        t
+    );
+    if (scenarioCategory === undefined) {
+        console.log("[Cmd:createNestedScenario] Cancelled at category prompt.");
+        return;
+    }
+
     // 5. Создание папок и файла
     const newUid = uuidv4();
     const scenarioFolderUri = vscode.Uri.joinPath(baseFolderUri, trimmedCode); // Итоговая папка: parent/code
@@ -2331,10 +2399,14 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
             templateContent,
             scenarioHeaderValues
         );
+        const templateWithCategory = applyScenarioCategoryToTemplate(
+            templateWithDefaults,
+            scenarioCategory
+        ).content;
 
         // Заменяем плейсхолдеры
         const finalContent = applyScenarioLanguage(
-            applyTemplateReplacements(templateWithDefaults, {
+            applyTemplateReplacements(templateWithCategory, {
                 Name_Placeholder: escapeYamlDoubleQuotedString(trimmedName),
                 Code_Placeholder: escapeYamlDoubleQuotedString(trimmedCode),
                 UID_Placeholder: escapeYamlDoubleQuotedString(newUid)

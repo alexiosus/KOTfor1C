@@ -608,6 +608,11 @@
         "category": "%cmd.category%"
       },
       {
+        "command": "kotTestToolkit.setScenarioCategory",
+        "title": "%cmd.setScenarioCategory.title%",
+        "category": "%cmd.category%"
+      },
+      {
         "command": "kotTestToolkit.createMainScenario",
         "title": "%cmd.createMainScenario.title%",
         "category": "%cmd.category%"
@@ -1038,6 +1043,10 @@
       "commandPalette": [
         {
           "command": "kotTestToolkit.openProjectDefinition",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.setScenarioCategory",
           "when": "false"
         },
         {

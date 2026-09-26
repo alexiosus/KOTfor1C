@@ -100,6 +100,12 @@ import {
     EXPORT_SCENARIO_METADATA_COMMAND,
     ExportScenarioMetadataCodeLensProvider
 } from './exportScenarioMetadataCodeLens';
+import { collectNestedScenarioCategories } from './scenarioCategory';
+import {
+    SCENARIO_CATEGORY_COMMAND,
+    ScenarioCategoryCodeLensProvider,
+    setScenarioCategoryCommand
+} from './scenarioCategoryCodeLens';
 import { resolveVanessaTemplateRoot } from './userStepCreator';
 import type { UserStepLibraryRoot } from './userStepCommands';
 
@@ -930,6 +936,12 @@ export function activate(context: vscode.ExtensionContext) {
         )
     );
     context.subscriptions.push(
+        vscode.languages.registerCodeLensProvider(
+            { pattern: '**/*.yaml', scheme: 'file' },
+            new ScenarioCategoryCodeLensProvider(context.extensionUri)
+        )
+    );
+    context.subscriptions.push(
         vscode.languages.registerReferenceProvider(
             [
                 { pattern: '**/*.yaml', scheme: 'file' },
@@ -1318,7 +1330,15 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.createNestedScenario', async () => {
             const { handleCreateNestedScenario } = await loadScenarioCreator();
-            await handleCreateNestedScenario(context);
+            let existingCategories: readonly string[] = [];
+            try {
+                existingCategories = collectNestedScenarioCategories((await projectDefinitionResolver.getView(
+                    vscode.window.activeTextEditor?.document.uri
+                )).all);
+            } catch {
+                // Creation remains available while the shared definition view is unavailable.
+            }
+            await handleCreateNestedScenario(context, { existingCategories: existingCategories });
         }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
@@ -1342,6 +1362,15 @@ export function activate(context: vscode.ExtensionContext) {
             const t = await getTranslator(context.extensionUri);
             await addExportScenarioMetadataCommand(target, {
                 index: projectDefinitionIndex,
+                translate: t
+            });
+        }
+    ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        SCENARIO_CATEGORY_COMMAND, async (target?: unknown) => {
+            const t = await getTranslator(context.extensionUri);
+            await setScenarioCategoryCommand(target, {
+                resolver: projectDefinitionResolver,
                 translate: t
             });
         }
