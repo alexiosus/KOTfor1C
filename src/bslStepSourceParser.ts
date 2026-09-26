@@ -45,6 +45,23 @@ export interface UserStepSourceParseResult {
     readonly moduleAppendRange: ProjectDefinitionRange | null;
 }
 
+export interface StaticBslStepRegistration {
+    readonly snippet: string;
+    readonly implementationName: string;
+    readonly template: string;
+    readonly description: string;
+    readonly category?: string;
+    readonly range: ProjectDefinitionRange;
+}
+
+export interface StaticBslStepRegistrationParseResult {
+    readonly registrations: readonly StaticBslStepRegistration[];
+    readonly warnings: readonly ProjectDefinitionWarning[];
+    readonly declarations: readonly BslDeclaration[];
+    readonly registrationInsertionRange: ProjectDefinitionRange | null;
+    readonly moduleAppendRange: ProjectDefinitionRange | null;
+}
+
 interface InternalDeclaration extends BslDeclaration {
     readonly startOffset: number;
     readonly endOffset: number;
@@ -263,7 +280,7 @@ function parseDeclarations(
     source: string,
     tokens: readonly BslToken[],
     warnings: ProjectDefinitionWarning[],
-    uri: string
+    uri: string | undefined
 ): InternalDeclaration[] {
     const declarations: InternalDeclaration[] = [];
     for (let index = 0; index < tokens.length; index++) {
@@ -544,7 +561,7 @@ function registrationInsertion(
     tokens: readonly BslToken[],
     declarations: readonly InternalDeclaration[],
     warnings: ProjectDefinitionWarning[],
-    uri: string
+    uri: string | undefined
 ): ProjectDefinitionRange | null {
     const candidates = declarations.filter(item => folded(item.name) === REGISTRATION_FUNCTION);
     if (candidates.length !== 1) {
@@ -571,15 +588,15 @@ function registrationInsertion(
     return range(insertionPosition, insertionPosition);
 }
 
-export function parseUserStepSource(
+export function parseStaticBslStepRegistrations(
     source: string,
-    context: UserStepSourceParseContext
-): UserStepSourceParseResult {
+    sourceUri?: string
+): StaticBslStepRegistrationParseResult {
     const tokens = scanBslTokens(source);
     const warnings: ProjectDefinitionWarning[] = [];
-    const declarations = parseDeclarations(source, tokens, warnings, context.sourceUri);
+    const declarations = parseDeclarations(source, tokens, warnings, sourceUri);
     const significant = significantTokens(tokens);
-    const definitions: ProjectDefinition[] = [];
+    const registrations: StaticBslStepRegistration[] = [];
 
     for (let index = 0; index < significant.length; index++) {
         const method = significant[index];
@@ -596,7 +613,7 @@ export function parseUserStepSource(
         const callRange = range(startToken.range.start, callEnd.range.end);
         if (closeIndex < 0) {
             warnings.push({
-                uri: context.sourceUri,
+                uri: sourceUri,
                 message: 'Unterminated user-step registration call.',
                 range: callRange
             });
@@ -605,7 +622,7 @@ export function parseUserStepSource(
         const args = splitArguments(significant.slice(index + 2, closeIndex));
         if (!args || args.length < 5) {
             warnings.push({
-                uri: context.sourceUri,
+                uri: sourceUri,
                 message: 'Unsupported user-step registration argument list.',
                 range: callRange
             });
@@ -629,7 +646,7 @@ export function parseUserStepSource(
             || category === null
         ) {
             warnings.push({
-                uri: context.sourceUri,
+                uri: sourceUri,
                 message: 'User-step registration contains a dynamic expression and was skipped.',
                 range: callRange
             });
@@ -638,7 +655,7 @@ export function parseUserStepSource(
         }
         if (!template.trim()) {
             warnings.push({
-                uri: context.sourceUri,
+                uri: sourceUri,
                 message: 'User-step registration has an empty display template.',
                 range: callRange
             });
@@ -646,31 +663,13 @@ export function parseUserStepSource(
             continue;
         }
 
-        const definitionLocation = Object.freeze({ uri: context.sourceUri, range: callRange });
-        const implementation = declarations.filter(item => folded(item.name) === folded(implementationName));
-        const implementationLocation = implementation.length === 1
-            ? Object.freeze({ uri: context.sourceUri, range: implementation[0].nameRange })
-            : definitionLocation;
-        const id = createLocalDefinitionId({
-            kind: 'userStep',
-            sourceUri: context.sourceUri,
-            range: callRange,
-            signature: template
-        });
-        definitions.push(Object.freeze({
-            id,
-            kind: 'userStep',
+        registrations.push(Object.freeze({
+            snippet,
+            implementationName,
             template,
-            normalizedTemplate: normalizeProjectDefinitionTemplate(template),
-            parameters: createParameters(snippet, template),
-            description: description || undefined,
+            description,
             category: category || undefined,
-            sourceLabel: context.sourceLabel,
-            workspaceFolderUri: context.workspaceFolderUri,
-            profileId: context.profileId,
-            libraryRootUri: context.libraryRootUri,
-            definitionLocation,
-            implementationLocation
+            range: callRange
         }));
         index = closeIndex;
     }
@@ -679,13 +678,13 @@ export function parseUserStepSource(
     const balanced = moduleDelimitersAreBalanced(tokens);
     if (malformedString) {
         warnings.push({
-            uri: context.sourceUri,
+            uri: sourceUri,
             message: 'Unterminated BSL string literal prevents safe module insertion.',
             range: malformedString.range
         });
     }
     if (!balanced) {
-        warnings.push({ uri: context.sourceUri, message: 'Unbalanced BSL delimiters prevent safe module insertion.' });
+        warnings.push({ uri: sourceUri, message: 'Unbalanced BSL delimiters prevent safe module insertion.' });
     }
     const moduleSafe = declarations.every(item => item.terminated) && !malformedString && balanced;
     const modulePosition = offsetPosition(source, source.length);
@@ -694,14 +693,71 @@ export function parseUserStepSource(
         tokens,
         declarations,
         warnings,
-        context.sourceUri
+        sourceUri
     );
 
     return Object.freeze({
-        definitions: Object.freeze(definitions),
+        registrations: Object.freeze(registrations),
         warnings: Object.freeze(warnings),
         declarations: Object.freeze(declarations),
         registrationInsertionRange,
         moduleAppendRange: moduleSafe ? range(modulePosition, modulePosition) : null
+    });
+}
+
+function createUserStepDefinition(
+    registration: StaticBslStepRegistration,
+    declarations: readonly BslDeclaration[],
+    context: UserStepSourceParseContext
+): ProjectDefinition {
+    const definitionLocation = Object.freeze({
+        uri: context.sourceUri,
+        range: registration.range
+    });
+    const implementation = declarations.filter(item =>
+        folded(item.name) === folded(registration.implementationName)
+    );
+    const implementationLocation = implementation.length === 1
+        ? Object.freeze({ uri: context.sourceUri, range: implementation[0].nameRange })
+        : definitionLocation;
+    const id = createLocalDefinitionId({
+        kind: 'userStep',
+        sourceUri: context.sourceUri,
+        range: registration.range,
+        signature: registration.template
+    });
+    return Object.freeze({
+        id,
+        kind: 'userStep',
+        template: registration.template,
+        normalizedTemplate: normalizeProjectDefinitionTemplate(registration.template),
+        parameters: createParameters(registration.snippet, registration.template),
+        description: registration.description || undefined,
+        category: registration.category,
+        sourceLabel: context.sourceLabel,
+        workspaceFolderUri: context.workspaceFolderUri,
+        profileId: context.profileId,
+        libraryRootUri: context.libraryRootUri,
+        definitionLocation,
+        implementationLocation
+    });
+}
+
+export function parseUserStepSource(
+    source: string,
+    context: UserStepSourceParseContext
+): UserStepSourceParseResult {
+    const parsed = parseStaticBslStepRegistrations(source, context.sourceUri);
+    const definitions = parsed.registrations.map(registration => createUserStepDefinition(
+        registration,
+        parsed.declarations,
+        context
+    ));
+    return Object.freeze({
+        definitions: Object.freeze(definitions),
+        warnings: parsed.warnings,
+        declarations: parsed.declarations,
+        registrationInsertionRange: parsed.registrationInsertionRange,
+        moduleAppendRange: parsed.moduleAppendRange
     });
 }
