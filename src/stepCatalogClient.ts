@@ -210,6 +210,9 @@ export class VersionedStepCatalogClient {
             if (!entry) {
                 return cachedCatalog;
             }
+            if (cachedCatalog?.digest === entry.sha256) {
+                return cachedCatalog;
+            }
 
             const response = await this.transport.get(new URL(entry.path, indexUrl), {
                 signal,

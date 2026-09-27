@@ -1746,6 +1746,8 @@
   "Uncategorized": "Uncategorized",
   "Could not refresh the step library.": "Could not refresh the step library.",
   "Show sources and categories": "Show sources and categories",
+  "Resize sources and categories pane": "Resize sources and categories pane",
+  "Resize step details pane": "Resize step details pane",
   "Back": "Back",
   "Step inserted.": "Step inserted.",
   "Step copied.": "Step copied.",

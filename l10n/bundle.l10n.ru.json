@@ -1744,6 +1744,8 @@
   "Uncategorized": "Без категории",
   "Could not refresh the step library.": "Не удалось обновить библиотеку шагов.",
   "Show sources and categories": "Показать источники и категории",
+  "Resize sources and categories pane": "Изменить ширину панели источников и категорий",
+  "Resize step details pane": "Изменить ширину панели сведений о шаге",
   "Back": "Назад",
   "Step inserted.": "Шаг вставлен.",
   "Step copied.": "Шаг скопирован.",

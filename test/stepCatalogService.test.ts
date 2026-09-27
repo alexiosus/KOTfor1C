@@ -211,6 +211,26 @@ test('concurrent first requests for one folder share the exact cached catalog re
     assert.equal(firstResult.identity, secondResult.identity);
 });
 
+test('cached startup catalog is revalidated in background and replaced without manual refresh', async () => {
+    const cached = createCatalog(VERSION, '-cached');
+    const current = createCatalog(VERSION, '-current');
+    const fixture = createCoordinator({
+        getCachedExactCatalog: async () => cachedResult(cached),
+        getExactCatalog: async () => downloadedResult(current)
+    });
+    const events: WorkspaceStepCatalogChangeEvent[] = [];
+    fixture.coordinator.onDidChangeCatalog(event => events.push(event));
+
+    const first = await fixture.coordinator.getCatalog('file:///workspace/test.yaml');
+    await fixture.coordinator.whenIdle();
+    const updated = await fixture.coordinator.getCatalog('file:///workspace/test.yaml');
+
+    assert.equal(first.identity, `versioned:${sha256Hex(JSON.stringify(cached))}`);
+    assert.equal(updated.identity, `versioned:${sha256Hex(JSON.stringify(current))}`);
+    assert.equal(fixture.exactCalls.length, 1);
+    assert.deepEqual(events.map(event => event.newIdentity), [updated.identity]);
+});
+
 test('versioned category metadata is not exposed as IntelliSense steps', async () => {
     const catalog = withCategoryMetadata(createCatalog());
     const fixture = createCoordinator({

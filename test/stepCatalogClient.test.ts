@@ -211,6 +211,26 @@ test('invalid downloaded hash preserves a valid exact cache during refresh', asy
     assert.deepEqual(await storage.read(paths.catalog), cachedBytes);
 });
 
+test('refresh reuses a cached catalog when the current index has the same digest', async () => {
+    const catalog = createCatalog();
+    const cachedBytes = jsonBytes(catalog);
+    const paths = getStepCatalogCachePaths(INDEX_URL, VERSION);
+    const transport = new FakeTransport([
+        Promise.resolve(indexResponse({ [VERSION]: catalogEntry(cachedBytes) }))
+    ]);
+    const client = new VersionedStepCatalogClient(
+        new MemoryStorage({ [paths.catalog]: cachedBytes }),
+        transport,
+        () => 1_000
+    );
+
+    const result = await client.refreshExactCatalog(INDEX_URL, VERSION);
+
+    assert.equal(result?.source, 'versioned-cache');
+    assert.equal(result?.digest, sha256Hex(cachedBytes));
+    assert.equal(transport.calls, 1);
+});
+
 test('rejects a downloaded catalog whose declared version or count does not match', async () => {
     const wrongVersion = createCatalog('1.2.043.29');
     const wrongBytes = jsonBytes(wrongVersion);

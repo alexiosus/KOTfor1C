@@ -6,6 +6,7 @@ import vm from 'node:vm';
 
 interface ProtocolItem {
     id: string;
+    familyId?: string;
     kind: 'builtInStep' | 'userStep' | 'exportScenario' | 'nestedScenario' | 'mainScenario';
     sourceGroup: 'builtIn' | 'user' | 'export' | 'nested' | 'main';
     displayText: string;
@@ -22,6 +23,7 @@ interface Protocol {
         sourceGroup?: ProtocolItem['sourceGroup'];
         categoryPath?: readonly string[];
         language?: 'ru' | 'en' | 'both';
+        preferredLanguage?: 'ru' | 'en';
         uncategorized?: boolean;
         offset?: number;
         limit?: number;
@@ -55,6 +57,12 @@ interface Protocol {
         scrollTop: number;
         scrollLeft: number;
     }, action: () => T): T;
+    resizePaneLayout(
+        layout: { categoryWidth: number; detailsWidth: number },
+        divider: 'category' | 'details',
+        deltaPixels: number,
+        containerWidth: number
+    ): { categoryWidth: number; detailsWidth: number };
 }
 
 function loadProtocol(): { protocol: Protocol; source: string } {
@@ -226,6 +234,75 @@ test('filters by source, ancestor category, and built-in language without hiding
             uncategorized: true
         }).map(value => value.id),
         ['built-other']
+    );
+});
+
+test('RU and EN keeps one preferred built-in variant per translated family', () => {
+    const { protocol } = loadProtocol();
+    const items = protocol.prepareItems([
+        item('open-ru', 'И я открываю форму', {
+            familyId: 'open', language: 'ru', categoryPath: ['Интерфейс', 'Формы'],
+            searchText: 'и я открываю форму open form'
+        }),
+        item('open-en', 'And I open form', {
+            familyId: 'open', language: 'en', categoryPath: ['UI', 'Forms'],
+            searchText: 'and i open form и я открываю форму'
+        }),
+        item('report-ru', 'И я формирую отчет', {
+            familyId: 'report', language: 'ru', categoryPath: ['Отчеты']
+        }),
+        item('project', 'Project helper', {
+            kind: 'userStep', sourceGroup: 'user', language: undefined,
+            familyId: 'project', categoryPath: ['Project']
+        })
+    ]);
+
+    const english = protocol.searchItems(items, '', {
+        language: 'both', preferredLanguage: 'en', limit: Number.MAX_SAFE_INTEGER
+    });
+    const russian = protocol.searchItems(items, '', {
+        language: 'both', preferredLanguage: 'ru', limit: Number.MAX_SAFE_INTEGER
+    });
+
+    assert.deepEqual(english.map(value => value.id), ['open-en', 'project', 'report-ru']);
+    assert.deepEqual(russian.map(value => value.id), ['project', 'open-ru', 'report-ru']);
+    assert.deepEqual(
+        protocol.buildCategoryTree(english)[0].children.map((node: unknown) =>
+            (node as { label: string }).label
+        ),
+        ['UI', 'Отчеты']
+    );
+});
+
+test('resizes adjacent panes within category, definition, and detail minimums', () => {
+    const { protocol } = loadProtocol();
+
+    assert.deepEqual(
+        protocol.resizePaneLayout(
+            { categoryWidth: 270, detailsWidth: 380 },
+            'category',
+            100,
+            1_000
+        ),
+        { categoryWidth: 312, detailsWidth: 380 }
+    );
+    assert.deepEqual(
+        protocol.resizePaneLayout(
+            { categoryWidth: 270, detailsWidth: 380 },
+            'details',
+            200,
+            1_000
+        ),
+        { categoryWidth: 270, detailsWidth: 260 }
+    );
+    assert.deepEqual(
+        protocol.resizePaneLayout(
+            { categoryWidth: 270, detailsWidth: 380 },
+            'category',
+            -1_000,
+            1_000
+        ),
+        { categoryWidth: 180, detailsWidth: 380 }
     );
 });
 

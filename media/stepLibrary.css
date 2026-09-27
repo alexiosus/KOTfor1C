@@ -1,5 +1,13 @@
 :root {
     color-scheme: light dark;
+    --step-row-alternate: color-mix(in srgb, var(--vscode-editor-background) 96%, var(--vscode-foreground) 4%);
+    --step-row-hover: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--vscode-focusBorder) 8%);
+    --step-row-selected: color-mix(in srgb, var(--vscode-editor-background) 88%, var(--vscode-focusBorder) 12%);
+    --step-row-selected-border: color-mix(in srgb, var(--vscode-focusBorder) 74%, transparent);
+    --step-syntax-keyword: var(--vscode-terminal-ansiMagenta, #c586c0);
+    --step-syntax-string: var(--vscode-terminal-ansiGreen, #98c379);
+    --step-syntax-parameter: var(--vscode-terminal-ansiCyan, #56b6c2);
+    --step-syntax-table: var(--vscode-terminal-ansiBlue, #61afef);
 }
 
 * {
@@ -107,7 +115,12 @@ select:focus-visible,
 
 .library-grid {
     display: grid;
-    grid-template-columns: minmax(210px, 270px) minmax(300px, 1fr) minmax(280px, 380px);
+    grid-template-columns:
+        var(--category-pane-width, 270px)
+        4px
+        minmax(300px, 1fr)
+        4px
+        var(--details-pane-width, 380px);
     min-height: 0;
 }
 
@@ -116,12 +129,35 @@ select:focus-visible,
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    border-right: 1px solid var(--vscode-panel-border);
     background: var(--vscode-editor-background);
 }
 
-.pane:last-child {
-    border-right: 0;
+.pane-resizer {
+    position: relative;
+    z-index: 1;
+    min-width: 4px;
+    cursor: col-resize;
+    touch-action: none;
+}
+
+.pane-resizer::before {
+    position: absolute;
+    inset: 0 1px;
+    background: var(--vscode-panel-border);
+    content: '';
+    transition: background-color 80ms ease, inset 80ms ease;
+}
+
+.pane-resizer:hover::before,
+.pane-resizer:focus-visible::before,
+.resizing-panes .pane-resizer::before {
+    inset: 0;
+    background: var(--vscode-focusBorder);
+}
+
+.resizing-panes {
+    cursor: col-resize;
+    user-select: none;
 }
 
 .category-pane,
@@ -183,8 +219,8 @@ select:focus-visible,
     min-height: 27px;
     align-items: center;
     gap: 5px;
-    padding: 3px 6px;
-    border: 0;
+    padding: 2px 5px;
+    border: 1px solid transparent;
     border-radius: 2px;
     color: var(--vscode-foreground);
     background: transparent;
@@ -195,13 +231,17 @@ select:focus-visible,
     .category-tree > .tree-node:nth-child(even),
     .tree-children > .tree-node:nth-child(even)
 ) > .tree-item {
-    background: var(--vscode-list-inactiveSelectionBackground, transparent);
+    background: var(--step-row-alternate);
 }
 
-.tree-item:hover,
+.tree-item:hover {
+    background: var(--step-row-hover);
+}
+
 .tree-item[aria-selected="true"] {
-    color: var(--vscode-list-activeSelectionForeground);
-    background: var(--vscode-list-activeSelectionBackground);
+    border-color: var(--step-row-selected-border);
+    color: var(--vscode-foreground);
+    background: var(--step-row-selected);
 }
 
 .tree-chevron {
@@ -260,6 +300,8 @@ select:focus-visible,
 
 .definition-row {
     display: grid;
+    width: max-content;
+    min-width: 100%;
     gap: 4px;
     min-height: 52px;
     padding: 8px 10px;
@@ -269,49 +311,41 @@ select:focus-visible,
 }
 
 .definition-row:nth-child(even) {
-    background: var(--vscode-list-inactiveSelectionBackground, transparent);
+    background: var(--step-row-alternate);
 }
 
 .definition-row:hover {
-    background: var(--vscode-list-hoverBackground);
+    background: var(--step-row-hover);
 }
 
 .definition-row[aria-selected="true"] {
-    color: var(--vscode-list-activeSelectionForeground);
-    background: var(--vscode-list-activeSelectionBackground);
-}
-
-.definition-row[aria-selected="true"] :is(
-    .syntax-keyword,
-    .syntax-string,
-    .syntax-parameter,
-    .syntax-table
-) {
-    color: inherit;
+    border-color: var(--step-row-selected-border);
+    color: var(--vscode-foreground);
+    background: var(--step-row-selected);
 }
 
 .definition-text {
-    overflow-wrap: anywhere;
+    overflow-wrap: normal;
     font-family: var(--vscode-editor-font-family);
     line-height: 1.35;
-    white-space: pre-wrap;
+    white-space: pre;
 }
 
 .syntax-keyword {
-    color: var(--vscode-symbolIcon-keywordForeground, var(--vscode-editor-foreground));
+    color: var(--step-syntax-keyword);
     font-weight: 600;
 }
 
 .syntax-string {
-    color: var(--vscode-symbolIcon-stringForeground, var(--vscode-editor-foreground));
+    color: var(--step-syntax-string);
 }
 
 .syntax-parameter {
-    color: var(--vscode-symbolIcon-variableForeground, var(--vscode-editor-foreground));
+    color: var(--step-syntax-parameter);
 }
 
 .syntax-table {
-    color: var(--vscode-symbolIcon-operatorForeground, var(--vscode-descriptionForeground));
+    color: var(--step-syntax-table);
 }
 
 .definition-meta {
@@ -331,12 +365,15 @@ select:focus-visible,
 }
 
 .details-content h3 {
+    width: max-content;
+    min-width: 100%;
     margin: 0 0 14px;
     font-size: 15px;
     font-family: var(--vscode-editor-font-family);
     font-weight: 600;
     line-height: 1.45;
-    white-space: pre-wrap;
+    overflow-wrap: normal;
+    white-space: pre;
 }
 
 .details-field {
@@ -353,8 +390,7 @@ select:focus-visible,
     text-transform: uppercase;
 }
 
-.details-value,
-.details-code {
+.details-value {
     margin: 0;
     overflow-wrap: anywhere;
     line-height: 1.45;
@@ -362,12 +398,18 @@ select:focus-visible,
 }
 
 .details-code {
+    width: max-content;
+    min-width: 100%;
+    margin: 0;
     padding: 8px;
+    overflow-wrap: normal;
     border: 1px solid var(--vscode-textBlockQuote-border);
     border-radius: 3px;
     color: var(--vscode-textPreformat-foreground);
     background: var(--vscode-textCodeBlock-background);
     font-family: var(--vscode-editor-font-family);
+    line-height: 1.45;
+    white-space: pre;
 }
 
 .parameter-list {
@@ -438,6 +480,10 @@ select:focus-visible,
     .library-grid {
         position: relative;
         grid-template-columns: minmax(280px, 1fr) minmax(260px, 0.8fr);
+    }
+
+    .pane-resizer {
+        display: none;
     }
 
     .category-pane {

@@ -18,6 +18,10 @@
     });
     const DEFAULT_RESULT_LIMIT = 100;
     const UNCATEGORIZED_SENTINEL = '#uncategorized';
+    const PANE_RESIZER_TOTAL = 8;
+    const MIN_CATEGORY_WIDTH = 180;
+    const MIN_DEFINITION_WIDTH = 300;
+    const MIN_DETAILS_WIDTH = 260;
 
     function normalize(value) {
         return String(value || '')
@@ -156,12 +160,43 @@
             || item.language === language;
     }
 
+    function preferredLocalizedItems(items, language, preferredLanguage) {
+        if (language !== 'both') {
+            return items || [];
+        }
+        const preferred = preferredLanguage === 'ru' ? 'ru' : 'en';
+        const result = [];
+        const familyIndexes = new Map();
+        for (const item of items || []) {
+            if (item.sourceGroup !== 'builtIn' || !item.familyId) {
+                result.push(item);
+                continue;
+            }
+            const previousIndex = familyIndexes.get(item.familyId);
+            if (previousIndex === undefined) {
+                familyIndexes.set(item.familyId, result.length);
+                result.push(item);
+                continue;
+            }
+            const previous = result[previousIndex];
+            if (previous.language !== preferred && item.language === preferred) {
+                result[previousIndex] = item;
+            }
+        }
+        return result;
+    }
+
     function searchItems(items, query, options) {
         const resolvedOptions = options || {};
         const normalizedQuery = normalize(query);
         const queryTokens = tokens(normalizedQuery);
         const ranked = [];
-        for (const item of items || []) {
+        const localizedItems = preferredLocalizedItems(
+            items,
+            resolvedOptions.language,
+            resolvedOptions.preferredLanguage
+        );
+        for (const item of localizedItems) {
             if (
                 resolvedOptions.sourceGroup
                 && item.sourceGroup !== resolvedOptions.sourceGroup
@@ -203,6 +238,53 @@
             ? Math.floor(resolvedOptions.limit)
             : DEFAULT_RESULT_LIMIT);
         return ranked.slice(offset, offset + limit).map(entry => entry.item);
+    }
+
+    function clamp(value, minimum, maximum) {
+        return Math.min(Math.max(value, minimum), maximum);
+    }
+
+    function resizePaneLayout(layout, divider, deltaPixels, containerWidth) {
+        const available = Math.max(
+            MIN_CATEGORY_WIDTH + MIN_DEFINITION_WIDTH + MIN_DETAILS_WIDTH,
+            Math.floor(containerWidth) - PANE_RESIZER_TOTAL
+        );
+        const rawCategory = Number.isFinite(layout?.categoryWidth)
+            ? Math.round(layout.categoryWidth)
+            : 270;
+        const rawDetails = Number.isFinite(layout?.detailsWidth)
+            ? Math.round(layout.detailsWidth)
+            : 380;
+        let detailsWidth = clamp(
+            rawDetails,
+            MIN_DETAILS_WIDTH,
+            available - MIN_CATEGORY_WIDTH - MIN_DEFINITION_WIDTH
+        );
+        let categoryWidth = clamp(
+            rawCategory,
+            MIN_CATEGORY_WIDTH,
+            available - detailsWidth - MIN_DEFINITION_WIDTH
+        );
+        detailsWidth = clamp(
+            detailsWidth,
+            MIN_DETAILS_WIDTH,
+            available - categoryWidth - MIN_DEFINITION_WIDTH
+        );
+        const delta = Number.isFinite(deltaPixels) ? Math.round(deltaPixels) : 0;
+        if (divider === 'category') {
+            categoryWidth = clamp(
+                categoryWidth + delta,
+                MIN_CATEGORY_WIDTH,
+                available - detailsWidth - MIN_DEFINITION_WIDTH
+            );
+        } else if (divider === 'details') {
+            detailsWidth = clamp(
+                detailsWidth - delta,
+                MIN_DETAILS_WIDTH,
+                available - categoryWidth - MIN_DEFINITION_WIDTH
+            );
+        }
+        return { categoryWidth, detailsWidth };
     }
 
     function nodeId(sourceGroup, path) {
@@ -352,6 +434,7 @@
         canInsertItem,
         isUncategorizedNodeId,
         tokenizeGherkinText,
-        preserveScrollPosition
+        preserveScrollPosition,
+        resizePaneLayout
     });
 }));

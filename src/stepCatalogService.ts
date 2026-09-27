@@ -183,6 +183,14 @@ export class WorkspaceStepCatalogCoordinator {
                 const catalog = resolveVersionedCatalog(cached, requestedVersion);
                 this.exactCatalogs.set(exactKey, catalog);
                 this.states.set(folderKey, { selectionKey, generation, catalog });
+                this.startExactLookup({
+                    folderKey,
+                    workspaceFolderUri: folder?.uri,
+                    selectionKey,
+                    generation,
+                    indexUrl,
+                    requestedVersion
+                }, true);
                 return catalog;
             }
         }
@@ -448,12 +456,15 @@ export class WorkspaceStepCatalogCoordinator {
         readonly generation: number;
         readonly indexUrl: string;
         readonly requestedVersion: string;
-    }): void {
+    }, refresh = false): void {
         const exactKey = this.exactKey(input.indexUrl, input.requestedVersion);
-        let lookup = this.exactLookups.get(exactKey);
+        const lookupKey = `${exactKey}\0${refresh ? 'refresh' : 'normal'}`;
+        let lookup = this.exactLookups.get(lookupKey);
         if (!lookup) {
-            lookup = this.dependencies.getExactCatalog(input.indexUrl, input.requestedVersion);
-            this.exactLookups.set(exactKey, lookup);
+            lookup = refresh
+                ? this.dependencies.refreshExactCatalog(input.indexUrl, input.requestedVersion)
+                : this.dependencies.getExactCatalog(input.indexUrl, input.requestedVersion);
+            this.exactLookups.set(lookupKey, lookup);
         }
 
         let task!: Promise<void>;

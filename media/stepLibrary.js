@@ -5,6 +5,7 @@
     const protocol = globalThis.StepLibraryProtocol;
     const BATCH_SIZE = 100;
     const shell = document.querySelector('.library-shell');
+    const libraryGrid = document.querySelector('.library-grid');
     const searchInput = document.getElementById('searchInput');
     const languageFilter = document.getElementById('languageFilter');
     const sortMode = document.getElementById('sortMode');
@@ -20,6 +21,7 @@
     const insertButton = document.getElementById('insertButton');
     const copyButton = document.getElementById('copyButton');
     const openDefinitionButton = document.getElementById('openDefinitionButton');
+    const paneResizers = [...document.querySelectorAll('.pane-resizer')];
     const liveRegion = document.getElementById('liveRegion');
     const labels = document.body.dataset;
     const persisted = vscode.getState() || {};
@@ -41,7 +43,15 @@
         sortMode: persisted.sortMode === 'alphabetical' ? 'alphabetical' : 'relevance',
         insertionTarget: { available: false, identity: 'unavailable' },
         pendingActions: new Set(),
-        renderGeneration: 0
+        renderGeneration: 0,
+        paneLayout: {
+            categoryWidth: Number.isFinite(persisted.paneLayout?.categoryWidth)
+                ? persisted.paneLayout.categoryWidth
+                : 270,
+            detailsWidth: Number.isFinite(persisted.paneLayout?.detailsWidth)
+                ? persisted.paneLayout.detailsWidth
+                : 380
+        }
     };
 
     function saveState() {
@@ -53,7 +63,104 @@
             expandedNodes: [...state.expandedNodes],
             selectedItemId: state.selectedItemId,
             language: state.language,
-            sortMode: state.sortMode
+            sortMode: state.sortMode,
+            paneLayout: state.paneLayout
+        });
+    }
+
+    function languageOptions(extra) {
+        return {
+            language: state.language,
+            preferredLanguage: labels.preferredLanguage === 'ru' ? 'ru' : 'en',
+            ...extra
+        };
+    }
+
+    function applyPaneLayout(layout, persist) {
+        if (!libraryGrid) {
+            return;
+        }
+        state.paneLayout = libraryGrid.clientWidth > 900
+            ? protocol.resizePaneLayout(
+                layout,
+                'category',
+                0,
+                libraryGrid.clientWidth
+            )
+            : layout;
+        libraryGrid.style.setProperty(
+            '--category-pane-width',
+            `${state.paneLayout.categoryWidth}px`
+        );
+        libraryGrid.style.setProperty(
+            '--details-pane-width',
+            `${state.paneLayout.detailsWidth}px`
+        );
+        for (const resizer of paneResizers) {
+            const value = resizer.dataset.divider === 'category'
+                ? state.paneLayout.categoryWidth
+                : Math.max(0, libraryGrid.clientWidth - state.paneLayout.detailsWidth);
+            resizer.setAttribute('aria-valuenow', String(Math.round(value)));
+        }
+        if (persist) {
+            saveState();
+        }
+    }
+
+    function setupPaneResizer(resizer) {
+        const divider = resizer.dataset.divider;
+        if (divider !== 'category' && divider !== 'details') {
+            return;
+        }
+        let drag = null;
+        resizer.addEventListener('pointerdown', event => {
+            if (event.button !== 0 || !libraryGrid || libraryGrid.clientWidth <= 900) {
+                return;
+            }
+            event.preventDefault();
+            drag = {
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startLayout: { ...state.paneLayout },
+                containerWidth: libraryGrid.clientWidth
+            };
+            resizer.setPointerCapture(event.pointerId);
+            shell.classList.add('resizing-panes');
+        });
+        resizer.addEventListener('pointermove', event => {
+            if (!drag || event.pointerId !== drag.pointerId) {
+                return;
+            }
+            applyPaneLayout(protocol.resizePaneLayout(
+                drag.startLayout,
+                divider,
+                event.clientX - drag.startX,
+                drag.containerWidth
+            ), false);
+        });
+        const finishDrag = event => {
+            if (!drag || event.pointerId !== drag.pointerId) {
+                return;
+            }
+            drag = null;
+            shell.classList.remove('resizing-panes');
+            saveState();
+        };
+        resizer.addEventListener('pointerup', finishDrag);
+        resizer.addEventListener('pointercancel', finishDrag);
+        resizer.addEventListener('lostpointercapture', finishDrag);
+        resizer.addEventListener('keydown', event => {
+            if (!libraryGrid || !['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+                return;
+            }
+            event.preventDefault();
+            const delta = event.key === 'ArrowLeft' ? -16 : 16;
+            applyPaneLayout(protocol.resizePaneLayout(
+                state.paneLayout,
+                divider,
+                delta,
+                libraryGrid.clientWidth
+            ), true);
         });
     }
 
@@ -99,23 +206,21 @@
         if (!state.snapshot) {
             return [];
         }
-        return protocol.searchItems(state.snapshot.items, '', {
-            language: state.language,
+        return protocol.searchItems(state.snapshot.items, '', languageOptions({
             limit: Number.MAX_SAFE_INTEGER
-        });
+        }));
     }
 
     function filteredItems() {
         if (!state.snapshot) {
             return [];
         }
-        const items = protocol.searchItems(state.snapshot.items, state.query, {
+        const items = protocol.searchItems(state.snapshot.items, state.query, languageOptions({
             sourceGroup: state.sourceGroup || undefined,
             categoryPath: state.uncategorized ? undefined : state.categoryPath,
             uncategorized: state.uncategorized,
-            language: state.language,
             limit: Number.MAX_SAFE_INTEGER
-        });
+        }));
         if (state.sortMode === 'alphabetical') {
             items.sort((left, right) => {
                 const leftText = left.__normalizedDisplayText
@@ -519,6 +624,9 @@
     searchInput.value = state.query;
     languageFilter.value = state.language;
     sortMode.value = state.sortMode;
+    paneResizers.forEach(setupPaneResizer);
+    requestAnimationFrame(() => applyPaneLayout(state.paneLayout, false));
+    window.addEventListener('resize', () => applyPaneLayout(state.paneLayout, false));
     searchInput.addEventListener('input', () => {
         state.query = searchInput.value;
         saveState();

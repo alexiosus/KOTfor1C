@@ -12,6 +12,7 @@ test('panel HTML uses a restrictive CSP, nonce scripts, and only local assets', 
 
     assert.match(source, /default-src 'none'/u);
     assert.match(source, /style-src \$\{webview\.cspSource\}/u);
+    assert.match(source, /font-src \$\{webview\.cspSource\}/u);
     assert.match(source, /script-src 'nonce-\$\{nonce\}'/u);
     assert.match(source, /stepLibrary\.css/u);
     assert.match(source, /stepLibraryProtocol\.js/u);
@@ -35,7 +36,9 @@ test('step-library assets exist, are included by VSIX rules, and render data wit
     assert.doesNotMatch(client, /\.innerHTML\s*=/u);
     assert.match(client, /requestAnimationFrame/u);
     assert.match(client, /getState\(\)|setState\(/u);
-    assert.doesNotMatch(client, /\.style\./u);
+    assert.match(client, /\.style\.setProperty\(\s*'--category-pane-width'/u);
+    assert.match(client, /\.style\.setProperty\(\s*'--details-pane-width'/u);
+    assert.doesNotMatch(client, /\.style\.(?:cssText|background|color|display)\b/u);
 });
 
 test('client shell is three-pane, accessible, responsive, and initially renders at most 100 rows', () => {
@@ -51,6 +54,11 @@ test('client shell is three-pane, accessible, responsive, and initially renders 
     assert.match(client, /(?:const|let)\s+BATCH_SIZE\s*=\s*100/u);
     assert.match(client, /ArrowDown|ArrowUp|ArrowRight|ArrowLeft|Home|End|Escape/u);
     assert.match(panel, /id="detailsBack"/u);
+    assert.equal((panel.match(/role="separator"/gu) ?? []).length, 2);
+    assert.match(css, /\.pane-resizer/u);
+    assert.match(css, /--category-pane-width/u);
+    assert.match(css, /white-space:\s*pre;/u);
+    assert.match(client, /resizePaneLayout/u);
 });
 
 test('inbound message type has no caller-supplied URI or arbitrary command shape', () => {

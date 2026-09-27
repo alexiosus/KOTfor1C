@@ -617,6 +617,8 @@ export class StepLibraryPanel implements vscode.Disposable {
             uncategorized: t('Uncategorized'),
             loadFailed: t('Could not refresh the step library.'),
             showCategories: t('Show sources and categories'),
+            resizeCategories: t('Resize sources and categories pane'),
+            resizeDetails: t('Resize step details pane'),
             back: t('Back')
         };
         const documentLanguage = (vscode.env.language || 'en').toLocaleLowerCase().startsWith('ru')
@@ -627,7 +629,7 @@ export class StepLibraryPanel implements vscode.Disposable {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
     <title>${escapeHtml(labels.title)}</title>
     <link href="${codiconsUri}" rel="stylesheet">
     <link href="${stylesUri}" rel="stylesheet">
@@ -657,6 +659,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     data-opened="${escapeHtml(labels.opened)}"
     data-action-failed="${escapeHtml(labels.actionFailed)}"
     data-load-failed="${escapeHtml(labels.loadFailed)}"
+    data-preferred-language="${documentLanguage}"
 >
     <div class="library-shell">
         <header class="library-toolbar">
@@ -684,6 +687,7 @@ export class StepLibraryPanel implements vscode.Disposable {
                 </div>
                 <div id="categoryTree" class="category-tree" role="tree" tabindex="0"></div>
             </aside>
+            <div id="categoryResizer" class="pane-resizer" data-divider="category" role="separator" aria-orientation="vertical" aria-label="${escapeHtml(labels.resizeCategories)}" tabindex="0"></div>
             <section class="pane definitions-pane" aria-label="${escapeHtml(labels.definitions)}">
                 <div class="pane-heading">
                     <h2>${escapeHtml(labels.definitions)}</h2>
@@ -692,6 +696,7 @@ export class StepLibraryPanel implements vscode.Disposable {
                 <div id="statusMessage" class="status-message">${escapeHtml(labels.loading)}</div>
                 <div id="definitionList" class="definition-list" role="listbox" tabindex="0" aria-busy="true"></div>
             </section>
+            <div id="detailsResizer" class="pane-resizer" data-divider="details" role="separator" aria-orientation="vertical" aria-label="${escapeHtml(labels.resizeDetails)}" tabindex="0"></div>
             <section id="detailsPane" class="pane details-pane" aria-label="${escapeHtml(labels.details)}">
                 <div class="pane-heading">
                     <button id="detailsBack" class="icon-button mobile-only" type="button" aria-label="${escapeHtml(labels.back)}">←</button>
