@@ -207,6 +207,7 @@ export function parseVanessaStepTemplateXml(xml: string): VanessaTemplateParseRe
 
     const steps: BuiltInStepDefinition[] = [];
     const categories: StepCategoryTranslation[] = [];
+    let activeCategoryPath: BuiltInStepDefinition['categoryPath'];
     let excludedSyntaxRows = 0;
     for (let index = 1; index < rowsItems.length; index++) {
         const [russianPattern, russianDescription, englishPattern, englishDescription]
@@ -225,16 +226,32 @@ export function parseVanessaStepTemplateXml(xml: string): VanessaTemplateParseRe
             throw new Error(`Vanessa template row ${index} has no Russian or English step pattern.`);
         }
         if (isStepCategoryDefinition({ ru, en })) {
-            categories.push({
+            const category = {
                 ...(ru ? { ru: ru.pattern } : {}),
                 ...(en ? { en: en.pattern } : {})
-            });
+            };
+            categories.push(category);
+            const russianPath = (category.ru ?? category.en ?? '')
+                .split('.')
+                .map(segment => normalizeStepCatalogText(segment))
+                .filter(Boolean);
+            const englishPath = (category.en ?? category.ru ?? '')
+                .split('.')
+                .map(segment => normalizeStepCatalogText(segment))
+                .filter(Boolean);
+            activeCategoryPath = russianPath.length > 0 || englishPath.length > 0
+                ? {
+                    ...(russianPath.length > 0 ? { ru: russianPath } : {}),
+                    ...(englishPath.length > 0 ? { en: englishPath } : {})
+                }
+                : undefined;
             continue;
         }
         steps.push({
             id: createStepDefinitionId(ru?.pattern, en?.pattern),
             ru,
-            en
+            en,
+            ...(activeCategoryPath ? { categoryPath: activeCategoryPath } : {})
         });
     }
 
@@ -394,11 +411,18 @@ function isCategoryOnlyEnrichment(
     for (let index = 0; index < existingSteps.length; index += 1) {
         const previous = existingSteps[index].categoryPath;
         const next = candidateSteps[index].categoryPath;
-        if (previous && JSON.stringify(previous) !== JSON.stringify(next)) {
+        if (previous && !next) {
             return false;
         }
-        if (!previous && next) {
-            addedCategory = true;
+        for (const language of ['ru', 'en'] as const) {
+            const previousPath = previous?.[language];
+            const nextPath = next?.[language];
+            if (previousPath && JSON.stringify(previousPath) !== JSON.stringify(nextPath)) {
+                return false;
+            }
+            if (!previousPath && nextPath) {
+                addedCategory = true;
+            }
         }
     }
     return addedCategory;

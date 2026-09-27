@@ -6,6 +6,7 @@ import type {
     ProjectDefinitionView
 } from './projectDefinition';
 import { buildProjectDefinitionSnippetData } from './projectDefinitionSnippet';
+import { alignGherkinTablesInText } from './gherkinTableUtils';
 import type { TestInfo } from './types';
 
 export type StepLibrarySourceGroup = 'builtIn' | 'user' | 'export' | 'nested' | 'main';
@@ -23,6 +24,7 @@ export interface StepLibraryItem {
     readonly kind: StepLibraryItemKind;
     readonly sourceGroup: StepLibrarySourceGroup;
     readonly template: string;
+    readonly templateDisplayText?: string;
     readonly displayText: string;
     readonly alternateDisplayText?: string;
     readonly language?: 'ru' | 'en';
@@ -71,9 +73,10 @@ function preferredDisplayText(definition: ProjectDefinition): string {
 }
 
 function displayText(definition: ProjectDefinition): string {
-    return buildProjectDefinitionSnippetData(definition, {
+    const text = buildProjectDefinitionSnippetData(definition, {
         preferredText: preferredDisplayText(definition)
     }).displayText;
+    return alignGherkinTablesInText(text, '\n');
 }
 
 function categoryPath(definition: ProjectDefinition): readonly string[] {
@@ -224,6 +227,7 @@ export function buildStepLibrarySnapshot(
             )
             : undefined;
         const alternateDisplayText = alternate ? displayText(alternate) : undefined;
+        const templateDisplayText = alignGherkinTablesInText(definition.template, '\n');
         const definitionCategoryPath = categoryPath(definition);
         const definitionParameters = parameters(definition);
         const navigable = definition.kind !== 'builtInStep'
@@ -248,6 +252,7 @@ export function buildStepLibrarySnapshot(
             kind: definition.kind,
             sourceGroup: group,
             template: definition.template,
+            ...(templateDisplayText !== definition.template ? { templateDisplayText } : {}),
             displayText: ownDisplayText,
             ...(alternateDisplayText ? { alternateDisplayText } : {}),
             ...(definition.language ? { language: definition.language } : {}),

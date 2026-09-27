@@ -126,6 +126,7 @@ function createHarness(options: {
     }>();
     const defaultCatalog = catalog('default-catalog', 'И встроенный шаг');
     const catalogs = options.catalogs ?? new Map([['default', defaultCatalog]]);
+    const catalogResources: Array<string | undefined> = [];
 
     const resolver = new ProjectDefinitionResolver({
         local: {
@@ -145,6 +146,7 @@ function createHarness(options: {
         },
         steps: {
             getCatalog: async resource => {
+                catalogResources.push(resource?.toString());
                 const key = resource?.toString().includes('workspace-b') ? 'b' : 'a';
                 return catalogs.get(key) ?? catalogs.get('default') ?? defaultCatalog;
             },
@@ -154,6 +156,7 @@ function createHarness(options: {
 
     return {
         resolver,
+        catalogResources,
         localEvents,
         scenarioEvents,
         catalogEvents,
@@ -184,6 +187,17 @@ test('ensureReady retains the physically routed local snapshot when its URI alia
     const view = await resolver.ensureReady(uri('file:///alias/libraries/exports.feature'));
 
     assert.equal(view.all.some(item => item.id === 'export'), true);
+});
+
+test('ensureReady resolves the built-in catalog in the routed workspace', async () => {
+    const { resolver, catalogResources } = createHarness({
+        local: localSnapshot([]),
+        snapshotLookupUnavailable: true
+    });
+
+    await resolver.ensureReady(uri('file:///external-alias/libraries/exports.feature'));
+
+    assert.deepEqual(catalogResources, ['file:///workspace-a']);
 });
 
 test('composes all four definition kinds and preserves localized built-in variants', async () => {

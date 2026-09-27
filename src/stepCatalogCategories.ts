@@ -144,7 +144,7 @@ function localizedCategoryPath(
     }
     return {
         ru: Object.freeze([...russian]),
-        ...(fullyTranslated ? { en: Object.freeze(english) } : {})
+        en: Object.freeze(fullyTranslated ? english : [...russian])
     };
 }
 

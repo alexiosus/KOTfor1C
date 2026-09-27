@@ -76,7 +76,10 @@ test('collapses repeated identical mappings and leaves conflicting mappings unca
         ]
     });
 
-    assert.deepEqual(result.steps[0].categoryPath, { ru: ['Общее', 'Данные'] });
+    assert.deepEqual(result.steps[0].categoryPath, {
+        ru: ['Общее', 'Данные'],
+        en: ['Общее', 'Данные']
+    });
     assert.equal(result.steps[1].categoryPath, undefined);
     assert.equal(result.steps[2].categoryPath, undefined);
     assert.deepEqual(result.steps.map(item => item.id), [
@@ -109,8 +112,11 @@ test('reports unmatched registrations and missing or conflicting category transl
     });
 
     assert.deepEqual(result.steps.map(item => item.categoryPath), [
-        { ru: ['Интерфейс', 'Формы'] },
-        { ru: ['Неизвестно'] }
+        {
+            ru: ['Интерфейс', 'Формы'],
+            en: ['Интерфейс', 'Формы']
+        },
+        { ru: ['Неизвестно'], en: ['Неизвестно'] }
     ]);
     assert.equal(result.report.unmatchedRegistrationCount, 2);
     assert.deepEqual(result.report.untranslatableCategorySegments, [
@@ -118,6 +124,19 @@ test('reports unmatched registrations and missing or conflicting category transl
         'Формы'
     ]);
     assert.equal(result.steps.length, 2);
+});
+
+test('uses the Russian category path for English variants when no unambiguous translation exists', () => {
+    const result = enrichStepCatalogCategories({
+        steps: [step('И выполняю команду', 'And I execute command')],
+        categoryTranslations: [],
+        registrations: [registration('И выполняю команду', 'Прочее.Выполнить команду')]
+    });
+
+    assert.deepEqual(result.steps[0].categoryPath, {
+        ru: ['Прочее', 'Выполнить команду'],
+        en: ['Прочее', 'Выполнить команду']
+    });
 });
 
 test('applies one category mapping to every catalog variant sharing its Russian template', () => {

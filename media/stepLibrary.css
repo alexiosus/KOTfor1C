@@ -191,6 +191,13 @@ select:focus-visible,
     text-align: left;
 }
 
+:where(
+    .category-tree > .tree-node:nth-child(even),
+    .tree-children > .tree-node:nth-child(even)
+) > .tree-item {
+    background: var(--vscode-list-inactiveSelectionBackground, transparent);
+}
+
 .tree-item:hover,
 .tree-item[aria-selected="true"] {
     color: var(--vscode-list-activeSelectionForeground);
@@ -198,9 +205,14 @@ select:focus-visible,
 }
 
 .tree-chevron {
+    display: inline-flex;
     width: 12px;
     flex: 0 0 12px;
+    align-items: center;
+    justify-content: center;
     color: var(--vscode-descriptionForeground);
+    font-size: 14px;
+    line-height: 1;
     text-align: center;
 }
 
@@ -256,6 +268,10 @@ select:focus-visible,
     cursor: default;
 }
 
+.definition-row:nth-child(even) {
+    background: var(--vscode-list-inactiveSelectionBackground, transparent);
+}
+
 .definition-row:hover {
     background: var(--vscode-list-hoverBackground);
 }
@@ -265,11 +281,37 @@ select:focus-visible,
     background: var(--vscode-list-activeSelectionBackground);
 }
 
+.definition-row[aria-selected="true"] :is(
+    .syntax-keyword,
+    .syntax-string,
+    .syntax-parameter,
+    .syntax-table
+) {
+    color: inherit;
+}
+
 .definition-text {
     overflow-wrap: anywhere;
     font-family: var(--vscode-editor-font-family);
     line-height: 1.35;
     white-space: pre-wrap;
+}
+
+.syntax-keyword {
+    color: var(--vscode-symbolIcon-keywordForeground, var(--vscode-editor-foreground));
+    font-weight: 600;
+}
+
+.syntax-string {
+    color: var(--vscode-symbolIcon-stringForeground, var(--vscode-editor-foreground));
+}
+
+.syntax-parameter {
+    color: var(--vscode-symbolIcon-variableForeground, var(--vscode-editor-foreground));
+}
+
+.syntax-table {
+    color: var(--vscode-symbolIcon-operatorForeground, var(--vscode-descriptionForeground));
 }
 
 .definition-meta {
@@ -291,8 +333,10 @@ select:focus-visible,
 .details-content h3 {
     margin: 0 0 14px;
     font-size: 15px;
+    font-family: var(--vscode-editor-font-family);
     font-weight: 600;
     line-height: 1.45;
+    white-space: pre-wrap;
 }
 
 .details-field {

@@ -212,6 +212,33 @@ test('pairs built-in translations and keeps localized multiline display data', (
     assert.equal(english?.capturedLocation, undefined);
 });
 
+test('aligns Gherkin tables in every visual representation without changing the insertion template', () => {
+    const template = [
+        'And I inspect the table:',
+        '| Name |Long value|',
+        '| Longer name|x|'
+    ].join('\n');
+    const builtIn = definition({
+        id: 'built:table:en',
+        familyId: 'built:table',
+        kind: 'builtInStep',
+        template,
+        language: 'en'
+    });
+
+    const item = buildStepLibrarySnapshot(view([builtIn])).items[0] as
+        StepLibrarySnapshot['items'][number] & { templateDisplayText?: string };
+
+    const aligned = [
+        'And I inspect the table:',
+        '    | Name        | Long value |',
+        '    | Longer name | x          |'
+    ].join('\n');
+    assert.equal(item.displayText, aligned);
+    assert.equal(item.templateDisplayText, aligned);
+    assert.equal(item.template, template);
+});
+
 test('splits authored categories, exposes compact parameters, and uses export examples', () => {
     const snapshot = buildStepLibrarySnapshot(view(allSources()));
     const user = snapshot.items.find(item => item.kind === 'userStep');

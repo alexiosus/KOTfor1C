@@ -38,8 +38,10 @@ test('official template parser separates category translations from executable s
     assert.deepEqual(result.categories, [{ ru: 'Файлы', en: 'Files' }]);
     assert.equal(result.steps[0].ru?.pattern, 'И поле <Имя> равно "Значение"');
     assert.equal(result.steps[0].en?.description, 'Checks value & title');
+    assert.deepEqual(result.steps[0].categoryPath, { ru: ['Файлы'], en: ['Files'] });
     assert.equal(result.steps[1].en, undefined);
     assert.equal(result.steps[1].ru?.description, 'Описание\nв две строки');
+    assert.deepEqual(result.steps[1].categoryPath, { ru: ['Файлы'], en: ['Files'] });
 });
 
 test('official template parser rejects a row with three outer cells', () => {
@@ -180,7 +182,7 @@ test('generation report records source, duplicate, and category coverage data', 
     assert.equal(report.stepCount, 3);
     assert.deepEqual(report.duplicateRussianPatterns, ['И только русский шаг']);
     assert.deepEqual(report.duplicateEnglishPatterns, ['And field <Name> equals "Value"']);
-    assert.equal(report.categorizedStepCount, 1);
+    assert.equal(report.categorizedStepCount, 2);
     assert.equal(report.uncategorizedStepCount, 2);
     assert.equal(report.unmatchedRegistrationCount, 0);
     assert.deepEqual(report.conflictingCategoryMappings, []);
@@ -249,6 +251,43 @@ test('publication appends a category-enriched revision without modifying the ori
     assert.deepEqual(revision.steps[0].categoryPath, { ru: ['Файлы'], en: ['Files'] });
     const reportPath = revisionPath.replace('/catalog-', '/generation-report-');
     assert.equal(JSON.parse(await readFile(path.join(root, reportPath), 'utf8')).stepCount, 2);
+});
+
+test('publication permits adding a missing localized category path', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kot-step-catalog-'));
+    const { catalog, report } = generatedFixture();
+    const originalCatalog = {
+        ...catalog,
+        steps: catalog.steps.map((step, index) => index === 0
+            ? { ...step, categoryPath: { ru: step.categoryPath!.ru } }
+            : { id: step.id, ru: step.ru, ...(step.en ? { en: step.en } : {}) })
+    };
+    const originalBytes = serializeStepCatalogJson(originalCatalog);
+    const versionDirectory = path.join(root, generationOptions.version);
+    await mkdir(versionDirectory, { recursive: true });
+    await writeFile(path.join(versionDirectory, 'catalog.json'), originalBytes);
+    await writeFile(path.join(versionDirectory, 'generation-report.json'), 'original report\n');
+    await writeFile(path.join(root, 'index.json'), `${JSON.stringify({
+        schemaVersion: 1,
+        generatedAt: originalCatalog.generatedAt,
+        catalogs: {
+            [generationOptions.version]: {
+                path: `${generationOptions.version}/catalog.json`,
+                sha256: sha256Hex(originalBytes),
+                stepCount: originalCatalog.steps.length,
+                sourceCommit: originalCatalog.source.commit
+            }
+        }
+    })}\n`);
+
+    await writeCatalogPublication(root, catalog, report);
+
+    const index = JSON.parse(await readFile(path.join(root, 'index.json'), 'utf8'));
+    const revision = JSON.parse(await readFile(
+        path.join(root, index.catalogs[generationOptions.version].path),
+        'utf8'
+    ));
+    assert.deepEqual(revision.steps[0].categoryPath, { ru: ['Файлы'], en: ['Files'] });
 });
 
 test('publication writes exact catalog bytes and a sorted digest index', async () => {

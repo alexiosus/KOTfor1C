@@ -47,6 +47,14 @@ interface Protocol {
         uncategorized: boolean;
     };
     canInsertItem(item: ProtocolItem | undefined, insertionTargetAvailable: boolean): boolean;
+    tokenizeGherkinText(value: string): Array<{
+        kind: 'plain' | 'keyword' | 'string' | 'parameter' | 'table';
+        text: string;
+    }>;
+    preserveScrollPosition<T>(element: {
+        scrollTop: number;
+        scrollLeft: number;
+    }, action: () => T): T;
 }
 
 function loadProtocol(): { protocol: Protocol; source: string } {
@@ -145,6 +153,40 @@ test('prepares normalized search fields once instead of rereading source text pe
         readsAfterPreparation
     );
     assert.equal(preparedDisplayReads, 0);
+});
+
+test('tokenizes Gherkin presentation text without changing its content', () => {
+    const { protocol } = loadProtocol();
+    const source = [
+        'And I open "Sales" form',
+        '    | Name | <Value> |'
+    ].join('\n');
+
+    const tokens = protocol.tokenizeGherkinText(source);
+
+    assert.equal(tokens.map(token => token.text).join(''), source);
+    assert.deepEqual(tokens.filter(token => token.kind !== 'plain'), [
+        { kind: 'keyword', text: 'And' },
+        { kind: 'string', text: '"Sales"' },
+        { kind: 'table', text: '|' },
+        { kind: 'table', text: '|' },
+        { kind: 'parameter', text: '<Value>' },
+        { kind: 'table', text: '|' }
+    ]);
+});
+
+test('restores both scroll axes after a tree render mutates them', () => {
+    const { protocol } = loadProtocol();
+    const element = { scrollTop: 127, scrollLeft: 9 };
+
+    const result = protocol.preserveScrollPosition(element, () => {
+        element.scrollTop = 0;
+        element.scrollLeft = 0;
+        return 'rendered';
+    });
+
+    assert.equal(result, 'rendered');
+    assert.deepEqual(element, { scrollTop: 127, scrollLeft: 9 });
 });
 
 test('filters by source, ancestor category, and built-in language without hiding project definitions', () => {

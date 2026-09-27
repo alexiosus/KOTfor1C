@@ -31,6 +31,51 @@
         return normalize(value).match(/[\p{L}\p{N}_-]+/gu) || [];
     }
 
+    function tokenizeGherkinText(value) {
+        const source = String(value || '');
+        const result = [];
+        const pattern = /(^[ \t]*)(Given|When|Then|And|But|If|Допустим|Пусть|К тому же|Также|Дано|Когда|Тогда|Если|И|Но)(?=[ \t]|$)|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|<[^>\r\n]+>|%\d+(?:[ \t]+[^\s"'|<>]+)?|\|/gimu;
+        let cursor = 0;
+        const append = (kind, text) => {
+            if (!text) {
+                return;
+            }
+            const previous = result[result.length - 1];
+            if (previous?.kind === kind) {
+                previous.text += text;
+            } else {
+                result.push({ kind, text });
+            }
+        };
+        for (const match of source.matchAll(pattern)) {
+            append('plain', source.slice(cursor, match.index));
+            if (match[2]) {
+                append('plain', match[1]);
+                append('keyword', match[2]);
+            } else if (match[0] === '|') {
+                append('table', match[0]);
+            } else if (match[0].startsWith('"') || match[0].startsWith("'")) {
+                append('string', match[0]);
+            } else {
+                append('parameter', match[0]);
+            }
+            cursor = (match.index || 0) + match[0].length;
+        }
+        append('plain', source.slice(cursor));
+        return result;
+    }
+
+    function preserveScrollPosition(element, action) {
+        const scrollTop = element.scrollTop;
+        const scrollLeft = element.scrollLeft;
+        try {
+            return action();
+        } finally {
+            element.scrollTop = scrollTop;
+            element.scrollLeft = scrollLeft;
+        }
+    }
+
     function prepareItems(items) {
         return (items || []).map(item => {
             if (item && item.__stepLibraryPrepared === true) {
@@ -305,6 +350,8 @@
         buildCategoryTree,
         reconcileCategorySelection,
         canInsertItem,
-        isUncategorizedNodeId
+        isUncategorizedNodeId,
+        tokenizeGherkinText,
+        preserveScrollPosition
     });
 }));

@@ -224,7 +224,7 @@ export class StepLibraryPanel implements vscode.Disposable {
         void this.refreshSnapshot();
     }
 
-    private async refreshSnapshot(): Promise<void> {
+    private async refreshSnapshot(force = false): Promise<void> {
         const panel = this.panel;
         if (!panel) {
             return;
@@ -249,7 +249,7 @@ export class StepLibraryPanel implements vscode.Disposable {
             }
             const snapshot = buildStepLibrarySnapshot(view, this.services.getScenarios());
             this.lastSuccessfulSnapshot = snapshot;
-            await this.postSnapshotIfChanged(snapshot);
+            await this.postSnapshotIfChanged(snapshot, force);
         } catch (error) {
             if (generation !== this.loadGeneration || this.panel !== panel) {
                 return;
@@ -541,7 +541,7 @@ export class StepLibraryPanel implements vscode.Disposable {
             case 'refresh':
                 try {
                     await this.services.refreshDefinitions(this.resource);
-                    await this.refreshSnapshot();
+                    await this.refreshSnapshot(true);
                 } catch (error) {
                     await this.panel?.webview.postMessage({
                         command: 'error',
@@ -569,6 +569,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     private getWebviewHtml(webview: vscode.Webview, t: Translator): string {
         const nonce = getNonce();
         const mediaUri = vscode.Uri.joinPath(this.services.extensionUri, 'media');
+        const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'codicon.css'));
         const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'stepLibrary.css'));
         const protocolUri = webview.asWebviewUri(
             vscode.Uri.joinPath(mediaUri, 'stepLibraryProtocol.js')
@@ -628,6 +629,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
     <title>${escapeHtml(labels.title)}</title>
+    <link href="${codiconsUri}" rel="stylesheet">
     <link href="${stylesUri}" rel="stylesheet">
 </head>
 <body

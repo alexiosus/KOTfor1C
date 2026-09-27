@@ -417,6 +417,18 @@ test('does not repost an unchanged view identity and refreshes after resolver ch
     ).length, 1);
 });
 
+test('manual refresh acknowledges completion even when the library identity is unchanged', async () => {
+    const harness = createHarness(async () => view('view:same'));
+    await harness.panel.open(uri('file:///workspace/test.feature'));
+
+    await sendWebviewMessage(harness, { command: 'refresh' });
+
+    assert.equal(harness.refreshDefinitionsCalls, 1);
+    assert.equal(harness.fakePanel.webview.messages.filter(
+        (message: any) => message.command === 'snapshot'
+    ).length, 2);
+});
+
 test('publishes main scenarios from the scenario catalog and opens their captured location', async () => {
     const mainScenario: TestInfo = {
         name: 'Monthly close',

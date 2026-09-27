@@ -220,8 +220,11 @@ export class ProjectDefinitionResolver implements DisposableLike {
         local: ProjectDefinitionSnapshot | null
     ): Promise<ProjectDefinitionView> {
         const currentScenarios = this.#dependencies.scenarios.getScenarioCatalog();
+        const catalogResource = local
+            ? { toString: () => local.workspaceFolderUri } as vscode.Uri
+            : resource;
         const [steps, scenarios] = await Promise.all([
-            this.#dependencies.steps.getCatalog(resource),
+            this.#dependencies.steps.getCatalog(catalogResource),
             currentScenarios
                 ? Promise.resolve(currentScenarios)
                 : this.#dependencies.scenarios.ensureFreshScenarioCatalog()

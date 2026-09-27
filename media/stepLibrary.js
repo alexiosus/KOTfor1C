@@ -70,6 +70,20 @@
         statusMessage.classList.toggle('error', kind === 'error');
     }
 
+    function appendHighlightedText(element, value) {
+        element.replaceChildren();
+        for (const token of protocol.tokenizeGherkinText(value)) {
+            if (token.kind === 'plain') {
+                element.append(document.createTextNode(token.text));
+                continue;
+            }
+            const span = document.createElement('span');
+            span.className = `syntax-${token.kind}`;
+            span.textContent = token.text;
+            element.append(span);
+        }
+    }
+
     function sourceLabel(sourceGroup) {
         return labels[`source${sourceGroup.charAt(0).toUpperCase()}${sourceGroup.slice(1)}`]
             || sourceGroup;
@@ -159,11 +173,11 @@
         renderTree();
         renderResults();
         shell.classList.remove('categories-open');
-        definitionList.focus();
     }
 
     function createTreeNode(node, level) {
         const container = document.createElement('div');
+        container.className = 'tree-node';
         const button = document.createElement('button');
         const children = document.createElement('div');
         const expandable = node.children.length > 0;
@@ -180,8 +194,10 @@
         button.tabIndex = isSelectedTreeNode(node) ? 0 : -1;
 
         const chevron = document.createElement('span');
-        chevron.className = 'tree-chevron';
-        chevron.textContent = expandable ? (expanded ? '⌄' : '›') : '';
+        chevron.className = expandable
+            ? `tree-chevron codicon ${expanded ? 'codicon-chevron-down' : 'codicon-chevron-right'}`
+            : 'tree-chevron';
+        chevron.setAttribute('aria-hidden', 'true');
         const label = document.createElement('span');
         label.className = 'tree-label';
         label.textContent = node.label;
@@ -247,15 +263,17 @@
             count: items.length,
             children: []
         };
-        categoryTree.replaceChildren(
-            createTreeNode(allNode, 1),
-            ...roots.map(root => createTreeNode(root, 1))
-        );
-        if (focusNodeId) {
-            [...categoryTree.querySelectorAll('[data-node-id]')]
-                .find(element => element.dataset.nodeId === focusNodeId)
-                ?.focus();
-        }
+        protocol.preserveScrollPosition(categoryTree, () => {
+            categoryTree.replaceChildren(
+                createTreeNode(allNode, 1),
+                ...roots.map(root => createTreeNode(root, 1))
+            );
+            if (focusNodeId) {
+                [...categoryTree.querySelectorAll('[data-node-id]')]
+                    .find(element => element.dataset.nodeId === focusNodeId)
+                    ?.focus({ preventScroll: true });
+            }
+        });
     }
 
     function createDefinitionRow(item) {
@@ -267,7 +285,7 @@
         row.dataset.itemId = item.id;
         const text = document.createElement('div');
         text.className = 'definition-text';
-        text.textContent = item.displayText;
+        appendHighlightedText(text, item.displayText);
         const meta = document.createElement('div');
         meta.className = 'definition-meta';
         const source = document.createElement('span');
@@ -348,7 +366,11 @@
         label.textContent = labelText;
         const content = document.createElement(code ? 'pre' : 'p');
         content.className = code ? 'details-code' : 'details-value';
-        content.textContent = value;
+        if (code) {
+            appendHighlightedText(content, value);
+        } else {
+            content.textContent = value;
+        }
         field.append(label, content);
         detailsContent.append(field);
     }
@@ -373,7 +395,7 @@
             return;
         }
         const title = document.createElement('h3');
-        title.textContent = item.displayText;
+        appendHighlightedText(title, item.displayText);
         detailsContent.append(title);
         addDetailsField(labels.sourceLabel, item.sourceLabel || sourceLabel(item.sourceGroup));
         addDetailsField(labels.categoryLabel, categoryLabel(item));
@@ -393,7 +415,7 @@
         if (item.alternateDisplayText) {
             addDetailsField(labels.translationLabel, item.alternateDisplayText, true);
         }
-        addDetailsField(labels.templateLabel, item.template, true);
+        addDetailsField(labels.templateLabel, item.templateDisplayText || item.template, true);
         if (item.insertable !== false && !state.insertionTarget.available) {
             const targetHint = document.createElement('p');
             targetHint.className = 'target-hint';
