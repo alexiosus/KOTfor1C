@@ -141,6 +141,7 @@ function nestedDefinition(scenario: TestInfo): ProjectDefinition {
         parameters: Object.freeze(parameters),
         description: scenario.scenarioDescription || undefined,
         category: scenario.scenarioCategory || undefined,
+        scenarioCode: scenario.scenarioCode || undefined,
         sourceLabel: `Nested scenario (${scenario.relativePath || scenario.name})`,
         definitionLocation: scenarioLocation(scenario)
     });
@@ -163,7 +164,8 @@ function scenarioIdentity(scenarios: readonly TestInfo[]): string {
         name: scenario.name,
         parameters: scenario.parameters ?? [],
         description: scenario.scenarioDescription ?? '',
-        category: scenario.scenarioCategory ?? ''
+        category: scenario.scenarioCategory ?? '',
+        code: scenario.scenarioCode ?? ''
     })).sort((left, right) =>
         left.uri.localeCompare(right.uri)
         || left.name.localeCompare(right.name)

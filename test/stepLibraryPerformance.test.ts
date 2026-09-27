@@ -12,7 +12,7 @@ import { buildStepLibrarySnapshot } from '../src/stepLibraryModel';
 
 interface SearchItem {
     readonly id: string;
-    readonly sourceGroup: 'builtIn' | 'user' | 'export' | 'nested';
+    readonly sourceGroup: 'builtIn' | 'user' | 'export' | 'nested' | 'main';
     readonly displayText: string;
     readonly template: string;
     readonly searchText: string;

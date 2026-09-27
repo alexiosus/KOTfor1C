@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
     ProjectDefinition,
     ProjectDefinitionKind,
@@ -5,8 +6,10 @@ import type {
     ProjectDefinitionView
 } from './projectDefinition';
 import { buildProjectDefinitionSnippetData } from './projectDefinitionSnippet';
+import type { TestInfo } from './types';
 
-export type StepLibrarySourceGroup = 'builtIn' | 'user' | 'export' | 'nested';
+export type StepLibrarySourceGroup = 'builtIn' | 'user' | 'export' | 'nested' | 'main';
+export type StepLibraryItemKind = ProjectDefinitionKind | 'mainScenario';
 
 export interface StepLibraryParameter {
     readonly name: string;
@@ -17,17 +20,19 @@ export interface StepLibraryItem {
     readonly id: string;
     readonly definitionId: string;
     readonly familyId: string;
-    readonly kind: ProjectDefinitionKind;
+    readonly kind: StepLibraryItemKind;
     readonly sourceGroup: StepLibrarySourceGroup;
     readonly template: string;
     readonly displayText: string;
     readonly alternateDisplayText?: string;
     readonly language?: 'ru' | 'en';
     readonly description?: string;
+    readonly scenarioCode?: string;
     readonly categoryPath: readonly string[];
     readonly parameters: readonly StepLibraryParameter[];
     readonly sourceLabel: string;
     readonly navigable: boolean;
+    readonly insertable: boolean;
     readonly capturedLocation?: ProjectDefinitionLocation;
     readonly searchText: string;
 }
@@ -42,7 +47,8 @@ const SOURCE_ORDER: Readonly<Record<StepLibrarySourceGroup, number>> = Object.fr
     builtIn: 0,
     user: 1,
     export: 2,
-    nested: 3
+    nested: 3,
+    main: 4
 });
 
 function compareText(left: string, right: string): number {
@@ -115,7 +121,80 @@ function presentationId(definition: ProjectDefinition): string {
     return `${definition.id}#${definition.language ?? 'authored'}`;
 }
 
-export function buildStepLibrarySnapshot(view: ProjectDefinitionView): StepLibrarySnapshot {
+function mainScenarioLocation(scenario: TestInfo): ProjectDefinitionLocation {
+    const line = scenario.scenarioCodeLine ?? 0;
+    const startCharacter = scenario.scenarioCodeLineStartCharacter ?? 0;
+    const endCharacter = scenario.scenarioCodeLineEndCharacter ?? startCharacter;
+    return Object.freeze({
+        uri: scenario.yamlFileUri.toString(),
+        range: Object.freeze({
+            start: Object.freeze({ line, character: startCharacter }),
+            end: Object.freeze({ line, character: endCharacter })
+        })
+    });
+}
+
+function isMainScenario(scenario: TestInfo): boolean {
+    return typeof scenario.tabName === 'string' && scenario.tabName.trim().length > 0;
+}
+
+function mainScenarioItems(scenarios: readonly TestInfo[]): readonly StepLibraryItem[] {
+    return scenarios.filter(isMainScenario).map(scenario => {
+        const uri = scenario.yamlFileUri.toString();
+        const definitionId = `mainScenario:${uri}`;
+        const tabName = scenario.tabName!.trim();
+        const relativePath = scenario.relativePath || scenario.name;
+        const sourceLabel = `Main scenario (${relativePath})`;
+        const scenarioCode = scenario.scenarioCode?.trim();
+        const description = scenario.scenarioDescription?.trim();
+        const capturedLocation = mainScenarioLocation(scenario);
+        return Object.freeze({
+            id: `mainScenario#${uri}`,
+            definitionId,
+            familyId: definitionId,
+            kind: 'mainScenario' as const,
+            sourceGroup: 'main' as const,
+            template: scenario.name,
+            displayText: scenario.name,
+            ...(description ? { description } : {}),
+            ...(scenarioCode ? { scenarioCode } : {}),
+            categoryPath: Object.freeze([tabName]),
+            parameters: Object.freeze([]),
+            sourceLabel,
+            navigable: true,
+            insertable: false,
+            capturedLocation,
+            searchText: normalizeSearchText([
+                scenario.name,
+                description,
+                scenarioCode,
+                tabName,
+                sourceLabel,
+                relativePath
+            ])
+        });
+    });
+}
+
+function mainScenarioIdentity(scenarios: readonly TestInfo[]): string | undefined {
+    const signatures = scenarios.filter(isMainScenario).map(scenario => ({
+        uri: scenario.yamlFileUri.toString(),
+        name: scenario.name,
+        code: scenario.scenarioCode ?? '',
+        description: scenario.scenarioDescription ?? '',
+        tabName: scenario.tabName?.trim() ?? '',
+        relativePath: scenario.relativePath
+    })).sort((left, right) => compareText(left.uri, right.uri));
+    if (signatures.length === 0) {
+        return undefined;
+    }
+    return createHash('sha256').update(JSON.stringify(signatures), 'utf8').digest('hex');
+}
+
+export function buildStepLibrarySnapshot(
+    view: ProjectDefinitionView,
+    scenarios: readonly TestInfo[] = []
+): StepLibrarySnapshot {
     const builtInsByFamily = new Map<string, ProjectDefinition[]>();
     for (const definition of view.all) {
         if (definition.kind !== 'builtInStep') {
@@ -131,9 +210,10 @@ export function buildStepLibrarySnapshot(view: ProjectDefinitionView): StepLibra
         builtIn: 0,
         user: 0,
         export: 0,
-        nested: 0
+        nested: 0,
+        main: 0
     };
-    const items = view.all.map(definition => {
+    const items: StepLibraryItem[] = view.all.map(definition => {
         const group = sourceGroup(definition.kind);
         counts[group] += 1;
         const ownDisplayText = displayText(definition);
@@ -156,6 +236,7 @@ export function buildStepLibrarySnapshot(view: ProjectDefinitionView): StepLibra
             alternateDisplayText,
             definition.template,
             definition.description,
+            definition.scenarioCode,
             ...definitionCategoryPath,
             definition.sourceLabel,
             ...definitionParameters.flatMap(parameter => [parameter.name, parameter.defaultValue])
@@ -171,21 +252,28 @@ export function buildStepLibrarySnapshot(view: ProjectDefinitionView): StepLibra
             ...(alternateDisplayText ? { alternateDisplayText } : {}),
             ...(definition.language ? { language: definition.language } : {}),
             ...(definition.description ? { description: definition.description } : {}),
+            ...(definition.scenarioCode ? { scenarioCode: definition.scenarioCode } : {}),
             categoryPath: definitionCategoryPath,
             parameters: definitionParameters,
             sourceLabel: definition.sourceLabel,
             navigable,
+            insertable: true,
             ...(capturedLocation ? { capturedLocation } : {}),
             searchText
         });
-    }).sort((left, right) =>
+    });
+    const mainItems = mainScenarioItems(scenarios);
+    counts.main = mainItems.length;
+    items.push(...mainItems);
+    items.sort((left, right) =>
         SOURCE_ORDER[left.sourceGroup] - SOURCE_ORDER[right.sourceGroup]
         || compareText(left.displayText.toLowerCase(), right.displayText.toLowerCase())
         || compareText(left.id, right.id)
     );
 
+    const mainIdentity = mainScenarioIdentity(scenarios);
     return Object.freeze({
-        viewIdentity: view.identity,
+        viewIdentity: mainIdentity ? `${view.identity}\0main:${mainIdentity}` : view.identity,
         items: Object.freeze(items),
         counts: Object.freeze(counts)
     });

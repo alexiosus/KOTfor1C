@@ -8,12 +8,13 @@
 }(typeof globalThis === 'object' ? globalThis : this, function createStepLibraryProtocol() {
     'use strict';
 
-    const SOURCE_ORDER = ['builtIn', 'user', 'export', 'nested'];
+    const SOURCE_ORDER = ['builtIn', 'user', 'export', 'nested', 'main'];
     const DEFAULT_SOURCE_LABELS = Object.freeze({
         builtIn: 'Vanessa',
         user: 'User steps',
         export: 'Export scenarios',
-        nested: 'Nested scenarios'
+        nested: 'Nested scenarios',
+        main: 'Main scenarios'
     });
     const DEFAULT_RESULT_LIMIT = 100;
     const UNCATEGORIZED_SENTINEL = '#uncategorized';
@@ -294,11 +295,16 @@
         return { sourceGroup, categoryPath, uncategorized: false };
     }
 
+    function canInsertItem(item, insertionTargetAvailable) {
+        return Boolean(item && item.insertable !== false && insertionTargetAvailable);
+    }
+
     return Object.freeze({
         searchItems,
         prepareItems,
         buildCategoryTree,
         reconcileCategorySelection,
+        canInsertItem,
         isUncategorizedNodeId
     });
 }));

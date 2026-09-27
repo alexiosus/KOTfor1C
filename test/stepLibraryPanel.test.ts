@@ -8,6 +8,7 @@ import * as projectDefinitionSnippet from '../src/projectDefinitionSnippet';
 import { getGherkinInsertionContext as actualInsertionContext } from '../src/gherkinInsertionContext';
 import type { ProjectDefinition } from '../src/projectDefinition';
 import type { ProjectDefinitionView } from '../src/projectDefinition';
+import type { TestInfo } from '../src/types';
 
 interface Disposable {
     dispose(): void;
@@ -230,7 +231,8 @@ function loadPanelModule(
 
 function createHarness(
     getView: (resource?: unknown) => Promise<ProjectDefinitionView>,
-    activeEditor?: any
+    activeEditor?: any,
+    getScenarios: () => readonly TestInfo[] = () => []
 ) {
     const fakePanel = new FakePanel();
     const runtime = createRuntime(activeEditor);
@@ -247,6 +249,7 @@ function createHarness(
             getView,
             onDidChangeView: changes.event
         },
+        getScenarios,
         refreshDefinitions: async () => {
             refreshDefinitionsCalls += 1;
         }
@@ -389,6 +392,41 @@ test('does not repost an unchanged view identity and refreshes after resolver ch
     assert.equal(harness.fakePanel.webview.messages.filter(
         (message: any) => message.command === 'snapshot'
     ).length, 1);
+});
+
+test('publishes main scenarios from the scenario catalog and opens their captured location', async () => {
+    const mainScenario: TestInfo = {
+        name: 'Monthly close',
+        tabName: 'Accounting',
+        scenarioCode: '000020026',
+        yamlFileUri: uri('file:///workspace/main/scen.yaml') as TestInfo['yamlFileUri'],
+        relativePath: 'Accounting/MonthlyClose'
+    };
+    const harness = createHarness(
+        async () => view('view:main'),
+        undefined,
+        () => [mainScenario]
+    );
+    await harness.panel.open(mainScenario.yamlFileUri);
+
+    const snapshotMessage = harness.fakePanel.webview.messages.find(
+        (message: any) => message.command === 'snapshot'
+    ) as any;
+    const item = snapshotMessage.snapshot.items.find(
+        (candidate: any) => candidate.kind === 'mainScenario'
+    );
+    assert.equal(item.scenarioCode, '000020026');
+    assert.equal(item.sourceGroup, 'main');
+
+    await sendWebviewMessage(harness, {
+        command: 'openDefinition',
+        itemId: item.id
+    });
+    assert.equal(harness.runtime.navigationCalls.length, 1);
+    assert.equal(
+        harness.runtime.navigationCalls[0][3].uri,
+        'file:///workspace/main/scen.yaml'
+    );
 });
 
 test('defers resolver work while hidden and refreshes when visible again', async () => {

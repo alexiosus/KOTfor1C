@@ -234,7 +234,8 @@
                 builtIn: labels.sourceBuiltIn,
                 user: labels.sourceUser,
                 export: labels.sourceExport,
-                nested: labels.sourceNested
+                nested: labels.sourceNested,
+                main: labels.sourceMain
             },
             uncategorized: labels.uncategorized
         });
@@ -358,7 +359,10 @@
         const insertPending = item && state.pendingActions.has(`insert\0${item.id}`);
         const copyPending = item && state.pendingActions.has(`copy\0${item.id}`);
         const openPending = item && state.pendingActions.has(`openDefinition\0${item.id}`);
-        insertButton.disabled = !item || !state.insertionTarget.available || insertPending;
+        insertButton.disabled = !protocol.canInsertItem(
+            item,
+            state.insertionTarget.available
+        ) || insertPending;
         copyButton.disabled = !item || copyPending;
         openDefinitionButton.disabled = !item || !item.navigable || openPending;
         if (!item) {
@@ -373,6 +377,9 @@
         detailsContent.append(title);
         addDetailsField(labels.sourceLabel, item.sourceLabel || sourceLabel(item.sourceGroup));
         addDetailsField(labels.categoryLabel, categoryLabel(item));
+        if (item.scenarioCode) {
+            addDetailsField(labels.scenarioCodeLabel, item.scenarioCode, true);
+        }
         if (item.description) {
             addDetailsField(labels.descriptionLabel, item.description);
         }
@@ -387,10 +394,15 @@
             addDetailsField(labels.translationLabel, item.alternateDisplayText, true);
         }
         addDetailsField(labels.templateLabel, item.template, true);
-        if (!state.insertionTarget.available) {
+        if (item.insertable !== false && !state.insertionTarget.available) {
             const targetHint = document.createElement('p');
             targetHint.className = 'target-hint';
             targetHint.textContent = labels.insertionUnavailable;
+            detailsContent.append(targetHint);
+        } else if (item.insertable === false) {
+            const targetHint = document.createElement('p');
+            targetHint.className = 'target-hint';
+            targetHint.textContent = labels.itemNotInsertable;
             detailsContent.append(targetHint);
         }
     }
@@ -406,9 +418,12 @@
     }
 
     function requestInsert(itemId) {
-        if (!state.insertionTarget.available) {
+        const item = state.snapshot?.items.find(candidate => candidate.id === itemId);
+        if (!protocol.canInsertItem(item, state.insertionTarget.available)) {
             shell.classList.add('details-open');
-            announce(labels.insertionUnavailable);
+            announce(item?.insertable === false
+                ? labels.itemNotInsertable
+                : labels.insertionUnavailable);
             return;
         }
         sendAction('insert', itemId);

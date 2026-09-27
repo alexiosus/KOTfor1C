@@ -39,6 +39,7 @@ export interface ProjectDefinition {
     readonly description?: string;
     readonly category?: string;
     readonly categoryPath?: readonly string[];
+    readonly scenarioCode?: string;
     readonly usageExample?: string;
     readonly sourceLabel: string;
     readonly workspaceFolderUri?: string;

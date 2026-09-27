@@ -12,10 +12,12 @@ import {
 } from './gherkinInsertionContext';
 import { buildProjectDefinitionInsertion } from './projectDefinitionSnippet';
 import { openProjectDefinitionHandler } from './projectDefinitionNavigation';
+import type { TestInfo } from './types';
 
 export interface StepLibraryPanelServices {
     readonly extensionUri: vscode.Uri;
     readonly resolver: ProjectDefinitionResolver;
+    readonly getScenarios: () => readonly TestInfo[];
     readonly refreshDefinitions: (resource?: vscode.Uri) => Promise<void>;
 }
 
@@ -245,7 +247,7 @@ export class StepLibraryPanel implements vscode.Disposable {
                 this.pendingRefreshWhenVisible = true;
                 return;
             }
-            const snapshot = buildStepLibrarySnapshot(view);
+            const snapshot = buildStepLibrarySnapshot(view, this.services.getScenarios());
             this.lastSuccessfulSnapshot = snapshot;
             await this.postSnapshotIfChanged(snapshot);
         } catch (error) {
@@ -472,6 +474,9 @@ export class StepLibraryPanel implements vscode.Disposable {
     }
 
     private async insertItem(item: StepLibraryItem): Promise<boolean> {
+        if (!item.insertable) {
+            return false;
+        }
         let target = this.revalidateInsertionTarget();
         if (!target) {
             return false;
@@ -572,7 +577,7 @@ export class StepLibraryPanel implements vscode.Disposable {
         const labels = {
             title: t('KOT Step Library'),
             search: t('Search steps'),
-            searchPlaceholder: t('Search templates, descriptions, categories, and parameters'),
+            searchPlaceholder: t('Search templates, descriptions, codes, categories, and parameters'),
             categories: t('Sources and categories'),
             definitions: t('Definitions'),
             details: t('Step details'),
@@ -589,6 +594,7 @@ export class StepLibraryPanel implements vscode.Disposable {
             allDefinitions: t('All definitions'),
             source: t('Source'),
             category: t('Category'),
+            scenarioCode: t('Scenario code'),
             description: t('Description'),
             parameters: t('Parameters'),
             translation: t('Translation'),
@@ -597,6 +603,7 @@ export class StepLibraryPanel implements vscode.Disposable {
             copy: t('Copy'),
             openDefinition: t('Open definition'),
             insertionUnavailable: t('Open a supported Feature or scenario text block to insert a step.'),
+            itemNotInsertable: t('Main scenarios cannot be inserted.'),
             inserted: t('Step inserted.'),
             copied: t('Step copied.'),
             opened: t('Definition opened.'),
@@ -605,6 +612,7 @@ export class StepLibraryPanel implements vscode.Disposable {
             user: t('User steps'),
             export: t('Export scenarios'),
             nested: t('Nested scenarios'),
+            main: t('Main scenarios'),
             uncategorized: t('Uncategorized'),
             loadFailed: t('Could not refresh the step library.'),
             showCategories: t('Show sources and categories'),
@@ -627,6 +635,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     data-source-user="${escapeHtml(labels.user)}"
     data-source-export="${escapeHtml(labels.export)}"
     data-source-nested="${escapeHtml(labels.nested)}"
+    data-source-main="${escapeHtml(labels.main)}"
     data-uncategorized="${escapeHtml(labels.uncategorized)}"
     data-no-results="${escapeHtml(labels.noResults)}"
     data-no-definitions="${escapeHtml(labels.noDefinitions)}"
@@ -634,11 +643,13 @@ export class StepLibraryPanel implements vscode.Disposable {
     data-all-definitions="${escapeHtml(labels.allDefinitions)}"
     data-source-label="${escapeHtml(labels.source)}"
     data-category-label="${escapeHtml(labels.category)}"
+    data-scenario-code-label="${escapeHtml(labels.scenarioCode)}"
     data-description-label="${escapeHtml(labels.description)}"
     data-parameters-label="${escapeHtml(labels.parameters)}"
     data-translation-label="${escapeHtml(labels.translation)}"
     data-template-label="${escapeHtml(labels.template)}"
     data-insertion-unavailable="${escapeHtml(labels.insertionUnavailable)}"
+    data-item-not-insertable="${escapeHtml(labels.itemNotInsertable)}"
     data-inserted="${escapeHtml(labels.inserted)}"
     data-copied="${escapeHtml(labels.copied)}"
     data-opened="${escapeHtml(labels.opened)}"

@@ -4,7 +4,11 @@ import type {
     ProjectDefinition,
     ProjectDefinitionView
 } from '../src/projectDefinition';
-import { buildStepLibrarySnapshot } from '../src/stepLibraryModel';
+import {
+    buildStepLibrarySnapshot,
+    type StepLibrarySnapshot
+} from '../src/stepLibraryModel';
+import type { TestInfo } from '../src/types';
 
 function definition(
     overrides: Partial<ProjectDefinition> & Pick<ProjectDefinition, 'id' | 'kind' | 'template'>
@@ -24,6 +28,31 @@ function view(definitions: readonly ProjectDefinition[]): ProjectDefinitionView 
         byId: new Map(definitions.map(item => [item.id, item])),
         byNormalizedTemplate: new Map()
     };
+}
+
+function scenario(overrides: Partial<TestInfo> & Pick<TestInfo, 'name'>): TestInfo {
+    const serializedUri = overrides.yamlFileUri?.toString() ?? 'file:///workspace/main/scen.yaml';
+    return {
+        name: overrides.name,
+        yamlFileUri: overrides.yamlFileUri ?? {
+            scheme: 'file',
+            fsPath: serializedUri.replace(/^file:\/\//u, ''),
+            toString: () => serializedUri
+        } as TestInfo['yamlFileUri'],
+        relativePath: 'main',
+        ...overrides
+    };
+}
+
+function snapshotWithScenarios(
+    definitions: readonly ProjectDefinition[],
+    scenarios: readonly TestInfo[]
+): StepLibrarySnapshot {
+    const build = buildStepLibrarySnapshot as unknown as (
+        currentView: ProjectDefinitionView,
+        currentScenarios: readonly TestInfo[]
+    ) => StepLibrarySnapshot;
+    return build(view(definitions), scenarios);
 }
 
 function allSources(): readonly ProjectDefinition[] {
@@ -95,10 +124,74 @@ test('builds stable serializable rows for all callable sources', () => {
     const snapshot = buildStepLibrarySnapshot(view(allSources()));
 
     assert.equal(snapshot.viewIdentity, 'view:visual-library');
-    assert.deepEqual(snapshot.counts, { builtIn: 2, user: 1, export: 1, nested: 1 });
+    assert.deepEqual(snapshot.counts, { builtIn: 2, user: 1, export: 1, nested: 1, main: 0 });
     assert.equal(snapshot.items.length, 5);
     assert.equal(JSON.parse(JSON.stringify(snapshot)).viewIdentity, snapshot.viewIdentity);
     assert.equal(JSON.stringify(snapshot).includes('snippetText'), false);
+});
+
+test('includes nested scenario codes in presentation and search data', () => {
+    const nested = Object.assign(
+        definition({
+            id: 'nested:code',
+            kind: 'nestedScenario',
+            template: 'Fill GL account',
+            sourceLabel: 'Nested scenario (Accounting)',
+            definitionLocation: allSources()[4].definitionLocation
+        }),
+        { scenarioCode: '000015128' }
+    );
+
+    const item = buildStepLibrarySnapshot(view([nested])).items[0] as {
+        scenarioCode?: string;
+        searchText: string;
+    };
+
+    assert.equal(item.scenarioCode, '000015128');
+    assert.match(item.searchText, /000015128/u);
+});
+
+test('adds non-callable main scenarios as a separate searchable source grouped by Test Manager tab', () => {
+    const snapshot = snapshotWithScenarios([], [scenario({
+        name: 'Monthly close',
+        scenarioCode: '000020026',
+        scenarioDescription: 'Builds the monthly close feature.',
+        tabName: 'Accounting',
+        relativePath: 'Accounting/MonthlyClose'
+    })]);
+
+    assert.deepEqual(snapshot.counts, {
+        builtIn: 0,
+        user: 0,
+        export: 0,
+        nested: 0,
+        main: 1
+    });
+    assert.equal(snapshot.items.length, 1);
+    assert.deepEqual(snapshot.items[0], {
+        id: 'mainScenario#file:///workspace/main/scen.yaml',
+        definitionId: 'mainScenario:file:///workspace/main/scen.yaml',
+        familyId: 'mainScenario:file:///workspace/main/scen.yaml',
+        kind: 'mainScenario',
+        sourceGroup: 'main',
+        template: 'Monthly close',
+        displayText: 'Monthly close',
+        description: 'Builds the monthly close feature.',
+        scenarioCode: '000020026',
+        categoryPath: ['Accounting'],
+        parameters: [],
+        sourceLabel: 'Main scenario (Accounting/MonthlyClose)',
+        navigable: true,
+        insertable: false,
+        capturedLocation: {
+            uri: 'file:///workspace/main/scen.yaml',
+            range: {
+                start: { line: 0, character: 0 },
+                end: { line: 0, character: 0 }
+            }
+        },
+        searchText: 'monthly close builds the monthly close feature. 000020026 accounting main scenario (accounting/monthlyclose) accounting/monthlyclose'
+    });
 });
 
 test('pairs built-in translations and keeps localized multiline display data', () => {

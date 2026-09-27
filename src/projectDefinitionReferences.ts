@@ -61,7 +61,10 @@ export interface ProjectDefinitionReferenceOptions {
 }
 
 interface ResolvedSearchRoot {
+    /** Canonical path used only for filesystem traversal and reads. */
     readonly path: string;
+    /** Workspace-facing path used to construct locations returned to VS Code. */
+    readonly uriPath: string;
     readonly extensions: ReadonlySet<string>;
 }
 
@@ -235,7 +238,11 @@ export class ProjectDefinitionReferenceService {
         token: Pick<vscode.CancellationToken, 'isCancellationRequested'>
     ): Promise<ResolvedSearchRoot[]> {
         const configured = await this.#options.loadSearchRoots(resource);
-        const merged = new Map<string, { path: string; extensions: Set<string> }>();
+        const merged = new Map<string, {
+            path: string;
+            uriPath: string;
+            extensions: Set<string>;
+        }>();
         for (const item of configured) {
             if (token.isCancellationRequested) {
                 throw new ConcurrencyCancelledError();
@@ -243,7 +250,11 @@ export class ProjectDefinitionReferenceService {
             try {
                 const resolvedPath = await this.#options.fileSystem.realpath(item.path);
                 const key = pathKey(resolvedPath);
-                const current = merged.get(key) ?? { path: resolvedPath, extensions: new Set<string>() };
+                const current = merged.get(key) ?? {
+                    path: resolvedPath,
+                    uriPath: path.resolve(item.path),
+                    extensions: new Set<string>()
+                };
                 item.extensions.forEach(extension => current.extensions.add(normalizeExtension(extension)));
                 merged.set(key, current);
             } catch (error) {
@@ -252,6 +263,7 @@ export class ProjectDefinitionReferenceService {
         }
         return Array.from(merged.values()).map(item => ({
             path: item.path,
+            uriPath: item.uriPath,
             extensions: item.extensions
         }));
     }
@@ -292,7 +304,11 @@ export class ProjectDefinitionReferenceService {
                 () => token.isCancellationRequested
             );
             for (const filePath of files) {
-                const uri = this.#options.fileSystem.toUri(filePath);
+                const relativePath = path.relative(root.path, filePath);
+                const uriPath = relativePath
+                    ? path.join(root.uriPath, relativePath)
+                    : root.uriPath;
+                const uri = this.#options.fileSystem.toUri(uriPath);
                 sources.set(uri, { filePath, uri });
             }
         }
@@ -309,7 +325,11 @@ export class ProjectDefinitionReferenceService {
             }
             const extension = path.extname(document.fileName).toLocaleLowerCase();
             const included = roots.some(root =>
-                root.extensions.has(extension) && isSameOrNestedPath(document.fileName, root.path)
+                root.extensions.has(extension)
+                && (
+                    isSameOrNestedPath(document.fileName, root.uriPath)
+                    || isSameOrNestedPath(document.fileName, root.path)
+                )
             );
             if (!included) {
                 continue;

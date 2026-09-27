@@ -106,6 +106,8 @@ test('package and runtime locale bundles have matching keys for the visual libra
         'User steps',
         'Export scenarios',
         'Nested scenarios',
+        'Main scenarios',
+        'Scenario code',
         'Uncategorized',
         'Insert',
         'Copy',

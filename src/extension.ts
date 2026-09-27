@@ -896,6 +896,7 @@ export function activate(context: vscode.ExtensionContext) {
                 const panel = new StepLibraryPanel({
                     extensionUri: context.extensionUri,
                     resolver: projectDefinitionResolver,
+                    getScenarios: () => phaseSwitcherProvider.getScenarioCatalog()?.all ?? [],
                     refreshDefinitions: async resource => {
                         await stepCatalogService.refresh(resource);
                         await projectDefinitionIndex.reloadConfigurations();

@@ -6,13 +6,14 @@ import vm from 'node:vm';
 
 interface ProtocolItem {
     id: string;
-    kind: 'builtInStep' | 'userStep' | 'exportScenario' | 'nestedScenario';
-    sourceGroup: 'builtIn' | 'user' | 'export' | 'nested';
+    kind: 'builtInStep' | 'userStep' | 'exportScenario' | 'nestedScenario' | 'mainScenario';
+    sourceGroup: 'builtIn' | 'user' | 'export' | 'nested' | 'main';
     displayText: string;
     template: string;
     searchText: string;
     categoryPath: string[];
     language?: 'ru' | 'en';
+    insertable?: boolean;
 }
 
 interface Protocol {
@@ -45,6 +46,7 @@ interface Protocol {
         categoryPath: string[];
         uncategorized: boolean;
     };
+    canInsertItem(item: ProtocolItem | undefined, insertionTargetAvailable: boolean): boolean;
 }
 
 function loadProtocol(): { protocol: Protocol; source: string } {
@@ -305,6 +307,21 @@ test('uses stable alphabetical ties and returns a bounded result window', () => 
         protocol.searchItems(items, '', { offset: 1, limit: 1 }).map(value => value.id),
         ['b']
     );
+});
+
+test('allows insertion only for callable library items with an active editor target', () => {
+    const { protocol } = loadProtocol();
+    const callable = item('callable', 'Open form', { insertable: true });
+    const mainScenario = item('main', 'Monthly close', {
+        kind: 'mainScenario',
+        sourceGroup: 'main',
+        insertable: false
+    });
+
+    assert.equal(protocol.canInsertItem(callable, true), true);
+    assert.equal(protocol.canInsertItem(callable, false), false);
+    assert.equal(protocol.canInsertItem(mainScenario, true), false);
+    assert.equal(protocol.canInsertItem(undefined, true), false);
 });
 
 test('exports under Node, attaches to globalThis, and contains no edit-distance implementation', () => {

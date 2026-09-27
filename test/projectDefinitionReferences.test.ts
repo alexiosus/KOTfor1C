@@ -395,6 +395,34 @@ test('deduplicates aliased roots and invalidates only a changed file', async () 
     assert.equal(fileSystem.reads, 3);
 });
 
+test('returns workspace-facing URIs while reading files through a canonical root alias', async () => {
+    const nested = definition(
+        'nested:workspace-uri',
+        'nestedScenario',
+        'Workspace call',
+        'file:///workspace/definition.yaml'
+    );
+    const fileSystem = new VirtualFileSystem({
+        '/physical/main.yaml': { text: 'And Workspace call\n' }
+    });
+    fileSystem.aliases.set('/workspace', '/physical');
+    const service = createService(
+        [nested],
+        fileSystem,
+        [{ path: '/workspace', extensions: ['.yaml'] }]
+    );
+
+    const references = await service.findReferences(
+        nested.id,
+        uri('file:///workspace/definition.yaml'),
+        { includeDeclaration: false },
+        noCancellation
+    );
+
+    assert.equal(references.length, 1);
+    assert.equal(references[0].uri.toString(), 'file:///workspace/main.yaml');
+});
+
 test('bounds concurrent reads and cancels without publishing partial results', async () => {
     const nested = definition('nested:many', 'nestedScenario', 'Many call', 'file:///defs/many.yaml');
     const files = Object.fromEntries(Array.from({ length: 8 }, (_, index) => [

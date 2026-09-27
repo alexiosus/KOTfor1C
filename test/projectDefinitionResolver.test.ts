@@ -387,6 +387,26 @@ test('category-only scenario changes rebuild resolver identity and nested defini
     );
 });
 
+test('code-only scenario changes rebuild resolver identity and nested definition', async () => {
+    const target = 'file:///workspace-a/nested/scen.yaml';
+    const original = {
+        ...scenario('Create order', target, 'nested'),
+        scenarioCode: '000001'
+    };
+    const harness = createHarness({ scenarios: buildScenarioCatalog([original]) });
+    const resource = uri('file:///workspace-a/test.feature');
+    const before = await harness.resolver.getView(resource);
+
+    harness.setScenarios(buildScenarioCatalog([{ ...original, scenarioCode: '000002' }]));
+    const after = await harness.resolver.getView(resource);
+
+    assert.notEqual(after.identity, before.identity);
+    assert.equal(
+        after.all.find(item => item.kind === 'nestedScenario')?.scenarioCode,
+        '000002'
+    );
+});
+
 test('emits view invalidation and rebuilds after a local snapshot change', async () => {
     const initial = localSnapshot([
         localDefinition('one', 'userStep', 'И первый', 'file:///workspace-a/one.bsl')
