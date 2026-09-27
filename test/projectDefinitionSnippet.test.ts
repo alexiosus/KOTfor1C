@@ -90,6 +90,25 @@ test('replaces a callable keyword with the typed keyword and otherwise keeps its
         buildCallableDefinitionText('Exported action', '', 'When'),
         'When Exported action'
     );
+    assert.equal(
+        buildCallableDefinitionText('Дано открыта форма', '', 'И'),
+        'Дано открыта форма'
+    );
+});
+
+test('applies inferred base indentation to every inserted line', () => {
+    const result = buildProjectDefinitionInsertion(definition({
+        kind: 'nestedScenario',
+        template: 'Создать заказ',
+        parameters: [{ name: 'Клиент', index: 0, source: 'snippet' }]
+    }), {
+        fallbackKeyword: 'И',
+        indentation: '    ',
+        language: 'ru'
+    });
+
+    assert.equal(result.displayText, '    И Создать заказ\n        Клиент = "Клиент"');
+    assert.equal(result.snippetText, '    И Создать заказ\n        Клиент = ${1:"Клиент"}');
 });
 
 test('builds a nested parameter block with defaults and aligned names', () => {

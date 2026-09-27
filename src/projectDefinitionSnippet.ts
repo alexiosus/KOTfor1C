@@ -1,7 +1,7 @@
 import type { ProjectDefinition } from './projectDefinition';
 
 const STEP_TEMPLATE_PLACEHOLDER_REGEX = /%(\d+)\s+([^"'\r\n]+)/g;
-const GHERKIN_KEYWORD_CAPTURE_REGEX = /^(?:\*\s*)?(and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\s+/i;
+const GHERKIN_KEYWORD_CAPTURE_REGEX = /^(?:\*\s*)?(and|but|then|when|given|if|и|тогда|когда|если|допустим|дано|к тому же|но)\s+/i;
 
 export interface ProjectDefinitionSnippetData {
     readonly displayText: string;
@@ -16,6 +16,22 @@ export interface ProjectDefinitionInsertionOptions {
     readonly indentation?: string;
     readonly language: 'ru' | 'en';
     readonly parameterDefaults?: Readonly<Record<string, string>>;
+}
+
+function applyBaseIndentation(
+    data: ProjectDefinitionSnippetData,
+    indentation: string | undefined
+): ProjectDefinitionSnippetData {
+    if (!indentation) {
+        return data;
+    }
+    const indent = (value: string): string =>
+        `${indentation}${value.replace(/\n/gu, `\n${indentation}`)}`;
+    return {
+        displayText: indent(data.displayText),
+        snippetText: indent(data.snippetText),
+        hasPlaceholders: data.hasPlaceholders
+    };
 }
 
 export function buildCallableDefinitionText(
@@ -168,11 +184,17 @@ export function buildProjectDefinitionInsertion(
         options.fallbackKeyword
     );
     if (definition.kind !== 'nestedScenario') {
-        return buildProjectDefinitionSnippetData(definition, { preferredText: callableText });
+        return applyBaseIndentation(
+            buildProjectDefinitionSnippetData(definition, { preferredText: callableText }),
+            options.indentation
+        );
     }
 
     if (definition.parameters.length === 0) {
-        return buildProjectDefinitionSnippetData(definition, { preferredText: callableText });
+        return applyBaseIndentation(
+            buildProjectDefinitionSnippetData(definition, { preferredText: callableText }),
+            options.indentation
+        );
     }
 
     const ordered = [...definition.parameters].sort((left, right) => left.index - right.index);
@@ -188,9 +210,9 @@ export function buildProjectDefinitionInsertion(
         displayText += `${prefix}${defaultValue}`;
         snippetText += `${escapeStepSnippetText(prefix)}\${${index + 1}:${escapeSnippetPlaceholderDefault(defaultValue)}}`;
     });
-    return {
+    return applyBaseIndentation({
         displayText,
         snippetText,
         hasPlaceholders: true
-    };
+    }, options.indentation);
 }

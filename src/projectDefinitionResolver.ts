@@ -146,9 +146,19 @@ function nestedDefinition(scenario: TestInfo): ProjectDefinition {
     });
 }
 
-function scenarioIdentity(catalog: ScenarioCatalog): string {
+export function isCallableNestedScenario(
+    scenario: Pick<TestInfo, 'tabName'>
+): boolean {
+    return typeof scenario.tabName !== 'string' || scenario.tabName.trim().length === 0;
+}
+
+function callableNestedScenarios(catalog: ScenarioCatalog): readonly TestInfo[] {
+    return catalog.all.filter(isCallableNestedScenario);
+}
+
+function scenarioIdentity(scenarios: readonly TestInfo[]): string {
     const hash = createHash('sha256');
-    const signatures = catalog.all.map(scenario => ({
+    const signatures = scenarios.map(scenario => ({
         uri: scenario.yamlFileUri.toString(),
         name: scenario.name,
         parameters: scenario.parameters ?? [],
@@ -208,7 +218,8 @@ export class ProjectDefinitionResolver implements DisposableLike {
                 ? Promise.resolve(currentScenarios)
                 : this.#dependencies.scenarios.ensureFreshScenarioCatalog()
         ]);
-        const nestedIdentity = scenarioIdentity(scenarios);
+        const nestedScenarios = callableNestedScenarios(scenarios);
+        const nestedIdentity = scenarioIdentity(nestedScenarios);
         const identity = compositeIdentity(
             steps.identity,
             nestedIdentity,
@@ -221,7 +232,7 @@ export class ProjectDefinitionResolver implements DisposableLike {
         const view = createProjectDefinitionView(identity, [
             ...builtInDefinitions(steps),
             ...(local?.definitions ?? []),
-            ...scenarios.all.map(nestedDefinition)
+            ...nestedScenarios.map(nestedDefinition)
         ]);
         this.#views.set(identity, view);
         return view;

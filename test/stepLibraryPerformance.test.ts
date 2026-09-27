@@ -21,6 +21,7 @@ interface SearchItem {
 }
 
 interface StepLibraryProtocol {
+    prepareItems(items: readonly SearchItem[]): readonly SearchItem[];
     searchItems(
         items: readonly SearchItem[],
         query: string,
@@ -91,7 +92,10 @@ test('prepared visual-library view keeps 2200 definitions on the client hot path
             return largeView(2_200);
         };
         const snapshotResult = measure(() => buildStepLibrarySnapshot(resolvePreparedView()));
-        const items = snapshotResult.value.items as readonly SearchItem[];
+        const preparationResult = measure(() => protocol.prepareItems(
+            snapshotResult.value.items as readonly SearchItem[]
+        ));
+        const items = preparationResult.value;
         const searches = [
             measure(() => protocol.searchItems(items, items[100].displayText)),
             measure(() => protocol.searchItems(items, 'Step 10')),
@@ -112,6 +116,7 @@ test('prepared visual-library view keeps 2200 definitions on the client hot path
 
         t.diagnostic([
             `prepared view ${snapshotResult.durationMs.toFixed(2)} ms`,
+            `client normalization ${preparationResult.durationMs.toFixed(2)} ms`,
             `search exact/prefix/token/substring ${searches
                 .map(result => result.durationMs.toFixed(2))
                 .join('/')} ms`,

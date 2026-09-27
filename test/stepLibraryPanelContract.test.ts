@@ -74,6 +74,15 @@ test('client gates insertion, supports copy shortcut, and suppresses duplicate a
     assert.match(client, /pendingActions/u);
     assert.match(client, /event\.(?:ctrlKey|metaKey)/u);
     assert.match(client, /message\.command\s*===\s*'actionResult'/u);
+    assert.match(client, /prepareItems/u);
+    assert.match(client, /reconcileCategorySelection/u);
+});
+
+test('webview document language follows the active VS Code locale', () => {
+    const panel = projectFile('src/stepLibraryPanel.ts');
+
+    assert.match(panel, /vscode\.env\.language/u);
+    assert.match(panel, /<html lang="\$\{documentLanguage\}">/u);
 });
 
 test('package and runtime locale bundles have matching keys for the visual library', () => {

@@ -32,6 +32,7 @@ interface CapturedInsertionTarget {
     readonly version: number;
     readonly selections: readonly vscode.Selection[];
     readonly context: GherkinInsertionContext;
+    readonly indentation: string;
     readonly identity: string;
 }
 
@@ -99,6 +100,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     private lastPostedIdentity: string | null = null;
     private lastSuccessfulSnapshot: StepLibrarySnapshot | null = null;
     private insertionTarget: CapturedInsertionTarget | null = null;
+    private insertionTargetGeneration = 0;
     private readonly pendingActions = new Set<string>();
 
     constructor(private readonly services: StepLibraryPanelServices) {
@@ -151,6 +153,7 @@ export class StepLibraryPanel implements vscode.Disposable {
                 this.lastPostedIdentity = null;
                 this.lastSuccessfulSnapshot = null;
                 this.insertionTarget = null;
+                this.insertionTargetGeneration += 1;
                 this.pendingRefreshWhenVisible = false;
             }),
             panel.onDidChangeViewState(event => {
@@ -198,6 +201,7 @@ export class StepLibraryPanel implements vscode.Disposable {
         this.lastPostedIdentity = null;
         this.lastSuccessfulSnapshot = null;
         this.insertionTarget = null;
+        this.insertionTargetGeneration += 1;
         this.pendingActions.clear();
     }
 
@@ -291,11 +295,64 @@ export class StepLibraryPanel implements vscode.Disposable {
         );
     }
 
+    private positionsEqual(left: vscode.Position, right: vscode.Position): boolean {
+        return left.line === right.line && left.character === right.character;
+    }
+
+    private orderedSelectionStart(selection: vscode.Selection): vscode.Position {
+        const anchorBeforeActive = selection.anchor.line < selection.active.line
+            || (
+                selection.anchor.line === selection.active.line
+                && selection.anchor.character <= selection.active.character
+            );
+        return anchorBeforeActive ? selection.anchor : selection.active;
+    }
+
+    private buildInsertionSelection(
+        editor: vscode.TextEditor,
+        selection: vscode.Selection,
+        context: GherkinInsertionContext
+    ): { readonly selection: vscode.Selection; readonly indentation: string } {
+        if (!this.positionsEqual(selection.anchor, selection.active)) {
+            const start = this.orderedSelectionStart(selection);
+            return {
+                selection: this.cloneSelection(selection),
+                indentation: start.character === 0 ? context.indentation : ''
+            };
+        }
+
+        const position = selection.active;
+        const linePrefix = editor.document.lineAt(position.line).text.slice(0, position.character);
+        const actualIndentation = /^\s*/u.exec(linePrefix)?.[0] ?? '';
+        if (!linePrefix.trim()) {
+            if (actualIndentation !== context.indentation) {
+                return {
+                    selection: new vscode.Selection(
+                        new vscode.Position(position.line, 0),
+                        new vscode.Position(position.line, position.character)
+                    ),
+                    indentation: context.indentation
+                };
+            }
+            return { selection: this.cloneSelection(selection), indentation: '' };
+        }
+
+        return {
+            selection: new vscode.Selection(
+                new vscode.Position(position.line, actualIndentation.length),
+                new vscode.Position(position.line, position.character)
+            ),
+            indentation: ''
+        };
+    }
+
     private captureInsertionTarget(editor: vscode.TextEditor): CapturedInsertionTarget | null {
         if (editor.selections.length === 0) {
             return null;
         }
         const contexts: GherkinInsertionContext[] = [];
+        const insertionSelections: vscode.Selection[] = [];
+        const insertionIndentations: string[] = [];
         for (const selection of editor.selections) {
             const anchorContext = getGherkinInsertionContext(editor.document, selection.anchor);
             const activeContext = selection.anchor.line === selection.active.line
@@ -306,22 +363,36 @@ export class StepLibraryPanel implements vscode.Disposable {
                 return null;
             }
             contexts.push(activeContext);
+            const insertion = this.buildInsertionSelection(editor, selection, activeContext);
+            insertionSelections.push(insertion.selection);
+            insertionIndentations.push(insertion.indentation);
         }
-        const selections = editor.selections.map(selection => this.cloneSelection(selection));
         const context = contexts[0];
+        const indentation = insertionIndentations[0];
+        const homogeneous = contexts.every((candidate, index) =>
+            candidate.language === context.language
+            && candidate.typedKeyword === context.typedKeyword
+            && candidate.fallbackKeyword === context.fallbackKeyword
+            && insertionIndentations[index] === indentation
+        );
+        if (!homogeneous) {
+            return null;
+        }
         const uri = editor.document.uri.toString();
         return {
             editor,
             uri,
             version: editor.document.version,
-            selections,
+            selections: insertionSelections,
             context,
+            indentation,
             identity: `available\0${uri}`
         };
     }
 
     private updateInsertionTarget(editor: vscode.TextEditor): void {
         const previousIdentity = this.insertionTargetIdentity;
+        this.insertionTargetGeneration += 1;
         this.insertionTarget = this.captureInsertionTarget(editor);
         if (
             this.insertionTarget
@@ -337,9 +408,14 @@ export class StepLibraryPanel implements vscode.Disposable {
         }
     }
 
-    private revalidateInsertionTarget(): CapturedInsertionTarget | null {
-        const captured = this.insertionTarget;
-        if (!captured || captured.editor.document.uri.toString() !== captured.uri) {
+    private revalidateInsertionTarget(
+        captured: CapturedInsertionTarget | null = this.insertionTarget
+    ): CapturedInsertionTarget | null {
+        if (
+            !captured
+            || this.insertionTarget?.editor !== captured.editor
+            || captured.editor.document.uri.toString() !== captured.uri
+        ) {
             return null;
         }
         const current = this.captureInsertionTarget(captured.editor);
@@ -400,12 +476,19 @@ export class StepLibraryPanel implements vscode.Disposable {
         if (!target) {
             return false;
         }
+        const targetGeneration = this.insertionTargetGeneration;
         const view = await this.services.resolver.getView(target.editor.document.uri);
         const definition = view.byId.get(item.definitionId);
         if (!definition) {
             return false;
         }
-        target = this.revalidateInsertionTarget();
+        if (
+            targetGeneration !== this.insertionTargetGeneration
+            || this.insertionTarget?.editor !== target.editor
+        ) {
+            return false;
+        }
+        target = this.revalidateInsertionTarget(target);
         if (!target) {
             return false;
         }
@@ -415,7 +498,7 @@ export class StepLibraryPanel implements vscode.Disposable {
                 : definition.template,
             typedKeyword: target.context.typedKeyword,
             fallbackKeyword: target.context.fallbackKeyword,
-            indentation: target.context.indentation,
+            indentation: target.indentation,
             language: target.context.language
         });
         return target.editor.insertSnippet(
@@ -527,8 +610,11 @@ export class StepLibraryPanel implements vscode.Disposable {
             showCategories: t('Show sources and categories'),
             back: t('Back')
         };
+        const documentLanguage = (vscode.env.language || 'en').toLocaleLowerCase().startsWith('ru')
+            ? 'ru'
+            : 'en';
         return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${documentLanguage}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">

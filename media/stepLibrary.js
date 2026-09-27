@@ -116,7 +116,7 @@
         if (node.id === 'all') {
             return !state.sourceGroup;
         }
-        if (node.id.endsWith('::uncategorized')) {
+        if (protocol.isUncategorizedNodeId(node.id)) {
             return state.sourceGroup === node.sourceGroup && state.uncategorized;
         }
         return state.sourceGroup === node.sourceGroup
@@ -133,7 +133,7 @@
         } else {
             state.sourceGroup = node.sourceGroup;
             state.categoryPath = [...node.path];
-            state.uncategorized = node.id.endsWith('::uncategorized');
+            state.uncategorized = protocol.isUncategorizedNodeId(node.id);
         }
         saveState();
         renderTree();
@@ -555,11 +555,26 @@
             return;
         }
         if (message.command === 'snapshot' && message.snapshot) {
-            state.snapshot = message.snapshot;
+            state.snapshot = {
+                ...message.snapshot,
+                items: protocol.prepareItems(message.snapshot.items)
+            };
             state.insertionTarget = message.insertionTarget || {
                 available: false,
                 identity: 'unavailable'
             };
+            const reconciled = protocol.reconcileCategorySelection(
+                state.snapshot.items,
+                state
+            );
+            state.sourceGroup = reconciled.sourceGroup;
+            state.categoryPath = reconciled.categoryPath;
+            state.uncategorized = reconciled.uncategorized;
+            const visibleItems = filteredItems();
+            if (!visibleItems.some(item => item.id === state.selectedItemId)) {
+                state.selectedItemId = visibleItems[0]?.id || null;
+            }
+            saveState();
             refreshButton.disabled = false;
             renderTree();
             renderResults();

@@ -16,6 +16,7 @@ interface ProtocolItem {
 }
 
 interface Protocol {
+    prepareItems(items: readonly ProtocolItem[]): readonly ProtocolItem[];
     searchItems(items: readonly ProtocolItem[], query: string, options?: {
         sourceGroup?: ProtocolItem['sourceGroup'];
         categoryPath?: readonly string[];
@@ -35,6 +36,15 @@ interface Protocol {
         count: number;
         children: unknown[];
     }>;
+    reconcileCategorySelection(items: readonly ProtocolItem[], selection: {
+        sourceGroup?: ProtocolItem['sourceGroup'] | null;
+        categoryPath?: readonly string[];
+        uncategorized?: boolean;
+    }): {
+        sourceGroup: ProtocolItem['sourceGroup'] | null;
+        categoryPath: string[];
+        uncategorized: boolean;
+    };
 }
 
 function loadProtocol(): { protocol: Protocol; source: string } {
@@ -83,6 +93,47 @@ test('ranks exact, prefix, token-prefix, template substring, and metadata matche
         'template-substring',
         'metadata-substring'
     ]);
+});
+
+test('prepares normalized search fields once instead of rereading source text per query', () => {
+    const { protocol } = loadProtocol();
+    let displayReads = 0;
+    let templateReads = 0;
+    let searchReads = 0;
+    const source = item('prepared', 'Open Form');
+    Object.defineProperties(source, {
+        displayText: {
+            enumerable: true,
+            get: () => {
+                displayReads += 1;
+                return 'Open Form';
+            }
+        },
+        template: {
+            enumerable: true,
+            get: () => {
+                templateReads += 1;
+                return 'Open Form';
+            }
+        },
+        searchText: {
+            enumerable: true,
+            get: () => {
+                searchReads += 1;
+                return 'open form documentation';
+            }
+        }
+    });
+
+    const prepared = protocol.prepareItems([source]);
+    const readsAfterPreparation = [displayReads, templateReads, searchReads];
+    protocol.searchItems(prepared, 'open');
+    protocol.searchItems(prepared, 'documentation');
+
+    assert.deepEqual(
+        [displayReads, templateReads, searchReads],
+        readsAfterPreparation
+    );
 });
 
 test('filters by source, ancestor category, and built-in language without hiding project definitions', () => {
@@ -155,12 +206,56 @@ test('builds source/category nodes with ancestor and uncategorized counts', () =
         ['Tables', 1]
     ]);
     assert.deepEqual(uncategorized, {
-        id: 'builtIn::uncategorized',
+        id: 'builtIn::#uncategorized',
         sourceGroup: 'builtIn',
         label: 'Without category',
         path: [],
         count: 1,
         children: []
+    });
+});
+
+test('keeps authored uncategorized category distinct from the synthetic bucket', () => {
+    const { protocol } = loadProtocol();
+    const tree = protocol.buildCategoryTree([
+        item('authored', 'Named category', { categoryPath: ['uncategorized'] }),
+        item('synthetic', 'No category')
+    ]);
+    const childIds = tree[0].children as Array<{ id: string }>;
+
+    assert.deepEqual(childIds.map(child => child.id).sort(), [
+        'builtIn::#uncategorized',
+        'builtIn::uncategorized'
+    ]);
+});
+
+test('reconciles a removed source or category to the closest surviving selection', () => {
+    const { protocol } = loadProtocol();
+    const items = [
+        item('forms', 'Open form', { categoryPath: ['UI', 'Forms'] }),
+        item('tables', 'Open table', { categoryPath: ['UI', 'Tables'] }),
+        item('nested', 'Create order', {
+            kind: 'nestedScenario', sourceGroup: 'nested', categoryPath: ['Sales']
+        })
+    ];
+
+    assert.deepEqual(protocol.reconcileCategorySelection(items, {
+        sourceGroup: 'builtIn',
+        categoryPath: ['UI', 'Removed'],
+        uncategorized: false
+    }), {
+        sourceGroup: 'builtIn',
+        categoryPath: ['UI'],
+        uncategorized: false
+    });
+    assert.deepEqual(protocol.reconcileCategorySelection(items, {
+        sourceGroup: 'user',
+        categoryPath: ['Missing'],
+        uncategorized: false
+    }), {
+        sourceGroup: null,
+        categoryPath: [],
+        uncategorized: false
     });
 });
 

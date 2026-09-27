@@ -195,6 +195,29 @@ test('composes all four definition kinds and preserves localized built-in varian
     );
 });
 
+test('excludes tab-backed main scenarios from callable project definitions and identity', async () => {
+    const nested = scenario(
+        'Callable helper',
+        'file:///workspace-a/nested/scen.yaml',
+        'nested'
+    );
+    const main = {
+        ...scenario('Main test', 'file:///workspace-a/main/scen.yaml', 'main'),
+        tabName: 'Smoke'
+    };
+    const first = createHarness({ scenarios: buildScenarioCatalog([nested, main]) });
+    const second = createHarness({ scenarios: buildScenarioCatalog([nested]) });
+
+    const withMain = await first.resolver.getView(uri('file:///workspace-a/test.feature'));
+    const withoutMain = await second.resolver.getView(uri('file:///workspace-a/test.feature'));
+
+    assert.deepEqual(
+        withMain.all.filter(item => item.kind === 'nestedScenario').map(item => item.template),
+        ['Callable helper']
+    );
+    assert.equal(withMain.identity, withoutMain.identity);
+});
+
 test('pairs localized built-in variants into a family and selects their category path', async () => {
     const categorizedCatalog: ResolvedStepCatalog = {
         identity: 'categorized-catalog',

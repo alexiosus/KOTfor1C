@@ -16,6 +16,7 @@
         nested: 'Nested scenarios'
     });
     const DEFAULT_RESULT_LIMIT = 100;
+    const UNCATEGORIZED_SENTINEL = '#uncategorized';
 
     function normalize(value) {
         return String(value || '')
@@ -27,6 +28,23 @@
 
     function tokens(value) {
         return normalize(value).match(/[\p{L}\p{N}_-]+/gu) || [];
+    }
+
+    function prepareItems(items) {
+        return (items || []).map(item => {
+            if (item && item.__stepLibraryPrepared === true) {
+                return item;
+            }
+            const normalizedDisplayText = normalize(item.displayText);
+            return {
+                ...item,
+                __stepLibraryPrepared: true,
+                __normalizedDisplayText: normalizedDisplayText,
+                __displayTokens: tokens(normalizedDisplayText),
+                __normalizedTemplateText: normalize(item.template || item.displayText),
+                __normalizedSearchText: normalize(item.searchText)
+            };
+        });
     }
 
     function compareText(left, right) {
@@ -54,21 +72,22 @@
         if (!normalizedQuery) {
             return 0;
         }
-        const display = normalize(item.displayText);
+        const display = item.__normalizedDisplayText || normalize(item.displayText);
         if (display === normalizedQuery) {
             return 0;
         }
         if (display.startsWith(normalizedQuery)) {
             return 1;
         }
-        if (hasTokenPrefix(tokens(display), queryTokens)) {
+        if (hasTokenPrefix(item.__displayTokens || tokens(display), queryTokens)) {
             return 2;
         }
-        const template = normalize(item.template || item.displayText);
+        const template = item.__normalizedTemplateText
+            || normalize(item.template || item.displayText);
         if (display.includes(normalizedQuery) || template.includes(normalizedQuery)) {
             return 3;
         }
-        if (normalize(item.searchText).includes(normalizedQuery)) {
+        if ((item.__normalizedSearchText || normalize(item.searchText)).includes(normalizedQuery)) {
             return 4;
         }
         return null;
@@ -144,6 +163,15 @@
         return `${sourceGroup}::${path.map(encodeURIComponent).join('/')}`;
     }
 
+    function uncategorizedNodeId(sourceGroup) {
+        return `${sourceGroup}::${UNCATEGORIZED_SENTINEL}`;
+    }
+
+    function isUncategorizedNodeId(value) {
+        return typeof value === 'string'
+            && value.endsWith(`::${UNCATEGORIZED_SENTINEL}`);
+    }
+
     function categoryNode(sourceGroup, label, path) {
         return {
             id: nodeId(sourceGroup, path),
@@ -197,7 +225,7 @@
             rootNode.count += 1;
             const path = Array.isArray(item.categoryPath) ? item.categoryPath : [];
             if (path.length === 0) {
-                const uncategorizedId = `${group}::uncategorized`;
+                const uncategorizedId = uncategorizedNodeId(group);
                 let uncategorized = rootNode.childByLabel.get(uncategorizedId);
                 if (!uncategorized) {
                     uncategorized = categoryNode(group, uncategorizedLabel, []);
@@ -227,12 +255,50 @@
             .filter(group => roots.has(group))
             .map(group => serializableNode(
                 roots.get(group),
-                `${group}::uncategorized`
+                uncategorizedNodeId(group)
             ));
+    }
+
+    function reconcileCategorySelection(items, selection) {
+        const requestedSource = selection?.sourceGroup;
+        const sourceGroup = SOURCE_ORDER.includes(requestedSource)
+            && (items || []).some(item => item.sourceGroup === requestedSource)
+            ? requestedSource
+            : null;
+        if (!sourceGroup) {
+            return { sourceGroup: null, categoryPath: [], uncategorized: false };
+        }
+
+        const sourceItems = (items || []).filter(item => item.sourceGroup === sourceGroup);
+        if (selection?.uncategorized === true) {
+            const hasUncategorized = sourceItems.some(item =>
+                !Array.isArray(item.categoryPath) || item.categoryPath.length === 0
+            );
+            if (hasUncategorized) {
+                return { sourceGroup, categoryPath: [], uncategorized: true };
+            }
+        }
+
+        const categoryPath = Array.isArray(selection?.categoryPath)
+            ? [...selection.categoryPath]
+            : [];
+        while (categoryPath.length > 0) {
+            const survives = sourceItems.some(item =>
+                isCategoryAncestor(categoryPath, item.categoryPath)
+            );
+            if (survives) {
+                break;
+            }
+            categoryPath.pop();
+        }
+        return { sourceGroup, categoryPath, uncategorized: false };
     }
 
     return Object.freeze({
         searchItems,
-        buildCategoryTree
+        prepareItems,
+        buildCategoryTree,
+        reconcileCategorySelection,
+        isUncategorizedNodeId
     });
 }));

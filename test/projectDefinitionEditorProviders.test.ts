@@ -244,6 +244,50 @@ test('completion still returns built-ins when the local definition snapshot is u
     assert.equal(result.items.length, 1);
 });
 
+test('completion treats Дано as a Russian Gherkin keyword when filtering step kinds', async () => {
+    const exports = loadProvider('completionProvider.ts');
+    const Provider = exports.DriveCompletionProvider as { prototype: object };
+    const definitions = [
+        definition({
+            id: 'built:given', kind: 'builtInStep', template: 'Дано открыта форма',
+            sourceLabel: 'Vanessa RU', language: 'ru'
+        }),
+        definition({
+            id: 'built:then', kind: 'builtInStep', template: 'Тогда форма открыта',
+            sourceLabel: 'Vanessa RU', language: 'ru'
+        })
+    ];
+    const provider = Object.create(Provider.prototype);
+    provider.definitionResolver = {
+        getView: async () => ({
+            identity: 'view:russian-given', all: definitions,
+            byId: new Map(definitions.map(item => [item.id, item])),
+            byNormalizedTemplate: new Map()
+        })
+    };
+    provider.preparedGherkinStates = {
+        getOrCreate: (_identity: string, factory: () => unknown) => factory()
+    };
+    provider.fuzzyMatch = () => ({ matched: true, score: 1 });
+    provider.getScenarioParameterDefaults = () => new Map();
+
+    const result = await provider.provideCompletionItems(
+        {
+            fileName: 'test.feature', languageId: 'gherkin',
+            uri: { toString: () => 'file:///test.feature' },
+            lineAt: () => ({ text: 'Тогда ' })
+        },
+        { line: 0, character: 6 },
+        { isCancellationRequested: false },
+        {}
+    );
+    const labels = result.items.map((item: { label: string | { label: string } }) =>
+        typeof item.label === 'string' ? item.label : item.label.label
+    );
+
+    assert.deepEqual(labels, ['Тогда форма открыта']);
+});
+
 test('nested scenario completion preserves the call keyword and parameter block', async () => {
     const exports = loadProvider('completionProvider.ts');
     const Provider = exports.DriveCompletionProvider as { prototype: object };

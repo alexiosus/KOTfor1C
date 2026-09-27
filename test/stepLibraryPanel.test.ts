@@ -315,6 +315,21 @@ function createFeatureEditor(initialText = [
     return editor;
 }
 
+function createYamlEditorAtBlankColumnZero(): any {
+    const editor = createFeatureEditor([
+        'ТипФайла: Сценарий',
+        'ТекстСценария: |',
+        '    Тогда форма открыта',
+        ''
+    ].join('\n'));
+    editor.document.uri = uri('file:///workspace/test.yaml');
+    editor.document.languageId = 'yaml';
+    editor.document.fileName = '/workspace/test.yaml';
+    const position = { line: 3, character: 0 };
+    editor.selections = [{ anchor: position, active: position }];
+    return editor;
+}
+
 async function sendWebviewMessage(harness: ReturnType<typeof createHarness>, message: unknown): Promise<void> {
     harness.fakePanel.webview.inbound.fire(message);
     await flush();
@@ -459,6 +474,108 @@ test('inserts into the last eligible editor after the webview takes focus', asyn
 
     assert.equal(editor.inserted.length, 1);
     assert.equal(editor.inserted[0].value, 'And Search for "${1:Value}"');
+});
+
+test('adds inferred YAML indentation and replaces an already typed keyword prefix', async () => {
+    const definition = projectDefinition({
+        id: 'user:ready', kind: 'userStep', template: 'Дано форма готова', language: 'ru'
+    });
+    const yamlEditor = createYamlEditorAtBlankColumnZero();
+    const yamlHarness = createHarness(
+        async () => definitionView('view:yaml-indent', [definition]),
+        yamlEditor
+    );
+    await yamlHarness.panel.open(yamlEditor.document.uri);
+    await sendWebviewMessage(yamlHarness, {
+        command: 'insert', itemId: `${definition.id}#ru`
+    });
+
+    assert.equal(yamlEditor.inserted[0]?.value, '    Дано форма готова');
+    assert.equal(yamlEditor.inserted[0]?.selections[0].anchor.character, 0);
+    assert.equal(yamlEditor.inserted[0]?.selections[0].active.character, 0);
+
+    const featureEditor = createFeatureEditor([
+        '#language: en',
+        'Feature: Demo',
+        'Scenario: Search',
+        '    Then '
+    ].join('\n'));
+    const cursor = { line: 3, character: 9 };
+    featureEditor.selections = [{ anchor: cursor, active: cursor }];
+    const english = projectDefinition({
+        id: 'user:search', kind: 'userStep', template: 'Given search is ready'
+    });
+    const featureHarness = createHarness(
+        async () => definitionView('view:typed-prefix', [english]),
+        featureEditor
+    );
+    await featureHarness.panel.open(featureEditor.document.uri);
+    await sendWebviewMessage(featureHarness, {
+        command: 'insert', itemId: `${english.id}#en`
+    });
+
+    assert.equal(featureEditor.inserted[0]?.value, 'Then search is ready');
+    assert.equal(featureEditor.inserted[0]?.selections[0].anchor.character, 4);
+    assert.equal(featureEditor.inserted[0]?.selections[0].active.character, 9);
+});
+
+test('rejects heterogeneous multi-cursor insertion contexts', async () => {
+    const editor = createFeatureEditor([
+        'Feature: Demo',
+        'Scenario: Search',
+        '    Then ',
+        '    Когда '
+    ].join('\n'));
+    editor.selections = [
+        { anchor: { line: 2, character: 9 }, active: { line: 2, character: 9 } },
+        { anchor: { line: 3, character: 10 }, active: { line: 3, character: 10 } }
+    ];
+    const definition = projectDefinition({
+        id: 'user:mixed', kind: 'userStep', template: 'And ready'
+    });
+    const harness = createHarness(
+        async () => definitionView('view:mixed', [definition]),
+        editor
+    );
+    await harness.panel.open(editor.document.uri);
+    await sendWebviewMessage(harness, {
+        command: 'insert', itemId: `${definition.id}#en`
+    });
+
+    assert.equal(editor.inserted.length, 0);
+});
+
+test('aborts a deferred insertion when another eligible editor becomes active', async () => {
+    const definition = projectDefinition({
+        id: 'user:race', kind: 'userStep', template: 'And race-safe'
+    });
+    const editorA = createFeatureEditor();
+    const editorB = createFeatureEditor();
+    editorB.document.uri = uri('file:///workspace/other.feature');
+    editorB.document.fileName = '/workspace/other.feature';
+    const deferredView = deferred<ProjectDefinitionView>();
+    let calls = 0;
+    const harness = createHarness(async () => {
+        calls += 1;
+        return calls === 1
+            ? definitionView('view:initial', [definition])
+            : deferredView.promise;
+    }, editorA);
+    await harness.panel.open(editorA.document.uri);
+
+    harness.fakePanel.webview.inbound.fire({
+        command: 'insert', itemId: `${definition.id}#en`
+    });
+    await flush();
+    harness.runtime.activeEditor = editorB;
+    harness.runtime.visibleEditors = [editorA, editorB];
+    harness.runtime.activeEditorEvents.fire(editorB);
+    deferredView.resolve(definitionView('view:resolved', [definition]));
+    await flush();
+    await flush();
+
+    assert.equal(editorA.inserted.length, 0);
+    assert.equal(editorB.inserted.length, 0);
 });
 
 test('revalidates a changed document and refuses a target that became unsupported', async () => {

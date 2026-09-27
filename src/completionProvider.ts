@@ -24,8 +24,8 @@ const SCENARIO_BRACKET_PARAMETER_PREFIX_REGEX = /(^|[^\\])\[([A-Za-zА-Яа-яЁ
 const SEMANTIC_STEP_PREFIX = '!';
 const FORM_EXPLORER_INITIAL_SUGGEST_COMMAND = 'editor.action.triggerSuggest';
 const FORM_EXPLORER_ADVANCE_ARGUMENT_COMMAND = 'kotTestToolkit.completion.advanceFormExplorerArgument';
-const GHERKIN_KEYWORD_PREFIX_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)\s+/i;
-const OPTIONAL_GHERKIN_PREFIX_FRAGMENT = String.raw`(?:(?:\*\s*)?(?:And|But|Then|When|Given|If|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?`;
+const GHERKIN_KEYWORD_PREFIX_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|дано|к тому же|но)\s+/i;
+const OPTIONAL_GHERKIN_PREFIX_FRAGMENT = String.raw`(?:(?:\*\s*)?(?:And|But|Then|When|Given|If|И|Тогда|Когда|Если|Допустим|Дано|К тому же|Но)\s+)?`;
 const VARIABLE_ASSIGNMENT_VERB_FRAGMENT = String.raw`(?:save|store|remember|read|create|determine|define|generate|wait|execute|put|retrieve|get|copy|запоминаю|сохраняю|читаю|создаю|определяю|генерирую|ожидаю|выполняю|вставляю|получаю|копирую)`;
 const OPTIONAL_TRAILING_ANNOTATION_FRAGMENT = String.raw`(?:\s+\([^)]*\))?\s*$`;
 const SEMANTIC_SYNONYM_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
@@ -44,9 +44,9 @@ const SEMANTIC_SYNONYM_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
     ['сохранить', 'запомнить', 'save', 'store', 'remember'],
     ['значение', 'параметр', 'value', 'parameter', 'argument']
 ];
-const SAVE_VARIABLE_STEP_REGEX_EN_VALUE_TO = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+value\s+to\s+(?:"([^"]+)"|'([^']+)')\s+variable(?:\s+globally)?\s*$/i;
-const SAVE_VARIABLE_STEP_REGEX_RU_VALUE_TO = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?Я\s+запоминаю\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s+значение\s+(.+?)\s*$/i;
-const EXECUTE_AND_PUT_TO_VARIABLE_REGEX = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|К тому же|Но)\s+)?(?:I\s+execute\s+code\s+and\s+put\s+to\s+varible|Я\s+выполняю\s+код\s+и\s+вставляю\s+в\s+переменную)\s+(?:"([^"]+)"|'([^']+)')\s+(?:"([^"]+)"|'([^']+)')\s*$/i;
+const SAVE_VARIABLE_STEP_REGEX_EN_VALUE_TO = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|Дано|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+value\s+to\s+(?:"([^"]+)"|'([^']+)')\s+variable(?:\s+globally)?\s*$/i;
+const SAVE_VARIABLE_STEP_REGEX_RU_VALUE_TO = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|Дано|К тому же|Но)\s+)?Я\s+запоминаю\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s+значение\s+(.+?)\s*$/i;
+const EXECUTE_AND_PUT_TO_VARIABLE_REGEX = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|Дано|К тому же|Но)\s+)?(?:I\s+execute\s+code\s+and\s+put\s+to\s+varible|Я\s+выполняю\s+код\s+и\s+вставляю\s+в\s+переменную)\s+(?:"([^"]+)"|'([^']+)')\s+(?:"([^"]+)"|'([^']+)')\s*$/i;
 const VARIABLE_ASSIGNMENT_TO_THE_VARIABLE_REGEX = new RegExp(
     String.raw`^\s*${OPTIONAL_GHERKIN_PREFIX_FRAGMENT}.*\b${VARIABLE_ASSIGNMENT_VERB_FRAGMENT}\s+(.+?)\s+(?:to|into|in)\s+the\s+variable\s+(?:"([^"]+)"|'([^']+)')(?:\s+UI\s+Automation)?${OPTIONAL_TRAILING_ANNOTATION_FRAGMENT}`,
     'i'
@@ -760,7 +760,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         const completionList = new vscode.CompletionList();
 
         // Ищем отступы и ключевые слова в начале строки (регистронезависимо)
-        const lineStartPattern = /^(\s*)(?:\*\s*)?(and|but|then|when|given|if|и|тогда|когда|если|допустим|к тому же|но)?\s*/i;
+        const lineStartPattern = /^(\s*)(?:\*\s*)?(and|but|then|when|given|if|и|тогда|когда|если|допустим|дано|к тому же|но)?\s*/i;
         const lineStartMatch = linePrefix.match(lineStartPattern);
 
         if (!lineStartMatch) {
@@ -803,7 +803,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             const itemFullText = typeof baseItem.label === 'string' ? baseItem.label : baseItem.label.label; // Полный текст элемента автодополнения
 
             // Извлекаем ключевое слово из самого шага Gherkin, если оно там есть
-            const itemStartPatternGherkin = /^(And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+            const itemStartPatternGherkin = /^(And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим|Дано)\s+/i;
             const itemKeywordMatch = itemFullText.match(itemStartPatternGherkin);
             const itemKeywordFromStep = itemKeywordMatch ? itemKeywordMatch[0].trim().toLowerCase() : ''; // Ключевое слово из элемента
             const itemTextAfterKeywordInItem = itemKeywordMatch ? itemFullText.substring(itemKeywordMatch[0].length) : itemFullText; // Текст элемента после ключевого слова
@@ -2189,7 +2189,6 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         const snippet = buildProjectDefinitionInsertion(definition, {
             preferredText: completionText,
             fallbackKeyword: getScenarioCallKeyword(resolvedLanguage),
-            indentation,
             language: resolvedLanguage
         });
         const baseInsertText = snippet.hasPlaceholders
