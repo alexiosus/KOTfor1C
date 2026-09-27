@@ -33,8 +33,9 @@ test('catalog workflow validates generated output before publishing only catalog
 
     assert.match(source, /node --test[\s\S]*out\/test\/stepCatalogGenerator\.test\.js/);
     assert.match(source, /index\.json/);
-    assert.match(source, /generation-report\.json/);
-    assert.match(source, /catalog\.json/);
+    assert.match(source, /path\.join\(root, entry\.path\)/);
+    assert.match(source, /replace\(\/\^catalog\/, 'generation-report'\)/);
+    assert.match(source, /"\$VERSION"\/\*\.json/);
     for (const reportField of [
         'categorizedStepCount',
         'uncategorizedStepCount',

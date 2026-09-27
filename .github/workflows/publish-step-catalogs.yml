@@ -128,11 +128,18 @@ jobs:
           const [root, version, sourceCommit] = process.argv.slice(2);
           const index = JSON.parse(fs.readFileSync(path.join(root, 'index.json'), 'utf8'));
           const entry = index.catalogs?.[version];
-          const catalogBytes = fs.readFileSync(path.join(root, version, 'catalog.json'));
+          if (!entry || !entry.path.startsWith(`${version}/catalog`)) {
+            throw new Error('Generated catalog index entry path is invalid.');
+          }
+          const reportPath = path.posix.join(
+            path.posix.dirname(entry.path),
+            path.posix.basename(entry.path).replace(/^catalog/, 'generation-report')
+          );
+          const catalogBytes = fs.readFileSync(path.join(root, entry.path));
           const catalog = JSON.parse(catalogBytes.toString('utf8'));
-          const report = JSON.parse(fs.readFileSync(path.join(root, version, 'generation-report.json'), 'utf8'));
+          const report = JSON.parse(fs.readFileSync(path.join(root, reportPath), 'utf8'));
           const digest = crypto.createHash('sha256').update(catalogBytes).digest('hex');
-          if (!entry || entry.path !== `${version}/catalog.json` || entry.sha256 !== digest) {
+          if (entry.sha256 !== digest) {
             throw new Error('Generated catalog index entry is invalid.');
           }
           if (entry.sourceCommit !== sourceCommit || entry.stepCount !== catalog.steps.length) {
@@ -158,9 +165,7 @@ jobs:
 
           git -C "$PUBLICATION_ROOT" config user.name "Alexey Eremeev"
           git -C "$PUBLICATION_ROOT" config user.email "48015759+alexiosus@users.noreply.github.com"
-          git -C "$PUBLICATION_ROOT" add index.json \
-            "$VERSION/catalog.json" \
-            "$VERSION/generation-report.json"
+          git -C "$PUBLICATION_ROOT" add index.json "$VERSION"/*.json
           if git -C "$PUBLICATION_ROOT" diff --cached --quiet; then
             echo "Catalog $VERSION is already published without changes."
             exit 0

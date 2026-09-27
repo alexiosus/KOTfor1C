@@ -200,6 +200,50 @@ test('publication refuses to replace an existing version with different bytes', 
     );
 });
 
+test('publication appends a category-enriched revision without modifying the original catalog', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kot-step-catalog-'));
+    const { catalog, report } = generatedFixture();
+    const originalCatalog = {
+        ...catalog,
+        steps: catalog.steps.map(step => ({
+            id: step.id,
+            ...(step.ru ? { ru: step.ru } : {}),
+            ...(step.en ? { en: step.en } : {})
+        }))
+    };
+    const originalBytes = serializeStepCatalogJson(originalCatalog);
+    const versionDirectory = path.join(root, generationOptions.version);
+    await mkdir(versionDirectory, { recursive: true });
+    await writeFile(path.join(versionDirectory, 'catalog.json'), originalBytes);
+    await writeFile(path.join(versionDirectory, 'generation-report.json'), 'original report\n');
+    await writeFile(path.join(root, 'index.json'), `${JSON.stringify({
+        schemaVersion: 1,
+        generatedAt: originalCatalog.generatedAt,
+        catalogs: {
+            [generationOptions.version]: {
+                path: `${generationOptions.version}/catalog.json`,
+                sha256: sha256Hex(originalBytes),
+                stepCount: originalCatalog.steps.length,
+                sourceCommit: originalCatalog.source.commit
+            }
+        }
+    })}\n`);
+
+    await writeCatalogPublication(root, catalog, report);
+
+    assert.equal(
+        await readFile(path.join(versionDirectory, 'catalog.json'), 'utf8'),
+        originalBytes
+    );
+    const index = JSON.parse(await readFile(path.join(root, 'index.json'), 'utf8'));
+    const revisionPath = index.catalogs[generationOptions.version].path as string;
+    assert.match(revisionPath, /^1\.2\.043\.28\/catalog-[0-9a-f]{64}\.json$/u);
+    const revision = JSON.parse(await readFile(path.join(root, revisionPath), 'utf8'));
+    assert.deepEqual(revision.steps[0].categoryPath, { ru: ['Файлы'], en: ['Files'] });
+    const reportPath = revisionPath.replace('/catalog-', '/generation-report-');
+    assert.equal(JSON.parse(await readFile(path.join(root, reportPath), 'utf8')).stepCount, 2);
+});
+
 test('publication writes exact catalog bytes and a sorted digest index', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kot-step-catalog-'));
     const { catalog, report } = generatedFixture();

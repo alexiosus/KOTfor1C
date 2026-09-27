@@ -366,6 +366,48 @@ function latestTimestamp(left: string | undefined, right: string): string {
     return Date.parse(left) >= Date.parse(right) ? left : right;
 }
 
+function categoryNeutralCatalog(catalog: BuiltInStepCatalog): unknown {
+    return {
+        ...catalog,
+        steps: catalog.steps.map(step => ({
+            id: step.id,
+            ...(step.ru ? { ru: step.ru } : {}),
+            ...(step.en ? { en: step.en } : {})
+        }))
+    };
+}
+
+function isCategoryOnlyEnrichment(
+    existing: BuiltInStepCatalog,
+    candidate: BuiltInStepCatalog
+): boolean {
+    if (JSON.stringify(categoryNeutralCatalog(existing))
+        !== JSON.stringify(categoryNeutralCatalog(candidate))) {
+        return false;
+    }
+    let addedCategory = false;
+    for (let index = 0; index < existing.steps.length; index += 1) {
+        const previous = existing.steps[index].categoryPath;
+        const next = candidate.steps[index].categoryPath;
+        if (previous && JSON.stringify(previous) !== JSON.stringify(next)) {
+            return false;
+        }
+        if (!previous && next) {
+            addedCategory = true;
+        }
+    }
+    return addedCategory;
+}
+
+function reportPathForCatalog(catalogPath: string): string {
+    const directory = path.posix.dirname(catalogPath);
+    const fileName = path.posix.basename(catalogPath);
+    const reportName = fileName.startsWith('catalog')
+        ? fileName.replace(/^catalog/u, 'generation-report')
+        : 'generation-report.json';
+    return path.posix.join(directory, reportName);
+}
+
 export async function writeCatalogPublication(
     publicationRoot: string,
     catalog: BuiltInStepCatalog,
@@ -412,36 +454,58 @@ export async function writeCatalogPublication(
         }
     }
 
-    const versionDirectory = path.join(publicationRoot, validatedCatalog.vanessaVersion);
-    const catalogPath = path.join(versionDirectory, 'catalog.json');
-    const reportPath = path.join(versionDirectory, 'generation-report.json');
-    const [existingCatalog, existingReport] = await Promise.all([
-        readOptional(catalogPath),
-        readOptional(reportPath)
-    ]);
-    if (existingCatalog && existingCatalog.toString('utf8') !== catalogText) {
-        throw new Error(
-            `An immutable catalog already exists for Vanessa ${validatedCatalog.vanessaVersion}.`
-        );
+    const version = validatedCatalog.vanessaVersion;
+    const defaultCatalogPath = `${version}/catalog.json`;
+    const indexedCatalogPath = existingIndex?.catalogs[version]?.path;
+    const currentCatalogPath = indexedCatalogPath ?? defaultCatalogPath;
+    const currentCatalogBytes = await readOptional(path.join(publicationRoot, currentCatalogPath));
+    if (indexedCatalogPath && !currentCatalogBytes) {
+        throw new Error(`Indexed catalog is missing for Vanessa ${version}.`);
     }
-    if (existingReport && existingReport.toString('utf8') !== reportText) {
+
+    let targetCatalogPath = currentCatalogPath;
+    if (currentCatalogBytes && currentCatalogBytes.toString('utf8') !== catalogText) {
+        let existingCatalog: BuiltInStepCatalog | undefined;
+        try {
+            existingCatalog = parseBuiltInStepCatalog(
+                JSON.parse(currentCatalogBytes.toString('utf8')),
+                version
+            );
+        } catch {
+            existingCatalog = undefined;
+        }
+        if (!existingCatalog || !isCategoryOnlyEnrichment(existingCatalog, validatedCatalog)) {
+            throw new Error(`An immutable catalog already exists for Vanessa ${version}.`);
+        }
+        targetCatalogPath = `${version}/catalog-${sha256Hex(catalogText)}.json`;
+    }
+
+    const targetReportPath = reportPathForCatalog(targetCatalogPath);
+    const [targetCatalogBytes, targetReportBytes] = await Promise.all([
+        readOptional(path.join(publicationRoot, targetCatalogPath)),
+        readOptional(path.join(publicationRoot, targetReportPath))
+    ]);
+    if (targetCatalogBytes && targetCatalogBytes.toString('utf8') !== catalogText) {
+        throw new Error(`An immutable catalog already exists for Vanessa ${version}.`);
+    }
+    if (targetReportBytes && targetReportBytes.toString('utf8') !== reportText) {
         throw new Error(
-            `An immutable generation report already exists for Vanessa ${validatedCatalog.vanessaVersion}.`
+            `An immutable generation report already exists for Vanessa ${version}.`
         );
     }
 
-    await mkdir(versionDirectory, { recursive: true });
-    if (!existingReport) {
-        await writeFile(reportPath, reportText, { flag: 'wx' });
+    await mkdir(path.dirname(path.join(publicationRoot, targetCatalogPath)), { recursive: true });
+    if (!targetReportBytes) {
+        await writeFile(path.join(publicationRoot, targetReportPath), reportText, { flag: 'wx' });
     }
-    if (!existingCatalog) {
-        await writeFile(catalogPath, catalogText, { flag: 'wx' });
+    if (!targetCatalogBytes) {
+        await writeFile(path.join(publicationRoot, targetCatalogPath), catalogText, { flag: 'wx' });
     }
 
     const catalogs = {
         ...existingIndex?.catalogs,
-        [validatedCatalog.vanessaVersion]: {
-            path: `${validatedCatalog.vanessaVersion}/catalog.json`,
+        [version]: {
+            path: targetCatalogPath,
             sha256: sha256Hex(catalogText),
             stepCount: validatedCatalog.steps.length,
             sourceCommit: validatedCatalog.source.commit
