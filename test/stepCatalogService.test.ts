@@ -84,6 +84,10 @@ interface CoordinatorFixtureOptions {
     readonly customHtml?: string;
     readonly changelog?: string;
     readonly changelogMtime?: number;
+    readonly getWorkspaceFolder?: (
+        documentUri: string | undefined,
+        folders: readonly WorkspaceStepCatalogFolder[]
+    ) => WorkspaceStepCatalogFolder | undefined;
     readonly readCustomHtml?: (url: string) => Promise<string>;
     readonly getCachedExactCatalog?: (
         indexUrl: string,
@@ -100,6 +104,7 @@ function createCoordinator(options: CoordinatorFixtureOptions = {}): {
     dependencies: WorkspaceStepCatalogDependencies;
     cachedExactCalls: Array<{ indexUrl: string; version: string }>;
     exactCalls: Array<{ indexUrl: string; version: string }>;
+    configurationFolderUris: Array<string | undefined>;
     setConfiguration(value: Partial<WorkspaceStepCatalogConfiguration>): void;
     setChangelog(value: string, mtime: number): void;
 } {
@@ -115,16 +120,23 @@ function createCoordinator(options: CoordinatorFixtureOptions = {}): {
     let changelogMtime = options.changelogMtime ?? 100;
     const cachedExactCalls: Array<{ indexUrl: string; version: string }> = [];
     const exactCalls: Array<{ indexUrl: string; version: string }> = [];
+    const configurationFolderUris: Array<string | undefined> = [];
 
     const dependencies: WorkspaceStepCatalogDependencies = {
         getWorkspaceFolder(documentUri) {
+            if (options.getWorkspaceFolder) {
+                return options.getWorkspaceFolder(documentUri, folders);
+            }
             if (!documentUri) {
                 return folders[0];
             }
             return folders.find(folder => documentUri.startsWith(`${folder.uri}/`)) ?? folders[0];
         },
         getWorkspaceFolders: () => folders,
-        getConfiguration: () => configuration,
+        getConfiguration: workspaceFolderUri => {
+            configurationFolderUris.push(workspaceFolderUri);
+            return configuration;
+        },
         pathOperations: path.posix,
         statFile: async filePath => filePath.endsWith('/docs/Changelog.md')
             ? { mtime: changelogMtime, size: changelog.length }
@@ -153,6 +165,7 @@ function createCoordinator(options: CoordinatorFixtureOptions = {}): {
         dependencies,
         cachedExactCalls,
         exactCalls,
+        configurationFolderUris,
         setConfiguration(value) {
             configuration = { ...configuration, ...value };
         },
@@ -162,6 +175,25 @@ function createCoordinator(options: CoordinatorFixtureOptions = {}): {
         }
     };
 }
+
+test('refreshing an external resource updates every real workspace folder', async () => {
+    const folders = [
+        { uri: 'file:///first', fsPath: '/first' },
+        { uri: 'file:///second', fsPath: '/second' }
+    ];
+    const fixture = createCoordinator({
+        folders,
+        configuration: { vanessaVersion: VERSION },
+        getWorkspaceFolder: documentUri => folders.find(folder =>
+            documentUri?.startsWith(`${folder.uri}/`)
+        ),
+        getExactCatalog: async () => downloadedResult(createCatalog())
+    });
+
+    await fixture.coordinator.refresh('file:///external/library.feature');
+
+    assert.deepEqual(fixture.configurationFolderUris, ['file:///first', 'file:///second']);
+});
 
 test('concurrent first requests for one folder share the exact cached catalog resolution', async () => {
     const cached = deferred<VersionedCatalogResult | null>();

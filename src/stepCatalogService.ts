@@ -218,8 +218,11 @@ export class WorkspaceStepCatalogCoordinator {
     }
 
     public async refresh(documentUri?: string): Promise<readonly ResolvedStepCatalog[]> {
-        const selected = documentUri
-            ? [this.dependencies.getWorkspaceFolder(documentUri)]
+        const requestedFolder = documentUri
+            ? this.dependencies.getWorkspaceFolder(documentUri)
+            : undefined;
+        const selected = requestedFolder
+            ? [requestedFolder]
             : this.dependencies.getWorkspaceFolders();
         const folders = selected.length > 0 ? selected : [undefined];
         const refreshes = new Map<string, Promise<VersionedCatalogResult | null>>();
