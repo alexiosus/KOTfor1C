@@ -272,6 +272,7 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
     readonly #emitter = new SimpleEmitter<ProjectDefinitionSnapshotChangeEvent>();
     #generation = 0;
     #configurationLoadGeneration = 0;
+    #configurationJob: Promise<void> | null = null;
     #configurationWatchStarted = false;
     #configurationSubscription: DisposableLike | null = null;
     #disposed = false;
@@ -292,7 +293,7 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
         }
         this.#configurationWatchStarted = true;
         if (this.#options.watchConfigurations) {
-            this.#track((async () => {
+            this.#configurationJob = this.#track((async () => {
                 try {
                     const subscription = await this.#options.watchConfigurations?.(() => {
                         void this.reloadConfigurations();
@@ -320,12 +321,14 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
             return Promise.resolve();
         }
         const generation = ++this.#configurationLoadGeneration;
-        return this.#track((async () => {
+        const job = this.#track((async () => {
             const configurations = await this.#options.loadConfigurations?.() ?? [];
             if (!this.#disposed && generation === this.#configurationLoadGeneration) {
                 this.setProfiles(configurations);
             }
         })());
+        this.#configurationJob = job;
+        return job;
     }
 
     setProfiles(configurations: readonly ProjectDefinitionIndexConfiguration[]): void {
@@ -376,6 +379,10 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
     ): Promise<ProjectDefinitionSnapshot> {
         this.#throwIfCancellationRequested(token);
         let coordinator = this.#coordinatorFor(resource);
+        if (!coordinator && this.#configurationJob) {
+            await this.#awaitCancellation(this.#configurationJob, token);
+            coordinator = this.#coordinatorFor(resource);
+        }
         if (!coordinator && resource) {
             const value = typeof resource === 'string' ? resource : resource.toString();
             coordinator = await this.#awaitCancellation(

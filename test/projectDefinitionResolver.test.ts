@@ -107,6 +107,7 @@ function catalog(identity: string, pattern: string): ResolvedStepCatalog {
 
 function createHarness(options: {
     local?: ProjectDefinitionSnapshot | null;
+    snapshotLookupUnavailable?: boolean;
     scenarios?: ScenarioCatalog;
     catalogs?: ReadonlyMap<string, ResolvedStepCatalog>;
 } = {}) {
@@ -128,7 +129,7 @@ function createHarness(options: {
 
     const resolver = new ProjectDefinitionResolver({
         local: {
-            getSnapshot: () => local,
+            getSnapshot: () => options.snapshotLookupUnavailable ? null : local,
             ensureReady: async () => {
                 if (!local) {
                     throw new Error('not ready');
@@ -167,6 +168,23 @@ function createHarness(options: {
         }
     };
 }
+
+test('ensureReady retains the physically routed local snapshot when its URI alias cannot be looked up synchronously', async () => {
+    const exportDefinition = localDefinition(
+        'export',
+        'exportScenario',
+        'Window is ready',
+        'file:///physical/libraries/exports.feature'
+    );
+    const { resolver } = createHarness({
+        local: localSnapshot([exportDefinition]),
+        snapshotLookupUnavailable: true
+    });
+
+    const view = await resolver.ensureReady(uri('file:///alias/libraries/exports.feature'));
+
+    assert.equal(view.all.some(item => item.id === 'export'), true);
+});
 
 test('composes all four definition kinds and preserves localized built-in variants', async () => {
     const local = localSnapshot([

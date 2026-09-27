@@ -212,7 +212,13 @@ export class ProjectDefinitionResolver implements DisposableLike {
     }
 
     async getView(resource?: vscode.Uri): Promise<ProjectDefinitionView> {
-        const local = this.#dependencies.local.getSnapshot(resource);
+        return this.#buildView(resource, this.#dependencies.local.getSnapshot(resource));
+    }
+
+    async #buildView(
+        resource: vscode.Uri | undefined,
+        local: ProjectDefinitionSnapshot | null
+    ): Promise<ProjectDefinitionView> {
         const currentScenarios = this.#dependencies.scenarios.getScenarioCatalog();
         const [steps, scenarios] = await Promise.all([
             this.#dependencies.steps.getCatalog(resource),
@@ -244,8 +250,8 @@ export class ProjectDefinitionResolver implements DisposableLike {
         resource?: vscode.Uri,
         token?: CancellationTokenLike
     ): Promise<ProjectDefinitionView> {
-        await this.#dependencies.local.ensureReady(resource, token);
-        return this.getView(resource);
+        const local = await this.#dependencies.local.ensureReady(resource, token);
+        return this.#buildView(resource, local);
     }
 
     async resolve(

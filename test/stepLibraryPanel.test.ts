@@ -232,7 +232,8 @@ function loadPanelModule(
 function createHarness(
     getView: (resource?: unknown) => Promise<ProjectDefinitionView>,
     activeEditor?: any,
-    getScenarios: () => readonly TestInfo[] = () => []
+    getScenarios: () => readonly TestInfo[] = () => [],
+    ensureReady: (resource?: unknown) => Promise<ProjectDefinitionView> = getView
 ) {
     const fakePanel = new FakePanel();
     const runtime = createRuntime(activeEditor);
@@ -247,6 +248,7 @@ function createHarness(
         extensionUri: uri('file:///extension'),
         resolver: {
             getView,
+            ensureReady,
             onDidChangeView: changes.event
         },
         getScenarios,
@@ -338,6 +340,27 @@ async function sendWebviewMessage(harness: ReturnType<typeof createHarness>, mes
     await flush();
     await flush();
 }
+
+test('initial open waits for physically routed project definitions', async () => {
+    const exportDefinition = projectDefinition({
+        id: 'export:ready',
+        kind: 'exportScenario',
+        template: 'Window is ready'
+    });
+    const harness = createHarness(
+        async () => view('view:unavailable'),
+        undefined,
+        () => [],
+        async () => definitionView('view:ready', [exportDefinition])
+    );
+
+    await harness.panel.open(uri('file:///alias/libraries/exports.feature'));
+
+    const snapshot = harness.fakePanel.webview.messages.find(
+        (message: any) => message.command === 'snapshot'
+    ) as any;
+    assert.equal(snapshot.snapshot.counts.export, 1);
+});
 
 test('drops an older resolver result that completes after a newer load', async () => {
     const first = deferred<ProjectDefinitionView>();

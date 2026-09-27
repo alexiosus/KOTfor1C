@@ -239,7 +239,7 @@ export class StepLibraryPanel implements vscode.Disposable {
             if (!this.lastSuccessfulSnapshot) {
                 await panel.webview.postMessage({ command: 'loading' });
             }
-            const view = await this.services.resolver.getView(this.resource);
+            const view = await this.services.resolver.ensureReady(this.resource);
             if (generation !== this.loadGeneration || this.panel !== panel) {
                 return;
             }

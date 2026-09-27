@@ -512,6 +512,42 @@ test('start schedules configuration loading without waiting for it', async () =>
     assert.deepEqual(service.getSnapshot()?.definitions.map(item => item.template), ['Started']);
 });
 
+test('ensureReady waits for the initial profile configuration already loading in the background', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const featurePath = '/workspace/active/a.feature';
+    fileSystem.setFile(featurePath, exportFeature('Ready after profile load'), 1);
+    const loading = deferred<readonly ProjectDefinitionIndexConfiguration[]>();
+    const service = new ProjectDefinitionIndexService({
+        parserVersion: 'parser-v1',
+        fileSystem,
+        cache: new MemoryCache(),
+        loadConfigurations: () => loading.promise
+    });
+    let settled = false;
+
+    service.start();
+    const ready = service.ensureReady(`file://${featurePath}`).then(
+        snapshot => ({ snapshot }),
+        error => ({ error })
+    ).finally(() => { settled = true; });
+    await new Promise(resolve => setImmediate(resolve));
+
+    const settledBeforeProfileLoaded = settled;
+    loading.resolve([configuration('active')]);
+    const result = await ready;
+    await service.waitForIdle();
+    service.dispose();
+
+    assert.equal(settledBeforeProfileLoaded, false);
+    if ('error' in result) {
+        throw result.error;
+    }
+    assert.deepEqual(
+        result.snapshot.definitions.map(item => item.template),
+        ['Ready after profile load']
+    );
+});
+
 test('configuration changes reload the latest active profile without restarting the service', async () => {
     const fileSystem = new MemoryFileSystem();
     fileSystem.setFile('/workspace/initial/initial.feature', exportFeature('Initial profile'), 1);
