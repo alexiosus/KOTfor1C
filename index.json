@@ -3,9 +3,9 @@
   "generatedAt": "2026-09-09T22:37:57+03:00",
   "catalogs": {
     "1.2.043.28": {
-      "path": "1.2.043.28/catalog.json",
-      "sha256": "4ecef108ccfee0767e8a47cfe954db27d6046cc624abdcd63fb1d8e842365950",
-      "stepCount": 1613,
+      "path": "1.2.043.28/catalog-00d34a4782f8040a23baac2af38e59452796606ed2c3cc464c0e0ac09192bae1.json",
+      "sha256": "00d34a4782f8040a23baac2af38e59452796606ed2c3cc464c0e0ac09192bae1",
+      "stepCount": 1206,
       "sourceCommit": "f3a01778a14d29b38204685deea0131274d438ff"
     },
     "1.2.043.42": {
