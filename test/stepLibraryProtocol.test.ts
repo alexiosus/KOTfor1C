@@ -127,6 +127,14 @@ test('prepares normalized search fields once instead of rereading source text pe
 
     const prepared = protocol.prepareItems([source]);
     const readsAfterPreparation = [displayReads, templateReads, searchReads];
+    let preparedDisplayReads = 0;
+    Object.defineProperty(prepared[0], 'displayText', {
+        enumerable: true,
+        get: () => {
+            preparedDisplayReads += 1;
+            return 'Open Form';
+        }
+    });
     protocol.searchItems(prepared, 'open');
     protocol.searchItems(prepared, 'documentation');
 
@@ -134,6 +142,7 @@ test('prepares normalized search fields once instead of rereading source text pe
         [displayReads, templateReads, searchReads],
         readsAfterPreparation
     );
+    assert.equal(preparedDisplayReads, 0);
 });
 
 test('filters by source, ancestor category, and built-in language without hiding project definitions', () => {
@@ -254,6 +263,31 @@ test('reconciles a removed source or category to the closest surviving selection
         uncategorized: false
     }), {
         sourceGroup: null,
+        categoryPath: [],
+        uncategorized: false
+    });
+});
+
+test('reconciles localized category selection against only the active language', () => {
+    const { protocol } = loadProtocol();
+    const items = protocol.prepareItems([
+        item('english', 'Open form', {
+            language: 'en', categoryPath: ['UI', 'Forms']
+        }),
+        item('russian', 'Открыть форму', {
+            language: 'ru', categoryPath: ['Интерфейс', 'Формы']
+        })
+    ]);
+    const russianItems = protocol.searchItems(items, '', {
+        language: 'ru', limit: Number.MAX_SAFE_INTEGER
+    });
+
+    assert.deepEqual(protocol.reconcileCategorySelection(russianItems, {
+        sourceGroup: 'builtIn',
+        categoryPath: ['UI'],
+        uncategorized: false
+    }), {
+        sourceGroup: 'builtIn',
         categoryPath: [],
         uncategorized: false
     });

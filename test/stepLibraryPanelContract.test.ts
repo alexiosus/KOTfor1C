@@ -76,6 +76,9 @@ test('client gates insertion, supports copy shortcut, and suppresses duplicate a
     assert.match(client, /message\.command\s*===\s*'actionResult'/u);
     assert.match(client, /prepareItems/u);
     assert.match(client, /reconcileCategorySelection/u);
+    assert.match(client, /reconcileFiltersAndSelection/u);
+    assert.match(client, /state\.snapshot\?\.viewIdentity[\s\S]*message\.snapshot\.viewIdentity/u);
+    assert.match(client, /__normalizedDisplayText/u);
 });
 
 test('webview document language follows the active VS Code locale', () => {

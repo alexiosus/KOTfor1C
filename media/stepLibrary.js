@@ -104,12 +104,32 @@
         });
         if (state.sortMode === 'alphabetical') {
             items.sort((left, right) => {
-                const leftText = left.displayText.toLowerCase();
-                const rightText = right.displayText.toLowerCase();
+                const leftText = left.__normalizedDisplayText
+                    || left.displayText.toLowerCase();
+                const rightText = right.__normalizedDisplayText
+                    || right.displayText.toLowerCase();
                 return leftText < rightText ? -1 : leftText > rightText ? 1 : 0;
             });
         }
         return items;
+    }
+
+    function reconcileFiltersAndSelection() {
+        if (!state.snapshot) {
+            return;
+        }
+        const reconciled = protocol.reconcileCategorySelection(
+            allItemsForLanguage(),
+            state
+        );
+        state.sourceGroup = reconciled.sourceGroup;
+        state.categoryPath = reconciled.categoryPath;
+        state.uncategorized = reconciled.uncategorized;
+        const visibleItems = filteredItems();
+        if (!visibleItems.some(item => item.id === state.selectedItemId)) {
+            state.selectedItemId = visibleItems[0]?.id || null;
+        }
+        saveState();
     }
 
     function isSelectedTreeNode(node) {
@@ -472,7 +492,7 @@
     });
     languageFilter.addEventListener('change', () => {
         state.language = languageFilter.value;
-        saveState();
+        reconcileFiltersAndSelection();
         renderTree();
         renderResults();
     });
@@ -555,26 +575,18 @@
             return;
         }
         if (message.command === 'snapshot' && message.snapshot) {
+            const preparedItems = state.snapshot?.viewIdentity === message.snapshot.viewIdentity
+                ? state.snapshot.items
+                : protocol.prepareItems(message.snapshot.items);
             state.snapshot = {
                 ...message.snapshot,
-                items: protocol.prepareItems(message.snapshot.items)
+                items: preparedItems
             };
             state.insertionTarget = message.insertionTarget || {
                 available: false,
                 identity: 'unavailable'
             };
-            const reconciled = protocol.reconcileCategorySelection(
-                state.snapshot.items,
-                state
-            );
-            state.sourceGroup = reconciled.sourceGroup;
-            state.categoryPath = reconciled.categoryPath;
-            state.uncategorized = reconciled.uncategorized;
-            const visibleItems = filteredItems();
-            if (!visibleItems.some(item => item.id === state.selectedItemId)) {
-                state.selectedItemId = visibleItems[0]?.id || null;
-            }
-            saveState();
+            reconcileFiltersAndSelection();
             refreshButton.disabled = false;
             renderTree();
             renderResults();

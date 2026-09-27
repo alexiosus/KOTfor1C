@@ -142,7 +142,7 @@
             ranked.push({
                 item,
                 rank,
-                display: normalize(item.displayText)
+                display: item.__normalizedDisplayText || normalize(item.displayText)
             });
         }
         ranked.sort((left, right) =>
