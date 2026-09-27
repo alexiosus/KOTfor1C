@@ -407,6 +407,30 @@ test('watcher delete removes a scanned file reached through another filesystem a
     assert.equal(service.getSnapshot()?.files.size, 0);
 });
 
+test('stale watcher delete reindexes an export feature that already exists again', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const watches = new WatchHarness();
+    const root = '/workspace/active';
+    const featurePath = `${root}/exports.feature`;
+    fileSystem.setFile(featurePath, exportFeature('Before atomic save'), 1);
+    const service = createService(fileSystem, { watches });
+    service.startProfile(configuration('active', root));
+    await service.waitForIdle();
+
+    const callbacks = watches.callbacks.get(root);
+    assert.ok(callbacks);
+
+    fileSystem.setFile(featurePath, exportFeature('After atomic save'), 2);
+    callbacks.delete(featurePath);
+    await service.waitForIdle();
+
+    assert.deepEqual(
+        service.getSnapshot()?.definitions.map(item => item.template),
+        ['After atomic save']
+    );
+    assert.equal(service.getSnapshot()?.files.size, 1);
+});
+
 test('profile changes dispose old watchers and suppress stale completed scans', async () => {
     const fileSystem = new MemoryFileSystem();
     const watches = new WatchHarness();

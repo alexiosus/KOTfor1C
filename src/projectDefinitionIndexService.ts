@@ -853,6 +853,12 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
         if (!source) {
             return;
         }
+        if (await this.#sourceExists(source.filePath)) {
+            // Atomic saves can surface as delete/create pairs. By the time a queued
+            // delete is handled, the replacement may already exist and must win.
+            await this.#updateWatchedFile(coordinator, filePath);
+            return;
+        }
         const deletedUris = new Set(source.aliasPaths.map(fileUri));
         for (const aliasPath of source.aliasPaths) {
             coordinator.sourcePaths.delete(normalizedPath(aliasPath));
@@ -873,6 +879,15 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
             this.#options.parserVersion,
             records
         );
+    }
+
+    async #sourceExists(filePath: string): Promise<boolean> {
+        try {
+            await this.#options.fileSystem.stat(filePath);
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     async #resolveWatchedSource(
