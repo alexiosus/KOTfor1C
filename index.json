@@ -9,8 +9,8 @@
       "sourceCommit": "f3a01778a14d29b38204685deea0131274d438ff"
     },
     "1.2.043.42": {
-      "path": "1.2.043.42/catalog.json",
-      "sha256": "d8cfcb1c3a4e88f0cf3ef97214077ecc74e9559a696bd94c19b5c583b06b598e",
+      "path": "1.2.043.42/catalog-12e382ee123dc17e9aaa0e6b934b628024307b96f4750688272b3e39e3907fa9.json",
+      "sha256": "12e382ee123dc17e9aaa0e6b934b628024307b96f4750688272b3e39e3907fa9",
       "stepCount": 1206,
       "sourceCommit": "a0ce2ee9803dd69be52f682e5cf49e0938fd33f1"
     }
