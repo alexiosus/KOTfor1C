@@ -75,3 +75,34 @@ test('client gates insertion, supports copy shortcut, and suppresses duplicate a
     assert.match(client, /event\.(?:ctrlKey|metaKey)/u);
     assert.match(client, /message\.command\s*===\s*'actionResult'/u);
 });
+
+test('package and runtime locale bundles have matching keys for the visual library', () => {
+    const packageEn = JSON.parse(projectFile('package.nls.json')) as Record<string, string>;
+    const packageRu = JSON.parse(projectFile('package.nls.ru.json')) as Record<string, string>;
+    const runtimeEn = JSON.parse(projectFile('l10n/bundle.l10n.json')) as Record<string, string>;
+    const runtimeRu = JSON.parse(projectFile('l10n/bundle.l10n.ru.json')) as Record<string, string>;
+
+    assert.deepEqual(Object.keys(packageRu).sort(), Object.keys(packageEn).sort());
+    assert.deepEqual(Object.keys(runtimeRu).sort(), Object.keys(runtimeEn).sort());
+    assert.ok(packageEn['cmd.openStepLibrary.title']);
+    for (const key of [
+        'KOT Step Library',
+        'Search steps',
+        'Sources and categories',
+        'All definitions',
+        'Vanessa built-in steps',
+        'User steps',
+        'Export scenarios',
+        'Nested scenarios',
+        'Uncategorized',
+        'Insert',
+        'Copy',
+        'Open definition',
+        'Loading step library...',
+        'Could not refresh the step library.',
+        'Open Step Library'
+    ]) {
+        assert.ok(runtimeEn[key], `missing English runtime key: ${key}`);
+        assert.ok(runtimeRu[key], `missing Russian runtime key: ${key}`);
+    }
+});

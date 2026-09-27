@@ -1744,5 +1744,8 @@
   "Step inserted.": "Шаг вставлен.",
   "Step copied.": "Шаг скопирован.",
   "Definition opened.": "Определение открыто.",
-  "The action could not be completed.": "Не удалось выполнить действие."
+  "The action could not be completed.": "Не удалось выполнить действие.",
+  "Open Step Library": "Открыть библиотеку шагов",
+  "Restart VS Code": "Перезапустить VS Code",
+  "KOT for 1C updated to {0}. Restart VS Code to apply the update.": "KOT for 1C обновлён до версии {0}. Перезапустите VS Code, чтобы применить обновление."
 }

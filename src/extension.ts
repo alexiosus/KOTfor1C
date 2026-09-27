@@ -888,6 +888,39 @@ export function activate(context: vscode.ExtensionContext) {
         projectDefinitionResolver,
         projectDefinitionReferenceService
     );
+    let stepLibraryPanelPromise: Promise<import('./stepLibraryPanel.js').StepLibraryPanel>
+        | undefined;
+    const getStepLibraryPanel = () => {
+        if (!stepLibraryPanelPromise) {
+            stepLibraryPanelPromise = import('./stepLibraryPanel.js').then(({ StepLibraryPanel }) => {
+                const panel = new StepLibraryPanel({
+                    extensionUri: context.extensionUri,
+                    resolver: projectDefinitionResolver,
+                    refreshDefinitions: async resource => {
+                        await stepCatalogService.refresh(resource);
+                        await projectDefinitionIndex.reloadConfigurations();
+                        await projectDefinitionIndex.waitForIdle();
+                        await phaseSwitcherProvider.refreshFromExternalStateChange({
+                            refreshCache: true
+                        });
+                    }
+                });
+                context.subscriptions.push(panel);
+                return panel;
+            }).catch(error => {
+                stepLibraryPanelPromise = undefined;
+                throw error;
+            });
+        }
+        return stepLibraryPanelPromise;
+    };
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'kotTestToolkit.openStepLibrary',
+        async () => {
+            const panel = await getStepLibraryPanel();
+            await panel.open(vscode.window.activeTextEditor?.document.uri);
+        }
+    ));
     const completionProvider = new DriveCompletionProvider(context, projectDefinitionResolver);
     const hoverProvider = new DriveHoverProvider(
         context,

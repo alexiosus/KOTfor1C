@@ -140,6 +140,7 @@
   "cmd.createFirstLaunchZip.title": "KOT - Create FirstLaunch archive",
   "cmd.openYamlParametersManager.title": "KOT - Open Build Scenario Parameters Manager",
   "cmd.openFormExplorer.title": "KOT - Open 1C Form Explorer",
+  "cmd.openStepLibrary.title": "KOT - Open Step Library",
   "cmd.openInfobaseManager.title": "KOT - Open Infobase Manager",
   "cmd.generateFormExplorerExtension.title": "KOT - Generate Form Explorer extension project",
   "cmd.buildFormExplorerExtensionCfe.title": "KOT - Build Form Explorer .cfe",

@@ -73,6 +73,7 @@
     const refreshVanessaStepsFromDropdownBtn = document.getElementById('refreshVanessaStepsFromDropdownBtn');
     const runVanessaFromDropdownBtn = document.getElementById('runVanessaFromDropdownBtn');
     const openFormExplorerFromDropdownBtn = document.getElementById('openFormExplorerFromDropdownBtn');
+    const openStepLibraryTopBtn = document.getElementById('openStepLibraryTopBtn');
     const openInfobaseManagerTopBtn = document.getElementById('openInfobaseManagerTopBtn');
     const configurationDiffReportDropdownBtn = document.getElementById('configurationDiffReportDropdownBtn');
     const configurationDiffReportDropdownContent = document.getElementById('configurationDiffReportDropdownContent');
@@ -3550,6 +3551,16 @@
                 closeConfigurationDiffReportDropdownMenu();
                 log('Open KOT Form Explorer from top bar clicked.');
                 vscode.postMessage({ command: 'openFormExplorer' });
+            });
+        }
+
+        if (openStepLibraryTopBtn) {
+            openStepLibraryTopBtn.addEventListener('click', event => {
+                event.preventDefault();
+                closeScenarioRepairDropdownMenu();
+                closeConfigurationDiffReportDropdownMenu();
+                log('Open KOT Step Library from top bar clicked.');
+                vscode.postMessage({ command: 'openStepLibrary' });
             });
         }
 

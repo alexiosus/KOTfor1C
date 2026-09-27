@@ -738,6 +738,12 @@
         "category": "%cmd.category%"
       },
       {
+        "command": "kotTestToolkit.openStepLibrary",
+        "title": "%cmd.openStepLibrary.title%",
+        "category": "%cmd.category%",
+        "icon": "$(library)"
+      },
+      {
         "command": "kotTestToolkit.openInfobaseManager",
         "title": "%cmd.openInfobaseManager.title%",
         "category": "%cmd.category%"
@@ -912,6 +918,13 @@
           "group": "00_mxl@0"
         }
       ],
+      "editor/title": [
+        {
+          "command": "kotTestToolkit.openStepLibrary",
+          "when": "resourceExtname == .yaml || resourceExtname == .feature",
+          "group": "navigation@10"
+        }
+      ],
       "editor/context": [
         {
           "command": "kotTestToolkit.openSubscenario",
@@ -1048,6 +1061,10 @@
         {
           "command": "kotTestToolkit.setScenarioCategory",
           "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.openStepLibrary",
+          "when": "true"
         },
         {
           "command": "kotTestToolkit.refreshGherkinSteps",

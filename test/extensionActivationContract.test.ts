@@ -28,6 +28,15 @@ const phaseSwitcherResolveWebviewSource = phaseSwitcherSource.slice(
     phaseSwitcherSource.indexOf('    public async resolveWebviewView('),
     phaseSwitcherSource.indexOf('    private async _sendInitialState(')
 );
+const packageManifest = JSON.parse(fs.readFileSync(
+    path.join(process.cwd(), 'package.json'),
+    'utf8'
+)) as {
+    contributes: {
+        commands: Array<{ command: string; title: string; category: string }>;
+        menus: Record<string, Array<{ command: string; when?: string }>>;
+    };
+};
 
 test('activation does not eagerly provision 1C helper infobases', () => {
     assert.doesNotMatch(source, /warmUpSharedStartupInfobase/);
@@ -40,6 +49,49 @@ test('activation defers optional panel modules until their commands are used', (
     assert.doesNotMatch(source, /import \{ InfobaseManagerPanel \} from '\.\/infobaseManagerPanel';/);
     assert.match(source, /import\('\.\/formExplorerPanel\.js'\)/);
     assert.match(source, /import\('\.\/infobaseManagerPanel\.js'\)/);
+});
+
+test('step library is contributed to the palette and only YAML or feature editor titles', () => {
+    const command = packageManifest.contributes.commands.find(entry =>
+        entry.command === 'kotTestToolkit.openStepLibrary'
+    );
+    assert.deepEqual(command && {
+        command: command.command,
+        title: command.title,
+        category: command.category
+    }, {
+        command: 'kotTestToolkit.openStepLibrary',
+        title: '%cmd.openStepLibrary.title%',
+        category: '%cmd.category%'
+    });
+    assert.ok(packageManifest.contributes.menus.commandPalette.some(entry =>
+        entry.command === 'kotTestToolkit.openStepLibrary' && entry.when === 'true'
+    ));
+    const titleEntries = packageManifest.contributes.menus['editor/title'].filter(entry =>
+        entry.command === 'kotTestToolkit.openStepLibrary'
+    );
+    assert.equal(titleEntries.length, 1);
+    assert.match(titleEntries[0].when ?? '', /resourceExtname == \.yaml/u);
+    assert.match(titleEntries[0].when ?? '', /resourceExtname == \.feature/u);
+    assert.doesNotMatch(titleEntries[0].when ?? '', /\.json|\.txt/u);
+});
+
+test('activation creates one step-library panel lazily from shared services', () => {
+    assert.doesNotMatch(source, /from '\.\/stepLibraryPanel';/u);
+    assert.match(source, /import\('\.\/stepLibraryPanel\.js'\)/u);
+    assert.equal(source.match(/new StepLibraryPanel\(/gu)?.length, 1);
+    assert.match(source, /resolver:\s*projectDefinitionResolver/u);
+    assert.match(source, /stepCatalogService\.refresh\(resource\)/u);
+    assert.match(source, /projectDefinitionIndex\.reloadConfigurations\(\)/u);
+    assert.match(source, /projectDefinitionIndex\.waitForIdle\(\)/u);
+    assert.match(
+        source,
+        /phaseSwitcherProvider\.refreshFromExternalStateChange\(\{\s*refreshCache:\s*true\s*\}\)/u
+    );
+    assert.match(
+        source,
+        /registerCommand\(\s*'kotTestToolkit\.openStepLibrary'[\s\S]*?activeTextEditor\?\.document\.uri/u
+    );
 });
 
 test('activation defers scenario creation and settings commands', () => {

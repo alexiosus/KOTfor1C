@@ -6386,6 +6386,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 openScenarioFileTitle: this.t('Open scenario file {0}', '{0}'),
                 runVanessaTopTitle: this.t('Open Vanessa'),
                 openFormExplorerTopTitle: this.t('Open KOT Form Explorer'),
+                openStepLibraryTopTitle: this.t('Open Step Library'),
                 openInfobaseManagerTopTitle: this.t('Open Infobase Manager'),
                 thinkingMenuTitle: this.t('Thinking menu'),
                 generateConfigurationDiffReportTitle: this.t('Generate AI diff report'),
@@ -6669,6 +6670,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 case 'openFormExplorer':
                     console.log("[PhaseSwitcherProvider] Opening KOT Form Explorer...");
                     vscode.commands.executeCommand('kotTestToolkit.openFormExplorer');
+                    return;
+                case 'openStepLibrary':
+                    await vscode.commands.executeCommand('kotTestToolkit.openStepLibrary');
                     return;
                 case 'openInfobaseManager':
                     console.log("[PhaseSwitcherProvider] Opening KOT Infobase Manager...");

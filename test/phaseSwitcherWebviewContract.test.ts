@@ -114,3 +114,22 @@ test('Test Manager creation menu delegates exported scenarios and user steps to 
     assert.match(phaseSwitcherProviderSource, /createExportScenario:\s*this\.t\('Export scenario'\)/u);
     assert.match(phaseSwitcherProviderSource, /createUserStep:\s*this\.t\('User step'\)/u);
 });
+
+test('Test Manager toolbar opens the shared visual step library command', () => {
+    assert.match(
+        phaseSwitcherHtmlSource,
+        /id="openStepLibraryTopBtn"[\s\S]*?\$\{loc\.openStepLibraryTopTitle\}[\s\S]*?codicon-library/u
+    );
+    assert.match(
+        phaseSwitcherWebviewSource,
+        /openStepLibraryTopBtn\.addEventListener\('click'[\s\S]*?postMessage\(\{ command: 'openStepLibrary' \}\)/u
+    );
+    assert.match(
+        phaseSwitcherProviderSource,
+        /case 'openStepLibrary':[\s\S]*?executeCommand\('kotTestToolkit\.openStepLibrary'\)/u
+    );
+    assert.match(
+        phaseSwitcherProviderSource,
+        /openStepLibraryTopTitle:\s*this\.t\('Open Step Library'\)/u
+    );
+});
