@@ -59,6 +59,9 @@ test('project definition completion logging does not grow with the number of mat
             if (specifier === './projectDefinitionSnippet') {
                 return projectDefinitionSnippet;
             }
+            if (specifier === './gherkinInsertionContext') {
+                return { getGherkinInsertionContext: () => ({ supported: true }) };
+            }
             return {};
         },
         console: { log: (...args: unknown[]) => logs.push(args.join(' ')) }

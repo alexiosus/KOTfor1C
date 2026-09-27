@@ -123,6 +123,9 @@ function loadProvider(fileName: string): Record<string, unknown> {
             if (specifier === './projectDefinitionSnippet') {
                 return projectDefinitionSnippet;
             }
+            if (specifier === './gherkinInsertionContext') {
+                return { getGherkinInsertionContext: () => ({ supported: true }) };
+            }
             if (specifier === './yamlValidator.js') {
                 return { isScenarioYamlFile: () => true };
             }

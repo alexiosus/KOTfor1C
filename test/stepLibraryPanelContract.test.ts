@@ -66,3 +66,12 @@ test('inbound message type has no caller-supplied URI or arbitrary command shape
     assert.match(typeBlock, /'openDefinition'/u);
     assert.doesNotMatch(typeBlock, /uri|url|path/iu);
 });
+
+test('client gates insertion, supports copy shortcut, and suppresses duplicate actions', () => {
+    const client = projectFile('media/stepLibrary.js');
+
+    assert.match(client, /insertionTarget\.available/u);
+    assert.match(client, /pendingActions/u);
+    assert.match(client, /event\.(?:ctrlKey|metaKey)/u);
+    assert.match(client, /message\.command\s*===\s*'actionResult'/u);
+});

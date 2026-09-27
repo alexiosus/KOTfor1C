@@ -1742,5 +1742,9 @@
   "Uncategorized": "Uncategorized",
   "Could not refresh the step library.": "Could not refresh the step library.",
   "Show sources and categories": "Show sources and categories",
-  "Back": "Back"
+  "Back": "Back",
+  "Step inserted.": "Step inserted.",
+  "Step copied.": "Step copied.",
+  "Definition opened.": "Definition opened.",
+  "The action could not be completed.": "The action could not be completed."
 }

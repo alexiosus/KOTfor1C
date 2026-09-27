@@ -17,6 +17,7 @@ import {
     buildProjectDefinitionInsertion,
     buildProjectDefinitionSnippetData
 } from './projectDefinitionSnippet';
+import { getGherkinInsertionContext } from './gherkinInsertionContext';
 
 const VARIABLE_REFERENCE_PREFIX_REGEX = /^[A-Za-zА-Яа-яЁё0-9_]*$/;
 const SCENARIO_BRACKET_PARAMETER_PREFIX_REGEX = /(^|[^\\])\[([A-Za-zА-Яа-яЁё0-9_-]*)$/;
@@ -705,22 +706,12 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
         console.log("[DriveCompletionProvider:provideCompletionItems] Triggered.");
 
-        const isFeatureDocument = this.isFeatureDocument(document);
-        let isSupportedDocument = isFeatureDocument;
-        if (!isSupportedDocument) {
-            const { isScenarioYamlFile } = await import('./yamlValidator.js');
-            isSupportedDocument = isScenarioYamlFile(document);
-        }
-        if (!isSupportedDocument) {
-            console.log("[DriveCompletionProvider:provideCompletionItems] Unsupported document type. Returning empty.");
-            return [];
-        }
-
-        // Предоставляем автодополнение только в блоках текста сценария
-        if (!this.isInScenarioTextBlock(document, position)) {
+        const insertionContext = getGherkinInsertionContext(document, position);
+        if (!insertionContext) {
             console.log("[DriveCompletionProvider:provideCompletionItems] Not in scenario text block. Returning empty.");
             return [];
         }
+        const isFeatureDocument = this.isFeatureDocument(document);
 
         // Получаем текст текущей строки до позиции курсора
         const lineText = document.lineAt(position.line).text;
@@ -2779,96 +2770,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         return { matched: false, score: 0 };
     }
 
-    /**
-     * Проверяет, находится ли позиция в блоке текста сценария
-     */
-    private isInScenarioTextBlock(document: vscode.TextDocument, position: vscode.Position): boolean {
-        if (this.isFeatureDocument(document)) {
-            return this.isInFeatureScenarioBlock(document, position.line);
-        }
-
-        // Простая проверка: работаем только с YAML файлами
-        if (document.fileName.toLowerCase().endsWith('.yaml')) {
-            // Ищем "ТекстСценария:" до текущей позиции курсора
-            const textUpToPosition = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
-            const scenarioBlockStartRegex = /ТекстСценария:\s*\|?\s*(\r\n|\r|\n)/m; // 'm' для многострочного поиска
-            let lastScenarioBlockStartOffset = -1;
-            let match;
-
-            // Находим последнее вхождение "ТекстСценария:" перед курсором
-            const globalRegex = new RegExp(scenarioBlockStartRegex.source, 'gm');
-            while((match = globalRegex.exec(textUpToPosition)) !== null) {
-                lastScenarioBlockStartOffset = match.index + match[0].length; // Запоминаем позицию ПОСЛЕ найденного блока
-            }
-
-            if (lastScenarioBlockStartOffset === -1) {
-                // console.log("[isInScenarioTextBlock] 'ТекстСценария:' not found before cursor.");
-                return false; // Блок "ТекстСценария:" не найден перед курсором
-            }
-
-            // Теперь проверяем, не вышли ли мы из этого блока в другую секцию YAML
-            // Берем текст от начала последнего найденного блока "ТекстСценария:" до текущей позиции курсора
-            const textAfterLastBlockStart = textUpToPosition.substring(lastScenarioBlockStartOffset);
-
-            // Ищем строки, которые начинаются без отступа (или с меньшим отступом, чем ожидается для шагов)
-            // и содержат двоеточие, что указывает на новую секцию YAML.
-            // Шаги Gherkin обычно имеют отступ (например, 4 пробела или 1 таб).
-            // Секции YAML верхнего уровня (ДанныеСценария, ПараметрыСценария, ВложенныеСценарии) обычно начинаются без отступа или с меньшим.
-            const linesInBlock = textAfterLastBlockStart.split(/\r\n|\r|\n/);
-            for (const line of linesInBlock) {
-                const trimmedLine = line.trim();
-                if (trimmedLine === "") {
-                    continue; // Пропускаем пустые строки
-                }
-                if (trimmedLine.startsWith("#")) {
-                    continue; // Пропускаем комментарии
-                }
-
-                // Если строка не начинается с пробела (или таба) и содержит ':' и это не строка продолжения многострочного текста (|)
-                // Это эвристика для определения новой секции YAML
-                if (!line.startsWith(" ") && !line.startsWith("\t") && trimmedLine.includes(":") && !trimmedLine.startsWith("|")) {
-                    // console.log(`[isInScenarioTextBlock] New YAML section found: '${trimmedLine}'. Exiting block.`);
-                    return false; // Нашли новую секцию YAML, значит мы уже не в "ТекстСценария:"
-                }
-            }
-            // console.log("[isInScenarioTextBlock] Cursor is within 'ТекстСценария:' block.");
-            return true; // Если новых секций не найдено, считаем, что мы в блоке
-        }
-        return false;
-    }
-
     private isFeatureDocument(document: vscode.TextDocument): boolean {
         return document.fileName.toLowerCase().endsWith('.feature');
-    }
-
-    private isInFeatureScenarioBlock(document: vscode.TextDocument, lineIndex: number): boolean {
-        const currentLine = document.lineAt(lineIndex).text.trim();
-        if (currentLine.startsWith('#')) {
-            return false;
-        }
-        if (currentLine.startsWith('@') || currentLine.startsWith('|') || currentLine.startsWith('"""')) {
-            return false;
-        }
-        if (/^(?:Feature|Функционал|Rule|Правило|Scenario|Сценарий|Scenario Outline|Структура сценария|Examples|Примеры|Scenarios|Сценарии)\s*:/i.test(currentLine)) {
-            return false;
-        }
-
-        for (let line = lineIndex; line >= 0; line--) {
-            const trimmed = document.lineAt(line).text.trim();
-            if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('@')) {
-                continue;
-            }
-
-            if (/^(?:Scenario|Сценарий|Scenario Outline|Структура сценария|Background|Предыстория)\s*:/i.test(trimmed)) {
-                return true;
-            }
-
-            if (/^(?:Feature|Функционал|Rule|Правило|Examples|Примеры)\s*:?/i.test(trimmed)) {
-                return false;
-            }
-        }
-
-        return false;
     }
 
     /**

@@ -1740,5 +1740,9 @@
   "Uncategorized": "Без категории",
   "Could not refresh the step library.": "Не удалось обновить библиотеку шагов.",
   "Show sources and categories": "Показать источники и категории",
-  "Back": "Назад"
+  "Back": "Назад",
+  "Step inserted.": "Шаг вставлен.",
+  "Step copied.": "Шаг скопирован.",
+  "Definition opened.": "Определение открыто.",
+  "The action could not be completed.": "Не удалось выполнить действие."
 }

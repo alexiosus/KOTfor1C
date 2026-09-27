@@ -40,6 +40,7 @@
             : 'both',
         sortMode: persisted.sortMode === 'alphabetical' ? 'alphabetical' : 'relevance',
         insertionTarget: { available: false, identity: 'unavailable' },
+        pendingActions: new Set(),
         renderGeneration: 0
     };
 
@@ -334,9 +335,12 @@
     function renderDetails() {
         detailsContent.replaceChildren();
         const item = state.snapshot?.items.find(candidate => candidate.id === state.selectedItemId);
-        insertButton.disabled = true;
-        copyButton.disabled = true;
-        openDefinitionButton.disabled = true;
+        const insertPending = item && state.pendingActions.has(`insert\0${item.id}`);
+        const copyPending = item && state.pendingActions.has(`copy\0${item.id}`);
+        const openPending = item && state.pendingActions.has(`openDefinition\0${item.id}`);
+        insertButton.disabled = !item || !state.insertionTarget.available || insertPending;
+        copyButton.disabled = !item || copyPending;
+        openDefinitionButton.disabled = !item || !item.navigable || openPending;
         if (!item) {
             const empty = document.createElement('p');
             empty.className = 'empty-details';
@@ -363,10 +367,22 @@
             addDetailsField(labels.translationLabel, item.alternateDisplayText, true);
         }
         addDetailsField(labels.templateLabel, item.template, true);
-        const targetHint = document.createElement('p');
-        targetHint.className = 'target-hint';
-        targetHint.textContent = labels.insertionUnavailable;
-        detailsContent.append(targetHint);
+        if (!state.insertionTarget.available) {
+            const targetHint = document.createElement('p');
+            targetHint.className = 'target-hint';
+            targetHint.textContent = labels.insertionUnavailable;
+            detailsContent.append(targetHint);
+        }
+    }
+
+    function sendAction(command, itemId) {
+        const key = `${command}\0${itemId}`;
+        if (state.pendingActions.has(key)) {
+            return;
+        }
+        state.pendingActions.add(key);
+        renderDetails();
+        vscode.postMessage({ command, itemId });
     }
 
     function requestInsert(itemId) {
@@ -375,7 +391,7 @@
             announce(labels.insertionUnavailable);
             return;
         }
-        vscode.postMessage({ command: 'insert', itemId });
+        sendAction('insert', itemId);
     }
 
     function moveListFocus(key) {
@@ -482,7 +498,10 @@
         definitionList.querySelector('[aria-selected="true"]')?.focus();
     });
     definitionList.addEventListener('keydown', event => {
-        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && state.selectedItemId) {
+            event.preventDefault();
+            sendAction('copy', state.selectedItemId);
+        } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
             event.preventDefault();
             moveListFocus(event.key);
         } else if (event.key === 'Enter' && state.selectedItemId) {
@@ -516,12 +535,12 @@
     });
     copyButton.addEventListener('click', () => {
         if (state.selectedItemId) {
-            vscode.postMessage({ command: 'copy', itemId: state.selectedItemId });
+            sendAction('copy', state.selectedItemId);
         }
     });
     openDefinitionButton.addEventListener('click', () => {
         if (state.selectedItemId) {
-            vscode.postMessage({ command: 'openDefinition', itemId: state.selectedItemId });
+            sendAction('openDefinition', state.selectedItemId);
         }
     });
 
@@ -552,6 +571,18 @@
             const detail = typeof message.message === 'string' ? ` ${message.message}` : '';
             setStatus(`${labels.loadFailed}${detail}`, 'error');
             announce(`${labels.loadFailed}${detail}`);
+            return;
+        }
+        if (message.command === 'actionResult' && typeof message.itemId === 'string') {
+            const key = `${message.action}\0${message.itemId}`;
+            state.pendingActions.delete(key);
+            renderDetails();
+            const successLabels = {
+                insert: labels.inserted,
+                copy: labels.copied,
+                openDefinition: labels.opened
+            };
+            announce(message.success ? successLabels[message.action] : labels.actionFailed);
         }
     });
 

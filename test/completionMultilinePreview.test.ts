@@ -87,6 +87,9 @@ test('multiline step documentation renders each localized template as a code blo
             if (specifier === './projectDefinitionSnippet') {
                 return projectDefinitionSnippet;
             }
+            if (specifier === './gherkinInsertionContext') {
+                return { getGherkinInsertionContext: () => ({ supported: true }) };
+            }
             return {};
         },
         console: { log: () => undefined }
