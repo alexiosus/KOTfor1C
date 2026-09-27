@@ -282,3 +282,31 @@ test('does not collapse definitions with the same template and sorts ambiguity d
     }
     assert.deepEqual(result.matches.map(item => item.definition.id), ['a', 'b', 'z']);
 });
+
+test('normalizes an invocation once when resolving it against many definitions', () => {
+    const definitions = Array.from({ length: 200 }, (_, index) => makeDefinition({
+        id: `definition-${index}`,
+        template: `And I execute action ${index}`
+    }));
+    const view = createProjectDefinitionView('large-view', definitions);
+
+    // Populate the compiled-definition cache before observing invocation work.
+    resolveProjectInvocation(view, 'And warm up matcher cache');
+
+    const originalToLocaleLowerCase = String.prototype.toLocaleLowerCase;
+    let lowercaseCalls = 0;
+    String.prototype.toLocaleLowerCase = function (...args: Parameters<String['toLocaleLowerCase']>): string {
+        lowercaseCalls += 1;
+        return originalToLocaleLowerCase.apply(this, args);
+    };
+    try {
+        assert.equal(
+            resolveProjectInvocation(view, 'And completely unknown project step').kind,
+            'missing'
+        );
+    } finally {
+        String.prototype.toLocaleLowerCase = originalToLocaleLowerCase;
+    }
+
+    assert.equal(lowercaseCalls, 1);
+});
