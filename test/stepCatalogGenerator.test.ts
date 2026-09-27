@@ -205,11 +205,18 @@ test('publication appends a category-enriched revision without modifying the ori
     const { catalog, report } = generatedFixture();
     const originalCatalog = {
         ...catalog,
-        steps: catalog.steps.map(step => ({
-            id: step.id,
-            ...(step.ru ? { ru: step.ru } : {}),
-            ...(step.en ? { en: step.en } : {})
-        }))
+        steps: [
+            {
+                id: createStepDefinitionId('Файлы', 'Files'),
+                ru: { pattern: 'Файлы', description: 'Категория шагов' },
+                en: { pattern: 'Files', description: 'Steps category' }
+            },
+            ...catalog.steps.map(step => ({
+                id: step.id,
+                ...(step.ru ? { ru: step.ru } : {}),
+                ...(step.en ? { en: step.en } : {})
+            }))
+        ]
     };
     const originalBytes = serializeStepCatalogJson(originalCatalog);
     const versionDirectory = path.join(root, generationOptions.version);

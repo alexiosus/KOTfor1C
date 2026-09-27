@@ -366,10 +366,13 @@ function latestTimestamp(left: string | undefined, right: string): string {
     return Date.parse(left) >= Date.parse(right) ? left : right;
 }
 
-function categoryNeutralCatalog(catalog: BuiltInStepCatalog): unknown {
+function categoryNeutralCatalog(
+    catalog: BuiltInStepCatalog,
+    steps: readonly BuiltInStepDefinition[]
+): unknown {
     return {
         ...catalog,
-        steps: catalog.steps.map(step => ({
+        steps: steps.map(step => ({
             id: step.id,
             ...(step.ru ? { ru: step.ru } : {}),
             ...(step.en ? { en: step.en } : {})
@@ -381,14 +384,16 @@ function isCategoryOnlyEnrichment(
     existing: BuiltInStepCatalog,
     candidate: BuiltInStepCatalog
 ): boolean {
-    if (JSON.stringify(categoryNeutralCatalog(existing))
-        !== JSON.stringify(categoryNeutralCatalog(candidate))) {
+    const existingSteps = executableStepDefinitions(existing.steps);
+    const candidateSteps = executableStepDefinitions(candidate.steps);
+    if (JSON.stringify(categoryNeutralCatalog(existing, existingSteps))
+        !== JSON.stringify(categoryNeutralCatalog(candidate, candidateSteps))) {
         return false;
     }
     let addedCategory = false;
-    for (let index = 0; index < existing.steps.length; index += 1) {
-        const previous = existing.steps[index].categoryPath;
-        const next = candidate.steps[index].categoryPath;
+    for (let index = 0; index < existingSteps.length; index += 1) {
+        const previous = existingSteps[index].categoryPath;
+        const next = candidateSteps[index].categoryPath;
         if (previous && JSON.stringify(previous) !== JSON.stringify(next)) {
             return false;
         }
