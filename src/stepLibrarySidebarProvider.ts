@@ -41,6 +41,21 @@ function errorMessage(error: unknown): string {
     return String(error);
 }
 
+function escapeHtmlAttribute(value: string): string {
+    return value
+        .replace(/&/gu, '&amp;')
+        .replace(/"/gu, '&quot;')
+        .replace(/</gu, '&lt;')
+        .replace(/>/gu, '&gt;');
+}
+
+function translate(message: string, ...args: string[]): string {
+    if (typeof vscode.l10n?.t === 'function') {
+        return vscode.l10n.t(message, ...args);
+    }
+    return message.replace(/\{(\d+)\}/gu, (placeholder, index) => args[Number(index)] ?? placeholder);
+}
+
 function cleanId(value: unknown): string | null {
     if (typeof value !== 'string') {
         return null;
@@ -86,7 +101,7 @@ function sameResource(left: vscode.Uri | undefined, right: vscode.Uri | undefine
 }
 
 export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, vscode.Disposable {
-    public static readonly viewType = 'kotTestToolkit.stepLibraryView';
+    public static readonly viewType = 'kotTestToolkit.stepLibrarySidebarView';
 
     private readonly disposables: vscode.Disposable[] = [];
     private viewDisposables: vscode.Disposable[] = [];
@@ -398,8 +413,9 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
         const codiconStylesUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'codicon.css'));
         const protocolUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'stepLibrarySidebarProtocol.js'));
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'stepLibrarySidebar.js'));
+        const t = (message: string) => escapeHtmlAttribute(translate(message));
         return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${escapeHtmlAttribute(vscode.env.language || 'en')}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -407,20 +423,20 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
     <link href="${codiconStylesUri}" rel="stylesheet">
     <link href="${sharedStylesUri}" rel="stylesheet">
     <link href="${stylesUri}" rel="stylesheet">
-    <title>Step Library</title>
+    <title>${t('Step Library')}</title>
 </head>
 <body>
-    <main class="step-sidebar">
+    <main class="step-sidebar" data-loading="${t('Loading step library...')}" data-no-matches="${t('No steps match the current filters.')}" data-error="${t('Unable to load the Step Library')}" data-contains-related-scenarios="${t('Contains scenarios related to the open scenario')}" data-insert-step="${t('Insert step')}" data-insertion-unavailable="${t('Insertion target unavailable')}" data-relationship-current="${t('Currently open scenario')}" data-relationship-incoming-direct="${t('Calls the open scenario directly')}" data-relationship-incoming-transitive="${t('Calls the open scenario through {0} scenarios')}" data-relationship-outgoing-direct="${t('Called by the open scenario directly')}" data-relationship-outgoing-transitive="${t('Called by the open scenario through {0} scenarios')}" data-relationship-contains-related="${t('Contains a scenario related to the open scenario')}">
         <div class="step-toolbar">
             <div class="step-search-wrap">
                 <span class="codicon codicon-search" aria-hidden="true"></span>
-                <input id="searchInput" type="search" aria-label="Search steps" placeholder="Search steps">
+                <input id="searchInput" type="search" aria-label="${t('Search steps')}" placeholder="${t('Search steps')}">
             </div>
-            <button id="refreshButton" class="kot-icon-button" type="button" aria-label="Refresh step library" title="Refresh step library"><span class="codicon codicon-refresh" aria-hidden="true"></span></button>
-            <button id="openFullButton" class="kot-icon-button" type="button" aria-label="Open full Step Library" title="Open full Step Library"><span class="codicon codicon-open-preview" aria-hidden="true"></span></button>
+            <button id="refreshButton" class="kot-icon-button" type="button" aria-label="${t('Refresh step library')}" title="${t('Refresh step library')}"><span class="codicon codicon-refresh" aria-hidden="true"></span></button>
+            <button id="openFullButton" class="kot-icon-button" type="button" aria-label="${t('Open full Step Library')}" title="${t('Open full Step Library')}"><span class="codicon codicon-open-preview" aria-hidden="true"></span></button>
         </div>
         <div id="status" class="step-status" role="status" aria-live="polite"></div>
-        <div id="tree" class="kot-tree step-tree" role="tree" aria-label="Steps"></div>
+        <div id="tree" class="kot-tree step-tree" role="tree" aria-label="${t('Steps')}"></div>
     </main>
     <script nonce="${nonce}" src="${protocolUri}"></script>
     <script nonce="${nonce}" src="${scriptUri}"></script>

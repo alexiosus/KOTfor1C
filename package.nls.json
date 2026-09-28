@@ -171,5 +171,9 @@
   "submenu.editorContext.editing": "KOT - Editing",
 
   "view.phaseSwitcher.name": "KOT for 1C",
-  "view.phaseSwitcher.contextualTitle": "KOT for 1C"
+  "view.phaseSwitcher.contextualTitle": "KOT for 1C",
+  "view.stepLibrary.name": "Step Library",
+  "view.stepLibrary.contextualTitle": "KOT Step Library",
+  "view.infobases.name": "Infobases",
+  "view.infobases.contextualTitle": "KOT Infobases"
 }

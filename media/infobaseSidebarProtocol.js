@@ -61,9 +61,9 @@
         return createState({ ...current, menuId: current.menuId === nextId ? null : nextId });
     }
 
-    function activeMarker(item) {
+    function activeMarker(item, accessibleLabel = 'Active profile infobase') {
         return item && item.active === true
-            ? Object.freeze({ visible: true, accessibleLabel: 'Active profile infobase' })
+            ? Object.freeze({ visible: true, accessibleLabel })
             : Object.freeze({ visible: false, accessibleLabel: '' });
     }
 

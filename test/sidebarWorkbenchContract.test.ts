@@ -177,3 +177,28 @@ test('compact Infobases view uses native sidebar primitives and a closed mainten
     assert.match(compactCss, /overflow-x:\s*hidden/u);
     assert.doesNotMatch(compactCss, /gradient|box-shadow/iu);
 });
+
+test('compact workbench views source user-facing strings from localization bundles', () => {
+    const english = JSON.parse(read('l10n/bundle.l10n.json')) as Record<string, string>;
+    const russian = JSON.parse(read('l10n/bundle.l10n.ru.json')) as Record<string, string>;
+    const requiredKeys = [
+        'Search steps',
+        'Refresh step library',
+        'Open full Step Library',
+        'Currently open scenario',
+        'Calls the open scenario directly',
+        'Called by the open scenario directly',
+        'Active profile infobase',
+        'Refresh infobases',
+        'Open in 1C:Enterprise',
+        'Maintenance actions',
+        'No managed infobases',
+        'Open full Infobase Manager'
+    ];
+    for (const key of requiredKeys) {
+        assert.equal(typeof english[key], 'string', `English: ${key}`);
+        assert.equal(typeof russian[key], 'string', `Russian: ${key}`);
+    }
+    assert.match(read('src/stepLibrarySidebarProvider.ts'), /vscode\.l10n\.t/u);
+    assert.match(read('src/infobaseSidebarProvider.ts'), /vscode\.l10n\.t/u);
+});

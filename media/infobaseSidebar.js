@@ -3,6 +3,8 @@
 
     const vscode = acquireVsCodeApi();
     const protocol = globalThis.InfobaseSidebarProtocol;
+    const root = document.querySelector('.infobase-sidebar');
+    const loc = root.dataset;
     const profileName = document.getElementById('profileName');
     const status = document.getElementById('status');
     const list = document.getElementById('list');
@@ -74,7 +76,7 @@
             row.setAttribute('aria-busy', 'true');
         }
 
-        const marker = protocol.activeMarker(item);
+        const marker = protocol.activeMarker(item, loc.activeMarker);
         const active = document.createElement('span');
         active.className = 'infobase-active-marker';
         if (marker.visible) {
@@ -102,13 +104,13 @@
 
         const actions = document.createElement('span');
         actions.className = 'kot-row-actions infobase-actions';
-        actions.appendChild(actionButton('play', 'Open in 1C:Enterprise', 'openEnterprise', item));
-        actions.appendChild(actionButton('tools', 'Open in Designer', 'openDesigner', item));
+        actions.appendChild(actionButton('play', loc.openEnterprise, 'openEnterprise', item));
+        actions.appendChild(actionButton('tools', loc.openDesigner, 'openDesigner', item));
         const menuButton = document.createElement('button');
         menuButton.type = 'button';
         menuButton.className = 'kot-icon-button infobase-action';
-        menuButton.title = 'Maintenance actions';
-        menuButton.setAttribute('aria-label', `Maintenance actions: ${item.displayName}`);
+        menuButton.title = loc.maintenance;
+        menuButton.setAttribute('aria-label', `${loc.maintenance}: ${item.displayName}`);
         menuButton.setAttribute('aria-haspopup', 'menu');
         menuButton.setAttribute('aria-expanded', uiState.menuId === item.id ? 'true' : 'false');
         menuButton.disabled = uiState.pendingId !== null;
@@ -127,10 +129,10 @@
             menu.className = 'infobase-menu';
             menu.setAttribute('role', 'menu');
             menu.append(
-                maintenanceItem('Export DT…', 'exportDt', item),
-                maintenanceItem('Import DT…', 'importDt', item),
-                maintenanceItem('Export CF…', 'exportCf', item),
-                maintenanceItem('Import CF…', 'importCf', item)
+                maintenanceItem(`${loc.exportDt}…`, 'exportDt', item),
+                maintenanceItem(`${loc.importDt}…`, 'importDt', item),
+                maintenanceItem(`${loc.exportCf}…`, 'exportCf', item),
+                maintenanceItem(`${loc.importCf}…`, 'importCf', item)
             );
             row.appendChild(menu);
         }
@@ -194,26 +196,26 @@
         const message = event.data || {};
         switch (message.command) {
             case 'loading':
-                status.textContent = message.retainItems ? 'Refreshing infobases…' : 'Loading infobases…';
+                status.textContent = message.retainItems ? loc.refreshing : loc.loading;
                 refreshButton.disabled = true;
                 break;
             case 'state':
                 items = Array.isArray(message.items) ? message.items : [];
                 uiState = protocol.withItems(uiState, items);
-                profileName.textContent = message.profileName || 'Active profile';
+                profileName.textContent = message.profileName || loc.activeProfile;
                 profileName.title = message.profileName || '';
-                status.textContent = items.length === 0 ? 'No managed infobases' : '';
+                status.textContent = items.length === 0 ? loc.empty : '';
                 refreshButton.disabled = false;
                 persistState();
                 render();
                 break;
             case 'pending':
                 uiState = protocol.withPending(uiState, message.infobaseId);
-                status.textContent = message.infobaseId ? 'Running action…' : '';
+                status.textContent = message.infobaseId ? loc.running : '';
                 render();
                 break;
             case 'error':
-                status.textContent = message.message || 'Unable to load infobases';
+                status.textContent = message.message || loc.error;
                 refreshButton.disabled = false;
                 render();
                 break;

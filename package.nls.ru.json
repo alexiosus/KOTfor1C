@@ -171,5 +171,9 @@
   "submenu.editorContext.editing": "KOT - Редактирование",
 
   "view.phaseSwitcher.name": "KOT for 1C",
-  "view.phaseSwitcher.contextualTitle": "KOT for 1C"
+  "view.phaseSwitcher.contextualTitle": "KOT for 1C",
+  "view.stepLibrary.name": "Библиотека шагов",
+  "view.stepLibrary.contextualTitle": "Библиотека шагов KOT",
+  "view.infobases.name": "Базы",
+  "view.infobases.contextualTitle": "Базы KOT"
 }

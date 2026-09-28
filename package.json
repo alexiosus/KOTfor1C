@@ -1295,6 +1295,18 @@
           "name": "%view.phaseSwitcher.name%",
           "type": "webview",
           "contextualTitle": "%view.phaseSwitcher.contextualTitle%"
+        },
+        {
+          "id": "kotTestToolkit.stepLibrarySidebarView",
+          "name": "%view.stepLibrary.name%",
+          "type": "webview",
+          "contextualTitle": "%view.stepLibrary.contextualTitle%"
+        },
+        {
+          "id": "kotTestToolkit.infobaseSidebarView",
+          "name": "%view.infobases.name%",
+          "type": "webview",
+          "contextualTitle": "%view.infobases.contextualTitle%"
         }
       ]
     }

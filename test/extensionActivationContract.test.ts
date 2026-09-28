@@ -39,6 +39,7 @@ const packageManifest = JSON.parse(fs.readFileSync(
     contributes: {
         commands: Array<{ command: string; title: string; category: string }>;
         menus: Record<string, Array<{ command: string; when?: string }>>;
+        views: Record<string, Array<{ id: string; name: string; type: string; contextualTitle?: string }>>;
     };
 };
 
@@ -64,6 +65,23 @@ test('activation shares a lazy managed-infobase snapshot without eager 1C discov
     assert.doesNotMatch(source, /from '\.\/infobaseManager';/u);
     assert.doesNotMatch(infobaseManagerPanelSource, /collectManagedInfobases/u);
     assert.match(infobaseManagerPanelSource, /managedInfobaseService\.(?:ensureReady|refresh)\(/u);
+    const activationPrefix = source.slice(source.indexOf('export function activate('));
+    assert.doesNotMatch(activationPrefix, /managedInfobaseService\.ensureReady\(/u);
+    assert.doesNotMatch(activationPrefix, /collectManagedInfobases\(context\)(?!,)/u);
+});
+
+test('manifest contributes the three ordered KOT workbench webviews', () => {
+    assert.deepEqual(
+        packageManifest.contributes.views.kotTestToolkitContainer.map(view => ({
+            id: view.id,
+            type: view.type
+        })),
+        [
+            { id: 'kotTestToolkit.phaseSwitcherView', type: 'webview' },
+            { id: 'kotTestToolkit.stepLibrarySidebarView', type: 'webview' },
+            { id: 'kotTestToolkit.infobaseSidebarView', type: 'webview' }
+        ]
+    );
 });
 
 test('step library is contributed to the palette and only YAML or feature editor titles', () => {
@@ -91,14 +109,13 @@ test('step library is contributed to the palette and only YAML or feature editor
     assert.doesNotMatch(titleEntries[0].when ?? '', /\.json|\.txt/u);
 });
 
-test('activation creates one step-library panel lazily from shared services', () => {
+test('activation shares step-library services between compact and full views', () => {
     assert.doesNotMatch(source, /from '\.\/stepLibraryPanel';/u);
     assert.match(source, /import\('\.\/stepLibraryPanel\.js'\)/u);
-    assert.match(source, /import\('\.\/stepLibrarySnapshotService\.js'\)/u);
-    assert.match(source, /import\('\.\/stepLibraryActions\.js'\)/u);
     assert.equal(source.match(/new StepLibraryPanel\(/gu)?.length, 1);
     assert.equal(source.match(/new StepLibrarySnapshotService\(/gu)?.length, 1);
     assert.equal(source.match(/new StepLibraryActionService\(/gu)?.length, 1);
+    assert.equal(source.match(/new StepLibrarySidebarProvider\(/gu)?.length, 1);
     assert.match(source, /snapshotService,\s*actionService,/u);
     assert.match(source, /resolver:\s*projectDefinitionResolver/u);
     assert.match(source, /stepCatalogService\.refresh\(resource\)/u);
@@ -112,6 +129,30 @@ test('activation creates one step-library panel lazily from shared services', ()
         source,
         /registerCommand\(\s*'kotTestToolkit\.openStepLibrary'[\s\S]*?activeTextEditor\?\.document\.uri/u
     );
+});
+
+test('activation registers all workbench providers with retained hidden context', () => {
+    for (const provider of [
+        'PhaseSwitcherProvider',
+        'StepLibrarySidebarProvider',
+        'InfobaseSidebarProvider'
+    ]) {
+        assert.match(
+            source,
+            new RegExp(`registerWebviewViewProvider\\(\\s*${provider}\\.viewType,[\\s\\S]*?retainContextWhenHidden:\\s*true`, 'u')
+        );
+    }
+    assert.doesNotMatch(source, /stepLibrarySnapshotService\.ensureReady\(/u);
+});
+
+test('active-editor changes reach the shared relationship service through Test Manager once', () => {
+    assert.equal(source.match(/new ScenarioRelationshipService\(/gu)?.length, 1);
+    assert.equal(source.match(/phaseSwitcherProvider\.attachRelationshipService\(/gu)?.length, 1);
+    const listenerStart = source.indexOf('vscode.window.onDidChangeActiveTextEditor(editor => {');
+    const listenerEnd = source.indexOf('\n        })', listenerStart);
+    const listener = source.slice(listenerStart, listenerEnd);
+    assert.equal(listener.match(/phaseSwitcherProvider\.handleActiveEditorChanged\(editor\)/gu)?.length, 1);
+    assert.doesNotMatch(listener, /relationshipService\.handleActiveEditorChanged/u);
 });
 
 test('activation defers scenario creation and settings commands', () => {

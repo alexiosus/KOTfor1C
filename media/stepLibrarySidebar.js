@@ -3,6 +3,8 @@
 
     const vscode = acquireVsCodeApi();
     const protocol = globalThis.StepLibrarySidebarProtocol;
+    const root = document.querySelector('.step-sidebar');
+    const loc = root.dataset;
     const tree = document.getElementById('tree');
     const searchInput = document.getElementById('searchInput');
     const status = document.getElementById('status');
@@ -80,7 +82,14 @@
 
     function relationshipDecoration(node) {
         const state = protocol.withRelationshipState(uiState, relationshipState);
-        return protocol.relationshipDecorationForNode(node, state);
+        return protocol.relationshipDecorationForNode(node, state, {
+            current: loc.relationshipCurrent,
+            incomingDirect: loc.relationshipIncomingDirect,
+            incomingTransitive: loc.relationshipIncomingTransitive,
+            outgoingDirect: loc.relationshipOutgoingDirect,
+            outgoingTransitive: loc.relationshipOutgoingTransitive,
+            containsRelated: loc.relationshipContainsRelated
+        });
     }
 
     function makeRow(node, parentId) {
@@ -137,9 +146,9 @@
             actions.appendChild(createIcon(icon, decoration.accessibleLabel));
         } else if (relatedAncestorIds.has(node.id)) {
             row.classList.add('is-related');
-            actions.appendChild(createIcon('git-branch', 'Contains scenarios related to the open scenario'));
+            actions.appendChild(createIcon('git-branch', loc.containsRelatedScenarios));
         } else if (node.kind === 'definition') {
-            actions.appendChild(createIcon('add', insertionAvailable ? 'Insert step' : 'Insertion target unavailable'));
+            actions.appendChild(createIcon('add', insertionAvailable ? loc.insertStep : loc.insertionUnavailable));
         }
         row.appendChild(actions);
         return row;
@@ -274,7 +283,7 @@
         const message = event.data || {};
         switch (message.command) {
             case 'loading':
-                status.textContent = 'Loading steps…';
+                status.textContent = loc.loading;
                 break;
             case 'roots':
                 roots = Array.isArray(message.nodes) ? message.nodes : [];
@@ -299,7 +308,7 @@
             }
             case 'searchResults':
                 searchResults = message.query.trim() ? (message.nodes || []) : null;
-                status.textContent = searchResults && searchResults.length === 0 ? 'No matching steps' : '';
+                status.textContent = searchResults && searchResults.length === 0 ? loc.noMatches : '';
                 render();
                 break;
             case 'relationshipState':
@@ -316,7 +325,7 @@
                 refreshButton.disabled = false;
                 break;
             case 'error':
-                status.textContent = message.message || 'Unable to load the Step Library';
+                status.textContent = message.message || loc.error;
                 refreshButton.disabled = false;
                 break;
         }

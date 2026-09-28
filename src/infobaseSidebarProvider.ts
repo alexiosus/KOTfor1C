@@ -109,6 +109,21 @@ function errorMessage(error: unknown): string {
     return String(error);
 }
 
+function escapeHtmlAttribute(value: string): string {
+    return value
+        .replace(/&/gu, '&amp;')
+        .replace(/"/gu, '&quot;')
+        .replace(/</gu, '&lt;')
+        .replace(/>/gu, '&gt;');
+}
+
+function translate(message: string, ...args: string[]): string {
+    if (typeof vscode.l10n?.t === 'function') {
+        return vscode.l10n.t(message, ...args);
+    }
+    return message.replace(/\{(\d+)\}/gu, (placeholder, index) => args[Number(index)] ?? placeholder);
+}
+
 export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vscode.Disposable {
     public static readonly viewType = 'kotTestToolkit.infobaseSidebarView';
 
@@ -318,8 +333,9 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
         const codiconStylesUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'codicon.css'));
         const protocolUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'infobaseSidebarProtocol.js'));
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'infobaseSidebar.js'));
+        const t = (message: string) => escapeHtmlAttribute(translate(message));
         return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${escapeHtmlAttribute(vscode.env?.language || 'en')}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -327,14 +343,14 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
     <link href="${codiconStylesUri}" rel="stylesheet">
     <link href="${sharedStylesUri}" rel="stylesheet">
     <link href="${stylesUri}" rel="stylesheet">
-    <title>Infobases</title>
+    <title>${t('Infobases')}</title>
 </head>
 <body>
-    <main class="infobase-sidebar">
-        <header class="infobase-header"><span id="profileName"></span><button id="refreshButton" class="kot-icon-button" type="button" aria-label="Refresh infobases" title="Refresh infobases"><span class="codicon codicon-refresh" aria-hidden="true"></span></button></header>
+    <main class="infobase-sidebar" data-active-marker="${t('Active profile infobase')}" data-open-enterprise="${t('Open in 1C:Enterprise')}" data-open-designer="${t('Open in Designer')}" data-maintenance="${t('Maintenance actions')}" data-export-dt="${t('Export DT')}" data-import-dt="${t('Import DT')}" data-export-cf="${t('Export CF')}" data-import-cf="${t('Import CF')}" data-refreshing="${t('Refreshing infobases...')}" data-loading="${t('Loading infobases...')}" data-active-profile="${t('Active profile')}" data-empty="${t('No managed infobases')}" data-running="${t('Running action...')}" data-error="${t('Unable to load infobases')}">
+        <header class="infobase-header"><span id="profileName"></span><button id="refreshButton" class="kot-icon-button" type="button" aria-label="${t('Refresh infobases')}" title="${t('Refresh infobases')}"><span class="codicon codicon-refresh" aria-hidden="true"></span></button></header>
         <div id="status" class="infobase-status" role="status" aria-live="polite"></div>
-        <div id="list" class="infobase-list" role="listbox" aria-label="Infobases"></div>
-        <footer class="infobase-footer"><button id="createButton" type="button"><span class="codicon codicon-add" aria-hidden="true"></span><span>Create</span></button><button id="openFullButton" type="button"><span class="codicon codicon-open-preview" aria-hidden="true"></span><span>Open manager</span></button></footer>
+        <div id="list" class="infobase-list" role="listbox" aria-label="${t('Infobases')}"></div>
+        <footer class="infobase-footer"><button id="createButton" type="button"><span class="codicon codicon-add" aria-hidden="true"></span><span>${t('Create')}</span></button><button id="openFullButton" type="button"><span class="codicon codicon-open-preview" aria-hidden="true"></span><span>${t('Open full Infobase Manager')}</span></button></footer>
     </main>
     <script nonce="${nonce}" src="${protocolUri}"></script>
     <script nonce="${nonce}" src="${scriptUri}"></script>

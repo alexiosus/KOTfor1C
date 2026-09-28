@@ -162,7 +162,13 @@
         });
     }
 
-    function relationshipDecorationForNode(node, state) {
+    function relationshipDecorationForNode(node, state, labels) {
+        const localized = labels && typeof labels === 'object' ? labels : {};
+        const label = (key, fallback) => typeof localized[key] === 'string' && localized[key]
+            ? localized[key]
+            : fallback;
+        const distanceLabel = (key, fallback, distance) => label(key, fallback)
+            .replace('{0}', String(distance));
         const scenarioKey = node && typeof node === 'object' && typeof node.scenarioKey === 'string'
             ? node.scenarioKey.trim()
             : '';
@@ -176,7 +182,7 @@
                 icon: 'eye',
                 classNames: Object.freeze(['is-current']),
                 direct: true,
-                accessibleLabel: 'Currently open scenario'
+                accessibleLabel: label('current', 'Currently open scenario')
             });
         }
         if (!relationshipState.enabled) {
@@ -197,11 +203,11 @@
             }
             const accessibleLabel = useIncoming
                 ? (direct
-                    ? 'Calls the open scenario directly'
-                    : `Calls the open scenario through ${distance} scenarios`)
+                    ? label('incomingDirect', 'Calls the open scenario directly')
+                    : distanceLabel('incomingTransitive', 'Calls the open scenario through {0} scenarios', distance))
                 : (direct
-                    ? 'Called by the open scenario directly'
-                    : `Called by the open scenario through ${distance} scenarios`);
+                    ? label('outgoingDirect', 'Called by the open scenario directly')
+                    : distanceLabel('outgoingTransitive', 'Called by the open scenario through {0} scenarios', distance));
             return Object.freeze({
                 state: stateName,
                 icon,
@@ -216,7 +222,7 @@
                 icon: null,
                 classNames: Object.freeze(['is-related', 'is-transitive']),
                 direct: false,
-                accessibleLabel: 'Contains a scenario related to the open scenario'
+                accessibleLabel: label('containsRelated', 'Contains a scenario related to the open scenario')
             });
         }
         return noDecoration();

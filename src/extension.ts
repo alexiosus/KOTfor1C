@@ -109,6 +109,14 @@ import {
 import { resolveVanessaTemplateRoot } from './userStepCreator';
 import type { UserStepLibraryRoot } from './userStepCommands';
 import { ManagedInfobaseService } from './managedInfobaseService';
+import { ScenarioRelationshipService } from './scenarioRelationshipService';
+import { StepLibrarySnapshotService } from './stepLibrarySnapshotService';
+import { StepLibraryActionService } from './stepLibraryActions';
+import { StepLibrarySidebarProvider } from './stepLibrarySidebarProvider';
+import {
+    createDeferredInfobaseSidebarOperations,
+    InfobaseSidebarProvider
+} from './infobaseSidebarProvider';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -873,6 +881,28 @@ export function activate(context: vscode.ExtensionContext) {
     );
     // --- Регистрация Провайдера для Webview (Test Manager) ---
     const phaseSwitcherProvider = new PhaseSwitcherProvider(context.extensionUri, context);
+    const relationshipService = new ScenarioRelationshipService({
+        catalogProvider: phaseSwitcherProvider,
+        configuration: vscode.workspace.getConfiguration('kotTestToolkit'),
+        workspaceConfigurationTarget: vscode.ConfigurationTarget.Workspace,
+        onDidChangeConfiguration: vscode.workspace.onDidChangeConfiguration,
+        getScanRootPaths: () => {
+            const workspaceRootUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+            if (!workspaceRootUri) {
+                return null;
+            }
+            const scanRootPath = path.resolve(resolveScenarioScanRootFsPath(workspaceRootUri));
+            let canonicalScanRootPath = scanRootPath;
+            try {
+                canonicalScanRootPath = fs.realpathSync.native(scanRootPath);
+            } catch {
+                // The scan root can be configured before it is created.
+            }
+            return { scanRootPath, canonicalScanRootPath };
+        }
+    });
+    phaseSwitcherProvider.attachRelationshipService(relationshipService);
+    context.subscriptions.push(relationshipService);
     context.subscriptions.push(
         onDidChangeScenarioScanRoot(() => {
             phaseSwitcherProvider.handleScenarioScanRootChanged();
@@ -919,51 +949,70 @@ export function activate(context: vscode.ExtensionContext) {
         projectDefinitionResolver,
         projectDefinitionReferenceService
     );
+    const snapshotService = new StepLibrarySnapshotService({
+        resolver: projectDefinitionResolver,
+        scenarios: phaseSwitcherProvider
+    });
+    const actionService = new StepLibraryActionService({
+        resolver: projectDefinitionResolver,
+        openDefinition: openProjectDefinitionHandler,
+        host: {
+            getActiveTextEditor: () => vscode.window.activeTextEditor,
+            onDidChangeActiveTextEditor: vscode.window.onDidChangeActiveTextEditor,
+            onDidChangeTextEditorSelection: vscode.window.onDidChangeTextEditorSelection,
+            onDidChangeTextDocument: vscode.workspace.onDidChangeTextDocument,
+            createPosition: (line, character) => new vscode.Position(line, character),
+            createSelection: (anchor, active) => new vscode.Selection(anchor, active),
+            createSnippetString: value => new vscode.SnippetString(value),
+            writeClipboardText: value => vscode.env.clipboard.writeText(value)
+        }
+    });
+    const refreshStepDefinitions = async (resource?: vscode.Uri) => {
+        await stepCatalogService.refresh(resource);
+        await projectDefinitionIndex.reloadConfigurations();
+        await projectDefinitionIndex.waitForIdle();
+        await phaseSwitcherProvider.refreshFromExternalStateChange({ refreshCache: true });
+    };
+    const stepLibrarySidebarProvider = new StepLibrarySidebarProvider({
+        extensionUri: context.extensionUri,
+        snapshotService,
+        actionService,
+        relationshipService,
+        refreshDefinitions: refreshStepDefinitions
+    });
+    const infobaseSidebarProvider = new InfobaseSidebarProvider({
+        extensionUri: context.extensionUri,
+        managedInfobaseService,
+        loadOperations: createDeferredInfobaseSidebarOperations(context)
+    });
+    context.subscriptions.push(
+        snapshotService,
+        actionService,
+        stepLibrarySidebarProvider,
+        infobaseSidebarProvider,
+        vscode.window.registerWebviewViewProvider(
+            StepLibrarySidebarProvider.viewType,
+            stepLibrarySidebarProvider,
+            { webviewOptions: { retainContextWhenHidden: true } }
+        ),
+        vscode.window.registerWebviewViewProvider(
+            InfobaseSidebarProvider.viewType,
+            infobaseSidebarProvider,
+            { webviewOptions: { retainContextWhenHidden: true } }
+        )
+    );
     let stepLibraryPanelPromise: Promise<import('./stepLibraryPanel.js').StepLibraryPanel>
         | undefined;
     const getStepLibraryPanel = () => {
         if (!stepLibraryPanelPromise) {
-            stepLibraryPanelPromise = Promise.all([
-                import('./stepLibraryPanel.js'),
-                import('./stepLibrarySnapshotService.js'),
-                import('./stepLibraryActions.js')
-            ]).then(([
-                { StepLibraryPanel },
-                { StepLibrarySnapshotService },
-                { StepLibraryActionService }
-            ]) => {
-                const snapshotService = new StepLibrarySnapshotService({
-                    resolver: projectDefinitionResolver,
-                    scenarios: phaseSwitcherProvider
-                });
-                const actionService = new StepLibraryActionService({
-                    resolver: projectDefinitionResolver,
-                    openDefinition: openProjectDefinitionHandler,
-                    host: {
-                        getActiveTextEditor: () => vscode.window.activeTextEditor,
-                        onDidChangeActiveTextEditor: vscode.window.onDidChangeActiveTextEditor,
-                        onDidChangeTextEditorSelection: vscode.window.onDidChangeTextEditorSelection,
-                        onDidChangeTextDocument: vscode.workspace.onDidChangeTextDocument,
-                        createPosition: (line, character) => new vscode.Position(line, character),
-                        createSelection: (anchor, active) => new vscode.Selection(anchor, active),
-                        createSnippetString: value => new vscode.SnippetString(value),
-                        writeClipboardText: value => vscode.env.clipboard.writeText(value)
-                    }
-                });
+            stepLibraryPanelPromise = import('./stepLibraryPanel.js').then(({ StepLibraryPanel }) => {
                 const panel = new StepLibraryPanel({
                     extensionUri: context.extensionUri,
                     snapshotService,
                     actionService,
-                    refreshDefinitions: async resource => {
-                        await stepCatalogService.refresh(resource);
-                        await projectDefinitionIndex.reloadConfigurations();
-                        await projectDefinitionIndex.waitForIdle();
-                        await phaseSwitcherProvider.refreshFromExternalStateChange({
-                            refreshCache: true
-                        });
-                    }
+                    refreshDefinitions: refreshStepDefinitions
                 });
-                context.subscriptions.push(snapshotService, actionService, panel);
+                context.subscriptions.push(panel);
                 return panel;
             }).catch(error => {
                 stepLibraryPanelPromise = undefined;
