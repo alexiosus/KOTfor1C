@@ -18,6 +18,15 @@ function registration(template: string, category?: string) {
     return { template, category };
 }
 
+function sourcedRegistration(
+    template: string,
+    snippet: string,
+    category?: string,
+    sourceUri = 'file:///vanessa/Module.bsl'
+) {
+    return { template, snippet, category, sourceUri };
+}
+
 test('enriches by normalized Russian template and translates dotted path segments', () => {
     const result = enrichStepCatalogCategories({
         steps: [step('И открываю форму', 'And I open form')],
@@ -154,4 +163,64 @@ test('applies one category mapping to every catalog variant sharing its Russian 
         { ru: ['Общее'], en: ['Common'] },
         { ru: ['Общее'], en: ['Common'] }
     ]);
+});
+
+test('inherits a category for a close legacy alias from the same BSL module and arity', () => {
+    const result = enrichStepCatalogCategories({
+        steps: [
+            step('И область "%1 Area" табличного документа "%2 Document" соответствует макету "%3 Template"'),
+            step('И область "%1 Area" табличного документа "%2 Document" равна макету "%3 Template"'),
+            step('И табличный документ "%1 Document" соответствует макету "%2 Template"')
+        ],
+        categoryTranslations: [{
+            ru: 'UI.Табличный документ.Эталонный макет.Область',
+            en: 'UI.Spreadsheet document.Reference template.Area'
+        }],
+        registrations: [
+            sourcedRegistration(
+                'И область "R1C1:R10C10" табличного документа "ТабДок" соответствует макету "Макет"',
+                'LegacyArea(Area, Document, Template)'
+            ),
+            sourcedRegistration(
+                'И область "R1C1:R10C10" табличного документа "ТабДок" равна макету "Макет"',
+                'CurrentArea(Area, Document, Template)',
+                'UI.Табличный документ.Эталонный макет.Область'
+            ),
+            sourcedRegistration(
+                'И табличный документ "ТабДок" соответствует макету "Макет"',
+                'LegacyDocument(Document, Template)'
+            )
+        ]
+    });
+
+    assert.deepEqual(result.steps.map(item => item.categoryPath), [
+        {
+            ru: ['UI', 'Табличный документ', 'Эталонный макет', 'Область'],
+            en: ['UI', 'Spreadsheet document', 'Reference template', 'Area']
+        },
+        {
+            ru: ['UI', 'Табличный документ', 'Эталонный макет', 'Область'],
+            en: ['UI', 'Spreadsheet document', 'Reference template', 'Area']
+        },
+        undefined
+    ]);
+});
+
+test('groups definitions without source metadata as Vanessa service steps when requested', () => {
+    const result = enrichStepCatalogCategories({
+        steps: [step('И внутренний шаг', 'And internal step')],
+        categoryTranslations: [],
+        registrations: [],
+        fallbackCategoryPath: {
+            ru: ['Служебные'],
+            en: ['Service']
+        }
+    });
+
+    assert.deepEqual(result.steps[0].categoryPath, {
+        ru: ['Служебные'],
+        en: ['Service']
+    });
+    assert.equal(result.report.categorizedStepCount, 1);
+    assert.equal(result.report.uncategorizedStepCount, 0);
 });

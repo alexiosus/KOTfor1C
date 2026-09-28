@@ -28,6 +28,7 @@ const SOURCE_READ_CONCURRENCY = 16;
 
 type RequiredArgument = typeof REQUIRED_ARGUMENTS[number];
 type Arguments = Record<RequiredArgument, string>;
+type SourceRegistration = StaticBslStepRegistration & { readonly sourceUri: string };
 
 function parseArguments(argv: readonly string[]): Arguments {
     const values = new Map<string, string>();
@@ -74,12 +75,12 @@ async function enumerateBslFiles(sourceRoot: string): Promise<readonly string[]>
 }
 
 async function collectVanessaRegistrations(sourceRoot: string): Promise<{
-    readonly registrations: readonly StaticBslStepRegistration[];
+    readonly registrations: readonly SourceRegistration[];
     readonly warningCount: number;
     readonly parsedFileCount: number;
 }> {
     const files = await enumerateBslFiles(sourceRoot);
-    const registrationsByFile: StaticBslStepRegistration[][] = files.map(() => []);
+    const registrationsByFile: SourceRegistration[][] = files.map(() => []);
     const warningCounts = files.map(() => 0);
     const parsedFiles = files.map(() => false);
     let cursor = 0;
@@ -96,7 +97,11 @@ async function collectVanessaRegistrations(sourceRoot: string): Promise<{
                     source,
                     pathToFileURL(files[index]).toString()
                 );
-                registrationsByFile[index].push(...parsed.registrations);
+                const sourceUri = pathToFileURL(files[index]).toString();
+                registrationsByFile[index].push(...parsed.registrations.map(registration => ({
+                    ...registration,
+                    sourceUri
+                })));
                 warningCounts[index] = parsed.warnings.length;
                 parsedFiles[index] = true;
             }
@@ -134,7 +139,11 @@ async function main(): Promise<void> {
     const enrichment = enrichStepCatalogCategories({
         steps: parsedTemplate.steps,
         categoryTranslations: parsedTemplate.categories,
-        registrations: sourceRegistrations.registrations
+        registrations: sourceRegistrations.registrations,
+        fallbackCategoryPath: {
+            ru: ['Служебные'],
+            en: ['Service']
+        }
     });
     const parsed = { ...parsedTemplate, steps: enrichment.steps };
     const catalog = generateBuiltInStepCatalog(parsed, {

@@ -295,6 +295,12 @@ select:focus-visible,
 }
 
 .definition-list {
+    width: 100%;
+    min-width: 0;
+    padding: 0;
+}
+
+.definition-list-content {
     display: flex;
     flex-direction: column;
     width: max-content;

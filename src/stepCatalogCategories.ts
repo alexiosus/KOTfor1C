@@ -10,6 +10,7 @@ import {
     type BuiltInStepDefinition,
     type StepCategoryPath
 } from './stepCatalog';
+import { calculateLevenshteinSimilarity } from './stringSimilarity';
 
 export interface StepCategoryTranslationInput {
     readonly ru?: string;
@@ -27,7 +28,14 @@ export interface StepCategoryEnrichmentReport {
 export interface StepCategoryEnrichmentInput {
     readonly steps: readonly BuiltInStepDefinition[];
     readonly categoryTranslations: readonly StepCategoryTranslationInput[];
-    readonly registrations: readonly Pick<StaticBslStepRegistration, 'template' | 'category'>[];
+    readonly registrations: readonly StepCategoryRegistrationInput[];
+    readonly fallbackCategoryPath?: StepCategoryPath;
+}
+
+export interface StepCategoryRegistrationInput
+    extends Pick<StaticBslStepRegistration, 'template' | 'category'>,
+    Partial<Pick<StaticBslStepRegistration, 'snippet'>> {
+    readonly sourceUri?: string;
 }
 
 export interface StepCategoryEnrichmentResult {
@@ -51,6 +59,85 @@ function splitCategoryPath(value: string | undefined): readonly string[] {
 
 function categoryKey(path: readonly string[]): string {
     return JSON.stringify(path);
+}
+
+function snippetArity(snippet: string | undefined): number | null {
+    if (!snippet) {
+        return null;
+    }
+    const open = snippet.indexOf('(');
+    const close = snippet.lastIndexOf(')');
+    if (open < 0 || close <= open) {
+        return null;
+    }
+    const parameters = snippet.slice(open + 1, close).trim();
+    return parameters ? parameters.split(',').length : 0;
+}
+
+function aliasSignature(template: string): string {
+    const invocationLine = template.split(/\r\n|\r|\n/u, 1)[0] ?? template;
+    return normalizeStepCatalogText(invocationLine)
+        .toLocaleLowerCase()
+        .replace(
+            /^(?:и|дано|допустим|когда|тогда|затем|но|если|and|given|when|then|but)\s+/u,
+            ''
+        )
+        .replace(/"[^"]*"/gu, '""')
+        .replace(/'[^']*'/gu, "''");
+}
+
+interface ResolvedCategoryRegistration {
+    readonly registration: StepCategoryRegistrationInput;
+    readonly template: string;
+    readonly categoryPath: readonly string[];
+    readonly arity: number | null;
+    readonly signature: string;
+}
+
+const LEGACY_ALIAS_MINIMUM_SIMILARITY = 0.79;
+const LEGACY_ALIAS_MINIMUM_MARGIN = 0.08;
+
+function inferredLegacyAliasCategory(
+    unresolved: ResolvedCategoryRegistration,
+    registrations: readonly ResolvedCategoryRegistration[]
+): readonly string[] | null {
+    const sourceUri = unresolved.registration.sourceUri;
+    if (!sourceUri || unresolved.arity === null) {
+        return null;
+    }
+
+    const bestByCategory = new Map<string, {
+        readonly path: readonly string[];
+        readonly score: number;
+    }>();
+    for (const candidate of registrations) {
+        if (
+            candidate.categoryPath.length === 0
+            || candidate.registration.sourceUri !== sourceUri
+            || candidate.arity !== unresolved.arity
+        ) {
+            continue;
+        }
+        const score = calculateLevenshteinSimilarity(
+            unresolved.signature,
+            candidate.signature
+        );
+        const key = categoryKey(candidate.categoryPath);
+        if (score > (bestByCategory.get(key)?.score ?? -1)) {
+            bestByCategory.set(key, { path: candidate.categoryPath, score });
+        }
+    }
+
+    const ranked = [...bestByCategory.values()].sort((left, right) => right.score - left.score);
+    const best = ranked[0];
+    if (!best || best.score < LEGACY_ALIAS_MINIMUM_SIMILARITY) {
+        return null;
+    }
+    const second = ranked[1];
+    if (second && best.score - second.score < LEGACY_ALIAS_MINIMUM_MARGIN) {
+        return null;
+    }
+    return best.path;
 }
 
 function templateParameters(template: string): readonly ProjectDefinitionParameter[] {
@@ -154,15 +241,26 @@ export function enrichStepCatalogCategories(
     const resolveRegistrationTemplate = buildRegistrationTemplateResolver(input.steps);
     const mappings = new Map<string, Map<string, readonly string[]>>();
     let unmatchedRegistrationCount = 0;
+    const resolvedRegistrations: ResolvedCategoryRegistration[] = [];
 
     for (const registration of input.registrations) {
         const path = splitCategoryPath(registration.category);
-        if (path.length === 0) {
-            continue;
-        }
         const template = resolveRegistrationTemplate(registration.template);
         if (!template) {
-            unmatchedRegistrationCount += 1;
+            if (path.length > 0) {
+                unmatchedRegistrationCount += 1;
+            }
+            continue;
+        }
+        const resolved = Object.freeze({
+            registration,
+            template,
+            categoryPath: path,
+            arity: snippetArity(registration.snippet),
+            signature: aliasSignature(template)
+        });
+        resolvedRegistrations.push(resolved);
+        if (path.length === 0) {
             continue;
         }
         const categories = mappings.get(template) ?? new Map<string, readonly string[]>();
@@ -170,9 +268,21 @@ export function enrichStepCatalogCategories(
         mappings.set(template, categories);
     }
 
+    for (const registration of resolvedRegistrations) {
+        if (registration.categoryPath.length > 0 || mappings.has(registration.template)) {
+            continue;
+        }
+        const inferred = inferredLegacyAliasCategory(registration, resolvedRegistrations);
+        if (!inferred) {
+            continue;
+        }
+        mappings.set(registration.template, new Map([[categoryKey(inferred), inferred]]));
+    }
+
     const conflicting = new Set<string>();
     const translations = buildTranslations(input.categoryTranslations);
     const untranslatable = new Set<string>();
+    const fallbackCategoryPath = input.fallbackCategoryPath;
     const steps = input.steps.map(step => {
         if (!step.ru) {
             return step;
@@ -180,7 +290,16 @@ export function enrichStepCatalogCategories(
         const template = normalizeStepCatalogText(step.ru.pattern);
         const categories = mappings.get(template);
         if (!categories || categories.size === 0) {
-            return step;
+            if (!fallbackCategoryPath) {
+                return step;
+            }
+            return Object.freeze({
+                ...step,
+                categoryPath: Object.freeze({
+                    ru: Object.freeze([...(fallbackCategoryPath.ru ?? [])]),
+                    en: Object.freeze([...(fallbackCategoryPath.en ?? [])])
+                })
+            });
         }
         if (categories.size > 1) {
             conflicting.add(template);

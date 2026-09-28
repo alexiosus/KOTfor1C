@@ -694,7 +694,9 @@ export class StepLibraryPanel implements vscode.Disposable {
                     <span id="resultCount" class="count-badge">0</span>
                 </div>
                 <div id="statusMessage" class="status-message">${escapeHtml(labels.loading)}</div>
-                <div id="definitionList" class="definition-list" role="listbox" tabindex="0" aria-busy="true"></div>
+                <div id="definitionList" class="definition-list" role="listbox" tabindex="0" aria-busy="true">
+                    <div id="definitionListContent" class="definition-list-content"></div>
+                </div>
             </section>
             <div id="detailsResizer" class="pane-resizer" data-divider="details" role="separator" aria-orientation="vertical" aria-label="${escapeHtml(labels.resizeDetails)}" tabindex="0"></div>
             <section id="detailsPane" class="pane details-pane" aria-label="${escapeHtml(labels.details)}">

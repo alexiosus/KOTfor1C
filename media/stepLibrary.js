@@ -16,6 +16,7 @@
     const categoryTree = document.getElementById('categoryTree');
     const statusMessage = document.getElementById('statusMessage');
     const definitionList = document.getElementById('definitionList');
+    const definitionListContent = document.getElementById('definitionListContent');
     const resultCount = document.getElementById('resultCount');
     const detailsContent = document.getElementById('detailsContent');
     const insertButton = document.getElementById('insertButton');
@@ -491,7 +492,7 @@
         renderedRowsById.clear();
         selectedDefinitionRow = null;
         resultPager = null;
-        definitionList.replaceChildren();
+        definitionListContent.replaceChildren();
         definitionList.setAttribute('aria-busy', 'false');
         if (!state.snapshot || state.snapshot.items.length === 0) {
             setStatus(labels.noDefinitions);
@@ -524,7 +525,7 @@
         for (const item of resultPager.next()) {
             fragment.append(createDefinitionRow(item));
         }
-        definitionList.append(fragment);
+        definitionListContent.append(fragment);
     }
 
     function addDetailsField(labelText, value, code) {

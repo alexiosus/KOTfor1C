@@ -61,13 +61,16 @@ test('client shell is three-pane, accessible, responsive, and initially renders 
     assert.match(client, /resizePaneLayout/u);
 });
 
-test('definition row backgrounds span the full horizontally scrollable list width', () => {
+test('definition list keeps the viewport fixed while its content grows horizontally', () => {
+    const panel = projectFile('src/stepLibraryPanel.ts');
     const css = projectFile('media/stepLibrary.css');
 
-    assert.match(css, /\.definition-list\s*\{[^}]*display:\s*flex;/su);
-    assert.match(css, /\.definition-list\s*\{[^}]*flex-direction:\s*column;/su);
-    assert.match(css, /\.definition-list\s*\{[^}]*width:\s*max-content;/su);
-    assert.match(css, /\.definition-list\s*\{[^}]*min-width:\s*100%;/su);
+    assert.match(panel, /class="definition-list-content"/u);
+    assert.match(css, /\.definition-list\s*\{[^}]*width:\s*100%;/su);
+    assert.match(css, /\.definition-list\s*\{[^}]*min-width:\s*0;/su);
+    assert.match(css, /\.definition-list-content\s*\{[^}]*display:\s*flex;/su);
+    assert.match(css, /\.definition-list-content\s*\{[^}]*width:\s*max-content;/su);
+    assert.match(css, /\.definition-list-content\s*\{[^}]*min-width:\s*100%;/su);
     assert.match(css, /\.definition-row\s*\{[^}]*width:\s*100%;/su);
     assert.match(css, /\.definition-row\s*\{[^}]*flex:\s*0\s+0\s+auto;/su);
 });
