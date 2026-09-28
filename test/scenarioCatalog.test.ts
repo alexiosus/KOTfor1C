@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { TestInfo } from '../src/types';
 import {
+    areScenarioCatalogEntriesEqual,
     buildScenarioCatalog,
     removeScenarioFromCatalogByUri,
     resolveScenarioByName,
@@ -92,6 +93,20 @@ test('upserts by URI and removal keeps the other duplicate', () => {
     const removed = removeScenarioFromCatalogByUri(updated, 'file:///same/scen.yaml');
     assert.deepEqual(removed.byName.get('New'), [other]);
     assert.equal(removed.byUri.has('file:///same/scen.yaml'), false);
+});
+
+test('scenario catalog entry equality detects category-only metadata changes', () => {
+    const original = {
+        ...scenario('Nested scenario', 'nested', 'file:///nested/scen.yaml'),
+        scenarioCategory: 'Old category'
+    };
+    const updated = {
+        ...original,
+        scenarioCategory: 'New category'
+    };
+
+    assert.equal(areScenarioCatalogEntriesEqual(original, original), true);
+    assert.equal(areScenarioCatalogEntriesEqual(original, updated), false);
 });
 
 test('collapses case-only Windows URI aliases into one scenario definition', () => {

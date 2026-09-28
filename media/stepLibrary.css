@@ -295,12 +295,16 @@ select:focus-visible,
 }
 
 .definition-list {
+    display: grid;
+    width: max-content;
+    min-width: 100%;
+    align-content: start;
     padding: 4px;
 }
 
 .definition-row {
     display: grid;
-    width: max-content;
+    width: 100%;
     min-width: 100%;
     gap: 4px;
     min-height: 52px;

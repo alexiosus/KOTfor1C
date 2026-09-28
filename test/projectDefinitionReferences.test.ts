@@ -488,6 +488,39 @@ test('reference provider resolves a stable id from a BSL declaration range', asy
     assert.deepEqual(calls, [{ id: user.id, includeDeclaration: true }]);
 });
 
+test('current-scenario resolution uses the open document instead of the cursor line', async () => {
+    const nested = definition(
+        'file:///scenario/current.yaml',
+        'nestedScenario',
+        'Current scenario',
+        'file:///scenario/current.yaml'
+    );
+    const calledFromCurrentLine = definition(
+        'file:///scenario/called.yaml',
+        'nestedScenario',
+        'Called scenario',
+        'file:///scenario/called.yaml'
+    );
+    const exports = loadReferencesModule();
+    const resolveForDocument = exports.resolveProjectDefinitionIdsForDocument as (
+        document: object,
+        resolver: object,
+        token: object
+    ) => Promise<string[]>;
+    const document = {
+        uri: uri('file:///scenario/current.yaml'),
+        lineAt: () => ({ text: 'And Called scenario' })
+    };
+
+    const ids = await resolveForDocument(
+        document,
+        resolverFor([nested, calledFromCurrentLine]),
+        noCancellation
+    );
+
+    assert.deepEqual(Array.from(ids), [nested.id]);
+});
+
 test('activation stays lazy and registers Shift+F12 for YAML, feature, and BSL files', () => {
     const extension = fs.readFileSync(path.join(process.cwd(), 'src', 'extension.ts'), 'utf8');
     assert.match(extension, /new ProjectDefinitionReferenceService\(/);

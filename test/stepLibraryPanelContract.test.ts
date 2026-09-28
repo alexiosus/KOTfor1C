@@ -61,6 +61,14 @@ test('client shell is three-pane, accessible, responsive, and initially renders 
     assert.match(client, /resizePaneLayout/u);
 });
 
+test('definition row backgrounds span the full horizontally scrollable list width', () => {
+    const css = projectFile('media/stepLibrary.css');
+
+    assert.match(css, /\.definition-list\s*\{[^}]*width:\s*max-content;/su);
+    assert.match(css, /\.definition-list\s*\{[^}]*min-width:\s*100%;/su);
+    assert.match(css, /\.definition-row\s*\{[^}]*width:\s*100%;/su);
+});
+
 test('inbound message type has no caller-supplied URI or arbitrary command shape', () => {
     const source = projectFile('src/stepLibraryPanel.ts');
     const typeBlock = source.match(

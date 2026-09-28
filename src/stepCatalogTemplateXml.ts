@@ -207,7 +207,6 @@ export function parseVanessaStepTemplateXml(xml: string): VanessaTemplateParseRe
 
     const steps: BuiltInStepDefinition[] = [];
     const categories: StepCategoryTranslation[] = [];
-    let activeCategoryPath: BuiltInStepDefinition['categoryPath'];
     let excludedSyntaxRows = 0;
     for (let index = 1; index < rowsItems.length; index++) {
         const [russianPattern, russianDescription, englishPattern, englishDescription]
@@ -231,27 +230,12 @@ export function parseVanessaStepTemplateXml(xml: string): VanessaTemplateParseRe
                 ...(en ? { en: en.pattern } : {})
             };
             categories.push(category);
-            const russianPath = (category.ru ?? category.en ?? '')
-                .split('.')
-                .map(segment => normalizeStepCatalogText(segment))
-                .filter(Boolean);
-            const englishPath = (category.en ?? category.ru ?? '')
-                .split('.')
-                .map(segment => normalizeStepCatalogText(segment))
-                .filter(Boolean);
-            activeCategoryPath = russianPath.length > 0 || englishPath.length > 0
-                ? {
-                    ...(russianPath.length > 0 ? { ru: russianPath } : {}),
-                    ...(englishPath.length > 0 ? { en: englishPath } : {})
-                }
-                : undefined;
             continue;
         }
         steps.push({
             id: createStepDefinitionId(ru?.pattern, en?.pattern),
             ru,
-            en,
-            ...(activeCategoryPath ? { categoryPath: activeCategoryPath } : {})
+            en
         });
     }
 

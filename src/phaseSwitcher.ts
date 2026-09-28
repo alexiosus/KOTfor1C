@@ -7,6 +7,7 @@ import { readScenarioInfo, scanWorkspaceForScenarioCatalog, resolveScanDirFsPath
 import { TestInfo } from './types';
 import { LazyScenarioCatalog } from './lazyScenarioCatalog';
 import {
+    areScenarioCatalogEntriesEqual,
     buildScenarioCatalog,
     removeScenarioFromCatalogByUri,
     ScenarioDirectoryIndex,
@@ -1517,55 +1518,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         );
     }
 
-    private areStringArraysEqual(left?: string[], right?: string[]): boolean {
-        if (!left?.length && !right?.length) {
-            return true;
-        }
-        if (!left || !right || left.length !== right.length) {
-            return false;
-        }
-        return left.every((item, index) => item === right[index]);
-    }
-
-    private areDefaultsEqual(
-        left?: Record<string, string>,
-        right?: Record<string, string>
-    ): boolean {
-        const leftEntries = Object.entries(left || {});
-        const rightEntries = Object.entries(right || {});
-        if (leftEntries.length !== rightEntries.length) {
-            return false;
-        }
-
-        const rightMap = new Map(rightEntries);
-        for (const [key, value] of leftEntries) {
-            if (rightMap.get(key) !== value) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private isSameTestInfo(left: TestInfo, right: TestInfo): boolean {
-        return (
-            left.name === right.name &&
-            left.yamlFileUri.toString() === right.yamlFileUri.toString() &&
-            left.relativePath === right.relativePath &&
-            (left.uid || '') === (right.uid || '') &&
-            (left.scenarioDescription || '') === (right.scenarioDescription || '') &&
-            (left.scenarioCode || '') === (right.scenarioCode || '') &&
-            (left.scenarioCodeLine ?? -1) === (right.scenarioCodeLine ?? -1) &&
-            (left.scenarioCodeLineStartCharacter ?? -1) === (right.scenarioCodeLineStartCharacter ?? -1) &&
-            (left.scenarioCodeLineEndCharacter ?? -1) === (right.scenarioCodeLineEndCharacter ?? -1) &&
-            this.areStringArraysEqual(left.parameters, right.parameters) &&
-            this.areDefaultsEqual(left.parameterDefaults, right.parameterDefaults) &&
-            this.areStringArraysEqual(left.nestedScenarioNames, right.nestedScenarioNames) &&
-            left.tabName === right.tabName &&
-            left.defaultState === right.defaultState &&
-            left.order === right.order
-        );
-    }
-
     public upsertScenarioCacheEntryFromDocument(document: vscode.TextDocument): boolean {
         if (!this.shouldTrackUriForCache(document.uri)) {
             return false;
@@ -1580,7 +1532,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const updatedInfo = this.buildTestInfoFromDocument(document);
             const uriKey = document.uri.toString();
             const existing = catalog.byUri.get(uriKey);
-            if ((!existing && !updatedInfo) || (existing && updatedInfo && this.isSameTestInfo(existing, updatedInfo))) {
+            if ((!existing && !updatedInfo)
+                || (existing && updatedInfo && areScenarioCatalogEntriesEqual(existing, updatedInfo))) {
                 return true;
             }
 

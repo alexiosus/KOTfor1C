@@ -20,7 +20,7 @@ import {
 import { openScenarioDefinitionForInvocation } from './projectDefinitionNavigation';
 import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 import {
-    resolveProjectDefinitionIdsAtPosition,
+    resolveProjectDefinitionIdsForDocument,
     type ProjectDefinitionReferenceService
 } from './projectDefinitionReferences';
 import JSZip = require('jszip');
@@ -455,9 +455,8 @@ export async function findCurrentFileReferencesHandler(
         cancellable: true
     }, async (progress, token) => {
         const document = editor.document;
-        const definitionIds = await resolveProjectDefinitionIdsAtPosition(
+        const definitionIds = await resolveProjectDefinitionIdsForDocument(
             document,
-            editor.selection.active,
             definitionResolver,
             token
         );

@@ -138,6 +138,46 @@ test('extracts a static Vanessa registration category from the sixth argument', 
     assert.deepEqual(parsed.warnings, []);
 });
 
+test('keeps a static template and category when only the optional description is dynamic', () => {
+    const source = [
+        'Функция ПолучитьСписокТестов(Контекст) Экспорт',
+        '    ДобавитьШагВМассивТестов(Контекст, "OpenForm()", "OpenForm", "Дано Я открываю форму", ОписаниеШага("OpenForm"), "UI.Навигация.Открыть форму");',
+        'КонецФункции'
+    ].join('\n');
+
+    const parsed = parseStaticBslStepRegistrations(source);
+
+    assert.deepEqual(parsed.registrations.map(item => ({
+        template: item.template,
+        description: item.description,
+        category: item.category
+    })), [{
+        template: 'Дано Я открываю форму',
+        description: '',
+        category: 'UI.Навигация.Открыть форму'
+    }]);
+    assert.deepEqual(parsed.warnings, []);
+});
+
+test('evaluates standard newline and tab symbols in a static registration template', () => {
+    const source = [
+        'Функция ПолучитьСписокТестов(Контекст) Экспорт',
+        '    ДобавитьШагВМассивТестов(Контекст, "HasColumns(Table)", "HasColumns", "Если в таблице есть колонки Тогда" + Символы.ПС + Символы.Таб + "| Колонка |", "", "UI.Таблицы.Проверка состава колонок");',
+        'КонецФункции'
+    ].join('\n');
+
+    const parsed = parseStaticBslStepRegistrations(source);
+
+    assert.deepEqual(parsed.registrations.map(item => ({
+        template: item.template,
+        category: item.category
+    })), [{
+        template: 'Если в таблице есть колонки Тогда\n\t| Колонка |',
+        category: 'UI.Таблицы.Проверка состава колонок'
+    }]);
+    assert.deepEqual(parsed.warnings, []);
+});
+
 test('evaluates concatenated static variables and supports RU and EN declaration keywords', () => {
     const source = [
         'Procedure GetTests(Context)',

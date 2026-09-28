@@ -472,6 +472,27 @@ export async function resolveProjectDefinitionIdsAtPosition(
     return sameFile.length === 1 ? [sameFile[0].id] : [];
 }
 
+export async function resolveProjectDefinitionIdsForDocument(
+    document: Pick<vscode.TextDocument, 'uri'>,
+    resolver: ProjectDefinitionResolver,
+    token: Pick<vscode.CancellationToken, 'isCancellationRequested'>
+): Promise<string[]> {
+    if (token.isCancellationRequested) {
+        return [];
+    }
+    const view = await resolver.getView(document.uri);
+    if (token.isCancellationRequested) {
+        return [];
+    }
+    const documentUri = document.uri.toString();
+    return view.all
+        .filter(definition =>
+            definition.definitionLocation?.uri === documentUri
+            || definition.implementationLocation?.uri === documentUri
+        )
+        .map(definition => definition.id);
+}
+
 export class ProjectDefinitionReferenceProvider implements vscode.ReferenceProvider {
     constructor(
         private readonly service: ProjectDefinitionReferenceService,

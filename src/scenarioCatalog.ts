@@ -96,6 +96,54 @@ export interface ScenarioCatalogProvider {
     readonly onDidUpdateScenarioCatalog: vscode.Event<ScenarioCatalog | null>;
 }
 
+function areStringArraysEqual(
+    left?: readonly string[],
+    right?: readonly string[]
+): boolean {
+    if (!left?.length && !right?.length) {
+        return true;
+    }
+    if (!left || !right || left.length !== right.length) {
+        return false;
+    }
+    return left.every((item, index) => item === right[index]);
+}
+
+function areDefaultsEqual(
+    left?: Readonly<Record<string, string>>,
+    right?: Readonly<Record<string, string>>
+): boolean {
+    const leftEntries = Object.entries(left || {});
+    const rightEntries = Object.entries(right || {});
+    if (leftEntries.length !== rightEntries.length) {
+        return false;
+    }
+
+    const rightMap = new Map(rightEntries);
+    return leftEntries.every(([key, value]) => rightMap.get(key) === value);
+}
+
+export function areScenarioCatalogEntriesEqual(left: TestInfo, right: TestInfo): boolean {
+    return (
+        left.name === right.name
+        && left.yamlFileUri.toString() === right.yamlFileUri.toString()
+        && left.relativePath === right.relativePath
+        && (left.uid || '') === (right.uid || '')
+        && (left.scenarioDescription || '') === (right.scenarioDescription || '')
+        && (left.scenarioCategory || '') === (right.scenarioCategory || '')
+        && (left.scenarioCode || '') === (right.scenarioCode || '')
+        && (left.scenarioCodeLine ?? -1) === (right.scenarioCodeLine ?? -1)
+        && (left.scenarioCodeLineStartCharacter ?? -1) === (right.scenarioCodeLineStartCharacter ?? -1)
+        && (left.scenarioCodeLineEndCharacter ?? -1) === (right.scenarioCodeLineEndCharacter ?? -1)
+        && areStringArraysEqual(left.parameters, right.parameters)
+        && areDefaultsEqual(left.parameterDefaults, right.parameterDefaults)
+        && areStringArraysEqual(left.nestedScenarioNames, right.nestedScenarioNames)
+        && left.tabName === right.tabName
+        && left.defaultState === right.defaultState
+        && left.order === right.order
+    );
+}
+
 export type ScenarioResolution =
     | { kind: 'missing'; name: string }
     | { kind: 'unique'; name: string; scenario: TestInfo }

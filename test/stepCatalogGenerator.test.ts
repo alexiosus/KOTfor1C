@@ -38,10 +38,10 @@ test('official template parser separates category translations from executable s
     assert.deepEqual(result.categories, [{ ru: 'Файлы', en: 'Files' }]);
     assert.equal(result.steps[0].ru?.pattern, 'И поле <Имя> равно "Значение"');
     assert.equal(result.steps[0].en?.description, 'Checks value & title');
-    assert.deepEqual(result.steps[0].categoryPath, { ru: ['Файлы'], en: ['Files'] });
+    assert.equal(result.steps[0].categoryPath, undefined);
     assert.equal(result.steps[1].en, undefined);
     assert.equal(result.steps[1].ru?.description, 'Описание\nв две строки');
-    assert.deepEqual(result.steps[1].categoryPath, { ru: ['Файлы'], en: ['Files'] });
+    assert.equal(result.steps[1].categoryPath, undefined);
 });
 
 test('official template parser rejects a row with three outer cells', () => {
@@ -182,7 +182,7 @@ test('generation report records source, duplicate, and category coverage data', 
     assert.equal(report.stepCount, 3);
     assert.deepEqual(report.duplicateRussianPatterns, ['И только русский шаг']);
     assert.deepEqual(report.duplicateEnglishPatterns, ['And field <Name> equals "Value"']);
-    assert.equal(report.categorizedStepCount, 2);
+    assert.equal(report.categorizedStepCount, 1);
     assert.equal(report.uncategorizedStepCount, 2);
     assert.equal(report.unmatchedRegistrationCount, 0);
     assert.deepEqual(report.conflictingCategoryMappings, []);

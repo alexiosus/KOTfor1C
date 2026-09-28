@@ -78,6 +78,16 @@ const FUNCTION_STARTS = new Map([
 const REGISTRATION_METHOD = 'добавитьшагвмассивтестов';
 const REGISTRATION_FUNCTION = 'получитьсписоктестов';
 const RETURN_KEYWORDS = new Set(['возврат', 'return']);
+const STATIC_CHARACTER_MEMBERS = new Map([
+    ['символы.пс', '\n'],
+    ['chars.lf', '\n'],
+    ['символы.таб', '\t'],
+    ['chars.tab', '\t'],
+    ['символы.вк', '\r'],
+    ['chars.cr', '\r'],
+    ['символы.нпп', '\u00a0'],
+    ['chars.nbsp', '\u00a0']
+]);
 
 function position(line: number, character: number): ProjectDefinitionPosition {
     return Object.freeze({ line, character });
@@ -359,6 +369,15 @@ function evaluateStaticExpression(
             return token.value ?? '';
         }
         if (token.kind === 'identifier') {
+            const member = tokens[index + 1]?.text === '.'
+                && tokens[index + 2]?.kind === 'identifier'
+                ? `${folded(token.text)}.${folded(tokens[index + 2].text)}`
+                : undefined;
+            const staticMember = member ? STATIC_CHARACTER_MEMBERS.get(member) : undefined;
+            if (staticMember !== undefined) {
+                index += 3;
+                return staticMember;
+            }
             index += 1;
             return variables.get(folded(token.text)) ?? null;
         }
@@ -636,13 +655,12 @@ export function parseStaticBslStepRegistrations(
         const snippet = evaluateStaticExpression(args[1], variables);
         const implementationName = evaluateStaticExpression(args[2], variables);
         const template = evaluateStaticExpression(args[3], variables);
-        const description = args[4] ? evaluateStaticExpression(args[4], variables) : '';
+        const description = args[4] ? evaluateStaticExpression(args[4], variables) ?? '' : '';
         const category = args[5] ? evaluateStaticExpression(args[5], variables) : '';
         if (
             snippet === null
             || implementationName === null
             || template === null
-            || description === null
             || category === null
         ) {
             warnings.push({
