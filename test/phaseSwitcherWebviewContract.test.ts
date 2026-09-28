@@ -140,29 +140,44 @@ test('PhaseSwitcher consumes shared relationship state without mutating build se
         /public attachRelationshipService\(service: ScenarioRelationshipService\)/u
     );
 
-    const projectionStart = phaseSwitcherProviderSource.indexOf(
-        '    private getAffectedMainScenarioNamesForActiveEditor()'
-    );
     const messageStart = phaseSwitcherProviderSource.indexOf(
-        '    private sendAffectedMainScenariosToWebview(',
-        projectionStart
+        '    private sendRelationshipStateToWebview('
     );
     const activeEditorStart = phaseSwitcherProviderSource.indexOf(
         '    public handleActiveEditorChanged(',
         messageStart
     );
-    assert.notEqual(projectionStart, -1);
     assert.notEqual(messageStart, -1);
     assert.notEqual(activeEditorStart, -1);
 
-    const projectionSource = phaseSwitcherProviderSource.slice(projectionStart, messageStart);
-    assert.match(projectionSource, /this\._relationshipService\?\.getState\(\)/u);
-    assert.doesNotMatch(projectionSource, /buildCallersByCalleeFromCache/u);
-
     const relationshipMessageSource = phaseSwitcherProviderSource.slice(messageStart, activeEditorStart);
-    assert.match(relationshipMessageSource, /command: 'updateAffectedMainScenarios'/u);
+    assert.match(relationshipMessageSource, /this\._relationshipService\?\.getState\(\)/u);
+    assert.doesNotMatch(relationshipMessageSource, /buildCallersByCalleeFromCache/u);
+    assert.match(relationshipMessageSource, /command: 'updateRelationshipState'/u);
+    for (const property of [
+        'currentScenarioKeys',
+        'relationships',
+        'affectedMainScenarioKeys',
+        'affectedPhaseNames',
+        'currentLabel',
+        'enabled'
+    ]) {
+        assert.match(relationshipMessageSource, new RegExp(`\\b${property}\\b`, 'u'));
+    }
     assert.doesNotMatch(
         relationshipMessageSource,
         /_mainScenarioSelectionStates|updateScenarioSelection|checkbox|buildScenario/u
+    );
+    assert.match(
+        phaseSwitcherProviderSource,
+        /case 'setRelationshipHighlightEnabled':[\s\S]*?typeof message\.enabled !== 'boolean'[\s\S]*?await this\._relationshipService\.setEnabled\(message\.enabled\)/u
+    );
+    assert.match(
+        phaseSwitcherWebviewSource,
+        /relationshipState = scenarioProtocol\.parseRelationshipState\(message\.relationshipState\)/u
+    );
+    assert.match(
+        phaseSwitcherWebviewSource,
+        /case 'updateRelationshipState':[\s\S]*?scenarioProtocol\.parseRelationshipState\(message\)/u
     );
 });

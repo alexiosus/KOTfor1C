@@ -16,7 +16,7 @@
     let testInfoByKey = new Map();
     let phaseExpandedState = {}; 
     let runArtifacts = {};
-    let affectedMainScenarioNames = new Set();
+    let relationshipState = scenarioProtocol.parseRelationshipState(undefined);
     let favoriteScenarios = [];
     let favoriteSortMode = 'code';
     let activeManagerTab = 'tests';
@@ -574,76 +574,52 @@
         );
     }
 
-    function normalizeAffectedMainScenarioNames(names) {
-        if (!Array.isArray(names)) {
-            return new Set();
-        }
-        const result = new Set();
-        names.forEach(name => {
-            if (typeof name === 'string') {
-                const trimmed = name.trim();
-                if (trimmed) {
-                    result.add(trimmed);
-                }
-            }
-        });
-        return result;
-    }
-
-    function isScenarioSearchActive() {
-        return activeManagerTab === 'tests' && typeof activeScenarioSearchQuery === 'string' && activeScenarioSearchQuery.trim().length > 0;
-    }
-
-    function clearAffectedMainScenarioHighlighting() {
-        if (!(phaseTreeContainer instanceof HTMLElement)) {
-            return;
-        }
+    function applyAffectedMainScenarioHighlighting() {
+        if (!phaseTreeContainer) return;
         const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-key]');
         scenarioLabels.forEach(label => {
             if (!(label instanceof HTMLElement)) return;
-            label.classList.remove('affected-main-scenario');
-        });
-        const phaseGroups = phaseTreeContainer.querySelectorAll('.phase-group');
-        phaseGroups.forEach(group => {
-            if (!(group instanceof HTMLElement)) return;
-            group.classList.remove('phase-group-affected');
-            const header = group.querySelector('.phase-header');
-            if (header instanceof HTMLElement) {
-                header.classList.remove('phase-header-affected');
+            const scenarioKey = label.getAttribute('data-key') || '';
+            const decoration = scenarioProtocol.relationshipDecorationForScenario(
+                scenarioKey,
+                relationshipState
+            );
+            label.classList.toggle(
+                'affected-main-scenario',
+                decoration.state !== 'none' && decoration.state !== 'current'
+            );
+            label.classList.toggle('current-main-scenario', decoration.state === 'current');
+            label.classList.toggle('incoming-scenario', decoration.state === 'incoming');
+            label.classList.toggle('outgoing-scenario', decoration.state === 'outgoing');
+            label.classList.toggle(
+                'transitive-scenario',
+                decoration.state !== 'none' && !decoration.direct
+            );
+            if (decoration.accessibleLabel) {
+                label.setAttribute('data-relationship-label', decoration.accessibleLabel);
+            } else {
+                label.removeAttribute('data-relationship-label');
             }
         });
-    }
-
-    function applyAffectedMainScenarioHighlighting() {
-        if (!phaseTreeContainer) return;
-        if (settings.highlightAffectedMainScenarios === false || isScenarioSearchActive()) {
-            clearAffectedMainScenarioHighlighting();
-            return;
-        }
-
-        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-name]');
-        scenarioLabels.forEach(label => {
-            if (!(label instanceof HTMLElement)) return;
-            const name = label.getAttribute('data-name') || '';
-            label.classList.toggle('affected-main-scenario', !!name && affectedMainScenarioNames.has(name));
-        });
 
         const phaseGroups = phaseTreeContainer.querySelectorAll('.phase-group');
         phaseGroups.forEach(group => {
             if (!(group instanceof HTMLElement)) return;
-            const groupCheckboxes = group.querySelectorAll('.checkbox-item[data-name]');
-            let hasAffectedScenarioInGroup = false;
-            groupCheckboxes.forEach(label => {
-                if (hasAffectedScenarioInGroup || !(label instanceof HTMLElement)) {
-                    return;
-                }
-                const name = label.getAttribute('data-name') || '';
-                if (name && affectedMainScenarioNames.has(name)) {
-                    hasAffectedScenarioInGroup = true;
-                }
-            });
+            const scenarioKeys = Array.from(group.querySelectorAll('.checkbox-item[data-key]'))
+                .map(label => label instanceof HTMLElement ? label.getAttribute('data-key') || '' : '')
+                .filter(Boolean);
+            const aggregate = scenarioProtocol.aggregatePhaseRelationship(
+                scenarioKeys,
+                relationshipState
+            );
+            const hasAffectedScenarioInGroup = aggregate.state === 'related';
 
             group.classList.toggle('phase-group-affected', hasAffectedScenarioInGroup);
+            if (aggregate.accessibleLabel) {
+                group.setAttribute('data-relationship-label', aggregate.accessibleLabel);
+            } else {
+                group.removeAttribute('data-relationship-label');
+            }
             const header = group.querySelector('.phase-header');
             if (header instanceof HTMLElement) {
                 header.classList.toggle('phase-header-affected', hasAffectedScenarioInGroup);
@@ -1151,7 +1127,7 @@
 
         return `
             <div class="item-container">
-                <label class="checkbox-item${viewState.isAffectedMainScenario ? ' affected-main-scenario' : ''}" id="label-${viewState.safeName}" data-key="${viewState.escapedScenarioKeyAttr}" data-name="${viewState.escapedNameAttr}" data-uri="${viewState.escapedFileUriAttr}" title="${viewState.escapedTitleAttr}">
+                <label class="checkbox-item${viewState.relationshipClassNames}" id="label-${viewState.safeName}" data-key="${viewState.escapedScenarioKeyAttr}" data-name="${viewState.escapedNameAttr}" data-uri="${viewState.escapedFileUriAttr}" data-relationship-label="${viewState.escapedRelationshipLabel}" title="${viewState.escapedTitleAttr}">
                     ${viewState.leadingControlHtml}
                     <span class="checkbox-label-text">${viewState.name}</span>
                     ${viewState.progressHtml}
@@ -1181,7 +1157,22 @@
         const escapedTitleAttr = escapeHtmlAttr(relativePath);
         const fileUriString = testInfo.yamlFileUriString || '';
         const escapedFileUriAttr = escapeHtmlAttr(fileUriString);
-        const isAffectedMainScenario = affectedMainScenarioNames.has(name);
+        const relationshipDecoration = scenarioProtocol.relationshipDecorationForScenario(
+            scenarioKey,
+            relationshipState
+        );
+        const relationshipClassNames = [
+            relationshipDecoration.state === 'current' ? 'current-main-scenario' : '',
+            relationshipDecoration.state !== 'none' && relationshipDecoration.state !== 'current'
+                ? 'affected-main-scenario'
+                : '',
+            relationshipDecoration.state === 'incoming' ? 'incoming-scenario' : '',
+            relationshipDecoration.state === 'outgoing' ? 'outgoing-scenario' : '',
+            relationshipDecoration.state !== 'none' && !relationshipDecoration.direct
+                ? 'transitive-scenario'
+                : ''
+        ].filter(Boolean).map(className => ` ${className}`).join('');
+        const escapedRelationshipLabel = escapeHtmlAttr(relationshipDecoration.accessibleLabel);
         const escapedIconTitle = escapeHtmlAttr((window.__loc?.openScenarioFileTitle || 'Open scenario file {0}').replace('{0}', name));
         const runInfo = runArtifacts && typeof runArtifacts === 'object'
             ? runArtifacts[scenarioKey]
@@ -1300,7 +1291,9 @@
             escapedFileUriAttr,
             fileUriString,
             escapedTitleAttr,
-            isAffectedMainScenario,
+            relationshipDecoration,
+            relationshipClassNames,
+            escapedRelationshipLabel,
             isRunInProgress,
             hasLineProgress,
             progressBadgeText,
@@ -1481,7 +1474,6 @@
             label.title = viewState.relativePath;
             label.setAttribute('data-key', viewState.scenarioKey);
             label.setAttribute('data-uri', viewState.fileUriString);
-            label.classList.toggle('affected-main-scenario', viewState.isAffectedMainScenario);
             syncScenarioLeadingControl(label, viewState);
             syncScenarioProgress(label, viewState);
             syncScenarioActionButton(label, '.run-scenario-log-btn', viewState.runLogButtonHtml, '.run-scenario-btn, .open-scenario-btn');
@@ -2721,7 +2713,7 @@
                     runArtifacts = message.runArtifacts || {};
                     favoriteScenarios = Array.isArray(message.favorites) ? message.favorites : [];
                     favoriteSortMode = normalizeFavoriteSortMode(message.favoriteSortMode || favoriteSortMode);
-                    affectedMainScenarioNames = normalizeAffectedMainScenarioNames(message.affectedMainScenarioNames);
+                    relationshipState = scenarioProtocol.parseRelationshipState(message.relationshipState);
                     applyYamlParametersProfilesState(message.yamlParametersProfiles);
                     configurationDiffReportState = normalizeConfigurationDiffReportState(message.configurationDiffReport);
                     testReviewReportState = normalizeTestReviewReportState(message.testReviewReport);
@@ -2737,6 +2729,7 @@
                     if (typeof settings.highlightAffectedMainScenarios !== 'boolean') {
                         settings.highlightAffectedMainScenarios = true;
                     }
+                    settings.highlightAffectedMainScenarios = relationshipState.enabled;
                     isBuildInProgress = !!settings.buildInProgress;
                     log("Received settings in webview:");
                     console.log(settings);
@@ -2926,8 +2919,9 @@
                 setActiveManagerTab(activeManagerTab);
                 break;
 
-            case 'updateAffectedMainScenarios':
-                affectedMainScenarioNames = normalizeAffectedMainScenarioNames(message.names);
+            case 'updateRelationshipState':
+                relationshipState = scenarioProtocol.parseRelationshipState(message);
+                settings.highlightAffectedMainScenarios = relationshipState.enabled;
                 applyAffectedMainScenarioHighlighting();
                 break;
 

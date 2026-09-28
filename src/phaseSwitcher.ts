@@ -466,7 +466,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _lastAutoFollowLineByEditorUri: Map<string, number> = new Map();
     private _featureLineCountCache: Map<string, FeatureLineCountCacheEntry> = new Map();
     private _activeScenarioUriForHighlight: vscode.Uri | null = null;
-    private _lastHighlightedMainScenarioNames: Set<string> = new Set();
     private _relationshipService: ScenarioRelationshipService | null = null;
     private _relationshipServiceSubscription: vscode.Disposable | null = null;
     private _startupArtifactsRestoreAttempted: boolean = false;
@@ -491,7 +490,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this._relationshipServiceSubscription?.dispose();
         this._relationshipService = service;
         this._relationshipServiceSubscription = service.onDidChangeState(() => {
-            this.sendAffectedMainScenariosToWebview();
+            this.sendRelationshipStateToWebview();
         });
         this._context.subscriptions.push(this._relationshipServiceSubscription);
         const candidateUri = vscode.window.activeTextEditor?.document?.uri;
@@ -501,7 +500,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         );
         this._activeScenarioUriForHighlight = shouldHighlight ? candidateUri! : null;
         service.handleActiveEditorChanged(this._activeScenarioUriForHighlight ?? undefined);
-        this.sendAffectedMainScenariosToWebview(true);
+        this.sendRelationshipStateToWebview();
     }
 
     public isFailedFeatureLine(documentUri: vscode.Uri, lineIndex: number): boolean {
@@ -1368,50 +1367,28 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return 0;
     }
 
-    private areStringSetsEqual(left: Set<string>, right: Set<string>): boolean {
-        if (left.size !== right.size) {
-            return false;
-        }
-        for (const value of left) {
-            if (!right.has(value)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private getAffectedMainScenarioNamesForActiveEditor(): string[] {
-        const relationshipState = this._relationshipService?.getState();
-        const catalog = this.getScenarioCatalog();
-        if (!relationshipState?.enabled || !catalog || catalog.all.length === 0) {
-            return [];
-        }
-
-        return [...new Set(relationshipState.affectedMainScenarioKeys
-            .map(key => catalog.byUri.get(key)?.name?.trim() ?? '')
-            .filter(Boolean))]
-            .sort((left, right) => left.localeCompare(
-                right,
-                undefined,
-                { sensitivity: 'base' }
-            ));
-    }
-
-    private sendAffectedMainScenariosToWebview(force: boolean = false): void {
+    private sendRelationshipStateToWebview(): void {
         if (!this._view?.webview) {
             return;
         }
 
-        const affectedMainScenarioNames = this.getAffectedMainScenarioNamesForActiveEditor();
-        const nextSet = new Set<string>(affectedMainScenarioNames);
-        if (!force && this.areStringSetsEqual(this._lastHighlightedMainScenarioNames, nextSet)) {
-            return;
-        }
-
-        this._lastHighlightedMainScenarioNames = nextSet;
+        const relationshipState = this._relationshipService?.getState() ?? {
+            enabled: this.isAffectedMainScenarioHighlightEnabled(),
+            currentLabel: null,
+            currentScenarioKeys: [],
+            relationships: [],
+            affectedMainScenarioKeys: [],
+            affectedPhaseNames: [],
+            revision: 0
+        };
         this._view.webview.postMessage({
-            command: 'updateAffectedMainScenarios',
-            names: affectedMainScenarioNames
+            command: 'updateRelationshipState',
+            currentScenarioKeys: relationshipState.currentScenarioKeys,
+            relationships: relationshipState.relationships,
+            affectedMainScenarioKeys: relationshipState.affectedMainScenarioKeys,
+            affectedPhaseNames: relationshipState.affectedPhaseNames,
+            currentLabel: relationshipState.currentLabel,
+            enabled: relationshipState.enabled
         });
     }
 
@@ -1429,7 +1406,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._relationshipService.handleActiveEditorChanged(nextUri ?? undefined);
             return;
         }
-        this.sendAffectedMainScenariosToWebview();
+        this.sendRelationshipStateToWebview();
     }
 
     private shouldUseUriForAffectedScenarioHighlight(uri: vscode.Uri): boolean {
@@ -1748,7 +1725,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._relationshipService?.handleActiveEditorChanged(
                 this._activeScenarioUriForHighlight ?? undefined
             );
-            this.sendAffectedMainScenariosToWebview(true);
+            this.sendRelationshipStateToWebview();
         }
     }
 
@@ -1854,7 +1831,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }));
 
         context.subscriptions.push(this.onDidUpdateScenarioCatalog(() => {
-            this.sendAffectedMainScenariosToWebview();
+            this.sendRelationshipStateToWebview();
         }));
 
         context.subscriptions.push(vscode.window.onDidChangeVisibleTextEditors(() => {
@@ -1988,7 +1965,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this.stopAllFeatureStepTrackers();
             this.stopAllTrackedRunLogWatchers();
             this.disposeAllLiveRunLogWatchers();
-            this._lastHighlightedMainScenarioNames.clear();
             this.resetVanessaRuntimeLogMonitorState({ clearAutoDetectedRuns: true });
             this.sendRunArtifactsStateToWebview();
             this.handleActiveEditorChanged(vscode.window.activeTextEditor);
@@ -4970,7 +4946,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             console.warn('[PhaseSwitcherProvider] Failed to open nested scenario after code change:', openError);
         }
         this.handleActiveEditorChanged(vscode.window.activeTextEditor);
-        this.sendAffectedMainScenariosToWebview(true);
+        this.sendRelationshipStateToWebview();
 
         vscode.window.showInformationMessage(
             this.t(
@@ -5155,7 +5131,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             await this._sendInitialState(this._view.webview);
         }
         this.handleActiveEditorChanged(vscode.window.activeTextEditor);
-        this.sendAffectedMainScenariosToWebview(true);
+        this.sendRelationshipStateToWebview();
 
         vscode.window.showInformationMessage(
             this.t(
@@ -5714,7 +5690,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             await this._sendInitialState(this._view.webview);
         }
         this.handleActiveEditorChanged(vscode.window.activeTextEditor);
-        this.sendAffectedMainScenariosToWebview(true);
+        this.sendRelationshipStateToWebview();
 
         vscode.window.showInformationMessage(
             this.t('Scenario "{0}" was renamed to "{1}". Updated files: {2}.', trimmedScenarioName, newScenarioName, String(changedFiles))
@@ -5824,7 +5800,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             await this._sendInitialState(this._view.webview);
         }
         this.handleActiveEditorChanged(vscode.window.activeTextEditor);
-        this.sendAffectedMainScenariosToWebview(true);
+        this.sendRelationshipStateToWebview();
 
         vscode.window.showInformationMessage(this.t('Main scenario "{0}" was deleted.', trimmedScenarioName));
     }
@@ -6422,6 +6398,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 uri: typeof message.uri === 'string' && message.uri.trim() ? message.uri.trim() : undefined
             });
             switch (message.command) {
+                case 'setRelationshipHighlightEnabled':
+                    if (typeof message.enabled !== 'boolean' || !this._relationshipService) {
+                        return;
+                    }
+                    await this._relationshipService.setEnabled(message.enabled);
+                    this.sendRelationshipStateToWebview();
+                    return;
                 case 'updateScenarioSelectionStates':
                     if (!message.data || typeof message.data !== 'object') {
                         return;
@@ -6796,7 +6779,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         // external absolute ScenarioFolder path).
         this.handleActiveEditorChanged(vscode.window.activeTextEditor);
 
-        const affectedMainScenarioNames = this.getAffectedMainScenarioNamesForActiveEditor();
+        const relationshipState = this._relationshipService?.getState() ?? {
+            enabled: highlightAffectedMainScenariosEnabled,
+            currentLabel: null,
+            currentScenarioKeys: [],
+            relationships: [],
+            affectedMainScenarioKeys: [],
+            affectedPhaseNames: [],
+            revision: 0
+        };
         const favoriteEntries = this.sortFavoriteEntries(this.getFavoriteEntries());
         const favoriteSortMode = this.getFavoriteSortMode();
         const { YamlParametersManager } = await import('./yamlParametersManager.js');
@@ -6804,14 +6795,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const yamlParametersProfiles = await yamlParametersManager.getProfilesSummary();
         const configurationDiffReport = await this.buildConfigurationDiffReportWebviewState();
         const testReviewReport = await this.buildTestReviewReportWebviewState();
-        this._lastHighlightedMainScenarioNames = new Set(affectedMainScenarioNames);
-
         webview.postMessage({
             command: 'loadInitialState',
             tabData: tabDataForUI, // Передаем отфильтрованные и сгруппированные данные для UI
             states: states,
             runArtifacts,
-            affectedMainScenarioNames,
+            relationshipState,
             favorites: favoriteEntries,
             favoriteSortMode,
             yamlParametersProfiles,
