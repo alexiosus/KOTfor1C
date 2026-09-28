@@ -133,3 +133,36 @@ test('Test Manager toolbar opens the shared visual step library command', () => 
         /openStepLibraryTopTitle:\s*this\.t\('Open Step Library'\)/u
     );
 });
+
+test('PhaseSwitcher consumes shared relationship state without mutating build selection', () => {
+    assert.match(
+        phaseSwitcherProviderSource,
+        /public attachRelationshipService\(service: ScenarioRelationshipService\)/u
+    );
+
+    const projectionStart = phaseSwitcherProviderSource.indexOf(
+        '    private getAffectedMainScenarioNamesForActiveEditor()'
+    );
+    const messageStart = phaseSwitcherProviderSource.indexOf(
+        '    private sendAffectedMainScenariosToWebview(',
+        projectionStart
+    );
+    const activeEditorStart = phaseSwitcherProviderSource.indexOf(
+        '    public handleActiveEditorChanged(',
+        messageStart
+    );
+    assert.notEqual(projectionStart, -1);
+    assert.notEqual(messageStart, -1);
+    assert.notEqual(activeEditorStart, -1);
+
+    const projectionSource = phaseSwitcherProviderSource.slice(projectionStart, messageStart);
+    assert.match(projectionSource, /this\._relationshipService\?\.getState\(\)/u);
+    assert.doesNotMatch(projectionSource, /buildCallersByCalleeFromCache/u);
+
+    const relationshipMessageSource = phaseSwitcherProviderSource.slice(messageStart, activeEditorStart);
+    assert.match(relationshipMessageSource, /command: 'updateAffectedMainScenarios'/u);
+    assert.doesNotMatch(
+        relationshipMessageSource,
+        /_mainScenarioSelectionStates|updateScenarioSelection|checkbox|buildScenario/u
+    );
+});

@@ -110,6 +110,8 @@ import {
     updateScenarioDisplayNameInTestConfigContent
 } from './scenarioYamlMutations';
 import { resolveWorkspaceSettingPath } from './vanessaVersion';
+import { ScenarioRelationshipIndex } from './scenarioRelationshipIndex';
+import type { ScenarioRelationshipService } from './scenarioRelationshipService';
 
 const loadInfobaseManager = createDeferredLoader(
     () => import('./infobaseManager.js')
@@ -465,6 +467,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private _featureLineCountCache: Map<string, FeatureLineCountCacheEntry> = new Map();
     private _activeScenarioUriForHighlight: vscode.Uri | null = null;
     private _lastHighlightedMainScenarioNames: Set<string> = new Set();
+    private _relationshipService: ScenarioRelationshipService | null = null;
+    private _relationshipServiceSubscription: vscode.Disposable | null = null;
     private _startupArtifactsRestoreAttempted: boolean = false;
     private _buildOutputChannel: vscode.OutputChannel | undefined;
     private _runOutputChannel: vscode.OutputChannel | undefined;
@@ -481,6 +485,23 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     public getScenarioDefinitions(name: string): readonly TestInfo[] {
         return this.getScenarioCatalog()?.byName.get(name) || [];
+    }
+
+    public attachRelationshipService(service: ScenarioRelationshipService): void {
+        this._relationshipServiceSubscription?.dispose();
+        this._relationshipService = service;
+        this._relationshipServiceSubscription = service.onDidChangeState(() => {
+            this.sendAffectedMainScenariosToWebview();
+        });
+        this._context.subscriptions.push(this._relationshipServiceSubscription);
+        const candidateUri = vscode.window.activeTextEditor?.document?.uri;
+        const shouldHighlight = !!(
+            candidateUri
+            && this.shouldUseUriForAffectedScenarioHighlight(candidateUri)
+        );
+        this._activeScenarioUriForHighlight = shouldHighlight ? candidateUri! : null;
+        service.handleActiveEditorChanged(this._activeScenarioUriForHighlight ?? undefined);
+        this.sendAffectedMainScenariosToWebview(true);
     }
 
     public isFailedFeatureLine(documentUri: vscode.Uri, lineIndex: number): boolean {
@@ -763,6 +784,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private isAffectedMainScenarioHighlightEnabled(): boolean {
+        if (this._relationshipService) {
+            return this._relationshipService.getState().enabled;
+        }
         return vscode.workspace
             .getConfiguration('kotTestToolkit')
             .get<boolean>('phaseSwitcher.highlightAffectedMainScenarios', true);
@@ -1357,52 +1381,20 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private getAffectedMainScenarioNamesForActiveEditor(): string[] {
-        if (!this.isAffectedMainScenarioHighlightEnabled()) {
-            return [];
-        }
-
-        const activeUri = this._activeScenarioUriForHighlight;
+        const relationshipState = this._relationshipService?.getState();
         const catalog = this.getScenarioCatalog();
-        if (!activeUri || !catalog || catalog.all.length === 0) {
+        if (!relationshipState?.enabled || !catalog || catalog.all.length === 0) {
             return [];
         }
 
-        const initialScenarios = this.getScenarioNamesRelatedToUri(activeUri)
-            .map(name => name.trim())
-            .filter(name => name.length > 0);
-
-        if (initialScenarios.length === 0) {
-            return [];
-        }
-
-        const callersByCallee = this.buildCallersByCalleeFromCache();
-        const queue: string[] = [...initialScenarios];
-        const visited = new Set<string>(queue);
-        const affectedMainScenarioNames = new Set<string>();
-
-        while (queue.length > 0) {
-            const currentScenarioName = queue.shift()!;
-            if ((catalog.byName.get(currentScenarioName) || []).some(info => this.isMainScenario(info))) {
-                affectedMainScenarioNames.add(currentScenarioName);
-            }
-
-            const callers = callersByCallee.get(currentScenarioName);
-            if (!callers) {
-                continue;
-            }
-
-            for (const callerName of callers) {
-                if (visited.has(callerName)) {
-                    continue;
-                }
-                visited.add(callerName);
-                queue.push(callerName);
-            }
-        }
-
-        return Array.from(affectedMainScenarioNames).sort((left, right) =>
-            left.localeCompare(right, undefined, { sensitivity: 'base' })
-        );
+        return [...new Set(relationshipState.affectedMainScenarioKeys
+            .map(key => catalog.byUri.get(key)?.name?.trim() ?? '')
+            .filter(Boolean))]
+            .sort((left, right) => left.localeCompare(
+                right,
+                undefined,
+                { sensitivity: 'base' }
+            ));
     }
 
     private sendAffectedMainScenariosToWebview(force: boolean = false): void {
@@ -1433,6 +1425,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         this._activeScenarioUriForHighlight = nextUri;
+        if (this._relationshipService) {
+            this._relationshipService.handleActiveEditorChanged(nextUri ?? undefined);
+            return;
+        }
         this.sendAffectedMainScenariosToWebview();
     }
 
@@ -1749,6 +1745,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this._activeScenarioUriForHighlight = remappedUri && this.shouldUseUriForAffectedScenarioHighlight(remappedUri)
                 ? remappedUri
                 : null;
+            this._relationshipService?.handleActiveEditorChanged(
+                this._activeScenarioUriForHighlight ?? undefined
+            );
             this.sendAffectedMainScenariosToWebview(true);
         }
     }
@@ -1989,7 +1988,6 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             this.stopAllFeatureStepTrackers();
             this.stopAllTrackedRunLogWatchers();
             this.disposeAllLiveRunLogWatchers();
-            this._activeScenarioUriForHighlight = null;
             this._lastHighlightedMainScenarioNames.clear();
             this.resetVanessaRuntimeLogMonitorState({ clearAutoDetectedRuns: true });
             this.sendRunArtifactsStateToWebview();
@@ -6796,15 +6794,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         // _activeScenarioUriForHighlight may be stale if the scan root changed after the
         // last onDidChangeActiveTextEditor event (e.g. after saving yaml params with an
         // external absolute ScenarioFolder path).
-        const currentActiveUri = vscode.window.activeTextEditor?.document?.uri;
-        if (currentActiveUri?.scheme === 'file') {
-            const qualifies = this.shouldUseUriForAffectedScenarioHighlight(currentActiveUri);
-            if (qualifies) {
-                this._activeScenarioUriForHighlight = currentActiveUri;
-            } else {
-                this._activeScenarioUriForHighlight = null;
-            }
-        }
+        this.handleActiveEditorChanged(vscode.window.activeTextEditor);
 
         const affectedMainScenarioNames = this.getAffectedMainScenarioNamesForActiveEditor();
         const favoriteEntries = this.sortFavoriteEntries(this.getFavoriteEntries());
@@ -8194,17 +8184,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return result;
         }
 
-        for (const testInfo of catalog.all) {
-            const calledScenarios = testInfo.nestedScenarioNames || [];
-            for (const calledScenarioRaw of calledScenarios) {
-                const calledScenario = calledScenarioRaw.trim();
-                if (!calledScenario) {
-                    continue;
-                }
-                const callers = result.get(calledScenario) || new Set<string>();
-                callers.add(testInfo.name);
-                result.set(calledScenario, callers);
-            }
+        const callersByCallee = ScenarioRelationshipIndex
+            .fromCatalog(catalog)
+            .getCallerNamesByCalleeName();
+        for (const [calleeName, callerNames] of callersByCallee) {
+            result.set(calleeName, new Set(callerNames));
         }
         return result;
     }
