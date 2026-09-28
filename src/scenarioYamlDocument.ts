@@ -176,7 +176,7 @@ function buildStructuralShadow(source: string): string {
         } else if (
             maskFreeFormBody
             && maskedKotDescriptionIndent >= 0
-            && /^\s*PhaseSwitcher:\s*(?:#.*)?$/.test(lineWithoutBom)
+            && /^\s*(?:PhaseSwitcher:\s*(?:#.*)?|Категория:.*)$/.test(lineWithoutBom)
             && (lineWithoutBom.match(/^\s*/)?.[0].length ?? -1) === maskedKotDescriptionIndent
         ) {
             maskFreeFormBody = false;

@@ -109,6 +109,22 @@ test('scenario category is independent from the PhaseSwitcher tab', () => {
     assert.equal(info?.tabName, 'Регресс');
 });
 
+test('scenario category remains structural after a legacy free-form description', () => {
+    const descriptor = parseScenarioDescriptor([
+        'ДанныеСценария:',
+        '    Имя: Установить расширение',
+        'KOTМетаданные:',
+        '    Описание: |',
+        '        Installs an extension from .cfe.',
+        '    -',
+        '    Категория: "Tests Environment"',
+        'ПараметрыСценария:',
+        ''
+    ].join('\n'));
+
+    assert.equal(descriptor.scenarioCategory, 'Tests Environment');
+});
+
 test('empty scenario category is treated as absent', () => {
     const descriptor = parseScenarioDescriptor([
         'ДанныеСценария:',
