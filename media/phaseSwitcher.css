@@ -1795,3 +1795,272 @@ label.checkbox-item.search-match {
         grid-template-columns: minmax(0, 1fr) auto;
     }
 }
+
+/* Native sidebar workbench overrides. Keep this block last while the legacy
+   panel styles are retired incrementally. */
+body {
+    font-family: var(--vscode-font-family);
+    background: var(--vscode-sideBar-background);
+}
+
+.phase-switcher-app {
+    gap: 0;
+    padding: 0;
+    background: var(--vscode-sideBar-background);
+}
+
+.phase-switcher-topbar {
+    min-height: 35px;
+    padding: 3px 6px;
+    border: 0;
+    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
+    border-radius: 0;
+    background: var(--vscode-sideBarSectionHeader-background, var(--vscode-sideBar-background));
+    box-shadow: none;
+}
+
+.phase-switcher-topbar h1 {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.controls-top-buttons,
+.global-list-actions-right {
+    gap: 2px;
+    flex-wrap: nowrap;
+}
+
+.compact-top-btn,
+.compact-action-btn {
+    min-width: 28px;
+    min-height: 28px;
+    padding: 0 5px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+}
+
+.phase-switcher-section {
+    min-height: 0;
+    padding: 0;
+    gap: 0;
+    border: 0;
+    border-radius: 0;
+    background: var(--vscode-sideBar-background);
+    box-shadow: none;
+    overflow: hidden;
+}
+
+.manager-tabs-row {
+    min-height: 34px;
+    padding: 2px 4px;
+    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
+    flex-wrap: nowrap;
+}
+
+.manager-tab-btn {
+    min-height: 28px;
+    padding: 0 7px;
+    border-radius: 3px;
+    font-size: var(--vscode-font-size);
+    font-weight: 400;
+}
+
+.manager-tab-btn.is-active {
+    font-weight: 600;
+}
+
+.manager-tabs-side {
+    gap: 2px;
+}
+
+.relationship-context {
+    display: grid;
+    gap: 1px;
+    min-height: 0;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+    line-height: 1.3;
+}
+
+.relationship-context:empty,
+.relationship-context-line:empty {
+    display: none;
+}
+
+.scenario-search-row {
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
+}
+
+.scenario-search-input {
+    height: 26px;
+    border-radius: 2px;
+}
+
+.phase-tree-container {
+    min-width: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+#phaseTreeContainer,
+#favoritesContainer {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 2px 0;
+    border: 0;
+    border-radius: 0;
+    background: var(--vscode-sideBar-background);
+    box-shadow: none;
+}
+
+.phase-group {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+.phase-header {
+    min-height: 30px;
+    gap: 0;
+    padding: 0 4px 0 0;
+    border: 0;
+    border-radius: 0;
+}
+
+.phase-header:hover {
+    background: var(--vscode-list-hoverBackground);
+}
+
+.phase-header.phase-header-affected {
+    border-radius: 0;
+    background: color-mix(in srgb, var(--kot-sidebar-related) 10%, transparent);
+    box-shadow: inset 2px 0 0 var(--kot-sidebar-related);
+}
+
+.phase-header.phase-header-affected .phase-title,
+.phase-header.phase-header-affected .phase-test-count {
+    color: var(--vscode-foreground);
+}
+
+.phase-expand-collapse-btn {
+    min-height: 30px;
+    padding: 0 4px;
+    gap: 2px;
+    border-radius: 0;
+    font-weight: 400;
+}
+
+.phase-toggle-icon {
+    margin-right: 2px;
+    font-size: 12px;
+}
+
+.phase-title {
+    font-size: var(--vscode-font-size);
+    font-weight: 600;
+}
+
+.phase-test-count {
+    min-width: 34px;
+    height: 22px;
+    padding: 0 4px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    font-family: var(--vscode-font-family);
+    font-size: 11px;
+}
+
+.phase-test-count:hover {
+    background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.phase-tests-list,
+.phase-tests-list.expanded {
+    padding: 0 0 0 14px;
+}
+
+.item-container {
+    margin: 0;
+}
+
+label.checkbox-item {
+    min-height: 30px;
+    gap: 3px;
+    padding: 0 4px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+label.checkbox-item:hover {
+    border: 0;
+    background: var(--vscode-list-hoverBackground);
+}
+
+label.checkbox-item.affected-main-scenario,
+label.checkbox-item.search-match {
+    border-radius: 0;
+}
+
+label.checkbox-item.current-main-scenario {
+    background: var(--vscode-list-activeSelectionBackground);
+    color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+}
+
+.open-scenario-btn,
+.run-scenario-btn,
+.run-scenario-log-btn {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+}
+
+.phase-switcher-controls-fixed-bottom {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 4px 6px 6px;
+    border: 0;
+    border-top: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
+    border-radius: 0;
+    background: var(--vscode-sideBar-background);
+    box-shadow: none;
+}
+
+#statusBar {
+    min-height: 18px;
+    padding: 0 2px 3px;
+    justify-content: flex-start;
+    text-align: left;
+}
+
+.controls-row {
+    gap: 4px;
+    margin: 0;
+}
+
+.phase-switcher-controls button,
+.assemble-controls button {
+    min-height: 28px;
+    padding: 3px 7px;
+    border-radius: 3px;
+}
+
+.controls-row.controls-row-primary > .split-button,
+.split-menu-btn {
+    border-radius: 3px;
+}
+
+.split-menu-btn {
+    border-top-right-radius: 3px !important;
+    border-bottom-right-radius: 3px !important;
+}

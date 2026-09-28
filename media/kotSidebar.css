@@ -1,0 +1,158 @@
+:root {
+    --kot-sidebar-row-height: 30px;
+    --kot-sidebar-control-height: 28px;
+    --kot-sidebar-action-gutter: 76px;
+    --kot-sidebar-related: var(--vscode-charts-purple, var(--vscode-editorBracketHighlight-foreground4, var(--vscode-list-highlightForeground)));
+    --kot-sidebar-current: var(--vscode-focusBorder);
+    --kot-sidebar-modified: var(--vscode-editorWarning-foreground);
+}
+
+.kot-sidebar-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+.kot-sidebar-search {
+    width: 100%;
+    min-width: 0;
+}
+
+.kot-tree {
+    min-width: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+.kot-tree-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    min-height: 30px;
+    box-sizing: border-box;
+    color: var(--vscode-foreground);
+}
+
+.kot-tree-row:hover {
+    background: var(--vscode-list-hoverBackground);
+    color: var(--vscode-list-hoverForeground, var(--vscode-foreground));
+}
+
+.kot-tree-row:focus-visible,
+.kot-tree-row:focus-within {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+
+.kot-tree-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.kot-row-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex: 0 0 var(--kot-sidebar-action-gutter);
+    min-width: 0;
+    overflow: hidden;
+}
+
+.kot-icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--kot-sidebar-control-height);
+    min-height: 28px;
+    padding: 0 6px;
+    border: 0;
+    border-radius: 3px;
+    color: var(--vscode-icon-foreground);
+    background: transparent;
+}
+
+.kot-icon-button:hover {
+    background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.kot-icon-button:active {
+    transform: translateY(1px);
+}
+
+.kot-icon-button:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+
+.is-current {
+    border-inline-start: 2px solid var(--kot-sidebar-current);
+    background: var(--vscode-list-activeSelectionBackground);
+    color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+}
+
+.is-current .kot-tree-label {
+    font-weight: 600;
+}
+
+.is-related {
+    border-inline-start: 2px solid var(--kot-sidebar-related);
+    background: color-mix(in srgb, var(--kot-sidebar-related) 12%, transparent);
+}
+
+.is-related .scenario-relationship-icon,
+.phase-group.is-related > .phase-header .scenario-relationship-icon {
+    color: var(--kot-sidebar-related);
+}
+
+.is-transitive {
+    opacity: 0.72;
+}
+
+.is-modified .kot-modified,
+.kot-modified {
+    color: var(--vscode-editorWarning-foreground);
+}
+
+.kot-modified {
+    display: none;
+    flex: 0 0 auto;
+    width: 14px;
+    text-align: center;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.is-modified .kot-modified {
+    display: inline-block;
+}
+
+.scenario-relationship-icon {
+    flex: 0 0 auto;
+    width: 16px;
+    text-align: center;
+}
+
+.kot-empty,
+.kot-error,
+.kot-loading {
+    margin: 0;
+    padding: 12px 8px;
+    color: var(--vscode-descriptionForeground);
+    line-height: 1.4;
+}
+
+.kot-error {
+    color: var(--vscode-errorForeground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .kot-icon-button,
+    .kot-tree-row {
+        transition: none;
+    }
+}

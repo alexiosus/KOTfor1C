@@ -6226,6 +6226,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         await this.loadLocalizationBundleIfNeeded();
         const nonce = getNonce();
         const styleUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'phaseSwitcher.css'));
+        const sidebarStylesUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'kotSidebar.css'));
         const protocolScriptUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'phaseSwitcherProtocol.js'));
         const scriptUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'phaseSwitcher.js'));
         const htmlTemplateUri = vscode.Uri.joinPath(this._extensionUri, 'media', 'phaseSwitcher.html');
@@ -6236,6 +6237,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             let htmlContent = Buffer.from(htmlBytes).toString('utf-8');
             htmlContent = htmlContent.replace(/\$\{nonce\}/g, nonce);
             htmlContent = htmlContent.replace('${stylesUri}', styleUri.toString());
+            htmlContent = htmlContent.replace('${sidebarStylesUri}', sidebarStylesUri.toString());
             htmlContent = htmlContent.replace('${protocolScriptUri}', protocolScriptUri.toString());
             htmlContent = htmlContent.replace('${scriptUri}', scriptUri.toString());
             htmlContent = htmlContent.replace('${codiconsUri}', codiconsUri.toString());
@@ -6278,6 +6280,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 favoritesOpenTitle: this.t('Open scenario'),
                 favoritesRemoveTitle: this.t('Remove from favorites'),
                 toggleScenarioSearchTitle: this.t('Toggle scenario search'),
+                relationshipToggleTitle: this.t('Show scenario relationships'),
+                relationshipOpenContext: this.t('Open: {0}', '{0}'),
+                relationshipOpenNone: this.t('Open: no scenario'),
+                relationshipSummaryContext: this.t('Relationships: {0} main tests · {1} nested scenarios', '{0}', '{1}'),
+                relationshipSummaryDisabled: this.t('Relationships: hidden'),
+                modifiedSelectionTitle: this.t('Build selection differs from the loaded state'),
                 scenarioSearchPlaceholder: this.t('Find main scenario by name...'),
                 scenarioSearchTitle: this.t('Search main scenarios and focus match in list'),
                 scenarioSearchClearTitle: this.t('Clear scenario search'),
