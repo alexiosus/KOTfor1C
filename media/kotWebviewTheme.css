@@ -25,7 +25,8 @@ body {
     overflow: hidden;
     background: var(--kot-bg);
     color: var(--vscode-editor-foreground);
-    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
 }
 
 button,

@@ -3,21 +3,25 @@
 
 (function() {
     const vscode = acquireVsCodeApi();
+    const scenarioProtocol = globalThis.PhaseSwitcherProtocol;
+    if (!scenarioProtocol) {
+        throw new Error('PhaseSwitcherProtocol is not loaded');
+    }
 
     // === Глобальные переменные состояния ===
     let testDataByPhase = {};
     let initialTestStates = {};
     let currentCheckboxStates = {};
     let testDefaultStates = {};
-    let testInfoByName = new Map();
+    let testInfoByKey = new Map();
     let phaseExpandedState = {}; 
     let runArtifacts = {};
-    let affectedMainScenarioNames = new Set();
+    let relationshipState = scenarioProtocol.parseRelationshipState(undefined);
     let favoriteScenarios = [];
     let favoriteSortMode = 'code';
     let activeManagerTab = 'tests';
     let activeScenarioSearchQuery = '';
-    let isScenarioSearchVisible = false;
+    const isScenarioSearchVisible = true;
     let settings = {
         assemblerEnabled: true,
         switcherEnabled: true,
@@ -59,6 +63,8 @@
     const addScenarioDropdownContent = document.getElementById('addScenarioDropdownContent');
     const createMainScenarioFromDropdownBtn = document.getElementById('createMainScenarioFromDropdownBtn');
     const createNestedScenarioFromDropdownBtn = document.getElementById('createNestedScenarioFromDropdownBtn');
+    const createExportScenarioFromDropdownBtn = document.getElementById('createExportScenarioFromDropdownBtn');
+    const createUserStepFromDropdownBtn = document.getElementById('createUserStepFromDropdownBtn');
     const scenarioRepairDropdownBtn = document.getElementById('scenarioRepairDropdownBtn');
     const scenarioRepairDropdownContent = document.getElementById('scenarioRepairDropdownContent');
     const reloadTestsFromDiskFromDropdownBtn = document.getElementById('reloadTestsFromDiskFromDropdownBtn');
@@ -67,6 +73,7 @@
     const refreshVanessaStepsFromDropdownBtn = document.getElementById('refreshVanessaStepsFromDropdownBtn');
     const runVanessaFromDropdownBtn = document.getElementById('runVanessaFromDropdownBtn');
     const openFormExplorerFromDropdownBtn = document.getElementById('openFormExplorerFromDropdownBtn');
+    const openStepLibraryTopBtn = document.getElementById('openStepLibraryTopBtn');
     const openInfobaseManagerTopBtn = document.getElementById('openInfobaseManagerTopBtn');
     const configurationDiffReportDropdownBtn = document.getElementById('configurationDiffReportDropdownBtn');
     const configurationDiffReportDropdownContent = document.getElementById('configurationDiffReportDropdownContent');
@@ -80,12 +87,18 @@
     const testsTabBtn = document.getElementById('testsTabBtn');
     const favoritesTabBtn = document.getElementById('favoritesTabBtn');
     const globalListActions = document.getElementById('globalListActions');
-    const toggleScenarioSearchBtn = document.getElementById('toggleScenarioSearchBtn');
+    const relationshipToggleBtn = document.getElementById('relationshipToggleBtn');
+    const refreshTestsBtn = document.getElementById('refreshTestsBtn');
+    const relationshipCurrentContext = document.getElementById('relationshipCurrentContext');
+    const relationshipSummaryContext = document.getElementById('relationshipSummaryContext');
     const favoritesSortControls = document.getElementById('favoritesSortControls');
     const favoritesSortSelect = document.getElementById('favoritesSortSelect');
     const scenarioSearchRow = document.getElementById('scenarioSearchRow');
     const scenarioSearchInput = document.getElementById('scenarioSearchInput');
     const scenarioSearchClearBtn = document.getElementById('scenarioSearchClearBtn');
+    const selectedCount = document.getElementById('selectedCount');
+    const selectableCount = document.getElementById('selectableCount');
+    const clearSelectionBtn = document.getElementById('clearSelectionBtn');
 
     const phaseSwitcherSectionElements = document.querySelectorAll('.phase-switcher-section');
     const phaseTreeContainer = document.getElementById('phaseTreeContainer');
@@ -198,18 +211,30 @@
                     return;
                 }
                 groupItems.forEach(testInfo => {
-                    if (testInfo && typeof testInfo.name === 'string' && testInfo.name) {
-                        nextIndex.set(testInfo.name, testInfo);
+                    const scenarioKey = scenarioProtocol.getScenarioKey(testInfo);
+                    if (scenarioKey) {
+                        nextIndex.set(scenarioKey, testInfo);
                     }
                 });
             });
         }
-        testInfoByName = nextIndex;
+        testInfoByKey = nextIndex;
     }
 
-    function getTestInfoByName(name) {
-        return typeof name === 'string' && name
-            ? (testInfoByName.get(name) || null)
+    function getTestInfoByKey(key) {
+        return typeof key === 'string' && key
+            ? (testInfoByKey.get(key) || null)
+            : null;
+    }
+
+    function getScenarioCommandFromElement(command, element, extra = {}) {
+        if (!(element instanceof Element)) {
+            return null;
+        }
+        const scenarioKey = element.getAttribute('data-key') || '';
+        const testInfo = getTestInfoByKey(scenarioKey);
+        return testInfo
+            ? scenarioProtocol.createScenarioCommand(command, testInfo, extra)
             : null;
     }
 
@@ -223,7 +248,7 @@
         phaseControlsActive = effectiveEnable;
         const isDisabled = !effectiveEnable;
 
-        if (selectAllBtn instanceof HTMLButtonElement) selectAllBtn.disabled = isDisabled;
+        if (selectAllBtn instanceof HTMLInputElement) selectAllBtn.disabled = isDisabled;
 
         if (collapseAllBtn instanceof HTMLButtonElement) {
             const hasPhases = Object.keys(testDataByPhase).length > 0;
@@ -269,9 +294,10 @@
 
                     if (Array.isArray(testsInPhase)) {
                         testsInPhase.forEach(testInfo => {
-                            if (testInfo && initialTestStates[testInfo.name] !== 'disabled') {
+                            const scenarioKey = scenarioProtocol.getScenarioKey(testInfo);
+                            if (scenarioKey && initialTestStates[scenarioKey] !== 'disabled') {
                                 totalInPhase++;
-                                if (currentCheckboxStates[testInfo.name]) {
+                                if (currentCheckboxStates[scenarioKey]) {
                                     enabledCount++;
                                 }
                             }
@@ -520,8 +546,8 @@
         const runButtons = phaseTreeContainer.querySelectorAll('.run-scenario-btn');
         runButtons.forEach(button => {
             if (button instanceof HTMLButtonElement) {
-                const scenarioName = button.getAttribute('data-name') || '';
-                const runInfo = scenarioName && runArtifacts ? runArtifacts[scenarioName] : null;
+                const scenarioKey = button.getAttribute('data-key') || '';
+                const runInfo = scenarioKey && runArtifacts ? runArtifacts[scenarioKey] : null;
                 const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
                 const isBlockingRunInProgress = runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false;
                 button.disabled = isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact;
@@ -554,81 +580,118 @@
         );
     }
 
-    function normalizeAffectedMainScenarioNames(names) {
-        if (!Array.isArray(names)) {
-            return new Set();
+    function renderRelationshipContext() {
+        if (relationshipToggleBtn instanceof HTMLButtonElement) {
+            relationshipToggleBtn.setAttribute('aria-pressed', relationshipState.enabled ? 'true' : 'false');
+            relationshipToggleBtn.classList.toggle('is-active', relationshipState.enabled);
         }
-        const result = new Set();
-        names.forEach(name => {
-            if (typeof name === 'string') {
-                const trimmed = name.trim();
-                if (trimmed) {
-                    result.add(trimmed);
-                }
-            }
-        });
-        return result;
-    }
 
-    function isScenarioSearchActive() {
-        return activeManagerTab === 'tests' && typeof activeScenarioSearchQuery === 'string' && activeScenarioSearchQuery.trim().length > 0;
-    }
-
-    function clearAffectedMainScenarioHighlighting() {
-        if (!(phaseTreeContainer instanceof HTMLElement)) {
-            return;
+        if (relationshipCurrentContext instanceof HTMLElement) {
+            const currentLabel = relationshipState.currentLabel;
+            relationshipCurrentContext.textContent = currentLabel
+                ? (window.__loc?.relationshipOpenContext || 'Open: {0}').replace('{0}', currentLabel)
+                : (window.__loc?.relationshipOpenNone || 'Open: no scenario');
         }
-        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-name]');
-        scenarioLabels.forEach(label => {
-            if (!(label instanceof HTMLElement)) return;
-            label.classList.remove('affected-main-scenario');
-        });
-        const phaseGroups = phaseTreeContainer.querySelectorAll('.phase-group');
-        phaseGroups.forEach(group => {
-            if (!(group instanceof HTMLElement)) return;
-            group.classList.remove('phase-group-affected');
-            const header = group.querySelector('.phase-header');
-            if (header instanceof HTMLElement) {
-                header.classList.remove('phase-header-affected');
+
+        if (relationshipSummaryContext instanceof HTMLElement) {
+            if (!relationshipState.enabled) {
+                relationshipSummaryContext.textContent = window.__loc?.relationshipSummaryDisabled || 'Relationships: hidden';
+                return;
             }
-        });
+            const mainCount = new Set(relationshipState.affectedMainScenarioKeys).size;
+            const nestedCount = relationshipState.relationships.filter(entry => !testInfoByKey.has(entry.scenarioKey)).length;
+            relationshipSummaryContext.textContent = (
+                window.__loc?.relationshipSummaryContext
+                || 'Relationships: {0} main tests · {1} nested scenarios'
+            )
+                .replace('{0}', String(mainCount))
+                .replace('{1}', String(nestedCount));
+        }
     }
 
-    function applyAffectedMainScenarioHighlighting() {
+    function patchScenarioRelationshipDecorations() {
         if (!phaseTreeContainer) return;
-        if (settings.highlightAffectedMainScenarios === false || isScenarioSearchActive()) {
-            clearAffectedMainScenarioHighlighting();
-            return;
-        }
-
-        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-name]');
+        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-key]');
         scenarioLabels.forEach(label => {
             if (!(label instanceof HTMLElement)) return;
-            const name = label.getAttribute('data-name') || '';
-            label.classList.toggle('affected-main-scenario', !!name && affectedMainScenarioNames.has(name));
+            const scenarioKey = label.getAttribute('data-key') || '';
+            const decoration = scenarioProtocol.relationshipDecorationForScenario(
+                scenarioKey,
+                relationshipState
+            );
+            label.classList.toggle(
+                'affected-main-scenario',
+                decoration.state !== 'none' && decoration.state !== 'current'
+            );
+            label.classList.toggle('current-main-scenario', decoration.state === 'current');
+            label.classList.toggle('is-current', decoration.state === 'current');
+            label.classList.toggle('is-related', decoration.state !== 'none' && decoration.state !== 'current');
+            label.classList.toggle('incoming-scenario', decoration.state === 'incoming');
+            label.classList.toggle('outgoing-scenario', decoration.state === 'outgoing');
+            label.classList.toggle(
+                'transitive-scenario',
+                decoration.state !== 'none' && !decoration.direct
+            );
+            label.classList.toggle(
+                'is-transitive',
+                decoration.state !== 'none' && !decoration.direct
+            );
+            if (decoration.accessibleLabel) {
+                label.setAttribute('data-relationship-label', decoration.accessibleLabel);
+            } else {
+                label.removeAttribute('data-relationship-label');
+            }
+            const icon = label.querySelector('.scenario-relationship-icon');
+            if (icon instanceof HTMLElement) {
+                Array.from(icon.classList)
+                    .filter(className => className.startsWith('codicon-'))
+                    .forEach(className => icon.classList.remove(className));
+                icon.classList.toggle('codicon', !!decoration.icon);
+                if (decoration.icon) {
+                    icon.classList.add(`codicon-${decoration.icon}`);
+                    icon.setAttribute('role', 'img');
+                    icon.setAttribute('aria-label', decoration.accessibleLabel);
+                    icon.title = decoration.accessibleLabel;
+                    icon.removeAttribute('aria-hidden');
+                } else {
+                    icon.removeAttribute('role');
+                    icon.removeAttribute('aria-label');
+                    icon.removeAttribute('title');
+                    icon.setAttribute('aria-hidden', 'true');
+                }
+            }
         });
 
         const phaseGroups = phaseTreeContainer.querySelectorAll('.phase-group');
         phaseGroups.forEach(group => {
             if (!(group instanceof HTMLElement)) return;
-            const groupCheckboxes = group.querySelectorAll('.checkbox-item[data-name]');
-            let hasAffectedScenarioInGroup = false;
-            groupCheckboxes.forEach(label => {
-                if (hasAffectedScenarioInGroup || !(label instanceof HTMLElement)) {
-                    return;
-                }
-                const name = label.getAttribute('data-name') || '';
-                if (name && affectedMainScenarioNames.has(name)) {
-                    hasAffectedScenarioInGroup = true;
-                }
-            });
+            const scenarioKeys = Array.from(group.querySelectorAll('.checkbox-item[data-key]'))
+                .map(label => label instanceof HTMLElement ? label.getAttribute('data-key') || '' : '')
+                .filter(Boolean);
+            const aggregate = scenarioProtocol.aggregatePhaseRelationship(
+                scenarioKeys,
+                relationshipState
+            );
+            const hasAffectedScenarioInGroup = aggregate.state === 'related';
 
             group.classList.toggle('phase-group-affected', hasAffectedScenarioInGroup);
+            group.classList.toggle('is-related', hasAffectedScenarioInGroup);
+            group.classList.toggle('is-transitive', hasAffectedScenarioInGroup && !aggregate.direct);
+            if (aggregate.accessibleLabel) {
+                group.setAttribute('data-relationship-label', aggregate.accessibleLabel);
+            } else {
+                group.removeAttribute('data-relationship-label');
+            }
             const header = group.querySelector('.phase-header');
             if (header instanceof HTMLElement) {
                 header.classList.toggle('phase-header-affected', hasAffectedScenarioInGroup);
             }
         });
+        renderRelationshipContext();
+    }
+
+    function applyAffectedMainScenarioHighlighting() {
+        patchScenarioRelationshipDecorations();
     }
 
     /**
@@ -963,16 +1026,8 @@
         if (globalListActions instanceof HTMLElement) {
             globalListActions.classList.toggle('hidden', isFavoritesTab);
         }
-        if (isFavoritesTab) {
-            isScenarioSearchVisible = false;
-        }
         if (scenarioSearchRow instanceof HTMLElement) {
-            scenarioSearchRow.classList.toggle('hidden', isFavoritesTab || !isScenarioSearchVisible);
-        }
-        if (toggleScenarioSearchBtn instanceof HTMLButtonElement) {
-            toggleScenarioSearchBtn.classList.toggle('hidden', isFavoritesTab);
-            toggleScenarioSearchBtn.classList.toggle('is-active', !isFavoritesTab && isScenarioSearchVisible);
-            toggleScenarioSearchBtn.setAttribute('aria-pressed', (!isFavoritesTab && isScenarioSearchVisible) ? 'true' : 'false');
+            scenarioSearchRow.classList.toggle('hidden', isFavoritesTab);
         }
         syncScenarioSearchHighlightState(false);
     }
@@ -1027,7 +1082,6 @@
         const shouldHighlight =
             activeManagerTab === 'tests' &&
             isScenarioSearchVisible &&
-            document.activeElement === scenarioSearchInput &&
             activeScenarioSearchQuery.length > 0;
 
         if (shouldHighlight) {
@@ -1131,13 +1185,16 @@
 
         return `
             <div class="item-container">
-                <label class="checkbox-item${viewState.isAffectedMainScenario ? ' affected-main-scenario' : ''}" id="label-${viewState.safeName}" data-name="${viewState.escapedNameAttr}" title="${viewState.escapedTitleAttr}">
+                <label class="checkbox-item kot-tree-row${viewState.relationshipClassNames}" id="label-${viewState.safeName}" data-key="${viewState.escapedScenarioKeyAttr}" data-name="${viewState.escapedNameAttr}" data-uri="${viewState.escapedFileUriAttr}" data-relationship-label="${viewState.escapedRelationshipLabel}" title="${viewState.escapedTitleAttr}" tabindex="0" role="treeitem">
                     ${viewState.leadingControlHtml}
-                    <span class="checkbox-label-text">${viewState.name}</span>
-                    ${viewState.progressHtml}
-                    ${viewState.runLogButtonHtml}
-                    ${viewState.runButtonHtml}
-                    ${viewState.openButtonHtml}
+                    ${viewState.relationshipIconHtml}
+                    <span class="checkbox-label-text kot-tree-label">${viewState.name}</span>
+                    <span class="kot-row-actions">
+                        ${viewState.progressHtml}
+                        ${viewState.runLogButtonHtml}
+                        ${viewState.runButtonHtml}
+                        ${viewState.openButtonHtml}
+                    </span>
                 </label>
             </div>
         `;
@@ -1148,16 +1205,49 @@
             return null;
         }
 
+        const scenarioKey = scenarioProtocol.getScenarioKey(testInfo);
+        if (!scenarioKey) {
+            return null;
+        }
         const name = testInfo.name;
         const relativePath = testInfo.relativePath || '';
         const defaultState = !!testInfo.defaultState;
-        const safeName = name.replace(/[^a-zA-Z0-9_\\-]/g, '_');
+        const safeName = scenarioKey.replace(/[^a-zA-Z0-9_\\-]/g, '_');
+        const escapedScenarioKeyAttr = escapeHtmlAttr(scenarioKey);
         const escapedNameAttr = escapeHtmlAttr(name);
         const escapedTitleAttr = escapeHtmlAttr(relativePath);
         const fileUriString = testInfo.yamlFileUriString || '';
-        const isAffectedMainScenario = affectedMainScenarioNames.has(name);
+        const escapedFileUriAttr = escapeHtmlAttr(fileUriString);
+        const relationshipDecoration = scenarioProtocol.relationshipDecorationForScenario(
+            scenarioKey,
+            relationshipState
+        );
+        const relationshipClassNames = [
+            relationshipDecoration.state === 'current' ? 'current-main-scenario' : '',
+            relationshipDecoration.state === 'current' ? 'is-current' : '',
+            relationshipDecoration.state !== 'none' && relationshipDecoration.state !== 'current'
+                ? 'affected-main-scenario'
+                : '',
+            relationshipDecoration.state !== 'none' && relationshipDecoration.state !== 'current'
+                ? 'is-related'
+                : '',
+            relationshipDecoration.state === 'incoming' ? 'incoming-scenario' : '',
+            relationshipDecoration.state === 'outgoing' ? 'outgoing-scenario' : '',
+            relationshipDecoration.state !== 'none' && !relationshipDecoration.direct
+                ? 'transitive-scenario'
+                : '',
+            relationshipDecoration.state !== 'none' && !relationshipDecoration.direct
+                ? 'is-transitive'
+                : ''
+        ].filter(Boolean).map(className => ` ${className}`).join('');
+        const escapedRelationshipLabel = escapeHtmlAttr(relationshipDecoration.accessibleLabel);
+        const relationshipIconHtml = relationshipDecoration.icon
+            ? `<span class="scenario-relationship-icon codicon codicon-${escapeHtmlAttr(relationshipDecoration.icon)}" role="img" aria-label="${escapedRelationshipLabel}" title="${escapedRelationshipLabel}"></span>`
+            : '<span class="scenario-relationship-icon" aria-hidden="true"></span>';
         const escapedIconTitle = escapeHtmlAttr((window.__loc?.openScenarioFileTitle || 'Open scenario file {0}').replace('{0}', name));
-        const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
+        const runInfo = runArtifacts && typeof runArtifacts === 'object'
+            ? runArtifacts[scenarioKey]
+            : null;
         const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
         const runStatus = runInfo?.runStatus || 'idle';
         const shouldShowRunIndicator = hasRunArtifact || runStatus !== 'idle';
@@ -1234,7 +1324,7 @@
             : `<input
                         type="checkbox"
                         id="chk-${safeName}"
-                        name="${escapedNameAttr}"
+                        name="${escapedScenarioKeyAttr}"
                         data-default="${defaultState}">`;
         const progressHtml = hasLineProgress
             ? `<span class="scenario-run-progress has-hover-counter" title="${escapeHtmlAttr(progressTitle)}">
@@ -1244,31 +1334,38 @@
             : '';
 
         const openButtonHtml = fileUriString
-            ? `<button class="open-scenario-btn" data-name="${escapedNameAttr}" title="${escapedIconTitle}">
+            ? `<button class="open-scenario-btn" data-key="${escapedScenarioKeyAttr}" data-name="${escapedNameAttr}" data-uri="${escapedFileUriAttr}" title="${escapedIconTitle}">
                    <span class="codicon codicon-circle-small-filled open-scenario-icon-idle"></span>
                    <span class="codicon codicon-edit open-scenario-icon-edit"></span>
                </button>`
             : '';
 
         const runButtonHtml = shouldShowRunIndicator && !isBlockingRunInProgress
-            ? `<button class="${runButtonClass}" data-name="${escapedNameAttr}" title="${escapedRunTitle}"${runButtonDisabledAttr}>
+            ? `<button class="${runButtonClass}" data-key="${escapedScenarioKeyAttr}" data-name="${escapedNameAttr}" data-uri="${escapedFileUriAttr}" title="${escapedRunTitle}"${runButtonDisabledAttr}>
                    ${runButtonIconHtml}
                </button>`
             : '';
         const runLogButtonHtml = canOpenFailedStepInFeature
-            ? `<button class="run-scenario-log-btn" data-name="${escapedNameAttr}" title="${runStepTitle}">
+            ? `<button class="run-scenario-log-btn" data-key="${escapedScenarioKeyAttr}" data-name="${escapedNameAttr}" data-uri="${escapedFileUriAttr}" title="${runStepTitle}">
                    <span class="codicon codicon-go-to-file"></span>
                </button>`
             : '';
 
         return {
             name,
+            scenarioKey,
             relativePath,
             defaultState,
             safeName,
+            escapedScenarioKeyAttr,
             escapedNameAttr,
+            escapedFileUriAttr,
+            fileUriString,
             escapedTitleAttr,
-            isAffectedMainScenario,
+            relationshipDecoration,
+            relationshipClassNames,
+            escapedRelationshipLabel,
+            relationshipIconHtml,
             isRunInProgress,
             hasLineProgress,
             progressBadgeText,
@@ -1301,11 +1398,16 @@
             return;
         }
         const anchor = selector ? label.querySelector(selector) : null;
-        if (anchor && anchor.parentElement === label) {
-            label.insertBefore(element, anchor);
+        if (anchor?.parentElement) {
+            anchor.parentElement.insertBefore(element, anchor);
             return;
         }
-        label.appendChild(element);
+        const actions = label.querySelector('.kot-row-actions');
+        if (actions instanceof HTMLElement) {
+            actions.appendChild(element);
+        } else {
+            label.appendChild(element);
+        }
     }
 
     function syncScenarioLeadingControl(label, viewState) {
@@ -1346,7 +1448,7 @@
         }
         if (existingCheckbox instanceof HTMLInputElement) {
             existingCheckbox.id = `chk-${viewState.safeName}`;
-            existingCheckbox.name = viewState.name;
+            existingCheckbox.name = viewState.scenarioKey;
             existingCheckbox.setAttribute('data-default', String(viewState.defaultState));
             return;
         }
@@ -1414,6 +1516,18 @@
         if (desiredName !== null) {
             existingButton.setAttribute('data-name', desiredName);
         }
+        const desiredKey = desiredButton.getAttribute('data-key');
+        if (desiredKey !== null) {
+            existingButton.setAttribute('data-key', desiredKey);
+        } else {
+            existingButton.removeAttribute('data-key');
+        }
+        const desiredUri = desiredButton.getAttribute('data-uri');
+        if (desiredUri !== null) {
+            existingButton.setAttribute('data-uri', desiredUri);
+        } else {
+            existingButton.removeAttribute('data-uri');
+        }
         existingButton.innerHTML = desiredButton.innerHTML;
     }
 
@@ -1422,20 +1536,21 @@
             return;
         }
 
-        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-name]');
+        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-key]');
         scenarioLabels.forEach(label => {
             if (!(label instanceof HTMLElement)) {
                 return;
             }
-            const scenarioName = label.getAttribute('data-name') || '';
-            const testInfo = getTestInfoByName(scenarioName);
+            const scenarioKey = label.getAttribute('data-key') || '';
+            const testInfo = getTestInfoByKey(scenarioKey);
             const viewState = buildScenarioViewState(testInfo);
             if (!viewState) {
                 return;
             }
 
             label.title = viewState.relativePath;
-            label.classList.toggle('affected-main-scenario', viewState.isAffectedMainScenario);
+            label.setAttribute('data-key', viewState.scenarioKey);
+            label.setAttribute('data-uri', viewState.fileUriString);
             syncScenarioLeadingControl(label, viewState);
             syncScenarioProgress(label, viewState);
             syncScenarioActionButton(label, '.run-scenario-log-btn', viewState.runLogButtonHtml, '.run-scenario-btn, .open-scenario-btn');
@@ -1445,6 +1560,40 @@
         applyCheckboxStatesToVisible();
     }
 
+    function capturePhaseTreeViewState() {
+        if (!(phaseTreeContainer instanceof HTMLElement)) {
+            return { scrollTop: 0, focusedScenarioKey: '', expandedPhaseNames: [] };
+        }
+        const focusedRow = document.activeElement instanceof Element
+            ? document.activeElement.closest('.checkbox-item[data-key]')
+            : null;
+        return {
+            scrollTop: phaseTreeContainer.scrollTop,
+            focusedScenarioKey: focusedRow instanceof HTMLElement
+                ? (focusedRow.getAttribute('data-key') || '')
+                : '',
+            expandedPhaseNames: Object.entries(phaseExpandedState)
+                .filter(([, expanded]) => expanded)
+                .map(([phaseName]) => phaseName)
+        };
+    }
+
+    function restorePhaseTreeViewState(viewState) {
+        if (!(phaseTreeContainer instanceof HTMLElement) || !viewState) {
+            return;
+        }
+        phaseTreeContainer.scrollTop = Number.isFinite(viewState.scrollTop) ? viewState.scrollTop : 0;
+        if (!viewState.focusedScenarioKey) {
+            return;
+        }
+        const row = Array.from(phaseTreeContainer.querySelectorAll('.checkbox-item[data-key]'))
+            .find(element => element instanceof HTMLElement
+                && element.getAttribute('data-key') === viewState.focusedScenarioKey);
+        if (row instanceof HTMLElement) {
+            row.focus({ preventScroll: true });
+        }
+    }
+
     /**
      * Отрисовывает дерево фаз и тестов.
      * @param {object} allPhaseData - Данные о фазах и тестах.
@@ -1452,6 +1601,7 @@
     function renderPhaseTree(allPhaseData) {
         log('Rendering phase tree...');
         if (!phaseTreeContainer) { log("Error: Phase tree container not found!"); return; }
+        const preservedViewState = capturePhaseTreeViewState();
         phaseTreeContainer.innerHTML = '';
 
         const sortedPhaseNames = Object.keys(allPhaseData).sort();
@@ -1485,9 +1635,10 @@
 
             if (Array.isArray(testsInPhase)) {
                 testsInPhase.forEach(testInfo => {
-                    if (testInfo && initialTestStates[testInfo.name] !== 'disabled') {
+                    const scenarioKey = scenarioProtocol.getScenarioKey(testInfo);
+                    if (scenarioKey && initialTestStates[scenarioKey] !== 'disabled') {
                         totalInPhase++;
-                        if (currentCheckboxStates[testInfo.name]) {
+                        if (currentCheckboxStates[scenarioKey]) {
                             enabledCount++;
                         }
                     }
@@ -1497,6 +1648,7 @@
             const phaseGroupDiv = document.createElement('div');
             phaseGroupDiv.className = 'phase-group';
             phaseGroupDiv.id = phaseGroupId;
+            phaseGroupDiv.setAttribute('role', 'group');
 
             const phaseHeaderDiv = document.createElement('div');
             phaseHeaderDiv.className = 'phase-header';
@@ -1512,6 +1664,7 @@
             expandCollapseButton.title = phaseExpandedState[phaseName]
                 ? (window.__loc?.collapsePhaseTitle || 'Collapse group')
                 : (window.__loc?.expandPhaseTitle || 'Expand group');
+            expandCollapseButton.setAttribute('aria-label', expandCollapseButton.title);
 
             const iconSpan = document.createElement('span');
             iconSpan.className = `codicon phase-toggle-icon ${phaseExpandedState[phaseName] ? 'codicon-chevron-down' : 'codicon-chevron-right'}`;
@@ -1539,7 +1692,10 @@
                     const txt = window.__loc?.noTestsInPhase || 'No tests in this group.';
                     testsListDiv.innerHTML = `<p class="no-tests-in-phase">${txt}</p>`;
                 } else {
-                    testsInPhase.forEach(info => { if (info?.name) testsListDiv.innerHTML += createCheckboxHtml(info); });
+                    testsListDiv.innerHTML = testsInPhase
+                        .filter(info => !!info?.name)
+                        .map(info => createCheckboxHtml(info))
+                        .join('');
                 }
             } else {
                 const txt = window.__loc?.errorLoadingTests || 'Error loading tests.';
@@ -1566,6 +1722,7 @@
         syncScenarioSearchHighlightState(false);
         log('Phase tree rendered.');
         updateAreAllPhasesExpandedState();
+        restorePhaseTreeViewState(preservedViewState);
     }
 
     /**
@@ -1682,6 +1839,7 @@
         button.title = nextExpanded
             ? (window.__loc?.collapsePhaseTitle || 'Collapse group')
             : (window.__loc?.expandPhaseTitle || 'Expand group');
+        button.setAttribute('aria-label', button.title);
         log(`Phase '${phaseName}' expanded state: ${nextExpanded}`);
         updateAreAllPhasesExpandedState();
     }
@@ -1727,7 +1885,7 @@
         });
 
         updatePendingStatus();
-        updateHighlighting();
+        updateSelectionControls();
         sendScenarioSelectionStates();
     }
 
@@ -1792,18 +1950,56 @@
         updateAreAllPhasesExpandedState();
     }
 
-    /**
-     * Обновляет подсветку измененных чекбоксов.
-     */
-    function updateHighlighting() {
-        if (!phaseTreeContainer) return;
-        const checkboxes = phaseTreeContainer.querySelectorAll('input[type=checkbox]');
-        checkboxes.forEach(cb => {
-            if (!(cb instanceof HTMLInputElement)) return;
-            const label = cb.closest('.checkbox-item');
-            if (!label) return;
-            label.classList.remove('changed');
-        });
+    function updateSelectionControls() {
+        updateSelectAllButtonState();
+    }
+
+    function getVisibleSelectableScenarioKeys() {
+        const enabledKeys = Object.keys(initialTestStates)
+            .filter(key => initialTestStates[key] !== 'disabled');
+        if (activeManagerTab === 'favorites') {
+            const favoriteUris = new Set(favoriteScenarios
+                .map(entry => typeof entry?.uri === 'string' ? entry.uri : '')
+                .filter(Boolean));
+            return enabledKeys.filter(key => {
+                const info = testInfoByKey.get(key);
+                return !!info && favoriteUris.has(info.yamlFileUriString || '');
+            });
+        }
+        if (!activeScenarioSearchQuery) {
+            return enabledKeys;
+        }
+        const matchedKeys = new Set(Array.from(
+            phaseTreeContainer.querySelectorAll('.checkbox-item.search-match[data-key]')
+        ).map(element => element instanceof HTMLElement ? element.getAttribute('data-key') || '' : ''));
+        return enabledKeys.filter(key => matchedKeys.has(key));
+    }
+
+    function updateSelectAllButtonState() {
+        if (!(selectAllBtn instanceof HTMLInputElement)) {
+            return;
+        }
+        const visibleKeys = getVisibleSelectableScenarioKeys();
+        const selectedKeys = Object.entries(currentCheckboxStates)
+            .filter(([, selected]) => !!selected)
+            .map(([key]) => key);
+        const aggregate = scenarioProtocol.selectionAggregateForKeys(selectedKeys, visibleKeys);
+        selectAllBtn.dataset.selectionState = aggregate;
+        selectAllBtn.checked = aggregate === 'checked';
+        selectAllBtn.indeterminate = aggregate === 'indeterminate';
+        selectAllBtn.setAttribute('aria-checked', aggregate === 'indeterminate' ? 'mixed' : String(selectAllBtn.checked));
+        const selectableKeys = Object.keys(initialTestStates)
+            .filter(key => initialTestStates[key] !== 'disabled');
+        const selectedTotal = selectableKeys.filter(key => !!currentCheckboxStates[key]).length;
+        if (selectedCount instanceof HTMLElement) {
+            selectedCount.textContent = String(selectedTotal);
+        }
+        if (selectableCount instanceof HTMLElement) {
+            selectableCount.textContent = String(selectableKeys.length);
+        }
+        if (clearSelectionBtn instanceof HTMLButtonElement) {
+            clearSelectionBtn.disabled = selectedTotal === 0 || !phaseControlsActive;
+        }
     }
 
     /**
@@ -1823,10 +2019,10 @@
             return;
         }
         log(`Open scenario button clicked for: ${name}`);
-        vscode.postMessage({
-            command: 'openScenario',
-            name: name
-        });
+        const message = getScenarioCommandFromElement('openScenario', button);
+        if (message) {
+            vscode.postMessage(message);
+        }
     }
 
     function handleRunScenarioClick(event) {
@@ -1841,16 +2037,19 @@
             log('ERROR: Run scenario button clicked without data-name attribute!');
             return;
         }
-        const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
+        const scenarioKey = button.getAttribute('data-key') || '';
+        const runInfo = runArtifacts && typeof runArtifacts === 'object'
+            ? runArtifacts[scenarioKey]
+            : null;
         if (runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false) {
             log(`Run request ignored for "${name}" because run is already in progress.`);
             return;
         }
         log(`Run scenario button clicked: ${name}`);
-        vscode.postMessage({
-            command: 'runScenarioInVanessa',
-            name
-        });
+        const message = getScenarioCommandFromElement('runScenarioInVanessa', button);
+        if (message) {
+            vscode.postMessage(message);
+        }
     }
 
     function handleRunLogClick(event) {
@@ -1866,10 +2065,10 @@
             return;
         }
         log(`Run step button clicked for: ${name}`);
-        vscode.postMessage({
-            command: 'openScenarioRunStepInFeature',
-            name
-        });
+        const message = getScenarioCommandFromElement('openScenarioRunStepInFeature', button);
+        if (message) {
+            vscode.postMessage(message);
+        }
     }
 
     function handleScenarioRowClick(event) {
@@ -1891,8 +2090,10 @@
         if (!name) {
             return;
         }
-
-        const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
+        const scenarioKey = row.getAttribute('data-key') || '';
+        const runInfo = runArtifacts && typeof runArtifacts === 'object'
+            ? runArtifacts[scenarioKey]
+            : null;
         const runStatus = runInfo?.runStatus || 'idle';
         if (runStatus !== 'running' && runStatus !== 'failed') {
             return;
@@ -1902,18 +2103,18 @@
         event.stopPropagation();
         if (runStatus === 'running') {
             log(`Running scenario row clicked, opening current step in feature: ${name}`);
-            vscode.postMessage({
-                command: 'openScenarioRunStepInFeature',
-                name
-            });
+            const message = getScenarioCommandFromElement('openScenarioRunStepInFeature', row);
+            if (message) {
+                vscode.postMessage(message);
+            }
             return;
         }
 
         log(`Failed scenario row clicked, opening scenario yaml: ${name}`);
-        vscode.postMessage({
-            command: 'openScenario',
-            name
-        });
+        const message = getScenarioCommandFromElement('openScenario', row);
+        if (message) {
+            vscode.postMessage(message);
+        }
     }
 
     function closeRunModeMenu() {
@@ -2122,12 +2323,21 @@
 
     function handleScenarioContextMenu(event) {
         if (!(event.currentTarget instanceof HTMLElement)) return;
-        const name = event.currentTarget.getAttribute('data-name');
+        const scenarioRow = event.currentTarget;
+        const name = scenarioRow.getAttribute('data-name');
         if (!name) return;
+        const scenarioKey = scenarioRow.getAttribute('data-key') || '';
+        const testInfo = getTestInfoByKey(scenarioKey);
+        if (!testInfo) return;
+        const postScenarioCommand = (command, extra = {}) => {
+            vscode.postMessage(scenarioProtocol.createScenarioCommand(command, testInfo, extra));
+        };
 
         event.preventDefault();
         event.stopPropagation();
-        const runInfo = runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[name] : null;
+        const runInfo = runArtifacts && typeof runArtifacts === 'object'
+            ? runArtifacts[scenarioKey]
+            : null;
         const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
         const hasFeatureArtifact = !!(runInfo && runInfo.featurePath);
         const hasOriginalJsonArtifact = !!(runInfo && runInfo.jsonPath);
@@ -2161,12 +2371,12 @@
             {
                 icon: 'codicon-edit',
                 label: window.__loc?.openScenarioTitle || 'Open scenario',
-                onClick: () => vscode.postMessage({ command: 'openScenario', name })
+                onClick: () => postScenarioCommand('openScenario')
             },
             {
                 icon: 'codicon-settings-gear',
                 label: window.__loc?.openTestSettingsTitle || 'Open test settings',
-                onClick: () => vscode.postMessage({ command: 'openMainScenarioTestSettings', name })
+                onClick: () => postScenarioCommand('openMainScenarioTestSettings')
             },
             { separator: true },
             {
@@ -2174,14 +2384,14 @@
                 label: runLabel,
                 title: runDisabled ? runUnavailable : runHint,
                 disabled: runDisabled,
-                onClick: () => vscode.postMessage({ command: 'runScenarioInVanessa', name })
+                onClick: () => postScenarioCommand('runScenarioInVanessa')
             },
             {
                 icon: 'codicon-go-to-file',
                 label: openFeatureLabel,
                 title: hasFeatureArtifact ? openFeatureHint : openFeatureUnavailable,
                 disabled: !hasFeatureArtifact,
-                onClick: () => vscode.postMessage({ command: 'openScenarioFeatureInEditor', name })
+                onClick: () => postScenarioCommand('openScenarioFeatureInEditor')
             },
             {
                 icon: 'codicon-file-code',
@@ -2193,14 +2403,14 @@
                         label: openBuiltJsonLabel,
                         title: hasOriginalJsonArtifact ? openBuiltJsonHint : openBuiltJsonUnavailable,
                         disabled: !hasOriginalJsonArtifact,
-                        onClick: () => vscode.postMessage({ command: 'openScenarioJsonArtifactInEditor', name, variant: 'original' })
+                        onClick: () => postScenarioCommand('openScenarioJsonArtifactInEditor', { variant: 'original' })
                     },
                     {
                         icon: 'codicon-file-code',
                         label: openCombinedJsonLabel,
                         title: hasCombinedJsonArtifact ? openCombinedJsonHint : openCombinedJsonUnavailable,
                         disabled: !hasCombinedJsonArtifact,
-                        onClick: () => vscode.postMessage({ command: 'openScenarioJsonArtifactInEditor', name, variant: 'combined' })
+                        onClick: () => postScenarioCommand('openScenarioJsonArtifactInEditor', { variant: 'combined' })
                     }
                 ]
             },
@@ -2209,14 +2419,14 @@
                 label: openRunLogLabel,
                 title: canOpenRunLog ? openRunLogHint : openRunLogUnavailable,
                 disabled: !canOpenRunLog,
-                onClick: () => vscode.postMessage({ command: 'openRunScenarioLog', name })
+                onClick: () => postScenarioCommand('openRunScenarioLog')
             },
             {
                 icon: 'codicon-list-flat',
                 label: watchLiveOutputLabel,
                 title: isRunInProgress ? watchLiveOutputHint : watchLiveOutputUnavailable,
                 disabled: !isRunInProgress,
-                onClick: () => vscode.postMessage({ command: 'watchRunScenarioLog', name })
+                onClick: () => postScenarioCommand('watchRunScenarioLog')
             },
             {
                 separator: true
@@ -2224,19 +2434,21 @@
             {
                 icon: 'codicon-rename',
                 label: window.__loc?.renameScenarioTitle || 'Rename scenario',
-                onClick: () => vscode.postMessage({ command: 'renameScenario', name })
+                onClick: () => postScenarioCommand('renameScenario')
             },
             {
                 icon: 'codicon-trash',
                 label: window.__loc?.deleteMainScenarioTitle || 'Delete main scenario',
-                onClick: () => vscode.postMessage({ command: 'deleteMainScenario', name })
+                onClick: () => postScenarioCommand('deleteMainScenario')
             }
         ], `scenario:${name}`);
     }
 
-    function showRunModeMenu(anchorButton, scenarioName, options = {}) {
+    function showRunModeMenu(anchorButton, scenarioKey, options = {}) {
         const includeManual = options?.includeManual !== false;
-        const menuScope = scenarioName || '__top__';
+        const scenarioInfo = getTestInfoByKey(scenarioKey);
+        const scenarioName = scenarioInfo?.name || '';
+        const menuScope = scenarioKey || '__top__';
         if (activeRunModeMenu && activeRunModeMenu.getAttribute('data-scenario') === menuScope) {
             closeRunModeMenu();
             return;
@@ -2255,7 +2467,7 @@
         const autoHint = window.__loc?.runScenarioModeAutomaticHint || 'Runs scenario with StartFeaturePlayer and waits for completion.';
         const manualHint = window.__loc?.runScenarioModeManualHint || 'Opens Vanessa for manual debugging without StartFeaturePlayer.';
         const canRunAuto = scenarioName ? true : hasRunnableArtifacts();
-        const runInfo = scenarioName && runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[scenarioName] : null;
+        const runInfo = scenarioKey && runArtifacts && typeof runArtifacts === 'object' ? runArtifacts[scenarioKey] : null;
         const hasFeatureArtifact = !!(scenarioName && runInfo && runInfo.featurePath);
 
         const autoItem = document.createElement('button');
@@ -2276,11 +2488,8 @@
                 return;
             }
             closeRunModeMenu();
-            if (scenarioName) {
-                vscode.postMessage({
-                    command: 'runScenarioInVanessa',
-                    name: scenarioName
-                });
+            if (scenarioInfo) {
+                vscode.postMessage(scenarioProtocol.createScenarioCommand('runScenarioInVanessa', scenarioInfo));
             } else {
                 vscode.postMessage({
                     command: 'runScenarioViaPicker',
@@ -2298,11 +2507,8 @@
             e.preventDefault();
             e.stopPropagation();
             closeRunModeMenu();
-            if (scenarioName) {
-                vscode.postMessage({
-                    command: 'openScenarioInVanessaManual',
-                    name: scenarioName
-                });
+            if (scenarioInfo) {
+                vscode.postMessage(scenarioProtocol.createScenarioCommand('openScenarioInVanessaManual', scenarioInfo));
             } else {
                 vscode.postMessage({
                     command: 'runScenarioViaPicker',
@@ -2316,7 +2522,7 @@
             menu.appendChild(manualItem);
         }
 
-        if (scenarioName) {
+        if (scenarioInfo) {
             const openFeatureLabel = window.__loc?.runScenarioModeOpenFeature || 'Open feature in editor';
             const openFeatureHint = window.__loc?.runScenarioModeOpenFeatureHint || 'Opens built feature file for this scenario in editor.';
             const openFeatureUnavailable = window.__loc?.runScenarioNoFeatureArtifact || 'Feature artifact is not available for this scenario.';
@@ -2338,10 +2544,7 @@
                     return;
                 }
                 closeRunModeMenu();
-                vscode.postMessage({
-                    command: 'openScenarioFeatureInEditor',
-                    name: scenarioName
-                });
+                vscode.postMessage(scenarioProtocol.createScenarioCommand('openScenarioFeatureInEditor', scenarioInfo));
             });
             menu.appendChild(openFeatureItem);
         }
@@ -2484,7 +2687,7 @@
             }
         });
 
-        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-name]');
+        const scenarioLabels = phaseTreeContainer.querySelectorAll('.checkbox-item[data-key]');
         scenarioLabels.forEach(label => {
             if (!(label instanceof HTMLElement)) return;
             label.removeEventListener('contextmenu', handleScenarioContextMenu);
@@ -2502,8 +2705,8 @@
         const runButtons = phaseTreeContainer.querySelectorAll('.run-scenario-btn');
         runButtons.forEach(btn => {
             if (!(btn instanceof HTMLButtonElement)) return;
-            const scenarioName = btn.getAttribute('data-name') || '';
-            const runInfo = scenarioName && runArtifacts ? runArtifacts[scenarioName] : null;
+            const scenarioKey = btn.getAttribute('data-key') || '';
+            const runInfo = runArtifacts ? runArtifacts[scenarioKey] : null;
             const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
             const isBlockingRunInProgress = runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false;
             btn.disabled = isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact;
@@ -2518,7 +2721,7 @@
         });
 
         log(`Applied states to ${count} visible checkboxes.`);
-        updateHighlighting();
+        updateSelectionControls();
         applyAffectedMainScenarioHighlighting();
         updateAreAllPhasesExpandedState();
     }
@@ -2545,7 +2748,7 @@
         log(`Checkbox changed: ${name} = ${isChecked}`);
         updateCurrentState(name, isChecked);
         updatePendingStatus();
-        updateHighlighting();
+        updateSelectionControls();
         sendScenarioSelectionStates();
     }
 
@@ -2566,9 +2769,10 @@
 
             if (Array.isArray(testsInPhase)) {
                 testsInPhase.forEach(testInfo => {
-                    if (testInfo && initialTestStates[testInfo.name] !== 'disabled') {
+                    const scenarioKey = scenarioProtocol.getScenarioKey(testInfo);
+                    if (scenarioKey && initialTestStates[scenarioKey] !== 'disabled') {
                         totalInPhase++;
-                        if (currentCheckboxStates[testInfo.name]) {
+                        if (currentCheckboxStates[scenarioKey]) {
                             enabledCount++;
                         }
                     }
@@ -2615,7 +2819,7 @@
             .replace('{1}', String(total));
         renderMainStatusBar();
 
-        updateHighlighting();
+        updateSelectionControls();
         updatePhaseCounts();
         updateAreAllPhasesExpandedState();
         updateSelectDefaultsButtonState();
@@ -2666,7 +2870,7 @@
                     runArtifacts = message.runArtifacts || {};
                     favoriteScenarios = Array.isArray(message.favorites) ? message.favorites : [];
                     favoriteSortMode = normalizeFavoriteSortMode(message.favoriteSortMode || favoriteSortMode);
-                    affectedMainScenarioNames = normalizeAffectedMainScenarioNames(message.affectedMainScenarioNames);
+                    relationshipState = scenarioProtocol.parseRelationshipState(message.relationshipState);
                     applyYamlParametersProfilesState(message.yamlParametersProfiles);
                     configurationDiffReportState = normalizeConfigurationDiffReportState(message.configurationDiffReport);
                     testReviewReportState = normalizeTestReviewReportState(message.testReviewReport);
@@ -2682,6 +2886,7 @@
                     if (typeof settings.highlightAffectedMainScenarios !== 'boolean') {
                         settings.highlightAffectedMainScenarios = true;
                     }
+                    settings.highlightAffectedMainScenarios = relationshipState.enabled;
                     isBuildInProgress = !!settings.buildInProgress;
                     log("Received settings in webview:");
                     console.log(settings);
@@ -2696,12 +2901,12 @@
                     Object.keys(testDataByPhase).forEach(phaseName => {
                         if (Array.isArray(testDataByPhase[phaseName])) {
                             testDataByPhase[phaseName].forEach(info => {
-                                const name = info.name;
-                                if (name && initialTestStates.hasOwnProperty(name)) {
-                                    if (initialTestStates[name] !== 'disabled') {
-                                        currentCheckboxStates[name] = initialTestStates[name] === 'checked';
+                                const scenarioKey = scenarioProtocol.getScenarioKey(info);
+                                if (scenarioKey && initialTestStates.hasOwnProperty(scenarioKey)) {
+                                    if (initialTestStates[scenarioKey] !== 'disabled') {
+                                        currentCheckboxStates[scenarioKey] = initialTestStates[scenarioKey] === 'checked';
                                     }
-                                    testDefaultStates[name] = !!info.defaultState;
+                                    testDefaultStates[scenarioKey] = !!info.defaultState;
                                 }
                             });
                         }
@@ -2822,9 +3027,10 @@
                     const pattern = groupIdx === 0 ? patternA : groupIdx === 1 ? patternB : patternC;
                     scenarios.forEach((info, i) => {
                         const name = info?.name;
-                        if (!name) { return; }
+                        const scenarioKey = scenarioProtocol.getScenarioKey(info);
+                        if (!name || !scenarioKey) { return; }
                         const stateKey = i < pattern.length ? pattern[i] : 'idle-no-button';
-                        demoOverlay[name] = buildDemoRunArtifact(name, stateKey);
+                        demoOverlay[scenarioKey] = buildDemoRunArtifact(name, stateKey);
                     });
                 });
 
@@ -2842,12 +3048,13 @@
 
             case 'setDemoState': {
                 isDemoMode = true;
+                const scenarioKey = message.key;
                 const name = message.name;
                 const stateKey = message.stateKey;
-                if (!name || !stateKey) { break; }
+                if (!scenarioKey || !name || !stateKey) { break; }
                 const artifact = buildDemoRunArtifact(name, stateKey);
                 if (!artifact) { break; }
-                runArtifacts = Object.assign({}, runArtifacts, { [name]: artifact });
+                runArtifacts = Object.assign({}, runArtifacts, { [scenarioKey]: artifact });
                 updateTopRunButtonState();
                 if (settings.switcherEnabled && testDataByPhase && Object.keys(testDataByPhase).length > 0) {
                     updateVisibleScenarioRunState();
@@ -2869,8 +3076,9 @@
                 setActiveManagerTab(activeManagerTab);
                 break;
 
-            case 'updateAffectedMainScenarios':
-                affectedMainScenarioNames = normalizeAffectedMainScenarioNames(message.names);
+            case 'updateRelationshipState':
+                relationshipState = scenarioProtocol.parseRelationshipState(message);
+                settings.highlightAffectedMainScenarios = relationshipState.enabled;
                 applyAffectedMainScenarioHighlighting();
                 break;
 
@@ -2946,18 +3154,51 @@
          }
     });
 
-    if(selectAllBtn instanceof HTMLButtonElement) selectAllBtn.addEventListener('click', () => {
-        log('Toggle ALL clicked.');
-        const keys = Object.keys(initialTestStates).filter(n => initialTestStates[n] !== 'disabled');
-        if(keys.length === 0) return;
-        let check = false;
-        for(const name of keys){ if(!currentCheckboxStates[name]) { check = true; break; } }
-        log(`New state for ALL enabled will be: ${check}`);
-        keys.forEach(name => { currentCheckboxStates[name] = check; });
+    if(selectAllBtn instanceof HTMLInputElement) selectAllBtn.addEventListener('change', () => {
+        log('Toggle visible scenarios clicked.');
+        const visibleKeys = getVisibleSelectableScenarioKeys();
+        if (visibleKeys.length === 0) return;
+        const selectedKeys = Object.entries(currentCheckboxStates)
+            .filter(([, selected]) => !!selected)
+            .map(([key]) => key);
+        const nextSelectedKeys = new Set(scenarioProtocol.nextVisibleSelection(
+            selectedKeys,
+            visibleKeys,
+            'toggle'
+        ));
+        visibleKeys.forEach(key => {
+            currentCheckboxStates[key] = nextSelectedKeys.has(key);
+        });
         applyCheckboxStatesToVisible();
         updatePendingStatus();
         sendScenarioSelectionStates();
     });
+
+    if (clearSelectionBtn instanceof HTMLButtonElement) clearSelectionBtn.addEventListener('click', () => {
+        for (const key of Object.keys(currentCheckboxStates)) {
+            if (initialTestStates[key] !== 'disabled') {
+                currentCheckboxStates[key] = false;
+            }
+        }
+        applyCheckboxStatesToVisible();
+        updatePendingStatus();
+        sendScenarioSelectionStates();
+    });
+
+    if (relationshipToggleBtn instanceof HTMLButtonElement) {
+        relationshipToggleBtn.addEventListener('click', () => {
+            vscode.postMessage({
+                command: 'setRelationshipHighlightEnabled',
+                enabled: !relationshipState.enabled
+            });
+        });
+    }
+
+    if (refreshTestsBtn instanceof HTMLButtonElement) {
+        refreshTestsBtn.addEventListener('click', () => {
+            vscode.postMessage({ command: 'refreshData' });
+        });
+    }
 
     if(selectDefaultsBtn instanceof HTMLButtonElement) selectDefaultsBtn.addEventListener('click', () => {
         log('Select Defaults for ALL clicked.');
@@ -2996,20 +3237,6 @@
                 command: 'setFavoriteSortMode',
                 mode: favoriteSortMode
             });
-        });
-    }
-
-    if (toggleScenarioSearchBtn instanceof HTMLButtonElement) {
-        toggleScenarioSearchBtn.addEventListener('click', event => {
-            event.preventDefault();
-            if (activeManagerTab !== 'tests') {
-                return;
-            }
-            isScenarioSearchVisible = !isScenarioSearchVisible;
-            setActiveManagerTab(activeManagerTab);
-            if (isScenarioSearchVisible && scenarioSearchInput instanceof HTMLInputElement) {
-                scenarioSearchInput.focus();
-            }
         });
     }
 
@@ -3352,6 +3579,26 @@
                 resetAddScenarioDropdownPosition();
             });
         }
+
+        if (createExportScenarioFromDropdownBtn) {
+            createExportScenarioFromDropdownBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                log('Create Export Scenario from dropdown clicked.');
+                vscode.postMessage({ command: 'createExportScenario' });
+                addScenarioDropdownBtn.closest('.dropdown-container')?.classList.remove('show');
+                resetAddScenarioDropdownPosition();
+            });
+        }
+
+        if (createUserStepFromDropdownBtn) {
+            createUserStepFromDropdownBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                log('Create User Step from dropdown clicked.');
+                vscode.postMessage({ command: 'createUserStep' });
+                addScenarioDropdownBtn.closest('.dropdown-container')?.classList.remove('show');
+                resetAddScenarioDropdownPosition();
+            });
+        }
     }
 
     if (configurationDiffReportDropdownBtn && configurationDiffReportDropdownContent) {
@@ -3474,6 +3721,16 @@
                 closeConfigurationDiffReportDropdownMenu();
                 log('Open KOT Form Explorer from top bar clicked.');
                 vscode.postMessage({ command: 'openFormExplorer' });
+            });
+        }
+
+        if (openStepLibraryTopBtn) {
+            openStepLibraryTopBtn.addEventListener('click', event => {
+                event.preventDefault();
+                closeScenarioRepairDropdownMenu();
+                closeConfigurationDiffReportDropdownMenu();
+                log('Open KOT Step Library from top bar clicked.');
+                vscode.postMessage({ command: 'openStepLibrary' });
             });
         }
 

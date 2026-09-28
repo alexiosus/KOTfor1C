@@ -1,0 +1,845 @@
+(function startStepLibraryClient() {
+    'use strict';
+
+    const vscode = acquireVsCodeApi();
+    const protocol = globalThis.StepLibraryProtocol;
+    const BATCH_SIZE = 100;
+    const shell = document.querySelector('.library-shell');
+    const libraryGrid = document.querySelector('.library-grid');
+    const searchInput = document.getElementById('searchInput');
+    const languageFilter = document.getElementById('languageFilter');
+    const sortMode = document.getElementById('sortMode');
+    const refreshButton = document.getElementById('refreshButton');
+    const categoryToggle = document.getElementById('categoryToggle');
+    const categoryBack = document.getElementById('categoryBack');
+    const detailsBack = document.getElementById('detailsBack');
+    const categoryTree = document.getElementById('categoryTree');
+    const statusMessage = document.getElementById('statusMessage');
+    const definitionList = document.getElementById('definitionList');
+    const definitionListContent = document.getElementById('definitionListContent');
+    const resultCount = document.getElementById('resultCount');
+    const detailsContent = document.getElementById('detailsContent');
+    const insertButton = document.getElementById('insertButton');
+    const copyButton = document.getElementById('copyButton');
+    const openDefinitionButton = document.getElementById('openDefinitionButton');
+    const paneResizers = [...document.querySelectorAll('.pane-resizer')];
+    const liveRegion = document.getElementById('liveRegion');
+    const labels = document.body.dataset;
+    const persisted = vscode.getState() || {};
+    const renderedRowsById = new Map();
+    const treeElementsById = new Map();
+    let selectedDefinitionRow = null;
+    let selectedTreeButton = null;
+    let resultPager = null;
+    let resultScrollFrame = null;
+    let snapshotItemsById = new Map();
+    let languageItemsCache = { key: '', items: [] };
+    let filteredItemsCache = { key: '', items: [] };
+    const state = {
+        snapshot: null,
+        query: typeof persisted.query === 'string' ? persisted.query : '',
+        sourceGroup: typeof persisted.sourceGroup === 'string' ? persisted.sourceGroup : null,
+        categoryPath: Array.isArray(persisted.categoryPath) ? persisted.categoryPath : [],
+        uncategorized: persisted.uncategorized === true,
+        expandedNodes: new Set(Array.isArray(persisted.expandedNodes)
+            ? persisted.expandedNodes
+            : []),
+        selectedItemId: typeof persisted.selectedItemId === 'string'
+            ? persisted.selectedItemId
+            : null,
+        language: persisted.language === 'ru' || persisted.language === 'en'
+            ? persisted.language
+            : 'both',
+        sortMode: persisted.sortMode === 'alphabetical' ? 'alphabetical' : 'relevance',
+        insertionTarget: { available: false, identity: 'unavailable' },
+        pendingActions: new Set(),
+        paneLayout: {
+            categoryWidth: Number.isFinite(persisted.paneLayout?.categoryWidth)
+                ? persisted.paneLayout.categoryWidth
+                : 270,
+            detailsWidth: Number.isFinite(persisted.paneLayout?.detailsWidth)
+                ? persisted.paneLayout.detailsWidth
+                : 380
+        }
+    };
+
+    function saveState() {
+        vscode.setState({
+            query: state.query,
+            sourceGroup: state.sourceGroup,
+            categoryPath: [...state.categoryPath],
+            uncategorized: state.uncategorized,
+            expandedNodes: [...state.expandedNodes],
+            selectedItemId: state.selectedItemId,
+            language: state.language,
+            sortMode: state.sortMode,
+            paneLayout: state.paneLayout
+        });
+    }
+
+    function languageOptions(extra) {
+        return {
+            language: state.language,
+            preferredLanguage: labels.preferredLanguage === 'ru' ? 'ru' : 'en',
+            ...extra
+        };
+    }
+
+    function applyPaneLayout(layout, persist) {
+        if (!libraryGrid) {
+            return;
+        }
+        state.paneLayout = libraryGrid.clientWidth > 900
+            ? protocol.resizePaneLayout(
+                layout,
+                'category',
+                0,
+                libraryGrid.clientWidth
+            )
+            : layout;
+        libraryGrid.style.setProperty(
+            '--category-pane-width',
+            `${state.paneLayout.categoryWidth}px`
+        );
+        libraryGrid.style.setProperty(
+            '--details-pane-width',
+            `${state.paneLayout.detailsWidth}px`
+        );
+        for (const resizer of paneResizers) {
+            const value = resizer.dataset.divider === 'category'
+                ? state.paneLayout.categoryWidth
+                : Math.max(0, libraryGrid.clientWidth - state.paneLayout.detailsWidth);
+            resizer.setAttribute('aria-valuenow', String(Math.round(value)));
+        }
+        if (persist) {
+            saveState();
+        }
+    }
+
+    function setupPaneResizer(resizer) {
+        const divider = resizer.dataset.divider;
+        if (divider !== 'category' && divider !== 'details') {
+            return;
+        }
+        let drag = null;
+        resizer.addEventListener('pointerdown', event => {
+            if (event.button !== 0 || !libraryGrid || libraryGrid.clientWidth <= 900) {
+                return;
+            }
+            event.preventDefault();
+            drag = {
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startLayout: { ...state.paneLayout },
+                containerWidth: libraryGrid.clientWidth
+            };
+            resizer.setPointerCapture(event.pointerId);
+            shell.classList.add('resizing-panes');
+        });
+        resizer.addEventListener('pointermove', event => {
+            if (!drag || event.pointerId !== drag.pointerId) {
+                return;
+            }
+            applyPaneLayout(protocol.resizePaneLayout(
+                drag.startLayout,
+                divider,
+                event.clientX - drag.startX,
+                drag.containerWidth
+            ), false);
+        });
+        const finishDrag = event => {
+            if (!drag || event.pointerId !== drag.pointerId) {
+                return;
+            }
+            drag = null;
+            shell.classList.remove('resizing-panes');
+            saveState();
+        };
+        resizer.addEventListener('pointerup', finishDrag);
+        resizer.addEventListener('pointercancel', finishDrag);
+        resizer.addEventListener('lostpointercapture', finishDrag);
+        resizer.addEventListener('keydown', event => {
+            if (!libraryGrid || !['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+                return;
+            }
+            event.preventDefault();
+            const delta = event.key === 'ArrowLeft' ? -16 : 16;
+            applyPaneLayout(protocol.resizePaneLayout(
+                state.paneLayout,
+                divider,
+                delta,
+                libraryGrid.clientWidth
+            ), true);
+        });
+    }
+
+    function announce(message) {
+        liveRegion.textContent = '';
+        requestAnimationFrame(() => {
+            liveRegion.textContent = message;
+        });
+    }
+
+    function setStatus(message, kind) {
+        statusMessage.textContent = message || '';
+        statusMessage.classList.toggle('visible', Boolean(message));
+        statusMessage.classList.toggle('error', kind === 'error');
+    }
+
+    function appendHighlightedText(element, value) {
+        element.replaceChildren();
+        for (const token of protocol.tokenizeGherkinText(value)) {
+            if (token.kind === 'plain') {
+                element.append(document.createTextNode(token.text));
+                continue;
+            }
+            const span = document.createElement('span');
+            span.className = `syntax-${token.kind}`;
+            span.textContent = token.text;
+            element.append(span);
+        }
+    }
+
+    function sourceLabel(sourceGroup) {
+        return labels[`source${sourceGroup.charAt(0).toUpperCase()}${sourceGroup.slice(1)}`]
+            || sourceGroup;
+    }
+
+    function categoryLabel(item) {
+        return item.categoryPath && item.categoryPath.length > 0
+            ? item.categoryPath.join(' / ')
+            : labels.uncategorized;
+    }
+
+    function allItemsForLanguage() {
+        if (!state.snapshot) {
+            return [];
+        }
+        const key = `${state.snapshot.viewIdentity}\0${state.language}\0${labels.preferredLanguage}`;
+        if (languageItemsCache.key === key) {
+            return languageItemsCache.items;
+        }
+        const items = protocol.searchItems(state.snapshot.items, '', languageOptions({
+            limit: Number.MAX_SAFE_INTEGER
+        }));
+        languageItemsCache = { key, items };
+        return items;
+    }
+
+    function filteredItems() {
+        if (!state.snapshot) {
+            return [];
+        }
+        const key = JSON.stringify([
+            state.snapshot.viewIdentity,
+            state.language,
+            labels.preferredLanguage,
+            state.query,
+            state.sourceGroup,
+            state.categoryPath,
+            state.uncategorized,
+            state.sortMode
+        ]);
+        if (filteredItemsCache.key === key) {
+            return filteredItemsCache.items;
+        }
+        if (
+            !state.query
+            && !state.sourceGroup
+            && state.categoryPath.length === 0
+            && !state.uncategorized
+        ) {
+            const items = [...allItemsForLanguage()];
+            filteredItemsCache = { key, items };
+            return items;
+        }
+        const items = protocol.searchItems(state.snapshot.items, state.query, languageOptions({
+            sourceGroup: state.sourceGroup || undefined,
+            categoryPath: state.uncategorized ? undefined : state.categoryPath,
+            uncategorized: state.uncategorized,
+            limit: Number.MAX_SAFE_INTEGER
+        }));
+        if (state.sortMode === 'alphabetical') {
+            items.sort((left, right) => {
+                const leftText = left.__normalizedDisplayText
+                    || left.displayText.toLowerCase();
+                const rightText = right.__normalizedDisplayText
+                    || right.displayText.toLowerCase();
+                return leftText < rightText ? -1 : leftText > rightText ? 1 : 0;
+            });
+        }
+        filteredItemsCache = { key, items };
+        return items;
+    }
+
+    function reconcileFiltersAndSelection() {
+        if (!state.snapshot) {
+            return;
+        }
+        const reconciled = protocol.reconcileCategorySelection(
+            allItemsForLanguage(),
+            state
+        );
+        state.sourceGroup = reconciled.sourceGroup;
+        state.categoryPath = reconciled.categoryPath;
+        state.uncategorized = reconciled.uncategorized;
+        const visibleItems = filteredItems();
+        if (!visibleItems.some(item => item.id === state.selectedItemId)) {
+            state.selectedItemId = visibleItems[0]?.id || null;
+        }
+        saveState();
+    }
+
+    function isSelectedTreeNode(node) {
+        if (node.id === 'all') {
+            return !state.sourceGroup;
+        }
+        if (protocol.isUncategorizedNodeId(node.id)) {
+            return state.sourceGroup === node.sourceGroup && state.uncategorized;
+        }
+        return state.sourceGroup === node.sourceGroup
+            && !state.uncategorized
+            && node.path.length === state.categoryPath.length
+            && node.path.every((segment, index) => segment === state.categoryPath[index]);
+    }
+
+    function selectTreeNode(node) {
+        if (node.id === 'all') {
+            state.sourceGroup = null;
+            state.categoryPath = [];
+            state.uncategorized = false;
+        } else {
+            state.sourceGroup = node.sourceGroup;
+            state.categoryPath = [...node.path];
+            state.uncategorized = protocol.isUncategorizedNodeId(node.id);
+        }
+        saveState();
+        if (selectedTreeButton) {
+            selectedTreeButton.setAttribute('aria-selected', 'false');
+            selectedTreeButton.tabIndex = -1;
+        }
+        selectedTreeButton = treeElementsById.get(node.id)?.button || null;
+        if (selectedTreeButton) {
+            selectedTreeButton.setAttribute('aria-selected', 'true');
+            selectedTreeButton.tabIndex = 0;
+        }
+        renderResults();
+        shell.classList.remove('categories-open');
+    }
+
+    function createTreeNode(node, level) {
+        const container = document.createElement('div');
+        container.className = 'tree-node';
+        const button = document.createElement('button');
+        const children = document.createElement('div');
+        const expandable = node.children.length > 0;
+        const expanded = state.expandedNodes.has(node.id);
+        button.type = 'button';
+        button.className = 'tree-item';
+        button.setAttribute('role', 'treeitem');
+        button.setAttribute('aria-level', String(level));
+        button.setAttribute('aria-selected', String(isSelectedTreeNode(node)));
+        button.dataset.nodeId = node.id;
+        if (expandable) {
+            button.setAttribute('aria-expanded', String(expanded));
+        }
+        button.tabIndex = isSelectedTreeNode(node) ? 0 : -1;
+
+        const chevron = document.createElement('span');
+        chevron.className = expandable
+            ? `tree-chevron codicon ${expanded ? 'codicon-chevron-down' : 'codicon-chevron-right'}`
+            : 'tree-chevron';
+        chevron.setAttribute('aria-hidden', 'true');
+        const label = document.createElement('span');
+        label.className = 'tree-label';
+        label.textContent = node.label;
+        const count = document.createElement('span');
+        count.className = 'tree-count';
+        count.textContent = String(node.count);
+        button.append(chevron, label, count);
+        if (expandable) {
+            chevron.addEventListener('click', event => {
+                event.stopPropagation();
+                toggleTreeNode(node.id);
+            });
+        }
+        button.addEventListener('click', () => {
+            selectTreeNode(node);
+        });
+        button.addEventListener('dblclick', () => {
+            if (expandable) {
+                toggleTreeNode(node.id);
+            }
+        });
+        container.append(button);
+
+        children.className = 'tree-children';
+        children.setAttribute('role', 'group');
+        children.hidden = !expanded;
+        for (const child of node.children) {
+            children.append(createTreeNode(child, level + 1));
+        }
+        if (expandable) {
+            container.append(children);
+        }
+        treeElementsById.set(node.id, { button, children, chevron });
+        if (isSelectedTreeNode(node)) {
+            selectedTreeButton = button;
+        }
+        return container;
+    }
+
+    function toggleTreeNode(nodeId) {
+        if (state.expandedNodes.has(nodeId)) {
+            state.expandedNodes.delete(nodeId);
+        } else {
+            state.expandedNodes.add(nodeId);
+        }
+        saveState();
+        const elements = treeElementsById.get(nodeId);
+        if (!elements) {
+            return;
+        }
+        const expanded = state.expandedNodes.has(nodeId);
+        elements.button.setAttribute('aria-expanded', String(expanded));
+        elements.children.hidden = !expanded;
+        elements.chevron.classList.toggle('codicon-chevron-down', expanded);
+        elements.chevron.classList.toggle('codicon-chevron-right', !expanded);
+        elements.button.focus({ preventScroll: true });
+    }
+
+    function renderTree() {
+        const items = allItemsForLanguage();
+        const roots = protocol.buildCategoryTree(items, {
+            sources: {
+                builtIn: labels.sourceBuiltIn,
+                user: labels.sourceUser,
+                export: labels.sourceExport,
+                nested: labels.sourceNested,
+                main: labels.sourceMain
+            },
+            uncategorized: labels.uncategorized
+        });
+        const allNode = {
+            id: 'all',
+            sourceGroup: '',
+            label: labels.allDefinitions,
+            path: [],
+            count: items.length,
+            children: []
+        };
+        protocol.preserveScrollPosition(categoryTree, () => {
+            treeElementsById.clear();
+            selectedTreeButton = null;
+            categoryTree.replaceChildren(
+                createTreeNode(allNode, 1),
+                ...roots.map(root => createTreeNode(root, 1))
+            );
+        });
+    }
+
+    function createDefinitionRow(item) {
+        const row = document.createElement('div');
+        row.className = 'definition-row';
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-selected', String(item.id === state.selectedItemId));
+        row.tabIndex = item.id === state.selectedItemId ? 0 : -1;
+        row.dataset.itemId = item.id;
+        const text = document.createElement('div');
+        text.className = 'definition-text';
+        appendHighlightedText(text, item.displayText);
+        const meta = document.createElement('div');
+        meta.className = 'definition-meta';
+        const source = document.createElement('span');
+        source.textContent = sourceLabel(item.sourceGroup);
+        const category = document.createElement('span');
+        category.textContent = categoryLabel(item);
+        meta.append(source, category);
+        row.append(text, meta);
+        row.addEventListener('click', () => selectItem(item.id, false, true));
+        row.addEventListener('dblclick', () => requestInsert(item.id));
+        renderedRowsById.set(item.id, row);
+        if (item.id === state.selectedItemId) {
+            selectedDefinitionRow = row;
+        }
+        return row;
+    }
+
+    function selectItem(itemId, focus, showDetails) {
+        state.selectedItemId = itemId;
+        saveState();
+        if (selectedDefinitionRow) {
+            selectedDefinitionRow.setAttribute('aria-selected', 'false');
+            selectedDefinitionRow.tabIndex = -1;
+        }
+        selectedDefinitionRow = renderedRowsById.get(itemId) || null;
+        if (selectedDefinitionRow) {
+            selectedDefinitionRow.setAttribute('aria-selected', 'true');
+            selectedDefinitionRow.tabIndex = 0;
+            if (focus) {
+                selectedDefinitionRow.focus();
+            }
+        }
+        renderDetails();
+        if (showDetails) {
+            shell.classList.add('details-open');
+        }
+    }
+
+    function renderResults() {
+        const items = filteredItems();
+        resultCount.textContent = String(items.length);
+        renderedRowsById.clear();
+        selectedDefinitionRow = null;
+        resultPager = null;
+        definitionListContent.replaceChildren();
+        definitionList.setAttribute('aria-busy', 'false');
+        if (!state.snapshot || state.snapshot.items.length === 0) {
+            setStatus(labels.noDefinitions);
+            state.selectedItemId = null;
+            renderDetails();
+            return;
+        }
+        if (items.length === 0) {
+            setStatus(labels.noResults);
+            state.selectedItemId = null;
+            renderDetails();
+            return;
+        }
+        setStatus('');
+        const selectedIndex = items.findIndex(item => item.id === state.selectedItemId);
+        if (selectedIndex < 0 || selectedIndex >= BATCH_SIZE) {
+            state.selectedItemId = items[0].id;
+            saveState();
+        }
+        resultPager = protocol.createResultPager(items, BATCH_SIZE);
+        appendNextResultBatch();
+        renderDetails();
+    }
+
+    function appendNextResultBatch() {
+        if (!resultPager?.hasMore) {
+            return;
+        }
+        const fragment = document.createDocumentFragment();
+        for (const item of resultPager.next()) {
+            fragment.append(createDefinitionRow(item));
+        }
+        definitionListContent.append(fragment);
+    }
+
+    function addDetailsField(labelText, value, code) {
+        const field = document.createElement('section');
+        field.className = 'details-field';
+        const label = document.createElement('span');
+        label.className = 'details-label';
+        label.textContent = labelText;
+        const content = document.createElement(code ? 'pre' : 'p');
+        content.className = code ? 'details-code' : 'details-value';
+        if (code) {
+            appendHighlightedText(content, value);
+        } else {
+            content.textContent = value;
+        }
+        field.append(label, content);
+        detailsContent.append(field);
+    }
+
+    function renderDetails() {
+        detailsContent.replaceChildren();
+        const item = state.selectedItemId
+            ? snapshotItemsById.get(state.selectedItemId)
+            : undefined;
+        const insertPending = item && state.pendingActions.has(`insert\0${item.id}`);
+        const copyPending = item && state.pendingActions.has(`copy\0${item.id}`);
+        const openPending = item && state.pendingActions.has(`openDefinition\0${item.id}`);
+        insertButton.disabled = !protocol.canInsertItem(
+            item,
+            state.insertionTarget.available
+        ) || insertPending;
+        copyButton.disabled = !item || copyPending;
+        openDefinitionButton.disabled = !item || !item.navigable || openPending;
+        if (!item) {
+            const empty = document.createElement('p');
+            empty.className = 'empty-details';
+            empty.textContent = labels.selectDefinition;
+            detailsContent.append(empty);
+            return;
+        }
+        const title = document.createElement('h3');
+        appendHighlightedText(title, item.displayText);
+        detailsContent.append(title);
+        addDetailsField(labels.sourceLabel, item.sourceLabel || sourceLabel(item.sourceGroup));
+        addDetailsField(labels.categoryLabel, categoryLabel(item));
+        if (item.scenarioCode) {
+            addDetailsField(labels.scenarioCodeLabel, item.scenarioCode, true);
+        }
+        if (item.description) {
+            addDetailsField(labels.descriptionLabel, item.description);
+        }
+        if (item.parameters && item.parameters.length > 0) {
+            const values = item.parameters.map(parameter => parameter.defaultValue === undefined
+                ? parameter.name
+                : `${parameter.name} = ${parameter.defaultValue}`
+            ).join('\n');
+            addDetailsField(labels.parametersLabel, values, true);
+        }
+        if (item.alternateDisplayText) {
+            addDetailsField(labels.translationLabel, item.alternateDisplayText, true);
+        }
+        addDetailsField(labels.templateLabel, item.templateDisplayText || item.template, true);
+        if (item.insertable !== false && !state.insertionTarget.available) {
+            const targetHint = document.createElement('p');
+            targetHint.className = 'target-hint';
+            targetHint.textContent = labels.insertionUnavailable;
+            detailsContent.append(targetHint);
+        } else if (item.insertable === false) {
+            const targetHint = document.createElement('p');
+            targetHint.className = 'target-hint';
+            targetHint.textContent = labels.itemNotInsertable;
+            detailsContent.append(targetHint);
+        }
+    }
+
+    function sendAction(command, itemId) {
+        const key = `${command}\0${itemId}`;
+        if (state.pendingActions.has(key)) {
+            return;
+        }
+        state.pendingActions.add(key);
+        renderDetails();
+        vscode.postMessage({ command, itemId });
+    }
+
+    function requestInsert(itemId) {
+        const item = snapshotItemsById.get(itemId);
+        if (!protocol.canInsertItem(item, state.insertionTarget.available)) {
+            shell.classList.add('details-open');
+            announce(item?.insertable === false
+                ? labels.itemNotInsertable
+                : labels.insertionUnavailable);
+            return;
+        }
+        sendAction('insert', itemId);
+    }
+
+    function moveListFocus(key) {
+        const rows = [...definitionList.querySelectorAll('[role="option"]')];
+        if (rows.length === 0) {
+            return;
+        }
+        const activeIndex = Math.max(0, rows.indexOf(document.activeElement));
+        let nextIndex = activeIndex;
+        if (key === 'ArrowDown') {
+            nextIndex = Math.min(rows.length - 1, activeIndex + 1);
+        } else if (key === 'ArrowUp') {
+            nextIndex = Math.max(0, activeIndex - 1);
+        } else if (key === 'Home') {
+            nextIndex = 0;
+        } else if (key === 'End') {
+            nextIndex = rows.length - 1;
+        }
+        selectItem(rows[nextIndex].dataset.itemId, true);
+    }
+
+    function moveTreeFocus(key) {
+        const nodes = [...categoryTree.querySelectorAll('[role="treeitem"]')]
+            .filter(node => node.offsetParent !== null);
+        if (nodes.length === 0) {
+            return;
+        }
+        const activeIndex = Math.max(0, nodes.indexOf(document.activeElement));
+        let nextIndex = activeIndex;
+        if (key === 'ArrowDown') {
+            nextIndex = Math.min(nodes.length - 1, activeIndex + 1);
+        } else if (key === 'ArrowUp') {
+            nextIndex = Math.max(0, activeIndex - 1);
+        } else if (key === 'Home') {
+            nextIndex = 0;
+        } else if (key === 'End') {
+            nextIndex = nodes.length - 1;
+        }
+        nodes[nextIndex].focus();
+    }
+
+    function expandOrCollapseTreeNode(key) {
+        const active = document.activeElement;
+        const nodeId = active?.dataset.nodeId;
+        if (!nodeId) {
+            return;
+        }
+        const expanded = active.getAttribute('aria-expanded');
+        if (key === 'ArrowRight') {
+            if (expanded === 'false') {
+                toggleTreeNode(nodeId);
+                return;
+            }
+            if (expanded === 'true') {
+                active.parentElement?.querySelector('.tree-children [role="treeitem"]')?.focus();
+            }
+            return;
+        }
+        if (expanded === 'true') {
+            toggleTreeNode(nodeId);
+            return;
+        }
+        const parentGroup = active.closest('.tree-children');
+        parentGroup?.parentElement?.querySelector(':scope > [role="treeitem"]')?.focus();
+    }
+
+    let searchTimer;
+    searchInput.value = state.query;
+    languageFilter.value = state.language;
+    sortMode.value = state.sortMode;
+    paneResizers.forEach(setupPaneResizer);
+    requestAnimationFrame(() => applyPaneLayout(state.paneLayout, false));
+    window.addEventListener('resize', () => applyPaneLayout(state.paneLayout, false));
+    searchInput.addEventListener('input', () => {
+        state.query = searchInput.value;
+        saveState();
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+            renderResults();
+        }, 80);
+    });
+    languageFilter.addEventListener('change', () => {
+        state.language = languageFilter.value;
+        reconcileFiltersAndSelection();
+        renderTree();
+        renderResults();
+    });
+    sortMode.addEventListener('change', () => {
+        state.sortMode = sortMode.value;
+        saveState();
+        renderResults();
+    });
+    refreshButton.addEventListener('click', () => {
+        refreshButton.disabled = true;
+        vscode.postMessage({ command: 'refresh' });
+    });
+    categoryToggle.addEventListener('click', () => {
+        shell.classList.add('categories-open');
+        categoryTree.querySelector('[role="treeitem"]')?.focus();
+    });
+    categoryBack.addEventListener('click', () => {
+        shell.classList.remove('categories-open');
+        categoryToggle.focus();
+    });
+    detailsBack.addEventListener('click', () => {
+        shell.classList.remove('details-open');
+        definitionList.querySelector('[aria-selected="true"]')?.focus();
+    });
+    definitionList.addEventListener('keydown', event => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && state.selectedItemId) {
+            event.preventDefault();
+            sendAction('copy', state.selectedItemId);
+        } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+            event.preventDefault();
+            moveListFocus(event.key);
+        } else if (event.key === 'Enter' && state.selectedItemId) {
+            event.preventDefault();
+            requestInsert(state.selectedItemId);
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            searchInput.focus();
+        }
+    });
+    definitionList.addEventListener('scroll', () => {
+        if (resultScrollFrame !== null) {
+            return;
+        }
+        resultScrollFrame = requestAnimationFrame(() => {
+            resultScrollFrame = null;
+            const remaining = definitionList.scrollHeight
+                - definitionList.scrollTop
+                - definitionList.clientHeight;
+            if (remaining < 480) {
+                appendNextResultBatch();
+            }
+        });
+    });
+    categoryTree.addEventListener('keydown', event => {
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+            event.preventDefault();
+            moveTreeFocus(event.key);
+        } else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+            event.preventDefault();
+            expandOrCollapseTreeNode(event.key);
+        } else if (event.key === 'Enter' && document.activeElement?.dataset.nodeId) {
+            event.preventDefault();
+            document.activeElement.click();
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            shell.classList.remove('categories-open');
+            definitionList.focus();
+        }
+    });
+    insertButton.addEventListener('click', () => {
+        if (state.selectedItemId) {
+            requestInsert(state.selectedItemId);
+        }
+    });
+    copyButton.addEventListener('click', () => {
+        if (state.selectedItemId) {
+            sendAction('copy', state.selectedItemId);
+        }
+    });
+    openDefinitionButton.addEventListener('click', () => {
+        if (state.selectedItemId) {
+            sendAction('openDefinition', state.selectedItemId);
+        }
+    });
+
+    window.addEventListener('message', event => {
+        const message = event.data;
+        if (!message || typeof message !== 'object') {
+            return;
+        }
+        if (message.command === 'loading') {
+            definitionList.setAttribute('aria-busy', 'true');
+            setStatus(labels.loading);
+            return;
+        }
+        if (message.command === 'snapshot' && message.snapshot) {
+            const preparedItems = state.snapshot?.viewIdentity === message.snapshot.viewIdentity
+                ? state.snapshot.items
+                : protocol.prepareItems(message.snapshot.items);
+            state.snapshot = {
+                ...message.snapshot,
+                items: preparedItems
+            };
+            snapshotItemsById = new Map(preparedItems.map(item => [item.id, item]));
+            state.insertionTarget = message.insertionTarget || {
+                available: false,
+                identity: 'unavailable'
+            };
+            reconcileFiltersAndSelection();
+            refreshButton.disabled = false;
+            renderTree();
+            renderResults();
+            announce(`${message.snapshot.items.length}`);
+            return;
+        }
+        if (message.command === 'error') {
+            refreshButton.disabled = false;
+            const detail = typeof message.message === 'string' ? ` ${message.message}` : '';
+            setStatus(`${labels.loadFailed}${detail}`, 'error');
+            announce(`${labels.loadFailed}${detail}`);
+            return;
+        }
+        if (message.command === 'actionResult' && typeof message.itemId === 'string') {
+            const key = `${message.action}\0${message.itemId}`;
+            state.pendingActions.delete(key);
+            renderDetails();
+            const successLabels = {
+                insert: labels.inserted,
+                copy: labels.copied,
+                openDefinition: labels.opened
+            };
+            announce(message.success ? successLabels[message.action] : labels.actionFailed);
+        }
+    });
+
+    setStatus(labels.loading);
+    vscode.postMessage({ command: 'ready' });
+}());

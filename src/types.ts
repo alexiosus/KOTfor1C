@@ -34,6 +34,8 @@ export interface TestInfo {
     scenarioCode?: string;
     /** Описание сценария (из блока KOTМетаданные.Описание) */
     scenarioDescription?: string;
+    /** Категория вызываемого вложенного сценария (из блока KOTМетаданные.Категория) */
+    scenarioCategory?: string;
     /** Номер строки поля Код в YAML (0-based) */
     scenarioCodeLine?: number;
     /** Начальная позиция (character) строки поля Код в YAML (0-based) */

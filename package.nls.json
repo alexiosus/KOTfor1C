@@ -20,7 +20,10 @@
   "config.phaseSwitcher.autoAddNewScenariosToFavorites.description": "Automatically add newly created scenarios to favorites.",
 
   "config.autoCollapseOnOpen.description": "Automatically collapse 'NestedScenarios' ('ВложенныеСценарии') and 'ScenarioParameters' ('ПараметрыСценария') sections when opening a file.",
-  "config.stepsExternalUrl.description": "URL to download steps.htm with Gherkin step definitions. Leave empty to use the file from the extension.",
+  "config.stepsVanessaVersion.description": "Exact Vanessa Automation version for this workspace folder (for example, 1.2.043.28). Leave empty to detect it from the changelog next to runVanessa.vanessaEpfPath.",
+  "config.stepsCatalogIndexUrl.description": "HTTPS URL of the immutable versioned Vanessa step catalog index.",
+  "config.stepsExternalUrl.description": "Legacy HTML fallback URL for Gherkin step definitions. It is used only when an exact versioned catalog is unavailable; leave empty to use the bundled fallback.",
+  "config.diagnostics.ignoredCodes.description": "Diagnostic codes to suppress for this user, workspace, or workspace folder. Changing the list immediately refreshes published KOT diagnostics.",
   "config.autoFillNestedScenariosOnSave.description": "Automatically fill 'NestedScenarios' section with missing scenarios when saving YAML files.",
   "config.autoFillScenarioParametersOnSave.description": "Automatically fill 'ScenarioParameters' section with missing parameters when saving YAML files.",
   "config.autoReplaceTabsWithSpacesOnSave.description": "Automatically replace tabs with 4 spaces when saving YAML files.",
@@ -107,10 +110,15 @@
 
   "cmd.category": "KOT for 1C",
   "cmd.openSubscenario.title": "KOT - Open scenario",
+  "cmd.openProjectDefinition.title": "KOT - Open project definition",
   "cmd.openNestedScenarioFromFeature.title": "KOT - Open nested scenario from feature",
   "cmd.findCurrentFileReferences.title": "KOT - Find references to current scenario",
   "cmd.createNestedScenario.title": "KOT - Create nested scenario",
+  "cmd.setScenarioCategory.title": "KOT - Set nested scenario category",
   "cmd.createMainScenario.title": "KOT - Create main scenario",
+  "cmd.createExportScenario.title": "KOT - Create exported scenario",
+  "cmd.createUserStep.title": "KOT - Create user step",
+  "cmd.buildUserStepLibrary.title": "KOT - Build user-step library",
   "cmd.manageSystemFunctions.title": "KOT - Manage system functions",
   "cmd.manageEtalonBases.title": "KOT - Manage etalon bases",
   "cmd.managePlatforms.title": "KOT - Manage 1C platforms",
@@ -132,6 +140,7 @@
   "cmd.createFirstLaunchZip.title": "KOT - Create FirstLaunch archive",
   "cmd.openYamlParametersManager.title": "KOT - Open Build Scenario Parameters Manager",
   "cmd.openFormExplorer.title": "KOT - Open 1C Form Explorer",
+  "cmd.openStepLibrary.title": "KOT - Open Step Library",
   "cmd.openInfobaseManager.title": "KOT - Open Infobase Manager",
   "cmd.generateFormExplorerExtension.title": "KOT - Generate Form Explorer extension project",
   "cmd.buildFormExplorerExtensionCfe.title": "KOT - Build Form Explorer .cfe",
@@ -161,6 +170,10 @@
   "submenu.editorContext.create": "KOT - Create...",
   "submenu.editorContext.editing": "KOT - Editing",
 
-  "view.phaseSwitcher.name": "KOT for 1C",
-  "view.phaseSwitcher.contextualTitle": "KOT for 1C"
+  "view.phaseSwitcher.name": "Test Manager",
+  "view.phaseSwitcher.contextualTitle": "KOT Test Manager",
+  "view.stepLibrary.name": "Step Library",
+  "view.stepLibrary.contextualTitle": "KOT Step Library",
+  "view.infobases.name": "Infobases",
+  "view.infobases.contextualTitle": "KOT Infobases"
 }

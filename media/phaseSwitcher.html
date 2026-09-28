@@ -6,6 +6,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; font-src ${webview.cspSource}; img-src ${webview.cspSource} https:; script-src 'nonce-${nonce}';">
     <link href="${codiconsUri}" rel="stylesheet">
     <link href="${stylesUri}" rel="stylesheet">
+    <link href="${sidebarStylesUri}" rel="stylesheet">
 </head>
 <body>
     <div class="app-shell phase-switcher-app">
@@ -13,21 +14,24 @@
             <div class="topbar-title-wrap">
                 <h1 class="topbar-title">${loc.phaseSwitcherTitle}</h1>
             </div>
-            <div class="toolbar controls-top-buttons">
-                <button id="runVanessaFromDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only" title="${loc.runVanessaTopTitle}">
+            <div class="toolbar controls-top-buttons kot-sidebar-toolbar">
+                <button id="runVanessaFromDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only kot-icon-button" title="${loc.runVanessaTopTitle}" aria-label="${loc.runVanessaTopTitle}">
                     <span class="codicon codicon-play-circle"></span>
                 </button>
-                <button id="openFormExplorerFromDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only top-action-btn-beta" title="${loc.openFormExplorerTopTitle}">
+                <button id="openFormExplorerFromDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only top-action-btn-beta kot-icon-button" title="${loc.openFormExplorerTopTitle}" aria-label="${loc.openFormExplorerTopTitle}">
                     <span class="top-action-icon-wrap">
                         <span class="codicon codicon-telescope"></span>
                         <span class="top-beta-badge" aria-hidden="true">β</span>
                     </span>
                 </button>
-                <button id="openInfobaseManagerTopBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only" title="${loc.openInfobaseManagerTopTitle}">
+                <button id="openStepLibraryTopBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only kot-icon-button" title="${loc.openStepLibraryTopTitle}" aria-label="${loc.openStepLibraryTopTitle}">
+                    <span class="codicon codicon-library"></span>
+                </button>
+                <button id="openInfobaseManagerTopBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only kot-icon-button" title="${loc.openInfobaseManagerTopTitle}" aria-label="${loc.openInfobaseManagerTopTitle}">
                     <span class="codicon codicon-database"></span>
                 </button>
                 <div class="dropdown-container">
-                    <button id="configurationDiffReportDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only" title="${loc.thinkingMenuTitle}">
+                    <button id="configurationDiffReportDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only kot-icon-button" title="${loc.thinkingMenuTitle}" aria-label="${loc.thinkingMenuTitle}">
                         <span class="codicon codicon-thinking"></span>
                     </button>
                     <div id="configurationDiffReportDropdownContent" class="dropdown-content menu-popover">
@@ -47,7 +51,7 @@
                     </div>
                 </div>
                 <div class="dropdown-container">
-                    <button id="scenarioRepairDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only" title="${loc.maintenanceMenuTitle}">
+                    <button id="scenarioRepairDropdownBtn" class="button-with-icon toolbar-btn compact-top-btn icon-only kot-icon-button" title="${loc.maintenanceMenuTitle}" aria-label="${loc.maintenanceMenuTitle}">
                         <span class="codicon codicon-ellipsis"></span>
                     </button>
                     <div id="scenarioRepairDropdownContent" class="dropdown-content menu-popover">
@@ -95,7 +99,7 @@
                     <div id="globalListActions" class="global-list-actions">
                         <div class="global-list-actions-right">
                             <div class="dropdown-container">
-                                <button id="addScenarioDropdownBtn" class="button-with-icon compact-action-btn ghost-btn icon-only" title="${loc.createScenarioTitle}">
+                                <button id="addScenarioDropdownBtn" class="button-with-icon compact-action-btn ghost-btn icon-only kot-icon-button" title="${loc.createScenarioTitle}" aria-label="${loc.createScenarioTitle}">
                                     <span class="codicon codicon-add"></span>
                                 </button>
                                 <div id="addScenarioDropdownContent" class="dropdown-content menu-popover">
@@ -105,20 +109,22 @@
                                     <a href="#" id="createNestedScenarioFromDropdownBtn" class="dropdown-item menu-item">
                                         <span class="codicon codicon-references"></span> ${loc.createNestedScenario}
                                     </a>
+                                    <a href="#" id="createExportScenarioFromDropdownBtn" class="dropdown-item menu-item">
+                                        <span class="codicon codicon-symbol-event"></span> ${loc.createExportScenario}
+                                    </a>
+                                    <a href="#" id="createUserStepFromDropdownBtn" class="dropdown-item menu-item">
+                                        <span class="codicon codicon-symbol-method"></span> ${loc.createUserStep}
+                                    </a>
                                 </div>
                             </div>
-                            <button
-                                id="toggleScenarioSearchBtn"
-                                class="button-with-icon compact-action-btn toggle-btn manager-search-toggle-btn icon-only"
-                                title="${loc.toggleScenarioSearchTitle}"
-                                aria-pressed="false">
-                                <span class="codicon codicon-search"></span>
+                            <button id="relationshipToggleBtn" class="button-with-icon compact-action-btn toggle-btn icon-only kot-icon-button" title="${loc.relationshipToggleTitle}" aria-pressed="true" aria-label="${loc.relationshipToggleTitle}">
+                                <span class="codicon codicon-git-branch"></span>
                             </button>
-                            <button id="collapseAllBtn" class="button-with-icon compact-action-btn ghost-btn icon-only" title="${loc.collapseExpandAllTitle}">
+                            <button id="refreshTestsBtn" class="button-with-icon compact-action-btn ghost-btn icon-only kot-icon-button" title="${loc.refreshTitle}" aria-label="${loc.refreshTitle}">
+                                <span class="codicon codicon-refresh"></span>
+                            </button>
+                            <button id="collapseAllBtn" class="button-with-icon compact-action-btn ghost-btn icon-only kot-icon-button" title="${loc.collapseExpandAllTitle}" aria-label="${loc.collapseExpandAllTitle}">
                                 <span class="codicon codicon-list-tree"></span>
-                            </button>
-                            <button id="selectAllBtn" class="button-with-icon compact-action-btn ghost-btn icon-only" title="${loc.toggleAllCheckboxesTitle}">
-                                <span class="codicon codicon-checklist"></span>
                             </button>
                         </div>
                     </div>
@@ -132,7 +138,12 @@
                 </div>
             </div>
 
-            <div id="scenarioSearchRow" class="scenario-search-row hidden">
+            <div id="relationshipContext" class="relationship-context" role="status">
+                <div id="relationshipCurrentContext" class="relationship-context-line relationship-context-current" aria-live="polite"></div>
+                <div id="relationshipSummaryContext" class="relationship-context-line relationship-context-summary"></div>
+            </div>
+
+            <div id="scenarioSearchRow" class="scenario-search-row kot-sidebar-search">
                 <div class="scenario-search-input-wrap search-frame">
                     <span class="codicon codicon-search scenario-search-icon" aria-hidden="true"></span>
                     <input
@@ -143,20 +154,30 @@
                         title="${loc.scenarioSearchTitle}">
                     <button
                         id="scenarioSearchClearBtn"
-                        class="scenario-search-clear-btn ghost-btn icon-only hidden"
+                        class="scenario-search-clear-btn ghost-btn icon-only kot-icon-button hidden"
                         type="button"
-                        title="${loc.scenarioSearchClearTitle}">
+                        title="${loc.scenarioSearchClearTitle}"
+                        aria-label="${loc.scenarioSearchClearTitle}">
                         <span class="codicon codicon-close"></span>
                     </button>
                 </div>
             </div>
 
-            <div id="phaseTreeContainer" class="phase-tree-container manager-view-panel">
-                <p>${loc.loadingPhasesAndTests}</p>
+            <div id="selectionSummary" class="selection-summary">
+                <label class="selection-summary-toggle" for="selectAllBtn">
+                    <input id="selectAllBtn" type="checkbox" aria-label="${loc.selectVisible}" title="${loc.selectVisible}">
+                    <span>${loc.selectVisible}</span>
+                </label>
+                <span class="selection-summary-count"><strong id="selectedCount">0</strong> ${loc.of} <span id="selectableCount">0</span> ${loc.selected}</span>
+                <button id="clearSelectionBtn" class="selection-clear-btn" type="button">${loc.clearSelection}</button>
             </div>
 
-            <div id="favoritesContainer" class="phase-tree-container manager-view-panel hidden">
-                <p>${loc.favoritesEmpty}</p>
+            <div id="phaseTreeContainer" class="phase-tree-container manager-view-panel kot-tree" role="tree">
+                <p class="kot-loading">${loc.loadingPhasesAndTests}</p>
+            </div>
+
+            <div id="favoritesContainer" class="phase-tree-container manager-view-panel kot-tree hidden">
+                <p class="kot-empty">${loc.favoritesEmpty}</p>
             </div>
 
             <div class="phase-switcher-controls-fixed-bottom surface-card">
@@ -174,7 +195,7 @@
                                     <span class="split-main-label">${loc.buildTests}</span>
                                 </span>
                             </button>
-                            <button id="assembleMenuBtn" class="button-with-icon toolbar-btn primary split-menu-btn icon-only" title="${loc.buildOptionsTitle}">
+                            <button id="assembleMenuBtn" class="button-with-icon toolbar-btn primary split-menu-btn icon-only kot-icon-button" title="${loc.buildOptionsTitle}" aria-label="${loc.buildOptionsTitle}">
                                 <span class="codicon codicon-chevron-down"></span>
                             </button>
                             <div id="assembleDropdownContent" class="dropdown-content menu-popover split-dropdown-content">
@@ -215,6 +236,7 @@
         </section>
     </div>
     <script type="application/javascript" nonce="${nonce}">window.__loc = ${webviewLoc};</script>
+    <script type="application/javascript" nonce="${nonce}" src="${protocolScriptUri}"></script>
     <script type="application/javascript" nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>

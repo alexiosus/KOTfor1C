@@ -44,5 +44,15 @@
 
 | Настройка | Назначение |
 |---|---|
+| `kotTestToolkit.diagnostics.ignoredCodes` | Скрывает выбранные виды диагностик по стабильному коду для пользователя, workspace или отдельной папки workspace |
 | `kotTestToolkit.editor.checkRelatedParentScenarios` | Включает/выключает проверку связанных родительских сценариев |
 | `kotTestToolkit.output.advancedLogging` | Более подробный лог диагностических операций |
+
+Например, чтобы глобально разрешить значения без кавычек и пустое описание сценария:
+
+```json
+"kotTestToolkit.diagnostics.ignoredCodes": [
+    "kotTestToolkit.missingQuotes",
+    "kotTestToolkit.defaultDescription"
+]
+```

@@ -1,0 +1,229 @@
+:root {
+    color-scheme: light dark;
+}
+
+html,
+body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: var(--vscode-sideBar-background);
+    color: var(--vscode-sideBar-foreground);
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+}
+
+.step-sidebar {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.step-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 28px 28px;
+    gap: 4px;
+    align-items: center;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+}
+
+.step-search-wrap {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    align-items: center;
+    min-width: 0;
+    height: 26px;
+    padding: 0 4px;
+    border: 1px solid var(--vscode-input-border, transparent);
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+}
+
+.step-search-wrap:focus-within {
+    border-color: var(--vscode-focusBorder);
+}
+
+.step-search-wrap input {
+    min-width: 0;
+    height: 100%;
+    padding: 0 2px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+}
+
+.step-status {
+    min-height: 0;
+    padding: 0 8px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+}
+
+.step-status:not(:empty) {
+    padding-block: 5px;
+}
+
+.step-tree {
+    min-width: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+.step-row {
+    padding-left: calc(4px + var(--step-depth, 0) * 12px);
+    border: 1px solid transparent;
+}
+
+.step-row:hover {
+    background: var(--vscode-list-hoverBackground);
+}
+
+.step-row.is-selected {
+    border-color: var(--vscode-focusBorder);
+    background: var(--vscode-list-inactiveSelectionBackground);
+}
+
+.step-row:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+
+.step-chevron {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 16px;
+    align-self: start;
+    min-height: 28px;
+}
+
+.step-node-icon {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 17px;
+    min-height: 28px;
+    color: var(--vscode-icon-foreground);
+}
+
+.step-row[data-kind="source"] .step-node-icon {
+    color: var(--vscode-symbolIcon-moduleForeground, var(--vscode-icon-foreground));
+}
+
+.kot-tree-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.step-code {
+    align-self: center;
+    margin: 4px 0;
+    overflow: hidden;
+    white-space: pre;
+    text-overflow: clip;
+    font-family: var(--vscode-editor-font-family);
+    font-size: var(--vscode-editor-font-size);
+    line-height: 1.35;
+}
+
+.step-count {
+    flex: 0 0 auto;
+    padding-inline: 4px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+}
+
+.step-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 1px;
+    align-self: start;
+    min-height: 28px;
+    flex-basis: auto;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.step-row:hover .step-actions,
+.step-row.is-selected .step-actions,
+.step-row:focus-within .step-actions {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.step-action {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0 4px;
+}
+
+.step-action:disabled {
+    opacity: 0.45;
+}
+
+.step-relation {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 18px;
+    min-height: 28px;
+    color: var(--kot-sidebar-related);
+}
+
+.step-row.is-current .step-relation {
+    color: currentColor;
+}
+
+.step-row[draggable="true"] {
+    cursor: grab;
+}
+
+.step-row.is-dragging {
+    cursor: grabbing;
+    opacity: 0.62;
+}
+
+.step-row.is-current {
+    background: var(--vscode-list-activeSelectionBackground);
+    color: var(--vscode-list-activeSelectionForeground);
+}
+
+.step-row.is-related {
+    border-inline-start-color: var(--kot-sidebar-related);
+}
+
+.step-row.is-transitive .step-code {
+    opacity: 0.72;
+}
+
+.syntax-keyword {
+    color: var(--vscode-symbolIcon-keywordForeground, var(--vscode-editor-foreground));
+    font-weight: 600;
+}
+
+.syntax-value {
+    color: var(--vscode-debugTokenExpression-string, var(--vscode-symbolIcon-stringForeground));
+}
+
+.syntax-table {
+    color: var(--vscode-symbolIcon-keyForeground, var(--vscode-textLink-foreground));
+}
+
+@media (max-width: 340px) {
+    .step-toolbar {
+        padding-inline: 4px;
+    }
+
+    .step-row {
+        padding-left: calc(2px + var(--step-depth, 0) * 10px);
+    }
+}

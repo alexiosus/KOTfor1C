@@ -32,6 +32,8 @@ import {
     resolveOneCPlatformForLaunch
 } from './oneCPlatform';
 import { getSharedStartupInfobasePaths } from './startupInfobase';
+import { formatProcessCommandForDisplay } from './processCommandDisplay';
+import { buildDestructiveInfobaseImportConfirmation } from './infobaseDestructiveConfirmation';
 
 const INFOBASE_MANAGER_OUTPUT_CHANNEL_NAME = 'KOT Infobase Manager';
 const INFOBASE_MANAGER_METADATA_KEY = 'infobaseManager.metadataByPath';
@@ -41,7 +43,7 @@ const INFOBASE_MARKER_FILE_NAME = '1Cv8.1CD';
 
 export type ManagedInfobaseKind = OneCInfobaseConnection['kind'];
 export type ManagedInfobaseRole = 'startup' | 'vanessa' | 'formExplorer' | 'snapshot';
-export type ManagedInfobaseSource = 'launcher' | 'runtime' | 'manual' | 'snapshot' | 'workspaceState';
+export type ManagedInfobaseSource = 'launcher' | 'runtime' | 'manual' | 'snapshot' | 'workspaceState' | 'profile';
 export type ManagedInfobaseState = 'ready' | 'empty' | 'dirty' | 'missing';
 export type ManagedInfobaseStateHint = Exclude<ManagedInfobaseState, 'missing'>;
 export type ManagedInfobaseLogKind = 'file' | 'directory';
@@ -66,8 +68,8 @@ export interface ManagedInfobaseRecord {
     exists: boolean;
     markerExists: boolean;
     state: ManagedInfobaseState;
-    roles: ManagedInfobaseRole[];
-    sources: ManagedInfobaseSource[];
+    roles: readonly ManagedInfobaseRole[];
+    sources: readonly ManagedInfobaseSource[];
     lastLaunchAt: string | null;
     lastLaunchKind: string | null;
     lastSnapshotPath: string | null;
@@ -77,7 +79,7 @@ export interface ManagedInfobaseRecord {
     startupParametersMode: ManagedInfobaseStartupParametersMode;
     startupParameters: string | null;
     preferredPlatformClientExePath: string | null;
-    logTargets: ManagedInfobaseLogTarget[];
+    logTargets: readonly ManagedInfobaseLogTarget[];
     hidden: boolean;
 }
 
@@ -105,7 +107,7 @@ export interface ManagedInfobaseMetadataPatch {
     startupParametersMode?: ManagedInfobaseStartupParametersMode | null;
     startupParameters?: string | null;
     preferredPlatformClientExePath?: string | null;
-    addRoles?: ManagedInfobaseRole[];
+    addRoles?: readonly ManagedInfobaseRole[];
     stateHint?: ManagedInfobaseStateHint | null;
     hidden?: boolean | null;
 }
@@ -1000,7 +1002,7 @@ function sortManagedInfobaseRoles(roles: Iterable<ManagedInfobaseRole>): Managed
 }
 
 function sortManagedInfobaseSources(sources: Iterable<ManagedInfobaseSource>): ManagedInfobaseSource[] {
-    const order: ManagedInfobaseSource[] = ['launcher', 'runtime', 'manual', 'snapshot', 'workspaceState'];
+    const order: ManagedInfobaseSource[] = ['launcher', 'runtime', 'manual', 'snapshot', 'workspaceState', 'profile'];
     const sourceSet = new Set<ManagedInfobaseSource>(sources);
     return order.filter(source => sourceSet.has(source));
 }
@@ -1107,7 +1109,8 @@ async function buildManagedInfobaseLogTargets(
 }
 
 export async function collectManagedInfobases(
-    context: vscode.ExtensionContext
+    context: vscode.ExtensionContext,
+    activeProfileInfobasePath?: string | null
 ): Promise<ManagedInfobaseRecord[]> {
     const metadataMap = getStoredMetadataMap(context);
     const manualEntries = getStoredManualEntries(context);
@@ -1238,6 +1241,13 @@ export async function collectManagedInfobases(
                 : null;
         }
     };
+
+    if (isTruthyText(activeProfileInfobasePath)) {
+        observeInfobase(activeProfileInfobasePath, {
+            displayNameHint: getInfobaseDisplayNameFallback(activeProfileInfobasePath),
+            addSources: ['profile']
+        });
+    }
 
     for (const launcherEntry of launcherEntries) {
         observeInfobase(launcherEntry.infobasePath, {
@@ -1547,12 +1557,6 @@ function getOutputTail(output: string, maxLength: number = 4000): string {
         : normalizedOutput.slice(-maxLength);
 }
 
-function formatCommandForOutput(exePath: string, args: string[]): string {
-    return [exePath, ...args]
-        .map(part => `"${part}"`)
-        .join(' ');
-}
-
 function appendInfobaseAuthenticationArgs(args: string[], authentication: InfobaseAuthentication | null): string[] {
     const username = (authentication?.username || '').trim();
     if (!username) {
@@ -1699,7 +1703,7 @@ async function runOneCCommand(
 ): Promise<void> {
     const effectiveArgs = [...args, '/Out', outFilePath];
     channel.appendLine(t('Infobase step: {0}', stepTitle));
-    channel.appendLine(t('Resolved 1C command: {0}', formatCommandForOutput(exePath, effectiveArgs)));
+    channel.appendLine(t('Resolved 1C command: {0}', formatProcessCommandForDisplay(exePath, effectiveArgs)));
 
     await new Promise<void>((resolve, reject) => {
         let stdout = '';
@@ -1808,7 +1812,7 @@ async function launchOneCDetached(
 ): Promise<void> {
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     channel.appendLine(t('Launching 1C process for infobase: {0}', infobasePath));
-    channel.appendLine(t('Resolved 1C command: {0}', formatCommandForOutput(exePath, args)));
+    channel.appendLine(t('Resolved 1C command: {0}', formatProcessCommandForDisplay(exePath, args)));
 
     await new Promise<void>((resolve, reject) => {
         try {
@@ -2356,6 +2360,22 @@ export async function restoreInfobaseFromDtInteractive(
         return;
     }
 
+    const dtPath = path.resolve(selectedFile[0].fsPath);
+    const confirmation = buildDestructiveInfobaseImportConfirmation(
+        'dt',
+        dtPath,
+        infobase,
+        t
+    );
+    const answer = await vscode.window.showWarningMessage(
+        confirmation.title,
+        { modal: true, detail: confirmation.detail },
+        confirmation.confirmLabel
+    );
+    if (answer !== confirmation.confirmLabel) {
+        return;
+    }
+
     await assertInfobaseNotBusy(infobase.infobasePath, t);
     const designerExePath = await resolveConfiguredOneCDesignerExePath(
         t,
@@ -2376,7 +2396,7 @@ export async function restoreInfobaseFromDtInteractive(
         '/IBConnectionString',
         buildInfobaseConnectionArgument(infobase.infobasePath),
         '/RestoreIB',
-        path.resolve(selectedFile[0].fsPath)
+        dtPath
     ];
 
     await vscode.window.withProgress(
@@ -2408,7 +2428,8 @@ export async function restoreInfobaseFromDtInteractive(
 
 export async function updateInfobaseConfigurationInteractive(
     context: vscode.ExtensionContext,
-    infobase: ManagedInfobaseRecord
+    infobase: ManagedInfobaseRecord,
+    modeHint?: 'sourceDirectory' | 'cfFile'
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     assertNonWebInfobaseRecord(t, infobase, t('Update configuration'));
@@ -2421,31 +2442,32 @@ export async function updateInfobaseConfigurationInteractive(
         ? resolveWorkspaceRelativePath(configuredSourceDirectoryRaw, workspaceRootPath)
         : '';
 
-    const selection = await vscode.window.showQuickPick(
-        [
-            {
-                label: t('Update from configured source directory'),
-                description: configuredSourceDirectory || t('Configuration source directory is not configured.'),
-                detail: t('Load configuration from the directory set in Form Explorer settings and update DB configuration.'),
-                modeKey: 'sourceDirectory' as const
-            },
-            {
-                label: t('Update from .cf file'),
-                description: infobase.locationLabel,
-                detail: t('Choose a custom .cf file and load it into the infobase.'),
-                modeKey: 'cfFile' as const
-            }
-        ],
+    const choices = [
         {
+            label: t('Update from configured source directory'),
+            description: configuredSourceDirectory || t('Configuration source directory is not configured.'),
+            detail: t('Load configuration from the directory set in Form Explorer settings and update DB configuration.'),
+            modeKey: 'sourceDirectory' as const
+        },
+        {
+            label: t('Update from .cf file'),
+            description: infobase.locationLabel,
+            detail: t('Choose a custom .cf file and load it into the infobase.'),
+            modeKey: 'cfFile' as const
+        }
+    ];
+    const selection = modeHint
+        ? choices.find(choice => choice.modeKey === modeHint)
+        : await vscode.window.showQuickPick(choices, {
             title: t('Update configuration for "{0}"', infobase.displayName),
             ignoreFocusOut: true
-        }
-    );
+        });
     if (!selection) {
         return;
     }
 
-    let commandArgs: string[] | null = null;
+    let commandArgs: string[];
+    let importSourcePath: string;
     let logSuffix = 'update-cfg';
     if (selection.modeKey === 'sourceDirectory') {
         if (!configuredSourceDirectory || !(await directoryExists(configuredSourceDirectory))) {
@@ -2458,6 +2480,7 @@ export async function updateInfobaseConfigurationInteractive(
             configuredSourceDirectory,
             '/UpdateDBCfg'
         ];
+        importSourcePath = configuredSourceDirectory;
         logSuffix = 'update-from-source';
     } else {
         const selectedCfFile = await vscode.window.showOpenDialog({
@@ -2474,12 +2497,28 @@ export async function updateInfobaseConfigurationInteractive(
             return;
         }
 
+        importSourcePath = path.resolve(selectedCfFile[0].fsPath);
         commandArgs = [
             '/LoadCfg',
-            path.resolve(selectedCfFile[0].fsPath),
+            importSourcePath,
             '/UpdateDBCfg'
         ];
         logSuffix = 'update-from-cf';
+    }
+
+    const confirmation = buildDestructiveInfobaseImportConfirmation(
+        selection.modeKey === 'sourceDirectory' ? 'sourceDirectory' : 'cf',
+        importSourcePath,
+        infobase,
+        t
+    );
+    const answer = await vscode.window.showWarningMessage(
+        confirmation.title,
+        { modal: true, detail: confirmation.detail },
+        confirmation.confirmLabel
+    );
+    if (answer !== confirmation.confirmLabel) {
+        return;
     }
 
     await assertInfobaseNotBusy(infobase.infobasePath, t);

@@ -1,12 +1,32 @@
 ﻿import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { TestInfo } from './types';
-import { getTranslator } from './localization';
-import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
-import { parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
-import { parseKotScenarioDescription } from './kotMetadataDescription';
+import type { TestInfo } from './types';
 import { getScenarioScanRootPath, resolveScenarioScanRootFsPath } from './scenarioScanRoot';
+import { buildScenarioCatalog, type ScenarioCatalog } from './scenarioCatalog';
+import { collectTreeWithConcurrencyLimit, mapWithConcurrencyLimit } from './boundedConcurrency';
+import { parseTestInfoFromScenarioSource } from './scenarioDescriptor';
+
+const SCENARIO_READ_CONCURRENCY = 32;
+const SCENARIO_DIRECTORY_CONCURRENCY = 16;
+
+interface ScenarioScanMetrics {
+    readonly directoryReadLatenciesMs: number[];
+    activeDirectoryReads: number;
+    maxDirectoryReadsInFlight: number;
+    readonly readLatenciesMs: number[];
+    pathTotalMs: number;
+    parseTotalMs: number;
+    fallbackAttempts: number;
+}
+
+function percentileMs(values: readonly number[], percentile: number): number {
+    if (values.length === 0) {
+        return 0;
+    }
+    const sorted = [...values].sort((left, right) => left - right);
+    return Math.round(sorted[Math.ceil(sorted.length * percentile) - 1]);
+}
 
 function buildWorkspaceUriFromFsPath(workspaceRootUri: vscode.Uri, targetFsPath: string): vscode.Uri {
     if (workspaceRootUri.scheme === 'file') {
@@ -50,66 +70,76 @@ function isPathInside(parentPath: string, candidatePath: string): boolean {
 async function collectFilesFromScanDirectory(
     workspaceRootUri: vscode.Uri,
     fileMatcher: (fileName: string) => boolean,
-    token?: vscode.CancellationToken
+    token?: vscode.CancellationToken,
+    metrics?: ScenarioScanMetrics
 ): Promise<vscode.Uri[]> {
     const scanDirFsPath = resolveScenarioScanRootFsPath(workspaceRootUri);
-    const results: vscode.Uri[] = [];
 
     try {
         const stat = await fs.promises.stat(scanDirFsPath);
         if (!stat.isDirectory()) {
-            return results;
+            return [];
         }
     } catch {
-        return results;
+        return [];
     }
 
-    const walk = async (currentDirFsPath: string): Promise<void> => {
-        if (token?.isCancellationRequested) {
-            return;
-        }
-
-        let entries: fs.Dirent[];
-        try {
-            entries = await fs.promises.readdir(currentDirFsPath, { withFileTypes: true });
-        } catch {
-            return;
-        }
-
-        for (const entry of entries) {
-            if (token?.isCancellationRequested) {
-                return;
+    const filePaths = await collectTreeWithConcurrencyLimit(
+        scanDirFsPath,
+        SCENARIO_DIRECTORY_CONCURRENCY,
+        async currentDirFsPath => {
+            let entries: fs.Dirent[];
+            const readStartedAt = metrics ? performance.now() : 0;
+            if (metrics) {
+                metrics.activeDirectoryReads += 1;
+                metrics.maxDirectoryReadsInFlight = Math.max(
+                    metrics.maxDirectoryReadsInFlight,
+                    metrics.activeDirectoryReads
+                );
+            }
+            try {
+                entries = await fs.promises.readdir(currentDirFsPath, { withFileTypes: true });
+            } catch {
+                return { children: [], values: [] };
+            } finally {
+                if (metrics) {
+                    metrics.directoryReadLatenciesMs.push(performance.now() - readStartedAt);
+                    metrics.activeDirectoryReads -= 1;
+                }
             }
 
-            const entryName = entry.name;
-            const entryFsPath = path.join(currentDirFsPath, entryName);
+            const children: string[] = [];
+            const values: string[] = [];
+            for (const entry of entries) {
+                if (token?.isCancellationRequested) {
+                    break;
+                }
 
-            if (entry.isDirectory()) {
-                if (entryName === 'node_modules' || entryName === '.git') {
+                const entryName = entry.name;
+                const entryFsPath = path.join(currentDirFsPath, entryName);
+
+                if (entry.isDirectory()) {
+                    if (entryName !== 'node_modules' && entryName !== '.git') {
+                        children.push(entryFsPath);
+                    }
                     continue;
                 }
-                await walk(entryFsPath);
-                continue;
+
+                if (entry.isFile() && fileMatcher(entryName)) {
+                    values.push(entryFsPath);
+                }
             }
+            return { children, values };
+        },
+        () => token?.isCancellationRequested ?? false
+    );
 
-            if (!entry.isFile()) {
-                continue;
-            }
-
-            if (!fileMatcher(entryName)) {
-                continue;
-            }
-
-            results.push(buildWorkspaceUriFromFsPath(workspaceRootUri, entryFsPath));
-        }
-    };
-
-    await walk(scanDirFsPath);
+    const results = filePaths.map(filePath => buildWorkspaceUriFromFsPath(workspaceRootUri, filePath));
     results.sort((left, right) => left.fsPath.localeCompare(right.fsPath, undefined, { sensitivity: 'base' }));
     return results;
 }
 
-export async function readTextFileFast(uri: vscode.Uri): Promise<string> {
+export async function readTextFileFast(uri: vscode.Uri, metrics?: ScenarioScanMetrics): Promise<string> {
     if (uri.fsPath) {
         try {
             return await fs.promises.readFile(uri.fsPath, 'utf-8');
@@ -118,15 +148,24 @@ export async function readTextFileFast(uri: vscode.Uri): Promise<string> {
         }
     }
 
+    if (metrics) {
+        metrics.fallbackAttempts += 1;
+    }
     const fileContentBytes = await vscode.workspace.fs.readFile(uri);
     return Buffer.from(fileContentBytes).toString('utf-8');
 }
 
 export async function findScenarioDescriptorUris(
     workspaceRootUri: vscode.Uri,
-    token?: vscode.CancellationToken
+    token?: vscode.CancellationToken,
+    metrics?: ScenarioScanMetrics
 ): Promise<vscode.Uri[]> {
-    return collectFilesFromScanDirectory(workspaceRootUri, fileName => fileName.toLowerCase() === 'scen.yaml', token);
+    return collectFilesFromScanDirectory(
+        workspaceRootUri,
+        fileName => fileName.toLowerCase() === 'scen.yaml',
+        token,
+        metrics
+    );
 }
 
 export async function findYamlFilesUnderScanDir(
@@ -155,251 +194,130 @@ export function resolveScanDirFsPath(workspaceRootUri: vscode.Uri): string {
 // Используем scen.yaml, т.к. он содержит метаданные
 export const SCAN_GLOB_PATTERN = '**/scen.yaml';
 
-function parseNestedScenarioNamesFromText(documentText: string): string[] {
-    const names: string[] = [];
-    const sectionRegex = /ВложенныеСценарии:\s*([\s\S]*?)(?=\n(?![ \t])[А-Яа-яЁёA-Za-z]+:|\n*$)/;
-    const match = sectionRegex.exec(documentText);
-    if (!match || !match[1]) {
-        return names;
+function computeRelativeScenarioPath(
+    fileUri: vscode.Uri,
+    scanDirUri: vscode.Uri,
+    fromEnumeratedScan = false
+): string {
+    const parentDirFsPath = path.dirname(fileUri.fsPath);
+    const relativePath = path.relative(scanDirUri.fsPath, parentDirFsPath);
+    const lexicallyInside = relativePath !== '..'
+        && !relativePath.startsWith(`..${path.sep}`)
+        && !path.isAbsolute(relativePath);
+    if ((fromEnumeratedScan && lexicallyInside) || isPathInside(scanDirUri.fsPath, parentDirFsPath)) {
+        return relativePath.replace(/\\/g, '/');
     }
-
-    const nameRegex = /^\s*ИмяСценария:\s*"([^"]+)"/gm;
-    let nameMatch: RegExpExecArray | null;
-    while ((nameMatch = nameRegex.exec(match[1])) !== null) {
-        const name = nameMatch[1].trim();
-        if (name.length > 0) {
-            names.push(name);
-        }
-    }
-
-    return names;
+    return vscode.workspace.asRelativePath(parentDirFsPath, false);
 }
 
-/**
- * Сканирует директорию воркспейса на наличие файлов сценариев,
- * парсит их для извлечения метаданных и возвращает Map.
- * Теперь собирает все сценарии, у которых есть Имя, а не только те, что с PhaseSwitcher metadata.
- * @param workspaceRootUri URI корневой папки воркспейса.
- * @param token Токен отмены.
- * @returns Promise с Map<string, TestInfo> или null в случае ошибки.
- */
-export async function scanWorkspaceForTests(workspaceRootUri: vscode.Uri, token?: vscode.CancellationToken): Promise<Map<string, TestInfo> | null> {
-    console.log("[scanWorkspaceForTests] Starting scan...");
-    const discoveredTests = new Map<string, TestInfo>();
-    const scanDirUri = vscode.Uri.file(resolveScanDirFsPath(workspaceRootUri));
-    console.log(`[scanWorkspaceForTests] Scanning directory: ${scanDirUri.fsPath} for pattern ${SCAN_GLOB_PATTERN}`);
-
+async function readScenarioDefinitions(
+    potentialFiles: readonly vscode.Uri[],
+    scanDirUri: vscode.Uri,
+    token?: vscode.CancellationToken,
+    metrics?: ScenarioScanMetrics,
+    fromEnumeratedScan = false
+): Promise<TestInfo[]> {
+    const definitions: TestInfo[] = [];
     try {
-        const potentialFiles = await findScenarioDescriptorUris(workspaceRootUri, token);
-        console.log(`[scanWorkspaceForTests] Found ${potentialFiles.length} potential files.`);
-
         for (const fileUri of potentialFiles) {
-            if (token?.isCancellationRequested) { 
-                console.log("[scanWorkspaceForTests] Scan cancelled.");
-                break; 
+            if (token?.isCancellationRequested) {
+                throw new vscode.CancellationError();
             }
 
             try {
-                const fileContent = await readTextFileFast(fileUri);
-                const lines = fileContent.split('\n');
-                const nestedScenarioNames = parseNestedScenarioNamesFromText(fileContent);
-                const parsedParameterDefaults = parseScenarioParameterDefaults(fileContent);
-                const phaseSwitcherMetadata = parsePhaseSwitcherMetadata(fileContent);
-                const scenarioDescription = parseKotScenarioDescription(fileContent);
-
-                let name: string | null = null;
-                let uid: string | null = null;
-                let scenarioCode: string | null = null;
-                let scenarioCodeLine: number | null = null;
-                let scenarioCodeLineStartCharacter: number | null = null;
-                let scenarioCodeLineEndCharacter: number | null = null;
-                let parsedTabName: string | undefined = phaseSwitcherMetadata.tabName;
-                let parsedDefaultState: boolean | undefined = phaseSwitcherMetadata.defaultState;
-                let parsedOrder: number | undefined = phaseSwitcherMetadata.order;
-                let tabMarkerFound = phaseSwitcherMetadata.hasTab; // Флаг, что ключ Tab был найден (даже если значение пустое)
-                
-                let parametersList: string[] = []; 
-                let inParametersMainSection = false; 
-                let parametersMainSectionIndent = -1; 
-
-                let inParameterListItem = false; // Находимся ли мы внутри элемента списка параметров (начинающегося с "-")
-                let parameterListItemIndent = -1; // Отступ строки, начинающей элемент списка ("- ")
-
-                for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-                    const line = lines[lineIndex];
-                    const trimmedLine = line.trim();
-                    // Нормализуем отступы в начале строки для консистентного анализа
-                    const normalizedLineStart = line.replace(/^\t+/, tabs => '    '.repeat(tabs.length)); 
-                    const currentLineIndent = (normalizedLineStart.match(/^(\s*)/) || [""])[0].length;
-
-                    // Извлечение имени сценария
-                    if (name === null) { 
-                        const nameMatch = line.match(/^\s*Имя:\s*\"(.+?)\"\s*$/);
-                        if (nameMatch && nameMatch[1]) {
-                            name = nameMatch[1];
-                        }
-                    }
-
-                    // Извлечение UID сценария
-                    if (uid === null) {
-                        const uidMatch = line.match(/^\s*UID:\s*\"(.+?)\"\s*$/);
-                        if (uidMatch && uidMatch[1]) {
-                            uid = uidMatch[1];
-                        }
-                    }
-
-                    // Извлечение кода сценария
-                    if (scenarioCode === null) {
-                        const codeMatch = line.match(/^\s*Код:\s*\"(.+?)\"\s*$/);
-                        if (codeMatch && codeMatch[1]) {
-                            scenarioCode = codeMatch[1];
-                            scenarioCodeLine = lineIndex;
-                            scenarioCodeLineStartCharacter = Math.max(0, line.search(/\S|$/));
-                            scenarioCodeLineEndCharacter = line.length;
-                        }
-                    }
-
-                    // Логика для секции ПараметрыСценария
-                    if (!inParametersMainSection && trimmedLine.startsWith("ПараметрыСценария:")) {
-                        inParametersMainSection = true;
-                        parametersMainSectionIndent = currentLineIndent;
-                        parametersList = []; 
-                        inParameterListItem = false; 
-                        parameterListItemIndent = -1;
-                        // console.log(`[scanner] Entered 'ПараметрыСценария' section in ${path.basename(fileUri.fsPath)} for scenario: ${name || 'Unknown'}. Indent: ${parametersMainSectionIndent}`);
-                        continue; 
-                    }
-
-                    if (inParametersMainSection) {
-                        // Проверка выхода из главной секции ПараметрыСценария
-                        if (currentLineIndent <= parametersMainSectionIndent && 
-                            trimmedLine !== "" && 
-                            !trimmedLine.startsWith("#") && 
-                            !trimmedLine.startsWith("ПараметрыСценария:") && 
-                            trimmedLine.includes(":") &&
-                            (trimmedLine.startsWith("ВложенныеСценарии:") || trimmedLine.startsWith("ТекстСценария:"))
-                            ) {
-                            // console.log(`[scanner] Exiting 'ПараметрыСценария' section in ${path.basename(fileUri.fsPath)} for scenario ${name || 'Unknown'} due to line: "${trimmedLine.substring(0,30)}..."`);
-                            inParametersMainSection = false;
-                        }
-                    }
-
-                    if (inParametersMainSection) {
-                        // Внутри главной секции "ПараметрыСценария:"
-                        // Ищем начало элемента списка параметров (строка, начинающаяся с "- ")
-                        if (trimmedLine.startsWith("-") && currentLineIndent > parametersMainSectionIndent) {
-                            // Проверяем, что это действительно начало блока параметра, а не просто дефис в значении
-                            const afterDash = trimmedLine.substring(trimmedLine.indexOf("-") + 1).trim();
-                            if (afterDash.startsWith("ПараметрыСценария") || afterDash.match(/^[A-Za-z0-9_А-Яа-я]+Сценария\d*:/)) { // Учитываем ПараметрыСценария1, ПараметрыСценария2
-                                inParameterListItem = true;
-                                // Отступ самого элемента списка (дефиса)
-                                parameterListItemIndent = (normalizedLineStart.match(/^(\s*)-/)?.[1] || "").length; 
-                                // console.log(`[scanner] Found parameter list item in ${path.basename(fileUri.fsPath)} for scenario ${name || 'Unknown'}. Item indent: ${parameterListItemIndent}. Line: "${trimmedLine.substring(0,40)}"`);
-                                // Ключ самого элемента списка (например, "ПараметрыСценария1:") может быть на этой же строке или на следующей
-                                const listItemKeyMatch = trimmedLine.match(/^-\s*([A-Za-z0-9_А-Яа-я]+Сценария\d*):/);
-                                if (listItemKeyMatch) {
-                                    // console.log(`[scanner] List item key: ${listItemKeyMatch[1]}`);
-                                }
-                                // Не continue, так как поля параметра могут быть на той же строке с большим отступом или на следующих
-                            }
-                        }
-                        
-                        if (inParameterListItem) {
-                             // Поля "Имя:", "Значение:" и т.д. должны иметь больший отступ, чем сам элемент списка (дефис)
-                            if (currentLineIndent > parameterListItemIndent) {
-                                const paramNameMatch = trimmedLine.match(/^Имя:\s*\"(.+?)\"\s*$/);
-                                if (paramNameMatch && paramNameMatch[1]) {
-                                    parametersList.push(paramNameMatch[1]);
-                                    // console.log(`[scanner] Found param name: "${paramNameMatch[1]}" in ${path.basename(fileUri.fsPath)} for scenario ${name || 'Unknown'}. Current params: [${parametersList.join(', ')}]`);
-                                }
-                            } else if (trimmedLine !== "" && !trimmedLine.startsWith("#") && currentLineIndent <= parameterListItemIndent) {
-                                // Если отступ стал меньше или равен отступу элемента списка,
-                                // и это не пустая строка/комментарий, значит, текущий элемент списка параметров закончился.
-                                // console.log(`[scanner] Exiting parameter list item (due to indent) in ${path.basename(fileUri.fsPath)} for scenario ${name || 'Unknown'} from line: "${trimmedLine.substring(0,30)}..." (indent ${currentLineIndent} <= ${parameterListItemIndent})`);
-                                inParameterListItem = false;
-                                parameterListItemIndent = -1;
-                                // Если эта строка - новый элемент списка, она будет обработана на следующей итерации
-                                if (trimmedLine.startsWith("-") && currentLineIndent > parametersMainSectionIndent) {
-                                     const afterDashCheck = trimmedLine.substring(trimmedLine.indexOf("-") + 1).trim();
-                                     if (afterDashCheck.startsWith("ПараметрыСценария") || afterDashCheck.match(/^[A-Za-z0-9_А-Яа-я]+Сценария\d*:/)) {
-                                        inParameterListItem = true;
-                                        parameterListItemIndent = (normalizedLineStart.match(/^(\s*)-/)?.[1] || "").length;
-                                        // console.log(`[scanner] Found new parameter list item '${trimmedLine.split(':')[0]}' immediately after previous one. Item indent: ${parameterListItemIndent}`);
-                                        // continue; // Пропускаем обработку этой же строки как поля параметра
-                                     }
-                                }
-                            }
-                        }
-                    }
-                } // end for (const line of lines)
-
-                // Добавляем сценарий, если у него есть имя.
-                // Информация для PhaseSwitcher (tabName, defaultState, order) добавляется, только если найден ключ Tab
-                // в KOT metadata или в legacy-маркере.
-                if (name) {
-                    if (discoveredTests.has(name)) {
-                        //  console.warn(`[scanWorkspaceForTests] Duplicate test name "${name}". Overwriting with ${fileUri.fsPath}`);
-                    }
-                    const parentDirFsPath = path.dirname(fileUri.fsPath);
-                    const scanDirFsPath = scanDirUri.fsPath;
-                    let relativePathValue = '';
-                    if (isPathInside(scanDirFsPath, parentDirFsPath)) {
-                         relativePathValue = path.relative(scanDirFsPath, parentDirFsPath).replace(/\\/g, '/');
-                    } else {
-                         relativePathValue = vscode.workspace.asRelativePath(parentDirFsPath, false);
-                        //  console.warn(`[scanWorkspaceForTests] File path ${relativePathValue} for scenario "${name}" might be incorrect relative to scan dir ${scanDirFsPath}`);
-                    }
-                    
-                    const uniqueParameters = parsedParameterDefaults.size > 0
-                        ? Array.from(parsedParameterDefaults.keys())
-                        : (parametersList.length > 0 ? [...new Set(parametersList)] : undefined);
-                    const uniqueNestedScenarioNames = nestedScenarioNames.length > 0
-                        ? [...new Set(nestedScenarioNames)]
-                        : undefined;
-                    const parameterDefaults = parsedParameterDefaults.size > 0
-                        ? Object.fromEntries(parsedParameterDefaults.entries())
-                        : undefined;
-
-                    const testInfo: TestInfo = { 
-                        name, 
-                        yamlFileUri: fileUri, 
-                        relativePath: relativePathValue,
-                        parameters: uniqueParameters,
-                        parameterDefaults,
-                        nestedScenarioNames: uniqueNestedScenarioNames,
-                        uid: uid || undefined,
-                        scenarioDescription: scenarioDescription || undefined,
-                        scenarioCode: scenarioCode || undefined,
-                        scenarioCodeLine: scenarioCodeLine ?? undefined,
-                        scenarioCodeLineStartCharacter: scenarioCodeLineStartCharacter ?? undefined,
-                        scenarioCodeLineEndCharacter: scenarioCodeLineEndCharacter ?? undefined
-                    };
-
-                    if (tabMarkerFound) { // Добавляем данные для PhaseSwitcher только если маркер был
-                        testInfo.tabName = parsedTabName; // Может быть undefined, если значение маркера пустое
-                        testInfo.defaultState = parsedDefaultState !== undefined ? parsedDefaultState : false; // По умолчанию false, если не указано
-                        testInfo.order = parsedOrder !== undefined ? parsedOrder : Infinity; // По умолчанию Infinity, если не указано
-                    }
-                    
-                    discoveredTests.set(name, testInfo);
-
-                    const logParams = uniqueParameters ? `Parameters: [${uniqueParameters.join(', ')}]` : "(No parameters found)";
-                    const logTab = testInfo.tabName ? `Tab: ${testInfo.tabName}` : "(No tab for PhaseSwitcher)";
-                    // console.log(`[scanWorkspaceForTests] ADDED Scenario: ${name}, ${logTab}, ${logParams}, File: ${path.basename(fileUri.fsPath)}`);
-
-                } else {
-                    // console.log(`[scanWorkspaceForTests] SKIPPED file (missing name): ${fileUri.fsPath}.`);
+                const readStartedAt = performance.now();
+                const source = await readTextFileFast(fileUri, metrics);
+                metrics?.readLatenciesMs.push(performance.now() - readStartedAt);
+                const pathStartedAt = performance.now();
+                const relativePath = computeRelativeScenarioPath(fileUri, scanDirUri, fromEnumeratedScan);
+                if (metrics) {
+                    metrics.pathTotalMs += performance.now() - pathStartedAt;
                 }
-            } catch (readErr: any) {
-                //  console.error(`[scanWorkspaceForTests] Error reading/parsing ${fileUri.fsPath}: ${readErr.message || readErr}`);
+                const parseStartedAt = performance.now();
+                const testInfo = parseTestInfoFromScenarioSource(
+                    source,
+                    fileUri,
+                    relativePath
+                );
+                if (metrics) {
+                    metrics.parseTotalMs += performance.now() - parseStartedAt;
+                }
+                if (testInfo) {
+                    definitions.push(testInfo);
+                }
+            } catch {
+                // A malformed or transiently unavailable descriptor is skipped like before.
             }
-        } // end for (const fileUri of potentialFiles)
+        }
     } catch (error) {
+        if (error instanceof vscode.CancellationError) {
+            throw error;
+        }
         console.error('[WorkspaceScanner] Error scanning workspace:', error);
         vscode.window.showErrorMessage(vscode.l10n.t('Error searching for scenario files.'));
-        return new Map();
+        return [];
     }
 
-    console.log(`[scanWorkspaceForTests] Scan finished. Total discovered tests: ${discoveredTests.size}.`);
-    return discoveredTests;
+    return definitions;
+}
+
+export async function readScenarioInfo(
+    fileUri: vscode.Uri,
+    scanRootUri: vscode.Uri,
+    token?: vscode.CancellationToken,
+    metrics?: ScenarioScanMetrics
+): Promise<TestInfo | null> {
+    return (await readScenarioDefinitions([fileUri], scanRootUri, token, metrics))[0] || null;
+}
+
+export async function scanWorkspaceForScenarioCatalog(
+    workspaceRootUri: vscode.Uri,
+    token?: vscode.CancellationToken
+): Promise<ScenarioCatalog> {
+    const startedAt = Date.now();
+    const scanDirUri = vscode.Uri.file(resolveScanDirFsPath(workspaceRootUri));
+    const metrics: ScenarioScanMetrics = {
+        directoryReadLatenciesMs: [], activeDirectoryReads: 0, maxDirectoryReadsInFlight: 0,
+        readLatenciesMs: [], pathTotalMs: 0, parseTotalMs: 0, fallbackAttempts: 0
+    };
+    const potentialFiles = await findScenarioDescriptorUris(workspaceRootUri, token, metrics);
+    const enumerationMs = Date.now() - startedAt;
+    const parsedDefinitions = await mapWithConcurrencyLimit(
+        potentialFiles,
+        SCENARIO_READ_CONCURRENCY,
+        // These paths came from readdir beneath scanDirUri; symlink entries are not traversed.
+        async fileUri => (await readScenarioDefinitions([fileUri], scanDirUri, token, metrics, true))[0] || null
+    );
+    const readAndParseMs = Date.now() - startedAt - enumerationMs;
+    if (token?.isCancellationRequested) {
+        throw new vscode.CancellationError();
+    }
+    const definitions = parsedDefinitions.filter((item): item is TestInfo => item !== null);
+    const catalog = buildScenarioCatalog(definitions);
+    const duplicateNames = [...catalog.byName.values()].filter(items => items.length > 1).length;
+
+    console.log(
+        `[WorkspaceScanner] Scanned ${catalog.all.length} definitions, ${catalog.byName.size} names, `
+        + `${duplicateNames} duplicate names in ${Date.now() - startedAt} ms `
+        + `(directories ${enumerationMs} ms, `
+        + `directory reads ${metrics.directoryReadLatenciesMs.length}, `
+        + `p50 ${percentileMs(metrics.directoryReadLatenciesMs, 0.5)} ms, `
+        + `p95 ${percentileMs(metrics.directoryReadLatenciesMs, 0.95)} ms, `
+        + `max in flight ${metrics.maxDirectoryReadsInFlight}; `
+        + `read/parse ${readAndParseMs} ms; `
+        + `read p50 ${percentileMs(metrics.readLatenciesMs, 0.5)} ms, `
+        + `p95 ${percentileMs(metrics.readLatenciesMs, 0.95)} ms, `
+        + `path ${Math.round(metrics.pathTotalMs)} ms, `
+        + `parse ${Math.round(metrics.parseTotalMs)} ms, `
+        + `fallback attempts ${metrics.fallbackAttempts}).`
+    );
+    return catalog;
+}
+
+export async function scanWorkspaceForTests(
+    workspaceRootUri: vscode.Uri,
+    token?: vscode.CancellationToken
+): Promise<Map<string, TestInfo> | null> {
+    const catalog = await scanWorkspaceForScenarioCatalog(workspaceRootUri, token);
+    return new Map(catalog.primaryByName);
 }

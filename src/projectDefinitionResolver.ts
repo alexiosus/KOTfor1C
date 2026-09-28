@@ -1,0 +1,283 @@
+import { createHash } from 'node:crypto';
+import type * as vscode from 'vscode';
+import type { TestInfo } from './types';
+import {
+    createProjectDefinitionView,
+    normalizeProjectDefinitionTemplate,
+    type ProjectDefinition,
+    type ProjectDefinitionParameter,
+    type ProjectDefinitionResolution,
+    type ProjectDefinitionSnapshot,
+    type ProjectDefinitionView
+} from './projectDefinition';
+import { resolveProjectInvocation } from './projectDefinitionMatcher';
+import type {
+    CancellationTokenLike,
+    DisposableLike,
+    ProjectDefinitionIndexProvider,
+    ProjectDefinitionSnapshotChangeEvent
+} from './projectDefinitionIndexService';
+import type { ScenarioCatalog, ScenarioCatalogProvider } from './scenarioCatalog';
+import {
+    executableStepDefinitions,
+    type BuiltInStepDefinition,
+    type ResolvedStepCatalog,
+    type StepTextVariant
+} from './stepCatalog';
+import type { StepCatalogChangeEvent } from './stepCatalogService';
+
+export interface ProjectDefinitionViewChangeEvent {
+    readonly workspaceFolderUri?: string;
+    readonly reason: 'local' | 'scenario' | 'builtIn';
+}
+
+export interface ProjectDefinitionStepCatalogProvider {
+    getCatalog(documentUri?: vscode.Uri): Promise<ResolvedStepCatalog>;
+    readonly onDidChangeCatalog: vscode.Event<StepCatalogChangeEvent>;
+}
+
+export interface ProjectDefinitionResolverDependencies {
+    readonly local: ProjectDefinitionIndexProvider;
+    readonly scenarios: ScenarioCatalogProvider;
+    readonly steps: ProjectDefinitionStepCatalogProvider;
+}
+
+class SimpleEmitter<T> implements DisposableLike {
+    readonly #listeners = new Set<(event: T) => void>();
+
+    readonly event = (listener: (event: T) => void): DisposableLike => {
+        this.#listeners.add(listener);
+        return { dispose: () => this.#listeners.delete(listener) };
+    };
+
+    fire(event: T): void {
+        for (const listener of [...this.#listeners]) {
+            listener(event);
+        }
+    }
+
+    dispose(): void {
+        this.#listeners.clear();
+    }
+}
+
+function templateParameters(template: string): readonly ProjectDefinitionParameter[] {
+    const invocationLine = template.split(/\r\n|\r|\n/u, 1)[0] ?? template;
+    return Object.freeze(Array.from(
+        invocationLine.matchAll(/(["'])\s*%\d+\s+([^"']*?)\s*\1/gu)
+    ).map((match, index) => {
+        const catalogHint = match[2]?.trim();
+        return Object.freeze({
+            name: catalogHint || `Parameter${index + 1}`,
+            index,
+            source: 'quoted' as const
+        });
+    }));
+}
+
+function builtInVariant(
+    catalog: ResolvedStepCatalog,
+    step: BuiltInStepDefinition,
+    language: 'ru' | 'en',
+    variant: StepTextVariant
+): ProjectDefinition {
+    const categoryPath = step.categoryPath?.[language];
+    return Object.freeze({
+        id: `${step.id}:${language}`,
+        familyId: step.id,
+        kind: 'builtInStep',
+        template: variant.pattern,
+        normalizedTemplate: normalizeProjectDefinitionTemplate(variant.pattern),
+        language,
+        parameters: templateParameters(variant.pattern),
+        description: variant.description || undefined,
+        ...(categoryPath ? { categoryPath: Object.freeze([...categoryPath]) } : {}),
+        sourceLabel: `Vanessa ${catalog.catalogVersion} (${language.toLocaleUpperCase()})`
+    });
+}
+
+function builtInDefinitions(catalog: ResolvedStepCatalog): readonly ProjectDefinition[] {
+    const result: ProjectDefinition[] = [];
+    for (const step of executableStepDefinitions(catalog.steps)) {
+        if (step.ru) {
+            result.push(builtInVariant(catalog, step, 'ru', step.ru));
+        }
+        if (step.en) {
+            result.push(builtInVariant(catalog, step, 'en', step.en));
+        }
+    }
+    return result;
+}
+
+function scenarioLocation(scenario: TestInfo) {
+    const line = scenario.scenarioCodeLine ?? 0;
+    const startCharacter = scenario.scenarioCodeLineStartCharacter ?? 0;
+    const endCharacter = scenario.scenarioCodeLineEndCharacter ?? startCharacter;
+    return Object.freeze({
+        uri: scenario.yamlFileUri.toString(),
+        range: Object.freeze({
+            start: Object.freeze({ line, character: startCharacter }),
+            end: Object.freeze({ line, character: endCharacter })
+        })
+    });
+}
+
+function nestedDefinition(scenario: TestInfo): ProjectDefinition {
+    const uri = scenario.yamlFileUri.toString();
+    const parameters = (scenario.parameters ?? [])
+        .map(name => name.trim())
+        .filter(Boolean)
+        .map((name, index) => Object.freeze({
+            name,
+            index,
+            source: 'snippet' as const,
+            defaultValue: scenario.parameterDefaults?.[name]
+        }));
+    return Object.freeze({
+        id: uri,
+        kind: 'nestedScenario',
+        template: scenario.name,
+        normalizedTemplate: normalizeProjectDefinitionTemplate(scenario.name),
+        parameters: Object.freeze(parameters),
+        description: scenario.scenarioDescription || undefined,
+        category: scenario.scenarioCategory || undefined,
+        scenarioCode: scenario.scenarioCode || undefined,
+        sourceLabel: `Nested scenario (${scenario.relativePath || scenario.name})`,
+        definitionLocation: scenarioLocation(scenario)
+    });
+}
+
+export function isCallableNestedScenario(
+    scenario: Pick<TestInfo, 'tabName'>
+): boolean {
+    return typeof scenario.tabName !== 'string' || scenario.tabName.trim().length === 0;
+}
+
+function callableNestedScenarios(catalog: ScenarioCatalog): readonly TestInfo[] {
+    return catalog.all.filter(isCallableNestedScenario);
+}
+
+function scenarioIdentity(scenarios: readonly TestInfo[]): string {
+    const hash = createHash('sha256');
+    const signatures = scenarios.map(scenario => ({
+        uri: scenario.yamlFileUri.toString(),
+        name: scenario.name,
+        parameters: scenario.parameters ?? [],
+        description: scenario.scenarioDescription ?? '',
+        category: scenario.scenarioCategory ?? '',
+        code: scenario.scenarioCode ?? ''
+    })).sort((left, right) =>
+        left.uri.localeCompare(right.uri)
+        || left.name.localeCompare(right.name)
+        || JSON.stringify(left.parameters).localeCompare(JSON.stringify(right.parameters))
+    );
+    hash.update(JSON.stringify(signatures), 'utf8');
+    return `scenarios:${hash.digest('hex')}`;
+}
+
+function compositeIdentity(
+    builtInIdentity: string,
+    nestedIdentity: string,
+    localIdentity: string
+): string {
+    return `project-view:${createHash('sha256')
+        .update(`${builtInIdentity}\0${nestedIdentity}\0${localIdentity}`, 'utf8')
+        .digest('hex')}`;
+}
+
+export class ProjectDefinitionResolver implements DisposableLike {
+    readonly #dependencies: ProjectDefinitionResolverDependencies;
+    readonly #emitter = new SimpleEmitter<ProjectDefinitionViewChangeEvent>();
+    readonly #subscriptions: DisposableLike[];
+    readonly #views = new Map<string, ProjectDefinitionView>();
+
+    readonly onDidChangeView = this.#emitter.event;
+
+    constructor(dependencies: ProjectDefinitionResolverDependencies) {
+        this.#dependencies = dependencies;
+        this.#subscriptions = [
+            dependencies.local.onDidChangeSnapshot(event => this.#onLocalChange(event)),
+            dependencies.scenarios.onDidUpdateScenarioCatalog(() => {
+                this.#views.clear();
+                this.#emitter.fire({ reason: 'scenario' });
+            }),
+            dependencies.steps.onDidChangeCatalog(event => {
+                this.#views.clear();
+                this.#emitter.fire({
+                    workspaceFolderUri: event.workspaceFolderUri?.toString(),
+                    reason: 'builtIn'
+                });
+            })
+        ];
+    }
+
+    async getView(resource?: vscode.Uri): Promise<ProjectDefinitionView> {
+        return this.#buildView(resource, this.#dependencies.local.getSnapshot(resource));
+    }
+
+    async #buildView(
+        resource: vscode.Uri | undefined,
+        local: ProjectDefinitionSnapshot | null
+    ): Promise<ProjectDefinitionView> {
+        const currentScenarios = this.#dependencies.scenarios.getScenarioCatalog();
+        const catalogResource = local
+            ? { toString: () => local.workspaceFolderUri } as vscode.Uri
+            : resource;
+        const [steps, scenarios] = await Promise.all([
+            this.#dependencies.steps.getCatalog(catalogResource),
+            currentScenarios
+                ? Promise.resolve(currentScenarios)
+                : this.#dependencies.scenarios.ensureFreshScenarioCatalog()
+        ]);
+        const nestedScenarios = callableNestedScenarios(scenarios);
+        const nestedIdentity = scenarioIdentity(nestedScenarios);
+        const identity = compositeIdentity(
+            steps.identity,
+            nestedIdentity,
+            local?.identity ?? 'local:unavailable'
+        );
+        const cached = this.#views.get(identity);
+        if (cached) {
+            return cached;
+        }
+        const view = createProjectDefinitionView(identity, [
+            ...builtInDefinitions(steps),
+            ...(local?.definitions ?? []),
+            ...nestedScenarios.map(nestedDefinition)
+        ]);
+        this.#views.set(identity, view);
+        return view;
+    }
+
+    async ensureReady(
+        resource?: vscode.Uri,
+        token?: CancellationTokenLike
+    ): Promise<ProjectDefinitionView> {
+        const local = await this.#dependencies.local.ensureReady(resource, token);
+        return this.#buildView(resource, local);
+    }
+
+    async resolve(
+        resource: vscode.Uri | undefined,
+        invocation: string,
+        view?: ProjectDefinitionView
+    ): Promise<ProjectDefinitionResolution> {
+        return resolveProjectInvocation(view ?? await this.getView(resource), invocation);
+    }
+
+    dispose(): void {
+        for (const subscription of this.#subscriptions) {
+            subscription.dispose();
+        }
+        this.#views.clear();
+        this.#emitter.dispose();
+    }
+
+    #onLocalChange(event: ProjectDefinitionSnapshotChangeEvent): void {
+        this.#views.clear();
+        this.#emitter.fire({
+            workspaceFolderUri: event.current.workspaceFolderUri,
+            reason: 'local'
+        });
+    }
+}

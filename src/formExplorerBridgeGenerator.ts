@@ -27,6 +27,7 @@ import {
     promptAndCacheInfobaseAuthentication,
     updateManagedInfobaseMetadata
 } from './infobaseManager';
+import { formatProcessCommandForDisplay } from './processCommandDisplay';
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -92,10 +93,6 @@ async function pathExists(targetPath: string): Promise<boolean> {
     }
 }
 
-function formatCommandForOutput(exePath: string, args: string[]): string {
-    return [exePath, ...args].map(p => `"${p}"`).join(' ');
-}
-
 // ─── bridge config JSON ───────────────────────────────────────────────────────
 
 async function writeBridgeConfigJson(configPath: string, config: BridgeConfigJson): Promise<void> {
@@ -124,7 +121,7 @@ async function launchInfobaseDetached(
 
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
     channel.appendLine(t('Launching 1C:Enterprise client for infobase: {0}', describeInfobaseConnection(infobasePath)));
-    channel.appendLine(t('Resolved 1C command: {0}', formatCommandForOutput(clientExePath, args)));
+    channel.appendLine(t('Resolved 1C command: {0}', formatProcessCommandForDisplay(clientExePath, args)));
 
     return await new Promise<number | null>((resolve, reject) => {
         try {

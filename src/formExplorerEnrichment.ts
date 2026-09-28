@@ -336,7 +336,7 @@ function chooseStaticLabel(metadata: StaticFormElementMetadata, fallbackName: st
 
 function getPropertyNode(node: XmlNode | null | undefined, propertyName: string): XmlNode | undefined {
     const propertiesNode = getFirstChildNode(node || null, 'Properties');
-    return getFirstChildNode(propertiesNode, propertyName);
+    return getFirstChildNode(propertiesNode || null, propertyName);
 }
 
 function getPropertyText(node: XmlNode | null | undefined, propertyName: string): string | undefined {

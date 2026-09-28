@@ -3,7 +3,7 @@ import * as path from 'path';
 import { getTranslator } from './localization';
 import { v4 as uuidv4 } from 'uuid';
 import { YamlParametersManager } from './yamlParametersManager';
-import { scanWorkspaceForTests } from './workspaceScanner';
+import { scanWorkspaceForScenarioCatalog } from './workspaceScanner';
 import { applyPreferredStepKeyword, getConfiguredScenarioLanguage, ScenarioLanguage } from './gherkinLanguage';
 import { isScenarioYamlFile, isTestSettingsYamlFile } from './yamlValidator';
 import { getScenarioScanRootPath } from './scenarioScanRoot';
@@ -25,6 +25,10 @@ import {
     parseYamlSectionFieldValues
 } from './yamlHeaderFields';
 import { isScenarioYamlUri } from './yamlValidator';
+import {
+    applyScenarioCategoryToTemplate,
+    validateScenarioCategoryValue
+} from './scenarioCategory';
 
 type ScenarioIndex = {
     names: Set<string>;
@@ -68,6 +72,16 @@ type PromptForSystemFunctionOptions = {
     placeHolder?: string;
 };
 
+export interface CreateNestedScenarioOptions {
+    readonly existingCategories?: readonly string[];
+}
+
+type ScenarioCategoryQuickPickItem = vscode.QuickPickItem & (
+    | { entryKind: 'category'; category: string }
+    | { entryKind: 'create' }
+    | { entryKind: 'none' }
+);
+
 type SelectedEtalonBaseValues = {
     baseName: string;
     baseId: string;
@@ -80,6 +94,24 @@ type ResolvedEtalonBasesState = {
     resolvedPath: string;
     bases: EtalonBaseDefinition[];
 };
+
+type SystemFunctionQuickPickItem = vscode.QuickPickItem & (
+    | { entryKind: 'systemFunction'; uid: string }
+    | { entryKind: 'add' }
+);
+
+type EtalonProfileQuickPickItem = vscode.QuickPickItem & (
+    | { entryKind: 'profile'; profileName: string }
+    | { entryKind: 'add' }
+);
+
+type EtalonBaseQuickPickItem = vscode.QuickPickItem & (
+    | { entryKind: 'base'; databaseId: string }
+    | { entryKind: 'add' }
+    | { entryKind: 'import' }
+    | { entryKind: 'export' }
+    | { entryKind: 'openCurrent' }
+);
 
 const SCENARIO_INDEX_CACHE_TTL_MS = 60_000;
 let scenarioIndexCache: ScenarioIndexCacheEntry | null = null;
@@ -859,13 +891,13 @@ async function selectScenarioForTestSettingsLink(
         return undefined;
     }
 
-    const discoveredTests = await scanWorkspaceForTests(workspaceFolder.uri);
-    if (!discoveredTests || discoveredTests.size === 0) {
+    const catalog = await scanWorkspaceForScenarioCatalog(workspaceFolder.uri);
+    if (catalog.all.length === 0) {
         vscode.window.showWarningMessage(t('No scenarios found in workspace.'));
         return undefined;
     }
 
-    const items = Array.from(discoveredTests.values())
+    const items = catalog.all
         .filter(item => !excludeUri || item.yamlFileUri.fsPath !== excludeUri.fsPath)
         .map(item => ({
             label: item.name,
@@ -1264,21 +1296,22 @@ export async function handleManageSystemFunctions(context: vscode.ExtensionConte
     let systemFunctions = [...getConfiguredSystemFunctions(config)];
 
     while (true) {
-        const pickedItem = await vscode.window.showQuickPick(
-            [
+        const items: SystemFunctionQuickPickItem[] = [
                 ...systemFunctions.map((systemFunction, index) => ({
                     label: systemFunction.name,
                     description: systemFunction.uid,
                     detail: index === 0 ? t('Default') : undefined,
-                    kind: 'systemFunction' as const,
+                    entryKind: 'systemFunction' as const,
                     uid: systemFunction.uid
                 })),
                 {
                     label: t('Add system function'),
                     detail: t('Create a new system function entry'),
-                    kind: 'add' as const
+                    entryKind: 'add' as const
                 }
-            ],
+            ];
+        const pickedItem = await vscode.window.showQuickPick<SystemFunctionQuickPickItem>(
+            items,
             {
                 placeHolder: t('Manage available system functions'),
                 title: t('System functions'),
@@ -1290,7 +1323,7 @@ export async function handleManageSystemFunctions(context: vscode.ExtensionConte
             return;
         }
 
-        if (pickedItem.kind === 'add') {
+        if (pickedItem.entryKind === 'add') {
             const name = await promptForSystemFunctionName(t);
             if (name === undefined) {
                 continue;
@@ -1517,21 +1550,22 @@ async function manageEtalonBaseProfiles(
     };
 
     while (true) {
-        const pickedItem = await vscode.window.showQuickPick(
-            [
+        const items: EtalonProfileQuickPickItem[] = [
                 ...nextBase.userProfiles.map(profile => ({
                     label: profile.profileName,
                     description: profile.login || undefined,
                     detail: profile.password ? t('Password is set') : t('Password is empty'),
-                    kind: 'profile' as const,
+                    entryKind: 'profile' as const,
                     profileName: profile.profileName
                 })),
                 {
                     label: t('Add user profile'),
                     detail: t('Create a new profile for this etalon base.'),
-                    kind: 'add' as const
+                    entryKind: 'add' as const
                 }
-            ],
+            ];
+        const pickedItem = await vscode.window.showQuickPick<EtalonProfileQuickPickItem>(
+            items,
             {
                 title: t('User profiles for "{0}"', base.name || base.databaseId),
                 placeHolder: t('Choose a profile to edit or add a new one'),
@@ -1543,7 +1577,7 @@ async function manageEtalonBaseProfiles(
             return nextBase;
         }
 
-        if (pickedItem.kind === 'add') {
+        if (pickedItem.entryKind === 'add') {
             const newProfile = await promptForEtalonBaseProfileValues(t);
             if (!newProfile) {
                 continue;
@@ -1651,38 +1685,39 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext):
     let etalonBasesState = await loadResolvedEtalonBasesState(context, t);
 
     while (true) {
-        const pickedItem = await vscode.window.showQuickPick(
-            [
+        const items: EtalonBaseQuickPickItem[] = [
                 ...etalonBasesState.bases.map(base => ({
                     label: base.name || base.databaseId,
                     description: base.databaseId,
                     detail: base.dtFilePath
                         ? t('DT: {0} · Profiles: {1}', base.dtFilePath, String(base.userProfiles.length))
                         : t('Profiles: {0}', String(base.userProfiles.length)),
-                    kind: 'base' as const,
+                    entryKind: 'base' as const,
                     databaseId: base.databaseId
                 })),
                 {
                     label: t('Add etalon base'),
                     detail: t('Create a new etalon base entry in bases.yaml.'),
-                    kind: 'add' as const
+                    entryKind: 'add' as const
                 },
                 {
                     label: t('Import bases.yaml from file'),
                     detail: t('Load etalon bases from an external YAML file into the current ModelDBSettings path.'),
-                    kind: 'import' as const
+                    entryKind: 'import' as const
                 },
                 {
                     label: t('Export bases.yaml to file'),
                     detail: t('Save the current etalon bases to an external YAML file.'),
-                    kind: 'export' as const
+                    entryKind: 'export' as const
                 },
                 {
                     label: t('Open current bases.yaml'),
                     detail: etalonBasesState.configuredPath || getDefaultModelDbSettingsValue(),
-                    kind: 'openCurrent' as const
+                    entryKind: 'openCurrent' as const
                 }
-            ],
+            ];
+        const pickedItem = await vscode.window.showQuickPick<EtalonBaseQuickPickItem>(
+            items,
             {
                 title: t('Etalon bases'),
                 placeHolder: t('ModelDBSettings: {0}', etalonBasesState.configuredPath || getDefaultModelDbSettingsValue()),
@@ -1694,7 +1729,7 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext):
             return;
         }
 
-        if (pickedItem.kind === 'add') {
+        if (pickedItem.entryKind === 'add') {
             const nextBase = await promptForEtalonBaseValues(t, etalonBasesState.workspaceRootPath);
             if (!nextBase) {
                 continue;
@@ -1713,7 +1748,7 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext):
             continue;
         }
 
-        if (pickedItem.kind === 'import') {
+        if (pickedItem.entryKind === 'import') {
             const selectedFile = await vscode.window.showOpenDialog({
                 canSelectFiles: true,
                 canSelectFolders: false,
@@ -1740,7 +1775,7 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext):
             continue;
         }
 
-        if (pickedItem.kind === 'export') {
+        if (pickedItem.entryKind === 'export') {
             const selectedTarget = await vscode.window.showSaveDialog({
                 title: t('Export bases.yaml'),
                 saveLabel: t('Export'),
@@ -1758,7 +1793,7 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext):
             continue;
         }
 
-        if (pickedItem.kind === 'openCurrent') {
+        if (pickedItem.entryKind === 'openCurrent') {
             await saveEtalonBasesToFile(etalonBasesState.resolvedPath, etalonBasesState.bases);
             await openEtalonBasesDocument(etalonBasesState.resolvedPath);
             continue;
@@ -1883,6 +1918,48 @@ async function promptForBooleanValue(
     );
 
     return pickedValue?.value;
+}
+
+async function promptForScenarioCategory(
+    existingCategories: readonly string[],
+    t: (message: string, ...args: string[]) => string
+): Promise<string | undefined> {
+    const items: ScenarioCategoryQuickPickItem[] = [
+        ...existingCategories.map(category => ({
+            label: category,
+            entryKind: 'category' as const,
+            category
+        })),
+        {
+            label: `$(add) ${t('Create new category…')}`,
+            entryKind: 'create'
+        },
+        {
+            label: `$(circle-slash) ${t('No category')}`,
+            entryKind: 'none'
+        }
+    ];
+    const selected = await vscode.window.showQuickPick(items, {
+        title: t('Nested scenario category'),
+        placeHolder: t('Select an existing category, create a new one, or continue without a category'),
+        ignoreFocusOut: true
+    });
+    if (!selected) {
+        return undefined;
+    }
+    if (selected.entryKind === 'none') {
+        return '';
+    }
+    if (selected.entryKind === 'category') {
+        return selected.category;
+    }
+    const value = await vscode.window.showInputBox({
+        title: t('Nested scenario category'),
+        prompt: t('Enter a category for the nested scenario.'),
+        ignoreFocusOut: true,
+        validateInput: input => validateScenarioCategoryValue(input, t)
+    });
+    return value?.trim();
 }
 
 async function promptForScenarioHeaderValues(
@@ -2060,20 +2137,15 @@ async function getKnownScenarioIndex(): Promise<ScenarioIndex> {
         return scenarioIndexCache.index;
     }
 
-    const discoveredTests = await scanWorkspaceForTests(workspaceRootUri);
+    const catalog = await scanWorkspaceForScenarioCatalog(workspaceRootUri);
     const index = createEmptyScenarioIndex();
-    if (discoveredTests) {
-        for (const [scenarioName, testInfo] of discoveredTests.entries()) {
-            index.names.add(normalizeScenarioName(scenarioName));
-            if (typeof testInfo?.name === 'string' && testInfo.name.trim().length > 0) {
-                index.names.add(normalizeScenarioName(testInfo.name));
-            }
-            if (typeof testInfo?.scenarioCode === 'string' && testInfo.scenarioCode.trim().length > 0) {
-                index.codes.add(normalizeScenarioCode(testInfo.scenarioCode));
-            }
-            if (typeof testInfo?.tabName === 'string' && testInfo.tabName.trim().length > 0) {
-                index.mainScenarioGroups.add(testInfo.tabName.trim());
-            }
+    for (const testInfo of catalog.all) {
+        index.names.add(normalizeScenarioName(testInfo.name));
+        if (typeof testInfo.scenarioCode === 'string' && testInfo.scenarioCode.trim().length > 0) {
+            index.codes.add(normalizeScenarioCode(testInfo.scenarioCode));
+        }
+        if (typeof testInfo.tabName === 'string' && testInfo.tabName.trim().length > 0) {
+            index.mainScenarioGroups.add(testInfo.tabName.trim());
         }
     }
 
@@ -2170,7 +2242,10 @@ async function maybeAutoAddScenarioToFavorites(
  * Запрашивает имя, код, папку, создает папку с кодом, файл scen.yaml и папку files.
  * @param context Контекст расширения для доступа к ресурсам (шаблонам).
  */
-export async function handleCreateNestedScenario(context: vscode.ExtensionContext): Promise<void> {
+export async function handleCreateNestedScenario(
+    context: vscode.ExtensionContext,
+    options: CreateNestedScenarioOptions = {}
+): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     const config = vscode.workspace.getConfiguration('kotTestToolkit');
     const newScenarioDefaults = getNewScenarioDefaults(config);
@@ -2225,8 +2300,12 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
         ignoreFocusOut: true,
         validateInput: value => {
             const trimmedValue = value?.trim();
-            if (!trimmedValue) return t('Code cannot be empty');
-            if (!/^\d+$/.test(trimmedValue)) return t('Code must contain digits only');
+            if (!trimmedValue) {
+                return t('Code cannot be empty');
+            }
+            if (!/^\d+$/.test(trimmedValue)) {
+                return t('Code must contain digits only');
+            }
             if (knownScenarioCodes.has(normalizeScenarioCode(trimmedValue))) {
                 return t('Scenario code "{0}" already exists.', trimmedValue);
             }
@@ -2287,6 +2366,15 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
         return;
     }
 
+    const scenarioCategory = await promptForScenarioCategory(
+        options.existingCategories ?? [],
+        t
+    );
+    if (scenarioCategory === undefined) {
+        console.log("[Cmd:createNestedScenario] Cancelled at category prompt.");
+        return;
+    }
+
     // 5. Создание папок и файла
     const newUid = uuidv4();
     const scenarioFolderUri = vscode.Uri.joinPath(baseFolderUri, trimmedCode); // Итоговая папка: parent/code
@@ -2311,10 +2399,14 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
             templateContent,
             scenarioHeaderValues
         );
+        const templateWithCategory = applyScenarioCategoryToTemplate(
+            templateWithDefaults,
+            scenarioCategory
+        ).content;
 
         // Заменяем плейсхолдеры
         const finalContent = applyScenarioLanguage(
-            applyTemplateReplacements(templateWithDefaults, {
+            applyTemplateReplacements(templateWithCategory, {
                 Name_Placeholder: escapeYamlDoubleQuotedString(trimmedName),
                 Code_Placeholder: escapeYamlDoubleQuotedString(trimmedCode),
                 UID_Placeholder: escapeYamlDoubleQuotedString(newUid)
@@ -2366,8 +2458,12 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
         ignoreFocusOut: true,
         validateInput: value => {
             const trimmedValue = value?.trim();
-            if (!trimmedValue) return t('Name cannot be empty');
-            if (/[/\\:*\?"<>|]/.test(trimmedValue)) return t('Name contains invalid characters');
+            if (!trimmedValue) {
+                return t('Name cannot be empty');
+            }
+            if (/[/\\:*\?"<>|]/.test(trimmedValue)) {
+                return t('Name contains invalid characters');
+            }
             if (knownScenarioNames.has(normalizeScenarioName(trimmedValue))) {
                 return t('Scenario name "{0}" already exists.', trimmedValue);
             }

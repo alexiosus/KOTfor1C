@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import { getTranslator } from './localization';
 import { buildFileInfobaseConnectionArgument } from './oneCInfobaseConnection';
 import { resolveOneCDesignerExePath } from './oneCPlatform';
+import { formatProcessCommandForDisplay } from './processCommandDisplay';
 
 const OUTPUT_CHANNEL_NAME = 'KOT Startup Infobase';
 const STARTUP_INFOBASE_ROOT_RELATIVE_PATH = path.join('.vscode', 'kot-runtime', 'startup-infobase');
@@ -66,12 +67,6 @@ function getOutputTail(output: string, maxLength: number = 4000): string {
     return output.length <= maxLength ? output.trim() : output.slice(-maxLength).trim();
 }
 
-function formatCommandForOutput(exePath: string, args: string[]): string {
-    return [exePath, ...args]
-        .map(part => `"${part}"`)
-        .join(' ');
-}
-
 async function ensureDirectory(directoryPath: string): Promise<void> {
     await fs.promises.mkdir(directoryPath, { recursive: true });
 }
@@ -118,7 +113,7 @@ async function run1CCommand(
 ): Promise<void> {
     const effectiveArgs = [...args, '/Out', outFilePath];
     channel.appendLine(t('Startup infobase step: {0}', stepTitle));
-    channel.appendLine(t('Resolved 1C command: {0}', formatCommandForOutput(exePath, effectiveArgs)));
+    channel.appendLine(t('Resolved 1C command: {0}', formatProcessCommandForDisplay(exePath, effectiveArgs)));
 
     await new Promise<void>((resolve, reject) => {
         let stdout = '';
@@ -430,7 +425,7 @@ export async function ensureSharedStartupInfobaseReady(
         };
     };
 
-    const operation = options?.showProgressNotification === false
+    const operation = Promise.resolve(options?.showProgressNotification === false
         ? performEnsure()
         : vscode.window.withProgress(
             {
@@ -439,7 +434,7 @@ export async function ensureSharedStartupInfobaseReady(
                 cancellable: false
             },
             async () => performEnsure()
-        );
+        ));
 
     activeEnsureOperations.set(ensureKey, operation);
     try {
