@@ -202,3 +202,16 @@ test('compact workbench views source user-facing strings from localization bundl
     assert.match(read('src/stepLibrarySidebarProvider.ts'), /vscode\.l10n\.t/u);
     assert.match(read('src/infobaseSidebarProvider.ts'), /vscode\.l10n\.t/u);
 });
+
+test('workbench performance gates are structural rather than wall-clock thresholds', () => {
+    const performanceTests = read('test/stepLibraryPerformance.test.ts');
+    assert.match(performanceTests, /without scans or path lookup/u);
+    assert.match(performanceTests, /share one in-flight resolver generation/u);
+    assert.match(performanceTests, /share one in-flight collector generation/u);
+    assert.doesNotMatch(performanceTests, /assert\.(?:ok|equal)\([^\n]*durationMs/u);
+
+    const compactProviderTests = read('test/stepLibrarySidebarProvider.test.ts');
+    assert.match(compactProviderTests, /initial ready posts loading and five roots without transferring the snapshot/u);
+    assert.match(compactProviderTests, /expand and search return bounded host-side pages only/u);
+    assert.match(compactProviderTests, /defers hidden invalidation and publishes the latest revision when shown again/u);
+});

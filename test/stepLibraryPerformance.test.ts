@@ -8,6 +8,10 @@ import type {
     ProjectDefinitionKind,
     ProjectDefinitionView
 } from '../src/projectDefinition';
+import { buildScenarioCatalog, type ScenarioCatalog } from '../src/scenarioCatalog';
+import { ScenarioRelationshipService } from '../src/scenarioRelationshipService';
+import { StepLibrarySnapshotService } from '../src/stepLibrarySnapshotService';
+import { ManagedInfobaseService } from '../src/managedInfobaseService';
 import { buildStepLibrarySnapshot } from '../src/stepLibraryModel';
 
 interface SearchItem {
@@ -72,6 +76,32 @@ function measure<T>(operation: () => T): { readonly value: T; readonly durationM
     return { value, durationMs: performance.now() - startedAt };
 }
 
+class EventHub<T> {
+    private readonly listeners = new Set<(event: T) => void>();
+
+    readonly event = (listener: (event: T) => void) => {
+        this.listeners.add(listener);
+        return { dispose: () => this.listeners.delete(listener) };
+    };
+}
+
+function deferred<T>(): { readonly promise: Promise<T>; resolve(value: T): void } {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>(resolvePromise => {
+        resolve = resolvePromise;
+    });
+    return { promise, resolve };
+}
+
+function emptyScenarioCatalog(): ScenarioCatalog {
+    return {
+        all: [],
+        byName: new Map(),
+        byUri: new Map(),
+        primaryByName: new Map()
+    };
+}
+
 test('prepared visual-library view keeps 2200 definitions on the client hot path', t => {
     const protocol = require(path.join(
         process.cwd(),
@@ -125,4 +155,110 @@ test('prepared visual-library view keeps 2200 definitions on the client hot path
     } finally {
         fs.readFileSync = originalReadFileSync;
     }
+});
+
+test('active-editor relationship updates use the published catalog without scans or path lookup', () => {
+    const catalogChanges = new EventHub<ScenarioCatalog | null>();
+    const configurationChanges = new EventHub<unknown>();
+    const nestedUri = {
+        scheme: 'file',
+        fsPath: '/workspace/Nested/scen.yaml',
+        toString: () => 'file:///workspace/Nested/scen.yaml'
+    };
+    const catalog = buildScenarioCatalog([{
+        name: 'Nested',
+        relativePath: 'Nested/scen.yaml',
+        yamlFileUri: nestedUri
+    } as never]);
+    let resolverCalls = 0;
+    let pathLookups = 0;
+    const service = new ScenarioRelationshipService({
+        catalogProvider: {
+            getScenarioCatalog: () => catalog,
+            ensureFreshScenarioCatalog: async () => {
+                resolverCalls += 1;
+                return catalog;
+            },
+            onDidUpdateScenarioCatalog: catalogChanges.event as never
+        },
+        configuration: {
+            get: <T>(_key: string, fallback?: T) => fallback,
+            update: async () => undefined
+        },
+        workspaceConfigurationTarget: 'workspace',
+        onDidChangeConfiguration: configurationChanges.event as never,
+        getScanRootPaths: () => {
+            pathLookups += 1;
+            return { scanRootPath: '/workspace', canonicalScanRootPath: '/workspace' };
+        }
+    });
+
+    service.handleActiveEditorChanged(nestedUri as never);
+
+    assert.equal(resolverCalls, 0);
+    assert.equal(pathLookups, 0);
+    assert.deepEqual(service.getState().currentScenarioKeys, [nestedUri.toString()]);
+    service.dispose();
+});
+
+test('two Step Library consumers share one in-flight resolver generation', async () => {
+    const resolverChanges = new EventHub<unknown>();
+    const scenarioChanges = new EventHub<ScenarioCatalog | null>();
+    const pendingView = deferred<ProjectDefinitionView>();
+    let resolverCalls = 0;
+    const service = new StepLibrarySnapshotService({
+        resolver: {
+            ensureReady: async () => {
+                resolverCalls += 1;
+                return pendingView.promise;
+            },
+            onDidChangeView: resolverChanges.event as never
+        },
+        scenarios: {
+            getScenarioCatalog: emptyScenarioCatalog,
+            onDidUpdateScenarioCatalog: scenarioChanges.event as never
+        }
+    });
+
+    const compactView = service.ensureReady();
+    const fullView = service.ensureReady();
+    assert.equal(resolverCalls, 1);
+    pendingView.resolve({ ...largeView(0), identity: 'shared-generation' });
+
+    const [compactSnapshot, fullSnapshot] = await Promise.all([compactView, fullView]);
+    assert.strictEqual(compactSnapshot, fullSnapshot);
+    assert.equal(resolverCalls, 1);
+    service.dispose();
+});
+
+test('two infobase consumers share one in-flight collector generation', async () => {
+    const profileChanges = new EventHub<unknown>();
+    const pendingRecords = deferred<readonly never[]>();
+    let collectorCalls = 0;
+    const service = new ManagedInfobaseService({
+        loadActiveProfile: async () => ({
+            id: 'active',
+            name: 'Active',
+            buildParameters: [],
+            additionalVanessaParameters: [],
+            globalVanessaVariables: []
+        }),
+        onDidChangeActiveProfile: profileChanges.event as never,
+        workspaceRootPath: '/workspace',
+        collect: async () => {
+            collectorCalls += 1;
+            return pendingRecords.promise;
+        }
+    });
+
+    const compactView = service.ensureReady();
+    const fullView = service.ensureReady();
+    await Promise.resolve();
+    assert.equal(collectorCalls, 1);
+    pendingRecords.resolve([]);
+
+    const [compactSnapshot, fullSnapshot] = await Promise.all([compactView, fullView]);
+    assert.strictEqual(compactSnapshot, fullSnapshot);
+    assert.equal(collectorCalls, 1);
+    service.dispose();
 });

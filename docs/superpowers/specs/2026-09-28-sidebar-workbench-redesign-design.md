@@ -409,4 +409,3 @@ Each step must leave the extension packageable and preserve existing full-panel 
 9. Destructive infobase imports require explicit confirmation naming the target base.
 10. Hidden views do not perform unnecessary render work, and opening the sidebar does not regress Extension Host responsiveness.
 11. Existing full Step Library, Infobase Manager, build, run, and creation workflows remain available.
-

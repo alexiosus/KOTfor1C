@@ -54,4 +54,3 @@ Exact names may follow existing domain terminology during extraction, but every 
 - Existing commands and public extension contributions are unchanged.
 - The full check and production bundle pass.
 - No excluded IntelliSense, steps, or AI files change.
-
