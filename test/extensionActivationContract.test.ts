@@ -79,7 +79,12 @@ test('step library is contributed to the palette and only YAML or feature editor
 test('activation creates one step-library panel lazily from shared services', () => {
     assert.doesNotMatch(source, /from '\.\/stepLibraryPanel';/u);
     assert.match(source, /import\('\.\/stepLibraryPanel\.js'\)/u);
+    assert.match(source, /import\('\.\/stepLibrarySnapshotService\.js'\)/u);
+    assert.match(source, /import\('\.\/stepLibraryActions\.js'\)/u);
     assert.equal(source.match(/new StepLibraryPanel\(/gu)?.length, 1);
+    assert.equal(source.match(/new StepLibrarySnapshotService\(/gu)?.length, 1);
+    assert.equal(source.match(/new StepLibraryActionService\(/gu)?.length, 1);
+    assert.match(source, /snapshotService,\s*actionService,/u);
     assert.match(source, /resolver:\s*projectDefinitionResolver/u);
     assert.match(source, /stepCatalogService\.refresh\(resource\)/u);
     assert.match(source, /projectDefinitionIndex\.reloadConfigurations\(\)/u);

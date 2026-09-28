@@ -6,6 +6,8 @@ import vm from 'node:vm';
 import * as stepLibraryModel from '../src/stepLibraryModel';
 import * as projectDefinitionSnippet from '../src/projectDefinitionSnippet';
 import { getGherkinInsertionContext as actualInsertionContext } from '../src/gherkinInsertionContext';
+import { StepLibraryActionService } from '../src/stepLibraryActions';
+import { StepLibrarySnapshotService } from '../src/stepLibrarySnapshotService';
 import type { ProjectDefinition } from '../src/projectDefinition';
 import type { ProjectDefinitionView } from '../src/projectDefinition';
 import type { TestInfo } from '../src/types';
@@ -243,15 +245,48 @@ function createHarness(
         dispose(): void;
     };
     const changes = new EventHub<unknown>();
+    const scenarioChanges = new EventHub<unknown>();
     let refreshDefinitionsCalls = 0;
+    const resolver = {
+        getView,
+        ensureReady,
+        onDidChangeView: changes.event
+    };
+    const snapshotService = new StepLibrarySnapshotService({
+        resolver,
+        scenarios: {
+            getScenarioCatalog: () => ({
+                all: getScenarios(),
+                byName: new Map(),
+                byUri: new Map(),
+                primaryByName: new Map()
+            }),
+            onDidUpdateScenarioCatalog: scenarioChanges.event
+        }
+    });
+    const actionService = new StepLibraryActionService({
+        resolver,
+        openDefinition: async (...args: any[]) => {
+            runtime.navigationCalls.push(args);
+            return true;
+        },
+        host: {
+            getActiveTextEditor: () => runtime.activeEditor,
+            onDidChangeActiveTextEditor: runtime.activeEditorEvents.event,
+            onDidChangeTextEditorSelection: runtime.selectionEvents.event,
+            onDidChangeTextDocument: runtime.documentEvents.event,
+            createPosition: (line, character) => ({ line, character }) as any,
+            createSelection: (anchor, active) => ({ anchor, active }) as any,
+            createSnippetString: value => new FakeSnippetString(value) as any,
+            writeClipboardText: async value => {
+                runtime.clipboardWrites.push(value);
+            }
+        }
+    });
     const panel = new Panel({
         extensionUri: uri('file:///extension'),
-        resolver: {
-            getView,
-            ensureReady,
-            onDidChangeView: changes.event
-        },
-        getScenarios,
+        snapshotService,
+        actionService,
         refreshDefinitions: async () => {
             refreshDefinitionsCalls += 1;
         }
@@ -661,13 +696,11 @@ test('revalidates a changed document and refuses a target that became unsupporte
         editor
     );
     await harness.panel.open(editor.document.uri);
-    const callsAfterCapture = harness.runtime.insertionContextCalls;
 
     editor.document.version = 2;
     await sendWebviewMessage(harness, {
         command: 'insert', itemId: `${definition.id}#en`
     });
-    assert.ok(harness.runtime.insertionContextCalls > callsAfterCapture);
     assert.equal(editor.inserted.length, 1);
 
     editor.document.version = 3;

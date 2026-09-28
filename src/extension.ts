@@ -892,11 +892,37 @@ export function activate(context: vscode.ExtensionContext) {
         | undefined;
     const getStepLibraryPanel = () => {
         if (!stepLibraryPanelPromise) {
-            stepLibraryPanelPromise = import('./stepLibraryPanel.js').then(({ StepLibraryPanel }) => {
+            stepLibraryPanelPromise = Promise.all([
+                import('./stepLibraryPanel.js'),
+                import('./stepLibrarySnapshotService.js'),
+                import('./stepLibraryActions.js')
+            ]).then(([
+                { StepLibraryPanel },
+                { StepLibrarySnapshotService },
+                { StepLibraryActionService }
+            ]) => {
+                const snapshotService = new StepLibrarySnapshotService({
+                    resolver: projectDefinitionResolver,
+                    scenarios: phaseSwitcherProvider
+                });
+                const actionService = new StepLibraryActionService({
+                    resolver: projectDefinitionResolver,
+                    openDefinition: openProjectDefinitionHandler,
+                    host: {
+                        getActiveTextEditor: () => vscode.window.activeTextEditor,
+                        onDidChangeActiveTextEditor: vscode.window.onDidChangeActiveTextEditor,
+                        onDidChangeTextEditorSelection: vscode.window.onDidChangeTextEditorSelection,
+                        onDidChangeTextDocument: vscode.workspace.onDidChangeTextDocument,
+                        createPosition: (line, character) => new vscode.Position(line, character),
+                        createSelection: (anchor, active) => new vscode.Selection(anchor, active),
+                        createSnippetString: value => new vscode.SnippetString(value),
+                        writeClipboardText: value => vscode.env.clipboard.writeText(value)
+                    }
+                });
                 const panel = new StepLibraryPanel({
                     extensionUri: context.extensionUri,
-                    resolver: projectDefinitionResolver,
-                    getScenarios: () => phaseSwitcherProvider.getScenarioCatalog()?.all ?? [],
+                    snapshotService,
+                    actionService,
                     refreshDefinitions: async resource => {
                         await stepCatalogService.refresh(resource);
                         await projectDefinitionIndex.reloadConfigurations();
@@ -906,7 +932,7 @@ export function activate(context: vscode.ExtensionContext) {
                         });
                     }
                 });
-                context.subscriptions.push(panel);
+                context.subscriptions.push(snapshotService, actionService, panel);
                 return panel;
             }).catch(error => {
                 stepLibraryPanelPromise = undefined;

@@ -1,23 +1,16 @@
 import * as vscode from 'vscode';
 import { getTranslator } from './localization';
-import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 import {
-    buildStepLibrarySnapshot,
     type StepLibraryItem,
     type StepLibrarySnapshot
 } from './stepLibraryModel';
-import {
-    getGherkinInsertionContext,
-    type GherkinInsertionContext
-} from './gherkinInsertionContext';
-import { buildProjectDefinitionInsertion } from './projectDefinitionSnippet';
-import { openProjectDefinitionHandler } from './projectDefinitionNavigation';
-import type { TestInfo } from './types';
+import type { StepLibraryActionService } from './stepLibraryActions';
+import type { StepLibrarySnapshotService } from './stepLibrarySnapshotService';
 
 export interface StepLibraryPanelServices {
     readonly extensionUri: vscode.Uri;
-    readonly resolver: ProjectDefinitionResolver;
-    readonly getScenarios: () => readonly TestInfo[];
+    readonly snapshotService: StepLibrarySnapshotService;
+    readonly actionService: StepLibraryActionService;
     readonly refreshDefinitions: (resource?: vscode.Uri) => Promise<void>;
 }
 
@@ -27,16 +20,6 @@ export type StepLibraryInboundMessage =
     | { readonly command: 'insert'; readonly itemId: string }
     | { readonly command: 'copy'; readonly itemId: string }
     | { readonly command: 'openDefinition'; readonly itemId: string };
-
-interface CapturedInsertionTarget {
-    readonly editor: vscode.TextEditor;
-    readonly uri: string;
-    readonly version: number;
-    readonly selections: readonly vscode.Selection[];
-    readonly context: GherkinInsertionContext;
-    readonly indentation: string;
-    readonly identity: string;
-}
 
 type Translator = (message: string, ...args: string[]) => string;
 
@@ -101,14 +84,27 @@ export class StepLibraryPanel implements vscode.Disposable {
     private pendingRefreshWhenVisible = false;
     private lastPostedIdentity: string | null = null;
     private lastSuccessfulSnapshot: StepLibrarySnapshot | null = null;
-    private insertionTarget: CapturedInsertionTarget | null = null;
-    private insertionTargetGeneration = 0;
     private readonly pendingActions = new Set<string>();
+    private refreshDefinitionsInProgress = false;
 
     constructor(private readonly services: StepLibraryPanelServices) {
-        this.disposables.push(this.services.resolver.onDidChangeView(() => {
-            this.scheduleRefresh();
-        }));
+        this.disposables.push(
+            this.services.snapshotService.onDidInvalidate(() => {
+                this.scheduleRefresh();
+            }),
+            this.services.actionService.onDidChangeInsertionTarget(target => {
+                if (target.resource && this.resource?.toString() !== target.resource.toString()) {
+                    this.resource = target.resource;
+                    if (this.lastSuccessfulSnapshot) {
+                        this.scheduleRefresh();
+                    }
+                    return;
+                }
+                if (this.lastSuccessfulSnapshot) {
+                    void this.postSnapshotIfChanged(this.lastSuccessfulSnapshot);
+                }
+            })
+        );
     }
 
     public async open(resource?: vscode.Uri): Promise<void> {
@@ -117,9 +113,6 @@ export class StepLibraryPanel implements vscode.Disposable {
         }
         const t = await getTranslator(this.services.extensionUri);
         if (this.panel) {
-            if (vscode.window.activeTextEditor) {
-                this.updateInsertionTarget(vscode.window.activeTextEditor);
-            }
             this.panel.title = t('KOT Step Library');
             this.panel.reveal(vscode.ViewColumn.One);
             await this.refreshSnapshot();
@@ -141,9 +134,6 @@ export class StepLibraryPanel implements vscode.Disposable {
         this.lastPostedIdentity = null;
         this.lastSuccessfulSnapshot = null;
         this.pendingActions.clear();
-        if (vscode.window.activeTextEditor) {
-            this.updateInsertionTarget(vscode.window.activeTextEditor);
-        }
         panel.webview.html = this.getWebviewHtml(panel.webview, t);
         this.panelDisposables = [
             panel.onDidDispose(() => {
@@ -154,8 +144,6 @@ export class StepLibraryPanel implements vscode.Disposable {
                 }
                 this.lastPostedIdentity = null;
                 this.lastSuccessfulSnapshot = null;
-                this.insertionTarget = null;
-                this.insertionTargetGeneration += 1;
                 this.pendingRefreshWhenVisible = false;
             }),
             panel.onDidChangeViewState(event => {
@@ -171,19 +159,6 @@ export class StepLibraryPanel implements vscode.Disposable {
                 const message = parseStepLibraryInboundMessage(rawMessage);
                 if (message) {
                     void this.handleMessage(message);
-                }
-            }),
-            vscode.window.onDidChangeActiveTextEditor(editor => {
-                if (editor) {
-                    this.updateInsertionTarget(editor);
-                }
-            }),
-            vscode.window.onDidChangeTextEditorSelection(event => {
-                this.updateInsertionTarget(event.textEditor);
-            }),
-            vscode.workspace.onDidChangeTextDocument(event => {
-                if (this.insertionTarget?.uri === event.document.uri.toString()) {
-                    this.updateInsertionTarget(this.insertionTarget.editor);
                 }
             })
         ];
@@ -202,8 +177,6 @@ export class StepLibraryPanel implements vscode.Disposable {
         panel?.dispose();
         this.lastPostedIdentity = null;
         this.lastSuccessfulSnapshot = null;
-        this.insertionTarget = null;
-        this.insertionTargetGeneration += 1;
         this.pendingActions.clear();
     }
 
@@ -214,7 +187,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     }
 
     private scheduleRefresh(): void {
-        if (!this.panel) {
+        if (!this.panel || this.refreshDefinitionsInProgress) {
             return;
         }
         if (!this.panel.visible) {
@@ -239,7 +212,7 @@ export class StepLibraryPanel implements vscode.Disposable {
             if (!this.lastSuccessfulSnapshot) {
                 await panel.webview.postMessage({ command: 'loading' });
             }
-            const view = await this.services.resolver.ensureReady(this.resource);
+            const snapshot = await this.services.snapshotService.ensureReady(this.resource);
             if (generation !== this.loadGeneration || this.panel !== panel) {
                 return;
             }
@@ -247,7 +220,6 @@ export class StepLibraryPanel implements vscode.Disposable {
                 this.pendingRefreshWhenVisible = true;
                 return;
             }
-            const snapshot = buildStepLibrarySnapshot(view, this.services.getScenarios());
             this.lastSuccessfulSnapshot = snapshot;
             await this.postSnapshotIfChanged(snapshot, force);
         } catch (error) {
@@ -271,7 +243,8 @@ export class StepLibraryPanel implements vscode.Disposable {
         if (!this.panel) {
             return;
         }
-        const identity = `${snapshot.viewIdentity}\0${this.insertionTargetIdentity}`;
+        const insertionTarget = this.services.actionService.getInsertionTargetState();
+        const identity = `${snapshot.viewIdentity}\0${insertionTarget.identity}`;
         if (!force && identity === this.lastPostedIdentity) {
             return;
         }
@@ -280,156 +253,10 @@ export class StepLibraryPanel implements vscode.Disposable {
             command: 'snapshot',
             snapshot,
             insertionTarget: {
-                identity: this.insertionTargetIdentity,
-                available: this.insertionTarget !== null
+                identity: insertionTarget.identity,
+                available: insertionTarget.available
             }
         });
-    }
-
-    private get insertionTargetIdentity(): string {
-        return this.insertionTarget?.identity ?? 'unavailable';
-    }
-
-    private cloneSelection(selection: vscode.Selection): vscode.Selection {
-        return new vscode.Selection(
-            new vscode.Position(selection.anchor.line, selection.anchor.character),
-            new vscode.Position(selection.active.line, selection.active.character)
-        );
-    }
-
-    private positionsEqual(left: vscode.Position, right: vscode.Position): boolean {
-        return left.line === right.line && left.character === right.character;
-    }
-
-    private orderedSelectionStart(selection: vscode.Selection): vscode.Position {
-        const anchorBeforeActive = selection.anchor.line < selection.active.line
-            || (
-                selection.anchor.line === selection.active.line
-                && selection.anchor.character <= selection.active.character
-            );
-        return anchorBeforeActive ? selection.anchor : selection.active;
-    }
-
-    private buildInsertionSelection(
-        editor: vscode.TextEditor,
-        selection: vscode.Selection,
-        context: GherkinInsertionContext
-    ): { readonly selection: vscode.Selection; readonly indentation: string } {
-        if (!this.positionsEqual(selection.anchor, selection.active)) {
-            const start = this.orderedSelectionStart(selection);
-            return {
-                selection: this.cloneSelection(selection),
-                indentation: start.character === 0 ? context.indentation : ''
-            };
-        }
-
-        const position = selection.active;
-        const linePrefix = editor.document.lineAt(position.line).text.slice(0, position.character);
-        const actualIndentation = /^\s*/u.exec(linePrefix)?.[0] ?? '';
-        if (!linePrefix.trim()) {
-            if (actualIndentation !== context.indentation) {
-                return {
-                    selection: new vscode.Selection(
-                        new vscode.Position(position.line, 0),
-                        new vscode.Position(position.line, position.character)
-                    ),
-                    indentation: context.indentation
-                };
-            }
-            return { selection: this.cloneSelection(selection), indentation: '' };
-        }
-
-        return {
-            selection: new vscode.Selection(
-                new vscode.Position(position.line, actualIndentation.length),
-                new vscode.Position(position.line, position.character)
-            ),
-            indentation: ''
-        };
-    }
-
-    private captureInsertionTarget(editor: vscode.TextEditor): CapturedInsertionTarget | null {
-        if (editor.selections.length === 0) {
-            return null;
-        }
-        const contexts: GherkinInsertionContext[] = [];
-        const insertionSelections: vscode.Selection[] = [];
-        const insertionIndentations: string[] = [];
-        for (const selection of editor.selections) {
-            const anchorContext = getGherkinInsertionContext(editor.document, selection.anchor);
-            const activeContext = selection.anchor.line === selection.active.line
-                && selection.anchor.character === selection.active.character
-                ? anchorContext
-                : getGherkinInsertionContext(editor.document, selection.active);
-            if (!anchorContext || !activeContext) {
-                return null;
-            }
-            contexts.push(activeContext);
-            const insertion = this.buildInsertionSelection(editor, selection, activeContext);
-            insertionSelections.push(insertion.selection);
-            insertionIndentations.push(insertion.indentation);
-        }
-        const context = contexts[0];
-        const indentation = insertionIndentations[0];
-        const homogeneous = contexts.every((candidate, index) =>
-            candidate.language === context.language
-            && candidate.typedKeyword === context.typedKeyword
-            && candidate.fallbackKeyword === context.fallbackKeyword
-            && insertionIndentations[index] === indentation
-        );
-        if (!homogeneous) {
-            return null;
-        }
-        const uri = editor.document.uri.toString();
-        return {
-            editor,
-            uri,
-            version: editor.document.version,
-            selections: insertionSelections,
-            context,
-            indentation,
-            identity: `available\0${uri}`
-        };
-    }
-
-    private updateInsertionTarget(editor: vscode.TextEditor): void {
-        const previousIdentity = this.insertionTargetIdentity;
-        this.insertionTargetGeneration += 1;
-        this.insertionTarget = this.captureInsertionTarget(editor);
-        if (
-            this.insertionTarget
-            && this.resource?.toString() !== editor.document.uri.toString()
-        ) {
-            this.resource = editor.document.uri;
-            if (this.lastSuccessfulSnapshot) {
-                this.scheduleRefresh();
-            }
-        }
-        if (previousIdentity !== this.insertionTargetIdentity && this.lastSuccessfulSnapshot) {
-            void this.postSnapshotIfChanged(this.lastSuccessfulSnapshot);
-        }
-    }
-
-    private revalidateInsertionTarget(
-        captured: CapturedInsertionTarget | null = this.insertionTarget
-    ): CapturedInsertionTarget | null {
-        if (
-            !captured
-            || this.insertionTarget?.editor !== captured.editor
-            || captured.editor.document.uri.toString() !== captured.uri
-        ) {
-            return null;
-        }
-        const current = this.captureInsertionTarget(captured.editor);
-        if (!current) {
-            this.insertionTarget = null;
-            if (this.lastSuccessfulSnapshot) {
-                void this.postSnapshotIfChanged(this.lastSuccessfulSnapshot);
-            }
-            return null;
-        }
-        this.insertionTarget = current;
-        return current;
     }
 
     private findItem(itemId: string): StepLibraryItem | undefined {
@@ -473,62 +300,6 @@ export class StepLibraryPanel implements vscode.Disposable {
         }
     }
 
-    private async insertItem(item: StepLibraryItem): Promise<boolean> {
-        if (!item.insertable) {
-            return false;
-        }
-        let target = this.revalidateInsertionTarget();
-        if (!target) {
-            return false;
-        }
-        const targetGeneration = this.insertionTargetGeneration;
-        const view = await this.services.resolver.getView(target.editor.document.uri);
-        const definition = view.byId.get(item.definitionId);
-        if (!definition) {
-            return false;
-        }
-        if (
-            targetGeneration !== this.insertionTargetGeneration
-            || this.insertionTarget?.editor !== target.editor
-        ) {
-            return false;
-        }
-        target = this.revalidateInsertionTarget(target);
-        if (!target) {
-            return false;
-        }
-        const insertion = buildProjectDefinitionInsertion(definition, {
-            preferredText: definition.kind === 'exportScenario'
-                ? definition.usageExample ?? definition.template
-                : definition.template,
-            typedKeyword: target.context.typedKeyword,
-            fallbackKeyword: target.context.fallbackKeyword,
-            indentation: target.indentation,
-            language: target.context.language
-        });
-        return target.editor.insertSnippet(
-            new vscode.SnippetString(insertion.snippetText),
-            [...target.selections]
-        );
-    }
-
-    private async copyItem(item: StepLibraryItem): Promise<boolean> {
-        await vscode.env.clipboard.writeText(item.displayText);
-        return true;
-    }
-
-    private async openItem(item: StepLibraryItem): Promise<boolean> {
-        if (item.kind === 'builtInStep' || !item.navigable || !item.capturedLocation) {
-            return false;
-        }
-        return openProjectDefinitionHandler(
-            item.definitionId,
-            this.resource,
-            this.services.resolver,
-            item.capturedLocation
-        );
-    }
-
     private async handleMessage(message: StepLibraryInboundMessage): Promise<void> {
         switch (message.command) {
             case 'ready':
@@ -539,8 +310,13 @@ export class StepLibraryPanel implements vscode.Disposable {
                 }
                 return;
             case 'refresh':
+                if (this.refreshDefinitionsInProgress) {
+                    return;
+                }
+                this.refreshDefinitionsInProgress = true;
                 try {
                     await this.services.refreshDefinitions(this.resource);
+                    this.services.snapshotService.invalidate();
                     await this.refreshSnapshot(true);
                 } catch (error) {
                     await this.panel?.webview.postMessage({
@@ -548,19 +324,29 @@ export class StepLibraryPanel implements vscode.Disposable {
                         message: errorMessage(error),
                         hasSnapshot: this.lastSuccessfulSnapshot !== null
                     });
+                } finally {
+                    this.refreshDefinitionsInProgress = false;
                 }
                 return;
             case 'insert':
-                await this.runItemAction('insert', message.itemId, item => this.insertItem(item));
+                await this.runItemAction(
+                    'insert',
+                    message.itemId,
+                    item => this.services.actionService.insert(item, this.resource)
+                );
                 return;
             case 'copy':
-                await this.runItemAction('copy', message.itemId, item => this.copyItem(item));
+                await this.runItemAction(
+                    'copy',
+                    message.itemId,
+                    item => this.services.actionService.copy(item)
+                );
                 return;
             case 'openDefinition':
                 await this.runItemAction(
                     'openDefinition',
                     message.itemId,
-                    item => this.openItem(item)
+                    item => this.services.actionService.openDefinition(item, this.resource)
                 );
                 return;
         }
