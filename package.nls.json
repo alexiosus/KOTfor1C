@@ -170,8 +170,8 @@
   "submenu.editorContext.create": "KOT - Create...",
   "submenu.editorContext.editing": "KOT - Editing",
 
-  "view.phaseSwitcher.name": "KOT for 1C",
-  "view.phaseSwitcher.contextualTitle": "KOT for 1C",
+  "view.phaseSwitcher.name": "Test Manager",
+  "view.phaseSwitcher.contextualTitle": "KOT Test Manager",
   "view.stepLibrary.name": "Step Library",
   "view.stepLibrary.contextualTitle": "KOT Step Library",
   "view.infobases.name": "Infobases",

@@ -117,14 +117,6 @@
                                     </a>
                                 </div>
                             </div>
-                            <button
-                                id="toggleScenarioSearchBtn"
-                                class="button-with-icon compact-action-btn toggle-btn manager-search-toggle-btn icon-only kot-icon-button"
-                                title="${loc.toggleScenarioSearchTitle}"
-                                aria-label="${loc.toggleScenarioSearchTitle}"
-                                aria-pressed="false">
-                                <span class="codicon codicon-search"></span>
-                            </button>
                             <button id="relationshipToggleBtn" class="button-with-icon compact-action-btn toggle-btn icon-only kot-icon-button" title="${loc.relationshipToggleTitle}" aria-pressed="true" aria-label="${loc.relationshipToggleTitle}">
                                 <span class="codicon codicon-git-branch"></span>
                             </button>
@@ -133,9 +125,6 @@
                             </button>
                             <button id="collapseAllBtn" class="button-with-icon compact-action-btn ghost-btn icon-only kot-icon-button" title="${loc.collapseExpandAllTitle}" aria-label="${loc.collapseExpandAllTitle}">
                                 <span class="codicon codicon-list-tree"></span>
-                            </button>
-                            <button id="selectAllBtn" class="button-with-icon compact-action-btn ghost-btn icon-only kot-icon-button" title="${loc.toggleAllCheckboxesTitle}" aria-label="${loc.toggleAllCheckboxesTitle}">
-                                <span class="codicon codicon-checklist"></span>
                             </button>
                         </div>
                     </div>
@@ -154,7 +143,7 @@
                 <div id="relationshipSummaryContext" class="relationship-context-line relationship-context-summary"></div>
             </div>
 
-            <div id="scenarioSearchRow" class="scenario-search-row kot-sidebar-search hidden">
+            <div id="scenarioSearchRow" class="scenario-search-row kot-sidebar-search">
                 <div class="scenario-search-input-wrap search-frame">
                     <span class="codicon codicon-search scenario-search-icon" aria-hidden="true"></span>
                     <input
@@ -172,6 +161,15 @@
                         <span class="codicon codicon-close"></span>
                     </button>
                 </div>
+            </div>
+
+            <div id="selectionSummary" class="selection-summary">
+                <label class="selection-summary-toggle" for="selectAllBtn">
+                    <input id="selectAllBtn" type="checkbox" aria-label="${loc.selectVisible}" title="${loc.selectVisible}">
+                    <span>${loc.selectVisible}</span>
+                </label>
+                <span class="selection-summary-count"><strong id="selectedCount">0</strong> ${loc.of} <span id="selectableCount">0</span> ${loc.selected}</span>
+                <button id="clearSelectionBtn" class="selection-clear-btn" type="button">${loc.clearSelection}</button>
             </div>
 
             <div id="phaseTreeContainer" class="phase-tree-container manager-view-panel kot-tree" role="tree">

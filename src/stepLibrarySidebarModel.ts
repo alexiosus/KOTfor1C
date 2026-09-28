@@ -12,6 +12,9 @@ export interface StepLibrarySidebarNode {
     readonly depth: number;
     readonly expandable: boolean;
     readonly itemId?: string;
+    readonly insertable?: boolean;
+    readonly navigable?: boolean;
+    readonly dragText?: string;
     readonly alternateLabel?: string;
     readonly scenarioKey?: string;
     readonly sourceGroup?: StepLibrarySourceGroup;
@@ -102,6 +105,9 @@ function definitionNode(item: StepLibraryItem, depth: number): StepLibrarySideba
         depth,
         expandable: false,
         itemId: item.id,
+        insertable: item.insertable,
+        navigable: item.navigable,
+        ...(item.insertable ? { dragText: item.displayText } : {}),
         ...(item.alternateDisplayText ? { alternateLabel: item.alternateDisplayText } : {}),
         ...(scenarioKey ? { scenarioKey } : {}),
         sourceGroup: item.sourceGroup

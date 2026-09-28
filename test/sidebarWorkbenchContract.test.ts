@@ -37,7 +37,6 @@ test('sidebar colors use VS Code theme tokens and distinguish current from relat
     assert.match(css, /\.is-current\s*\{[^}]*--vscode-list-activeSelectionBackground/isu);
     assert.match(css, /\.is-related\s*\{[^}]*--kot-sidebar-related/isu);
     assert.match(css, /\.is-transitive\s*\{[^}]*opacity/isu);
-    assert.match(css, /\.is-modified[\s\S]*--vscode-editorWarning-foreground/u);
 });
 
 test('tree toggles and icon-only controls expose localized accessible names', () => {
@@ -52,12 +51,17 @@ test('tree toggles and icon-only controls expose localized accessible names', ()
     }
 });
 
-test('relationship, current, and modified states have non-color text alternatives', () => {
+test('relationship and current states have non-color text alternatives', () => {
     assert.match(html, /id="relationshipToggleBtn"[^>]*aria-pressed="true"[^>]*aria-label="\$\{loc\.relationshipToggleTitle\}"/su);
     assert.match(html, /id="relationshipCurrentContext"[^>]*aria-live="polite"/su);
     assert.match(html, /id="relationshipSummaryContext"/u);
     assert.match(script, /class="scenario-relationship-icon[^"\n]*"[^>]*role="img"[^>]*aria-label=/u);
-    assert.match(script, /class="kot-modified"[^>]*title="\$\{viewState\.escapedModifiedTitle\}"[^>]*aria-label=/u);
+});
+
+test('live build selection does not pretend to have unapplied row changes', () => {
+    assert.doesNotMatch(script, /class="kot-modified"|>M<|classList\.toggle\('is-modified'|classList\.toggle\('changed'/u);
+    assert.doesNotMatch(read('media/kotSidebar.css'), /\.kot-modified|\.is-modified/u);
+    assert.match(script, /selectionStateSummary/u);
 });
 
 test('relationship toggle and compact context remain independent from build checkboxes', () => {
@@ -142,6 +146,34 @@ test('compact Step Library exposes relationship direction without horizontal ove
     assert.match(compactCss, /\.is-related/u);
     assert.match(compactCss, /\.is-transitive/u);
     assert.match(compactCss, /overflow-x:\s*hidden/u);
+});
+
+test('compact Step Library exposes insert, copy, open, and editor drag affordances', () => {
+    const compactProvider = read('src/stepLibrarySidebarProvider.ts');
+    const compactScript = read('media/stepLibrarySidebar.js');
+    const compactCss = read('media/stepLibrarySidebar.css');
+
+    assert.match(compactProvider, /\| \{ readonly command: 'copy'; readonly itemId: string \}/u);
+    assert.match(compactProvider, /actionService\.copy\(item\)/u);
+    assert.match(compactScript, /createActionButton\(\s*'insert'/u);
+    assert.match(compactScript, /createActionButton\('copy'/u);
+    assert.match(compactScript, /createActionButton\('openDefinition'/u);
+    assert.match(compactScript, /node\.insertable === true[\s\S]*?row\.draggable\s*=\s*true/u);
+    assert.match(compactScript, /dataTransfer\.setData\('text\/plain', node\.dragText\)/u);
+    assert.match(compactCss, /\.step-row:hover \.step-actions/u);
+    assert.match(compactCss, /\.step-row:focus-within \.step-actions/u);
+});
+
+test('Test Manager uses flat sidebar chrome and keeps search and selection summary visible', () => {
+    assert.match(html, /id="selectionSummary"/u);
+    assert.match(html, /id="selectedCount"/u);
+    assert.match(html, /id="selectableCount"/u);
+    assert.match(html, /id="clearSelectionBtn"/u);
+    assert.doesNotMatch(html, /id="toggleScenarioSearchBtn"/u);
+    const nativeOverrides = phaseCss.slice(phaseCss.indexOf('/* Native sidebar workbench overrides.'));
+    assert.match(nativeOverrides, /\.manager-tabs\s*\{[^}]*border:\s*0[^}]*border-radius:\s*0/isu);
+    assert.match(nativeOverrides, /\.phase-group\s*\{[^}]*border-radius:\s*0/isu);
+    assert.match(nativeOverrides, /label\.checkbox-item\s*\{[^}]*border-radius:\s*0/isu);
 });
 
 test('compact Infobases view uses native sidebar primitives and a closed maintenance protocol', () => {

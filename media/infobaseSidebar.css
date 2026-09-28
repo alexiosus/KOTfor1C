@@ -143,12 +143,28 @@ body {
 }
 
 .infobase-menu button {
+    display: flex;
+    align-items: center;
+    gap: 7px;
     padding: 5px 8px;
     border: 0;
     background: transparent;
     color: inherit;
     text-align: left;
     font: inherit;
+}
+
+.infobase-menu-heading {
+    padding: 6px 8px 3px;
+    border-top: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-widget-border));
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.infobase-menu-heading:first-child {
+    border-top: 0;
 }
 
 .infobase-menu button:hover,
@@ -159,8 +175,20 @@ body {
 }
 
 .infobase-footer {
-    justify-content: flex-end;
+    justify-content: stretch;
     border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+}
+
+.infobase-footer #openFullButton {
+    flex: 1 1 auto;
+    justify-content: flex-start;
+}
+
+.infobase-footer .infobase-create-button {
+    flex: 0 0 28px;
+    width: 28px;
+    padding: 0;
+    justify-content: center;
 }
 
 .infobase-footer button {

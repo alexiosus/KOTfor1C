@@ -21,6 +21,7 @@ export type StepLibrarySidebarMessage =
     | { readonly command: 'expand'; readonly nodeId: string; readonly offset: number }
     | { readonly command: 'search'; readonly query: string }
     | { readonly command: 'insert'; readonly itemId: string }
+    | { readonly command: 'copy'; readonly itemId: string }
     | { readonly command: 'openDefinition'; readonly itemId: string }
     | { readonly command: 'refresh' }
     | { readonly command: 'openFullLibrary' };
@@ -89,7 +90,7 @@ export function parseStepLibrarySidebarMessage(value: unknown): StepLibrarySideb
         }
         return { command: 'search', query: record.query };
     }
-    if (record.command === 'insert' || record.command === 'openDefinition') {
+    if (record.command === 'insert' || record.command === 'copy' || record.command === 'openDefinition') {
         const itemId = cleanId(record.itemId);
         return itemId ? { command: record.command, itemId } : null;
     }
@@ -249,6 +250,9 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
             case 'insert':
                 await this.runItemAction(message.itemId, 'insert');
                 return;
+            case 'copy':
+                await this.runItemAction(message.itemId, 'copy');
+                return;
             case 'openDefinition':
                 await this.runItemAction(message.itemId, 'openDefinition');
                 return;
@@ -261,7 +265,7 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
         }
     }
 
-    private async runItemAction(itemId: string, action: 'insert' | 'openDefinition'): Promise<void> {
+    private async runItemAction(itemId: string, action: 'insert' | 'copy' | 'openDefinition'): Promise<void> {
         const item = this.index?.getItem(itemId);
         const actionKey = `${action}\0${itemId}`;
         if (!item || this.pendingActions.has(actionKey)) {
@@ -271,7 +275,9 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
         try {
             const succeeded = action === 'insert'
                 ? await this.services.actionService.insert(item, this.resource)
-                : await this.services.actionService.openDefinition(item, this.resource);
+                : action === 'copy'
+                    ? await this.services.actionService.copy(item)
+                    : await this.services.actionService.openDefinition(item, this.resource);
             await this.view?.webview.postMessage({
                 command: 'actionResult',
                 action,
@@ -426,7 +432,7 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
     <title>${t('Step Library')}</title>
 </head>
 <body>
-    <main class="step-sidebar" data-loading="${t('Loading step library...')}" data-no-matches="${t('No steps match the current filters.')}" data-error="${t('Unable to load the Step Library')}" data-contains-related-scenarios="${t('Contains scenarios related to the open scenario')}" data-insert-step="${t('Insert step')}" data-insertion-unavailable="${t('Insertion target unavailable')}" data-relationship-current="${t('Currently open scenario')}" data-relationship-incoming-direct="${t('Calls the open scenario directly')}" data-relationship-incoming-transitive="${t('Calls the open scenario through {0} scenarios')}" data-relationship-outgoing-direct="${t('Called by the open scenario directly')}" data-relationship-outgoing-transitive="${t('Called by the open scenario through {0} scenarios')}" data-relationship-contains-related="${t('Contains a scenario related to the open scenario')}">
+    <main class="step-sidebar" data-loading="${t('Loading step library...')}" data-no-matches="${t('No steps match the current filters.')}" data-error="${t('Unable to load the Step Library')}" data-contains-related-scenarios="${t('Contains scenarios related to the open scenario')}" data-insert-step="${t('Insert step')}" data-copy-step="${t('Copy step')}" data-open-definition="${t('Open definition')}" data-insertion-unavailable="${t('Insertion target unavailable')}" data-relationship-current="${t('Currently open scenario')}" data-relationship-incoming-direct="${t('Calls the open scenario directly')}" data-relationship-incoming-transitive="${t('Calls the open scenario through {0} scenarios')}" data-relationship-outgoing-direct="${t('Called by the open scenario directly')}" data-relationship-outgoing-transitive="${t('Called by the open scenario through {0} scenarios')}" data-relationship-contains-related="${t('Contains a scenario related to the open scenario')}">
         <div class="step-toolbar">
             <div class="step-search-wrap">
                 <span class="codicon codicon-search" aria-hidden="true"></span>

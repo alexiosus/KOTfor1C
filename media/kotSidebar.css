@@ -4,7 +4,6 @@
     --kot-sidebar-action-gutter: 76px;
     --kot-sidebar-related: var(--vscode-charts-purple, var(--vscode-editorBracketHighlight-foreground4, var(--vscode-list-highlightForeground)));
     --kot-sidebar-current: var(--vscode-focusBorder);
-    --kot-sidebar-modified: var(--vscode-editorWarning-foreground);
 }
 
 .kot-sidebar-toolbar {
@@ -111,24 +110,6 @@
 
 .is-transitive {
     opacity: 0.72;
-}
-
-.is-modified .kot-modified,
-.kot-modified {
-    color: var(--vscode-editorWarning-foreground);
-}
-
-.kot-modified {
-    display: none;
-    flex: 0 0 auto;
-    width: 14px;
-    text-align: center;
-    font-size: 11px;
-    font-weight: 700;
-}
-
-.is-modified .kot-modified {
-    display: inline-block;
 }
 
 .scenario-relationship-icon {

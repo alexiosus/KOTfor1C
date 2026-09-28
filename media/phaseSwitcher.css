@@ -750,9 +750,6 @@ label.checkbox-item.disabled {
 label.checkbox-item.disabled input[type=checkbox] { 
     cursor: not-allowed; 
 }
-label.checkbox-item.changed span.checkbox-label-text { 
-    font-weight: bold; 
-}
 label.checkbox-item.affected-main-scenario {
     background: linear-gradient(
         90deg,
@@ -1594,9 +1591,6 @@ label.checkbox-item:hover {
     background: color-mix(in srgb, var(--tm-surface-1) 82%, transparent);
 }
 
-label.checkbox-item.changed span.checkbox-label-text {
-    font-weight: 600;
-}
 
 label.checkbox-item.affected-main-scenario,
 label.checkbox-item.search-match {
@@ -1810,13 +1804,22 @@ body {
 }
 
 .phase-switcher-topbar {
-    min-height: 35px;
-    padding: 3px 6px;
+    min-height: 30px;
+    padding: 1px 4px;
     border: 0;
     border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
     border-radius: 0;
     background: var(--vscode-sideBarSectionHeader-background, var(--vscode-sideBar-background));
     box-shadow: none;
+}
+
+.phase-switcher-topbar .topbar-title-wrap {
+    display: none;
+}
+
+.phase-switcher-topbar .controls-top-buttons {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
 }
 
 .phase-switcher-topbar h1 {
@@ -1860,15 +1863,28 @@ body {
     flex-wrap: nowrap;
 }
 
+.manager-tabs {
+    gap: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
 .manager-tab-btn {
     min-height: 28px;
     padding: 0 7px;
-    border-radius: 3px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
     font-size: var(--vscode-font-size);
     font-weight: 400;
 }
 
 .manager-tab-btn.is-active {
+    border: 0;
+    border-bottom: 2px solid var(--vscode-focusBorder);
+    background: transparent;
     font-weight: 600;
 }
 
@@ -1897,6 +1913,59 @@ body {
     border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
 }
 
+.selection-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 31px;
+    padding: 2px 6px;
+    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
+    color: var(--vscode-descriptionForeground);
+    white-space: nowrap;
+}
+
+.selection-summary-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--vscode-foreground);
+}
+
+.selection-summary-toggle input {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--vscode-checkbox-selectBackground, var(--vscode-button-background));
+}
+
+.selection-summary-count {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.selection-summary-count strong {
+    color: var(--vscode-foreground);
+    font-weight: 500;
+}
+
+.selection-clear-btn {
+    margin-left: auto;
+    padding: 2px 4px;
+    border: 0;
+    background: transparent;
+    color: var(--vscode-textLink-foreground);
+    font: inherit;
+}
+
+.selection-clear-btn:hover:not(:disabled) {
+    color: var(--vscode-textLink-activeForeground);
+}
+
+.selection-clear-btn:disabled {
+    color: var(--vscode-disabledForeground);
+}
+
 .scenario-search-input {
     height: 26px;
     border-radius: 2px;
@@ -1923,6 +1992,12 @@ body {
     margin: 0;
     border: 0;
     border-radius: 0;
+    background: transparent;
+}
+
+.phase-group.is-related,
+.phase-group.phase-group-affected {
+    border-inline-start: 0;
     background: transparent;
 }
 
@@ -2008,6 +2083,11 @@ label.checkbox-item:hover {
 label.checkbox-item.affected-main-scenario,
 label.checkbox-item.search-match {
     border-radius: 0;
+}
+
+label.checkbox-item.affected-main-scenario {
+    background: color-mix(in srgb, var(--kot-sidebar-related) 10%, transparent);
+    box-shadow: inset 2px 0 0 var(--kot-sidebar-related);
 }
 
 label.checkbox-item.current-main-scenario {

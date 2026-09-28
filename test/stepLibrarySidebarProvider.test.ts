@@ -173,6 +173,7 @@ function createHarness(options: HarnessOptions = {}) {
     let invalidateCalls = 0;
     let refreshCalls = 0;
     const inserted: StepLibraryItem[] = [];
+    const copied: StepLibraryItem[] = [];
     const opened: StepLibraryItem[] = [];
     const snapshotService = {
         onDidInvalidate: invalidations.event,
@@ -194,6 +195,10 @@ function createHarness(options: HarnessOptions = {}) {
         }),
         insert: async (value: StepLibraryItem) => {
             inserted.push(value);
+            return true;
+        },
+        copy: async (value: StepLibraryItem) => {
+            copied.push(value);
             return true;
         },
         openDefinition: async (value: StepLibraryItem) => {
@@ -238,6 +243,7 @@ function createHarness(options: HarnessOptions = {}) {
         relationshipChanges,
         executedCommands,
         inserted,
+        copied,
         opened,
         setSnapshot(value: StepLibrarySnapshot) { current = value; },
         setRelationshipState(value: unknown) { relationshipState = value; },
@@ -303,8 +309,10 @@ test('ignores invalid inbound messages and resolves actions from server-owned it
     assert.equal(harness.inserted.length, 0);
 
     await send(harness, { command: 'insert', itemId: 'safe-item' });
+    await send(harness, { command: 'copy', itemId: 'safe-item' });
     await send(harness, { command: 'openDefinition', itemId: 'safe-item' });
     assert.deepEqual(harness.inserted.map(value => value.id), ['safe-item']);
+    assert.deepEqual(harness.copied.map(value => value.id), ['safe-item']);
     assert.deepEqual(harness.opened.map(value => value.id), ['safe-item']);
 });
 

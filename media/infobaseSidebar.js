@@ -46,11 +46,11 @@
         return button;
     }
 
-    function maintenanceItem(label, action, item) {
+    function maintenanceItem(label, iconName, action, item) {
         const button = document.createElement('button');
         button.type = 'button';
         button.setAttribute('role', 'menuitem');
-        button.textContent = label;
+        button.append(icon(iconName), document.createTextNode(label));
         button.addEventListener('click', event => {
             event.stopPropagation();
             uiState = protocol.toggleMenu(uiState, item.id);
@@ -59,6 +59,13 @@
             vscode.postMessage({ command: 'maintenance', infobaseId: item.id, action });
         });
         return button;
+    }
+
+    function maintenanceHeading(label) {
+        const heading = document.createElement('div');
+        heading.className = 'infobase-menu-heading';
+        heading.textContent = label;
+        return heading;
     }
 
     function makeRow(item) {
@@ -129,10 +136,12 @@
             menu.className = 'infobase-menu';
             menu.setAttribute('role', 'menu');
             menu.append(
-                maintenanceItem(`${loc.exportDt}…`, 'exportDt', item),
-                maintenanceItem(`${loc.importDt}…`, 'importDt', item),
-                maintenanceItem(`${loc.exportCf}…`, 'exportCf', item),
-                maintenanceItem(`${loc.importCf}…`, 'importCf', item)
+                maintenanceHeading(loc.dtHeading),
+                maintenanceItem(`${loc.exportDt}…`, 'cloud-download', 'exportDt', item),
+                maintenanceItem(`${loc.importDt}…`, 'cloud-upload', 'importDt', item),
+                maintenanceHeading(loc.cfHeading),
+                maintenanceItem(`${loc.exportCf}…`, 'file-symlink-file', 'exportCf', item),
+                maintenanceItem(`${loc.importCf}…`, 'file-add', 'importCf', item)
             );
             row.appendChild(menu);
         }

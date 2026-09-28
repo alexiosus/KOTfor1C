@@ -105,6 +105,18 @@ body {
     min-height: 28px;
 }
 
+.step-node-icon {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 17px;
+    min-height: 28px;
+    color: var(--vscode-icon-foreground);
+}
+
+.step-row[data-kind="source"] .step-node-icon {
+    color: var(--vscode-symbolIcon-moduleForeground, var(--vscode-icon-foreground));
+}
+
 .kot-tree-label {
     min-width: 0;
     overflow: hidden;
@@ -131,10 +143,53 @@ body {
 }
 
 .step-actions {
-    display: inline-grid;
-    place-items: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 1px;
     align-self: start;
     min-height: 28px;
+    flex-basis: auto;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.step-row:hover .step-actions,
+.step-row.is-selected .step-actions,
+.step-row:focus-within .step-actions {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.step-action {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0 4px;
+}
+
+.step-action:disabled {
+    opacity: 0.45;
+}
+
+.step-relation {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 18px;
+    min-height: 28px;
+    color: var(--kot-sidebar-related);
+}
+
+.step-row.is-current .step-relation {
+    color: currentColor;
+}
+
+.step-row[draggable="true"] {
+    cursor: grab;
+}
+
+.step-row.is-dragging {
+    cursor: grabbing;
+    opacity: 0.62;
 }
 
 .step-row.is-current {

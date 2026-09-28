@@ -181,6 +181,41 @@ test('keeps aligned multiline Gherkin text intact in definition nodes', () => {
     assert.equal(model.children(tables.id).nodes[0]?.label, displayText);
 });
 
+test('definition nodes carry safe action and drag capabilities from their server-owned item', () => {
+    const model = StepLibrarySidebarIndex.fromSnapshot(snapshot([
+        item({
+            id: 'nested',
+            sourceGroup: 'nested',
+            displayText: 'And I prepare data',
+            template: 'And I prepare data',
+            categoryPath: ['Tests'],
+            insertable: true,
+            navigable: true
+        }),
+        item({
+            id: 'main',
+            sourceGroup: 'main',
+            displayText: 'Main scenario',
+            categoryPath: ['Tests'],
+            insertable: false,
+            navigable: true
+        })
+    ]), 'en');
+    const nestedCategory = childByLabel(model, 'source:nested', 'Tests');
+    const nested = model.children(nestedCategory.id).nodes[0];
+    const mainCategory = childByLabel(model, 'source:main', 'Tests');
+    const main = model.children(mainCategory.id).nodes[0];
+
+    assert.deepEqual(
+        { insertable: nested.insertable, navigable: nested.navigable, dragText: nested.dragText },
+        { insertable: true, navigable: true, dragText: 'And I prepare data' }
+    );
+    assert.deepEqual(
+        { insertable: main.insertable, navigable: main.navigable, dragText: main.dragText },
+        { insertable: false, navigable: true, dragText: undefined }
+    );
+});
+
 test('deduplicates a translated built-in family using the preferred language branch', () => {
     const russian = item({
         id: 'open-ru',

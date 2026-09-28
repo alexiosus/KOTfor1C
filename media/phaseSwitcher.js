@@ -21,7 +21,7 @@
     let favoriteSortMode = 'code';
     let activeManagerTab = 'tests';
     let activeScenarioSearchQuery = '';
-    let isScenarioSearchVisible = false;
+    const isScenarioSearchVisible = true;
     let settings = {
         assemblerEnabled: true,
         switcherEnabled: true,
@@ -87,7 +87,6 @@
     const testsTabBtn = document.getElementById('testsTabBtn');
     const favoritesTabBtn = document.getElementById('favoritesTabBtn');
     const globalListActions = document.getElementById('globalListActions');
-    const toggleScenarioSearchBtn = document.getElementById('toggleScenarioSearchBtn');
     const relationshipToggleBtn = document.getElementById('relationshipToggleBtn');
     const refreshTestsBtn = document.getElementById('refreshTestsBtn');
     const relationshipCurrentContext = document.getElementById('relationshipCurrentContext');
@@ -97,6 +96,9 @@
     const scenarioSearchRow = document.getElementById('scenarioSearchRow');
     const scenarioSearchInput = document.getElementById('scenarioSearchInput');
     const scenarioSearchClearBtn = document.getElementById('scenarioSearchClearBtn');
+    const selectedCount = document.getElementById('selectedCount');
+    const selectableCount = document.getElementById('selectableCount');
+    const clearSelectionBtn = document.getElementById('clearSelectionBtn');
 
     const phaseSwitcherSectionElements = document.querySelectorAll('.phase-switcher-section');
     const phaseTreeContainer = document.getElementById('phaseTreeContainer');
@@ -246,7 +248,7 @@
         phaseControlsActive = effectiveEnable;
         const isDisabled = !effectiveEnable;
 
-        if (selectAllBtn instanceof HTMLButtonElement) selectAllBtn.disabled = isDisabled;
+        if (selectAllBtn instanceof HTMLInputElement) selectAllBtn.disabled = isDisabled;
 
         if (collapseAllBtn instanceof HTMLButtonElement) {
             const hasPhases = Object.keys(testDataByPhase).length > 0;
@@ -1024,16 +1026,8 @@
         if (globalListActions instanceof HTMLElement) {
             globalListActions.classList.toggle('hidden', isFavoritesTab);
         }
-        if (isFavoritesTab) {
-            isScenarioSearchVisible = false;
-        }
         if (scenarioSearchRow instanceof HTMLElement) {
-            scenarioSearchRow.classList.toggle('hidden', isFavoritesTab || !isScenarioSearchVisible);
-        }
-        if (toggleScenarioSearchBtn instanceof HTMLButtonElement) {
-            toggleScenarioSearchBtn.classList.toggle('hidden', isFavoritesTab);
-            toggleScenarioSearchBtn.classList.toggle('is-active', !isFavoritesTab && isScenarioSearchVisible);
-            toggleScenarioSearchBtn.setAttribute('aria-pressed', (!isFavoritesTab && isScenarioSearchVisible) ? 'true' : 'false');
+            scenarioSearchRow.classList.toggle('hidden', isFavoritesTab);
         }
         syncScenarioSearchHighlightState(false);
     }
@@ -1088,7 +1082,6 @@
         const shouldHighlight =
             activeManagerTab === 'tests' &&
             isScenarioSearchVisible &&
-            document.activeElement === scenarioSearchInput &&
             activeScenarioSearchQuery.length > 0;
 
         if (shouldHighlight) {
@@ -1196,7 +1189,6 @@
                     ${viewState.leadingControlHtml}
                     ${viewState.relationshipIconHtml}
                     <span class="checkbox-label-text kot-tree-label">${viewState.name}</span>
-                    <span class="kot-modified" title="${viewState.escapedModifiedTitle}" aria-label="${viewState.escapedModifiedTitle}">M</span>
                     <span class="kot-row-actions">
                         ${viewState.progressHtml}
                         ${viewState.runLogButtonHtml}
@@ -1252,9 +1244,6 @@
         const relationshipIconHtml = relationshipDecoration.icon
             ? `<span class="scenario-relationship-icon codicon codicon-${escapeHtmlAttr(relationshipDecoration.icon)}" role="img" aria-label="${escapedRelationshipLabel}" title="${escapedRelationshipLabel}"></span>`
             : '<span class="scenario-relationship-icon" aria-hidden="true"></span>';
-        const escapedModifiedTitle = escapeHtmlAttr(
-            window.__loc?.modifiedSelectionTitle || 'Build selection differs from the loaded state'
-        );
         const escapedIconTitle = escapeHtmlAttr((window.__loc?.openScenarioFileTitle || 'Open scenario file {0}').replace('{0}', name));
         const runInfo = runArtifacts && typeof runArtifacts === 'object'
             ? runArtifacts[scenarioKey]
@@ -1377,7 +1366,6 @@
             relationshipClassNames,
             escapedRelationshipLabel,
             relationshipIconHtml,
-            escapedModifiedTitle,
             isRunInProgress,
             hasLineProgress,
             progressBadgeText,
@@ -1897,7 +1885,7 @@
         });
 
         updatePendingStatus();
-        updateHighlighting();
+        updateSelectionControls();
         sendScenarioSelectionStates();
     }
 
@@ -1962,23 +1950,7 @@
         updateAreAllPhasesExpandedState();
     }
 
-    /**
-     * Обновляет подсветку измененных чекбоксов.
-     */
-    function updateHighlighting() {
-        if (!phaseTreeContainer) return;
-        const checkboxes = phaseTreeContainer.querySelectorAll('input[type=checkbox]');
-        checkboxes.forEach(cb => {
-            if (!(cb instanceof HTMLInputElement)) return;
-            const label = cb.closest('.checkbox-item');
-            if (!label) return;
-            const scenarioKey = cb.getAttribute('name') || '';
-            const initialChecked = initialTestStates[scenarioKey] === 'checked';
-            const isModified = initialTestStates[scenarioKey] !== 'disabled'
-                && !!currentCheckboxStates[scenarioKey] !== initialChecked;
-            label.classList.toggle('changed', isModified);
-            label.classList.toggle('is-modified', isModified);
-        });
+    function updateSelectionControls() {
         updateSelectAllButtonState();
     }
 
@@ -2004,7 +1976,7 @@
     }
 
     function updateSelectAllButtonState() {
-        if (!(selectAllBtn instanceof HTMLButtonElement)) {
+        if (!(selectAllBtn instanceof HTMLInputElement)) {
             return;
         }
         const visibleKeys = getVisibleSelectableScenarioKeys();
@@ -2013,7 +1985,21 @@
             .map(([key]) => key);
         const aggregate = scenarioProtocol.selectionAggregateForKeys(selectedKeys, visibleKeys);
         selectAllBtn.dataset.selectionState = aggregate;
-        selectAllBtn.setAttribute('aria-checked', aggregate === 'indeterminate' ? 'mixed' : String(aggregate === 'checked'));
+        selectAllBtn.checked = aggregate === 'checked';
+        selectAllBtn.indeterminate = aggregate === 'indeterminate';
+        selectAllBtn.setAttribute('aria-checked', aggregate === 'indeterminate' ? 'mixed' : String(selectAllBtn.checked));
+        const selectableKeys = Object.keys(initialTestStates)
+            .filter(key => initialTestStates[key] !== 'disabled');
+        const selectedTotal = selectableKeys.filter(key => !!currentCheckboxStates[key]).length;
+        if (selectedCount instanceof HTMLElement) {
+            selectedCount.textContent = String(selectedTotal);
+        }
+        if (selectableCount instanceof HTMLElement) {
+            selectableCount.textContent = String(selectableKeys.length);
+        }
+        if (clearSelectionBtn instanceof HTMLButtonElement) {
+            clearSelectionBtn.disabled = selectedTotal === 0 || !phaseControlsActive;
+        }
     }
 
     /**
@@ -2735,7 +2721,7 @@
         });
 
         log(`Applied states to ${count} visible checkboxes.`);
-        updateHighlighting();
+        updateSelectionControls();
         applyAffectedMainScenarioHighlighting();
         updateAreAllPhasesExpandedState();
     }
@@ -2762,7 +2748,7 @@
         log(`Checkbox changed: ${name} = ${isChecked}`);
         updateCurrentState(name, isChecked);
         updatePendingStatus();
-        updateHighlighting();
+        updateSelectionControls();
         sendScenarioSelectionStates();
     }
 
@@ -2833,7 +2819,7 @@
             .replace('{1}', String(total));
         renderMainStatusBar();
 
-        updateHighlighting();
+        updateSelectionControls();
         updatePhaseCounts();
         updateAreAllPhasesExpandedState();
         updateSelectDefaultsButtonState();
@@ -3168,7 +3154,7 @@
          }
     });
 
-    if(selectAllBtn instanceof HTMLButtonElement) selectAllBtn.addEventListener('click', () => {
+    if(selectAllBtn instanceof HTMLInputElement) selectAllBtn.addEventListener('change', () => {
         log('Toggle visible scenarios clicked.');
         const visibleKeys = getVisibleSelectableScenarioKeys();
         if (visibleKeys.length === 0) return;
@@ -3183,6 +3169,17 @@
         visibleKeys.forEach(key => {
             currentCheckboxStates[key] = nextSelectedKeys.has(key);
         });
+        applyCheckboxStatesToVisible();
+        updatePendingStatus();
+        sendScenarioSelectionStates();
+    });
+
+    if (clearSelectionBtn instanceof HTMLButtonElement) clearSelectionBtn.addEventListener('click', () => {
+        for (const key of Object.keys(currentCheckboxStates)) {
+            if (initialTestStates[key] !== 'disabled') {
+                currentCheckboxStates[key] = false;
+            }
+        }
         applyCheckboxStatesToVisible();
         updatePendingStatus();
         sendScenarioSelectionStates();
@@ -3240,20 +3237,6 @@
                 command: 'setFavoriteSortMode',
                 mode: favoriteSortMode
             });
-        });
-    }
-
-    if (toggleScenarioSearchBtn instanceof HTMLButtonElement) {
-        toggleScenarioSearchBtn.addEventListener('click', event => {
-            event.preventDefault();
-            if (activeManagerTab !== 'tests') {
-                return;
-            }
-            isScenarioSearchVisible = !isScenarioSearchVisible;
-            setActiveManagerTab(activeManagerTab);
-            if (isScenarioSearchVisible && scenarioSearchInput instanceof HTMLInputElement) {
-                scenarioSearchInput.focus();
-            }
         });
     }
 

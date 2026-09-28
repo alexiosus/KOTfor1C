@@ -92,6 +92,42 @@
         });
     }
 
+    function createActionButton(command, iconName, label, node, disabled = false) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `kot-icon-button step-action step-action-${command}`;
+        button.title = label;
+        button.setAttribute('aria-label', `${label}: ${node.label}`);
+        button.disabled = disabled;
+        button.appendChild(createIcon(iconName));
+        button.addEventListener('click', event => {
+            event.stopPropagation();
+            if (!button.disabled && node.itemId) {
+                vscode.postMessage({ command, itemId: node.itemId });
+            }
+        });
+        return button;
+    }
+
+    function nodeIconName(node) {
+        if (node.kind === 'category') {
+            return 'folder';
+        }
+        if (node.kind === 'definition') {
+            return 'corner-down-right';
+        }
+        if (node.kind === 'more') {
+            return 'ellipsis';
+        }
+        return {
+            builtIn: 'extensions',
+            user: 'symbol-method',
+            export: 'package',
+            nested: 'references',
+            main: 'files'
+        }[node.sourceGroup] || 'library';
+    }
+
     function makeRow(node, parentId) {
         nodesById.set(node.id, node);
         const row = document.createElement('div');
@@ -106,6 +142,18 @@
             row.classList.add('is-selected');
             row.setAttribute('aria-selected', 'true');
         }
+        if (node.kind === 'definition' && node.insertable === true && typeof node.dragText === 'string') {
+            row.draggable = true;
+            row.addEventListener('dragstart', event => {
+                if (!event.dataTransfer) {
+                    return;
+                }
+                event.dataTransfer.effectAllowed = 'copy';
+                event.dataTransfer.setData('text/plain', node.dragText);
+                row.classList.add('is-dragging');
+            });
+            row.addEventListener('dragend', () => row.classList.remove('is-dragging'));
+        }
 
         const expanded = uiState.expandedIds.includes(node.id);
         const toggle = document.createElement('span');
@@ -115,6 +163,11 @@
             row.setAttribute('aria-expanded', expanded ? 'true' : 'false');
         }
         row.appendChild(toggle);
+
+        const nodeIcon = document.createElement('span');
+        nodeIcon.className = 'step-node-icon';
+        nodeIcon.appendChild(createIcon(nodeIconName(node)));
+        row.appendChild(nodeIcon);
 
         const label = document.createElement(node.kind === 'definition' ? 'pre' : 'span');
         label.className = node.kind === 'definition'
@@ -137,18 +190,38 @@
             row.appendChild(count);
         }
 
-        const actions = document.createElement('span');
-        actions.className = 'kot-row-actions step-actions';
         const decoration = relationshipDecoration(node);
         if (decoration.state !== 'none') {
             row.classList.add(...decoration.classNames);
             const icon = relationshipIcons.has(decoration.icon) ? decoration.icon : 'git-branch';
-            actions.appendChild(createIcon(icon, decoration.accessibleLabel));
+            const relation = document.createElement('span');
+            relation.className = 'step-relation';
+            relation.appendChild(createIcon(icon, decoration.accessibleLabel));
+            row.appendChild(relation);
         } else if (relatedAncestorIds.has(node.id)) {
             row.classList.add('is-related');
-            actions.appendChild(createIcon('git-branch', loc.containsRelatedScenarios));
-        } else if (node.kind === 'definition') {
-            actions.appendChild(createIcon('add', insertionAvailable ? loc.insertStep : loc.insertionUnavailable));
+            const relation = document.createElement('span');
+            relation.className = 'step-relation';
+            relation.appendChild(createIcon('git-branch', loc.containsRelatedScenarios));
+            row.appendChild(relation);
+        }
+
+        const actions = document.createElement('span');
+        actions.className = 'kot-row-actions step-actions';
+        if (node.kind === 'definition' && node.itemId) {
+            if (node.insertable === true) {
+                actions.appendChild(createActionButton(
+                    'insert',
+                    'insert',
+                    insertionAvailable ? loc.insertStep : loc.insertionUnavailable,
+                    node,
+                    !insertionAvailable
+                ));
+            }
+            actions.appendChild(createActionButton('copy', 'copy', loc.copyStep, node));
+            if (node.navigable === true) {
+                actions.appendChild(createActionButton('openDefinition', 'go-to-file', loc.openDefinition, node));
+            }
         }
         row.appendChild(actions);
         return row;
@@ -242,6 +315,9 @@
     });
 
     tree.addEventListener('dblclick', event => {
+        if (event.target.closest('button')) {
+            return;
+        }
         const row = event.target.closest('.step-row');
         activateNode(row ? nodesById.get(row.dataset.nodeId) : null, false);
     });
