@@ -20,6 +20,10 @@ const phaseSwitcherSource = fs.readFileSync(
     path.join(process.cwd(), 'src', 'phaseSwitcher.ts'),
     'utf8'
 );
+const infobaseManagerPanelSource = fs.readFileSync(
+    path.join(process.cwd(), 'src', 'infobaseManagerPanel.ts'),
+    'utf8'
+);
 const phaseSwitcherConstructorSource = phaseSwitcherSource.slice(
     phaseSwitcherSource.indexOf('    constructor(extensionUri:'),
     phaseSwitcherSource.indexOf('    private async loadLocalizationBundleIfNeeded')
@@ -49,6 +53,17 @@ test('activation defers optional panel modules until their commands are used', (
     assert.doesNotMatch(source, /import \{ InfobaseManagerPanel \} from '\.\/infobaseManagerPanel';/);
     assert.match(source, /import\('\.\/formExplorerPanel\.js'\)/);
     assert.match(source, /import\('\.\/infobaseManagerPanel\.js'\)/);
+});
+
+test('activation shares a lazy managed-infobase snapshot without eager 1C discovery', () => {
+    assert.match(source, /new ManagedInfobaseService\(/u);
+    assert.equal(source.match(/new ManagedInfobaseService\(/gu)?.length, 1);
+    assert.match(source, /import\('\.\/infobaseManager\.js'\)/u);
+    assert.match(source, /collectManagedInfobases\(context,\s*activeProfileInfobasePath\)/u);
+    assert.match(source, /new InfobaseManagerPanel\(context,\s*managedInfobaseService\)/u);
+    assert.doesNotMatch(source, /from '\.\/infobaseManager';/u);
+    assert.doesNotMatch(infobaseManagerPanelSource, /collectManagedInfobases/u);
+    assert.match(infobaseManagerPanelSource, /managedInfobaseService\.(?:ensureReady|refresh)\(/u);
 });
 
 test('step library is contributed to the palette and only YAML or feature editor titles', () => {

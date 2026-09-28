@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import {
     addInfobaseToLauncherInteractive,
-    collectManagedInfobases,
     configureInfobaseStartupParametersInteractive,
     copyInfobaseInteractive,
     createInfobaseInteractive,
@@ -22,6 +21,7 @@ import {
     showInfobaseLogsInteractive,
     updateInfobaseConfigurationInteractive
 } from './infobaseManager';
+import type { ManagedInfobaseService } from './managedInfobaseService';
 import { getTranslator } from './localization';
 import { normalizeInfobaseConnectionIdentity } from './oneCInfobaseConnection';
 import { type ConfiguredOneCPlatform, ensureOneCPlatformsCatalogInitialized } from './oneCPlatform';
@@ -83,10 +83,18 @@ export class InfobaseManagerPanel implements vscode.Disposable {
     private pendingAction: string | null = null;
     private lastError: string | null = null;
 
-    constructor(private readonly context: vscode.ExtensionContext) {
+    constructor(
+        private readonly context: vscode.ExtensionContext,
+        private readonly managedInfobaseService: ManagedInfobaseService
+    ) {
         this.disposables.push(
             vscode.workspace.onDidChangeConfiguration(event => {
                 if (event.affectsConfiguration('kotTestToolkit.platforms.catalog')) {
+                    void this.refreshState();
+                }
+            }),
+            this.managedInfobaseService.onDidInvalidate(() => {
+                if (this.panel) {
                     void this.refreshState();
                 }
             })
@@ -141,12 +149,14 @@ export class InfobaseManagerPanel implements vscode.Disposable {
         await this.refreshState();
     }
 
-    private async refreshState(): Promise<void> {
-        const [infobases, platforms] = await Promise.all([
-            collectManagedInfobases(this.context),
+    private async refreshState(forceInfobaseRefresh = false): Promise<void> {
+        const [snapshot, platforms] = await Promise.all([
+            forceInfobaseRefresh
+                ? this.managedInfobaseService.refresh()
+                : this.managedInfobaseService.ensureReady(),
             ensureOneCPlatformsCatalogInitialized()
         ]);
-        this.infobases = await this.sortInfobasesForDisplay(infobases);
+        this.infobases = await this.sortInfobasesForDisplay([...snapshot.infobases]);
         this.platforms = platforms;
         const visibleInfobases = this.getVisibleInfobases();
         if (this.selectedInfobasePath) {
@@ -358,7 +368,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             vscode.window.showErrorMessage(message);
         } finally {
             this.pendingAction = null;
-            await this.refreshState();
+            await this.refreshState(true);
         }
     }
 

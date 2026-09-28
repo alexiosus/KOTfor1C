@@ -108,6 +108,7 @@ import {
 } from './scenarioCategoryCodeLens';
 import { resolveVanessaTemplateRoot } from './userStepCreator';
 import type { UserStepLibraryRoot } from './userStepCommands';
+import { ManagedInfobaseService } from './managedInfobaseService';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -826,6 +827,36 @@ export function activate(context: vscode.ExtensionContext) {
     initializeScenarioScanRoot(context);
     const stepCatalogService = new StepCatalogService(context, vscode);
     context.subscriptions.push(stepCatalogService);
+    const activeProfileChangeEvent: vscode.Event<unknown> = listener => {
+        let disposed = false;
+        let subscription: vscode.Disposable | undefined;
+        void import('./yamlParametersManager.js').then(({ YamlParametersManager }) => {
+            if (disposed) {
+                return;
+            }
+            subscription = YamlParametersManager.getInstance(context)
+                .onDidChangeActiveProfile(listener);
+        });
+        return {
+            dispose: () => {
+                disposed = true;
+                subscription?.dispose();
+            }
+        };
+    };
+    const managedInfobaseService = new ManagedInfobaseService({
+        loadActiveProfile: async () => {
+            const { YamlParametersManager } = await import('./yamlParametersManager.js');
+            return YamlParametersManager.getInstance(context).loadActiveProfileSnapshot();
+        },
+        onDidChangeActiveProfile: activeProfileChangeEvent,
+        workspaceRootPath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null,
+        collect: async activeProfileInfobasePath => {
+            const { collectManagedInfobases } = await import('./infobaseManager.js');
+            return collectManagedInfobases(context, activeProfileInfobasePath);
+        }
+    });
+    context.subscriptions.push(managedInfobaseService);
     const loadFormExplorerPanel = createDeferredResourceLoader(
         async () => {
             const { FormExplorerPanel } = await import('./formExplorerPanel.js');
@@ -836,7 +867,7 @@ export function activate(context: vscode.ExtensionContext) {
     const loadInfobaseManagerPanel = createDeferredResourceLoader(
         async () => {
             const { InfobaseManagerPanel } = await import('./infobaseManagerPanel.js');
-            return new InfobaseManagerPanel(context);
+            return new InfobaseManagerPanel(context, managedInfobaseService);
         },
         panel => context.subscriptions.push(panel)
     );

@@ -42,7 +42,7 @@ const INFOBASE_MARKER_FILE_NAME = '1Cv8.1CD';
 
 export type ManagedInfobaseKind = OneCInfobaseConnection['kind'];
 export type ManagedInfobaseRole = 'startup' | 'vanessa' | 'formExplorer' | 'snapshot';
-export type ManagedInfobaseSource = 'launcher' | 'runtime' | 'manual' | 'snapshot' | 'workspaceState';
+export type ManagedInfobaseSource = 'launcher' | 'runtime' | 'manual' | 'snapshot' | 'workspaceState' | 'profile';
 export type ManagedInfobaseState = 'ready' | 'empty' | 'dirty' | 'missing';
 export type ManagedInfobaseStateHint = Exclude<ManagedInfobaseState, 'missing'>;
 export type ManagedInfobaseLogKind = 'file' | 'directory';
@@ -67,8 +67,8 @@ export interface ManagedInfobaseRecord {
     exists: boolean;
     markerExists: boolean;
     state: ManagedInfobaseState;
-    roles: ManagedInfobaseRole[];
-    sources: ManagedInfobaseSource[];
+    roles: readonly ManagedInfobaseRole[];
+    sources: readonly ManagedInfobaseSource[];
     lastLaunchAt: string | null;
     lastLaunchKind: string | null;
     lastSnapshotPath: string | null;
@@ -78,7 +78,7 @@ export interface ManagedInfobaseRecord {
     startupParametersMode: ManagedInfobaseStartupParametersMode;
     startupParameters: string | null;
     preferredPlatformClientExePath: string | null;
-    logTargets: ManagedInfobaseLogTarget[];
+    logTargets: readonly ManagedInfobaseLogTarget[];
     hidden: boolean;
 }
 
@@ -106,7 +106,7 @@ export interface ManagedInfobaseMetadataPatch {
     startupParametersMode?: ManagedInfobaseStartupParametersMode | null;
     startupParameters?: string | null;
     preferredPlatformClientExePath?: string | null;
-    addRoles?: ManagedInfobaseRole[];
+    addRoles?: readonly ManagedInfobaseRole[];
     stateHint?: ManagedInfobaseStateHint | null;
     hidden?: boolean | null;
 }
@@ -1001,7 +1001,7 @@ function sortManagedInfobaseRoles(roles: Iterable<ManagedInfobaseRole>): Managed
 }
 
 function sortManagedInfobaseSources(sources: Iterable<ManagedInfobaseSource>): ManagedInfobaseSource[] {
-    const order: ManagedInfobaseSource[] = ['launcher', 'runtime', 'manual', 'snapshot', 'workspaceState'];
+    const order: ManagedInfobaseSource[] = ['launcher', 'runtime', 'manual', 'snapshot', 'workspaceState', 'profile'];
     const sourceSet = new Set<ManagedInfobaseSource>(sources);
     return order.filter(source => sourceSet.has(source));
 }
@@ -1108,7 +1108,8 @@ async function buildManagedInfobaseLogTargets(
 }
 
 export async function collectManagedInfobases(
-    context: vscode.ExtensionContext
+    context: vscode.ExtensionContext,
+    activeProfileInfobasePath?: string | null
 ): Promise<ManagedInfobaseRecord[]> {
     const metadataMap = getStoredMetadataMap(context);
     const manualEntries = getStoredManualEntries(context);
@@ -1239,6 +1240,13 @@ export async function collectManagedInfobases(
                 : null;
         }
     };
+
+    if (isTruthyText(activeProfileInfobasePath)) {
+        observeInfobase(activeProfileInfobasePath, {
+            displayNameHint: getInfobaseDisplayNameFallback(activeProfileInfobasePath),
+            addSources: ['profile']
+        });
+    }
 
     for (const launcherEntry of launcherEntries) {
         observeInfobase(launcherEntry.infobasePath, {
