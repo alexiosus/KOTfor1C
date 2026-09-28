@@ -26,3 +26,35 @@ test('recognizes Windows UNC paths, case changes, and a canonical scan-root alia
     assert.deepEqual(index.getRelatedScenarioNames('\\\\MAC\\HOME\\DEVELOPMENT\\YAML\\drive\\invoice\\test.feature'), ['Invoice']);
     assert.deepEqual(index.getRelatedScenarioNames('c:\\work\\yaml\\drive\\invoice2\\test.feature'), []);
 });
+
+test('returns stable keys through raw and canonical aliases without collapsing duplicate names', () => {
+    const scanRoot = '\\\\mac\\Home\\Development\\Yaml';
+    const canonicalRoot = 'C:\\Work\\Yaml';
+    const parentKey = 'file:///C:/Work/Yaml/Drive/Invoice/scen.yaml';
+    const nestedKey = 'file:///C:/Work/Yaml/Drive/Invoice/Nested/scen.yaml';
+    const index = new ScenarioDirectoryIndex([
+        {
+            key: parentKey,
+            name: 'Duplicate',
+            filePath: '\\\\mac\\Home\\Development\\Yaml\\Drive\\Invoice\\scen.yaml'
+        },
+        {
+            key: nestedKey,
+            name: 'Duplicate',
+            filePath: '\\\\mac\\Home\\Development\\Yaml\\Drive\\Invoice\\Nested\\scen.yaml'
+        }
+    ], scanRoot, canonicalRoot, path.win32, true);
+
+    assert.deepEqual(
+        index.getRelatedScenarioKeys('C:\\WORK\\YAML\\drive\\invoice\\nested\\test.feature'),
+        [parentKey, nestedKey]
+    );
+    assert.deepEqual(
+        index.getRelatedScenarioKeys('\\\\MAC\\HOME\\DEVELOPMENT\\YAML\\drive\\invoice\\nested\\test.feature'),
+        [parentKey, nestedKey]
+    );
+    assert.deepEqual(
+        index.getRelatedScenarioNames('C:\\WORK\\YAML\\drive\\invoice\\nested\\test.feature'),
+        ['Duplicate']
+    );
+});

@@ -5,17 +5,19 @@ import type { TestInfo } from './types';
 type PathApi = Pick<typeof path, 'dirname' | 'isAbsolute' | 'relative' | 'resolve' | 'sep'>;
 
 interface ScenarioDirectoryDefinition {
+    key?: string;
     name: string;
     filePath: string;
 }
 
-interface IndexedScenarioName {
+interface IndexedScenarioDefinition {
+    key?: string;
     name: string;
     order: number;
 }
 
 export class ScenarioDirectoryIndex {
-    private readonly namesByDirectory = new Map<string, IndexedScenarioName[]>();
+    private readonly definitionsByDirectory = new Map<string, IndexedScenarioDefinition[]>();
 
     constructor(
         definitions: readonly ScenarioDirectoryDefinition[],
@@ -40,9 +42,9 @@ export class ScenarioDirectoryIndex {
 
             const rawKey = this.normalize(scenarioDirectory);
             const canonicalKey = this.normalize(pathApi.resolve(resolvedCanonicalRoot, relativeDirectory));
-            this.add(rawKey, definition.name, order);
+            this.add(rawKey, definition, order);
             if (canonicalKey !== rawKey) {
-                this.add(canonicalKey, definition.name, order);
+                this.add(canonicalKey, definition, order);
             }
         });
     }
@@ -52,7 +54,7 @@ export class ScenarioDirectoryIndex {
         let directory = this.normalize(targetPath);
 
         while (true) {
-            for (const entry of this.namesByDirectory.get(directory) || []) {
+            for (const entry of this.definitionsByDirectory.get(directory) || []) {
                 const previousOrder = matchingNames.get(entry.name);
                 if (previousOrder === undefined || entry.order < previousOrder) {
                     matchingNames.set(entry.name, entry.order);
@@ -71,15 +73,46 @@ export class ScenarioDirectoryIndex {
             .map(([name]) => name);
     }
 
+    public getRelatedScenarioKeys(targetPath: string): string[] {
+        const matchingKeys = new Map<string, number>();
+        let directory = this.normalize(targetPath);
+
+        while (true) {
+            for (const entry of this.definitionsByDirectory.get(directory) || []) {
+                if (!entry.key) {
+                    continue;
+                }
+                const previousOrder = matchingKeys.get(entry.key);
+                if (previousOrder === undefined || entry.order < previousOrder) {
+                    matchingKeys.set(entry.key, entry.order);
+                }
+            }
+
+            const parent = this.pathApi.dirname(directory);
+            if (parent === directory) {
+                break;
+            }
+            directory = parent;
+        }
+
+        return [...matchingKeys]
+            .sort((left, right) => left[1] - right[1])
+            .map(([key]) => key);
+    }
+
     private normalize(targetPath: string): string {
         const resolved = this.pathApi.resolve(targetPath);
         return this.caseInsensitive ? resolved.toLowerCase() : resolved;
     }
 
-    private add(directory: string, name: string, order: number): void {
-        const entries = this.namesByDirectory.get(directory) || [];
-        entries.push({ name, order });
-        this.namesByDirectory.set(directory, entries);
+    private add(directory: string, definition: ScenarioDirectoryDefinition, order: number): void {
+        const entries = this.definitionsByDirectory.get(directory) || [];
+        entries.push({
+            ...(definition.key ? { key: definition.key } : {}),
+            name: definition.name,
+            order
+        });
+        this.definitionsByDirectory.set(directory, entries);
     }
 }
 
