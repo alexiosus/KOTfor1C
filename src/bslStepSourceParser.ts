@@ -562,6 +562,160 @@ function findContainingDeclaration(
     return declarations.find(item => offset >= item.bodyStartOffset && offset < item.bodyEndOffset);
 }
 
+function descriptorFunctionName(tokens: readonly BslToken[]): string | null {
+    return tokens.length === 3
+        && tokens[0]?.kind === 'identifier'
+        && tokens[1]?.text === '('
+        && tokens[2]?.text === ')'
+        ? tokens[0].text
+        : null;
+}
+
+function descriptorProperty(
+    tokens: readonly BslToken[],
+    declaration: InternalDeclaration,
+    property: string,
+    seedVariables: ReadonlyMap<string, string> = new Map()
+): string | null {
+    const scoped = significantTokens(tokens).filter(token =>
+        token.startOffset >= declaration.bodyStartOffset
+        && token.endOffset <= declaration.bodyEndOffset
+    );
+    let statementStart = 0;
+    for (let index = 0; index <= scoped.length; index++) {
+        if (index < scoped.length && scoped[index].text !== ';') {
+            continue;
+        }
+        const statement = scoped.slice(statementStart, index);
+        statementStart = index + 1;
+        if (
+            statement[0]?.kind !== 'identifier'
+            || statement[1]?.text !== '.'
+            || folded(statement[2]?.text ?? '') !== folded(property)
+            || statement[3]?.text !== '='
+        ) {
+            continue;
+        }
+        const variables = new Map(collectStaticVariables(
+            tokens,
+            declaration.bodyStartOffset,
+            statement[0].startOffset
+        ));
+        for (const [name, value] of seedVariables) {
+            variables.set(folded(name), value);
+        }
+        const value = evaluateStaticExpression(statement.slice(4), variables);
+        if (value !== null) {
+            return value;
+        }
+    }
+    return null;
+}
+
+function declarationParameters(
+    tokens: readonly BslToken[],
+    declaration: InternalDeclaration
+): readonly string[] {
+    const header = significantTokens(tokens).filter(token =>
+        token.startOffset >= declaration.startOffset
+        && token.endOffset <= declaration.bodyStartOffset
+    );
+    const openIndex = header.findIndex(token => token.text === '(');
+    const closeIndex = openIndex >= 0 ? findClosingToken(header, openIndex) : -1;
+    if (openIndex < 0 || closeIndex < 0) {
+        return [];
+    }
+    return (splitArguments(header.slice(openIndex + 1, closeIndex)) ?? [])
+        .map(argument => argument.find(token => token.kind === 'identifier')?.text)
+        .filter((name): name is string => Boolean(name));
+}
+
+function descriptorCategory(
+    tokens: readonly BslToken[],
+    declarations: readonly InternalDeclaration[],
+    declaration: InternalDeclaration
+): string | null {
+    const scoped = significantTokens(tokens).filter(token =>
+        token.startOffset >= declaration.bodyStartOffset
+        && token.endOffset <= declaration.bodyEndOffset
+    );
+    for (let index = 0; index < scoped.length; index++) {
+        if (
+            scoped[index]?.kind !== 'identifier'
+            || folded(scoped[index].text) !== 'установитьтипшага'
+            || scoped[index + 1]?.text !== '('
+        ) {
+            continue;
+        }
+        const closeIndex = findClosingToken(scoped, index + 1);
+        if (closeIndex < 0) {
+            return null;
+        }
+        const args = splitArguments(scoped.slice(index + 2, closeIndex));
+        if (!args || args.length < 2) {
+            return null;
+        }
+        const variables = collectStaticVariables(
+            tokens,
+            declaration.bodyStartOffset,
+            scoped[index].startOffset
+        );
+        const category = evaluateStaticExpression(args[1], variables);
+        if (category === null) {
+            return null;
+        }
+        const helper = declarations.find(item =>
+            item.kind === 'function'
+            && folded(item.name) === folded(scoped[index].text)
+        );
+        const categoryParameter = helper
+            ? declarationParameters(tokens, helper)[1]
+            : undefined;
+        return helper && categoryParameter
+            ? descriptorProperty(
+                tokens,
+                helper,
+                'ТипШага',
+                new Map([[categoryParameter, category]])
+            ) ?? category
+            : category;
+    }
+    return null;
+}
+
+function descriptorRegistration(
+    tokens: readonly BslToken[],
+    declarations: readonly InternalDeclaration[],
+    descriptorExpression: readonly BslToken[],
+    registrationRange: ProjectDefinitionRange
+): StaticBslStepRegistration | null {
+    const name = descriptorFunctionName(descriptorExpression);
+    if (!name) {
+        return null;
+    }
+    const declaration = declarations.find(item =>
+        item.kind === 'function' && folded(item.name) === folded(name)
+    );
+    if (!declaration) {
+        return null;
+    }
+    const snippet = descriptorProperty(tokens, declaration, 'Снипет');
+    const implementationName = descriptorProperty(tokens, declaration, 'ИмяПроцедуры');
+    const template = descriptorProperty(tokens, declaration, 'ПредставлениеТеста');
+    const category = descriptorCategory(tokens, declarations, declaration);
+    if (!snippet || !implementationName || !template || !category) {
+        return null;
+    }
+    return Object.freeze({
+        snippet,
+        implementationName,
+        template,
+        description: descriptorProperty(tokens, declaration, 'ОписаниеШага') ?? '',
+        category,
+        range: registrationRange
+    });
+}
+
 function moduleDelimitersAreBalanced(tokens: readonly BslToken[]): boolean {
     const stack: string[] = [];
     for (const token of significantTokens(tokens)) {
@@ -639,6 +793,25 @@ export function parseStaticBslStepRegistrations(
             continue;
         }
         const args = splitArguments(significant.slice(index + 2, closeIndex));
+        if (args?.length === 2) {
+            const registration = descriptorRegistration(
+                tokens,
+                declarations,
+                args[1],
+                callRange
+            );
+            if (registration) {
+                registrations.push(registration);
+            } else {
+                warnings.push({
+                    uri: sourceUri,
+                    message: 'Vanessa step descriptor contains a dynamic or unsupported expression and was skipped.',
+                    range: callRange
+                });
+            }
+            index = closeIndex;
+            continue;
+        }
         if (!args || args.length < 4) {
             warnings.push({
                 uri: sourceUri,

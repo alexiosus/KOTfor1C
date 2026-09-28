@@ -64,9 +64,24 @@ test('client shell is three-pane, accessible, responsive, and initially renders 
 test('definition row backgrounds span the full horizontally scrollable list width', () => {
     const css = projectFile('media/stepLibrary.css');
 
+    assert.match(css, /\.definition-list\s*\{[^}]*display:\s*flex;/su);
+    assert.match(css, /\.definition-list\s*\{[^}]*flex-direction:\s*column;/su);
     assert.match(css, /\.definition-list\s*\{[^}]*width:\s*max-content;/su);
     assert.match(css, /\.definition-list\s*\{[^}]*min-width:\s*100%;/su);
     assert.match(css, /\.definition-row\s*\{[^}]*width:\s*100%;/su);
+    assert.match(css, /\.definition-row\s*\{[^}]*flex:\s*0\s+0\s+auto;/su);
+});
+
+test('client keeps tree and result interaction incremental', () => {
+    const client = projectFile('media/stepLibrary.js');
+
+    assert.match(client, /createResultPager/u);
+    assert.match(client, /renderedRowsById/u);
+    assert.match(client, /treeElementsById/u);
+    assert.match(client, /snapshotItemsById/u);
+    assert.match(client, /languageItemsCache/u);
+    assert.match(client, /filteredItemsCache/u);
+    assert.doesNotMatch(client, /requestAnimationFrame\(appendBatch\)/u);
 });
 
 test('inbound message type has no caller-supplied URI or arbitrary command shape', () => {

@@ -25,6 +25,15 @@
     const liveRegion = document.getElementById('liveRegion');
     const labels = document.body.dataset;
     const persisted = vscode.getState() || {};
+    const renderedRowsById = new Map();
+    const treeElementsById = new Map();
+    let selectedDefinitionRow = null;
+    let selectedTreeButton = null;
+    let resultPager = null;
+    let resultScrollFrame = null;
+    let snapshotItemsById = new Map();
+    let languageItemsCache = { key: '', items: [] };
+    let filteredItemsCache = { key: '', items: [] };
     const state = {
         snapshot: null,
         query: typeof persisted.query === 'string' ? persisted.query : '',
@@ -43,7 +52,6 @@
         sortMode: persisted.sortMode === 'alphabetical' ? 'alphabetical' : 'relevance',
         insertionTarget: { available: false, identity: 'unavailable' },
         pendingActions: new Set(),
-        renderGeneration: 0,
         paneLayout: {
             categoryWidth: Number.isFinite(persisted.paneLayout?.categoryWidth)
                 ? persisted.paneLayout.categoryWidth
@@ -206,14 +214,43 @@
         if (!state.snapshot) {
             return [];
         }
-        return protocol.searchItems(state.snapshot.items, '', languageOptions({
+        const key = `${state.snapshot.viewIdentity}\0${state.language}\0${labels.preferredLanguage}`;
+        if (languageItemsCache.key === key) {
+            return languageItemsCache.items;
+        }
+        const items = protocol.searchItems(state.snapshot.items, '', languageOptions({
             limit: Number.MAX_SAFE_INTEGER
         }));
+        languageItemsCache = { key, items };
+        return items;
     }
 
     function filteredItems() {
         if (!state.snapshot) {
             return [];
+        }
+        const key = JSON.stringify([
+            state.snapshot.viewIdentity,
+            state.language,
+            labels.preferredLanguage,
+            state.query,
+            state.sourceGroup,
+            state.categoryPath,
+            state.uncategorized,
+            state.sortMode
+        ]);
+        if (filteredItemsCache.key === key) {
+            return filteredItemsCache.items;
+        }
+        if (
+            !state.query
+            && !state.sourceGroup
+            && state.categoryPath.length === 0
+            && !state.uncategorized
+        ) {
+            const items = [...allItemsForLanguage()];
+            filteredItemsCache = { key, items };
+            return items;
         }
         const items = protocol.searchItems(state.snapshot.items, state.query, languageOptions({
             sourceGroup: state.sourceGroup || undefined,
@@ -230,6 +267,7 @@
                 return leftText < rightText ? -1 : leftText > rightText ? 1 : 0;
             });
         }
+        filteredItemsCache = { key, items };
         return items;
     }
 
@@ -275,7 +313,15 @@
             state.uncategorized = protocol.isUncategorizedNodeId(node.id);
         }
         saveState();
-        renderTree();
+        if (selectedTreeButton) {
+            selectedTreeButton.setAttribute('aria-selected', 'false');
+            selectedTreeButton.tabIndex = -1;
+        }
+        selectedTreeButton = treeElementsById.get(node.id)?.button || null;
+        if (selectedTreeButton) {
+            selectedTreeButton.setAttribute('aria-selected', 'true');
+            selectedTreeButton.tabIndex = 0;
+        }
         renderResults();
         shell.classList.remove('categories-open');
     }
@@ -335,6 +381,10 @@
         if (expandable) {
             container.append(children);
         }
+        treeElementsById.set(node.id, { button, children, chevron });
+        if (isSelectedTreeNode(node)) {
+            selectedTreeButton = button;
+        }
         return container;
     }
 
@@ -345,10 +395,19 @@
             state.expandedNodes.add(nodeId);
         }
         saveState();
-        renderTree(nodeId);
+        const elements = treeElementsById.get(nodeId);
+        if (!elements) {
+            return;
+        }
+        const expanded = state.expandedNodes.has(nodeId);
+        elements.button.setAttribute('aria-expanded', String(expanded));
+        elements.children.hidden = !expanded;
+        elements.chevron.classList.toggle('codicon-chevron-down', expanded);
+        elements.chevron.classList.toggle('codicon-chevron-right', !expanded);
+        elements.button.focus({ preventScroll: true });
     }
 
-    function renderTree(focusNodeId) {
+    function renderTree() {
         const items = allItemsForLanguage();
         const roots = protocol.buildCategoryTree(items, {
             sources: {
@@ -369,15 +428,12 @@
             children: []
         };
         protocol.preserveScrollPosition(categoryTree, () => {
+            treeElementsById.clear();
+            selectedTreeButton = null;
             categoryTree.replaceChildren(
                 createTreeNode(allNode, 1),
                 ...roots.map(root => createTreeNode(root, 1))
             );
-            if (focusNodeId) {
-                [...categoryTree.querySelectorAll('[data-node-id]')]
-                    .find(element => element.dataset.nodeId === focusNodeId)
-                    ?.focus({ preventScroll: true });
-            }
         });
     }
 
@@ -401,18 +457,26 @@
         row.append(text, meta);
         row.addEventListener('click', () => selectItem(item.id, false, true));
         row.addEventListener('dblclick', () => requestInsert(item.id));
+        renderedRowsById.set(item.id, row);
+        if (item.id === state.selectedItemId) {
+            selectedDefinitionRow = row;
+        }
         return row;
     }
 
     function selectItem(itemId, focus, showDetails) {
         state.selectedItemId = itemId;
         saveState();
-        for (const row of definitionList.querySelectorAll('[role="option"]')) {
-            const selected = row.dataset.itemId === itemId;
-            row.setAttribute('aria-selected', String(selected));
-            row.tabIndex = selected ? 0 : -1;
-            if (selected && focus) {
-                row.focus();
+        if (selectedDefinitionRow) {
+            selectedDefinitionRow.setAttribute('aria-selected', 'false');
+            selectedDefinitionRow.tabIndex = -1;
+        }
+        selectedDefinitionRow = renderedRowsById.get(itemId) || null;
+        if (selectedDefinitionRow) {
+            selectedDefinitionRow.setAttribute('aria-selected', 'true');
+            selectedDefinitionRow.tabIndex = 0;
+            if (focus) {
+                selectedDefinitionRow.focus();
             }
         }
         renderDetails();
@@ -422,9 +486,11 @@
     }
 
     function renderResults() {
-        const generation = ++state.renderGeneration;
         const items = filteredItems();
         resultCount.textContent = String(items.length);
+        renderedRowsById.clear();
+        selectedDefinitionRow = null;
+        resultPager = null;
         definitionList.replaceChildren();
         definitionList.setAttribute('aria-busy', 'false');
         if (!state.snapshot || state.snapshot.items.length === 0) {
@@ -440,27 +506,25 @@
             return;
         }
         setStatus('');
-        if (!items.some(item => item.id === state.selectedItemId)) {
+        const selectedIndex = items.findIndex(item => item.id === state.selectedItemId);
+        if (selectedIndex < 0 || selectedIndex >= BATCH_SIZE) {
             state.selectedItemId = items[0].id;
             saveState();
         }
-        let offset = 0;
-        function appendBatch() {
-            if (generation !== state.renderGeneration) {
-                return;
-            }
-            const fragment = document.createDocumentFragment();
-            const end = Math.min(offset + BATCH_SIZE, items.length);
-            for (; offset < end; offset += 1) {
-                fragment.append(createDefinitionRow(items[offset]));
-            }
-            definitionList.append(fragment);
-            if (offset < items.length) {
-                requestAnimationFrame(appendBatch);
-            }
-        }
-        appendBatch();
+        resultPager = protocol.createResultPager(items, BATCH_SIZE);
+        appendNextResultBatch();
         renderDetails();
+    }
+
+    function appendNextResultBatch() {
+        if (!resultPager?.hasMore) {
+            return;
+        }
+        const fragment = document.createDocumentFragment();
+        for (const item of resultPager.next()) {
+            fragment.append(createDefinitionRow(item));
+        }
+        definitionList.append(fragment);
     }
 
     function addDetailsField(labelText, value, code) {
@@ -482,7 +546,9 @@
 
     function renderDetails() {
         detailsContent.replaceChildren();
-        const item = state.snapshot?.items.find(candidate => candidate.id === state.selectedItemId);
+        const item = state.selectedItemId
+            ? snapshotItemsById.get(state.selectedItemId)
+            : undefined;
         const insertPending = item && state.pendingActions.has(`insert\0${item.id}`);
         const copyPending = item && state.pendingActions.has(`copy\0${item.id}`);
         const openPending = item && state.pendingActions.has(`openDefinition\0${item.id}`);
@@ -545,7 +611,7 @@
     }
 
     function requestInsert(itemId) {
-        const item = state.snapshot?.items.find(candidate => candidate.id === itemId);
+        const item = snapshotItemsById.get(itemId);
         if (!protocol.canInsertItem(item, state.insertionTarget.available)) {
             shell.classList.add('details-open');
             announce(item?.insertable === false
@@ -677,6 +743,20 @@
             searchInput.focus();
         }
     });
+    definitionList.addEventListener('scroll', () => {
+        if (resultScrollFrame !== null) {
+            return;
+        }
+        resultScrollFrame = requestAnimationFrame(() => {
+            resultScrollFrame = null;
+            const remaining = definitionList.scrollHeight
+                - definitionList.scrollTop
+                - definitionList.clientHeight;
+            if (remaining < 480) {
+                appendNextResultBatch();
+            }
+        });
+    });
     categoryTree.addEventListener('keydown', event => {
         if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
             event.preventDefault();
@@ -727,6 +807,7 @@
                 ...message.snapshot,
                 items: preparedItems
             };
+            snapshotItemsById = new Map(preparedItems.map(item => [item.id, item]));
             state.insertionTarget = message.insertionTarget || {
                 available: false,
                 identity: 'unavailable'

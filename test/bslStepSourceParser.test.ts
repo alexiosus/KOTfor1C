@@ -138,6 +138,47 @@ test('extracts a static Vanessa registration category from the sixth argument', 
     assert.deepEqual(parsed.warnings, []);
 });
 
+test('extracts a categorized Vanessa step from an object-returning descriptor', () => {
+    const source = [
+        'Функция ПолучитьСписокТестов(Контекст) Экспорт',
+        '    ВсеТесты = Новый Массив;',
+        '    ДобавитьШагВМассивТестов(ВсеТесты, ОШ_ЯСоздаюЗаписи());',
+        '    Возврат ВсеТесты;',
+        'КонецФункции',
+        '',
+        'Функция ОШ_ЯСоздаюЗаписи()',
+        '    Результат = НовоеОписаниеШага();',
+        '    Результат.Снипет = "ЯСоздаюЗаписи(ИмяРегистра, ТабПарам)";',
+        '    Результат.ИмяПроцедуры = "ЯСоздаюЗаписи";',
+        '    Результат.ПредставлениеТеста = "И я создаю записи регистра ""ИмяРегистра"" по таблице:" + Символы.ПС + Символы.Таб + "| Имя |";',
+        '    Результат.ОписаниеШага = ПолучитьДинамическоеОписание();',
+        '    УстановитьТипШага(Результат, "Создание объектов");',
+        '    Возврат Результат;',
+        'КонецФункции',
+        '',
+        'Функция УстановитьТипШага(ОписаниеШага, Раздел)',
+        '    ОписаниеШага.ТипШага = "Инициатор данных." + Раздел;',
+        'КонецФункции'
+    ].join('\n');
+
+    const parsed = parseStaticBslStepRegistrations(source);
+
+    assert.deepEqual(parsed.registrations.map(item => ({
+        snippet: item.snippet,
+        implementationName: item.implementationName,
+        template: item.template,
+        description: item.description,
+        category: item.category
+    })), [{
+        snippet: 'ЯСоздаюЗаписи(ИмяРегистра, ТабПарам)',
+        implementationName: 'ЯСоздаюЗаписи',
+        template: 'И я создаю записи регистра "ИмяРегистра" по таблице:\n\t| Имя |',
+        description: '',
+        category: 'Инициатор данных.Создание объектов'
+    }]);
+    assert.deepEqual(parsed.warnings, []);
+});
+
 test('keeps a static template and category when only the optional description is dynamic', () => {
     const source = [
         'Функция ПолучитьСписокТестов(Контекст) Экспорт',

@@ -295,10 +295,11 @@ select:focus-visible,
 }
 
 .definition-list {
-    display: grid;
+    display: flex;
+    flex-direction: column;
     width: max-content;
     min-width: 100%;
-    align-content: start;
+    align-items: stretch;
     padding: 4px;
 }
 
@@ -306,6 +307,7 @@ select:focus-visible,
     display: grid;
     width: 100%;
     min-width: 100%;
+    flex: 0 0 auto;
     gap: 4px;
     min-height: 52px;
     padding: 8px 10px;

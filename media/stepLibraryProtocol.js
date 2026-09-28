@@ -80,6 +80,25 @@
         }
     }
 
+    function createResultPager(items, batchSize) {
+        const values = Array.isArray(items) ? items : [];
+        const size = Math.max(1, Number.isFinite(batchSize) ? Math.floor(batchSize) : DEFAULT_RESULT_LIMIT);
+        let offset = 0;
+        return {
+            get hasMore() {
+                return offset < values.length;
+            },
+            next() {
+                if (offset >= values.length) {
+                    return [];
+                }
+                const batch = values.slice(offset, offset + size);
+                offset += batch.length;
+                return batch;
+            }
+        };
+    }
+
     function prepareItems(items) {
         return (items || []).map(item => {
             if (item && item.__stepLibraryPrepared === true) {
@@ -435,6 +454,7 @@
         isUncategorizedNodeId,
         tokenizeGherkinText,
         preserveScrollPosition,
+        createResultPager,
         resizePaneLayout
     });
 }));

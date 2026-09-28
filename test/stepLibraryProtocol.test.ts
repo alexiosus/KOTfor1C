@@ -63,6 +63,10 @@ interface Protocol {
         deltaPixels: number,
         containerWidth: number
     ): { categoryWidth: number; detailsWidth: number };
+    createResultPager<T>(items: readonly T[], batchSize: number): {
+        readonly hasMore: boolean;
+        next(): readonly T[];
+    };
 }
 
 function loadProtocol(): { protocol: Protocol; source: string } {
@@ -195,6 +199,21 @@ test('restores both scroll axes after a tree render mutates them', () => {
 
     assert.equal(result, 'rendered');
     assert.deepEqual(element, { scrollTop: 127, scrollLeft: 9 });
+});
+
+test('pages definition rows on demand instead of scheduling the complete result set', () => {
+    const { protocol } = loadProtocol();
+    const items = Array.from({ length: 251 }, (_, index) => index);
+    const pager = protocol.createResultPager(items, 100);
+
+    assert.equal(pager.hasMore, true);
+    assert.deepEqual(pager.next(), items.slice(0, 100));
+    assert.equal(pager.hasMore, true);
+    assert.deepEqual(pager.next(), items.slice(100, 200));
+    assert.equal(pager.hasMore, true);
+    assert.deepEqual(pager.next(), items.slice(200));
+    assert.equal(pager.hasMore, false);
+    assert.deepEqual(pager.next(), []);
 });
 
 test('filters by source, ancestor category, and built-in language without hiding project definitions', () => {
