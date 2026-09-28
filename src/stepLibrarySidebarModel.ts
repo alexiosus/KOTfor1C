@@ -166,11 +166,13 @@ export class StepLibrarySidebarIndex {
     private readonly rootNodes: readonly StepLibrarySidebarNode[];
     private readonly branches: ReadonlyMap<string, CategoryBranch>;
     private readonly itemsById: ReadonlyMap<string, StepLibraryItem>;
+    private readonly ancestorIdsByItemId: ReadonlyMap<string, readonly string[]>;
     private readonly searchEntries: readonly SearchEntry[];
 
     private constructor(items: readonly StepLibraryItem[]) {
         const branches = new Map<string, CategoryBranch>();
         const itemsById = new Map<string, StepLibraryItem>();
+        const ancestorIdsByItemId = new Map<string, readonly string[]>();
         const sourceCounts = new Map<StepLibrarySourceGroup, number>(SOURCE_GROUPS.map(group => [group, 0]));
 
         for (const group of SOURCE_GROUPS) {
@@ -192,6 +194,7 @@ export class StepLibrarySidebarIndex {
             const categoryPath = item.categoryPath.map(segment => segment.trim()).filter(Boolean);
             const effectivePath = categoryPath.length > 0 ? categoryPath : [];
             let parent = source;
+            const ancestorIds = [source.id];
 
             if (effectivePath.length === 0) {
                 const uncategorizedId = categoryId(item.sourceGroup, []);
@@ -210,6 +213,7 @@ export class StepLibrarySidebarIndex {
                     source.childIds.push(uncategorizedId);
                 }
                 parent = uncategorized;
+                ancestorIds.push(uncategorized.id);
             } else {
                 for (let index = 0; index < effectivePath.length; index += 1) {
                     const path = effectivePath.slice(0, index + 1);
@@ -229,9 +233,11 @@ export class StepLibrarySidebarIndex {
                         parent.childIds.push(id);
                     }
                     parent = branch;
+                    ancestorIds.push(branch.id);
                 }
             }
             parent.directItems.push(item);
+            ancestorIdsByItemId.set(item.id, Object.freeze(ancestorIds));
         }
 
         const branchCounts = (branch: CategoryBranch): number => {
@@ -268,6 +274,7 @@ export class StepLibrarySidebarIndex {
         })));
         this.branches = branches;
         this.itemsById = itemsById;
+        this.ancestorIdsByItemId = ancestorIdsByItemId;
         this.searchEntries = Object.freeze(items.map(item => Object.freeze({
             item,
             node: definitionNode(item, 0),
@@ -347,5 +354,9 @@ export class StepLibrarySidebarIndex {
 
     public getItem(itemId: string): StepLibraryItem | undefined {
         return this.itemsById.get(itemId);
+    }
+
+    public ancestorIds(itemId: string): readonly string[] {
+        return this.ancestorIdsByItemId.get(itemId) ?? Object.freeze([]);
     }
 }

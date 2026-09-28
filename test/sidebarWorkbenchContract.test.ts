@@ -94,3 +94,52 @@ test('relationship and run-state refreshes patch existing keyed rows', () => {
     assert.doesNotMatch(script.slice(patchStart, patchEnd), /innerHTML\s*=/u);
     assert.match(script, /function updateVisibleScenarioRunState\(\)/u);
 });
+
+test('compact Step Library uses bounded host pages and native sidebar assets', () => {
+    const assetPaths = [
+        'src/stepLibrarySidebarProvider.ts',
+        'media/stepLibrarySidebar.js',
+        'media/stepLibrarySidebar.css',
+        'media/stepLibrarySidebarProtocol.js'
+    ];
+    for (const assetPath of assetPaths) {
+        assert.equal(fs.existsSync(path.join(process.cwd(), assetPath)), true, assetPath);
+    }
+
+    const compactProvider = read('src/stepLibrarySidebarProvider.ts');
+    const compactScript = read('media/stepLibrarySidebar.js');
+    const compactCss = read('media/stepLibrarySidebar.css');
+    assert.match(compactProvider, /StepLibrarySidebarIndex\.fromSnapshot/u);
+    assert.match(compactProvider, /snapshotService\.ensureReady/u);
+    assert.match(compactProvider, /index\.children\([^)]*100/u);
+    assert.match(compactProvider, /index\.search\([^)]*100/u);
+    assert.doesNotMatch(compactProvider, /ProjectDefinitionResolver|WorkspaceScanner/u);
+
+    assert.match(compactScript, /addEventListener\('click'/u);
+    assert.match(compactScript, /DocumentFragment|createDocumentFragment/u);
+    assert.match(compactScript, /textContent/u);
+    assert.match(compactScript, /searchTimer\s*=\s*setTimeout\([\s\S]*?\},\s*150\)/u);
+    assert.match(compactScript, /getState\(\)/u);
+    assert.match(compactScript, /setState\(/u);
+    assert.doesNotMatch(compactScript, /innerHTML\s*=/u);
+
+    assert.match(compactCss, /overflow-x:\s*hidden/u);
+    assert.match(compactCss, /\.kot-tree-label\s*\{[^}]*min-width:\s*0[^}]*text-overflow:\s*ellipsis/isu);
+    assert.match(compactCss, /white-space:\s*pre/u);
+    assert.doesNotMatch(compactCss, /gradient|box-shadow/iu);
+});
+
+test('compact Step Library exposes relationship direction without horizontal overflow', () => {
+    assert.equal(fs.existsSync(path.join(process.cwd(), 'media/stepLibrarySidebar.js')), true);
+    const compactScript = read('media/stepLibrarySidebar.js');
+    const compactCss = read('media/stepLibrarySidebar.css');
+
+    assert.match(compactScript, /relationshipDecorationForNode/u);
+    assert.match(compactScript, /arrow-right-to-line|arrow-right-from-line/u);
+    assert.match(compactScript, /git-branch/u);
+    assert.match(compactScript, /aria-expanded/u);
+    assert.match(compactCss, /\.is-current/u);
+    assert.match(compactCss, /\.is-related/u);
+    assert.match(compactCss, /\.is-transitive/u);
+    assert.match(compactCss, /overflow-x:\s*hidden/u);
+});
