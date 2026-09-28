@@ -290,6 +290,45 @@ test('publication permits adding a missing localized category path', async () =>
     assert.deepEqual(revision.steps[0].categoryPath, { ru: ['Файлы'], en: ['Files'] });
 });
 
+test('publication appends a revision that corrects an existing category path', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kot-step-catalog-'));
+    const { catalog, report } = generatedFixture();
+    const originalCatalog = {
+        ...catalog,
+        steps: catalog.steps.map((step, index) => index === 0
+            ? { ...step, categoryPath: { ru: ['Ячейки'], en: ['Cells'] } }
+            : step)
+    };
+    const originalBytes = serializeStepCatalogJson(originalCatalog);
+    const versionDirectory = path.join(root, generationOptions.version);
+    await mkdir(versionDirectory, { recursive: true });
+    await writeFile(path.join(versionDirectory, 'catalog.json'), originalBytes);
+    await writeFile(path.join(versionDirectory, 'generation-report.json'), 'original report\n');
+    await writeFile(path.join(root, 'index.json'), `${JSON.stringify({
+        schemaVersion: 1,
+        generatedAt: originalCatalog.generatedAt,
+        catalogs: {
+            [generationOptions.version]: {
+                path: `${generationOptions.version}/catalog.json`,
+                sha256: sha256Hex(originalBytes),
+                stepCount: originalCatalog.steps.length,
+                sourceCommit: originalCatalog.source.commit
+            }
+        }
+    })}\n`);
+
+    await writeCatalogPublication(root, catalog, report);
+
+    const index = JSON.parse(await readFile(path.join(root, 'index.json'), 'utf8'));
+    const revisionPath = index.catalogs[generationOptions.version].path as string;
+    const revision = JSON.parse(await readFile(path.join(root, revisionPath), 'utf8'));
+    assert.deepEqual(revision.steps[0].categoryPath, { ru: ['Файлы'], en: ['Files'] });
+    assert.equal(
+        await readFile(path.join(versionDirectory, 'catalog.json'), 'utf8'),
+        originalBytes
+    );
+});
+
 test('publication writes exact catalog bytes and a sorted digest index', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kot-step-catalog-'));
     const { catalog, report } = generatedFixture();

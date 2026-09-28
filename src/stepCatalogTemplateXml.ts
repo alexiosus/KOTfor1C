@@ -381,7 +381,7 @@ function categoryNeutralCatalog(
     };
 }
 
-function isCategoryOnlyEnrichment(
+function isCategoryOnlyRevision(
     existing: BuiltInStepCatalog,
     candidate: BuiltInStepCatalog
 ): boolean {
@@ -391,25 +391,15 @@ function isCategoryOnlyEnrichment(
         !== JSON.stringify(categoryNeutralCatalog(candidate, candidateSteps))) {
         return false;
     }
-    let addedCategory = false;
+    let categoryChanged = false;
     for (let index = 0; index < existingSteps.length; index += 1) {
         const previous = existingSteps[index].categoryPath;
         const next = candidateSteps[index].categoryPath;
-        if (previous && !next) {
-            return false;
-        }
-        for (const language of ['ru', 'en'] as const) {
-            const previousPath = previous?.[language];
-            const nextPath = next?.[language];
-            if (previousPath && JSON.stringify(previousPath) !== JSON.stringify(nextPath)) {
-                return false;
-            }
-            if (!previousPath && nextPath) {
-                addedCategory = true;
-            }
+        if (JSON.stringify(previous ?? null) !== JSON.stringify(next ?? null)) {
+            categoryChanged = true;
         }
     }
-    return addedCategory;
+    return categoryChanged;
 }
 
 function reportPathForCatalog(catalogPath: string): string {
@@ -487,7 +477,7 @@ export async function writeCatalogPublication(
         } catch {
             existingCatalog = undefined;
         }
-        if (!existingCatalog || !isCategoryOnlyEnrichment(existingCatalog, validatedCatalog)) {
+        if (!existingCatalog || !isCategoryOnlyRevision(existingCatalog, validatedCatalog)) {
             throw new Error(`An immutable catalog already exists for Vanessa ${version}.`);
         }
         targetCatalogPath = `${version}/catalog-${sha256Hex(catalogText)}.json`;
