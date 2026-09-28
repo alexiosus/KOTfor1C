@@ -143,3 +143,37 @@ test('compact Step Library exposes relationship direction without horizontal ove
     assert.match(compactCss, /\.is-transitive/u);
     assert.match(compactCss, /overflow-x:\s*hidden/u);
 });
+
+test('compact Infobases view uses native sidebar primitives and a closed maintenance protocol', () => {
+    for (const assetPath of [
+        'src/infobaseSidebarProvider.ts',
+        'media/infobaseSidebarProtocol.js',
+        'media/infobaseSidebar.js',
+        'media/infobaseSidebar.css'
+    ]) {
+        assert.equal(fs.existsSync(path.join(process.cwd(), assetPath)), true, assetPath);
+    }
+
+    const compactProvider = read('src/infobaseSidebarProvider.ts');
+    const compactScript = read('media/infobaseSidebar.js');
+    const compactCss = read('media/infobaseSidebar.css');
+    assert.match(compactProvider, /buildInfobaseSidebarModel/u);
+    assert.match(compactProvider, /managedInfobaseService\.ensureReady/u);
+    assert.match(compactProvider, /managedInfobaseService\.refresh/u);
+    assert.doesNotMatch(compactProvider, /collectManagedInfobases/u);
+    assert.doesNotMatch(compactProvider, /infobasePath:\s*record\./u);
+    assert.match(compactProvider, /openInfobaseInEnterprise/u);
+    assert.match(compactProvider, /openInfobaseInDesigner/u);
+    assert.match(compactProvider, /exportInfobaseToDtInteractive/u);
+    assert.match(compactProvider, /restoreInfobaseFromDtInteractive/u);
+    assert.match(compactProvider, /exportInfobaseConfigurationToCfInteractive/u);
+    assert.match(compactProvider, /updateInfobaseConfigurationInteractive\(context, infobase, 'cfFile'\)/u);
+    assert.match(compactScript, /activeMarker/u);
+    assert.match(compactScript, /aria-haspopup/u);
+    assert.match(compactScript, /Escape/u);
+    assert.match(compactScript, /getState\(\)/u);
+    assert.match(compactScript, /setState\(/u);
+    assert.doesNotMatch(compactScript, /innerHTML\s*=/u);
+    assert.match(compactCss, /overflow-x:\s*hidden/u);
+    assert.doesNotMatch(compactCss, /gradient|box-shadow/iu);
+});

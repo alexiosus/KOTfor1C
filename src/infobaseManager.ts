@@ -2428,7 +2428,8 @@ export async function restoreInfobaseFromDtInteractive(
 
 export async function updateInfobaseConfigurationInteractive(
     context: vscode.ExtensionContext,
-    infobase: ManagedInfobaseRecord
+    infobase: ManagedInfobaseRecord,
+    modeHint?: 'sourceDirectory' | 'cfFile'
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     assertNonWebInfobaseRecord(t, infobase, t('Update configuration'));
@@ -2441,26 +2442,26 @@ export async function updateInfobaseConfigurationInteractive(
         ? resolveWorkspaceRelativePath(configuredSourceDirectoryRaw, workspaceRootPath)
         : '';
 
-    const selection = await vscode.window.showQuickPick(
-        [
-            {
-                label: t('Update from configured source directory'),
-                description: configuredSourceDirectory || t('Configuration source directory is not configured.'),
-                detail: t('Load configuration from the directory set in Form Explorer settings and update DB configuration.'),
-                modeKey: 'sourceDirectory' as const
-            },
-            {
-                label: t('Update from .cf file'),
-                description: infobase.locationLabel,
-                detail: t('Choose a custom .cf file and load it into the infobase.'),
-                modeKey: 'cfFile' as const
-            }
-        ],
+    const choices = [
         {
+            label: t('Update from configured source directory'),
+            description: configuredSourceDirectory || t('Configuration source directory is not configured.'),
+            detail: t('Load configuration from the directory set in Form Explorer settings and update DB configuration.'),
+            modeKey: 'sourceDirectory' as const
+        },
+        {
+            label: t('Update from .cf file'),
+            description: infobase.locationLabel,
+            detail: t('Choose a custom .cf file and load it into the infobase.'),
+            modeKey: 'cfFile' as const
+        }
+    ];
+    const selection = modeHint
+        ? choices.find(choice => choice.modeKey === modeHint)
+        : await vscode.window.showQuickPick(choices, {
             title: t('Update configuration for "{0}"', infobase.displayName),
             ignoreFocusOut: true
-        }
-    );
+        });
     if (!selection) {
         return;
     }
