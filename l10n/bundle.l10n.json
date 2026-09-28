@@ -1753,5 +1753,14 @@
   "Step copied.": "Step copied.",
   "Definition opened.": "Definition opened.",
   "The action could not be completed.": "The action could not be completed.",
-  "Open Step Library": "Open Step Library"
+  "Open Step Library": "Open Step Library",
+  "Restore \"{0}\" from DT?": "Restore \"{0}\" from DT?",
+  "Load CF into \"{0}\"?": "Load CF into \"{0}\"?",
+  "Load configuration source into \"{0}\"?": "Load configuration source into \"{0}\"?",
+  "Source: {0}": "Source: {0}",
+  "Target: {0}": "Target: {0}",
+  "Connection: {0}": "Connection: {0}",
+  "All current infobase data and configuration will be replaced.": "All current infobase data and configuration will be replaced.",
+  "The current infobase configuration will be replaced and the database configuration will be updated.": "The current infobase configuration will be replaced and the database configuration will be updated.",
+  "Load source directory": "Load source directory"
 }

@@ -1753,5 +1753,14 @@
   "The action could not be completed.": "Не удалось выполнить действие.",
   "Open Step Library": "Открыть библиотеку шагов",
   "Restart VS Code": "Перезапустить VS Code",
-  "KOT for 1C updated to {0}. Restart VS Code to apply the update.": "KOT for 1C обновлён до версии {0}. Перезапустите VS Code, чтобы применить обновление."
+  "KOT for 1C updated to {0}. Restart VS Code to apply the update.": "KOT for 1C обновлён до версии {0}. Перезапустите VS Code, чтобы применить обновление.",
+  "Restore \"{0}\" from DT?": "Восстановить \"{0}\" из DT?",
+  "Load CF into \"{0}\"?": "Загрузить CF в \"{0}\"?",
+  "Load configuration source into \"{0}\"?": "Загрузить исходники конфигурации в \"{0}\"?",
+  "Source: {0}": "Источник: {0}",
+  "Target: {0}": "Целевая база: {0}",
+  "Connection: {0}": "Подключение: {0}",
+  "All current infobase data and configuration will be replaced.": "Все текущие данные и конфигурация информационной базы будут заменены.",
+  "The current infobase configuration will be replaced and the database configuration will be updated.": "Текущая конфигурация информационной базы будет заменена, а конфигурация базы данных — обновлена.",
+  "Load source directory": "Загрузить каталог исходников"
 }

@@ -33,6 +33,7 @@ import {
 } from './oneCPlatform';
 import { getSharedStartupInfobasePaths } from './startupInfobase';
 import { formatProcessCommandForDisplay } from './processCommandDisplay';
+import { buildDestructiveInfobaseImportConfirmation } from './infobaseDestructiveConfirmation';
 
 const INFOBASE_MANAGER_OUTPUT_CHANNEL_NAME = 'KOT Infobase Manager';
 const INFOBASE_MANAGER_METADATA_KEY = 'infobaseManager.metadataByPath';
@@ -2359,6 +2360,22 @@ export async function restoreInfobaseFromDtInteractive(
         return;
     }
 
+    const dtPath = path.resolve(selectedFile[0].fsPath);
+    const confirmation = buildDestructiveInfobaseImportConfirmation(
+        'dt',
+        dtPath,
+        infobase,
+        t
+    );
+    const answer = await vscode.window.showWarningMessage(
+        confirmation.title,
+        { modal: true, detail: confirmation.detail },
+        confirmation.confirmLabel
+    );
+    if (answer !== confirmation.confirmLabel) {
+        return;
+    }
+
     await assertInfobaseNotBusy(infobase.infobasePath, t);
     const designerExePath = await resolveConfiguredOneCDesignerExePath(
         t,
@@ -2379,7 +2396,7 @@ export async function restoreInfobaseFromDtInteractive(
         '/IBConnectionString',
         buildInfobaseConnectionArgument(infobase.infobasePath),
         '/RestoreIB',
-        path.resolve(selectedFile[0].fsPath)
+        dtPath
     ];
 
     await vscode.window.withProgress(
@@ -2448,7 +2465,8 @@ export async function updateInfobaseConfigurationInteractive(
         return;
     }
 
-    let commandArgs: string[] | null = null;
+    let commandArgs: string[];
+    let importSourcePath: string;
     let logSuffix = 'update-cfg';
     if (selection.modeKey === 'sourceDirectory') {
         if (!configuredSourceDirectory || !(await directoryExists(configuredSourceDirectory))) {
@@ -2461,6 +2479,7 @@ export async function updateInfobaseConfigurationInteractive(
             configuredSourceDirectory,
             '/UpdateDBCfg'
         ];
+        importSourcePath = configuredSourceDirectory;
         logSuffix = 'update-from-source';
     } else {
         const selectedCfFile = await vscode.window.showOpenDialog({
@@ -2477,12 +2496,28 @@ export async function updateInfobaseConfigurationInteractive(
             return;
         }
 
+        importSourcePath = path.resolve(selectedCfFile[0].fsPath);
         commandArgs = [
             '/LoadCfg',
-            path.resolve(selectedCfFile[0].fsPath),
+            importSourcePath,
             '/UpdateDBCfg'
         ];
         logSuffix = 'update-from-cf';
+    }
+
+    const confirmation = buildDestructiveInfobaseImportConfirmation(
+        selection.modeKey === 'sourceDirectory' ? 'sourceDirectory' : 'cf',
+        importSourcePath,
+        infobase,
+        t
+    );
+    const answer = await vscode.window.showWarningMessage(
+        confirmation.title,
+        { modal: true, detail: confirmation.detail },
+        confirmation.confirmLabel
+    );
+    if (answer !== confirmation.confirmLabel) {
+        return;
     }
 
     await assertInfobaseNotBusy(infobase.infobasePath, t);
