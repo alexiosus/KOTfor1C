@@ -21,11 +21,12 @@ test('Test Manager loads the shared native sidebar stylesheet', () => {
     assert.equal(fs.existsSync(sharedCssPath), true);
 });
 
-test('shared tree primitives prevent horizontal overflow and preserve a fixed action gutter', () => {
+test('shared tree primitives prevent horizontal overflow without reserving an empty action gutter', () => {
     const css = read('media/kotSidebar.css');
     assert.match(css, /\.kot-tree\s*\{[^}]*overflow-x:\s*hidden/isu);
     assert.match(css, /\.kot-tree-label\s*\{[^}]*min-width:\s*0[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/isu);
-    assert.match(css, /\.kot-row-actions\s*\{[^}]*flex:\s*0\s+0\s+var\(--kot-sidebar-action-gutter\)/isu);
+    assert.doesNotMatch(css, /\.kot-row-actions\s*\{[^}]*var\(--kot-sidebar-action-gutter\)/isu);
+    assert.match(css, /\.kot-row-actions\s*\{[^}]*flex:\s*0\s+0\s+auto/isu);
     assert.match(css, /\.kot-tree-row\s*\{[^}]*min-height:\s*(?:30|31|32)px/isu);
     assert.match(css, /\.kot-icon-button\s*\{[^}]*min-height:\s*(?:28|29|30)px/isu);
     assert.match(phaseCss, /\.phase-tree-container\s*\{[^}]*overflow-x:\s*hidden/isu);
@@ -36,7 +37,7 @@ test('sidebar colors use VS Code theme tokens and distinguish current from relat
     assert.match(css, /--kot-sidebar-related:\s*var\(--vscode-charts-purple/u);
     assert.match(css, /\.is-current\s*\{[^}]*--vscode-list-activeSelectionBackground/isu);
     assert.match(css, /\.is-related\s*\{[^}]*--kot-sidebar-related/isu);
-    assert.match(css, /\.is-transitive\s*\{[^}]*opacity/isu);
+    assert.doesNotMatch(css, /\.is-transitive\s*\{[^}]*opacity/isu);
 });
 
 test('tree toggles and icon-only controls expose localized accessible names', () => {
@@ -45,31 +46,26 @@ test('tree toggles and icon-only controls expose localized accessible names', ()
 
     const iconOnlyButtons = [...html.matchAll(/<button\b(?=[^>]*\bicon-only\b)[^>]*>/gsu)]
         .map(match => match[0]);
-    assert.ok(iconOnlyButtons.length >= 8);
+    assert.ok(iconOnlyButtons.length >= 2);
     for (const button of iconOnlyButtons) {
         assert.match(button, /aria-label="\$\{loc\.[A-Za-z0-9]+\}"/u);
     }
 });
 
-test('relationship and current states have non-color text alternatives', () => {
-    assert.match(html, /id="relationshipToggleBtn"[^>]*aria-pressed="true"[^>]*aria-label="\$\{loc\.relationshipToggleTitle\}"/su);
-    assert.match(html, /id="relationshipCurrentContext"[^>]*aria-live="polite"/su);
-    assert.match(html, /id="relationshipSummaryContext"/u);
+test('relationship states have non-color text alternatives without duplicate current-eye icons', () => {
+    assert.doesNotMatch(html, /id="relationshipContext"/u);
+    assert.doesNotMatch(script, /scenario-relationship-icon[^\n]*codicon-eye/u);
     assert.match(script, /class="scenario-relationship-icon[^"\n]*"[^>]*role="img"[^>]*aria-label=/u);
 });
 
 test('live build selection does not pretend to have unapplied row changes', () => {
     assert.doesNotMatch(script, /class="kot-modified"|>M<|classList\.toggle\('is-modified'|classList\.toggle\('changed'/u);
     assert.doesNotMatch(read('media/kotSidebar.css'), /\.kot-modified|\.is-modified/u);
-    assert.match(script, /selectionStateSummary/u);
+    assert.doesNotMatch(script, /selectionStateSummary/u);
+    assert.doesNotMatch(html, /id="selectDefaultsBtn"/u);
 });
 
-test('relationship toggle and compact context remain independent from build checkboxes', () => {
-    assert.match(
-        script,
-        /relationshipToggleBtn\.addEventListener\('click'[\s\S]*?command: 'setRelationshipHighlightEnabled'[\s\S]*?enabled: !relationshipState\.enabled/u
-    );
-    assert.match(script, /function renderRelationshipContext\(\)/u);
+test('relationship state updates remain independent from build checkboxes', () => {
     const relationshipUpdateStart = script.indexOf("case 'updateRelationshipState':");
     const nextCase = script.indexOf("case 'updateStatus':", relationshipUpdateStart);
     assert.notEqual(relationshipUpdateStart, -1);
@@ -126,11 +122,13 @@ test('compact Step Library uses bounded host pages and native sidebar assets', (
     assert.match(compactScript, /getState\(\)/u);
     assert.match(compactScript, /setState\(/u);
     assert.doesNotMatch(compactScript, /innerHTML\s*=/u);
+    assert.doesNotMatch(compactScript, /getElementById\('refreshButton'\)|getElementById\('openFullButton'\)/u);
+    assert.ok(compactProvider.indexOf('id="status"') > compactProvider.indexOf('id="tree"'));
 
     assert.match(compactCss, /overflow-x:\s*hidden/u);
     assert.match(compactCss, /\.kot-tree-label\s*\{[^}]*min-width:\s*0[^}]*text-overflow:\s*ellipsis/isu);
     assert.match(compactCss, /white-space:\s*pre/u);
-    assert.doesNotMatch(compactCss, /gradient|box-shadow/iu);
+    assert.doesNotMatch(compactCss, /background(?:-image)?:[^;]*gradient|box-shadow/iu);
 });
 
 test('compact Step Library exposes relationship direction without horizontal overflow', () => {
@@ -144,7 +142,7 @@ test('compact Step Library exposes relationship direction without horizontal ove
     assert.match(compactScript, /aria-expanded/u);
     assert.match(compactCss, /\.is-current/u);
     assert.match(compactCss, /\.is-related/u);
-    assert.match(compactCss, /\.is-transitive/u);
+    assert.doesNotMatch(compactCss, /\.is-transitive\s*\{[^}]*opacity/isu);
     assert.match(compactCss, /overflow-x:\s*hidden/u);
 });
 
@@ -170,6 +168,8 @@ test('Test Manager uses flat sidebar chrome and keeps search and selection summa
     assert.match(html, /id="selectableCount"/u);
     assert.match(html, /id="clearSelectionBtn"/u);
     assert.doesNotMatch(html, /id="toggleScenarioSearchBtn"/u);
+    assert.doesNotMatch(html, /phase-switcher-topbar|id="relationshipContext"|id="selectDefaultsBtn"/u);
+    assert.match(script, /selectionSummary\.classList\.toggle\('hidden', isFavoritesTab\)/u);
     const nativeOverrides = phaseCss.slice(phaseCss.indexOf('/* Native sidebar workbench overrides.'));
     assert.match(nativeOverrides, /\.manager-tabs\s*\{[^}]*border:\s*0[^}]*border-radius:\s*0/isu);
     assert.match(nativeOverrides, /\.phase-group\s*\{[^}]*border-radius:\s*0/isu);
@@ -200,12 +200,14 @@ test('compact Infobases view uses native sidebar primitives and a closed mainten
     assert.match(compactProvider, /restoreInfobaseFromDtInteractive/u);
     assert.match(compactProvider, /exportInfobaseConfigurationToCfInteractive/u);
     assert.match(compactProvider, /updateInfobaseConfigurationInteractive\(context, infobase, 'cfFile'\)/u);
-    assert.match(compactScript, /activeMarker/u);
+    assert.match(compactScript, /runtimeMarker/u);
     assert.match(compactScript, /aria-haspopup/u);
     assert.match(compactScript, /Escape/u);
     assert.match(compactScript, /getState\(\)/u);
     assert.match(compactScript, /setState\(/u);
     assert.doesNotMatch(compactScript, /innerHTML\s*=/u);
+    assert.doesNotMatch(compactScript, /getElementById\('refreshButton'\)|getElementById\('createButton'\)|getElementById\('openFullButton'\)/u);
+    assert.ok(compactProvider.indexOf('id="status"') > compactProvider.indexOf('id="list"'));
     assert.match(compactCss, /overflow-x:\s*hidden/u);
     assert.doesNotMatch(compactCss, /gradient|box-shadow/iu);
 });
@@ -220,7 +222,7 @@ test('compact workbench views source user-facing strings from localization bundl
         'Currently open scenario',
         'Calls the open scenario directly',
         'Called by the open scenario directly',
-        'Active profile infobase',
+        'Running from KOT',
         'Refresh infobases',
         'Open in 1C:Enterprise',
         'Maintenance actions',
@@ -235,6 +237,35 @@ test('compact workbench views source user-facing strings from localization bundl
     assert.match(read('src/infobaseSidebarProvider.ts'), /vscode\.l10n\.t/u);
 });
 
+test('Activity Bar views expose native title actions and secondary views start collapsed', () => {
+    const manifest = JSON.parse(read('package.json')) as {
+        contributes: {
+            views: Record<string, Array<{ id: string; visibility?: string }>>;
+            menus: Record<string, Array<{ command: string; when?: string }>>;
+        };
+    };
+    const views = manifest.contributes.views.kotTestToolkitContainer;
+    assert.equal(views.find(view => view.id === 'kotTestToolkit.stepLibrarySidebarView')?.visibility, 'collapsed');
+    assert.equal(views.find(view => view.id === 'kotTestToolkit.infobaseSidebarView')?.visibility, 'collapsed');
+    const titleActions = manifest.contributes.menus['view/title'];
+    const commandsFor = (viewId: string) => titleActions
+        .filter(action => action.when?.includes(`view == ${viewId}`))
+        .map(action => action.command);
+    assert.deepEqual(commandsFor('kotTestToolkit.stepLibrarySidebarView'), [
+        'kotTestToolkit.refreshStepLibrarySidebar',
+        'kotTestToolkit.showCreateScenarioMenu',
+        'kotTestToolkit.openStepLibrary'
+    ]);
+    assert.deepEqual(commandsFor('kotTestToolkit.infobaseSidebarView'), [
+        'kotTestToolkit.refreshInfobaseSidebar',
+        'kotTestToolkit.createInfobase',
+        'kotTestToolkit.openFormExplorer',
+        'kotTestToolkit.openInfobaseManager'
+    ]);
+    assert.ok(commandsFor('kotTestToolkit.phaseSwitcherView').includes('kotTestToolkit.toggleScenarioRelationships'));
+    assert.ok(commandsFor('kotTestToolkit.phaseSwitcherView').includes('kotTestToolkit.openVanessa'));
+});
+
 test('workbench performance gates are structural rather than wall-clock thresholds', () => {
     const performanceTests = read('test/stepLibraryPerformance.test.ts');
     assert.match(performanceTests, /without scans or path lookup/u);
@@ -243,7 +274,7 @@ test('workbench performance gates are structural rather than wall-clock threshol
     assert.doesNotMatch(performanceTests, /assert\.(?:ok|equal)\([^\n]*durationMs/u);
 
     const compactProviderTests = read('test/stepLibrarySidebarProvider.test.ts');
-    assert.match(compactProviderTests, /initial ready posts loading and five roots without transferring the snapshot/u);
+    assert.match(compactProviderTests, /initial ready posts loading and six roots without transferring the snapshot/u);
     assert.match(compactProviderTests, /expand and search return bounded host-side pages only/u);
     assert.match(compactProviderTests, /defers hidden invalidation and publishes the latest revision when shown again/u);
 });

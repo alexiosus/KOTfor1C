@@ -57,6 +57,8 @@
     const assembleMenuBtn = document.getElementById('assembleMenuBtn');
     const assembleDropdownContent = document.getElementById('assembleDropdownContent');
     const createFirstLaunchBtn = document.getElementById('createFirstLaunchBtn');
+    const openYamlParametersQuickBtn = document.getElementById('openYamlParametersQuickBtn');
+    const openPlatformManagerQuickBtn = document.getElementById('openPlatformManagerQuickBtn');
 
     // Новые элементы для выпадающего меню
     const addScenarioDropdownBtn = document.getElementById('addScenarioDropdownBtn');
@@ -99,6 +101,7 @@
     const selectedCount = document.getElementById('selectedCount');
     const selectableCount = document.getElementById('selectableCount');
     const clearSelectionBtn = document.getElementById('clearSelectionBtn');
+    const selectionSummary = document.getElementById('selectionSummary');
 
     const phaseSwitcherSectionElements = document.querySelectorAll('.phase-switcher-section');
     const phaseTreeContainer = document.getElementById('phaseTreeContainer');
@@ -121,7 +124,6 @@
     let yamlParameterProfiles = [];
     let activeYamlParameterProfileId = '';
     let mainStatusText = '';
-    let selectionSummaryText = '';
 
     /**
      * Логирует сообщение в консоль webview и отправляет его в расширение.
@@ -172,11 +174,9 @@
         if (!(statusBar instanceof HTMLElement)) {
             return;
         }
-        const primary = (typeof mainStatusText === 'string' ? mainStatusText : '').trim();
-        const fallback = (typeof selectionSummaryText === 'string' ? selectionSummaryText : '').trim();
-        const visibleText = primary || fallback;
+        const visibleText = (typeof mainStatusText === 'string' ? mainStatusText : '').trim();
         statusBar.textContent = visibleText;
-        statusBar.classList.toggle('is-summary', primary.length === 0 && fallback.length > 0);
+        statusBar.classList.remove('is-summary');
         statusBar.classList.toggle('is-empty', visibleText.length === 0);
     }
 
@@ -264,7 +264,7 @@
 
 
         if (phaseTreeContainer) {
-            const checkboxes = phaseTreeContainer.querySelectorAll('input[type="checkbox"]');
+            const checkboxes = phaseTreeContainer.querySelectorAll('.checkbox-item input[type="checkbox"]');
             checkboxes.forEach(cb => {
                 if (cb instanceof HTMLInputElement) {
                     const isInitiallyDisabled = initialTestStates[cb.name] === 'disabled';
@@ -1029,7 +1029,28 @@
         if (scenarioSearchRow instanceof HTMLElement) {
             scenarioSearchRow.classList.toggle('hidden', isFavoritesTab);
         }
+        if (selectionSummary instanceof HTMLElement) {
+            selectionSummary.classList.toggle('hidden', isFavoritesTab);
+        }
         syncScenarioSearchHighlightState(false);
+    }
+
+    function updateScenarioLabelOverflow() {
+        requestAnimationFrame(() => {
+            for (const label of phaseTreeContainer?.querySelectorAll('.checkbox-label-text') || []) {
+                if (!(label instanceof HTMLElement)) {
+                    continue;
+                }
+                const content = label.querySelector('.kot-scroll-content');
+                if (!(content instanceof HTMLElement)) {
+                    continue;
+                }
+                const distance = Math.max(0, content.scrollWidth - label.clientWidth + 12);
+                label.classList.toggle('is-overflowing', distance > 1);
+                label.style.setProperty('--kot-overflow-distance', `${distance}px`);
+                label.style.setProperty('--kot-overflow-duration', `${Math.max(1.2, distance / 45)}s`);
+            }
+        });
     }
 
     function updateScenarioSearchClearButtonState() {
@@ -1188,7 +1209,8 @@
                 <label class="checkbox-item kot-tree-row${viewState.relationshipClassNames}" id="label-${viewState.safeName}" data-key="${viewState.escapedScenarioKeyAttr}" data-name="${viewState.escapedNameAttr}" data-uri="${viewState.escapedFileUriAttr}" data-relationship-label="${viewState.escapedRelationshipLabel}" title="${viewState.escapedTitleAttr}" tabindex="0" role="treeitem">
                     ${viewState.leadingControlHtml}
                     ${viewState.relationshipIconHtml}
-                    <span class="checkbox-label-text kot-tree-label">${viewState.name}</span>
+                    <span class="scenario-file-icon codicon codicon-file" aria-hidden="true"></span>
+                    <span class="checkbox-label-text kot-tree-label"><span class="kot-scroll-content">${escapeHtmlText(viewState.name)}</span></span>
                     <span class="kot-row-actions">
                         ${viewState.progressHtml}
                         ${viewState.runLogButtonHtml}
@@ -1243,7 +1265,7 @@
         const escapedRelationshipLabel = escapeHtmlAttr(relationshipDecoration.accessibleLabel);
         const relationshipIconHtml = relationshipDecoration.icon
             ? `<span class="scenario-relationship-icon codicon codicon-${escapeHtmlAttr(relationshipDecoration.icon)}" role="img" aria-label="${escapedRelationshipLabel}" title="${escapedRelationshipLabel}"></span>`
-            : '<span class="scenario-relationship-icon" aria-hidden="true"></span>';
+            : '';
         const escapedIconTitle = escapeHtmlAttr((window.__loc?.openScenarioFileTitle || 'Open scenario file {0}').replace('{0}', name));
         const runInfo = runArtifacts && typeof runArtifacts === 'object'
             ? runArtifacts[scenarioKey]
@@ -1335,7 +1357,6 @@
 
         const openButtonHtml = fileUriString
             ? `<button class="open-scenario-btn" data-key="${escapedScenarioKeyAttr}" data-name="${escapedNameAttr}" data-uri="${escapedFileUriAttr}" title="${escapedIconTitle}">
-                   <span class="codicon codicon-circle-small-filled open-scenario-icon-idle"></span>
                    <span class="codicon codicon-edit open-scenario-icon-edit"></span>
                </button>`
             : '';
@@ -1670,6 +1691,18 @@
             iconSpan.className = `codicon phase-toggle-icon ${phaseExpandedState[phaseName] ? 'codicon-chevron-down' : 'codicon-chevron-right'}`;
             expandCollapseButton.appendChild(iconSpan);
 
+            const phaseCheckbox = document.createElement('input');
+            phaseCheckbox.type = 'checkbox';
+            phaseCheckbox.className = 'phase-select-checkbox';
+            phaseCheckbox.dataset.phaseName = phaseName;
+            phaseCheckbox.title = window.__loc?.toggleAllInPhaseTitle || 'Toggle all tests in this group';
+            phaseCheckbox.setAttribute('aria-label', phaseCheckbox.title);
+
+            const folderSpan = document.createElement('span');
+            folderSpan.className = 'codicon codicon-folder phase-folder-icon';
+            folderSpan.setAttribute('aria-hidden', 'true');
+            expandCollapseButton.appendChild(folderSpan);
+
             const titleSpan = document.createElement('span');
             titleSpan.className = 'phase-title';
             titleSpan.textContent = phaseName;
@@ -1678,10 +1711,15 @@
             const countButton = document.createElement('button');
             countButton.type = 'button';
             countButton.className = 'phase-test-count';
-            updatePhaseCountButton(countButton, phaseName, enabledCount, totalInPhase);
 
+            phaseHeaderDiv.appendChild(phaseCheckbox);
             phaseHeaderDiv.appendChild(expandCollapseButton);
             phaseHeaderDiv.appendChild(countButton);
+            // The aggregate checkbox lives in the header, so calculate its
+            // checked/indeterminate state only after the controls share a DOM
+            // parent. Calling this before appendChild left every group looking
+            // unchecked even when all of its scenarios were selected.
+            updatePhaseCountButton(countButton, phaseName, enabledCount, totalInPhase);
 
             const testsListDiv = document.createElement('div');
             testsListDiv.className = 'phase-tests-list';
@@ -1715,7 +1753,7 @@
                     handlePhaseHeaderClick(event);
                 }
             });
-            countButton.addEventListener('click', handleTogglePhaseCheckboxesClick);
+            phaseCheckbox.addEventListener('change', handleTogglePhaseCheckboxesClick);
             phaseHeaderDiv.addEventListener('contextmenu', handlePhaseContextMenu);
         });
         applyCheckboxStatesToVisible();
@@ -1742,13 +1780,24 @@
         countButton.textContent = `${enabledCount}/${totalInPhase}`;
         countButton.classList.remove('group-changed');
 
+        const phaseCheckbox = countButton.closest('.phase-header')?.querySelector('.phase-select-checkbox');
+        if (phaseCheckbox instanceof HTMLInputElement) {
+            phaseCheckbox.checked = totalInPhase > 0 && enabledCount === totalInPhase;
+            phaseCheckbox.indeterminate = enabledCount > 0 && enabledCount < totalInPhase;
+            phaseCheckbox.disabled = !phaseControlsActive || totalInPhase === 0;
+            phaseCheckbox.setAttribute(
+                'aria-checked',
+                phaseCheckbox.indeterminate ? 'mixed' : String(phaseCheckbox.checked)
+            );
+        }
+
         const title = totalInPhase > 0
             ? (window.__loc?.toggleAllInPhaseTitle || 'Toggle all tests in this group')
             : (window.__loc?.noTestsInPhase || 'No tests in this group.');
         countButton.title = title;
         countButton.setAttribute('aria-label', title);
-        countButton.disabled = !phaseControlsActive || totalInPhase === 0;
-        countButton.classList.toggle('is-disabled', countButton.disabled);
+        countButton.disabled = true;
+        countButton.classList.toggle('is-disabled', true);
     }
 
     function setPhaseListExpandedState(testsList, expanded, animate = true) {
@@ -1850,7 +1899,7 @@
      */
     function handleTogglePhaseCheckboxesClick(event) {
         const button = event.currentTarget;
-        if (!(button instanceof HTMLButtonElement)) return;
+        if (!(button instanceof HTMLInputElement)) return;
         if (button.disabled) return;
         event.stopPropagation();
 
@@ -1868,13 +1917,7 @@
         const checkboxesInPhase = testsList.querySelectorAll('input[type="checkbox"]:not(:disabled)');
         if (checkboxesInPhase.length === 0) return;
 
-        let shouldCheckAll = false;
-        for (const cb of checkboxesInPhase) {
-            if (cb instanceof HTMLInputElement && !cb.checked) {
-                shouldCheckAll = true;
-                break;
-            }
-        }
+        const shouldCheckAll = button.checked;
 
         checkboxesInPhase.forEach(cb => {
             if (cb instanceof HTMLInputElement) {
@@ -1893,12 +1936,14 @@
      * Обновляет состояние и иконку кнопки "Свернуть/Развернуть все".
      */
     function updateAreAllPhasesExpandedState() {
-        if (!phaseTreeContainer || !collapseAllBtn) return;
+        if (!phaseTreeContainer) return;
         const phaseHeaders = phaseTreeContainer.querySelectorAll('.phase-header');
         if (phaseHeaders.length === 0) {
             areAllPhasesCurrentlyExpanded = false;
-            if (collapseAllBtn.firstElementChild) collapseAllBtn.firstElementChild.className = 'codicon codicon-expand-all';
-            collapseAllBtn.title = window.__loc?.expandAllPhasesTitle || 'Expand all groups';
+            if (collapseAllBtn instanceof HTMLButtonElement) {
+                if (collapseAllBtn.firstElementChild) collapseAllBtn.firstElementChild.className = 'codicon codicon-expand-all';
+                collapseAllBtn.title = window.__loc?.expandAllPhasesTitle || 'Expand all groups';
+            }
             return;
         }
 
@@ -1913,12 +1958,14 @@
             }
         }
         areAllPhasesCurrentlyExpanded = allExpanded;
-        if (collapseAllBtn.firstElementChild) {
-             collapseAllBtn.firstElementChild.className = areAllPhasesCurrentlyExpanded ? 'codicon codicon-collapse-all' : 'codicon codicon-expand-all';
+        if (collapseAllBtn instanceof HTMLButtonElement) {
+            if (collapseAllBtn.firstElementChild) {
+                collapseAllBtn.firstElementChild.className = areAllPhasesCurrentlyExpanded ? 'codicon codicon-collapse-all' : 'codicon codicon-expand-all';
+            }
+            collapseAllBtn.title = areAllPhasesCurrentlyExpanded
+                ? (window.__loc?.collapseAllPhasesTitle || 'Collapse all groups')
+                : (window.__loc?.expandAllPhasesTitle || 'Expand all groups');
         }
-        collapseAllBtn.title = areAllPhasesCurrentlyExpanded
-            ? (window.__loc?.collapseAllPhasesTitle || 'Collapse all groups')
-            : (window.__loc?.expandAllPhasesTitle || 'Expand all groups');
     }
 
     /**
@@ -1926,7 +1973,7 @@
      */
     function handleCollapseAllClick() {
         log('Collapse/Expand All button clicked.');
-        if (isSoftDisabled(collapseAllBtn)) {
+        if (isBuildInProgress || settings.switcherEnabled === false || isSoftDisabled(collapseAllBtn)) {
             return;
         }
         if (!phaseTreeContainer) return;
@@ -2652,7 +2699,7 @@
     function applyCheckboxStatesToVisible() {
         log('Applying states to visible checkboxes...');
         if (!phaseTreeContainer) return;
-        const checkboxes = phaseTreeContainer.querySelectorAll('input[type="checkbox"]');
+        const checkboxes = phaseTreeContainer.querySelectorAll('.checkbox-item input[type="checkbox"]');
         const lockByRunningTests = hasScenarioRunsInProgress();
         const lockByGlobalState = !phaseControlsActive || isBuildInProgress || lockByRunningTests;
         let count = 0;
@@ -2724,6 +2771,7 @@
         updateSelectionControls();
         applyAffectedMainScenarioHighlighting();
         updateAreAllPhasesExpandedState();
+        updateScenarioLabelOverflow();
     }
 
     /**
@@ -2801,22 +2849,6 @@
      * Обновляет статус-бар краткой информацией о текущем выборе сценариев.
      */
     function updatePendingStatus() {
-        let enabled = 0;
-        let total = 0;
-        for (const name in initialTestStates) {
-            if (initialTestStates.hasOwnProperty(name) && initialTestStates[name] !== 'disabled') {
-                total++;
-                const currentState = !!currentCheckboxStates[name];
-                if (currentState) {
-                    enabled++;
-                }
-            }
-        }
-
-        const statusTemplate = window.__loc?.selectionStateSummary || 'Will be built: {0}/{1}';
-        selectionSummaryText = statusTemplate
-            .replace('{0}', String(enabled))
-            .replace('{1}', String(total));
         renderMainStatusBar();
 
         updateSelectionControls();
@@ -2846,6 +2878,9 @@
         log('Received message command: ' + message?.command);
 
         switch (message?.command) {
+            case 'toggleAllGroups':
+                handleCollapseAllClick();
+                break;
             case 'loadInitialState':
                 if (message.error) {
                      closeRunModeMenu();
@@ -3760,6 +3795,13 @@
             });
         }
 
+        if (openYamlParametersQuickBtn) {
+            openYamlParametersQuickBtn.addEventListener('click', event => {
+                event.preventDefault();
+                vscode.postMessage({ command: 'openYamlParametersManager' });
+            });
+        }
+
         if (openPlatformManagerFromDropdownBtn) {
             openPlatformManagerFromDropdownBtn.addEventListener('click', event => {
                 event.preventDefault();
@@ -3769,6 +3811,14 @@
                 closeScenarioRepairDropdownMenu();
                 closeConfigurationDiffReportDropdownMenu();
                 log('Open platform manager from actions menu clicked.');
+                vscode.postMessage({ command: 'openPlatformManager' });
+            });
+        }
+
+
+        if (openPlatformManagerQuickBtn) {
+            openPlatformManagerQuickBtn.addEventListener('click', event => {
+                event.preventDefault();
                 vscode.postMessage({ command: 'openPlatformManager' });
             });
         }

@@ -477,6 +477,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     
     private _onDidUpdateScenarioCatalog = new vscode.EventEmitter<ScenarioCatalog | null>();
     public readonly onDidUpdateScenarioCatalog = this._onDidUpdateScenarioCatalog.event;
+    private readonly _onDidChangeFavoriteScenarios = new vscode.EventEmitter<void>();
+    public readonly onDidChangeFavoriteScenarios = this._onDidChangeFavoriteScenarios.event;
 
     public getScenarioCatalog(): ScenarioCatalog | null {
         return this._scenarioCatalogState.isDirty ? null : this._scenarioCatalogState.current;
@@ -1764,6 +1766,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     constructor(extensionUri: vscode.Uri, context: vscode.ExtensionContext) {
         this._extensionUri = extensionUri;
         this._context = context;
+        context.subscriptions.push(this._onDidChangeFavoriteScenarios);
         console.log("[PhaseSwitcherProvider] Initialized.");
         this._runningFeatureStepDecorationType = vscode.window.createTextEditorDecorationType({
             isWholeLine: true,
@@ -4112,6 +4115,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             PhaseSwitcherProvider.favoritesCacheKey,
             Array.from(deduplicated.values())
         );
+        this._onDidChangeFavoriteScenarios.fire();
     }
 
     private findScenarioByUriInCache(uri: vscode.Uri): TestInfo | undefined {
@@ -6010,6 +6014,37 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         await this.openScenarioInVanessaManual(picked.label, picked.scenarioKey);
     }
 
+    public async openVanessaFromSidebar(): Promise<void> {
+        const mode = await vscode.window.showQuickPick([
+            {
+                label: this.t('Run test (auto close)'),
+                description: this.t('Runs the selected scenario and waits for completion.'),
+                value: 'auto' as const
+            },
+            {
+                label: this.t('Open for debugging (keep Vanessa open)'),
+                description: this.t('Opens the selected scenario for manual debugging.'),
+                value: 'debug' as const
+            }
+        ], {
+            title: this.t('Open Vanessa'),
+            placeHolder: this.t('Choose launch mode'),
+            ignoreFocusOut: true
+        });
+        if (!mode) {
+            return;
+        }
+        if (mode.value === 'debug') {
+            await this.openScenarioInVanessaManualFromCommandPalette();
+            return;
+        }
+        await this.pickScenarioForVanessaRun();
+    }
+
+    public toggleAllGroupsFromSidebar(): void {
+        void this._view?.webview.postMessage({ command: 'toggleAllGroups' });
+    }
+
     private async pickScenarioForVanessaRun(): Promise<void> {
         if (this._isBuildInProgress) {
             vscode.window.showWarningMessage(this.t('Please wait for the current build to finish.'));
@@ -6297,7 +6332,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 accountingMode: this.t('Accounting mode'),
                 createFirstLaunchZipTitle: this.t('Create FirstLaunch archive'),
                 buildFL: this.t('Build FL'),
-                buildTests: this.t('Build tests'),
+                buildTests: this.t('Compile'),
                 buildOptionsTitle: this.t('Build options'),
                 profile: this.t('Profile'),
                 selectProfile: this.t('Select profile'),

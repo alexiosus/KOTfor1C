@@ -17,7 +17,9 @@ export interface InfobaseSidebarItem {
     readonly infobaseKind: ManagedInfobaseKind;
     readonly state: ManagedInfobaseState;
     readonly roles: readonly string[];
+    readonly launcherRegistered: boolean;
     readonly active: boolean;
+    readonly running: boolean;
 }
 
 export interface InfobaseSidebarModel {
@@ -89,7 +91,10 @@ function compareText(left: string, right: string): number {
     return left.localeCompare(right, undefined, { sensitivity: 'base' });
 }
 
-export function buildInfobaseSidebarModel(snapshot: ManagedInfobaseSnapshot): InfobaseSidebarModel {
+export function buildInfobaseSidebarModel(
+    snapshot: ManagedInfobaseSnapshot,
+    runningInfobaseIdentities: ReadonlySet<string> = new Set()
+): InfobaseSidebarModel {
     const activeIdentity = snapshot.activeInfobaseIdentity;
     const items = snapshot.infobases
         .filter(record => !record.hidden)
@@ -104,11 +109,14 @@ export function buildInfobaseSidebarModel(snapshot: ManagedInfobaseSnapshot): In
                 infobaseKind: record.infobaseKind,
                 state: record.state,
                 roles: Object.freeze([...record.roles]),
-                active
+                launcherRegistered: record.launcherRegistered,
+                active,
+                running: runningInfobaseIdentities.has(
+                    normalizeInfobaseConnectionIdentity(record.infobasePath)
+                )
             });
         })
-        .sort((left, right) => Number(right.active) - Number(left.active)
-            || compareText(left.displayName, right.displayName)
+        .sort((left, right) => compareText(left.displayName, right.displayName)
             || compareText(left.infobasePath, right.infobasePath));
     return Object.freeze({
         revision: snapshot.revision,

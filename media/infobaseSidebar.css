@@ -17,35 +17,11 @@ body {
 
 .infobase-sidebar {
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr) auto;
     width: 100%;
     height: 100%;
     min-width: 0;
     overflow: hidden;
-}
-
-.infobase-header,
-.infobase-footer {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    min-width: 0;
-    padding: 5px 8px;
-    border-color: var(--vscode-sideBarSectionHeader-border, transparent);
-}
-
-.infobase-header {
-    justify-content: space-between;
-    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
-    color: var(--vscode-descriptionForeground);
-    font-size: 11px;
-}
-
-.infobase-header > span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .infobase-status {
@@ -93,14 +69,14 @@ body {
     outline-offset: -1px;
 }
 
-.infobase-active-marker {
+.infobase-runtime-marker {
     width: 6px;
     height: 6px;
     margin-top: 8px;
     border-radius: 50%;
 }
 
-.infobase-active-marker.is-active {
+.infobase-runtime-marker.is-running {
     background: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
 }
 
@@ -136,10 +112,17 @@ body {
     right: 4px;
     display: grid;
     min-width: 150px;
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
     padding: 3px;
     border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border));
     background: var(--vscode-menu-background);
     color: var(--vscode-menu-foreground);
+}
+
+.infobase-menu.opens-upward {
+    top: auto;
+    bottom: calc(100% - 2px);
 }
 
 .infobase-menu button {
@@ -172,51 +155,4 @@ body {
     outline: 0;
     background: var(--vscode-menu-selectionBackground);
     color: var(--vscode-menu-selectionForeground);
-}
-
-.infobase-footer {
-    justify-content: stretch;
-    border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
-}
-
-.infobase-footer #openFullButton {
-    flex: 1 1 auto;
-    justify-content: flex-start;
-}
-
-.infobase-footer .infobase-create-button {
-    flex: 0 0 28px;
-    width: 28px;
-    padding: 0;
-    justify-content: center;
-}
-
-.infobase-footer button {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    min-width: 0;
-    min-height: 28px;
-    padding: 3px 7px;
-    border: 1px solid var(--vscode-button-border, transparent);
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground);
-    font: inherit;
-}
-
-.infobase-footer button:hover {
-    background: var(--vscode-button-secondaryHoverBackground);
-}
-
-.infobase-footer button span:last-child {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-@media (max-width: 300px) {
-    .infobase-footer button span:last-child {
-        display: none;
-    }
 }

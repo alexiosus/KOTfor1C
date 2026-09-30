@@ -79,7 +79,7 @@ select:focus-visible,
 
 .library-toolbar {
     display: grid;
-    grid-template-columns: minmax(220px, 1fr) auto auto auto;
+    grid-template-columns: minmax(220px, 1fr) auto auto auto auto;
     gap: 8px;
     align-items: center;
     padding: 8px;
@@ -310,6 +310,7 @@ select:focus-visible,
 }
 
 .definition-row {
+    position: relative;
     display: grid;
     width: 100%;
     min-width: 100%;
@@ -320,6 +321,28 @@ select:focus-visible,
     border: 1px solid transparent;
     border-radius: 3px;
     cursor: default;
+}
+
+.definition-favorite {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    padding: 0;
+    opacity: 0;
+}
+
+.definition-row:hover .definition-favorite,
+.definition-row[aria-selected="true"] .definition-favorite,
+.definition-favorite:focus-visible {
+    opacity: 1;
+}
+
+.definition-row:hover .definition-text,
+.definition-row[aria-selected="true"] .definition-text {
+    padding-inline-end: 28px;
 }
 
 .definition-row:nth-child(even) {

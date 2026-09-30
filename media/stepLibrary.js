@@ -10,6 +10,7 @@
     const languageFilter = document.getElementById('languageFilter');
     const sortMode = document.getElementById('sortMode');
     const refreshButton = document.getElementById('refreshButton');
+    const createButton = document.getElementById('createButton');
     const categoryToggle = document.getElementById('categoryToggle');
     const categoryBack = document.getElementById('categoryBack');
     const detailsBack = document.getElementById('detailsBack');
@@ -22,6 +23,7 @@
     const insertButton = document.getElementById('insertButton');
     const copyButton = document.getElementById('copyButton');
     const openDefinitionButton = document.getElementById('openDefinitionButton');
+    const favoriteButton = document.getElementById('favoriteButton');
     const paneResizers = [...document.querySelectorAll('.pane-resizer')];
     const liveRegion = document.getElementById('liveRegion');
     const labels = document.body.dataset;
@@ -39,6 +41,7 @@
         snapshot: null,
         query: typeof persisted.query === 'string' ? persisted.query : '',
         sourceGroup: typeof persisted.sourceGroup === 'string' ? persisted.sourceGroup : null,
+        favoritesOnly: persisted.favoritesOnly === true,
         categoryPath: Array.isArray(persisted.categoryPath) ? persisted.categoryPath : [],
         uncategorized: persisted.uncategorized === true,
         expandedNodes: new Set(Array.isArray(persisted.expandedNodes)
@@ -52,6 +55,7 @@
             : 'both',
         sortMode: persisted.sortMode === 'alphabetical' ? 'alphabetical' : 'relevance',
         insertionTarget: { available: false, identity: 'unavailable' },
+        favoriteItemIds: new Set(),
         pendingActions: new Set(),
         paneLayout: {
             categoryWidth: Number.isFinite(persisted.paneLayout?.categoryWidth)
@@ -67,6 +71,7 @@
         vscode.setState({
             query: state.query,
             sourceGroup: state.sourceGroup,
+            favoritesOnly: state.favoritesOnly,
             categoryPath: [...state.categoryPath],
             uncategorized: state.uncategorized,
             expandedNodes: [...state.expandedNodes],
@@ -235,6 +240,8 @@
             state.language,
             labels.preferredLanguage,
             state.query,
+            state.favoritesOnly,
+            [...state.favoriteItemIds].sort(),
             state.sourceGroup,
             state.categoryPath,
             state.uncategorized,
@@ -245,6 +252,7 @@
         }
         if (
             !state.query
+            && !state.favoritesOnly
             && !state.sourceGroup
             && state.categoryPath.length === 0
             && !state.uncategorized
@@ -253,7 +261,10 @@
             filteredItemsCache = { key, items };
             return items;
         }
-        const items = protocol.searchItems(state.snapshot.items, state.query, languageOptions({
+        const sourceItems = state.favoritesOnly
+            ? state.snapshot.items.filter(item => state.favoriteItemIds.has(item.id))
+            : state.snapshot.items;
+        const items = protocol.searchItems(sourceItems, state.query, languageOptions({
             sourceGroup: state.sourceGroup || undefined,
             categoryPath: state.uncategorized ? undefined : state.categoryPath,
             uncategorized: state.uncategorized,
@@ -276,13 +287,15 @@
         if (!state.snapshot) {
             return;
         }
-        const reconciled = protocol.reconcileCategorySelection(
-            allItemsForLanguage(),
-            state
-        );
-        state.sourceGroup = reconciled.sourceGroup;
-        state.categoryPath = reconciled.categoryPath;
-        state.uncategorized = reconciled.uncategorized;
+        if (!state.favoritesOnly) {
+            const reconciled = protocol.reconcileCategorySelection(
+                allItemsForLanguage(),
+                state
+            );
+            state.sourceGroup = reconciled.sourceGroup;
+            state.categoryPath = reconciled.categoryPath;
+            state.uncategorized = reconciled.uncategorized;
+        }
         const visibleItems = filteredItems();
         if (!visibleItems.some(item => item.id === state.selectedItemId)) {
             state.selectedItemId = visibleItems[0]?.id || null;
@@ -292,7 +305,10 @@
 
     function isSelectedTreeNode(node) {
         if (node.id === 'all') {
-            return !state.sourceGroup;
+            return !state.sourceGroup && !state.favoritesOnly;
+        }
+        if (node.id === 'favorites') {
+            return state.favoritesOnly;
         }
         if (protocol.isUncategorizedNodeId(node.id)) {
             return state.sourceGroup === node.sourceGroup && state.uncategorized;
@@ -305,10 +321,17 @@
 
     function selectTreeNode(node) {
         if (node.id === 'all') {
+            state.favoritesOnly = false;
+            state.sourceGroup = null;
+            state.categoryPath = [];
+            state.uncategorized = false;
+        } else if (node.id === 'favorites') {
+            state.favoritesOnly = true;
             state.sourceGroup = null;
             state.categoryPath = [];
             state.uncategorized = false;
         } else {
+            state.favoritesOnly = false;
             state.sourceGroup = node.sourceGroup;
             state.categoryPath = [...node.path];
             state.uncategorized = protocol.isUncategorizedNodeId(node.id);
@@ -428,11 +451,20 @@
             count: items.length,
             children: []
         };
+        const favoritesNode = {
+            id: 'favorites',
+            sourceGroup: '',
+            label: labels.favorites,
+            path: [],
+            count: items.filter(item => state.favoriteItemIds.has(item.id)).length,
+            children: []
+        };
         protocol.preserveScrollPosition(categoryTree, () => {
             treeElementsById.clear();
             selectedTreeButton = null;
             categoryTree.replaceChildren(
                 createTreeNode(allNode, 1),
+                createTreeNode(favoritesNode, 1),
                 ...roots.map(root => createTreeNode(root, 1))
             );
         });
@@ -455,7 +487,18 @@
         const category = document.createElement('span');
         category.textContent = categoryLabel(item);
         meta.append(source, category);
-        row.append(text, meta);
+        const favorite = document.createElement('button');
+        favorite.type = 'button';
+        favorite.className = 'definition-favorite icon-button codicon';
+        const isFavorite = state.favoriteItemIds.has(item.id);
+        favorite.classList.add(isFavorite ? 'codicon-star-full' : 'codicon-star-empty');
+        favorite.title = isFavorite ? labels.removeFavorite : labels.addFavorite;
+        favorite.setAttribute('aria-label', `${favorite.title}: ${item.displayText}`);
+        favorite.addEventListener('click', event => {
+            event.stopPropagation();
+            vscode.postMessage({ command: 'toggleFavorite', itemId: item.id });
+        });
+        row.append(text, meta, favorite);
         row.addEventListener('click', () => selectItem(item.id, false, true));
         row.addEventListener('dblclick', () => requestInsert(item.id));
         renderedRowsById.set(item.id, row);
@@ -559,6 +602,7 @@
         ) || insertPending;
         copyButton.disabled = !item || copyPending;
         openDefinitionButton.disabled = !item || !item.navigable || openPending;
+        favoriteButton.disabled = !item;
         if (!item) {
             const empty = document.createElement('p');
             empty.className = 'empty-details';
@@ -566,6 +610,10 @@
             detailsContent.append(empty);
             return;
         }
+        const isFavorite = state.favoriteItemIds.has(item.id);
+        favoriteButton.title = isFavorite ? labels.removeFavorite : labels.addFavorite;
+        favoriteButton.setAttribute('aria-label', favoriteButton.title);
+        favoriteButton.firstElementChild.className = `codicon ${isFavorite ? 'codicon-star-full' : 'codicon-star-empty'}`;
         const title = document.createElement('h3');
         appendHighlightedText(title, item.displayText);
         detailsContent.append(title);
@@ -717,6 +765,9 @@
         refreshButton.disabled = true;
         vscode.postMessage({ command: 'refresh' });
     });
+    createButton.addEventListener('click', () => {
+        vscode.postMessage({ command: 'create' });
+    });
     categoryToggle.addEventListener('click', () => {
         shell.classList.add('categories-open');
         categoryTree.querySelector('[role="treeitem"]')?.focus();
@@ -789,6 +840,11 @@
             sendAction('openDefinition', state.selectedItemId);
         }
     });
+    favoriteButton.addEventListener('click', () => {
+        if (state.selectedItemId) {
+            vscode.postMessage({ command: 'toggleFavorite', itemId: state.selectedItemId });
+        }
+    });
 
     window.addEventListener('message', event => {
         const message = event.data;
@@ -813,6 +869,9 @@
                 available: false,
                 identity: 'unavailable'
             };
+            state.favoriteItemIds = new Set(Array.isArray(message.favoriteItemIds)
+                ? message.favoriteItemIds
+                : []);
             reconcileFiltersAndSelection();
             refreshButton.disabled = false;
             renderTree();

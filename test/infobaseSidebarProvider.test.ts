@@ -115,6 +115,8 @@ function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('o
     });
 
     const invalidations = new EventHub<void>();
+    const runtimeChanges = new EventHub<ReadonlySet<string>>();
+    let runningIdentities = new Set<string>();
     let current = initial;
     let ensureError: Error | null = null;
     let ensureCalls = 0;
@@ -137,6 +139,15 @@ function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('o
         createInfobase: async () => { calls.push({ action: 'create' }); },
         openEnterprise: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'enterprise', id: value.id }); },
         openDesigner: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'designer', id: value.id }); },
+        openFormExplorer: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'formExplorer', id: value.id }); },
+        copy: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'copy', id: value.id }); },
+        recreate: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'recreate', id: value.id }); },
+        updateConfiguration: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'updateConfiguration', id: value.id }); },
+        edit: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'edit', id: value.id }); },
+        addToLauncher: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'addToLauncher', id: value.id }); },
+        removeFromLauncher: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'removeFromLauncher', id: value.id }); },
+        reveal: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'reveal', id: value.id }); },
+        logs: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'logs', id: value.id }); },
         exportDt: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'exportDt', id: value.id }); },
         importDt: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'importDt', id: value.id }); },
         exportCf: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'exportCf', id: value.id }); },
@@ -149,6 +160,10 @@ function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('o
     const provider = new Provider({
         extensionUri: uri('file:///extension'),
         managedInfobaseService: service,
+        runtimeTracker: {
+            onDidChange: runtimeChanges.event,
+            runningIdentities: () => runningIdentities
+        },
         loadOperations: async () => operations
     });
     const view = new FakeWebviewView();
@@ -157,6 +172,10 @@ function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('o
         provider, view, invalidations, commands, errors, calls,
         setSnapshot(value: ManagedInfobaseSnapshot) { current = value; },
         setEnsureError(value: Error | null) { ensureError = value; },
+        setRunningIdentities(value: ReadonlySet<string>) {
+            runningIdentities = new Set(value);
+            runtimeChanges.fire(runningIdentities);
+        },
         get ensureCalls() { return ensureCalls; },
         get refreshCalls() { return refreshCalls; }
     };
@@ -167,7 +186,7 @@ async function send(harness: ReturnType<typeof createHarness>, message: unknown)
     await flush();
 }
 
-test('ready publishes loading and a sorted model with active-profile semantics', async () => {
+test('ready publishes loading and an alphabetically sorted model', async () => {
     const harness = createHarness();
     assert.equal(harness.ensureCalls, 0);
     await send(harness, { command: 'ready' });
@@ -180,7 +199,27 @@ test('ready publishes loading and a sorted model with active-profile semantics',
     const state = harness.view.webview.messages.at(-1) as { profileName: string; activeInfobaseId: string; items: Array<{ id: string; active: boolean }> };
     assert.equal(state.profileName, 'QA profile');
     assert.equal(state.activeInfobaseId, 'two');
-    assert.deepEqual(state.items.map(item => [item.id, item.active]), [['two', true], ['one', false]]);
+    assert.deepEqual(state.items.map(item => [item.id, item.active]), [['one', false], ['two', true]]);
+});
+
+test('runtime process changes update markers without rescanning infobases', async () => {
+    const harness = createHarness();
+    await send(harness, { command: 'ready' });
+    const ensureCalls = harness.ensureCalls;
+
+    harness.setRunningIdentities(new Set(['/workspace/one']));
+    await flush();
+
+    assert.equal(harness.ensureCalls, ensureCalls);
+    const state = harness.view.webview.messages.at(-1) as {
+        command: string;
+        items: Array<{ id: string; running: boolean }>;
+    };
+    assert.equal(state.command, 'state');
+    assert.deepEqual(state.items.map(item => [item.id, item.running]), [
+        ['one', true],
+        ['two', false]
+    ]);
 });
 
 test('publishes an explicit empty state without retrying the shared snapshot', async () => {
@@ -201,6 +240,15 @@ test('rejects unknown IDs and actions while routing every allowed action exactly
     for (const message of [
         { command: 'openEnterprise', infobaseId: 'one' },
         { command: 'openDesigner', infobaseId: 'one' },
+        { command: 'maintenance', infobaseId: 'one', action: 'openFormExplorer' },
+        { command: 'maintenance', infobaseId: 'one', action: 'copy' },
+        { command: 'maintenance', infobaseId: 'one', action: 'recreate' },
+        { command: 'maintenance', infobaseId: 'one', action: 'updateConfiguration' },
+        { command: 'maintenance', infobaseId: 'one', action: 'edit' },
+        { command: 'maintenance', infobaseId: 'one', action: 'addToLauncher' },
+        { command: 'maintenance', infobaseId: 'one', action: 'removeFromLauncher' },
+        { command: 'maintenance', infobaseId: 'one', action: 'reveal' },
+        { command: 'maintenance', infobaseId: 'one', action: 'logs' },
         { command: 'maintenance', infobaseId: 'one', action: 'exportDt' },
         { command: 'maintenance', infobaseId: 'one', action: 'importDt' },
         { command: 'maintenance', infobaseId: 'one', action: 'exportCf' },
@@ -210,9 +258,11 @@ test('rejects unknown IDs and actions while routing every allowed action exactly
     }
 
     assert.deepEqual(harness.calls.map(call => call.action), [
-        'enterprise', 'designer', 'exportDt', 'importDt', 'exportCf', 'importCf'
+        'enterprise', 'designer', 'formExplorer', 'copy', 'recreate', 'updateConfiguration', 'edit',
+        'addToLauncher', 'removeFromLauncher', 'reveal', 'logs',
+        'exportDt', 'importDt', 'exportCf', 'importCf'
     ]);
-    assert.equal(harness.refreshCalls, 6);
+    assert.equal(harness.refreshCalls, 15);
     const pending = harness.view.webview.messages.filter(value => (value as { command: string }).command === 'pending') as Array<{ infobaseId: string | null }>;
     assert.equal(pending.every(message => message.infobaseId === 'one' || message.infobaseId === null), true);
 });

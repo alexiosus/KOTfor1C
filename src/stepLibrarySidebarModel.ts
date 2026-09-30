@@ -3,6 +3,7 @@ import type {
     StepLibrarySnapshot,
     StepLibrarySourceGroup
 } from './stepLibraryModel';
+import { buildCallableDefinitionText } from './projectDefinitionSnippet';
 
 export interface StepLibrarySidebarNode {
     readonly id: string;
@@ -18,6 +19,7 @@ export interface StepLibrarySidebarNode {
     readonly alternateLabel?: string;
     readonly scenarioKey?: string;
     readonly sourceGroup?: StepLibrarySourceGroup;
+    readonly favorite?: boolean;
 }
 
 export interface StepLibrarySidebarPage {
@@ -65,6 +67,8 @@ const DEFAULT_PAGE_SIZE = 100;
 const MAX_SEARCH_RESULTS = 100;
 const UNCATEGORIZED_KEY = '#uncategorized';
 const UNCATEGORIZED_LABEL = 'Uncategorized';
+const FAVORITES_ID = 'favorites';
+const FAVORITES_LABEL = 'Favorites';
 
 function compareText(left: string, right: string): number {
     return left < right ? -1 : left > right ? 1 : 0;
@@ -94,10 +98,30 @@ function categoryId(group: StepLibrarySourceGroup, path: readonly string[]): str
     return `category:${group}:${encodedPath}`;
 }
 
-function definitionNode(item: StepLibraryItem, depth: number): StepLibrarySidebarNode {
-    const scenarioKey = (item.sourceGroup === 'nested' || item.sourceGroup === 'main')
-        ? item.capturedLocation?.uri
-        : undefined;
+function buildDragText(item: StepLibraryItem, preferredLanguage: 'ru' | 'en'): string {
+    if (item.sourceGroup !== 'nested' && item.sourceGroup !== 'export') {
+        return item.displayText;
+    }
+    const fallbackKeyword = (item.language ?? preferredLanguage) === 'ru' ? 'И' : 'And';
+    const callableText = buildCallableDefinitionText(item.displayText, '', fallbackKeyword);
+    if (item.sourceGroup !== 'nested' || item.parameters.length === 0) {
+        return callableText;
+    }
+    const maxNameLength = item.parameters.reduce((maximum, parameter) =>
+        Math.max(maximum, parameter.name.length), 0);
+    return item.parameters.reduce((text, parameter) => {
+        const value = parameter.defaultValue ?? `"${parameter.name}"`;
+        return `${text}\n    ${parameter.name.padEnd(maxNameLength, ' ')} = ${value}`;
+    }, callableText);
+}
+
+function definitionNode(
+    item: StepLibraryItem,
+    depth: number,
+    preferredLanguage: 'ru' | 'en',
+    favoriteItemIds: ReadonlySet<string>
+): StepLibrarySidebarNode {
+    const scenarioKey = item.scenarioKey;
     return Object.freeze({
         id: `definition:${encodeURIComponent(item.id)}`,
         kind: 'definition' as const,
@@ -107,10 +131,11 @@ function definitionNode(item: StepLibraryItem, depth: number): StepLibrarySideba
         itemId: item.id,
         insertable: item.insertable,
         navigable: item.navigable,
-        ...(item.insertable ? { dragText: item.displayText } : {}),
+        ...(item.insertable ? { dragText: buildDragText(item, preferredLanguage) } : {}),
         ...(item.alternateDisplayText ? { alternateLabel: item.alternateDisplayText } : {}),
         ...(scenarioKey ? { scenarioKey } : {}),
-        sourceGroup: item.sourceGroup
+        sourceGroup: item.sourceGroup,
+        favorite: favoriteItemIds.has(item.id)
     });
 }
 
@@ -174,8 +199,13 @@ export class StepLibrarySidebarIndex {
     private readonly itemsById: ReadonlyMap<string, StepLibraryItem>;
     private readonly ancestorIdsByItemId: ReadonlyMap<string, readonly string[]>;
     private readonly searchEntries: readonly SearchEntry[];
+    private readonly favoriteItems: readonly StepLibraryItem[];
 
-    private constructor(items: readonly StepLibraryItem[]) {
+    private constructor(
+        items: readonly StepLibraryItem[],
+        private readonly preferredLanguage: 'ru' | 'en',
+        private readonly favoriteItemIds: ReadonlySet<string>
+    ) {
         const branches = new Map<string, CategoryBranch>();
         const itemsById = new Map<string, StepLibraryItem>();
         const ancestorIdsByItemId = new Map<string, readonly string[]>();
@@ -269,7 +299,24 @@ export class StepLibrarySidebarIndex {
             branchCounts(branches.get(sourceId(group))!);
         }
 
-        this.rootNodes = Object.freeze(SOURCE_GROUPS.map(group => Object.freeze({
+        this.favoriteItems = Object.freeze(items
+            .filter(item => favoriteItemIds.has(item.id))
+            .sort(stableItemOrder));
+        for (const item of this.favoriteItems) {
+            const ancestors = new Set(ancestorIdsByItemId.get(item.id) ?? []);
+            ancestors.add(FAVORITES_ID);
+            ancestorIdsByItemId.set(item.id, Object.freeze([...ancestors]));
+        }
+        this.rootNodes = Object.freeze([
+            Object.freeze({
+                id: FAVORITES_ID,
+                kind: 'source' as const,
+                label: FAVORITES_LABEL,
+                count: this.favoriteItems.length,
+                depth: 0,
+                expandable: this.favoriteItems.length > 0
+            }),
+            ...SOURCE_GROUPS.map(group => Object.freeze({
             id: sourceId(group),
             kind: 'source' as const,
             label: SOURCE_LABELS[group],
@@ -277,13 +324,14 @@ export class StepLibrarySidebarIndex {
             depth: 0,
             expandable: (sourceCounts.get(group) ?? 0) > 0,
             sourceGroup: group
-        })));
+            }))
+        ]);
         this.branches = branches;
         this.itemsById = itemsById;
         this.ancestorIdsByItemId = ancestorIdsByItemId;
         this.searchEntries = Object.freeze(items.map(item => Object.freeze({
             item,
-            node: definitionNode(item, 0),
+            node: definitionNode(item, 0, preferredLanguage, favoriteItemIds),
             normalizedDisplay: normalizeText(item.displayText),
             normalizedTemplate: normalizeText(item.template),
             normalizedSearch: normalizeText(item.searchText),
@@ -293,9 +341,14 @@ export class StepLibrarySidebarIndex {
 
     public static fromSnapshot(
         snapshot: StepLibrarySnapshot,
-        preferredLanguage: 'ru' | 'en'
+        preferredLanguage: 'ru' | 'en',
+        favoriteItemIds: ReadonlySet<string> = new Set()
     ): StepLibrarySidebarIndex {
-        return new StepLibrarySidebarIndex(selectBuiltInFamilies(snapshot.items, preferredLanguage));
+        return new StepLibrarySidebarIndex(
+            selectBuiltInFamilies(snapshot.items, preferredLanguage),
+            preferredLanguage,
+            favoriteItemIds
+        );
     }
 
     public roots(): readonly StepLibrarySidebarNode[] {
@@ -303,6 +356,35 @@ export class StepLibrarySidebarIndex {
     }
 
     public children(parentId: string, offset = 0, limit = DEFAULT_PAGE_SIZE): StepLibrarySidebarPage {
+        if (parentId === FAVORITES_ID) {
+            const safeOffset = Math.max(0, Math.floor(Number.isFinite(offset) ? offset : 0));
+            const safeLimit = normalizedLimit(limit, DEFAULT_PAGE_SIZE);
+            const pageItems = this.favoriteItems.slice(safeOffset, safeOffset + safeLimit);
+            const nodes = pageItems.map(item => definitionNode(
+                item,
+                1,
+                this.preferredLanguage,
+                this.favoriteItemIds
+            ));
+            const nextOffset = safeOffset + pageItems.length < this.favoriteItems.length
+                ? safeOffset + pageItems.length
+                : null;
+            const moreNode: readonly StepLibrarySidebarNode[] = nextOffset === null
+                ? []
+                : [Object.freeze({
+                    id: `${FAVORITES_ID}:more:${nextOffset}`,
+                    kind: 'more' as const,
+                    label: 'Show more…',
+                    count: this.favoriteItems.length - nextOffset,
+                    depth: 1,
+                    expandable: false
+                })];
+            return Object.freeze({
+                parentId,
+                nodes: Object.freeze([...nodes, ...moreNode]),
+                nextOffset
+            });
+        }
         const branch = this.branches.get(parentId);
         if (!branch) {
             return Object.freeze({ parentId, nodes: Object.freeze([]), nextOffset: null });
@@ -324,7 +406,12 @@ export class StepLibrarySidebarIndex {
             })
             : [];
         const directItems = branch.directItems.slice(safeOffset, safeOffset + safeLimit);
-        const definitionNodes = directItems.map(item => definitionNode(item, branch.depth + 1));
+        const definitionNodes = directItems.map(item => definitionNode(
+            item,
+            branch.depth + 1,
+            this.preferredLanguage,
+            this.favoriteItemIds
+        ));
         const nextOffset = safeOffset + directItems.length < branch.directItems.length
             ? safeOffset + directItems.length
             : null;

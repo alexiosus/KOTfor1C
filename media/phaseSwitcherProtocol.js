@@ -126,7 +126,7 @@
         if (parsed[currentKeySetKey].has(key)) {
             return Object.freeze({
                 state: 'current',
-                icon: 'eye',
+                icon: null,
                 direct: true,
                 accessibleLabel: 'Currently open scenario'
             });

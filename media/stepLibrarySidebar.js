@@ -8,8 +8,6 @@
     const tree = document.getElementById('tree');
     const searchInput = document.getElementById('searchInput');
     const status = document.getElementById('status');
-    const refreshButton = document.getElementById('refreshButton');
-    const openFullButton = document.getElementById('openFullButton');
     const persisted = vscode.getState() || {};
     let uiState = protocol.createState({
         expandedIds: persisted.expandedIds,
@@ -21,7 +19,10 @@
     let insertionAvailable = false;
     let relationshipState = protocol.createState().relationshipState;
     let relatedAncestorIds = new Set();
-    const relationshipIcons = new Set(['eye', 'arrow-right-to-line', 'arrow-right-from-line']);
+    let favoriteItemIds = new Set();
+    let libraryIdentity = null;
+    let animatedParentId = null;
+    const relationshipIcons = new Set(['arrow-right-to-line', 'arrow-right-from-line']);
     const nodesById = new Map();
     const childrenByParent = new Map();
     const requestedParents = new Set();
@@ -110,6 +111,9 @@
     }
 
     function nodeIconName(node) {
+        if (node.id === 'favorites') {
+            return 'star-full';
+        }
         if (node.kind === 'category') {
             return 'folder';
         }
@@ -128,10 +132,13 @@
         }[node.sourceGroup] || 'library';
     }
 
-    function makeRow(node, parentId) {
+    function makeRow(node, parentId, entering = false) {
         nodesById.set(node.id, node);
         const row = document.createElement('div');
         row.className = 'kot-tree-row step-row';
+        if (entering) {
+            row.classList.add('is-entering');
+        }
         row.dataset.nodeId = node.id;
         row.dataset.parentId = parentId || '';
         row.dataset.kind = node.kind;
@@ -176,11 +183,14 @@
         label.title = node.alternateLabel
             ? `${node.label}\n${node.alternateLabel}`
             : node.label;
+        const labelContent = document.createElement('span');
+        labelContent.className = 'kot-scroll-content';
         if (node.kind === 'definition') {
-            appendSyntax(label, node.label);
+            appendSyntax(labelContent, node.label);
         } else {
-            label.textContent = node.label;
+            labelContent.textContent = node.label;
         }
+        label.appendChild(labelContent);
         row.appendChild(label);
 
         if (typeof node.count === 'number') {
@@ -209,6 +219,12 @@
         const actions = document.createElement('span');
         actions.className = 'kot-row-actions step-actions';
         if (node.kind === 'definition' && node.itemId) {
+            actions.appendChild(createActionButton(
+                'toggleFavorite',
+                node.favorite ? 'star-full' : 'star-empty',
+                node.favorite ? loc.removeFavorite : loc.addFavorite,
+                node
+            ));
             if (node.insertable === true) {
                 actions.appendChild(createActionButton(
                     'insert',
@@ -227,8 +243,8 @@
         return row;
     }
 
-    function appendNode(fragment, node, parentId) {
-        fragment.appendChild(makeRow(node, parentId));
+    function appendNode(fragment, node, parentId, entering = false) {
+        fragment.appendChild(makeRow(node, parentId, entering));
         if (!node.expandable || !uiState.expandedIds.includes(node.id)) {
             return;
         }
@@ -238,7 +254,7 @@
             return;
         }
         for (const child of children) {
-            appendNode(fragment, child, node.id);
+            appendNode(fragment, child, node.id, entering || node.id === animatedParentId);
         }
     }
 
@@ -248,13 +264,28 @@
         const fragment = document.createDocumentFragment();
         const visibleRoots = searchResults === null ? roots : searchResults;
         for (const node of visibleRoots) {
-            appendNode(fragment, node, '');
+            appendNode(fragment, node, '', false);
         }
         tree.replaceChildren(fragment);
         tree.scrollTop = persisted.scrollTop !== undefined && roots.length > 0
             ? persisted.scrollTop
             : scrollTop;
         persisted.scrollTop = undefined;
+        if (tree.querySelector('.is-entering')) {
+            animatedParentId = null;
+        }
+        requestAnimationFrame(() => {
+            for (const label of tree.querySelectorAll('.kot-tree-label')) {
+                const content = label.querySelector('.kot-scroll-content');
+                if (!content) {
+                    continue;
+                }
+                const distance = Math.max(0, content.scrollWidth - label.clientWidth + 12);
+                label.classList.toggle('is-overflowing', distance > 1);
+                label.style.setProperty('--kot-overflow-distance', `${distance}px`);
+                label.style.setProperty('--kot-overflow-duration', `${Math.max(1.2, distance / 45)}s`);
+            }
+        });
     }
 
     function requestChildren(parentId, offset) {
@@ -270,7 +301,9 @@
         if (!node.expandable) {
             return;
         }
+        const wasExpanded = uiState.expandedIds.includes(node.id);
         uiState = protocol.toggleExpanded(uiState, node.id);
+        animatedParentId = wasExpanded ? null : node.id;
         if (uiState.expandedIds.includes(node.id) && !childrenByParent.has(node.id)) {
             requestChildren(node.id, 0);
         }
@@ -347,14 +380,6 @@
         }, 150);
     });
 
-    refreshButton.addEventListener('click', () => {
-        refreshButton.disabled = true;
-        vscode.postMessage({ command: 'refresh' });
-    });
-    openFullButton.addEventListener('click', () => {
-        vscode.postMessage({ command: 'openFullLibrary' });
-    });
-
     window.addEventListener('message', event => {
         const message = event.data || {};
         switch (message.command) {
@@ -362,16 +387,37 @@
                 status.textContent = loc.loading;
                 break;
             case 'roots':
+                if (libraryIdentity !== null && libraryIdentity !== message.identity) {
+                    childrenByParent.clear();
+                    requestedParents.clear();
+                }
+                libraryIdentity = message.identity || null;
+                {
+                    const nextFavorites = new Set(message.favoriteItemIds || []);
+                    const favoritesChanged = nextFavorites.size !== favoriteItemIds.size
+                        || [...nextFavorites].some(itemId => !favoriteItemIds.has(itemId));
+                    favoriteItemIds = nextFavorites;
+                    if (favoritesChanged) {
+                        childrenByParent.delete('favorites');
+                        for (const key of [...requestedParents]) {
+                            if (key.startsWith('favorites\0')) {
+                                requestedParents.delete(key);
+                            }
+                        }
+                        for (const [parentId, children] of childrenByParent) {
+                            childrenByParent.set(parentId, children.map(node => node.itemId
+                                ? { ...node, favorite: favoriteItemIds.has(node.itemId) }
+                                : node));
+                        }
+                    }
+                }
                 roots = Array.isArray(message.nodes) ? message.nodes : [];
-                childrenByParent.clear();
-                requestedParents.clear();
                 searchResults = null;
                 insertionAvailable = message.insertionTarget?.available === true;
                 relationshipState = message.relationshipState || relationshipState;
                 relatedAncestorIds = new Set(message.relatedAncestorIds || []);
                 uiState = protocol.withRelationshipState(uiState, relationshipState);
                 status.textContent = '';
-                refreshButton.disabled = false;
                 render();
                 break;
             case 'children': {
@@ -398,11 +444,9 @@
                 render();
                 break;
             case 'actionResult':
-                refreshButton.disabled = false;
                 break;
             case 'error':
                 status.textContent = message.message || loc.error;
-                refreshButton.disabled = false;
                 break;
         }
     });

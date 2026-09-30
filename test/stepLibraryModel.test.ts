@@ -190,8 +190,32 @@ test('adds non-callable main scenarios as a separate searchable source grouped b
                 end: { line: 0, character: 0 }
             }
         },
+        scenarioKey: 'file:///workspace/main/scen.yaml',
         searchText: 'monthly close builds the monthly close feature. 000020026 accounting main scenario (accounting/monthlyclose) accounting/monthlyclose'
     });
+});
+
+test('binds nested definitions to the nearest scenario runtime key in the same file', () => {
+    const uri = scenario({ name: 'placeholder' }).yamlFileUri;
+    const nested = definition({
+        id: 'nested:related',
+        kind: 'nestedScenario',
+        template: 'Prepare environment',
+        sourceLabel: 'Nested scenario',
+        definitionLocation: {
+            uri: uri.toString(),
+            range: {
+                start: { line: 18, character: 0 },
+                end: { line: 18, character: 20 }
+            }
+        }
+    });
+    const snapshot = snapshotWithScenarios([nested], [
+        scenario({ name: 'Earlier scenario', yamlFileUri: uri, scenarioCodeLine: 3 }),
+        scenario({ name: 'Prepare environment', yamlFileUri: uri, scenarioCodeLine: 17 })
+    ]);
+
+    assert.equal(snapshot.items[0]?.scenarioKey, uri.toString());
 });
 
 test('pairs built-in translations and keeps localized multiline display data', () => {

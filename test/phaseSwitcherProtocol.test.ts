@@ -17,7 +17,7 @@ const protocol = require(path.join(process.cwd(), 'media', 'phaseSwitcherProtoco
     };
     relationshipDecorationForScenario(scenarioKey: string, state: unknown): {
         state: 'current' | 'incoming' | 'outgoing' | 'related' | 'none';
-        icon: 'eye' | 'arrow-right-to-line' | 'arrow-right-from-line' | null;
+        icon: 'arrow-right-to-line' | 'arrow-right-from-line' | null;
         direct: boolean;
         accessibleLabel: string;
     };
@@ -127,7 +127,7 @@ test('current blue state takes precedence over relationship purple state', () =>
 
     assert.deepEqual(protocol.relationshipDecorationForScenario('open', parsed), {
         state: 'current',
-        icon: 'eye',
+        icon: null,
         direct: true,
         accessibleLabel: 'Currently open scenario'
     });

@@ -14,6 +14,14 @@ const phaseSwitcherProviderSource = require('node:fs').readFileSync(
     path.join(process.cwd(), 'src', 'phaseSwitcher.ts'),
     'utf8'
 );
+const extensionSource = require('node:fs').readFileSync(
+    path.join(process.cwd(), 'src', 'extension.ts'),
+    'utf8'
+);
+const packageManifest = JSON.parse(require('node:fs').readFileSync(
+    path.join(process.cwd(), 'package.json'),
+    'utf8'
+));
 
 const protocol = require(path.join(process.cwd(), 'media', 'phaseSwitcherProtocol.js')) as {
     getScenarioKey(testInfo: unknown): string;
@@ -88,50 +96,54 @@ test('demo run state is overlaid by exact scenario URI key', () => {
     );
 });
 
-test('Test Manager creation menu delegates exported scenarios and user steps to shared commands', () => {
-    for (const entry of [
-        {
-            id: 'createExportScenarioFromDropdownBtn',
-            label: 'createExportScenario',
-            message: 'createExportScenario',
-            command: 'kotTestToolkit.createExportScenario'
-        },
-        {
-            id: 'createUserStepFromDropdownBtn',
-            label: 'createUserStep',
-            message: 'createUserStep',
-            command: 'kotTestToolkit.createUserStep'
-        }
-    ]) {
-        assert.match(phaseSwitcherHtmlSource, new RegExp(`id="${entry.id}"[\\s\\S]*?\\$\\{loc\\.${entry.label}\\}`));
-        assert.match(phaseSwitcherWebviewSource, new RegExp(
-            `${entry.id}\\.addEventListener\\('click'[\\s\\S]*?postMessage\\(\\{ command: '${entry.message}' \\}\\)`
-        ));
-        assert.match(phaseSwitcherProviderSource, new RegExp(
-            `case '${entry.message}':[\\s\\S]*?executeCommand\\('${entry.command}'\\)`
-        ));
+test('Test Manager creation actions use the native view title menu', () => {
+    assert.doesNotMatch(phaseSwitcherHtmlSource, /createExportScenarioFromDropdownBtn|createUserStepFromDropdownBtn/u);
+    const actions = packageManifest.contributes.menus['view/title'] as Array<{ command: string; when: string }>;
+    const phaseCommands = actions
+        .filter(action => action.when === 'view == kotTestToolkit.phaseSwitcherView')
+        .map(action => action.command);
+    assert.ok(phaseCommands.includes('kotTestToolkit.showCreateScenarioMenu'));
+    const commandContributions = packageManifest.contributes.commands as Array<{
+        command: string;
+        category?: string;
+    }>;
+    for (const command of phaseCommands) {
+        assert.equal(
+            commandContributions.find(candidate => candidate.command === command)?.category,
+            undefined,
+            `${command} must not be prefixed with the extension category in the Test Manager menu`
+        );
     }
-    assert.match(phaseSwitcherProviderSource, /createExportScenario:\s*this\.t\('Export scenario'\)/u);
-    assert.match(phaseSwitcherProviderSource, /createUserStep:\s*this\.t\('User step'\)/u);
 });
 
-test('Test Manager toolbar opens the shared visual step library command', () => {
-    assert.match(
-        phaseSwitcherHtmlSource,
-        /id="openStepLibraryTopBtn"[\s\S]*?\$\{loc\.openStepLibraryTopTitle\}[\s\S]*?codicon-library/u
+test('phase aggregate checkbox is synchronized after the header controls are attached', () => {
+    const headerStart = phaseSwitcherWebviewSource.indexOf(
+        "            const phaseHeaderDiv = document.createElement('div');"
     );
-    assert.match(
-        phaseSwitcherWebviewSource,
-        /openStepLibraryTopBtn\.addEventListener\('click'[\s\S]*?postMessage\(\{ command: 'openStepLibrary' \}\)/u
+    const listStart = phaseSwitcherWebviewSource.indexOf(
+        "            const testsListDiv = document.createElement('div');",
+        headerStart
     );
-    assert.match(
-        phaseSwitcherProviderSource,
-        /case 'openStepLibrary':[\s\S]*?executeCommand\('kotTestToolkit\.openStepLibrary'\)/u
+    assert.notEqual(headerStart, -1);
+    assert.notEqual(listStart, -1);
+
+    const headerSource = phaseSwitcherWebviewSource.slice(headerStart, listStart);
+    const attachCheckbox = headerSource.indexOf('phaseHeaderDiv.appendChild(phaseCheckbox);');
+    const synchronizeAggregate = headerSource.indexOf(
+        'updatePhaseCountButton(countButton, phaseName, enabledCount, totalInPhase);'
     );
-    assert.match(
-        phaseSwitcherProviderSource,
-        /openStepLibraryTopTitle:\s*this\.t\('Open Step Library'\)/u
-    );
+    assert.ok(attachCheckbox >= 0);
+    assert.ok(synchronizeAggregate > attachCheckbox);
+});
+
+test('Step Library full-page action is contributed to its native view title', () => {
+    assert.doesNotMatch(phaseSwitcherHtmlSource, /id="openStepLibraryTopBtn"/u);
+    assert.match(extensionSource, /registerCommand\(\s*'kotTestToolkit\.openStepLibrary'/u);
+    const actions = packageManifest.contributes.menus['view/title'] as Array<{ command: string; when: string }>;
+    assert.ok(actions.some(action =>
+        action.command === 'kotTestToolkit.openStepLibrary'
+        && action.when === 'view == kotTestToolkit.stepLibrarySidebarView'
+    ));
 });
 
 test('PhaseSwitcher consumes shared relationship state without mutating build selection', () => {

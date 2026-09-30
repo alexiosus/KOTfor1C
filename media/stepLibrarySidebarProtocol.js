@@ -176,17 +176,17 @@
             return noDecoration();
         }
         const relationshipState = asState(state).relationshipState;
+        if (!relationshipState.enabled) {
+            return noDecoration();
+        }
         if (relationshipState.currentScenarioKeys.includes(scenarioKey)) {
             return Object.freeze({
                 state: 'current',
-                icon: 'eye',
+                icon: null,
                 classNames: Object.freeze(['is-current']),
                 direct: true,
                 accessibleLabel: label('current', 'Currently open scenario')
             });
-        }
-        if (!relationshipState.enabled) {
-            return noDecoration();
         }
         const relationship = relationshipState.relationships.find(entry => entry.scenarioKey === scenarioKey);
         if (relationship) {

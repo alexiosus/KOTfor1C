@@ -6,20 +6,24 @@ import {
 } from './stepLibraryModel';
 import type { StepLibraryActionService } from './stepLibraryActions';
 import type { StepLibrarySnapshotService } from './stepLibrarySnapshotService';
+import type { StepLibraryFavoritesService } from './stepLibraryFavorites';
 
 export interface StepLibraryPanelServices {
     readonly extensionUri: vscode.Uri;
     readonly snapshotService: StepLibrarySnapshotService;
     readonly actionService: StepLibraryActionService;
+    readonly favoritesService?: Pick<StepLibraryFavoritesService, 'favoriteItemIds' | 'toggle' | 'onDidChange'>;
     readonly refreshDefinitions: (resource?: vscode.Uri) => Promise<void>;
 }
 
 export type StepLibraryInboundMessage =
     | { readonly command: 'ready' }
     | { readonly command: 'refresh' }
+    | { readonly command: 'create' }
     | { readonly command: 'insert'; readonly itemId: string }
     | { readonly command: 'copy'; readonly itemId: string }
-    | { readonly command: 'openDefinition'; readonly itemId: string };
+    | { readonly command: 'openDefinition'; readonly itemId: string }
+    | { readonly command: 'toggleFavorite'; readonly itemId: string };
 
 type Translator = (message: string, ...args: string[]) => string;
 
@@ -58,13 +62,14 @@ export function parseStepLibraryInboundMessage(value: unknown): StepLibraryInbou
         return null;
     }
     const record = value as Record<string, unknown>;
-    if (record.command === 'ready' || record.command === 'refresh') {
+    if (record.command === 'ready' || record.command === 'refresh' || record.command === 'create') {
         return { command: record.command };
     }
     if (
         record.command === 'insert'
         || record.command === 'copy'
         || record.command === 'openDefinition'
+        || record.command === 'toggleFavorite'
     ) {
         const itemId = typeof record.itemId === 'string' ? record.itemId.trim() : '';
         return itemId ? { command: record.command, itemId } : null;
@@ -103,7 +108,12 @@ export class StepLibraryPanel implements vscode.Disposable {
                 if (this.lastSuccessfulSnapshot) {
                     void this.postSnapshotIfChanged(this.lastSuccessfulSnapshot);
                 }
-            })
+            }),
+            this.services.favoritesService?.onDidChange(() => {
+                if (this.lastSuccessfulSnapshot) {
+                    void this.postSnapshotIfChanged(this.lastSuccessfulSnapshot, true);
+                }
+            }) ?? { dispose: () => undefined }
         );
     }
 
@@ -113,7 +123,7 @@ export class StepLibraryPanel implements vscode.Disposable {
         }
         const t = await getTranslator(this.services.extensionUri);
         if (this.panel) {
-            this.panel.title = t('KOT Step Library');
+            this.panel.title = t('KOT Library');
             this.panel.reveal(vscode.ViewColumn.One);
             await this.refreshSnapshot();
             return;
@@ -122,7 +132,7 @@ export class StepLibraryPanel implements vscode.Disposable {
         const mediaUri = vscode.Uri.joinPath(this.services.extensionUri, 'media');
         const panel = vscode.window.createWebviewPanel(
             StepLibraryPanel.panelType,
-            t('KOT Step Library'),
+            t('KOT Library'),
             vscode.ViewColumn.One,
             {
                 enableScripts: true,
@@ -244,7 +254,10 @@ export class StepLibraryPanel implements vscode.Disposable {
             return;
         }
         const insertionTarget = this.services.actionService.getInsertionTargetState();
-        const identity = `${snapshot.viewIdentity}\0${insertionTarget.identity}`;
+        const favoriteItemIds = [
+            ...(this.services.favoritesService?.favoriteItemIds(snapshot) ?? new Set<string>())
+        ].sort();
+        const identity = `${snapshot.viewIdentity}\0${insertionTarget.identity}\0${favoriteItemIds.join(',')}`;
         if (!force && identity === this.lastPostedIdentity) {
             return;
         }
@@ -252,6 +265,7 @@ export class StepLibraryPanel implements vscode.Disposable {
         await this.panel.webview.postMessage({
             command: 'snapshot',
             snapshot,
+            favoriteItemIds,
             insertionTarget: {
                 identity: insertionTarget.identity,
                 available: insertionTarget.available
@@ -328,6 +342,9 @@ export class StepLibraryPanel implements vscode.Disposable {
                     this.refreshDefinitionsInProgress = false;
                 }
                 return;
+            case 'create':
+                await vscode.commands.executeCommand('kotTestToolkit.showCreateScenarioMenu');
+                return;
             case 'insert':
                 await this.runItemAction(
                     'insert',
@@ -349,6 +366,13 @@ export class StepLibraryPanel implements vscode.Disposable {
                     item => this.services.actionService.openDefinition(item, this.resource)
                 );
                 return;
+            case 'toggleFavorite': {
+                const item = this.findItem(message.itemId);
+                if (item) {
+                    await this.services.favoritesService?.toggle(item);
+                }
+                return;
+            }
         }
     }
 
@@ -362,13 +386,14 @@ export class StepLibraryPanel implements vscode.Disposable {
         );
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'stepLibrary.js'));
         const labels = {
-            title: t('KOT Step Library'),
+            title: t('KOT Library'),
             search: t('Search steps'),
             searchPlaceholder: t('Search templates, descriptions, codes, categories, and parameters'),
             categories: t('Sources and categories'),
             definitions: t('Definitions'),
             details: t('Step details'),
             refresh: t('Refresh step library'),
+            create: t('Create'),
             allLanguages: t('RU and EN'),
             russian: t('Russian'),
             english: t('English'),
@@ -379,6 +404,7 @@ export class StepLibraryPanel implements vscode.Disposable {
             noResults: t('No steps match the current filters.'),
             selectDefinition: t('Select a definition to see its details.'),
             allDefinitions: t('All definitions'),
+            favorites: t('Favorites'),
             source: t('Source'),
             category: t('Category'),
             scenarioCode: t('Scenario code'),
@@ -394,6 +420,8 @@ export class StepLibraryPanel implements vscode.Disposable {
             inserted: t('Step inserted.'),
             copied: t('Step copied.'),
             opened: t('Definition opened.'),
+            addFavorite: t('Add to favorites'),
+            removeFavorite: t('Remove from favorites'),
             actionFailed: t('The action could not be completed.'),
             builtIn: t('Vanessa built-in steps'),
             user: t('User steps'),
@@ -431,6 +459,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     data-no-definitions="${escapeHtml(labels.noDefinitions)}"
     data-select-definition="${escapeHtml(labels.selectDefinition)}"
     data-all-definitions="${escapeHtml(labels.allDefinitions)}"
+    data-favorites="${escapeHtml(labels.favorites)}"
     data-source-label="${escapeHtml(labels.source)}"
     data-category-label="${escapeHtml(labels.category)}"
     data-scenario-code-label="${escapeHtml(labels.scenarioCode)}"
@@ -443,6 +472,8 @@ export class StepLibraryPanel implements vscode.Disposable {
     data-inserted="${escapeHtml(labels.inserted)}"
     data-copied="${escapeHtml(labels.copied)}"
     data-opened="${escapeHtml(labels.opened)}"
+    data-add-favorite="${escapeHtml(labels.addFavorite)}"
+    data-remove-favorite="${escapeHtml(labels.removeFavorite)}"
     data-action-failed="${escapeHtml(labels.actionFailed)}"
     data-load-failed="${escapeHtml(labels.loadFailed)}"
     data-preferred-language="${documentLanguage}"
@@ -463,7 +494,8 @@ export class StepLibraryPanel implements vscode.Disposable {
                 <option value="relevance">${escapeHtml(labels.relevance)}</option>
                 <option value="alphabetical">${escapeHtml(labels.alphabetical)}</option>
             </select>
-            <button id="refreshButton" class="icon-button" type="button" title="${escapeHtml(labels.refresh)}" aria-label="${escapeHtml(labels.refresh)}">↻</button>
+            <button id="createButton" class="icon-button codicon codicon-add" type="button" title="${escapeHtml(labels.create)}" aria-label="${escapeHtml(labels.create)}"></button>
+            <button id="refreshButton" class="icon-button codicon codicon-refresh" type="button" title="${escapeHtml(labels.refresh)}" aria-label="${escapeHtml(labels.refresh)}"></button>
         </header>
         <main class="library-grid">
             <aside id="categoryPane" class="pane category-pane" aria-label="${escapeHtml(labels.categories)}">
@@ -494,6 +526,7 @@ export class StepLibraryPanel implements vscode.Disposable {
                     <p class="empty-details">${escapeHtml(labels.selectDefinition)}</p>
                 </div>
                 <div class="details-actions">
+                    <button id="favoriteButton" type="button" disabled aria-label="${escapeHtml(labels.addFavorite)}"><span class="codicon codicon-star-empty"></span></button>
                     <button id="insertButton" class="primary-button" type="button" disabled>${escapeHtml(labels.insert)}</button>
                     <button id="copyButton" type="button" disabled>${escapeHtml(labels.copy)}</button>
                     <button id="openDefinitionButton" type="button" disabled>${escapeHtml(labels.openDefinition)}</button>

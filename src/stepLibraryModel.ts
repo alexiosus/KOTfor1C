@@ -7,6 +7,7 @@ import type {
 } from './projectDefinition';
 import { buildProjectDefinitionSnippetData } from './projectDefinitionSnippet';
 import { alignGherkinTablesInText } from './gherkinTableUtils';
+import { getScenarioRuntimeKey } from './scenarioRuntimeIdentity';
 import type { TestInfo } from './types';
 
 export type StepLibrarySourceGroup = 'builtIn' | 'user' | 'export' | 'nested' | 'main';
@@ -36,6 +37,7 @@ export interface StepLibraryItem {
     readonly navigable: boolean;
     readonly insertable: boolean;
     readonly capturedLocation?: ProjectDefinitionLocation;
+    readonly scenarioKey?: string;
     readonly searchText: string;
 }
 
@@ -167,6 +169,7 @@ function mainScenarioItems(scenarios: readonly TestInfo[]): readonly StepLibrary
             navigable: true,
             insertable: false,
             capturedLocation,
+            scenarioKey: getScenarioRuntimeKey(scenario),
             searchText: normalizeSearchText([
                 scenario.name,
                 description,
@@ -177,6 +180,27 @@ function mainScenarioItems(scenarios: readonly TestInfo[]): readonly StepLibrary
             ])
         });
     });
+}
+
+function scenarioKeyForLocation(
+    location: ProjectDefinitionLocation | undefined,
+    scenarios: readonly TestInfo[]
+): string | undefined {
+    if (!location) {
+        return undefined;
+    }
+    const candidates = scenarios.filter(scenario => scenario.yamlFileUri.toString() === location.uri);
+    if (candidates.length === 0) {
+        return undefined;
+    }
+    const line = location.range.start.line;
+    candidates.sort((left, right) => {
+        const leftDistance = Math.abs((left.scenarioCodeLine ?? 0) - line);
+        const rightDistance = Math.abs((right.scenarioCodeLine ?? 0) - line);
+        return leftDistance - rightDistance
+            || getScenarioRuntimeKey(left).localeCompare(getScenarioRuntimeKey(right));
+    });
+    return getScenarioRuntimeKey(candidates[0]);
 }
 
 function mainScenarioIdentity(scenarios: readonly TestInfo[]): string | undefined {
@@ -235,6 +259,9 @@ export function buildStepLibrarySnapshot(
         const capturedLocation = navigable && definition.definitionLocation
             ? cloneLocation(definition.definitionLocation)
             : undefined;
+        const scenarioKey = definition.kind === 'nestedScenario'
+            ? scenarioKeyForLocation(capturedLocation, scenarios)
+            : undefined;
         const searchText = normalizeSearchText([
             ownDisplayText,
             alternateDisplayText,
@@ -264,6 +291,7 @@ export function buildStepLibrarySnapshot(
             navigable,
             insertable: true,
             ...(capturedLocation ? { capturedLocation } : {}),
+            ...(scenarioKey ? { scenarioKey } : {}),
             searchText
         });
     });

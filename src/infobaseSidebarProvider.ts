@@ -2,8 +2,23 @@ import * as vscode from 'vscode';
 import { buildInfobaseSidebarModel, type InfobaseSidebarModel } from './infobaseSidebarModel';
 import type { ManagedInfobaseRecord } from './infobaseManager';
 import type { ManagedInfobaseService, ManagedInfobaseSnapshot } from './managedInfobaseService';
+import type { InfobaseRuntimeTrackerLike } from './infobaseRuntimeTracker';
 
-export type InfobaseMaintenanceAction = 'exportDt' | 'importDt' | 'exportCf' | 'importCf';
+export type InfobaseMaintenanceAction =
+    | 'openFormExplorer'
+    | 'copy'
+    | 'recreate'
+    | 'updateConfiguration'
+    | 'updateFromSources'
+    | 'edit'
+    | 'addToLauncher'
+    | 'removeFromLauncher'
+    | 'reveal'
+    | 'logs'
+    | 'exportDt'
+    | 'importDt'
+    | 'exportCf'
+    | 'importCf';
 
 export type InfobaseSidebarMessage =
     | { readonly command: 'ready' }
@@ -18,6 +33,16 @@ export interface InfobaseSidebarOperations {
     readonly createInfobase: () => Promise<unknown>;
     readonly openEnterprise: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
     readonly openDesigner: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
+    readonly openFormExplorer: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
+    readonly copy: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
+    readonly recreate: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
+    readonly updateConfiguration: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
+    readonly updateFromSources: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
+    readonly edit: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
+    readonly addToLauncher: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
+    readonly removeFromLauncher: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
+    readonly reveal: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
+    readonly logs: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
     readonly exportDt: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
     readonly importDt: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
     readonly exportCf: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
@@ -30,10 +55,21 @@ export interface InfobaseSidebarServices {
         ManagedInfobaseService,
         'ensureReady' | 'refresh' | 'onDidInvalidate'
     >;
+    readonly runtimeTracker: InfobaseRuntimeTrackerLike;
     readonly loadOperations: () => Promise<InfobaseSidebarOperations>;
 }
 
 const MAINTENANCE_ACTIONS = new Set<InfobaseMaintenanceAction>([
+    'openFormExplorer',
+    'copy',
+    'recreate',
+    'updateConfiguration',
+    'updateFromSources',
+    'edit',
+    'addToLauncher',
+    'removeFromLauncher',
+    'reveal',
+    'logs',
     'exportDt',
     'importDt',
     'exportCf',
@@ -84,6 +120,21 @@ export function createDeferredInfobaseSidebarOperations(
             createInfobase: () => manager.createInfobaseInteractive(context),
             openEnterprise: (infobase: ManagedInfobaseRecord) => manager.openInfobaseInEnterprise(context, infobase),
             openDesigner: (infobase: ManagedInfobaseRecord) => manager.openInfobaseInDesigner(context, infobase),
+            openFormExplorer: async (infobase: ManagedInfobaseRecord) => await vscode.commands.executeCommand(
+                'kotTestToolkit.openFormExplorerForInfobase',
+                infobase.infobasePath
+            ),
+            copy: (infobase: ManagedInfobaseRecord) => manager.copyInfobaseInteractive(context, infobase),
+            recreate: (infobase: ManagedInfobaseRecord) => manager.recreateInfobaseInteractive(context, infobase),
+            updateConfiguration: (infobase: ManagedInfobaseRecord) =>
+                manager.updateInfobaseConfigurationInteractive(context, infobase),
+            updateFromSources: (infobase: ManagedInfobaseRecord) =>
+                manager.updateInfobaseConfigurationInteractive(context, infobase, 'sourceDirectory'),
+            edit: (infobase: ManagedInfobaseRecord) => manager.editInfobaseInteractive(context, infobase),
+            addToLauncher: (infobase: ManagedInfobaseRecord) => manager.addInfobaseToLauncherInteractive(context, infobase),
+            removeFromLauncher: (infobase: ManagedInfobaseRecord) => manager.removeInfobaseFromLauncherInteractive(infobase, context),
+            reveal: (infobase: ManagedInfobaseRecord) => manager.revealInfobaseInOs(infobase),
+            logs: (infobase: ManagedInfobaseRecord) => manager.showInfobaseLogsInteractive(infobase),
             exportDt: (infobase: ManagedInfobaseRecord) => manager.exportInfobaseToDtInteractive(context, infobase.infobasePath),
             importDt: (infobase: ManagedInfobaseRecord) => manager.restoreInfobaseFromDtInteractive(context, infobase),
             exportCf: (infobase: ManagedInfobaseRecord) => manager.exportInfobaseConfigurationToCfInteractive(context, infobase.infobasePath),
@@ -141,7 +192,17 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
 
     constructor(private readonly services: InfobaseSidebarServices) {
         this.disposables.push(
-            services.managedInfobaseService.onDidInvalidate(() => this.handleInvalidation())
+            services.managedInfobaseService.onDidInvalidate(() => this.handleInvalidation()),
+            services.runtimeTracker.onDidChange(() => {
+                if (!this.snapshot) {
+                    return;
+                }
+                this.model = buildInfobaseSidebarModel(
+                    this.snapshot,
+                    this.services.runtimeTracker.runningIdentities()
+                );
+                void this.postModel(this.model);
+            })
         );
     }
 
@@ -181,6 +242,14 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
         this.view = null;
         this.snapshot = null;
         this.model = null;
+    }
+
+    public async refresh(): Promise<void> {
+        await this.load(true);
+    }
+
+    public async createInfobase(): Promise<void> {
+        await this.runAction('__create__', 'createInfobase');
     }
 
     private disposeViewSubscriptions(): void {
@@ -298,7 +367,10 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
                 return;
             }
             this.snapshot = snapshot;
-            this.model = buildInfobaseSidebarModel(snapshot);
+            this.model = buildInfobaseSidebarModel(
+                snapshot,
+                this.services.runtimeTracker.runningIdentities()
+            );
             this.pendingReload = false;
             await this.postModel(this.model);
         } catch (error) {
@@ -346,11 +418,9 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
     <title>${t('Infobases')}</title>
 </head>
 <body>
-    <main class="infobase-sidebar" data-active-marker="${t('Active profile infobase')}" data-open-enterprise="${t('Open in 1C:Enterprise')}" data-open-designer="${t('Open in Designer')}" data-maintenance="${t('Maintenance actions')}" data-export-dt="${t('Export DT')}" data-import-dt="${t('Import DT')}" data-export-cf="${t('Export CF')}" data-import-cf="${t('Import CF')}" data-dt-heading="${t('Infobase data · DT')}" data-cf-heading="${t('Configuration · CF')}" data-refreshing="${t('Refreshing infobases...')}" data-loading="${t('Loading infobases...')}" data-active-profile="${t('Active profile')}" data-empty="${t('No managed infobases')}" data-running="${t('Running action...')}" data-error="${t('Unable to load infobases')}">
-        <header class="infobase-header"><span id="profileName"></span><button id="refreshButton" class="kot-icon-button" type="button" aria-label="${t('Refresh infobases')}" title="${t('Refresh infobases')}"><span class="codicon codicon-refresh" aria-hidden="true"></span></button></header>
-        <div id="status" class="infobase-status" role="status" aria-live="polite"></div>
+    <main class="infobase-sidebar" data-runtime-marker="${t('Running from KOT')}" data-open-enterprise="${t('Open in 1C:Enterprise')}" data-open-designer="${t('Open in Designer')}" data-maintenance="${t('Maintenance actions')}" data-open-form-explorer="${t('Open KOT Form Explorer')}" data-copy="${t('Copy infobase')}" data-recreate="${t('Recreate infobase')}" data-update-configuration="${t('Update configuration')}" data-update-from-sources="${t('Update from configured source directory')}" data-edit="${t('Edit infobase')}" data-add-to-launcher="${t('Add to 1C launcher')}" data-remove-from-launcher="${t('Remove from launcher')}" data-reveal="${t('Open infobase folder')}" data-logs="${t('Show infobase logs')}" data-export-dt="${t('Export DT')}" data-import-dt="${t('Import DT')}" data-export-cf="${t('Export CF')}" data-import-cf="${t('Import CF')}" data-general-heading="${t('Other actions')}" data-dt-heading="${t('Infobase data · DT')}" data-cf-heading="${t('Configuration · CF and files')}" data-refreshing="${t('Refreshing infobases...')}" data-loading="${t('Loading infobases...')}" data-empty="${t('No managed infobases')}" data-running="${t('Running action...')}" data-error="${t('Unable to load infobases')}">
         <div id="list" class="infobase-list" role="listbox" aria-label="${t('Infobases')}"></div>
-        <footer class="infobase-footer"><button id="openFullButton" type="button"><span class="codicon codicon-open-preview" aria-hidden="true"></span><span>${t('Open full Infobase Manager')}</span></button><button id="createButton" class="infobase-create-button" type="button" aria-label="${t('Create')}" title="${t('Create')}"><span class="codicon codicon-add" aria-hidden="true"></span></button></footer>
+        <div id="status" class="infobase-status" role="status" aria-live="polite"></div>
     </main>
     <script nonce="${nonce}" src="${protocolUri}"></script>
     <script nonce="${nonce}" src="${scriptUri}"></script>

@@ -13,7 +13,7 @@ const protocol = require(path.join(process.cwd(), 'media', 'infobaseSidebarProto
     moveSelection(state: unknown, itemIds: readonly string[], delta: number): ReturnType<typeof protocol.createState>;
     withPending(state: unknown, itemId: string | null): ReturnType<typeof protocol.createState>;
     toggleMenu(state: unknown, itemId: string): ReturnType<typeof protocol.createState>;
-    activeMarker(item: unknown): { visible: boolean; accessibleLabel: string };
+    runtimeMarker(item: unknown): { visible: boolean; accessibleLabel: string };
 };
 
 test('owns immutable selection, pending-row, and overflow-menu state', () => {
@@ -40,12 +40,13 @@ test('reconciles removed items and clamps roving keyboard selection', () => {
     assert.equal(protocol.moveSelection(reconciled, ['one', 'two'], -20).selectedId, 'one');
 });
 
-test('shows the active-profile marker only for the projected active base', () => {
-    assert.deepEqual(protocol.activeMarker({ active: true }), {
+test('shows a runtime marker only while a KOT-launched process is alive', () => {
+    assert.equal(typeof protocol.runtimeMarker, 'function');
+    assert.deepEqual(protocol.runtimeMarker({ running: true }), {
         visible: true,
-        accessibleLabel: 'Active profile infobase'
+        accessibleLabel: 'Running from KOT'
     });
-    assert.deepEqual(protocol.activeMarker({ active: false }), {
+    assert.deepEqual(protocol.runtimeMarker({ running: false }), {
         visible: false,
         accessibleLabel: ''
     });

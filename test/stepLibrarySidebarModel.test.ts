@@ -56,7 +56,7 @@ function childByLabel(index: StepLibrarySidebarIndex, parentId: string, label: s
     return node;
 }
 
-test('projects five stable source roots and only immediate category branches', () => {
+test('projects favorites plus five stable source roots and only immediate category branches', () => {
     const index = StepLibrarySidebarIndex.fromSnapshot(snapshot([
         item({ id: 'forms', sourceGroup: 'builtIn', displayText: 'Open form', categoryPath: ['UI', 'Forms'] }),
         item({ id: 'tables', sourceGroup: 'builtIn', displayText: 'Check table', categoryPath: ['UI', 'Tables'] }),
@@ -69,6 +69,7 @@ test('projects five stable source roots and only immediate category branches', (
     ]), 'en');
 
     assert.deepEqual(index.roots().map(root => [root.id, root.label, root.count, root.kind]), [
+        ['favorites', 'Favorites', 0, 'source'],
         ['source:builtIn', 'Vanessa built-in steps', 4, 'source'],
         ['source:user', 'User steps', 1, 'source'],
         ['source:export', 'Export scenarios', 1, 'source'],
@@ -118,10 +119,27 @@ test('pages only direct definitions in stable order and appends a continuation n
     assert.equal(last.nodes.at(-1)?.label, 'Step 204');
 });
 
+test('projects mixed favorite definitions in one bounded root', () => {
+    const definitions = Array.from({ length: 105 }, (_, index) => item({
+        id: `favorite-${String(index).padStart(3, '0')}`,
+        sourceGroup: index % 2 === 0 ? 'nested' : 'export',
+        displayText: `Favorite ${String(index).padStart(3, '0')}`
+    }));
+    const favoriteIds = new Set(definitions.map(definition => definition.id));
+    const model = StepLibrarySidebarIndex.fromSnapshot(snapshot(definitions), 'en', favoriteIds);
+
+    assert.equal(model.roots()[0].count, 105);
+    const first = model.children('favorites');
+    assert.equal(first.nodes.filter(node => node.kind === 'definition').length, 100);
+    assert.equal(first.nodes.at(-1)?.kind, 'more');
+    assert.equal(first.nextOffset, 100);
+    assert.ok(first.nodes.filter(node => node.kind === 'definition').every(node => node.favorite));
+});
+
 test('returns an empty bounded projection for empty or unknown branches', () => {
     const model = StepLibrarySidebarIndex.fromSnapshot(snapshot([]), 'ru');
 
-    assert.deepEqual(model.roots().map(node => node.count), [0, 0, 0, 0, 0]);
+    assert.deepEqual(model.roots().map(node => node.count), [0, 0, 0, 0, 0, 0]);
     assert.deepEqual(model.children('source:builtIn'), {
         parentId: 'source:builtIn',
         nodes: [],
@@ -186,9 +204,13 @@ test('definition nodes carry safe action and drag capabilities from their server
         item({
             id: 'nested',
             sourceGroup: 'nested',
-            displayText: 'And I prepare data',
-            template: 'And I prepare data',
+            displayText: 'I prepare data',
+            template: 'I prepare data',
             categoryPath: ['Tests'],
+            parameters: [
+                { name: 'Infobase', defaultValue: '"Demo"' },
+                { name: 'User' }
+            ],
             insertable: true,
             navigable: true
         }),
@@ -208,11 +230,36 @@ test('definition nodes carry safe action and drag capabilities from their server
 
     assert.deepEqual(
         { insertable: nested.insertable, navigable: nested.navigable, dragText: nested.dragText },
-        { insertable: true, navigable: true, dragText: 'And I prepare data' }
+        {
+            insertable: true,
+            navigable: true,
+            dragText: [
+                'And I prepare data',
+                '    Infobase = "Demo"',
+                '    User     = "User"'
+            ].join('\n')
+        }
     );
     assert.deepEqual(
         { insertable: main.insertable, navigable: main.navigable, dragText: main.dragText },
         { insertable: false, navigable: true, dragText: undefined }
+    );
+});
+
+test('definition nodes expose the catalog runtime key used by relationship projections', () => {
+    const model = StepLibrarySidebarIndex.fromSnapshot(snapshot([
+        item({
+            id: 'nested-related',
+            sourceGroup: 'nested',
+            displayText: 'Prepare environment',
+            scenarioKey: 'file:///workspace/scenarios/environment/scen.yaml'
+        })
+    ]), 'en');
+    const uncategorized = childByLabel(model, 'source:nested', 'Uncategorized');
+
+    assert.equal(
+        model.children(uncategorized.id).nodes[0]?.scenarioKey,
+        'file:///workspace/scenarios/environment/scen.yaml'
     );
 });
 
@@ -244,7 +291,7 @@ test('deduplicates a translated built-in family using the preferred language bra
     const forms = childByLabel(model, ui.id, 'Forms');
     const definition = model.children(forms.id).nodes[0];
 
-    assert.equal(model.roots()[0].count, 1);
+    assert.equal(model.roots().find(node => node.id === 'source:builtIn')?.count, 1);
     assert.equal(definition.label, 'And I open the form');
     assert.equal(definition.alternateLabel, 'И я открываю форму');
     assert.equal(model.getItem(definition.itemId ?? '')?.language, 'en');

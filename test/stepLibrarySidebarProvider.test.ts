@@ -258,7 +258,7 @@ async function send(harness: ReturnType<typeof createHarness>, message: unknown)
     await flush();
 }
 
-test('initial ready posts loading and five roots without transferring the snapshot', async () => {
+test('initial ready posts loading and six roots without transferring the snapshot', async () => {
     const catalog = snapshot('catalog:one', [item(1)]);
     const harness = createHarness({ initialSnapshot: catalog });
 
@@ -269,8 +269,8 @@ test('initial ready posts loading and five roots without transferring the snapsh
     assert.equal((harness.view.webview.messages[0] as any).command, 'loading');
     const roots = harness.view.webview.messages.find((message: any) => message.command === 'roots') as any;
     assert.equal(roots.identity, 'catalog:one');
-    assert.equal(roots.nodes.length, 5);
-    assert.equal(roots.nodes[3].count, 1);
+    assert.equal(roots.nodes.length, 6);
+    assert.equal(roots.nodes[4].count, 1);
     assert.equal(Object.hasOwn(roots, 'snapshot'), false);
     assert.doesNotMatch(JSON.stringify(roots), /Bulk step 001/u);
 });
@@ -356,6 +356,32 @@ test('defers hidden invalidation and publishes the latest revision when shown ag
     assert.ok(roots[1].revision > roots[0].revision);
 });
 
+test('visible invalidation keeps the rendered tree while the replacement snapshot loads', async () => {
+    const next = deferred<StepLibrarySnapshot>();
+    let firstLoad = true;
+    const harness = createHarness({
+        ensureReady: async () => {
+            if (firstLoad) {
+                firstLoad = false;
+                return snapshot('catalog:first', [item(1)]);
+            }
+            return next.promise;
+        }
+    });
+    await send(harness, { command: 'ready' });
+
+    harness.invalidations.fire();
+    await flush();
+
+    const loading = harness.view.webview.messages.at(-1) as { command: string; retainItems?: boolean };
+    assert.equal(loading.command, 'loading');
+    assert.equal(loading.retainItems, true);
+
+    next.resolve(snapshot('catalog:next', [item(2)]));
+    await flush();
+    assert.equal((harness.view.webview.messages.at(-1) as { identity: string }).identity, 'catalog:next');
+});
+
 test('refreshes the shared catalog and opens the full library command', async () => {
     const harness = createHarness({ initialSnapshot: snapshot('catalog:one', []) });
     await send(harness, { command: 'ready' });
@@ -371,11 +397,14 @@ test('refreshes the shared catalog and opens the full library command', async ()
 });
 
 test('relationship updates are lightweight and do not rebuild the catalog', async () => {
-    const harness = createHarness({ initialSnapshot: snapshot('catalog:one', [item(1)]) });
+    const scenarioKey = 'file:///workspace/item-1/scen.yaml';
+    const harness = createHarness({
+        initialSnapshot: snapshot('catalog:one', [item(1, { scenarioKey })])
+    });
     await send(harness, { command: 'ready' });
     const nextState = {
         enabled: true,
-        currentScenarioKeys: ['file:///workspace/item-1/scen.yaml'],
+        currentScenarioKeys: [scenarioKey],
         relationships: [],
         affectedMainScenarioKeys: [],
         affectedPhaseNames: [],

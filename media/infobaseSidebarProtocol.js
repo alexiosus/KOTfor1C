@@ -61,8 +61,8 @@
         return createState({ ...current, menuId: current.menuId === nextId ? null : nextId });
     }
 
-    function activeMarker(item, accessibleLabel = 'Active profile infobase') {
-        return item && item.active === true
+    function runtimeMarker(item, accessibleLabel = 'Running from KOT') {
+        return item && item.running === true
             ? Object.freeze({ visible: true, accessibleLabel })
             : Object.freeze({ visible: false, accessibleLabel: '' });
     }
@@ -74,6 +74,6 @@
         moveSelection,
         withPending,
         toggleMenu,
-        activeMarker
+        runtimeMarker
     });
 });

@@ -7,12 +7,14 @@ import {
     type StepLibrarySidebarNode
 } from './stepLibrarySidebarModel';
 import type { StepLibrarySnapshotService } from './stepLibrarySnapshotService';
+import type { StepLibraryFavoritesService } from './stepLibraryFavorites';
 
 export interface StepLibrarySidebarServices {
     readonly extensionUri: vscode.Uri;
     readonly snapshotService: StepLibrarySnapshotService;
     readonly actionService: StepLibraryActionService;
     readonly relationshipService: Pick<ScenarioRelationshipService, 'getState' | 'onDidChangeState'>;
+    readonly favoritesService?: Pick<StepLibraryFavoritesService, 'favoriteItemIds' | 'toggle' | 'onDidChange'>;
     readonly refreshDefinitions: (resource?: vscode.Uri) => Promise<void>;
 }
 
@@ -23,6 +25,7 @@ export type StepLibrarySidebarMessage =
     | { readonly command: 'insert'; readonly itemId: string }
     | { readonly command: 'copy'; readonly itemId: string }
     | { readonly command: 'openDefinition'; readonly itemId: string }
+    | { readonly command: 'toggleFavorite'; readonly itemId: string }
     | { readonly command: 'refresh' }
     | { readonly command: 'openFullLibrary' };
 
@@ -90,7 +93,12 @@ export function parseStepLibrarySidebarMessage(value: unknown): StepLibrarySideb
         }
         return { command: 'search', query: record.query };
     }
-    if (record.command === 'insert' || record.command === 'copy' || record.command === 'openDefinition') {
+    if (
+        record.command === 'insert'
+        || record.command === 'copy'
+        || record.command === 'openDefinition'
+        || record.command === 'toggleFavorite'
+    ) {
         const itemId = cleanId(record.itemId);
         return itemId ? { command: record.command, itemId } : null;
     }
@@ -126,7 +134,8 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
             }),
             services.relationshipService.onDidChangeState(state => {
                 void this.postRelationshipState(state);
-            })
+            }),
+            services.favoritesService?.onDidChange(() => this.handleFavoritesChanged()) ?? { dispose: () => undefined }
         );
     }
 
@@ -181,8 +190,6 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
 
     private handleInvalidation(): void {
         this.loadGeneration += 1;
-        this.index = null;
-        this.snapshot = null;
         if (this.refreshInProgress || !this.ready || !this.view?.visible) {
             this.pendingReload = true;
             return;
@@ -204,8 +211,6 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
             return;
         }
         this.loadGeneration += 1;
-        this.index = null;
-        this.snapshot = null;
         if (this.ready && this.view?.visible) {
             void this.loadIndex();
         } else {
@@ -256,12 +261,54 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
             case 'openDefinition':
                 await this.runItemAction(message.itemId, 'openDefinition');
                 return;
+            case 'toggleFavorite':
+                await this.toggleFavorite(message.itemId);
+                return;
             case 'refresh':
                 await this.refresh();
                 return;
             case 'openFullLibrary':
                 await vscode.commands.executeCommand('kotTestToolkit.openStepLibrary');
                 return;
+        }
+    }
+
+    private handleFavoritesChanged(): void {
+        if (!this.snapshot || !this.ready || !this.view?.visible) {
+            this.pendingReload = true;
+            return;
+        }
+        const preferredLanguage = vscode.env.language.toLowerCase().startsWith('ru') ? 'ru' : 'en';
+        this.index = StepLibrarySidebarIndex.fromSnapshot(
+            this.snapshot,
+            preferredLanguage,
+            this.services.favoritesService?.favoriteItemIds(this.snapshot) ?? new Set<string>()
+        );
+        this.revision += 1;
+        void this.postRoots(this.snapshot, this.index);
+    }
+
+    private async toggleFavorite(itemId: string): Promise<void> {
+        const item = this.index?.getItem(itemId);
+        const favoritesService = this.services.favoritesService;
+        const actionKey = `toggleFavorite\0${itemId}`;
+        if (!item || !favoritesService || this.pendingActions.has(actionKey)) {
+            return;
+        }
+        this.pendingActions.add(actionKey);
+        try {
+            const favorite = await favoritesService.toggle(item);
+            await this.view?.webview.postMessage({
+                command: 'actionResult',
+                action: 'toggleFavorite',
+                itemId,
+                succeeded: true,
+                favorite
+            });
+        } catch (error) {
+            await this.postError(error);
+        } finally {
+            this.pendingActions.delete(actionKey);
         }
     }
 
@@ -291,7 +338,7 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
         }
     }
 
-    private async refresh(): Promise<void> {
+    public async refresh(): Promise<void> {
         if (this.refreshInProgress) {
             return;
         }
@@ -306,8 +353,6 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
             this.refreshInProgress = false;
         }
         this.pendingReload = false;
-        this.index = null;
-        this.snapshot = null;
         await this.loadIndex();
     }
 
@@ -321,14 +366,21 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
             return;
         }
         const generation = ++this.loadGeneration;
-        await view.webview.postMessage({ command: 'loading' });
+        await view.webview.postMessage({
+            command: 'loading',
+            retainItems: this.index !== null && this.snapshot !== null
+        });
         try {
             const snapshot = await this.services.snapshotService.ensureReady(this.resource);
             if (generation !== this.loadGeneration || this.view !== view || !view.visible) {
                 return;
             }
             const preferredLanguage = vscode.env.language.toLowerCase().startsWith('ru') ? 'ru' : 'en';
-            const index = StepLibrarySidebarIndex.fromSnapshot(snapshot, preferredLanguage);
+            const index = StepLibrarySidebarIndex.fromSnapshot(
+                snapshot,
+                preferredLanguage,
+                this.services.favoritesService?.favoriteItemIds(snapshot) ?? new Set<string>()
+            );
             this.snapshot = snapshot;
             this.index = index;
             this.pendingReload = false;
@@ -348,10 +400,14 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
         }
         const target = this.services.actionService.getInsertionTargetState();
         const relationship = this.relationshipPayload(this.services.relationshipService.getState());
+        const favoriteItemIds = [
+            ...(this.services.favoritesService?.favoriteItemIds(snapshot) ?? new Set<string>())
+        ].sort();
         await view.webview.postMessage({
             command: 'roots',
             revision: this.revision,
             identity: snapshot.viewIdentity,
+            favoriteItemIds,
             nodes: index.roots(),
             insertionTarget: {
                 identity: target.identity,
@@ -381,7 +437,7 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
         }
         const ancestorIds = new Set<string>();
         for (const item of snapshot.items) {
-            if (!item.capturedLocation || !relatedKeys.has(item.capturedLocation.uri)) {
+            if (!item.scenarioKey || !relatedKeys.has(item.scenarioKey)) {
                 continue;
             }
             for (const ancestorId of index.ancestorIds(item.id)) {
@@ -429,20 +485,18 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
     <link href="${codiconStylesUri}" rel="stylesheet">
     <link href="${sharedStylesUri}" rel="stylesheet">
     <link href="${stylesUri}" rel="stylesheet">
-    <title>${t('Step Library')}</title>
+    <title>${t('Library')}</title>
 </head>
 <body>
-    <main class="step-sidebar" data-loading="${t('Loading step library...')}" data-no-matches="${t('No steps match the current filters.')}" data-error="${t('Unable to load the Step Library')}" data-contains-related-scenarios="${t('Contains scenarios related to the open scenario')}" data-insert-step="${t('Insert step')}" data-copy-step="${t('Copy step')}" data-open-definition="${t('Open definition')}" data-insertion-unavailable="${t('Insertion target unavailable')}" data-relationship-current="${t('Currently open scenario')}" data-relationship-incoming-direct="${t('Calls the open scenario directly')}" data-relationship-incoming-transitive="${t('Calls the open scenario through {0} scenarios')}" data-relationship-outgoing-direct="${t('Called by the open scenario directly')}" data-relationship-outgoing-transitive="${t('Called by the open scenario through {0} scenarios')}" data-relationship-contains-related="${t('Contains a scenario related to the open scenario')}">
+    <main class="step-sidebar" data-loading="${t('Loading step library...')}" data-no-matches="${t('No steps match the current filters.')}" data-error="${t('Unable to load the Step Library')}" data-contains-related-scenarios="${t('Contains scenarios related to the open scenario')}" data-insert-step="${t('Insert step')}" data-copy-step="${t('Copy step')}" data-open-definition="${t('Open definition')}" data-add-favorite="${t('Add to favorites')}" data-remove-favorite="${t('Remove from favorites')}" data-insertion-unavailable="${t('Insertion target unavailable')}" data-relationship-current="${t('Currently open scenario')}" data-relationship-incoming-direct="${t('Calls the open scenario directly')}" data-relationship-incoming-transitive="${t('Calls the open scenario through {0} scenarios')}" data-relationship-outgoing-direct="${t('Called by the open scenario directly')}" data-relationship-outgoing-transitive="${t('Called by the open scenario through {0} scenarios')}" data-relationship-contains-related="${t('Contains a scenario related to the open scenario')}">
         <div class="step-toolbar">
             <div class="step-search-wrap">
                 <span class="codicon codicon-search" aria-hidden="true"></span>
                 <input id="searchInput" type="search" aria-label="${t('Search steps')}" placeholder="${t('Search steps')}">
             </div>
-            <button id="refreshButton" class="kot-icon-button" type="button" aria-label="${t('Refresh step library')}" title="${t('Refresh step library')}"><span class="codicon codicon-refresh" aria-hidden="true"></span></button>
-            <button id="openFullButton" class="kot-icon-button" type="button" aria-label="${t('Open full Step Library')}" title="${t('Open full Step Library')}"><span class="codicon codicon-open-preview" aria-hidden="true"></span></button>
         </div>
-        <div id="status" class="step-status" role="status" aria-live="polite"></div>
         <div id="tree" class="kot-tree step-tree" role="tree" aria-label="${t('Steps')}"></div>
+        <div id="status" class="step-status" role="status" aria-live="polite"></div>
     </main>
     <script nonce="${nonce}" src="${protocolUri}"></script>
     <script nonce="${nonce}" src="${scriptUri}"></script>

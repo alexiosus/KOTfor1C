@@ -73,7 +73,7 @@ test('decorates current, caller, callee, and transitive scenario nodes distinctl
 
     assert.deepEqual(protocol.relationshipDecorationForNode(node('file:///current'), state), {
         state: 'current',
-        icon: 'eye',
+        icon: null,
         classNames: ['is-current'],
         direct: true,
         accessibleLabel: 'Currently open scenario'
@@ -109,13 +109,13 @@ test('decorates current, caller, callee, and transitive scenario nodes distinctl
     assert.equal(protocol.relationshipDecorationForNode({ kind: 'category' }, state).state, 'none');
 });
 
-test('keeps current identity visible when relationship highlighting is disabled', () => {
+test('hides every scenario relationship decoration when highlighting is disabled', () => {
     const state = protocol.withRelationshipState(protocol.createState(), {
         ...relationships,
         enabled: false
     });
 
-    assert.equal(protocol.relationshipDecorationForNode({ scenarioKey: 'file:///current' }, state).state, 'current');
+    assert.equal(protocol.relationshipDecorationForNode({ scenarioKey: 'file:///current' }, state).state, 'none');
     assert.equal(protocol.relationshipDecorationForNode({ scenarioKey: 'file:///caller' }, state).state, 'none');
 });
 

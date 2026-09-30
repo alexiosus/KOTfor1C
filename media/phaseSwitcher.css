@@ -2144,3 +2144,278 @@ label.checkbox-item.current-main-scenario {
     border-top-right-radius: 3px !important;
     border-bottom-right-radius: 3px !important;
 }
+
+/* Activity Bar density and stable-row refinements. */
+.favorites-sort-controls {
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+
+.favorites-sort-controls select {
+    min-height: 26px;
+    padding: 0 22px 0 6px;
+    border: 0;
+    border-radius: 3px;
+    background-color: transparent;
+    color: var(--vscode-foreground);
+}
+
+.favorites-sort-controls select:hover,
+.favorites-sort-controls select:focus-visible {
+    background-color: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+label.checkbox-item.disabled {
+    color: var(--vscode-foreground);
+}
+
+.scenario-file-icon {
+    flex: 0 0 16px;
+    color: var(--vscode-icon-foreground);
+}
+
+label.checkbox-item .kot-row-actions {
+    gap: 1px;
+}
+
+/* Compact native tree alignment shared with the Library view. */
+.phase-select-checkbox,
+label.checkbox-item > input[type="checkbox"],
+.selection-summary-toggle input[type="checkbox"] {
+    appearance: none;
+    display: inline-grid;
+    place-content: center;
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    margin: 0;
+    border: 1px solid var(--vscode-checkbox-border, var(--vscode-descriptionForeground));
+    border-radius: 3px;
+    background: transparent;
+    color: var(--vscode-checkbox-foreground, var(--vscode-button-foreground));
+}
+
+.phase-select-checkbox:checked,
+label.checkbox-item > input[type="checkbox"]:checked,
+.selection-summary-toggle input[type="checkbox"]:checked,
+.phase-select-checkbox:indeterminate,
+.selection-summary-toggle input[type="checkbox"]:indeterminate {
+    border-color: var(--vscode-checkbox-selectBorder, var(--vscode-button-background));
+    background: var(--vscode-checkbox-selectBackground, var(--vscode-button-background));
+}
+
+.phase-select-checkbox:checked::after,
+label.checkbox-item > input[type="checkbox"]:checked::after,
+.selection-summary-toggle input[type="checkbox"]:checked::after {
+    content: '✓';
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.phase-select-checkbox:indeterminate::after,
+.selection-summary-toggle input[type="checkbox"]:indeterminate::after {
+    width: 8px;
+    height: 2px;
+    background: currentColor;
+    content: '';
+}
+
+.phase-select-checkbox:focus-visible,
+label.checkbox-item > input[type="checkbox"]:focus-visible,
+.selection-summary-toggle input[type="checkbox"]:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: 1px;
+}
+
+.phase-header {
+    gap: 4px;
+    padding-inline: 4px;
+}
+
+.phase-select-checkbox {
+    flex: 0 0 16px;
+}
+
+.phase-expand-collapse-btn {
+    min-width: 0;
+    flex: 1 1 auto;
+    gap: 5px;
+    padding-inline: 0;
+    overflow: hidden;
+}
+
+.phase-folder-icon {
+    flex: 0 0 16px;
+    color: var(--vscode-icon-foreground);
+}
+
+.phase-title,
+.checkbox-label-text {
+    font-size: var(--vscode-font-size);
+    font-weight: 400;
+}
+
+.phase-tests-list,
+.phase-tests-list.expanded {
+    padding-left: 8px;
+}
+
+label.checkbox-item {
+    gap: 3px;
+    padding-inline: 4px 2px;
+}
+
+.scenario-file-icon {
+    margin-inline-start: 1px;
+}
+
+label.checkbox-item:hover .checkbox-label-text,
+label.checkbox-item:focus-within .checkbox-label-text {
+    padding-inline-end: 26px;
+}
+
+.controls-row-primary {
+    justify-content: flex-end;
+}
+
+.controls-row.controls-row-primary > .split-button {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 132px;
+}
+
+#assembleTestsBtn {
+    min-width: 94px;
+}
+
+#cancelAssembleBtn:not([style*="display: none"]) {
+    flex: 0 0 auto;
+}
+
+.scenario-search-input-wrap {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) 20px;
+    align-items: center;
+    height: 26px;
+    padding: 0 4px;
+    border: 1px solid var(--vscode-input-border, transparent);
+    border-radius: 2px;
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+}
+
+.scenario-search-input-wrap:focus-within {
+    border-color: var(--vscode-focusBorder);
+}
+
+.scenario-search-icon {
+    position: static;
+    transform: none;
+}
+
+.scenario-search-input {
+    height: 100%;
+    padding: 0 2px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+}
+
+.scenario-search-clear-btn {
+    position: static;
+    transform: none;
+}
+
+/* Native-sized Compile options menu. */
+.split-dropdown-content {
+    top: calc(100% + 3px);
+    min-width: 216px;
+    max-width: min(280px, calc(100vw - 12px));
+    padding: 4px;
+    border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border));
+    border-radius: 3px;
+    background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+    box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+}
+
+.split-dropdown-content .dropdown-control-row {
+    gap: 3px;
+    padding: 3px;
+}
+
+.split-dropdown-content .section-label {
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.split-dropdown-content .surface-select {
+    min-height: 26px;
+    border-radius: 2px;
+}
+
+.split-dropdown-content .record-gl-options-list {
+    gap: 1px;
+}
+
+.split-dropdown-content .record-gl-option-btn {
+    min-height: 26px;
+    padding: 3px 6px !important;
+    border-radius: 2px !important;
+}
+
+.open-scenario-btn {
+    position: absolute;
+    right: 2px;
+    opacity: 0;
+    pointer-events: none;
+    background: var(--vscode-list-hoverBackground, var(--vscode-sideBar-background));
+}
+
+label.checkbox-item:hover .open-scenario-btn,
+label.checkbox-item:focus-within .open-scenario-btn,
+.open-scenario-btn:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.open-scenario-btn .open-scenario-icon-edit {
+    display: inline-block;
+}
+
+.checkbox-label-text {
+    margin-right: 0 !important;
+}
+
+.phase-test-count:disabled,
+.phase-test-count.is-disabled {
+    opacity: 1;
+}
+
+.favorites-container,
+.favorites-list {
+    padding-inline: 6px;
+}
+
+.favorites-list .kot-empty,
+#favoritesContainer > .kot-empty {
+    padding-inline: 8px;
+}
+
+.run-mode-menu.phase-context-menu,
+.run-mode-menu.phase-context-submenu {
+    padding: 2px;
+    border-radius: 3px;
+    background: var(--vscode-menu-background);
+    box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+}
+
+.phase-context-menu .run-mode-menu-item {
+    min-height: 26px;
+    padding: 3px 6px;
+    border-radius: 2px;
+}

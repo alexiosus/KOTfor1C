@@ -54,9 +54,15 @@ import {
 } from './scenarioSyntaxHighlightProvider';
 import { isScenarioYamlFile } from './yamlValidator';
 import { ScenarioHeaderInlayHintsProvider } from './scenarioHeaderInlayHintsProvider';
-import { handleGenerateConfigurationDiffImpactReport } from './configurationDiffAiReport';
+import {
+    handleGenerateConfigurationDiffImpactReport,
+    openSavedConfigurationDiffImpactReport
+} from './configurationDiffAiReport';
 import { handleGenerateScenarioDescriptionWithAi } from './scenarioAiDescription';
-import { handleReviewChangedTestsWithAi } from './testReviewAiReport';
+import {
+    handleReviewChangedTestsWithAi,
+    openSavedTestReviewReport
+} from './testReviewAiReport';
 import type {
     BuildFormExplorerExtensionCommandOptions,
     InstallFormExplorerExtensionCommandOptions
@@ -117,6 +123,8 @@ import {
     createDeferredInfobaseSidebarOperations,
     InfobaseSidebarProvider
 } from './infobaseSidebarProvider';
+import { managedInfobaseRuntimeTracker } from './infobaseRuntimeTracker';
+import { StepLibraryFavoritesService } from './stepLibraryFavorites';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -881,6 +889,11 @@ export function activate(context: vscode.ExtensionContext) {
     );
     // --- Регистрация Провайдера для Webview (Test Manager) ---
     const phaseSwitcherProvider = new PhaseSwitcherProvider(context.extensionUri, context);
+    const stepLibraryFavoritesService = new StepLibraryFavoritesService(context.workspaceState);
+    context.subscriptions.push(stepLibraryFavoritesService);
+    context.subscriptions.push(phaseSwitcherProvider.onDidChangeFavoriteScenarios(() => {
+        stepLibraryFavoritesService.notifyLegacyFavoritesChanged();
+    }));
     const relationshipService = new ScenarioRelationshipService({
         catalogProvider: phaseSwitcherProvider,
         configuration: vscode.workspace.getConfiguration('kotTestToolkit'),
@@ -903,6 +916,15 @@ export function activate(context: vscode.ExtensionContext) {
     });
     phaseSwitcherProvider.attachRelationshipService(relationshipService);
     context.subscriptions.push(relationshipService);
+    const updateRelationshipHighlightContext = (enabled: boolean) => vscode.commands.executeCommand(
+        'setContext',
+        'kotTestToolkit.scenarioRelationshipsEnabled',
+        enabled
+    );
+    void updateRelationshipHighlightContext(relationshipService.getState().enabled);
+    context.subscriptions.push(relationshipService.onDidChangeState(state => {
+        void updateRelationshipHighlightContext(state.enabled);
+    }));
     context.subscriptions.push(
         onDidChangeScenarioScanRoot(() => {
             phaseSwitcherProvider.handleScenarioScanRootChanged();
@@ -930,6 +952,51 @@ export function activate(context: vscode.ExtensionContext) {
             PhaseSwitcherProvider.viewType,
             phaseSwitcherProvider,
             { webviewOptions: { retainContextWhenHidden: true } }
+        )
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'kotTestToolkit.openVanessa',
+            () => phaseSwitcherProvider.openVanessaFromSidebar()
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.toggleScenarioRelationships',
+            () => relationshipService.setEnabled(!relationshipService.getState().enabled)
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.toggleTestManagerGroups',
+            () => phaseSwitcherProvider.toggleAllGroupsFromSidebar()
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.showCreateScenarioMenu',
+            async () => {
+                const t = await getTranslator(context.extensionUri);
+                const picked = await vscode.window.showQuickPick([
+                    { label: t('Main scenario'), command: 'kotTestToolkit.createMainScenario' },
+                    { label: t('Nested scenario'), command: 'kotTestToolkit.createNestedScenario' },
+                    { label: t('Export scenario'), command: 'kotTestToolkit.createExportScenario' },
+                    { label: t('User step'), command: 'kotTestToolkit.createUserStep' }
+                ], {
+                    title: t('Create'),
+                    placeHolder: t('Choose what to create'),
+                    ignoreFocusOut: true
+                });
+                if (picked) {
+                    await vscode.commands.executeCommand(picked.command);
+                }
+            }
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.openConfigurationDiffReport',
+            () => openSavedConfigurationDiffImpactReport()
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.openTestReviewReport',
+            () => openSavedTestReviewReport()
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.openSettings',
+            () => vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit')
         )
     );
 
@@ -978,11 +1045,13 @@ export function activate(context: vscode.ExtensionContext) {
         snapshotService,
         actionService,
         relationshipService,
+        favoritesService: stepLibraryFavoritesService,
         refreshDefinitions: refreshStepDefinitions
     });
     const infobaseSidebarProvider = new InfobaseSidebarProvider({
         extensionUri: context.extensionUri,
         managedInfobaseService,
+        runtimeTracker: managedInfobaseRuntimeTracker,
         loadOperations: createDeferredInfobaseSidebarOperations(context)
     });
     context.subscriptions.push(
@@ -1001,6 +1070,20 @@ export function activate(context: vscode.ExtensionContext) {
             { webviewOptions: { retainContextWhenHidden: true } }
         )
     );
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'kotTestToolkit.refreshStepLibrarySidebar',
+            () => stepLibrarySidebarProvider.refresh()
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.refreshInfobaseSidebar',
+            () => infobaseSidebarProvider.refresh()
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.createInfobase',
+            () => infobaseSidebarProvider.createInfobase()
+        )
+    );
     let stepLibraryPanelPromise: Promise<import('./stepLibraryPanel.js').StepLibraryPanel>
         | undefined;
     const getStepLibraryPanel = () => {
@@ -1010,6 +1093,7 @@ export function activate(context: vscode.ExtensionContext) {
                     extensionUri: context.extensionUri,
                     snapshotService,
                     actionService,
+                    favoritesService: stepLibraryFavoritesService,
                     refreshDefinitions: refreshStepDefinitions
                 });
                 context.subscriptions.push(panel);

@@ -110,9 +110,13 @@ test('marks normalized file, server, and web identities as active', () => {
     }
 });
 
-test('sorts the active visible base first, hides hidden records, and keeps other bases', () => {
+test('projects KOT-launched runtime state without treating the active profile as runtime state', () => {
     const activePath = '/workspace/z-active';
-    const model = buildInfobaseSidebarModel(snapshot(
+    const project = buildInfobaseSidebarModel as unknown as (
+        value: ManagedInfobaseSnapshot,
+        runningIdentities: ReadonlySet<string>
+    ) => ReturnType<typeof buildInfobaseSidebarModel>;
+    const model = project(snapshot(
         normalizeInfobaseConnectionIdentity(activePath),
         [
             record({ id: 'alpha', infobasePath: '/workspace/alpha', displayName: 'Alpha' }),
@@ -120,14 +124,13 @@ test('sorts the active visible base first, hides hidden records, and keeps other
             record({ id: 'active', infobasePath: activePath, displayName: 'Zulu active' }),
             record({ id: 'beta', infobasePath: '/workspace/beta', displayName: 'Beta' })
         ]
-    ));
+    ), new Set([normalizeInfobaseConnectionIdentity('/workspace/beta')]));
 
-    assert.deepEqual(model.items.map(item => [item.id, item.active]), [
-        ['active', true],
+    assert.deepEqual(model.items.map(item => [item.id, item.running]), [
         ['alpha', false],
-        ['beta', false]
+        ['beta', true],
+        ['active', false]
     ]);
-    assert.equal(model.activeInfobaseId, 'active');
     assert.equal(model.items.some(item => item.id === 'hidden'), false);
     assert.ok(Object.isFrozen(model));
     assert.ok(Object.isFrozen(model.items));

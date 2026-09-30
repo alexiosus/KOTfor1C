@@ -5,12 +5,8 @@
     const protocol = globalThis.InfobaseSidebarProtocol;
     const root = document.querySelector('.infobase-sidebar');
     const loc = root.dataset;
-    const profileName = document.getElementById('profileName');
     const status = document.getElementById('status');
     const list = document.getElementById('list');
-    const refreshButton = document.getElementById('refreshButton');
-    const createButton = document.getElementById('createButton');
-    const openFullButton = document.getElementById('openFullButton');
     const persisted = vscode.getState() || {};
     let items = [];
     let uiState = protocol.createState({ selectedId: persisted.selectedId });
@@ -83,11 +79,11 @@
             row.setAttribute('aria-busy', 'true');
         }
 
-        const marker = protocol.activeMarker(item, loc.activeMarker);
+        const marker = protocol.runtimeMarker(item, loc.runtimeMarker);
         const active = document.createElement('span');
-        active.className = 'infobase-active-marker';
+        active.className = 'infobase-runtime-marker';
         if (marker.visible) {
-            active.classList.add('is-active');
+            active.classList.add('is-running');
             active.title = marker.accessibleLabel;
             active.setAttribute('role', 'img');
             active.setAttribute('aria-label', marker.accessibleLabel);
@@ -100,11 +96,17 @@
         labels.className = 'infobase-labels';
         const name = document.createElement('span');
         name.className = 'kot-tree-label infobase-name';
-        name.textContent = item.displayName;
+        const nameContent = document.createElement('span');
+        nameContent.className = 'kot-scroll-content';
+        nameContent.textContent = item.displayName;
+        name.appendChild(nameContent);
         name.title = item.displayName;
         const location = document.createElement('span');
         location.className = 'kot-tree-label infobase-location';
-        location.textContent = item.locationLabel;
+        const locationContent = document.createElement('span');
+        locationContent.className = 'kot-scroll-content';
+        locationContent.textContent = item.locationLabel;
+        location.appendChild(locationContent);
         location.title = item.infobasePath;
         labels.append(name, location);
         row.appendChild(labels);
@@ -137,11 +139,26 @@
             menu.setAttribute('role', 'menu');
             menu.append(
                 maintenanceHeading(loc.dtHeading),
-                maintenanceItem(`${loc.exportDt}…`, 'cloud-download', 'exportDt', item),
-                maintenanceItem(`${loc.importDt}…`, 'cloud-upload', 'importDt', item),
+                maintenanceItem(`${loc.importDt}…`, 'cloud-download', 'importDt', item),
+                maintenanceItem(`${loc.exportDt}…`, 'cloud-upload', 'exportDt', item),
                 maintenanceHeading(loc.cfHeading),
-                maintenanceItem(`${loc.exportCf}…`, 'file-symlink-file', 'exportCf', item),
-                maintenanceItem(`${loc.importCf}…`, 'file-add', 'importCf', item)
+                maintenanceItem(loc.updateFromSources, 'folder-opened', 'updateFromSources', item),
+                maintenanceItem(`${loc.importCf}…`, 'repo-sync', 'importCf', item),
+                maintenanceItem(`${loc.exportCf}…`, 'save', 'exportCf', item),
+                maintenanceItem(loc.updateConfiguration, 'settings-gear', 'updateConfiguration', item),
+                maintenanceHeading(loc.generalHeading),
+                maintenanceItem(loc.openFormExplorer, 'telescope', 'openFormExplorer', item),
+                maintenanceItem(loc.copy, 'copy', 'copy', item),
+                maintenanceItem(loc.recreate, 'discard', 'recreate', item),
+                maintenanceItem(loc.edit, 'edit', 'edit', item),
+                maintenanceItem(
+                    item.launcherRegistered ? loc.removeFromLauncher : loc.addToLauncher,
+                    item.launcherRegistered ? 'remove' : 'add',
+                    item.launcherRegistered ? 'removeFromLauncher' : 'addToLauncher',
+                    item
+                ),
+                maintenanceItem(loc.reveal, 'folder-opened', 'reveal', item),
+                maintenanceItem(loc.logs, 'output', 'logs', item)
             );
             row.appendChild(menu);
         }
@@ -163,8 +180,29 @@
         list.replaceChildren(fragment);
         list.scrollTop = persisted.scrollTop !== undefined ? persisted.scrollTop : scrollTop;
         persisted.scrollTop = undefined;
-        createButton.disabled = uiState.pendingId !== null;
-        refreshButton.disabled = uiState.pendingId !== null;
+        requestAnimationFrame(() => {
+            const openMenu = list.querySelector('.infobase-menu');
+            if (openMenu) {
+                const row = openMenu.closest('.infobase-row');
+                const listRect = list.getBoundingClientRect();
+                const rowRect = row?.getBoundingClientRect();
+                const menuHeight = openMenu.getBoundingClientRect().height;
+                if (rowRect && rowRect.bottom + menuHeight > listRect.bottom
+                    && rowRect.top - menuHeight >= listRect.top) {
+                    openMenu.classList.add('opens-upward');
+                }
+            }
+            for (const label of list.querySelectorAll('.kot-tree-label')) {
+                const content = label.querySelector('.kot-scroll-content');
+                if (!content) {
+                    continue;
+                }
+                const distance = Math.max(0, content.scrollWidth - label.clientWidth + 12);
+                label.classList.toggle('is-overflowing', distance > 1);
+                label.style.setProperty('--kot-overflow-distance', `${distance}px`);
+                label.style.setProperty('--kot-overflow-duration', `${Math.max(1.2, distance / 45)}s`);
+            }
+        });
     }
 
     list.addEventListener('keydown', event => {
@@ -197,24 +235,16 @@
             render();
         }
     });
-    refreshButton.addEventListener('click', () => vscode.postMessage({ command: 'refresh' }));
-    createButton.addEventListener('click', () => vscode.postMessage({ command: 'createInfobase' }));
-    openFullButton.addEventListener('click', () => vscode.postMessage({ command: 'openFullManager' }));
-
     window.addEventListener('message', event => {
         const message = event.data || {};
         switch (message.command) {
             case 'loading':
                 status.textContent = message.retainItems ? loc.refreshing : loc.loading;
-                refreshButton.disabled = true;
                 break;
             case 'state':
                 items = Array.isArray(message.items) ? message.items : [];
                 uiState = protocol.withItems(uiState, items);
-                profileName.textContent = message.profileName || loc.activeProfile;
-                profileName.title = message.profileName || '';
                 status.textContent = items.length === 0 ? loc.empty : '';
-                refreshButton.disabled = false;
                 persistState();
                 render();
                 break;
@@ -225,7 +255,6 @@
                 break;
             case 'error':
                 status.textContent = message.message || loc.error;
-                refreshButton.disabled = false;
                 render();
                 break;
         }
