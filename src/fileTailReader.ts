@@ -7,7 +7,14 @@ export interface FileTailReadResult {
     wasTruncated: boolean;
 }
 
-export async function readFileTail(
+const inFlightTailReads = new Map<string, Promise<FileTailReadResult | null>>();
+
+export function isTransientFileReadError(error: unknown): boolean {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    return code === 'EBUSY' || code === 'EACCES' || code === 'EPERM';
+}
+
+async function readFileTailUnshared(
     filePath: string,
     previousLength: number
 ): Promise<FileTailReadResult | null> {
@@ -53,6 +60,40 @@ export async function readFileTail(
     } finally {
         await handle.close();
     }
+}
+
+export function readFileTail(
+    filePath: string,
+    previousLength: number
+): Promise<FileTailReadResult | null> {
+    const normalizedPreviousLength = Number.isFinite(previousLength)
+        ? Math.max(0, Math.floor(previousLength))
+        : 0;
+    const key = `${pathForReadKey(filePath)}\0${normalizedPreviousLength}`;
+    const inFlight = inFlightTailReads.get(key);
+    if (inFlight) {
+        return inFlight;
+    }
+
+    let trackedRead: Promise<FileTailReadResult | null>;
+    trackedRead = readFileTailUnshared(filePath, normalizedPreviousLength)
+        .catch(error => {
+            if (isTransientFileReadError(error)) {
+                return null;
+            }
+            throw error;
+        })
+        .finally(() => {
+            if (inFlightTailReads.get(key) === trackedRead) {
+                inFlightTailReads.delete(key);
+            }
+        });
+    inFlightTailReads.set(key, trackedRead);
+    return trackedRead;
+}
+
+function pathForReadKey(filePath: string): string {
+    return process.platform === 'win32' ? filePath.toLowerCase() : filePath;
 }
 
 export function readFileTailSync(

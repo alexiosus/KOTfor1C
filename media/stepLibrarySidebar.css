@@ -13,6 +13,7 @@ body {
     color: var(--vscode-sideBar-foreground);
     font-family: var(--vscode-font-family);
     font-size: var(--vscode-font-size);
+    border-radius: 0;
 }
 
 .step-sidebar {
@@ -22,6 +23,7 @@ body {
     height: 100%;
     min-width: 0;
     overflow: hidden;
+    border-radius: 0;
 }
 
 .step-toolbar {
@@ -34,31 +36,7 @@ body {
 }
 
 .step-search-wrap {
-    display: grid;
-    grid-template-columns: 18px minmax(0, 1fr);
-    align-items: center;
     min-width: 0;
-    height: 26px;
-    padding: 0 4px;
-    border: 1px solid var(--vscode-input-border, transparent);
-    background: var(--vscode-input-background);
-    color: var(--vscode-input-foreground);
-    border-radius: 2px;
-}
-
-.step-search-wrap:focus-within {
-    border-color: var(--vscode-focusBorder);
-}
-
-.step-search-wrap input {
-    min-width: 0;
-    height: 100%;
-    padding: 0 2px;
-    border: 0;
-    outline: 0;
-    background: transparent;
-    color: inherit;
-    font: inherit;
 }
 
 .step-status {
@@ -74,23 +52,29 @@ body {
 
 .step-tree {
     min-width: 0;
+    box-sizing: border-box;
+    padding-block: 2px 6px;
     overflow-x: hidden;
     overflow-y: auto;
     scrollbar-gutter: stable;
+    border-radius: 0;
 }
 
 .step-row {
-    padding-left: calc(4px + var(--step-depth, 0) * 12px);
+    padding-left: calc(4px + var(--step-depth, 0) * 10px);
     border: 1px solid transparent;
 }
 
-.step-row:hover {
-    background: var(--vscode-list-hoverBackground);
+.step-row.is-drop-target {
+    border-color: var(--vscode-focusBorder);
+    background: var(--vscode-list-dropBackground);
 }
 
-.step-row.is-selected {
-    border-color: var(--vscode-focusBorder);
-    background: var(--vscode-list-inactiveSelectionBackground);
+.step-resource-empty {
+    min-height: 28px;
+    padding: 5px 6px 5px calc(40px + var(--step-depth, 0) * 4px);
+    color: var(--vscode-descriptionForeground);
+    font-style: italic;
 }
 
 .step-row:focus-visible {
@@ -101,7 +85,7 @@ body {
 .step-chevron {
     display: inline-grid;
     place-items: center;
-    flex: 0 0 16px;
+    flex: 0 0 18px;
     align-self: start;
     min-height: 28px;
 }
@@ -109,13 +93,17 @@ body {
 .step-node-icon {
     display: inline-grid;
     place-items: center;
-    flex: 0 0 17px;
+    flex: 0 0 18px;
     min-height: 28px;
     color: var(--vscode-icon-foreground);
 }
 
 .step-node-icon + .kot-tree-label {
     margin-inline-start: 4px;
+}
+
+.step-row[data-kind="definition"] .step-chevron + .kot-tree-label {
+    margin-inline-start: 2px;
 }
 
 .step-row[data-kind="source"] .step-node-icon {
@@ -136,7 +124,7 @@ body {
     white-space: pre;
     text-overflow: clip;
     font-family: var(--vscode-editor-font-family);
-    font-size: var(--vscode-editor-font-size);
+    font-size: var(--vscode-font-size);
     line-height: 1.35;
 }
 
@@ -148,50 +136,46 @@ body {
 }
 
 .step-actions {
-    position: absolute;
-    z-index: 1;
-    top: 2px;
-    right: 2px;
+    position: static;
     display: inline-flex;
     align-items: center;
     justify-content: flex-end;
     gap: 1px;
     align-self: start;
     min-height: 28px;
-    flex-basis: auto;
+    max-width: 0;
     opacity: 0;
     pointer-events: none;
-    background: var(--vscode-list-hoverBackground, var(--vscode-sideBar-background));
+    overflow: hidden;
+    background: transparent;
 }
 
 .step-row:hover .step-actions,
-.step-row.is-selected .step-actions,
-.step-row:focus-within .step-actions {
+.step-row:has(.step-action:focus-visible) .step-actions {
+    max-width: 112px;
     opacity: 1;
     pointer-events: auto;
 }
 
-.step-row:hover .step-code,
-.step-row.is-selected .step-code,
-.step-row:focus-within .step-code {
-    padding-inline-end: 104px;
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 118px), transparent calc(100% - 102px));
-    mask-image: linear-gradient(to right, #000 calc(100% - 118px), transparent calc(100% - 102px));
+.step-branch {
+    min-width: 0;
 }
 
-.step-row.is-entering {
-    animation: step-row-enter 120ms ease-out both;
+.step-children {
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    transition:
+        max-height 0.2s ease,
+        opacity 0.16s ease;
 }
 
-@keyframes step-row-enter {
-    from {
-        opacity: 0;
-        transform: translateY(-3px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+.step-children.expanded {
+    opacity: 1;
+}
+
+.step-children.animating {
+    pointer-events: none;
 }
 
 .step-action {
@@ -204,18 +188,6 @@ body {
     opacity: 0.45;
 }
 
-.step-relation {
-    display: inline-grid;
-    place-items: center;
-    flex: 0 0 18px;
-    min-height: 28px;
-    color: var(--kot-sidebar-related);
-}
-
-.step-row.is-current .step-relation {
-    color: currentColor;
-}
-
 .step-row[draggable="true"] {
     cursor: grab;
 }
@@ -225,9 +197,40 @@ body {
     opacity: 0.62;
 }
 
-.step-row.is-current {
-    background: var(--vscode-list-activeSelectionBackground);
-    color: var(--vscode-list-activeSelectionForeground);
+.scenario-resource-context-menu {
+    position: fixed;
+    z-index: 1000;
+    min-width: 190px;
+    padding: 4px;
+    border: 1px solid var(--vscode-menu-border, transparent);
+    border-radius: 5px;
+    color: var(--vscode-menu-foreground);
+    background: var(--vscode-menu-background);
+}
+
+.scenario-resource-context-action {
+    display: block;
+    width: 100%;
+    min-height: 26px;
+    padding: 3px 8px;
+    border: 0;
+    border-radius: 3px;
+    color: inherit;
+    background: transparent;
+    text-align: start;
+}
+
+.scenario-resource-context-action:hover,
+.scenario-resource-context-action:focus-visible {
+    color: var(--vscode-menu-selectionForeground);
+    background: var(--vscode-menu-selectionBackground);
+    outline: none;
+}
+
+.scenario-resource-context-separator {
+    height: 1px;
+    margin: 4px 6px;
+    background: var(--vscode-menu-separatorBackground, var(--vscode-menu-border));
 }
 
 .step-row.is-related {
@@ -253,12 +256,13 @@ body {
     }
 
     .step-row {
-        padding-left: calc(2px + var(--step-depth, 0) * 10px);
+        padding-left: calc(2px + var(--step-depth, 0) * 8px);
     }
+
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .step-row.is-entering {
-        animation: none;
+    .step-children {
+        transition: none;
     }
 }

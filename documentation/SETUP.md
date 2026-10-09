@@ -75,7 +75,7 @@
 
 | Ключ | Default | Назначение |
 |---|---|---|
-| `kotTestToolkit.steps.externalUrl` | `https://raw.githubusercontent.com/alexiosus/KOTfor1C/main/res/steps.htm` | Источник `steps.htm` для библиотеки шагов |
+| `kotTestToolkit.steps.catalogIndexUrl` | `https://raw.githubusercontent.com/alexiosus/KOTfor1C/step-catalogs/index.json` | Индекс версионных каталогов шагов Vanessa Automation |
 | `kotTestToolkit.editor.checkRelatedParentScenarios` | `true` | Проверять связанные родительские сценарии вместе с активным |
 
 ### 3.5 Test Manager and UI (Менеджер тестов и UI)

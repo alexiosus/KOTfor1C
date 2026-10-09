@@ -1,10 +1,8 @@
 import * as path from 'node:path';
 import type * as vscode from 'vscode';
-import { parseLegacyStepsHtml } from './legacyStepCatalog';
 import {
     executableStepDefinitions,
-    ResolvedStepCatalog,
-    sha256Hex
+    ResolvedStepCatalog
 } from './stepCatalog';
 import {
     StepCatalogStorage,
@@ -20,7 +18,6 @@ import {
     resolveWorkspaceSettingPath
 } from './vanessaVersion';
 
-const CUSTOM_HTML_MAX_BYTES = 20 * 1024 * 1024;
 const DEFAULT_CATALOG_INDEX_URL =
     'https://raw.githubusercontent.com/alexiosus/KOTfor1C/step-catalogs/index.json';
 
@@ -33,7 +30,6 @@ export interface WorkspaceStepCatalogConfiguration {
     readonly vanessaVersion: string;
     readonly vanessaEpfPath: string;
     readonly catalogIndexUrl: string;
-    readonly externalUrl: string;
 }
 
 export interface WorkspaceStepCatalogFileStat {
@@ -54,8 +50,6 @@ export interface WorkspaceStepCatalogDependencies {
     getConfiguration(workspaceFolderUri?: string): WorkspaceStepCatalogConfiguration;
     statFile(filePath: string): Promise<WorkspaceStepCatalogFileStat | null>;
     readTextFile(filePath: string): Promise<string>;
-    readBundledHtml(): Promise<string>;
-    readCustomHtml(url: string): Promise<string>;
     getCachedExactCatalog(
         indexUrl: string,
         version: string
@@ -68,6 +62,14 @@ export interface WorkspaceStepCatalogDependencies {
     refreshExactCatalog(
         indexUrl: string,
         version: string,
+        signal?: AbortSignal
+    ): Promise<VersionedCatalogResult | null>;
+    getLatestCatalog(
+        indexUrl: string,
+        signal?: AbortSignal
+    ): Promise<VersionedCatalogResult | null>;
+    refreshLatestCatalog(
+        indexUrl: string,
         signal?: AbortSignal
     ): Promise<VersionedCatalogResult | null>;
     warn(message: string, error?: unknown): void;
@@ -99,17 +101,13 @@ function resolveVersionedCatalog(
     };
 }
 
-function resolveLegacyCatalog(
-    html: string,
-    source: 'custom-html' | 'bundled-html',
-    requestedVersion?: string
-): ResolvedStepCatalog {
+function resolveUnavailableCatalog(requestedVersion?: string): ResolvedStepCatalog {
     return {
-        identity: `${source}:${sha256Hex(html)}`,
+        identity: `unavailable:${requestedVersion ?? 'latest'}`,
         requestedVersion,
-        catalogVersion: 'legacy-html',
-        source,
-        steps: parseLegacyStepsHtml(html)
+        catalogVersion: requestedVersion ?? 'unknown',
+        source: 'unavailable',
+        steps: []
     };
 }
 
@@ -122,8 +120,6 @@ export class WorkspaceStepCatalogCoordinator {
     private readonly exactLookups = new Map<string, Promise<VersionedCatalogResult | null>>();
     private readonly backgroundTasks = new Set<Promise<void>>();
     private readonly catalogLoads = new Map<string, Promise<ResolvedStepCatalog>>();
-    private readonly customFallbacks = new Map<string, Promise<ResolvedStepCatalog | null>>();
-    private bundledFallback: Promise<ResolvedStepCatalog> | undefined;
 
     public constructor(private readonly dependencies: WorkspaceStepCatalogDependencies) {}
 
@@ -159,8 +155,7 @@ export class WorkspaceStepCatalogCoordinator {
         const indexUrl = configuration.catalogIndexUrl.trim() || DEFAULT_CATALOG_INDEX_URL;
         const selectionKey = [
             versionResolution.fingerprint,
-            indexUrl,
-            configuration.externalUrl.trim()
+            indexUrl
         ].join('\0');
         const existing = this.states.get(folderKey);
         if (existing?.selectionKey === selectionKey) {
@@ -193,35 +188,32 @@ export class WorkspaceStepCatalogCoordinator {
                 }, true);
                 return catalog;
             }
+
+            const exact = await this.getExactLookup(indexUrl, requestedVersion);
+            const catalog = exact
+                ? resolveVersionedCatalog(exact, requestedVersion)
+                : resolveUnavailableCatalog(requestedVersion);
+            if (!this.isCurrentGeneration(folderKey, generation)) {
+                return this.states.get(folderKey)?.catalog ?? catalog;
+            }
+            if (exact) {
+                this.exactCatalogs.set(exactKey, catalog);
+            }
+            this.states.set(folderKey, { selectionKey, generation, catalog });
+            return catalog;
         }
 
-        const fallback = await this.getBundledFallback(requestedVersion);
+        const latest = await this.dependencies.getLatestCatalog(indexUrl).catch(error => {
+            this.dependencies.warn('Failed to load the latest Vanessa step catalog.', error);
+            return null;
+        });
+        const fallback = latest
+            ? resolveVersionedCatalog(latest, latest.catalog.vanessaVersion)
+            : resolveUnavailableCatalog();
         if (!this.isCurrentGeneration(folderKey, generation)) {
             return this.states.get(folderKey)?.catalog ?? fallback;
         }
         this.states.set(folderKey, { selectionKey, generation, catalog: fallback });
-
-        if (configuration.externalUrl.trim()) {
-            this.startCustomFallbackLookup({
-                folderKey,
-                workspaceFolderUri: folder?.uri,
-                selectionKey,
-                generation,
-                externalUrl: configuration.externalUrl,
-                requestedVersion
-            });
-        }
-
-        if (requestedVersion) {
-            this.startExactLookup({
-                folderKey,
-                workspaceFolderUri: folder?.uri,
-                selectionKey,
-                generation,
-                indexUrl,
-                requestedVersion
-            });
-        }
         return fallback;
     }
 
@@ -246,8 +238,7 @@ export class WorkspaceStepCatalogCoordinator {
             const indexUrl = configuration.catalogIndexUrl.trim() || DEFAULT_CATALOG_INDEX_URL;
             const selectionKey = [
                 resolution.fingerprint,
-                indexUrl,
-                configuration.externalUrl.trim()
+                indexUrl
             ].join('\0');
 
             let catalog: ResolvedStepCatalog;
@@ -266,10 +257,16 @@ export class WorkspaceStepCatalogCoordinator {
                     catalog = resolveVersionedCatalog(result, resolution.version);
                     this.exactCatalogs.set(exactKey, catalog);
                 } else {
-                    catalog = await this.getFallback(configuration.externalUrl, resolution.version);
+                    catalog = resolveUnavailableCatalog(resolution.version);
                 }
             } else {
-                catalog = await this.getFallback(configuration.externalUrl);
+                const result = await this.dependencies.refreshLatestCatalog(indexUrl).catch(error => {
+                    this.dependencies.warn('Failed to refresh the latest Vanessa step catalog.', error);
+                    return null;
+                });
+                catalog = result
+                    ? resolveVersionedCatalog(result, result.catalog.vanessaVersion)
+                    : resolveUnavailableCatalog();
             }
 
             if (this.isCurrentGeneration(folderKey, generation)) {
@@ -295,7 +292,6 @@ export class WorkspaceStepCatalogCoordinator {
         }
         this.versionByFingerprint.clear();
         this.exactLookups.clear();
-        this.customFallbacks.clear();
     }
 
     public async whenIdle(): Promise<void> {
@@ -381,72 +377,21 @@ export class WorkspaceStepCatalogCoordinator {
         return { version: version ?? undefined, fingerprint };
     }
 
-    private async getFallback(
-        externalUrl: string,
-        requestedVersion?: string
-    ): Promise<ResolvedStepCatalog> {
-        const normalizedExternalUrl = externalUrl.trim();
-        if (normalizedExternalUrl) {
-            const custom = await this.getCustomFallback(normalizedExternalUrl);
-            if (custom) {
-                return { ...custom, requestedVersion };
-            }
+    private getExactLookup(
+        indexUrl: string,
+        requestedVersion: string,
+        refresh = false
+    ): Promise<VersionedCatalogResult | null> {
+        const exactKey = this.exactKey(indexUrl, requestedVersion);
+        const lookupKey = `${exactKey}\0${refresh ? 'refresh' : 'normal'}`;
+        let lookup = this.exactLookups.get(lookupKey);
+        if (!lookup) {
+            lookup = refresh
+                ? this.dependencies.refreshExactCatalog(indexUrl, requestedVersion)
+                : this.dependencies.getExactCatalog(indexUrl, requestedVersion);
+            this.exactLookups.set(lookupKey, lookup);
         }
-
-        return this.getBundledFallback(requestedVersion);
-    }
-
-    private getCustomFallback(externalUrl: string): Promise<ResolvedStepCatalog | null> {
-        let customPromise = this.customFallbacks.get(externalUrl);
-        if (!customPromise) {
-            customPromise = this.dependencies.readCustomHtml(externalUrl)
-                .then(html => resolveLegacyCatalog(html, 'custom-html'))
-                .catch(error => {
-                    this.dependencies.warn('Failed to load custom legacy steps HTML.', error);
-                    return null;
-                });
-            this.customFallbacks.set(externalUrl, customPromise);
-        }
-        return customPromise;
-    }
-
-    private async getBundledFallback(requestedVersion?: string): Promise<ResolvedStepCatalog> {
-        if (!this.bundledFallback) {
-            this.bundledFallback = this.dependencies.readBundledHtml()
-                .then(html => resolveLegacyCatalog(html, 'bundled-html'));
-        }
-        return { ...(await this.bundledFallback), requestedVersion };
-    }
-
-    private startCustomFallbackLookup(input: {
-        readonly folderKey: string;
-        readonly workspaceFolderUri?: string;
-        readonly selectionKey: string;
-        readonly generation: number;
-        readonly externalUrl: string;
-        readonly requestedVersion?: string;
-    }): void {
-        let task!: Promise<void>;
-        task = this.getCustomFallback(input.externalUrl.trim()).then(result => {
-            if (!result) {
-                return;
-            }
-            const state = this.states.get(input.folderKey);
-            if (
-                !this.isCurrentGeneration(input.folderKey, input.generation)
-                || state?.selectionKey !== input.selectionKey
-                || state.catalog.source !== 'bundled-html'
-            ) {
-                return;
-            }
-            const catalog = { ...result, requestedVersion: input.requestedVersion };
-            const oldIdentity = state.catalog.identity;
-            state.catalog = catalog;
-            this.emitIfChanged(input.workspaceFolderUri, oldIdentity, catalog.identity);
-        }).finally(() => {
-            this.backgroundTasks.delete(task);
-        });
-        this.backgroundTasks.add(task);
+        return lookup;
     }
 
     private startExactLookup(input: {
@@ -458,14 +403,7 @@ export class WorkspaceStepCatalogCoordinator {
         readonly requestedVersion: string;
     }, refresh = false): void {
         const exactKey = this.exactKey(input.indexUrl, input.requestedVersion);
-        const lookupKey = `${exactKey}\0${refresh ? 'refresh' : 'normal'}`;
-        let lookup = this.exactLookups.get(lookupKey);
-        if (!lookup) {
-            lookup = refresh
-                ? this.dependencies.refreshExactCatalog(input.indexUrl, input.requestedVersion)
-                : this.dependencies.getExactCatalog(input.indexUrl, input.requestedVersion);
-            this.exactLookups.set(lookupKey, lookup);
-        }
+        const lookup = this.getExactLookup(input.indexUrl, input.requestedVersion, refresh);
 
         let task!: Promise<void>;
         task = lookup.then(result => {
@@ -611,8 +549,7 @@ export class StepCatalogService implements StepCatalogProvider, vscode.Disposabl
                     catalogIndexUrl: configuration.get<string>(
                         'steps.catalogIndexUrl',
                         DEFAULT_CATALOG_INDEX_URL
-                    ),
-                    externalUrl: configuration.get<string>('steps.externalUrl', '')
+                    )
                 };
             },
             statFile: async filePath => {
@@ -626,18 +563,16 @@ export class StepCatalogService implements StepCatalogProvider, vscode.Disposabl
             readTextFile: async filePath => decoder.decode(
                 await vscodeApi.workspace.fs.readFile(vscodeApi.Uri.file(filePath))
             ),
-            readBundledHtml: async () => decoder.decode(await vscodeApi.workspace.fs.readFile(
-                vscodeApi.Uri.joinPath(context.extensionUri, 'res', 'steps.htm')
-            )),
-            readCustomHtml: async url => decoder.decode((await fetchHttpsBytes(new URL(url), {
-                maxBytes: CUSTOM_HTML_MAX_BYTES
-            })).body),
             getCachedExactCatalog: (indexUrl, version) =>
                 client.getCachedExactCatalog(indexUrl, version),
             getExactCatalog: (indexUrl, version, signal) =>
                 client.getExactCatalog(indexUrl, version, signal),
             refreshExactCatalog: (indexUrl, version, signal) =>
                 client.refreshExactCatalog(indexUrl, version, signal),
+            getLatestCatalog: (indexUrl, signal) =>
+                client.getLatestCatalog(indexUrl, signal),
+            refreshLatestCatalog: (indexUrl, signal) =>
+                client.refreshLatestCatalog(indexUrl, signal),
             warn: (message, error) => console.warn(`[StepCatalogService] ${message}`, error ?? '')
         });
 
@@ -654,7 +589,6 @@ export class StepCatalogService implements StepCatalogProvider, vscode.Disposabl
             if ([
                 'kotTestToolkit.steps.vanessaVersion',
                 'kotTestToolkit.steps.catalogIndexUrl',
-                'kotTestToolkit.steps.externalUrl',
                 'kotTestToolkit.runVanessa.vanessaEpfPath'
             ].some(section => event.affectsConfiguration(section))) {
                 this.coordinator.invalidateConfiguration();

@@ -7,7 +7,6 @@ import {
 } from '../../src/bslStepSourceParser';
 import { enrichStepCatalogCategories } from '../../src/stepCatalogCategories';
 import {
-    compareCatalogWithLegacyHtml,
     createStepCatalogGenerationReport,
     generateBuiltInStepCatalog,
     parseVanessaStepTemplateXml,
@@ -20,8 +19,7 @@ const REQUIRED_ARGUMENTS = [
     'ref',
     'commit',
     'timestamp',
-    'output',
-    'legacy-html'
+    'output'
 ] as const;
 const REGISTRATION_MARKER = 'добавитьшагвмассивтестов';
 const SOURCE_READ_CONCURRENCY = 16;
@@ -127,9 +125,8 @@ async function main(): Promise<void> {
         'Ext',
         'Template.xml'
     );
-    const [templateXml, legacyHtml, sourceRegistrations] = await Promise.all([
+    const [templateXml, sourceRegistrations] = await Promise.all([
         readFile(templatePath, 'utf8'),
-        readFile(path.resolve(args['legacy-html']), 'utf8'),
         collectVanessaRegistrations(sourceRoot)
     ]);
     const parsedTemplate = parseVanessaStepTemplateXml(templateXml);
@@ -152,11 +149,9 @@ async function main(): Promise<void> {
         sourceCommit: args.commit,
         sourceTimestamp: args.timestamp
     });
-    const compatibility = compareCatalogWithLegacyHtml(catalog, legacyHtml);
     const report = createStepCatalogGenerationReport(
         parsed,
         catalog,
-        compatibility,
         enrichment.report
     );
     if (report.duplicateStepIds.length > 0) {

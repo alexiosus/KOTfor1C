@@ -27,16 +27,6 @@ html, body {
     background: var(--tm-bg);
 }
 
-.main-content-area {
-    flex-grow: 1; 
-    overflow-y: auto;
-    overflow-x: visible;
-    min-height: 0; 
-    padding: 10px 10px 16px 10px; 
-    display: flex;
-    flex-direction: column;
-}
-
 .phase-switcher-section {
     display: flex;
     flex-direction: column;
@@ -52,324 +42,13 @@ html, body {
     padding: 12px;
 }
 
-.controls-top-bar {
-    display: flex;
-    justify-content: space-between; 
-    align-items: center;
-    margin-bottom: 10px; 
-    flex-shrink: 0; 
-}
-
-h1 { 
-    border-bottom: none; 
-    padding-bottom: 0;
-    font-size: 1.15rem; 
-    font-weight: 800;
-    margin: 0;
-}
-
-
-.controls-top-buttons {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.top-action-icon-wrap {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.top-beta-badge {
-    position: absolute;
-    top: -15px;
-    right: -15px;
-    min-width: 14px;
-    height: 14px;
-    padding: 0;
-    border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--tm-accent) 36%, transparent);
-    background: color-mix(in srgb, var(--tm-accent) 18%, var(--tm-surface-0) 82%);
-    color: var(--vscode-descriptionForeground);
-    font-size: 9px;
-    line-height: 14px;
-    font-weight: 700;
-    opacity: 0;
-    transform: translateY(-1px) scale(0.86);
-    transition: opacity 0.14s ease, transform 0.14s ease;
-    pointer-events: none;
-}
-
-.top-action-btn-beta:hover .top-beta-badge,
-.top-action-btn-beta:focus-visible .top-beta-badge {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-}
-/* Стили для компактных кнопок в верхней панели (Обновить, Настройки) */
-.compact-top-btn {
-    background-color: var(--tm-surface-1);
-    color: var(--vscode-editor-foreground);
-    border: 1px solid var(--tm-border);
-    padding: 6px 8px;
-    border-radius: 12px;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-}
-.compact-top-btn .codicon {
-    font-size: 14px;
-}
-.compact-top-btn:hover {
-    border-color: var(--tm-border-strong);
-    background-color: var(--tm-surface-2);
-}
-.compact-top-btn:disabled {
-    background-color: transparent;
-    color: var(--vscode-disabledForeground);
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.compact-top-btn.is-disabled {
-    background-color: transparent;
-    color: var(--vscode-disabledForeground);
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.global-list-actions {
-    display: flex;
-    align-items: flex-start;
-    justify-content: flex-end;
-    flex: 1 1 auto;
-    width: 100%;
-    min-width: 0;
-    padding: 0;
-    margin: 0;
-    gap: 0;
-}
-
-.global-list-actions-right {
-    display: flex;
-    align-items: flex-start;
-    justify-content: flex-end;
-    gap: 6px;
-    row-gap: 4px;
-    min-width: 0;
-    max-width: 100%;
-    flex-wrap: wrap;
-    margin-left: auto;
-}
-
-.global-list-actions-right > * {
-    flex: 0 0 auto;
-}
-.compact-action-btn {
-    background-color: var(--tm-surface-1);
-    color: var(--vscode-editor-foreground);
-    border: 1px solid var(--tm-border);
-    padding: 6px 8px;
-    border-radius: 12px;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-}
-.compact-action-btn:first-child {
-    margin-left: 0; 
-}
-.compact-action-btn .codicon {
-    font-size: 14px; 
-    margin-right: 0; /* Убираем отступ, если только иконка */
-}
-.compact-action-btn .button-text {
-    font-size: var(--vscode-font-size); 
-    margin-left: 0.3em;
-}
-.compact-action-btn:hover {
-    border-color: var(--tm-border-strong);
-    background-color: var(--tm-surface-2);
-}
-.compact-action-btn:disabled {
-    background-color: transparent;
-    color: var(--vscode-disabledForeground);
-    cursor: not-allowed;
-    opacity: 0.5;
-}
-
-.compact-action-btn.is-disabled {
-    background-color: transparent;
-    color: var(--vscode-disabledForeground);
-    cursor: not-allowed;
-    opacity: 0.5;
-}
-
 .hidden {
     display: none !important;
-}
-
-.manager-tabs-row {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 3px;
-    margin-bottom: 6px;
-    flex-wrap: wrap;
-}
-
-.manager-tabs-side {
-    display: flex;
-    align-items: flex-start;
-    justify-content: flex-end;
-    flex: 1 1 auto;
-    width: 0;
-    gap: 10px;
-    min-width: 0;
-    flex-wrap: wrap;
-}
-
-.manager-search-toggle-btn {
-    padding: 3px 7px;
-}
-
-.manager-search-toggle-btn.is-active {
-    background-color: var(--vscode-button-secondaryBackground, var(--vscode-list-activeSelectionBackground));
-    color: var(--vscode-button-secondaryForeground, var(--vscode-list-activeSelectionForeground));
-}
-
-.manager-tabs {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    padding: 3px;
-    border: 1px solid var(--tm-border);
-    border-radius: 14px;
-    background: var(--tm-surface-1);
-}
-
-.manager-tab-btn {
-    background: transparent;
-    border: none;
-    color: var(--vscode-descriptionForeground);
-    cursor: pointer;
-    padding: 6px 12px;
-    border-radius: 10px;
-    font-size: var(--vscode-font-size);
-}
-
-.manager-tab-btn:hover {
-    background: var(--tm-surface-2);
-    color: var(--vscode-foreground);
-}
-
-.manager-tab-btn.is-active {
-    border: 1px solid var(--tm-border-strong);
-    background: color-mix(in srgb, var(--vscode-focusBorder) 14%, var(--tm-surface-1) 86%);
-    color: var(--vscode-editor-foreground);
-}
-
-.favorites-sort-controls {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--vscode-descriptionForeground);
-}
-
-.favorites-sort-controls label {
-    font-size: 0.95em;
-}
-
-.favorites-sort-controls select {
-    border: 1px solid var(--tm-border);
-    background: var(--tm-surface-1);
-    color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
-    border-radius: 10px;
-    padding: 4px 8px;
 }
 
 .manager-view-panel {
     flex-grow: 1;
     min-height: 100px;
-}
-
-.favorites-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.favorite-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    border: 1px solid var(--vscode-panel-border);
-    border-radius: 2px;
-    background-color: var(--vscode-sideBar-background, var(--vscode-editorWidget-background));
-    padding: 6px 8px;
-    user-select: none;
-    cursor: grab;
-}
-
-.favorite-item:hover {
-    background-color: var(--vscode-list-hoverBackground, var(--vscode-toolbar-hoverBackground));
-}
-
-.favorite-item:active {
-    cursor: grabbing;
-}
-
-.favorite-item:focus {
-    outline: 1px solid var(--vscode-focusBorder, var(--vscode-contrastActiveBorder));
-    outline-offset: -1px;
-}
-
-.favorite-main {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-}
-
-.favorite-label {
-    font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.favorite-meta {
-    color: var(--vscode-descriptionForeground);
-    font-size: 0.9em;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.favorite-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    flex-shrink: 0;
-}
-
-.favorite-action-btn {
-    background: transparent;
-    border: none;
-    color: var(--vscode-icon-foreground);
-    cursor: pointer;
-    border-radius: 3px;
-    padding: 3px 5px;
-}
-
-.favorite-action-btn:hover {
-    background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
-}
-
-.favorite-action-btn.remove {
-    color: var(--vscode-testing-iconFailed, var(--vscode-editorError-foreground));
 }
 
 /* Стили для выпадающего меню */
@@ -393,61 +72,9 @@ h1 {
     padding: 6px;
 }
 
-.dropdown-content .dropdown-item {
-    color: var(--vscode-menu-foreground, var(--vscode-editor-foreground));
-    padding: 0px 12px;
-    text-decoration: none;
-    display: flex; /* Используем flex для иконки и текста */
-    align-items: center; /* Выравнивание по центру */
-    gap: 8px; /* Промежуток между иконкой и текстом */
-    white-space: normal;
-    overflow-wrap: anywhere;
-}
-.dropdown-content .dropdown-item .codicon {
-    font-size: 16px;
-}
-
-.dropdown-item-title-with-beta {
-    min-width: 0;
-    display: inline-flex;
-    align-items: baseline;
-    gap: 6px;
-}
-
-.beta-inline-symbol {
-    color: var(--vscode-descriptionForeground);
-    font-size: 0.95em;
-    font-weight: 500;
-    line-height: 1;
-}
-
-.dropdown-content .dropdown-item-with-chevron .dropdown-item-chevron {
-    margin-left: auto;
-    font-size: 13px;
-    opacity: 0.72;
-}
-
-.dropdown-content .dropdown-item:hover {
-    background-color: var(--tm-surface-2);
-    color: var(--vscode-menu-selectionForeground, var(--vscode-list-hoverForeground));
-    border-radius: 10px;
-}
-
-.dropdown-separator {
-    height: 1px;
-    margin: 4px 8px;
-    background: var(--vscode-menu-separatorBackground, var(--vscode-panel-border));
-}
-
 .dropdown-container.show .dropdown-content {
     display: block;
 }
-
-#addScenarioDropdownContent {
-    left: 0;
-    right: auto;
-}
-
 
 #phaseTreeContainer {
     flex-grow: 1; 
@@ -603,6 +230,29 @@ h1 {
     white-space: nowrap;
     flex-shrink: 0;
     font-family: monospace;
+}
+
+.phase-compiled-indicator {
+    flex: 0 0 6px;
+    width: 6px;
+    height: 6px;
+    margin-inline: 3px 1px;
+    border-radius: 50%;
+    background: var(--vscode-charts-blue, var(--vscode-progressBar-background));
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+.phase-compiled-indicator[hidden] {
+    display: none;
+}
+
+.phase-count-cluster {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    min-width: 0;
+    white-space: nowrap;
 }
 
 .phase-test-count.group-changed {
@@ -789,11 +439,7 @@ label.checkbox-item.search-dim {
 .open-scenario-btn .codicon {
     vertical-align: middle;
 }
-.codicon-circle-small-filled {
-    opacity: 0.2;
-}
-.open-scenario-btn:hover,
-.open-scenario-btn:focus-visible {
+.open-scenario-btn:hover {
     opacity: 1 !important;
     color: var(--vscode-textLink-activeForeground);
 }
@@ -802,20 +448,8 @@ label.checkbox-item.search-dim {
     display: inline-block;
 }
 
-.open-scenario-btn .codicon.open-scenario-icon-edit {
+.open-scenario-btn:hover .codicon.open-scenario-icon-idle {
     display: none;
-}
-
-label.checkbox-item:hover .open-scenario-btn .codicon.open-scenario-icon-idle,
-.open-scenario-btn:hover .codicon.open-scenario-icon-idle,
-.open-scenario-btn:focus-visible .codicon.open-scenario-icon-idle {
-    display: none;
-}
-
-label.checkbox-item:hover .open-scenario-btn .codicon.open-scenario-icon-edit,
-.open-scenario-btn:hover .codicon.open-scenario-icon-edit,
-.open-scenario-btn:focus-visible .codicon.open-scenario-icon-edit {
-    display: inline-block;
 }
 
 .run-scenario-btn {
@@ -990,40 +624,6 @@ label.checkbox-item:hover .open-scenario-btn .codicon.open-scenario-icon-edit,
     background-color: var(--vscode-input-background); 
 }
 
-.assemble-options { margin-bottom: 15px; margin-top: 5px; }
-.assemble-options .select-item label { flex-shrink: 0; } 
-.assemble-options label.setting-item { 
-    display: flex; 
-    align-items: center; 
-    cursor: pointer; 
-    margin-bottom: 5px; 
-}
-.assemble-options label.setting-item input[type="checkbox"] {
-    margin-right: 8px; 
-    cursor: pointer;
-    width: 16px;  
-    height: 16px;  
-    vertical-align: middle; 
-    accent-color: var(--vscode-button-background); 
-    background-color: var(--vscode-input-background);
-    border: 1px solid var(--vscode-input-border, var(--vscode-contrastBorder));
-    color: var(--vscode-input-foreground); 
-}
-.assemble-options label.setting-item input[type="checkbox"]:disabled {
-    cursor: not-allowed;
-    opacity: 0.7;
-    accent-color: var(--vscode-disabledForeground);
-}
-.assemble-options label.setting-item span { font-size: var(--vscode-font-size); }
-.assemble-controls { margin-bottom: 10px; }
-.assemble-controls .controls-row {
-    display: flex;
-    gap: 10px;
-}
-.assemble-controls .controls-row > button {
-    flex-grow: 1;
-    flex-basis: 0;
-}
 .assemble-option-group {
     display: flex;
     flex-direction: column;
@@ -1038,17 +638,6 @@ label.checkbox-item:hover .open-scenario-btn .codicon.open-scenario-icon-edit,
     max-width: none;
 }
 
-.record-gl-options-inline {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 6px;
-}
-
-.record-gl-options-inline .record-gl-option-btn {
-    width: auto;
-    min-width: 88px;
-    flex: 0 0 auto;
-}
 .drive-accounting-label {
     margin-bottom: 0;
     flex-shrink: 0;
@@ -1060,45 +649,6 @@ label.checkbox-item:hover .open-scenario-btn .codicon.open-scenario-icon-edit,
     flex-wrap: wrap;
     align-items: stretch;
     margin-bottom: 10px;
-}
-
-#selectDefaultsBtn {
-    flex: 1 1 calc(50% - 5px);
-    min-width: max-content;
-    width: auto;
-    background-color: var(--vscode-button-secondaryBackground, var(--vscode-toolbar-hoverBackground));
-    color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
-}
-
-#selectDefaultsBtn:hover {
-    background-color: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
-}
-
-#selectDefaultsBtn:disabled {
-    background-color: var(--vscode-input-background, var(--vscode-editorWidget-background));
-    color: var(--vscode-disabledForeground);
-    border-color: var(--vscode-widget-border, var(--vscode-button-border, var(--vscode-disabledForeground)));
-    opacity: 0.5;
-}
-
-.controls-row.controls-row-drive {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: nowrap;
-    gap: 8px;
-    margin-top: 2px;
-}
-
-#driveActionsRow {
-    margin-bottom: 0;
-}
-
-#createFirstLaunchBtn {
-    flex: 0 1 calc(50% - 5px);
-    min-width: max-content;
-    width: auto;
-    max-width: none;
 }
 
 .controls-row.controls-row-primary > .split-button {
@@ -1177,70 +727,8 @@ label.checkbox-item:hover .open-scenario-btn .codicon.open-scenario-icon-edit,
     gap: 6px;
 }
 
-.record-gl-options-list {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.record-gl-option-btn {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    border: 1px solid transparent !important;
-    border-radius: 3px !important;
-    background: transparent !important;
-    color: var(--vscode-menu-foreground, var(--vscode-foreground)) !important;
-    padding: 4px 6px !important;
-    cursor: pointer;
-    text-align: left !important;
-}
-
-.record-gl-option-btn:hover {
-    background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground)) !important;
-    color: var(--vscode-menu-selectionForeground, var(--vscode-foreground)) !important;
-}
-
-.record-gl-option-btn.is-selected {
-    border-color: var(--vscode-focusBorder, var(--vscode-contrastActiveBorder)) !important;
-    background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.15)) !important;
-    color: var(--vscode-menu-foreground, var(--vscode-foreground)) !important;
-}
-
-.record-gl-option-check {
-    opacity: 0;
-    color: inherit;
-}
-
-.record-gl-option-btn.is-selected .record-gl-option-check {
-    opacity: 1;
-}
-
-.record-gl-options-list.is-disabled .record-gl-option-btn {
-    opacity: 0.6;
-    cursor: not-allowed;
-}
-
-.dropdown-content .dropdown-item.is-disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-}
-
-.split-dropdown-content .dropdown-item {
-    color: var(--vscode-button-foreground);
-    font-weight: 500;
-}
-
-.split-dropdown-content .dropdown-item:hover {
-    background-color: var(--vscode-button-hoverBackground);
-    color: var(--vscode-button-foreground);
-}
-
 /* Общие стили для кнопок в нижнем блоке управления */
-.phase-switcher-controls button, 
-.assemble-controls button {
+.phase-switcher-controls button {
     background-color: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
     border: 1px solid var(--vscode-button-border, var(--vscode-contrastBorder));
@@ -1250,12 +738,10 @@ label.checkbox-item:hover .open-scenario-btn .codicon.open-scenario-icon-edit,
     text-align: center;
     font-size: var(--vscode-font-size);
 }
-.phase-switcher-controls button:hover, 
-.assemble-controls button:hover {
+.phase-switcher-controls button:hover {
     background-color: var(--vscode-button-hoverBackground);
 }
-.phase-switcher-controls button:disabled, 
-.assemble-controls button:disabled {
+.phase-switcher-controls button:disabled {
     background-color: var(--vscode-button-secondaryBackground); 
     color: var(--vscode-disabledForeground);
     cursor: not-allowed; 
@@ -1321,72 +807,12 @@ body {
     height: 100%;
 }
 
-.phase-switcher-topbar {
-    flex: 0 0 auto;
-}
-
-.controls-top-buttons {
-    gap: 8px;
-}
-
 .phase-switcher-section {
     flex: 1 1 auto;
     min-height: 0;
     margin-bottom: 0;
     padding: 12px;
     gap: 10px;
-}
-
-.manager-tabs-row {
-    align-items: center;
-    gap: 3px;
-    margin-bottom: 0;
-}
-
-.manager-tabs {
-    flex: 0 0 auto;
-}
-
-.manager-tab-btn {
-    min-height: 32px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--tm-muted);
-}
-
-.manager-tab-btn:hover,
-.manager-tab-btn.is-active {
-    color: var(--vscode-editor-foreground);
-}
-
-.manager-tabs-side {
-    align-items: center;
-    gap: 10px;
-    width: auto;
-    min-width: 0;
-}
-
-.global-list-actions,
-.global-list-actions-right {
-    align-items: center;
-    gap: 8px;
-}
-
-.compact-top-btn,
-.compact-action-btn {
-    min-width: 32px;
-    padding-inline: 8px;
-}
-
-.favorites-sort-controls {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--tm-muted);
-}
-
-.favorites-sort-controls label {
-    font-size: 12px;
 }
 
 .dropdown-container.show > .menu-popover {
@@ -1434,8 +860,7 @@ body {
     border-color: transparent;
 }
 
-#phaseTreeContainer,
-#favoritesContainer {
+#phaseTreeContainer {
     padding: 10px;
     border: 1px solid var(--tm-border);
     border-radius: 14px;
@@ -1461,41 +886,6 @@ body {
     font-size: 12px;
     line-height: 1.45;
     text-align: center;
-}
-
-.favorite-item {
-    gap: 12px;
-    border-color: var(--tm-border);
-    border-radius: 14px;
-    background: var(--tm-button-bg);
-    padding: 9px 10px;
-}
-
-.favorite-item:hover {
-    border-color: var(--tm-border-strong);
-    background: var(--tm-surface-2);
-}
-
-.favorite-label {
-    font-size: 13px;
-    font-weight: 700;
-}
-
-.favorite-meta {
-    font-size: 12px;
-}
-
-.favorite-action-btn {
-    width: 24px;
-    height: 24px;
-    padding: 0;
-    border: 1px solid transparent;
-    border-radius: 8px;
-}
-
-.favorite-action-btn:hover {
-    border-color: var(--tm-border-strong);
-    background: var(--tm-surface-1);
 }
 
 .phase-group {
@@ -1553,23 +943,6 @@ body {
     background: var(--tm-surface-2);
 }
 
-.phase-test-count:focus-visible {
-    outline: 1px solid var(--tm-accent);
-    outline-offset: 1px;
-}
-
-.phase-test-count:disabled,
-.phase-test-count.is-disabled {
-    cursor: default;
-    opacity: 0.58;
-}
-
-.phase-test-count:disabled:hover,
-.phase-test-count.is-disabled:hover {
-    border-color: var(--tm-border);
-    background: var(--tm-surface-1);
-}
-
 .phase-tests-list {
     padding-left: 18px;
 }
@@ -1609,7 +982,6 @@ label.checkbox-item.search-match {
 }
 
 .open-scenario-btn:hover,
-.open-scenario-btn:focus-visible,
 .run-scenario-btn:hover,
 .run-scenario-log-btn:hover {
     border-color: color-mix(in srgb, var(--tm-border-strong) 72%, transparent);
@@ -1651,8 +1023,7 @@ label.checkbox-item.search-match {
     border-radius: 12px;
 }
 
-.phase-switcher-controls button,
-.assemble-controls button {
+.phase-switcher-controls button {
     min-height: 34px;
     padding: 7px 10px;
     border-radius: 12px;
@@ -1661,14 +1032,12 @@ label.checkbox-item.search-match {
     color: var(--vscode-editor-foreground);
 }
 
-.phase-switcher-controls button:hover,
-.assemble-controls button:hover {
+.phase-switcher-controls button:hover {
     border-color: var(--tm-border-strong);
     background: var(--tm-surface-2);
 }
 
-.phase-switcher-controls button:disabled,
-.assemble-controls button:disabled {
+.phase-switcher-controls button:disabled {
     background: color-mix(in srgb, var(--tm-surface-1) 88%, transparent);
     border-color: var(--tm-border);
     color: var(--vscode-disabledForeground);
@@ -1677,7 +1046,7 @@ label.checkbox-item.search-match {
 
 #assembleTestsBtn,
 #assembleMenuBtn,
-#createFirstLaunchBtn {
+#openVanessaBtn {
     border-color: color-mix(in srgb, var(--vscode-button-background) 70%, transparent);
     background: color-mix(in srgb, var(--vscode-button-background) 82%, var(--vscode-textLink-foreground) 18%);
     color: var(--vscode-button-foreground);
@@ -1685,7 +1054,7 @@ label.checkbox-item.search-match {
 
 #assembleTestsBtn:hover,
 #assembleMenuBtn:hover,
-#createFirstLaunchBtn:hover {
+#openVanessaBtn:hover {
     background: color-mix(in srgb, var(--vscode-button-hoverBackground) 84%, var(--vscode-textLink-foreground) 16%);
 }
 
@@ -1696,7 +1065,6 @@ label.checkbox-item.search-match {
 .split-menu-btn {
     width: 32px !important;
     min-width: 32px !important;
-    border-left: 1px solid color-mix(in srgb, var(--vscode-button-foreground) 18%, transparent) !important;
     border-top-left-radius: 0 !important;
     border-bottom-left-radius: 0 !important;
     border-top-right-radius: 12px !important;
@@ -1719,26 +1087,6 @@ label.checkbox-item.search-match {
     gap: 8px;
 }
 
-.record-gl-options-list {
-    gap: 4px;
-}
-
-.record-gl-option-btn {
-    min-height: 32px;
-    padding: 7px 10px !important;
-    border-radius: 10px !important;
-}
-
-.record-gl-option-btn:hover {
-    background: var(--tm-surface-2) !important;
-    color: var(--vscode-editor-foreground) !important;
-}
-
-.record-gl-option-btn.is-selected {
-    border-color: color-mix(in srgb, var(--tm-accent) 80%, transparent) !important;
-    background: color-mix(in srgb, var(--tm-accent) 14%, var(--tm-surface-1) 86%) !important;
-}
-
 .danger-btn {
     border-color: color-mix(in srgb, var(--vscode-errorForeground) 48%, transparent) !important;
     background: color-mix(in srgb, var(--vscode-errorForeground) 18%, var(--tm-surface-1) 82%) !important;
@@ -1749,10 +1097,6 @@ label.checkbox-item.search-match {
     background: color-mix(in srgb, var(--vscode-errorForeground) 24%, var(--tm-surface-2) 76%) !important;
 }
 
-
-.surface-chip {
-    padding: 4px 10px;
-}
 
 #cancelAssembleBtn:disabled {
     background: color-mix(in srgb, var(--vscode-errorForeground) 12%, var(--tm-surface-1) 88%) !important;
@@ -1765,29 +1109,6 @@ label.checkbox-item.search-match {
 }
 .codicon-close {
     left: 0 !important;
-}
-
-@media (max-width: 900px) {
-    .manager-tabs-row,
-    .manager-tabs-side {
-        align-items: stretch;
-    }
-
-    .global-list-actions {
-        width: 100%;
-    }
-
-    .favorites-sort-controls {
-        width: 80%;
-        justify-content: space-between;
-    }
-}
-
-
-@media (max-width: 980px) {
-    .topbar {
-        grid-template-columns: minmax(0, 1fr) auto;
-    }
 }
 
 /* Native sidebar workbench overrides. Keep this block last while the legacy
@@ -1803,48 +1124,6 @@ body {
     background: var(--vscode-sideBar-background);
 }
 
-.phase-switcher-topbar {
-    min-height: 30px;
-    padding: 1px 4px;
-    border: 0;
-    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
-    border-radius: 0;
-    background: var(--vscode-sideBarSectionHeader-background, var(--vscode-sideBar-background));
-    box-shadow: none;
-}
-
-.phase-switcher-topbar .topbar-title-wrap {
-    display: none;
-}
-
-.phase-switcher-topbar .controls-top-buttons {
-    grid-column: 1 / -1;
-    justify-content: flex-end;
-}
-
-.phase-switcher-topbar h1 {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-}
-
-.controls-top-buttons,
-.global-list-actions-right {
-    gap: 2px;
-    flex-wrap: nowrap;
-}
-
-.compact-top-btn,
-.compact-action-btn {
-    min-width: 28px;
-    min-height: 28px;
-    padding: 0 5px;
-    border: 0;
-    border-radius: 3px;
-    background: transparent;
-}
-
 .phase-switcher-section {
     min-height: 0;
     padding: 0;
@@ -1854,58 +1133,6 @@ body {
     background: var(--vscode-sideBar-background);
     box-shadow: none;
     overflow: hidden;
-}
-
-.manager-tabs-row {
-    min-height: 34px;
-    padding: 2px 4px;
-    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
-    flex-wrap: nowrap;
-}
-
-.manager-tabs {
-    gap: 0;
-    padding: 0;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-}
-
-.manager-tab-btn {
-    min-height: 28px;
-    padding: 0 7px;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    border-radius: 0;
-    font-size: var(--vscode-font-size);
-    font-weight: 400;
-}
-
-.manager-tab-btn.is-active {
-    border: 0;
-    border-bottom: 2px solid var(--vscode-focusBorder);
-    background: transparent;
-    font-weight: 600;
-}
-
-.manager-tabs-side {
-    gap: 2px;
-}
-
-.relationship-context {
-    display: grid;
-    gap: 1px;
-    min-height: 0;
-    padding: 4px 8px;
-    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
-    color: var(--vscode-descriptionForeground);
-    font-size: 11px;
-    line-height: 1.3;
-}
-
-.relationship-context:empty,
-.relationship-context-line:empty {
-    display: none;
 }
 
 .scenario-search-row {
@@ -1977,8 +1204,7 @@ body {
     overflow-y: auto;
 }
 
-#phaseTreeContainer,
-#favoritesContainer {
+#phaseTreeContainer {
     flex: 1 1 auto;
     min-height: 0;
     padding: 2px 0;
@@ -2090,11 +1316,6 @@ label.checkbox-item.affected-main-scenario {
     box-shadow: inset 2px 0 0 var(--kot-sidebar-related);
 }
 
-label.checkbox-item.current-main-scenario {
-    background: var(--vscode-list-activeSelectionBackground);
-    color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
-}
-
 .open-scenario-btn,
 .run-scenario-btn,
 .run-scenario-log-btn {
@@ -2128,8 +1349,7 @@ label.checkbox-item.current-main-scenario {
     margin: 0;
 }
 
-.phase-switcher-controls button,
-.assemble-controls button {
+.phase-switcher-controls button {
     min-height: 28px;
     padding: 3px 7px;
     border-radius: 3px;
@@ -2146,26 +1366,6 @@ label.checkbox-item.current-main-scenario {
 }
 
 /* Activity Bar density and stable-row refinements. */
-.favorites-sort-controls {
-    padding: 0;
-    border: 0;
-    background: transparent;
-}
-
-.favorites-sort-controls select {
-    min-height: 26px;
-    padding: 0 22px 0 6px;
-    border: 0;
-    border-radius: 3px;
-    background-color: transparent;
-    color: var(--vscode-foreground);
-}
-
-.favorites-sort-controls select:hover,
-.favorites-sort-controls select:focus-visible {
-    background-color: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
-}
-
 label.checkbox-item.disabled {
     color: var(--vscode-foreground);
 }
@@ -2295,8 +1495,7 @@ label.checkbox-item:focus-within .checkbox-label-text {
 }
 
 .scenario-search-input-wrap {
-    display: grid;
-    grid-template-columns: 18px minmax(0, 1fr) 20px;
+    display: flex !important;
     align-items: center;
     height: 26px;
     padding: 0 4px;
@@ -2358,16 +1557,6 @@ label.checkbox-item:focus-within .checkbox-label-text {
     border-radius: 2px;
 }
 
-.split-dropdown-content .record-gl-options-list {
-    gap: 1px;
-}
-
-.split-dropdown-content .record-gl-option-btn {
-    min-height: 26px;
-    padding: 3px 6px !important;
-    border-radius: 2px !important;
-}
-
 .open-scenario-btn {
     position: absolute;
     right: 2px;
@@ -2383,27 +1572,547 @@ label.checkbox-item:focus-within .open-scenario-btn,
     pointer-events: auto;
 }
 
-.open-scenario-btn .open-scenario-icon-edit {
-    display: inline-block;
-}
-
 .checkbox-label-text {
     margin-right: 0 !important;
 }
 
-.phase-test-count:disabled,
-.phase-test-count.is-disabled {
+/* Activity Bar stabilization: native search, tree order, and collision-free row actions. */
+.scenario-search-row {
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 4px 6px;
+}
+
+.scenario-search-input-wrap {
+    display: flex !important;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    height: 26px;
+    box-sizing: border-box;
+    overflow: hidden;
+    padding: 0 4px;
+}
+
+.scenario-search-input-wrap.search-frame > .scenario-search-icon,
+.scenario-search-input-wrap > .scenario-search-clear-btn {
+    position: static !important;
+    inset: auto !important;
+    transform: none !important;
+}
+
+.scenario-search-input-wrap > .scenario-search-icon {
+    flex: 0 0 18px;
+    width: 18px;
+    text-align: center;
+}
+
+.scenario-search-input {
+    flex: 1 1 0;
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0 2px !important;
+    border: 0;
+    outline: 0;
+}
+
+.scenario-search-input:focus,
+.scenario-search-input:focus-visible {
+    border: 0 !important;
+    outline: 0 !important;
+    box-shadow: none !important;
+}
+
+.scenario-search-input-wrap > .scenario-search-clear-btn {
+    flex: 0 0 20px;
+    width: 20px;
+    min-width: 20px;
+    max-width: 20px;
+    height: 20px;
+    min-height: 20px;
+    padding: 0;
+    border: 0;
+    outline-offset: -1px;
+}
+
+.scenario-search-clear-btn > .codicon {
+    position: static !important;
+    inset: auto !important;
+    transform: none !important;
+}
+
+.phase-header.phase-header-search-match,
+label.checkbox-item.search-match {
+    box-shadow: none;
+    background: transparent;
+}
+
+.search-hidden {
+    display: none !important;
+}
+
+.scenario-search-active .phase-tests-list {
+    max-height: none !important;
+    opacity: 1;
+    padding-block: 2px;
+}
+
+.phase-header.kot-tree-row {
+    display: grid;
+    grid-template-columns: 18px 18px minmax(0, 1fr) 24px auto;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    min-height: 30px;
+    padding-inline: 4px;
+}
+
+.phase-create-main-btn {
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    padding: 0;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.phase-header:hover .phase-create-main-btn,
+.phase-header:has(:focus-visible) .phase-create-main-btn {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.phase-expand-collapse-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 18px;
+    min-width: 18px;
+    height: 28px;
+    padding: 0;
+    overflow: visible;
+}
+
+.phase-label-button {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    font: inherit;
+}
+
+.phase-label-button:hover,
+.phase-label-button:focus-visible {
+    background: transparent;
+}
+
+.phase-label-button:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+
+.phase-title {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.phase-title.is-overflowing,
+label.checkbox-item span.checkbox-label-text.is-overflowing {
+    text-overflow: clip;
+}
+
+.phase-tests-list,
+.phase-tests-list.expanded {
+    padding-left: 0;
+}
+
+.phase-tests-list .item-container {
+    box-sizing: border-box;
+    padding-inline-start: 0;
+}
+
+label.checkbox-item {
+    position: relative;
+    gap: 5px;
+    padding-inline: 48px 2px;
+}
+
+.scenario-resource-toggle,
+.scenario-resource-toggle-spacer {
+    position: absolute;
+    inset-inline-start: 22px;
+    top: 50%;
+    display: inline-grid;
+    place-items: center;
+    width: 18px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    color: var(--vscode-icon-foreground);
+    background: transparent;
+    transform: translateY(-50%);
+}
+
+.scenario-resource-toggle {
+    cursor: pointer;
+}
+
+.scenario-resource-toggle-spacer {
+    pointer-events: none;
+}
+
+.scenario-resource-toggle:hover,
+.scenario-resource-toggle:focus-visible {
+    color: var(--vscode-foreground);
+}
+
+.scenario-resource-toggle:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+
+.scenario-resource-tree,
+.scenario-resource-children {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    transition:
+        max-height 0.2s ease,
+        opacity 0.16s ease;
+}
+
+.scenario-resource-tree.expanded,
+.scenario-resource-children.expanded {
+    max-height: none;
     opacity: 1;
 }
 
-.favorites-container,
-.favorites-list {
-    padding-inline: 6px;
+.scenario-resource-tree.animating,
+.scenario-resource-children.animating {
+    pointer-events: none;
 }
 
-.favorites-list .kot-empty,
-#favoritesContainer > .kot-empty {
-    padding-inline: 8px;
+.scenario-resource-node {
+    min-width: 0;
+}
+
+.scenario-resource-row {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    min-height: 30px;
+    box-sizing: border-box;
+    padding-inline: calc(45px + (var(--resource-depth, 1) * 15px)) 4px;
+    gap: 5px;
+    color: var(--vscode-foreground);
+}
+
+.scenario-resource-row.is-openable {
+    cursor: pointer;
+}
+
+.scenario-resource-row:hover,
+.scenario-resource-row:focus-within {
+    background: var(--vscode-list-hoverBackground);
+}
+
+.scenario-resource-disclosure,
+.scenario-resource-disclosure-spacer {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 18px;
+    width: 18px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    color: var(--vscode-icon-foreground);
+    background: transparent;
+}
+
+.scenario-resource-disclosure {
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.scenario-resource-disclosure:hover,
+.scenario-resource-disclosure:focus-visible {
+    color: var(--vscode-foreground);
+}
+
+.scenario-resource-icon {
+    flex: 0 0 16px;
+    width: 16px;
+    color: var(--vscode-icon-foreground);
+}
+
+.scenario-resource-file-icon {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 16px;
+    width: 16px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    box-sizing: border-box;
+    color: var(--vscode-icon-foreground);
+    background: transparent;
+    cursor: pointer;
+}
+
+.scenario-resource-row:hover .scenario-resource-file-icon .open-scenario-icon-idle {
+    display: none;
+}
+
+.scenario-resource-row:hover .scenario-resource-file-icon .open-scenario-icon-action {
+    display: inline-block;
+}
+
+.scenario-resource-file-icon:hover {
+    color: var(--vscode-foreground);
+    background: var(--tm-surface-2);
+}
+
+.scenario-resource-file-icon:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+
+.scenario-resource-label {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.scenario-resource-actions {
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 2px;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.scenario-resource-row:hover .scenario-resource-actions,
+.scenario-resource-row:focus-within .scenario-resource-actions {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.scenario-resource-reveal-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    color: var(--vscode-icon-foreground);
+    background: transparent;
+    cursor: pointer;
+}
+
+.scenario-resource-reveal-btn:hover {
+    color: var(--vscode-foreground);
+    background: var(--vscode-toolbar-hoverBackground, var(--tm-surface-2));
+}
+
+.scenario-resource-empty {
+    min-height: 28px;
+    box-sizing: border-box;
+    padding: 5px 8px 5px 91px;
+    color: var(--vscode-descriptionForeground);
+    font-style: italic;
+}
+
+.scenario-resource-drop-target.is-drop-target,
+.scenario-resource-drop-target.is-drop-target > .scenario-resource-row {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+    background: var(--vscode-list-dropBackground, var(--vscode-list-hoverBackground));
+}
+
+.checkbox-run-indicator {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+}
+
+.checkbox-run-indicator .codicon {
+    font-size: 14px;
+    line-height: 16px;
+}
+
+label.checkbox-item > .scenario-relationship-icon {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
+.phase-select-checkbox,
+label.checkbox-item > input[type="checkbox"],
+.selection-summary-toggle input[type="checkbox"] {
+    background: var(--vscode-checkbox-background, transparent);
+}
+
+.phase-select-checkbox:checked,
+label.checkbox-item > input[type="checkbox"]:checked,
+.selection-summary-toggle input[type="checkbox"]:checked,
+.phase-select-checkbox:indeterminate,
+.selection-summary-toggle input[type="checkbox"]:indeterminate {
+    border-color: var(--vscode-button-background, var(--vscode-focusBorder));
+    background: var(--vscode-button-background, var(--vscode-focusBorder));
+    color: var(--vscode-button-foreground, #fff);
+}
+
+label.checkbox-item .kot-row-actions {
+    position: static;
+    max-width: 76px;
+    opacity: 1;
+    pointer-events: auto;
+    background: transparent;
+    transition: max-width 0.12s ease;
+}
+
+label.checkbox-item .run-scenario-log-btn {
+    display: none;
+}
+
+label.checkbox-item .run-scenario-btn {
+    display: inline-flex;
+}
+
+label.checkbox-item:hover .kot-row-actions,
+label.checkbox-item:focus-within .kot-row-actions {
+    max-width: 132px;
+}
+
+label.checkbox-item:hover .run-scenario-log-btn,
+label.checkbox-item:focus-within .run-scenario-log-btn {
+    display: inline-flex;
+}
+
+label.checkbox-item:hover .checkbox-label-text,
+label.checkbox-item:focus-within .checkbox-label-text {
+    padding-inline-end: 0;
+}
+
+.open-scenario-btn {
+    position: static;
+    flex: 0 0 22px;
+    opacity: 1;
+    pointer-events: auto;
+    background: transparent;
+}
+
+label.checkbox-item .scenario-file-icon {
+    position: static;
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 16px;
+    width: 16px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    box-sizing: border-box;
+    opacity: 1;
+    pointer-events: auto;
+    cursor: pointer;
+    background: transparent;
+    color: var(--vscode-icon-foreground);
+}
+
+.scenario-file-icon .open-scenario-icon-idle {
+    display: inline-block;
+}
+
+.scenario-file-icon .open-scenario-icon-action {
+    display: none;
+}
+
+label.checkbox-item:hover .scenario-file-icon .open-scenario-icon-idle,
+.scenario-file-icon:hover .open-scenario-icon-idle {
+    display: none;
+}
+
+label.checkbox-item:hover .scenario-file-icon .open-scenario-icon-action,
+.scenario-file-icon:hover .open-scenario-icon-action {
+    display: inline-block;
+}
+
+label.checkbox-item .scenario-file-icon:hover {
+    border: 0;
+    border-radius: 3px;
+    background: var(--tm-surface-2);
+    color: var(--vscode-foreground);
+}
+
+label.checkbox-item .scenario-file-icon:focus-visible {
+    border-color: transparent;
+    background: transparent;
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: 1px;
+}
+
+.split-dropdown-content {
+    width: min(240px, calc(100vw - 12px));
+    min-width: 0;
+    max-width: calc(100vw - 12px);
+    box-sizing: border-box;
+    overflow-x: hidden;
+}
+
+.split-dropdown-content .dropdown-control-row,
+.split-dropdown-content .surface-select {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+.phase-title,
+.checkbox-label-text {
+    font-size: var(--vscode-font-size);
+    line-height: 1.35;
+}
+
+.profile-control-line {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 28px;
+    gap: 4px;
+    align-items: center;
+    min-width: 0;
+}
+
+.profile-control-line .assemble-profile-select {
+    width: auto;
+    min-width: 0;
+}
+
+.split-dropdown-content {
+    width: min(208px, calc(100vw - 12px));
 }
 
 .run-mode-menu.phase-context-menu,
@@ -2418,4 +2127,56 @@ label.checkbox-item:focus-within .open-scenario-btn,
     min-height: 26px;
     padding: 3px 6px;
     border-radius: 2px;
+}
+
+    .relationship-hidden {
+        display: none !important;
+    }
+
+    .status-hidden {
+        display: none !important;
+    }
+
+    .filter-hidden {
+        display: none !important;
+    }
+
+/* Bottom primary actions share a row while their labels fit, then wrap. */
+.controls-row.controls-row-primary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 4px;
+}
+
+.controls-row.controls-row-primary > .split-button,
+.controls-row.controls-row-primary > #cancelAssembleBtn,
+.controls-row.controls-row-primary > #openVanessaBtn {
+    flex: 1 1 calc(50% - 2px);
+    width: auto;
+    min-width: max-content;
+    box-sizing: border-box;
+}
+
+#assembleTestsBtn,
+#openVanessaBtn {
+    box-sizing: border-box;
+}
+
+#openVanessaBtn {
+    justify-content: center;
+    overflow: hidden;
+}
+
+#openVanessaBtn > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vanessa-automation-logo {
+    width: 20px;
+    height: 16px;
+    flex: 0 0 20px;
+    object-fit: contain;
 }

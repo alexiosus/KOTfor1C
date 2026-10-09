@@ -2,6 +2,7 @@ import * as cp from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { decideSharedStartupInfobaseAction } from './startupInfobasePolicy';
 import { getTranslator } from './localization';
 import { buildFileInfobaseConnectionArgument } from './oneCInfobaseConnection';
 import { resolveOneCDesignerExePath } from './oneCPlatform';
@@ -270,16 +271,7 @@ export async function shouldPrepareSharedStartupInfobase(): Promise<boolean> {
         return false;
     }
 
-    if (!(await pathExists(startupPaths.markerFilePath))) {
-        return true;
-    }
-
-    if (process.platform !== 'win32') {
-        return false;
-    }
-
-    const authState = await readJsonFile<SharedStartupInfobaseAuthState>(startupPaths.authStateFilePath);
-    return !isValidSharedStartupInfobaseAuthState(startupPaths, authState);
+    return !(await pathExists(startupPaths.markerFilePath));
 }
 
 export async function ensureSharedStartupInfobaseReady(
@@ -338,41 +330,36 @@ export async function ensureSharedStartupInfobaseReady(
         const templateDtInfo = process.platform === 'win32'
             ? await resolveStartupInfobaseTemplateDtInfo(context)
             : null;
-        const hasExistingInfobase = !options?.forceRecreate && await pathExists(startupPaths.markerFilePath);
+        const markerExists = await pathExists(startupPaths.markerFilePath);
+        const templateDescriptorMatches = storedAuthState?.provisioningMethod !== 'templateDt'
+            || (!!templateDtInfo && storedAuthState.templateDtDescriptor === templateDtInfo.descriptor);
+        const decision = decideSharedStartupInfobaseAction({
+            markerExists,
+            forceRecreate: options?.forceRecreate === true,
+            platform: process.platform,
+            hasStoredAuthentication: storedAuthentication !== null,
+            templateDescriptorMatches
+        });
 
-        if (hasExistingInfobase && (process.platform !== 'win32' || storedAuthentication)) {
-            if (process.platform === 'win32' && storedAuthentication) {
-                if (storedAuthState?.provisioningMethod === 'templateDt') {
-                    const templateDescriptorMatches = !!templateDtInfo
-                        && storedAuthState.templateDtDescriptor === templateDtInfo.descriptor;
-                    if (templateDescriptorMatches) {
-                        output.appendLine(t('Reusing shared startup infobase from template DT.'));
-                        return {
-                            infobaseDirectory: startupPaths.infobaseDirectory,
-                            reusedExistingInfobase: true,
-                            createdInfobase: false,
-                            authentication: storedAuthentication
-                        };
-                    }
-
-                    output.appendLine(t('Stored startup infobase template DT changed. Recreating startup infobase.'));
-                }
+        if (decision.action === 'reuse') {
+            if (decision.reason === 'current') {
+                output.appendLine(t('Reusing shared startup infobase from template DT.'));
+            } else if (decision.reason === 'templateChanged') {
+                output.appendLine(t('Stored startup infobase template DT changed. Reusing the existing infobase until it is explicitly recreated.'));
             } else {
-                output.appendLine(t('Reusing shared startup infobase.'));
-                return {
-                    infobaseDirectory: startupPaths.infobaseDirectory,
-                    reusedExistingInfobase: true,
-                    createdInfobase: false,
-                    authentication: null
-                };
+                output.appendLine(t('Reusing existing legacy shared startup infobase without service credentials.'));
             }
+            return {
+                infobaseDirectory: startupPaths.infobaseDirectory,
+                reusedExistingInfobase: true,
+                createdInfobase: false,
+                authentication: decision.authentication === 'stored' ? storedAuthentication : null
+            };
         }
 
-        const recreateReason = options?.forceRecreate
+        const recreateReason = decision.action === 'recreate'
             ? t('Recreating shared startup infobase.')
-            : hasExistingInfobase
-                ? t('Recreating shared startup infobase because the template state is missing or invalid.')
-                : t('Creating shared startup infobase.');
+            : t('Creating shared startup infobase.');
         output.appendLine(recreateReason);
 
         if (process.platform === 'win32' && !templateDtInfo) {

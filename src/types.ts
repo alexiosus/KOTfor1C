@@ -10,10 +10,6 @@ export interface TestInfo {
      * Опционально, так как не все сценарии будут иметь этот ключ.
      */
     tabName?: string; 
-    /** * Состояние по умолчанию (из `KOTМетаданные.PhaseSwitcher.Default` или legacy `# PhaseSwitcher_Default:`). 
-     * Опционально.
-     */
-    defaultState?: boolean;
     /** * Порядок сортировки внутри вкладки (из `KOTМетаданные.PhaseSwitcher.OrderOnTab` или legacy `# PhaseSwitcher_OrderOnTab:`).
      * Опционально.
      */

@@ -46,13 +46,21 @@ function scenario(overrides: Partial<TestInfo> & Pick<TestInfo, 'name'>): TestIn
 
 function snapshotWithScenarios(
     definitions: readonly ProjectDefinition[],
-    scenarios: readonly TestInfo[]
+    scenarios: readonly TestInfo[],
+    compiledResources: ReadonlyMap<string, {
+        readonly featureUri: string;
+        readonly filesRootUri: string;
+    }> = new Map()
 ): StepLibrarySnapshot {
     const build = buildStepLibrarySnapshot as unknown as (
         currentView: ProjectDefinitionView,
-        currentScenarios: readonly TestInfo[]
+        currentScenarios: readonly TestInfo[],
+        currentCompiledResources: ReadonlyMap<string, {
+            readonly featureUri: string;
+            readonly filesRootUri: string;
+        }>
     ) => StepLibrarySnapshot;
-    return build(view(definitions), scenarios);
+    return build(view(definitions), scenarios, compiledResources);
 }
 
 function allSources(): readonly ProjectDefinition[] {
@@ -151,6 +159,41 @@ test('includes nested scenario codes in presentation and search data', () => {
     assert.match(item.searchText, /000015128/u);
 });
 
+test('marks only local nested definitions as scenario file roots', () => {
+    const location = allSources()[4].definitionLocation;
+    assert.ok(location);
+    const localNested = definition({
+        id: 'nested:local-files',
+        kind: 'nestedScenario',
+        template: 'Local nested scenario',
+        sourceLabel: 'Nested scenario',
+        definitionLocation: location
+    });
+    const remoteNested = definition({
+        id: 'nested:remote-files',
+        kind: 'nestedScenario',
+        template: 'Remote nested scenario',
+        sourceLabel: 'Nested scenario',
+        definitionLocation: {
+            ...location,
+            uri: 'vscode-remote://ssh-remote+host/workspace/scen.yaml'
+        }
+    });
+    const exported = definition({
+        id: 'export:local-files',
+        kind: 'exportScenario',
+        template: 'Export scenario',
+        sourceLabel: 'Export scenario',
+        definitionLocation: location
+    });
+
+    const items = buildStepLibrarySnapshot(view([localNested, remoteNested, exported])).items;
+
+    assert.equal(items.find(item => item.definitionId === localNested.id)?.hasScenarioFiles, true);
+    assert.equal(items.find(item => item.definitionId === remoteNested.id)?.hasScenarioFiles, undefined);
+    assert.equal(items.find(item => item.definitionId === exported.id)?.hasScenarioFiles, undefined);
+});
+
 test('adds non-callable main scenarios as a separate searchable source grouped by Test Manager tab', () => {
     const snapshot = snapshotWithScenarios([], [scenario({
         name: 'Monthly close',
@@ -195,6 +238,33 @@ test('adds non-callable main scenarios as a separate searchable source grouped b
     });
 });
 
+test('makes a main scenario expandable only when its compiled feature resources exist', () => {
+    const main = scenario({
+        name: 'Compiled production',
+        tabName: 'Production',
+        relativePath: 'Production/004_Production'
+    });
+    const scenarioKey = main.yamlFileUri.toString();
+
+    const withoutBuild = snapshotWithScenarios([], [main]).items[0];
+    const withBuild = snapshotWithScenarios([], [main], new Map([
+        [scenarioKey, {
+            featureUri: 'file:///workspace/build/004_Production.feature',
+            filesRootUri: 'file:///workspace/build/004_Production/%D0%A4%D0%B0%D0%B9%D0%BB%D1%8B'
+        }]
+    ])).items[0];
+
+    assert.equal(withoutBuild?.hasScenarioFiles, undefined);
+    assert.equal(withoutBuild?.compiledFeatureUri, undefined);
+    assert.equal(withoutBuild?.scenarioFilesRootUri, undefined);
+    assert.equal(withBuild?.hasScenarioFiles, true);
+    assert.equal(withBuild?.compiledFeatureUri, 'file:///workspace/build/004_Production.feature');
+    assert.equal(
+        withBuild?.scenarioFilesRootUri,
+        'file:///workspace/build/004_Production/%D0%A4%D0%B0%D0%B9%D0%BB%D1%8B'
+    );
+});
+
 test('binds nested definitions to the nearest scenario runtime key in the same file', () => {
     const uri = scenario({ name: 'placeholder' }).yamlFileUri;
     const nested = definition({
@@ -216,6 +286,26 @@ test('binds nested definitions to the nearest scenario runtime key in the same f
     ]);
 
     assert.equal(snapshot.items[0]?.scenarioKey, uri.toString());
+});
+
+test('preserves the project definition identity used by export relationships', () => {
+    const exported = definition({
+        id: 'export:shared-login',
+        kind: 'exportScenario',
+        template: 'And use shared login',
+        sourceLabel: 'Project exports',
+        definitionLocation: {
+            uri: 'file:///workspace/library.feature',
+            range: {
+                start: { line: 4, character: 0 },
+                end: { line: 4, character: 20 }
+            }
+        }
+    });
+
+    const snapshot = buildStepLibrarySnapshot(view([exported]));
+
+    assert.equal(snapshot.items[0]?.definitionId, 'export:shared-login');
 });
 
 test('pairs built-in translations and keeps localized multiline display data', () => {

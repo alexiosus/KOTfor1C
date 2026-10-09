@@ -39,7 +39,7 @@ function toConfiguredLanguage(value: string | undefined): ScenarioLanguage {
     return value === 'ru' ? 'ru' : 'en';
 }
 
-const LANGUAGE_TAG_REGEX = /^#language:\s*(en|ru)\b/i;
+const LANGUAGE_TAG_REGEX = /^#\s*language\s*:\s*(en|ru)\b/i;
 
 function toCanonicalStepKeyword(rawKeyword: string): CanonicalStepKeyword | null {
     for (const entry of KEYWORD_TO_CANONICAL) {

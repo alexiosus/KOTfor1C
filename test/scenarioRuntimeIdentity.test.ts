@@ -21,13 +21,11 @@ import type { TestInfo } from '../src/types';
 function scenario(
     name: string,
     relativePath: string,
-    uri: string,
-    defaultState = false
+    uri: string
 ): TestInfo {
     return {
         name,
         relativePath,
-        defaultState,
         yamlFileUri: { toString: () => uri } as TestInfo['yamlFileUri']
     };
 }
@@ -55,8 +53,8 @@ test('runtime target resolution is exact by URI and strict about stale names', (
 
 test('legacy selection migrates only to the stable primary and preserves URI state', () => {
     const first = scenario('Duplicate', 'a', 'file:///a/scen.yaml');
-    const second = scenario('Duplicate', 'b', 'file:///b/scen.yaml', true);
-    const unique = scenario('Unique', 'u', 'file:///u/scen.yaml', true);
+    const second = scenario('Duplicate', 'b', 'file:///b/scen.yaml');
+    const unique = scenario('Unique', 'u', 'file:///u/scen.yaml');
     const catalog = buildScenarioCatalog([second, unique, first]);
 
     assert.deepEqual(
@@ -71,6 +69,18 @@ test('legacy selection migrates only to the stable primary and preserves URI sta
             'file:///u/scen.yaml': false
         }
     );
+});
+
+test('an old scenario Default value does not enable a scenario without saved selection', () => {
+    const oldScenario = {
+        ...scenario('Old', 'old', 'file:///old/scen.yaml'),
+        defaultState: true
+    };
+    const catalog = buildScenarioCatalog([oldScenario]);
+
+    assert.deepEqual(migrateLegacySelectionStates(catalog, {}, {}), {
+        'file:///old/scen.yaml': false
+    });
 });
 
 test('name-only runtime association is allowed only for unique definitions', () => {

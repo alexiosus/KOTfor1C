@@ -1,5 +1,6 @@
 export interface VanessaRunLogParseOptions {
     scenarioName?: string;
+    featureContent?: string;
 }
 
 export interface VanessaFailureDetails {
@@ -11,6 +12,12 @@ export interface VanessaFailureDetails {
 export interface VanessaStepLocation {
     featurePath?: string;
     featureLineNumber?: number;
+    iteration?: number;
+}
+
+interface VanessaRunLogStep {
+    lineNumber: number;
+    stepText?: string;
 }
 
 function stripWrappingQuotes(value: string): string {
@@ -38,12 +45,16 @@ export function extractFeaturePathFromRunLogLine(line: string): string | undefin
     return featurePath.length > 0 ? featurePath : undefined;
 }
 
-export function extractFeatureLineNumberFromRunLogLine(line: string): number | undefined {
-    const match = line.match(/\((\d+)\)\s*\.?\s*(?:Шаг|Step)\s*:/i)
-        || line.match(/^\s*(?:НомерСтрокиФичи|FeatureLineNumber)\s*:\s*(\d+)\s*$/i)
-        || line.match(/\((\d+)\)\s*(?:Given|When|Then|And|But|Но|Тогда|Когда|Если|И|К\s+тому\s+же|Допустим|Дано|Пусть)\b/i)
-        || line.match(/^\s*(\d+)\s*[\)\.]\s*(?:Шаг|Step)\s*:/i)
-        || line.match(/^\s*(\d+)\s*[\)\.]\s*(?:Given|When|Then|And|But|Но|Тогда|Когда|Если|И|К\s+тому\s+же|Допустим|Дано|Пусть)\b/i);
+function extractRunLogStep(line: string): VanessaRunLogStep | undefined {
+    const stepKeyword = '(?:Given|When|Then|And|But|Но|Тогда|Когда|Если|И|К\\s+тому\\s+же|Допустим|Дано|Пусть)';
+    const patterns = [
+        new RegExp(`\\((\\d+)\\)\\s*\\.?\\s*(?:Шаг|Step)\\s*:\\s*(.*?)\\s*$`, 'i'),
+        /^\s*(?:НомерСтрокиФичи|FeatureLineNumber)\s*:\s*(\d+)\s*$/i,
+        new RegExp(`\\((\\d+)\\)\\s*(${stepKeyword}\\b.*?)\\s*$`, 'i'),
+        /^\s*(\d+)\s*[\)\.]\s*(?:Шаг|Step)\s*:\s*(.*?)\s*$/i,
+        new RegExp(`^\\s*(\\d+)\\s*[\\)\\.]\\s*(${stepKeyword}\\b.*?)\\s*$`, 'i')
+    ];
+    const match = patterns.map(pattern => line.match(pattern)).find(Boolean);
     if (!match?.[1]) {
         return undefined;
     }
@@ -53,7 +64,39 @@ export function extractFeatureLineNumberFromRunLogLine(line: string): number | u
         return undefined;
     }
 
-    return Math.floor(lineNumber);
+    const stepText = match[2]?.trim();
+    return {
+        lineNumber: Math.floor(lineNumber),
+        stepText: stepText || undefined
+    };
+}
+
+export function extractFeatureLineNumberFromRunLogLine(line: string): number | undefined {
+    return extractRunLogStep(line)?.lineNumber;
+}
+
+function normalizeStepText(value: string): string {
+    return value
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toLocaleLowerCase();
+}
+
+function extractFeatureStepText(line: string): string | undefined {
+    const match = line.match(/^\s*((?:Given|When|Then|And|But|Но|Тогда|Когда|Если|И|К\s+тому\s+же|Допустим|Дано|Пусть)\b.*?)\s*$/i);
+    return match?.[1]?.trim() || undefined;
+}
+
+export function isRunLogStepCompatibleWithFeatureLine(logLine: string, featureLine: string): boolean {
+    const logStepText = extractRunLogStep(logLine)?.stepText;
+    if (!logStepText) {
+        return true;
+    }
+    const featureStepText = extractFeatureStepText(featureLine);
+    if (!featureStepText) {
+        return false;
+    }
+    return normalizeStepText(logStepText) === normalizeStepText(featureStepText);
 }
 
 export function extractScenarioNameFromRunLogLine(line: string): string | undefined {
@@ -290,6 +333,9 @@ export function extractLastStepLocation(
     let currentScenarioNameFromLog: string | undefined;
     let currentScenarioFeaturePathFromLog: string | undefined;
     let hasScenarioMarkers = false;
+    let iteration: number | undefined;
+    const featureLines = options.featureContent?.split(/\r\n|\r|\n/);
+    const lineVisits = new Map<number, number>();
 
     for (const line of lines) {
         const pathFromLine = extractFeaturePathFromRunLogLine(line);
@@ -312,11 +358,20 @@ export function extractLastStepLocation(
             || !isRunLogLineForScenario(normalizedScenarioName, currentScenarioNameFromLog, hasScenarioMarkers)) {
             continue;
         }
+        if (featureLines) {
+            const featureLine = featureLines[lineNumber - 1];
+            if (featureLine === undefined || !isRunLogStepCompatibleWithFeatureLine(line, featureLine)) {
+                continue;
+            }
+        }
 
         if (normalizedScenarioName) {
             featurePath = currentScenarioFeaturePathFromLog || currentFeaturePathFromLog;
         }
         featureLineNumber = lineNumber;
+        const visitCount = (lineVisits.get(lineNumber) || 0) + 1;
+        lineVisits.set(lineNumber, visitCount);
+        iteration = visitCount > 1 ? visitCount : undefined;
     }
 
     if (!featureLineNumber) {
@@ -325,6 +380,7 @@ export function extractLastStepLocation(
 
     return {
         featurePath,
-        featureLineNumber
+        featureLineNumber,
+        ...(iteration ? { iteration } : {})
     };
 }

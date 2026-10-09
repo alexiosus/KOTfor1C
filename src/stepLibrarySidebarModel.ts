@@ -12,11 +12,16 @@ export interface StepLibrarySidebarNode {
     readonly count?: number;
     readonly depth: number;
     readonly expandable: boolean;
+    readonly hasScenarioFiles?: true;
+    readonly compiledFeatureUri?: string;
+    readonly scenarioFilesRootUri?: string;
     readonly itemId?: string;
+    readonly definitionId?: string;
     readonly insertable?: boolean;
     readonly navigable?: boolean;
     readonly dragText?: string;
     readonly alternateLabel?: string;
+    readonly description?: string;
     readonly scenarioKey?: string;
     readonly sourceGroup?: StepLibrarySourceGroup;
     readonly favorite?: boolean;
@@ -127,14 +132,19 @@ function definitionNode(
         kind: 'definition' as const,
         label: item.displayText,
         depth,
-        expandable: false,
+        expandable: item.hasScenarioFiles === true,
         itemId: item.id,
+        definitionId: item.definitionId,
         insertable: item.insertable,
         navigable: item.navigable,
         ...(item.insertable ? { dragText: buildDragText(item, preferredLanguage) } : {}),
         ...(item.alternateDisplayText ? { alternateLabel: item.alternateDisplayText } : {}),
+        ...(item.description ? { description: item.description } : {}),
         ...(scenarioKey ? { scenarioKey } : {}),
         sourceGroup: item.sourceGroup,
+        ...(item.hasScenarioFiles ? { hasScenarioFiles: true as const } : {}),
+        ...(item.compiledFeatureUri ? { compiledFeatureUri: item.compiledFeatureUri } : {}),
+        ...(item.scenarioFilesRootUri ? { scenarioFilesRootUri: item.scenarioFilesRootUri } : {}),
         favorite: favoriteItemIds.has(item.id)
     });
 }
@@ -355,18 +365,39 @@ export class StepLibrarySidebarIndex {
         return this.rootNodes;
     }
 
-    public children(parentId: string, offset = 0, limit = DEFAULT_PAGE_SIZE): StepLibrarySidebarPage {
+    public countsForItems(itemIds: ReadonlySet<string>): Readonly<Record<string, number>> {
+        const counts: Record<string, number> = {};
+        for (const itemId of itemIds) {
+            if (!this.itemsById.has(itemId)) {
+                continue;
+            }
+            for (const ancestorId of this.ancestorIds(itemId)) {
+                counts[ancestorId] = (counts[ancestorId] ?? 0) + 1;
+            }
+        }
+        return Object.freeze(counts);
+    }
+
+    public children(
+        parentId: string,
+        offset = 0,
+        limit = DEFAULT_PAGE_SIZE,
+        visibleItemIds?: ReadonlySet<string>
+    ): StepLibrarySidebarPage {
         if (parentId === FAVORITES_ID) {
             const safeOffset = Math.max(0, Math.floor(Number.isFinite(offset) ? offset : 0));
             const safeLimit = normalizedLimit(limit, DEFAULT_PAGE_SIZE);
-            const pageItems = this.favoriteItems.slice(safeOffset, safeOffset + safeLimit);
+            const visibleFavoriteItems = visibleItemIds
+                ? this.favoriteItems.filter(item => visibleItemIds.has(item.id))
+                : this.favoriteItems;
+            const pageItems = visibleFavoriteItems.slice(safeOffset, safeOffset + safeLimit);
             const nodes = pageItems.map(item => definitionNode(
                 item,
                 1,
                 this.preferredLanguage,
                 this.favoriteItemIds
             ));
-            const nextOffset = safeOffset + pageItems.length < this.favoriteItems.length
+            const nextOffset = safeOffset + pageItems.length < visibleFavoriteItems.length
                 ? safeOffset + pageItems.length
                 : null;
             const moreNode: readonly StepLibrarySidebarNode[] = nextOffset === null
@@ -375,7 +406,7 @@ export class StepLibrarySidebarIndex {
                     id: `${FAVORITES_ID}:more:${nextOffset}`,
                     kind: 'more' as const,
                     label: 'Show more…',
-                    count: this.favoriteItems.length - nextOffset,
+                    count: visibleFavoriteItems.length - nextOffset,
                     depth: 1,
                     expandable: false
                 })];
@@ -405,14 +436,17 @@ export class StepLibrarySidebarIndex {
                 });
             })
             : [];
-        const directItems = branch.directItems.slice(safeOffset, safeOffset + safeLimit);
+        const visibleDirectItems = visibleItemIds
+            ? branch.directItems.filter(item => visibleItemIds.has(item.id))
+            : branch.directItems;
+        const directItems = visibleDirectItems.slice(safeOffset, safeOffset + safeLimit);
         const definitionNodes = directItems.map(item => definitionNode(
             item,
             branch.depth + 1,
             this.preferredLanguage,
             this.favoriteItemIds
         ));
-        const nextOffset = safeOffset + directItems.length < branch.directItems.length
+        const nextOffset = safeOffset + directItems.length < visibleDirectItems.length
             ? safeOffset + directItems.length
             : null;
         const moreNode: readonly StepLibrarySidebarNode[] = nextOffset === null
@@ -421,7 +455,7 @@ export class StepLibrarySidebarIndex {
                 id: `${parentId}:more:${nextOffset}`,
                 kind: 'more' as const,
                 label: 'Show more…',
-                count: branch.directItems.length - nextOffset,
+                count: visibleDirectItems.length - nextOffset,
                 depth: branch.depth + 1,
                 expandable: false,
                 sourceGroup: branch.sourceGroup

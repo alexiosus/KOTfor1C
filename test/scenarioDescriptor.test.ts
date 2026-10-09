@@ -53,7 +53,6 @@ test('scenario descriptor reads one structural scenario definition with exact co
         phaseSwitcher: {
             hasTab: true,
             tabName: 'Smoke',
-            defaultState: true,
             order: 10
         }
     });
@@ -68,6 +67,7 @@ test('test info adapter rejects unnamed descriptors and copies mutable metadata'
     assert.equal(info.name, 'Main: #1');
     assert.equal(info.yamlFileUri, uri);
     assert.equal(info.relativePath, 'Scenario');
+    assert.equal(Object.hasOwn(info, 'defaultState'), false);
 
     info.parameters?.push('Changed');
     if (info.parameterDefaults) {

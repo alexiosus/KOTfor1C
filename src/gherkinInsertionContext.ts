@@ -14,11 +14,11 @@ type InsertionDocument = Pick<
 >;
 
 const STEP_KEYWORD_REGEX = /^(?:\s*)(?:\*\s*)?(and|but|then|when|given|if|и|тогда|когда|если|допустим|дано|к тому же|но)(?=\s|$)/i;
-const FEATURE_SECTION_REGEX = /^(?:Feature|Функционал|Rule|Правило|Examples|Примеры)\s*:?/i;
-const SCENARIO_SECTION_REGEX = /^(?:Scenario|Сценарий|Scenario Outline|Структура сценария|Background|Предыстория)\s*:/i;
-const FEATURE_NON_STEP_REGEX = /^(?:Feature|Функционал|Rule|Правило|Scenario|Сценарий|Scenario Outline|Структура сценария|Background|Предыстория|Examples|Примеры|Scenarios|Сценарии)\s*:/i;
+const FEATURE_SECTION_REGEX = /^(?:Feature|Business Need|Ability|Функциональность|Функционал|Функция|Rule|Правило|Examples|Примеры|Scenarios|Сценарии)\s*:?/i;
+const SCENARIO_SECTION_REGEX = /^(?:Scenario Outline|Scenario Template|Scenario|Структура сценария|Шаблон сценария|Сценарий|Background|Предыстория|Контекст)\s*:/i;
+const FEATURE_NON_STEP_REGEX = /^(?:Feature|Business Need|Ability|Функциональность|Функционал|Функция|Rule|Правило|Scenario Outline|Scenario Template|Scenario|Структура сценария|Шаблон сценария|Сценарий|Background|Предыстория|Контекст|Examples|Примеры|Scenarios|Сценарии)\s*:/i;
 const YAML_SCENARIO_BLOCK_REGEX = /^(\s*)ТекстСценария\s*:\s*[|>][^\r\n]*$/i;
-const LANGUAGE_TAG_REGEX = /^#language:\s*(en|ru)\b/i;
+const LANGUAGE_TAG_REGEX = /^#\s*language\s*:\s*(en|ru)\b/i;
 
 function documentPath(document: InsertionDocument): string {
     const uri = document.uri as vscode.Uri & { readonly path?: string; readonly fsPath?: string };
@@ -57,7 +57,7 @@ function nearbyLanguage(lines: readonly string[], positionLine: number): 'ru' | 
         if (language) {
             return language;
         }
-        if (/^(?:Функционал|Правило|Сценарий|Структура сценария|Предыстория)\b/iu.test(lines[line].trim())) {
+        if (/^(?:Функциональность|Функционал|Функция|Правило|Сценарий|Структура сценария|Шаблон сценария|Предыстория|Контекст)\b/iu.test(lines[line].trim())) {
             return 'ru';
         }
         if (/^(?:Feature|Rule|Scenario|Scenario Outline|Background)\b/iu.test(lines[line].trim())) {

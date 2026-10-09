@@ -26,7 +26,6 @@ export interface ParsedScenarioDescriptor {
     readonly phaseSwitcher: {
         readonly hasTab: boolean;
         readonly tabName?: string;
-        readonly defaultState?: boolean;
         readonly order?: number;
     };
 }
@@ -121,7 +120,6 @@ export function parseScenarioDescriptor(source: string): ParsedScenarioDescripto
         phaseSwitcher: {
             hasTab: phaseSwitcher.hasTab,
             tabName: phaseSwitcher.tabName,
-            defaultState: phaseSwitcher.defaultState,
             order: phaseSwitcher.order
         }
     };
@@ -160,7 +158,6 @@ export function buildTestInfoFromScenarioDescriptor(
 
     if (descriptor.phaseSwitcher.hasTab) {
         result.tabName = descriptor.phaseSwitcher.tabName;
-        result.defaultState = descriptor.phaseSwitcher.defaultState ?? false;
         result.order = descriptor.phaseSwitcher.order ?? Infinity;
     }
 

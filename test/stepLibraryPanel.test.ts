@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
 import * as stepLibraryModel from '../src/stepLibraryModel';
+import * as scenarioFilesWebviewProtocol from '../src/scenarioFilesWebviewProtocol';
 import * as projectDefinitionSnippet from '../src/projectDefinitionSnippet';
 import { getGherkinInsertionContext as actualInsertionContext } from '../src/gherkinInsertionContext';
 import { StepLibraryActionService } from '../src/stepLibraryActions';
@@ -172,7 +173,10 @@ function loadPanelModule(
             parse: (value: string) => uri(value)
         },
         window: {
-            createWebviewPanel: () => fakePanel,
+            createWebviewPanel: (_viewType: string, title: string) => {
+                fakePanel.title = title;
+                return fakePanel;
+            },
             get activeTextEditor() { return runtime.activeEditor; },
             get visibleTextEditors() { return runtime.visibleEditors; },
             onDidChangeActiveTextEditor: runtime.activeEditorEvents.event,
@@ -199,6 +203,9 @@ function loadPanelModule(
             }
             if (specifier === './stepLibraryModel') {
                 return stepLibraryModel;
+            }
+            if (specifier === './scenarioFilesWebviewProtocol') {
+                return scenarioFilesWebviewProtocol;
             }
             if (specifier === './projectDefinitionSnippet') {
                 return projectDefinitionSnippet;
@@ -247,6 +254,59 @@ function createHarness(
     const changes = new EventHub<unknown>();
     const scenarioChanges = new EventHub<unknown>();
     let refreshDefinitionsCalls = 0;
+    const scenarioFileNodes = [{
+        id: 'scenario-file:nested:file:Fixtures/Input.xlsx',
+        kind: 'file',
+        itemId: '',
+        name: 'Input.xlsx',
+        relativePath: 'Fixtures/Input.xlsx',
+        depth: 2,
+        expandable: false
+    }];
+    let scenarioFileDeleteResult: 'deleted' | 'cancelled' = 'deleted';
+    let scenarioFileDeleteError: unknown;
+    let activeScenarioFileWatches = 0;
+    const scenarioFiles = {
+        listCalls: [] as Array<{ item: any; relativePath: string }>,
+        openCalls: [] as Array<{ item: any; relativePath: string }>,
+        revealCalls: [] as Array<{ item: any; relativePath: string }>,
+        deleteCalls: [] as Array<{ item: any; relativePath: string }>,
+        async listChildren(item: any, relativePath: string) {
+            scenarioFiles.listCalls.push({ item, relativePath });
+            return scenarioFileNodes.map(node => ({ ...node, itemId: item.id }));
+        },
+        async openExternal(item: any, relativePath: string) {
+            scenarioFiles.openCalls.push({ item, relativePath });
+            return true;
+        },
+        async revealInOs(item: any, relativePath: string) {
+            scenarioFiles.revealCalls.push({ item, relativePath });
+            return true;
+        },
+        async deleteFile(item: any, relativePath: string) {
+            scenarioFiles.deleteCalls.push({ item, relativePath });
+            if (scenarioFileDeleteError) {
+                throw scenarioFileDeleteError;
+            }
+            return scenarioFileDeleteResult;
+        },
+        watch() {
+            activeScenarioFileWatches += 1;
+            let active = true;
+            return {
+                dispose: () => {
+                    if (active) {
+                        active = false;
+                        activeScenarioFileWatches -= 1;
+                    }
+                }
+            };
+        },
+        async prepareDrop() { return { files: [], skipped: [] }; },
+        async appendTransferChunk(_transferId: string, offset: number) { return offset; },
+        async completeTransfer() { return undefined; },
+        async cancelTransfer() { return undefined; }
+    };
     const resolver = {
         getView,
         ensureReady,
@@ -287,6 +347,7 @@ function createHarness(
         extensionUri: uri('file:///extension'),
         snapshotService,
         actionService,
+        scenarioFilesService: scenarioFiles,
         refreshDefinitions: async () => {
             refreshDefinitionsCalls += 1;
         }
@@ -296,6 +357,13 @@ function createHarness(
         fakePanel,
         runtime,
         changes,
+        scenarioFiles,
+        get activeScenarioFileWatches() { return activeScenarioFileWatches; },
+        setScenarioFileDeleteResult(value: 'deleted' | 'cancelled') {
+            scenarioFileDeleteResult = value;
+            scenarioFileDeleteError = undefined;
+        },
+        setScenarioFileDeleteError(value: unknown) { scenarioFileDeleteError = value; },
         get refreshDefinitionsCalls() { return refreshDefinitionsCalls; }
     };
 }
@@ -376,6 +444,18 @@ async function sendWebviewMessage(harness: ReturnType<typeof createHarness>, mes
     await flush();
 }
 
+test('full Library uses the same branded title on creation and reopen', async () => {
+    const harness = createHarness(async () => view('view:title'));
+
+    await harness.panel.open();
+    assert.equal(harness.fakePanel.title, 'KOT for 1C: Library');
+
+    harness.fakePanel.title = 'Changed by host';
+    await harness.panel.open();
+    assert.equal(harness.fakePanel.title, 'KOT for 1C: Library');
+    assert.match(harness.fakePanel.webview.html, /KOT for 1C: Library/u);
+});
+
 test('initial open waits for physically routed project definitions', async () => {
     const exportDefinition = projectDefinition({
         id: 'export:ready',
@@ -395,6 +475,118 @@ test('initial open waits for physically routed project definitions', async () =>
         (message: any) => message.command === 'snapshot'
     ) as any;
     assert.equal(snapshot.snapshot.counts.export, 1);
+});
+
+test('full panel resolves resource messages through the shared scenario files service', async () => {
+    const nested = projectDefinition({
+        id: 'nested:resources',
+        kind: 'nestedScenario',
+        template: 'Create invoice',
+        definitionLocation: {
+            uri: 'file:///workspace/CreateInvoice/scen.yaml',
+            range: {
+                start: { line: 0, character: 0 },
+                end: { line: 0, character: 1 }
+            }
+        }
+    });
+    const harness = createHarness(async () => definitionView('view:resources', [nested]));
+    await harness.panel.open(uri('file:///workspace/test.feature'));
+    const snapshot = harness.fakePanel.webview.messages.find(
+        (message: any) => message.command === 'snapshot'
+    ) as any;
+    const item = snapshot.snapshot.items.find((candidate: any) => candidate.hasScenarioFiles);
+
+    await sendWebviewMessage(harness, {
+        command: 'listScenarioFiles',
+        itemId: item.id,
+        relativePath: 'Fixtures',
+        requestId: 'request-1'
+    });
+
+    assert.equal(harness.scenarioFiles.listCalls.length, 1);
+    assert.equal(harness.scenarioFiles.listCalls[0].item.id, item.id);
+    assert.equal(harness.scenarioFiles.listCalls[0].relativePath, 'Fixtures');
+    const response = harness.fakePanel.webview.messages.at(-1) as any;
+    assert.equal(response.command, 'scenarioFileChildren');
+    assert.equal(response.requestId, 'request-1');
+    assert.equal(response.itemId, item.id);
+    assert.equal(response.relativePath, 'Fixtures');
+    assert.equal(response.nodes[0].name, 'Input.xlsx');
+});
+
+test('full panel reports attachment deletion success cancellation and failure', async () => {
+    const nested = projectDefinition({
+        id: 'nested:delete',
+        kind: 'nestedScenario',
+        template: 'Delete attachment',
+        definitionLocation: {
+            uri: 'file:///workspace/DeleteAttachment/scen.yaml',
+            range: {
+                start: { line: 0, character: 0 },
+                end: { line: 0, character: 1 }
+            }
+        }
+    });
+    const harness = createHarness(async () => definitionView('view:delete', [nested]));
+    await harness.panel.open(uri('file:///workspace/test.feature'));
+    const snapshotMessage = harness.fakePanel.webview.messages.find(
+        (message: any) => message.command === 'snapshot'
+    ) as any;
+    const item = snapshotMessage.snapshot.items.find((candidate: any) => candidate.hasScenarioFiles);
+
+    await sendWebviewMessage(harness, {
+        command: 'deleteScenarioFile',
+        itemId: item.id,
+        relativePath: 'Folder\\Input.xlsx'
+    });
+    assert.deepEqual(
+        harness.scenarioFiles.deleteCalls.map(entry => [entry.item.id, entry.relativePath]),
+        [[item.id, 'Folder/Input.xlsx']]
+    );
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.fakePanel.webview.messages.at(-1))), {
+        command: 'scenarioFileActionResult',
+        action: 'delete',
+        itemId: item.id,
+        relativePath: 'Folder/Input.xlsx',
+        succeeded: true
+    });
+
+    harness.setScenarioFileDeleteResult('cancelled');
+    await sendWebviewMessage(harness, {
+        command: 'deleteScenarioFile',
+        itemId: item.id,
+        relativePath: 'Cancelled.xlsx'
+    });
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.fakePanel.webview.messages.at(-1))), {
+        command: 'scenarioFileActionResult',
+        action: 'delete',
+        itemId: item.id,
+        relativePath: 'Cancelled.xlsx',
+        succeeded: false,
+        cancelled: true
+    });
+
+    harness.setScenarioFileDeleteError(new Error('Delete denied'));
+    const successCount = harness.fakePanel.webview.messages.filter(
+        (message: any) => message.command === 'scenarioFileActionResult'
+            && message.action === 'delete'
+            && message.succeeded
+    ).length;
+    await sendWebviewMessage(harness, {
+        command: 'deleteScenarioFile',
+        itemId: item.id,
+        relativePath: 'Denied.xlsx'
+    });
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.fakePanel.webview.messages.at(-1))), {
+        command: 'scenarioFileTransferFailed',
+        message: 'Delete denied'
+    });
+    assert.equal(harness.fakePanel.webview.messages.filter(
+        (message: any) => message.command === 'scenarioFileActionResult'
+            && message.action === 'delete'
+            && message.succeeded
+    ).length, successCount);
 });
 
 test('drops an older resolver result that completes after a newer load', async () => {
@@ -450,6 +642,38 @@ test('does not repost an unchanged view identity and refreshes after resolver ch
     assert.equal(harness.fakePanel.webview.messages.filter(
         (message: any) => message.command === 'snapshot'
     ).length, 1);
+});
+
+test('an unchanged full refresh preserves expanded scenario attachment watches', async () => {
+    const nested = projectDefinition({
+        id: 'nested:watched',
+        kind: 'nestedScenario',
+        template: 'Watched resources',
+        definitionLocation: {
+            uri: 'file:///workspace/Watched/scen.yaml',
+            range: {
+                start: { line: 0, character: 0 },
+                end: { line: 0, character: 1 }
+            }
+        }
+    });
+    const harness = createHarness(async () => definitionView('view:same', [nested]));
+    await harness.panel.open(uri('file:///workspace/test.feature'));
+    const snapshotMessage = harness.fakePanel.webview.messages.find(
+        (message: any) => message.command === 'snapshot'
+    ) as any;
+    const item = snapshotMessage.snapshot.items.find((candidate: any) => candidate.hasScenarioFiles);
+    await sendWebviewMessage(harness, {
+        command: 'setScenarioFilesExpanded',
+        itemId: item.id,
+        expanded: true
+    });
+    assert.equal(harness.activeScenarioFileWatches, 1);
+
+    harness.changes.fire({ reason: 'local' });
+    await flush();
+
+    assert.equal(harness.activeScenarioFileWatches, 1);
 });
 
 test('manual refresh acknowledges completion even when the library identity is unchanged', async () => {

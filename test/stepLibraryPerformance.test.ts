@@ -13,6 +13,7 @@ import { ScenarioRelationshipService } from '../src/scenarioRelationshipService'
 import { StepLibrarySnapshotService } from '../src/stepLibrarySnapshotService';
 import { ManagedInfobaseService } from '../src/managedInfobaseService';
 import { buildStepLibrarySnapshot } from '../src/stepLibraryModel';
+import { ScenarioFilesService } from '../src/scenarioFilesService';
 
 interface SearchItem {
     readonly id: string;
@@ -181,10 +182,10 @@ test('active-editor relationship updates use the published catalog without scans
             },
             onDidUpdateScenarioCatalog: catalogChanges.event as never
         },
-        configuration: {
+        getConfiguration: () => ({
             get: <T>(_key: string, fallback?: T) => fallback,
             update: async () => undefined
-        },
+        }),
         workspaceConfigurationTarget: 'workspace',
         onDidChangeConfiguration: configurationChanges.event as never,
         getScanRootPaths: () => {
@@ -228,6 +229,57 @@ test('two Step Library consumers share one in-flight resolver generation', async
     const [compactSnapshot, fullSnapshot] = await Promise.all([compactView, fullView]);
     assert.strictEqual(compactSnapshot, fullSnapshot);
     assert.equal(resolverCalls, 1);
+    service.dispose();
+});
+
+test('initial Library snapshot performs no scenario resource directory reads', () => {
+    let readDirectoryCalls = 0;
+    const service = new ScenarioFilesService({
+        parseUri: value => ({ toString: () => value }),
+        dirname: value => value,
+        joinPath: (base, ...segments) => ({
+            toString: () => `${base.toString()}/${segments.join('/')}`
+        }),
+        readDirectory: async () => {
+            readDirectoryCalls += 1;
+            return [];
+        },
+        isFileNotFound: () => false,
+        openExternal: async () => true,
+        revealInOs: async () => undefined,
+        createWatcher: () => ({
+            onDidCreate: () => ({ dispose: () => undefined }),
+            onDidChange: () => ({ dispose: () => undefined }),
+            onDidDelete: () => ({ dispose: () => undefined }),
+            dispose: () => undefined
+        }),
+        chooseConflict: async () => 'skip'
+    });
+    const definitions: ProjectDefinition[] = Array.from({ length: 10_000 }, (_, index) => ({
+        id: `nested:${index}`,
+        kind: 'nestedScenario',
+        template: `Nested scenario ${index}`,
+        normalizedTemplate: `nested scenario ${index}`,
+        parameters: [],
+        sourceLabel: 'Nested scenarios',
+        definitionLocation: {
+            uri: `file:///workspace/Nested/${index}/scen.yaml`,
+            range: {
+                start: { line: 0, character: 0 },
+                end: { line: 0, character: 1 }
+            }
+        }
+    }));
+
+    const snapshot = buildStepLibrarySnapshot({
+        identity: 'nested:10000',
+        all: definitions,
+        byId: new Map(definitions.map(definition => [definition.id, definition])),
+        byNormalizedTemplate: new Map()
+    });
+
+    assert.equal(snapshot.items.filter(item => item.hasScenarioFiles).length, 10_000);
+    assert.equal(readDirectoryCalls, 0);
     service.dispose();
 });
 

@@ -20,6 +20,7 @@ import type {
     ProjectDefinitionView
 } from './projectDefinition';
 import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
+import { validateGherkinSyntax } from './exportScenarioParser';
 
 const DIAGNOSTIC_SOURCE = 'KOT for 1C';
 const CODE_UNCLOSED_IF = 'kotTestToolkit.unclosedIf';
@@ -35,6 +36,7 @@ const CODE_MISSING_QUOTES = 'kotTestToolkit.missingQuotes';
 const CODE_INCOMPLETE_BLOCK = 'kotTestToolkit.incompleteBlock';
 const CODE_DEFAULT_DESCRIPTION = 'kotTestToolkit.defaultDescription';
 const CODE_DUPLICATE_SCENARIO_CODE = 'kotTestToolkit.duplicateScenarioCode';
+const CODE_GHERKIN_SYNTAX = 'kotTestToolkit.gherkinSyntax';
 const LOCAL_DEPENDENCY_SCAN_MAX_FILES = 120;
 
 interface WorkspaceDiagnosticsScanOptions {
@@ -168,6 +170,10 @@ function getScenarioBodyRange(document: vscode.TextDocument): ScenarioBodyRange 
         endLine = startLine;
     }
     return { startLine, endLine };
+}
+
+export function isGherkinFeatureDocument(document: Pick<vscode.TextDocument, 'fileName'>): boolean {
+    return document.fileName.toLocaleLowerCase().endsWith('.feature');
 }
 
 function parseScenarioCallBlocks(document: vscode.TextDocument, bodyRange: ScenarioBodyRange): ScenarioCallBlock[] {
@@ -870,14 +876,17 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         context: vscode.CodeActionContext,
         token: vscode.CancellationToken
     ): Promise<vscode.CodeAction[]> {
-        if (!isScenarioYamlFile(document)) {
+        const featureDocument = isGherkinFeatureDocument(document);
+        if (!isScenarioYamlFile(document) && !featureDocument) {
             return [];
         }
 
         const shouldCancel = createDocumentValidationCancellation(document, token);
 
         const actions: vscode.CodeAction[] = [];
-        const localScenarioParameterDefaults = parseScenarioParameterDefaults(document.getText());
+        const localScenarioParameterDefaults = featureDocument
+            ? new Map<string, string>()
+            : parseScenarioParameterDefaults(document.getText());
         const scenarioLanguage = getScenarioLanguageForDocument(document);
         const scenarioCallKeyword = getScenarioCallKeyword(scenarioLanguage);
         const hasFixableDiagnostic = context.diagnostics.some(diagnostic =>
@@ -897,7 +906,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             ].includes(diagnostic.code)
         );
 
-        if (hasFixableDiagnostic) {
+        if (hasFixableDiagnostic && !featureDocument) {
             const fixAllAction = new vscode.CodeAction(this.messages.fixAll, vscode.CodeActionKind.QuickFix);
             fixAllAction.command = {
                 command: 'kotTestToolkit.fixScenarioIssues',
@@ -1518,6 +1527,10 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         if (shouldCancel()) {
             return;
         }
+        if (isGherkinFeatureDocument(document)) {
+            await this.validateFeatureDocument(document, options, shouldCancel);
+            return;
+        }
         if (!isScenarioYamlFile(document)) {
             this.deleteDiagnostics(document.uri);
             return;
@@ -1907,6 +1920,131 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 this.messages.defaultDescription,
                 vscode.DiagnosticSeverity.Warning,
                 CODE_DEFAULT_DESCRIPTION
+            ));
+        }
+
+        if (!shouldCancel()) {
+            this.publishDiagnostics(document.uri, diagnostics);
+        }
+    }
+
+    private async validateFeatureDocument(
+        document: vscode.TextDocument,
+        options: ValidationOptions,
+        shouldCancel: () => boolean
+    ): Promise<void> {
+        const source = document.getText();
+        const diagnostics: vscode.Diagnostic[] = validateGherkinSyntax(
+            source,
+            document.uri.toString()
+        )
+            .map(warning => {
+                const startLine = Math.min(
+                    Math.max(0, warning.range?.start.line ?? 0),
+                    Math.max(0, document.lineCount - 1)
+                );
+                const lineText = document.lineAt(startLine).text;
+                const startCharacter = Math.min(
+                    Math.max(0, warning.range?.start.character ?? 0),
+                    lineText.length
+                );
+                const endCharacter = Math.min(
+                    Math.max(startCharacter, warning.range?.end.character ?? lineText.length),
+                    lineText.length
+                );
+                const diagnostic = new vscode.Diagnostic(
+                    new vscode.Range(startLine, startCharacter, startLine, endCharacter),
+                    warning.message,
+                    vscode.DiagnosticSeverity.Error
+                );
+                diagnostic.source = DIAGNOSTIC_SOURCE;
+                diagnostic.code = CODE_GHERKIN_SYNTAX;
+                return diagnostic;
+            });
+
+        if (!options.includeStepChecks || shouldCancel()) {
+            if (!shouldCancel()) {
+                this.publishDiagnostics(document.uri, diagnostics);
+            }
+            return;
+        }
+
+        let definitionView: ProjectDefinitionView;
+        try {
+            definitionView = await this.definitionResolver.getView(document.uri);
+        } catch (error) {
+            console.error('[ScenarioDiagnostics] Failed to load project definitions for Feature validation:', error);
+            return;
+        }
+        if (shouldCancel()) {
+            return;
+        }
+
+        const gherkinStepRegex = /^\s*(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим|Дано)\s+/iu;
+        let docStringDelimiter: '"""' | '```' | null = null;
+        for (let line = 0; line < document.lineCount; line++) {
+            if (shouldCancel()) {
+                return;
+            }
+            const trimmed = document.lineAt(line).text.trim();
+            if (docStringDelimiter) {
+                if (trimmed.startsWith(docStringDelimiter)) {
+                    docStringDelimiter = null;
+                }
+                continue;
+            }
+            if (trimmed.startsWith('"""') || trimmed.startsWith('```')) {
+                docStringDelimiter = trimmed.startsWith('"""') ? '"""' : '```';
+                continue;
+            }
+            if (!gherkinStepRegex.test(trimmed)) {
+                continue;
+            }
+
+            const resolution = await this.definitionResolver.resolve(document.uri, trimmed, definitionView);
+            if (shouldCancel()) {
+                return;
+            }
+            if (resolution.kind === 'unique') {
+                continue;
+            }
+            if (resolution.kind === 'ambiguous') {
+                diagnostics.push(createAmbiguousDefinitionDiagnostic(
+                    document,
+                    line,
+                    this.messages.ambiguousDefinition,
+                    resolution.matches.map(match => match.definition)
+                ));
+                continue;
+            }
+
+            const includeSuggestions = options.includeStepSuggestions ?? options.includeSuggestions;
+            const rawSuggestions = includeSuggestions
+                ? await findClosestDefinitions(
+                    this.definitionResolver,
+                    document.uri,
+                    trimmed,
+                    3,
+                    shouldCancel,
+                    kind => kind !== 'nestedScenario',
+                    definitionView
+                )
+                : [];
+            if (shouldCancel()) {
+                return;
+            }
+            const likelyMissingQuotes = includeSuggestions && looksLikeMissingQuotes(trimmed, rawSuggestions);
+            const suggestions = rawSuggestions.map(suggestion =>
+                applyStepSuggestionWithOriginalValues(trimmed, suggestion)
+            );
+            diagnostics.push(createDiagnostic(
+                document,
+                line,
+                likelyMissingQuotes
+                    ? `${this.messages.missingQuotesLikely}${formatSuggestionListSuffix(this.messages, suggestions)}`
+                    : `${this.messages.unknownStep}${formatSuggestionListSuffix(this.messages, suggestions)}`,
+                likelyMissingQuotes ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error,
+                likelyMissingQuotes ? CODE_MISSING_QUOTES : CODE_UNKNOWN_STEP
             ));
         }
 

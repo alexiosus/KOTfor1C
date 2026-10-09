@@ -92,6 +92,30 @@ test('projects favorites plus five stable source roots and only immediate catego
     assert.equal(childByLabel(index, ui.id, 'Forms').depth, 2);
 });
 
+test('counts only visible relationship items in every ancestor group', () => {
+    const index = StepLibrarySidebarIndex.fromSnapshot(snapshot([
+        item({ id: 'related-favorite', sourceGroup: 'nested', displayText: 'Related favorite', categoryPath: ['Orders', 'Create'] }),
+        item({ id: 'related-other', sourceGroup: 'nested', displayText: 'Related other', categoryPath: ['Orders', 'Validate'] }),
+        item({ id: 'unrelated', sourceGroup: 'nested', displayText: 'Unrelated', categoryPath: ['Orders', 'Create'] }),
+        item({ id: 'export', sourceGroup: 'export', displayText: 'Export scenario' })
+    ]), 'en', new Set(['related-favorite']));
+    const counts = (index as any).countsForItems(new Set([
+        'related-favorite',
+        'related-other'
+    ]));
+    const orders = childByLabel(index, 'source:nested', 'Orders');
+    const create = childByLabel(index, orders.id, 'Create');
+    const validate = childByLabel(index, orders.id, 'Validate');
+
+    assert.deepEqual({ ...counts }, {
+        favorites: 1,
+        'source:nested': 2,
+        [orders.id]: 2,
+        [create.id]: 1,
+        [validate.id]: 1
+    });
+});
+
 test('pages only direct definitions in stable order and appends a continuation node', () => {
     const definitions = Array.from({ length: 205 }, (_, index) => item({
         id: `item-${String(index).padStart(3, '0')}`,
@@ -117,6 +141,38 @@ test('pages only direct definitions in stable order and appends a continuation n
     assert.equal(last.nodes.length, 5);
     assert.equal(last.nextOffset, null);
     assert.equal(last.nodes.at(-1)?.label, 'Step 204');
+});
+
+test('filters direct definitions before paging and computing the continuation node', () => {
+    const definitions = Array.from({ length: 205 }, (_, index) => item({
+        id: `item-${String(index).padStart(3, '0')}`,
+        sourceGroup: 'user',
+        displayText: `Step ${String(index).padStart(3, '0')}`,
+        categoryPath: ['Bulk']
+    }));
+    const model = StepLibrarySidebarIndex.fromSnapshot(snapshot(definitions), 'en');
+    const category = childByLabel(model, 'source:user', 'Bulk');
+    const modelWithFilteredChildren = model as unknown as {
+        children(
+            parentId: string,
+            offset: number,
+            limit: number,
+            visibleItemIds: ReadonlySet<string>
+        ): ReturnType<StepLibrarySidebarIndex['children']>;
+    };
+
+    const page = modelWithFilteredChildren.children(
+        category.id,
+        0,
+        100,
+        new Set(['item-150', 'item-204'])
+    );
+
+    assert.deepEqual(page.nodes.map(node => [node.kind, node.itemId]), [
+        ['definition', 'item-150'],
+        ['definition', 'item-204']
+    ]);
+    assert.equal(page.nextOffset, null);
 });
 
 test('projects mixed favorite definitions in one bounded root', () => {
@@ -263,6 +319,66 @@ test('definition nodes expose the catalog runtime key used by relationship proje
     );
 });
 
+test('definition nodes expose project definition ids used by export relationships', () => {
+    const currentSnapshot = snapshot([item({
+        id: 'export:shared#authored',
+        definitionId: 'export:shared',
+        kind: 'exportScenario',
+        sourceGroup: 'export',
+        displayText: 'Shared export'
+    })]);
+    const index = StepLibrarySidebarIndex.fromSnapshot(currentSnapshot, 'en');
+
+    const source = index.roots().find(node => node.id === 'source:export')!;
+    const category = index.children(source.id).nodes[0];
+    const definitionNode = index.children(category.id).nodes[0];
+
+    assert.equal(definitionNode.definitionId, 'export:shared');
+});
+
+test('nested definitions with local files advertise an expandable resource child', () => {
+    const index = StepLibrarySidebarIndex.fromSnapshot(snapshot([item({
+        id: 'nested-local',
+        kind: 'nestedScenario',
+        sourceGroup: 'nested',
+        displayText: 'Create invoice',
+        hasScenarioFiles: true,
+        capturedLocation: {
+            uri: 'file:///workspace/CreateInvoice/scen.yaml',
+            range: {
+                start: { line: 0, character: 0 },
+                end: { line: 0, character: 1 }
+            }
+        }
+    })]), 'en');
+
+    const nested = index.search('Create invoice')[0];
+
+    assert.equal(nested.expandable, true);
+    assert.equal(nested.hasScenarioFiles, true);
+});
+
+test('compiled main definitions expose their feature and attachments metadata to the sidebar', () => {
+    const index = StepLibrarySidebarIndex.fromSnapshot(snapshot([item({
+        id: 'main-compiled',
+        kind: 'mainScenario',
+        sourceGroup: 'main',
+        displayText: '004_Production',
+        hasScenarioFiles: true,
+        compiledFeatureUri: 'file:///build/004_Production.feature',
+        scenarioFilesRootUri: 'file:///build/004_Production/%D0%A4%D0%B0%D0%B9%D0%BB%D1%8B'
+    })]), 'en');
+
+    const main = index.search('004_Production')[0];
+
+    assert.equal(main.expandable, true);
+    assert.equal(main.compiledFeatureUri, 'file:///build/004_Production.feature');
+    assert.equal(
+        main.scenarioFilesRootUri,
+        'file:///build/004_Production/%D0%A4%D0%B0%D0%B9%D0%BB%D1%8B'
+    );
+});
+
 test('deduplicates a translated built-in family using the preferred language branch', () => {
     const russian = item({
         id: 'open-ru',
@@ -282,6 +398,7 @@ test('deduplicates a translated built-in family using the preferred language bra
         sourceGroup: 'builtIn',
         displayText: 'And I open the form',
         alternateDisplayText: 'И я открываю форму',
+        description: 'Opens the requested application form.',
         language: 'en',
         categoryPath: ['UI', 'Forms'],
         searchText: 'and i open the form и я открываю форму ui forms интерфейс формы'
@@ -294,6 +411,7 @@ test('deduplicates a translated built-in family using the preferred language bra
     assert.equal(model.roots().find(node => node.id === 'source:builtIn')?.count, 1);
     assert.equal(definition.label, 'And I open the form');
     assert.equal(definition.alternateLabel, 'И я открываю форму');
+    assert.equal(definition.description, 'Opens the requested application form.');
     assert.equal(model.getItem(definition.itemId ?? '')?.language, 'en');
     assert.equal(model.search('открываю')[0]?.itemId, 'open-en');
     assert.equal(indexCategoryLabels(model).includes('Интерфейс'), false);

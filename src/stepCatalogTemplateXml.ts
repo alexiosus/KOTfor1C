@@ -14,7 +14,6 @@ import {
     StepCatalogIndex,
     StepTextVariant
 } from './stepCatalog';
-import { parseLegacyStepsHtml } from './legacyStepCatalog';
 import type { StepCategoryEnrichmentReport } from './stepCatalogCategories';
 
 const SPREADSHEET_NAMESPACE = 'http://v8.1c.ru/8.2/data/spreadsheet';
@@ -48,13 +47,8 @@ export interface GenerateCatalogOptions {
     readonly sourceTimestamp: string;
 }
 
-export interface StepCatalogCompatibilityReport {
-    readonly missingLegacyRuPatterns: readonly string[];
-    readonly missingLegacyEnPatterns: readonly string[];
-}
-
 export interface StepCatalogGenerationReport
-    extends StepCatalogCompatibilityReport, StepCategoryEnrichmentReport {
+    extends StepCategoryEnrichmentReport {
     readonly schemaVersion: 1;
     readonly vanessaVersion: string;
     readonly sourceRows: number;
@@ -281,37 +275,9 @@ export function serializeStepCatalogJson(catalog: BuiltInStepCatalog): string {
     return serializeJson(catalog);
 }
 
-export function compareCatalogWithLegacyHtml(
-    catalog: BuiltInStepCatalog,
-    legacyHtml: string
-): StepCatalogCompatibilityReport {
-    const generatedRussian = new Set(
-        catalog.steps.flatMap(step => step.ru ? [normalizeStepCatalogText(step.ru.pattern)] : [])
-    );
-    const generatedEnglish = new Set(
-        catalog.steps.flatMap(step => step.en ? [normalizeStepCatalogText(step.en.pattern)] : [])
-    );
-    const legacy = parseLegacyStepsHtml(legacyHtml);
-    return {
-        missingLegacyRuPatterns: sortedUnique(
-            legacy.flatMap(step => {
-                const pattern = step.ru && normalizeStepCatalogText(step.ru.pattern);
-                return pattern && !generatedRussian.has(pattern) ? [pattern] : [];
-            })
-        ),
-        missingLegacyEnPatterns: sortedUnique(
-            legacy.flatMap(step => {
-                const pattern = step.en && normalizeStepCatalogText(step.en.pattern);
-                return pattern && !generatedEnglish.has(pattern) ? [pattern] : [];
-            })
-        )
-    };
-}
-
 export function createStepCatalogGenerationReport(
     parsed: VanessaTemplateParseResult,
     catalog: BuiltInStepCatalog,
-    compatibility: StepCatalogCompatibilityReport,
     categoryEnrichment?: StepCategoryEnrichmentReport
 ): StepCatalogGenerationReport {
     const categorizedStepCount = categoryEnrichment?.categorizedStepCount
@@ -343,9 +309,7 @@ export function createStepCatalogGenerationReport(
         uncategorizedStepCount: categoryReport.uncategorizedStepCount,
         unmatchedRegistrationCount: categoryReport.unmatchedRegistrationCount,
         conflictingCategoryMappings: [...categoryReport.conflictingCategoryMappings],
-        untranslatableCategorySegments: [...categoryReport.untranslatableCategorySegments],
-        missingLegacyRuPatterns: [...compatibility.missingLegacyRuPatterns],
-        missingLegacyEnPatterns: [...compatibility.missingLegacyEnPatterns]
+        untranslatableCategorySegments: [...categoryReport.untranslatableCategorySegments]
     };
 }
 

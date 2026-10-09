@@ -80,9 +80,13 @@
         }
     }
 
-    function createResultPager(items, batchSize) {
+    function createResultPager(items, batchSize, initialVisibleCount) {
         const values = Array.isArray(items) ? items : [];
         const size = Math.max(1, Number.isFinite(batchSize) ? Math.floor(batchSize) : DEFAULT_RESULT_LIMIT);
+        const firstSize = Math.max(
+            size,
+            Number.isFinite(initialVisibleCount) ? Math.floor(initialVisibleCount) : 0
+        );
         let offset = 0;
         return {
             get hasMore() {
@@ -92,7 +96,8 @@
                 if (offset >= values.length) {
                     return [];
                 }
-                const batch = values.slice(offset, offset + size);
+                const pageSize = offset === 0 ? firstSize : size;
+                const batch = values.slice(offset, offset + pageSize);
                 offset += batch.length;
                 return batch;
             }
@@ -445,6 +450,34 @@
         return Boolean(item && item.insertable !== false && insertionTargetAvailable);
     }
 
+    function definitionRowActionOrder(item) {
+        const actions = [];
+        if (item?.insertable !== false) {
+            actions.push('insert');
+        }
+        actions.push('copy');
+        if (item?.navigable === true) {
+            actions.push('openDefinition');
+        }
+        actions.push('favorite');
+        return actions;
+    }
+
+    function overflowPresentation(scrollWidth, clientWidth) {
+        const overflowWidth = Math.max(
+            0,
+            (Number.isFinite(scrollWidth) ? scrollWidth : 0)
+                - (Number.isFinite(clientWidth) ? clientWidth : 0)
+        );
+        const overflowing = overflowWidth > 1;
+        const distance = overflowing ? overflowWidth + 12 : 0;
+        return {
+            overflowing,
+            distance,
+            duration: Math.max(1.2, distance / 45)
+        };
+    }
+
     return Object.freeze({
         searchItems,
         prepareItems,
@@ -455,6 +488,8 @@
         tokenizeGherkinText,
         preserveScrollPosition,
         createResultPager,
-        resizePaneLayout
+        resizePaneLayout,
+        definitionRowActionOrder,
+        overflowPresentation
     });
 }));

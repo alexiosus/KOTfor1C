@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { getExtensionUri } from './appContext';
 import { updateScenarioScanRoot } from './scenarioScanRoot';
 import { getDefaultModelDbSettingsValue } from './etalonBases';
+import { ensureDefaultLibrariesParameter } from './yamlParameterDefaults';
 import {
     createActiveYamlParametersProfileSnapshot,
     getActiveYamlParametersProfileChange,
@@ -161,14 +162,14 @@ export class YamlParametersManager {
         // Получаем BuildPath из настроек
         const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const buildPath = config.get<string>('runtime.directory') || '.vscode/kot-runtime';
-        return [
+        return ensureDefaultLibrariesParameter([
             { key: 'ScenarioFolder', value: 'tests/' },
             { key: 'FeatureFolder', value: path.join(buildPath, 'tests') },
             { key: 'VanessaFolder', value: this.getDefaultVanessaFolderValue() },
             { key: 'ModelDBSettings', value: getDefaultModelDbSettingsValue() },
             { key: 'AuthCompile', value: 'False' },
             { key: 'LaunchDBFolder', value: path.join(buildPath, 'launch-infobase') }
-        ];
+        ]);
     }
 
     private normalizeVanessaFolderValue(rawValue: string): string {
@@ -514,7 +515,7 @@ export class YamlParametersManager {
             result.push(parameter);
         }
 
-        return result;
+        return ensureDefaultLibrariesParameter(result);
     }
 
     private getBuildParameterValue(parameters: YamlParameter[], ...aliases: string[]): string {

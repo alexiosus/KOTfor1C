@@ -474,7 +474,7 @@ export async function resolveOneCPlatformForLaunch(
 
     const shouldPromptUser = options?.forcePicker
         || (options?.promptUser ?? config.get<boolean>(PROMPT_FOR_LAUNCHES_CONFIG_KEY, true));
-    if (!shouldPromptUser || configuredPlatforms.length === 1) {
+    if (!shouldPromptUser || (configuredPlatforms.length === 1 && !options?.forcePicker)) {
         return configuredPlatforms[0];
     }
 

@@ -9,7 +9,7 @@
   },
   "license": "MIT",
   "repository": "https://github.com/alexiosus/KOTfor1C",
-  "version": "2.8.0",
+  "version": "3.0.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -23,6 +23,27 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "languages": [
+      {
+        "id": "feature",
+        "aliases": [
+          "Feature",
+          "Gherkin",
+          "feature"
+        ],
+        "extensions": [
+          ".feature"
+        ],
+        "configuration": "./language-configuration-feature.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "feature",
+        "scopeName": "source.feature.kot",
+        "path": "./syntaxes/feature.tmLanguage.json"
+      }
+    ],
     "configuration": [
       {
         "title": "%config.generalTitle%",
@@ -205,13 +226,6 @@
             "description": "%config.stepsCatalogIndexUrl.description%",
             "order": 2
           },
-          "kotTestToolkit.steps.externalUrl": {
-            "type": "string",
-            "default": "",
-            "scope": "resource",
-            "description": "%config.stepsExternalUrl.description%",
-            "order": 3
-          },
           "kotTestToolkit.diagnostics.ignoredCodes": {
             "type": "array",
             "default": [],
@@ -255,11 +269,29 @@
             "description": "%config.phaseSwitcher.highlightAffectedMainScenarios.description%",
             "order": 1
           },
+          "kotTestToolkit.phaseSwitcher.filterRelatedScenarios": {
+            "type": "boolean",
+            "default": false,
+            "description": "%config.phaseSwitcher.filterRelatedScenarios.description%",
+            "order": 2
+          },
+          "kotTestToolkit.stepLibrary.highlightScenarioRelationships": {
+            "type": "boolean",
+            "default": true,
+            "description": "%config.stepLibrary.highlightScenarioRelationships.description%",
+            "order": 3
+          },
+          "kotTestToolkit.stepLibrary.filterRelatedScenarios": {
+            "type": "boolean",
+            "default": false,
+            "description": "%config.stepLibrary.filterRelatedScenarios.description%",
+            "order": 4
+          },
           "kotTestToolkit.phaseSwitcher.autoAddNewScenariosToFavorites": {
             "type": "boolean",
             "default": true,
             "description": "%config.phaseSwitcher.autoAddNewScenariosToFavorites.description%",
-            "order": 2
+            "order": 5
           }
         }
       },
@@ -759,9 +791,60 @@
         "icon": "$(play-circle)"
       },
       {
-        "command": "kotTestToolkit.toggleScenarioRelationships",
-        "title": "%cmd.toggleScenarioRelationships.title%",
-        "icon": "$(git-branch)"
+        "command": "kotTestToolkit.toggleTestManagerRelationshipHighlight",
+        "title": "%cmd.relationships.highlight.title%"
+      },
+      {
+        "command": "kotTestToolkit.toggleTestManagerRelationshipHighlightChecked",
+        "title": "%cmd.relationships.highlight.checked.title%"
+      },
+      {
+        "command": "kotTestToolkit.toggleTestManagerRelationshipFilter",
+        "title": "%cmd.relationships.filter.title%"
+      },
+      {
+        "command": "kotTestToolkit.toggleTestManagerRelationshipFilterChecked",
+        "title": "%cmd.relationships.filter.checked.title%"
+      },
+      {
+        "command": "kotTestToolkit.setTestManagerStatusFilterAll",
+        "title": "%cmd.testManagerStatusFilter.all.title%"
+      },
+      {
+        "command": "kotTestToolkit.setTestManagerStatusFilterAllChecked",
+        "title": "%cmd.testManagerStatusFilter.all.checked.title%"
+      },
+      {
+        "command": "kotTestToolkit.setTestManagerStatusFilterBuilt",
+        "title": "%cmd.testManagerStatusFilter.built.title%"
+      },
+      {
+        "command": "kotTestToolkit.setTestManagerStatusFilterBuiltChecked",
+        "title": "%cmd.testManagerStatusFilter.built.checked.title%"
+      },
+      {
+        "command": "kotTestToolkit.setTestManagerStatusFilterRunning",
+        "title": "%cmd.testManagerStatusFilter.running.title%"
+      },
+      {
+        "command": "kotTestToolkit.setTestManagerStatusFilterRunningChecked",
+        "title": "%cmd.testManagerStatusFilter.running.checked.title%"
+      },
+      {
+        "command": "kotTestToolkit.toggleStepLibraryRelationshipHighlight",
+        "title": "%cmd.relationships.highlight.title%"
+      },
+      {
+        "command": "kotTestToolkit.toggleStepLibraryRelationshipHighlightChecked",
+        "title": "%cmd.relationships.highlight.checked.title%"
+      },
+      {
+        "command": "kotTestToolkit.toggleStepLibraryRelationshipFilter",
+        "title": "%cmd.relationships.filter.title%"
+      },
+      {
+        "command": "kotTestToolkit.toggleStepLibraryRelationshipFilterChecked",
+        "title": "%cmd.relationships.filter.checked.title%"
       },
       {
         "command": "kotTestToolkit.refreshStepLibrarySidebar",
@@ -789,6 +872,11 @@
       {
         "command": "kotTestToolkit.toggleTestManagerGroups",
         "title": "%cmd.toggleTestManagerGroups.title%",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "kotTestToolkit.toggleStepLibraryGroups",
+        "title": "%cmd.toggleStepLibraryGroups.title%",
         "icon": "$(list-tree)"
       },
       {
@@ -924,6 +1012,38 @@
       {
         "id": "kotTestToolkit.editorContext.editing",
         "label": "%submenu.editorContext.editing%"
+      },
+      {
+        "id": "kotTestToolkit.phaseSwitcher.create",
+        "label": "%submenu.phaseSwitcher.create%"
+      },
+      {
+        "id": "kotTestToolkit.phaseSwitcher.maintenance",
+        "label": "%submenu.phaseSwitcher.maintenance%"
+      },
+      {
+        "id": "kotTestToolkit.phaseSwitcher.ai",
+        "label": "%submenu.phaseSwitcher.ai%"
+      },
+      {
+        "id": "kotTestToolkit.testManager.relationships",
+        "label": "%submenu.testManager.filters%",
+        "icon": "$(filter)"
+      },
+      {
+        "id": "kotTestToolkit.testManager.relationshipsActive",
+        "label": "%submenu.testManager.filters%",
+        "icon": "$(filter-filled)"
+      },
+      {
+        "id": "kotTestToolkit.stepLibrary.relationships",
+        "label": "%cmd.configureScenarioRelationships.title%",
+        "icon": "$(filter)"
+      },
+      {
+        "id": "kotTestToolkit.stepLibrary.relationshipsActive",
+        "label": "%cmd.configureScenarioRelationships.title%",
+        "icon": "$(filter-filled)"
       }
     ],
     "keybindings": [
@@ -971,19 +1091,23 @@
     "menus": {
       "view/title": [
         {
-          "command": "kotTestToolkit.openVanessa",
+          "command": "kotTestToolkit.showCreateScenarioMenu",
           "when": "view == kotTestToolkit.phaseSwitcherView",
           "group": "navigation@1"
         },
         {
-          "command": "kotTestToolkit.showCreateScenarioMenu",
-          "when": "view == kotTestToolkit.phaseSwitcherView",
+          "submenu": "kotTestToolkit.testManager.relationships",
+          "when": "view == kotTestToolkit.phaseSwitcherView && !kotTestToolkit.testManagerFiltersActive",
           "group": "navigation@2"
         },
         {
-          "command": "kotTestToolkit.toggleScenarioRelationships",
+          "submenu": "kotTestToolkit.testManager.relationshipsActive",
+          "when": "view == kotTestToolkit.phaseSwitcherView && kotTestToolkit.testManagerFiltersActive",
+          "group": "navigation@2"
+        },
+        {
+          "command": "kotTestToolkit.toggleTestManagerGroups",
           "when": "view == kotTestToolkit.phaseSwitcherView",
-          "toggled": "kotTestToolkit.scenarioRelationshipsEnabled",
           "group": "navigation@3"
         },
         {
@@ -992,119 +1116,291 @@
           "group": "navigation@4"
         },
         {
-          "command": "kotTestToolkit.toggleTestManagerGroups",
+          "submenu": "kotTestToolkit.phaseSwitcher.create",
           "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "navigation@5"
-        },
-        {
-          "command": "kotTestToolkit.generateConfigurationDiffImpactReportWithAi",
-          "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "1_ai@1"
-        },
-        {
-          "command": "kotTestToolkit.openConfigurationDiffReport",
-          "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "1_ai@2"
-        },
-        {
-          "command": "kotTestToolkit.reviewChangedTestsWithAi",
-          "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "1_ai@3"
-        },
-        {
-          "command": "kotTestToolkit.openTestReviewReport",
-          "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "1_ai@4"
-        },
-        {
-          "command": "kotTestToolkit.createNestedScenario",
-          "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "2_create@1"
-        },
-        {
-          "command": "kotTestToolkit.createExportScenario",
-          "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "2_create@2"
-        },
-        {
-          "command": "kotTestToolkit.createUserStep",
-          "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "2_create@3"
-        },
-        {
-          "command": "kotTestToolkit.refreshGherkinSteps",
-          "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "3_maintenance@1"
-        },
-        {
-          "command": "kotTestToolkit.processQueuedScenarioFiles",
-          "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "3_maintenance@2"
-        },
-        {
-          "command": "kotTestToolkit.processAllScenarioFiles",
-          "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "3_maintenance@3"
-        },
-        {
-          "command": "kotTestToolkit.cancelScenarioRepair",
-          "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "3_maintenance@4"
-        },
-        {
-          "command": "kotTestToolkit.createFirstLaunchZip",
-          "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "4_tools@1"
-        },
-        {
-          "command": "kotTestToolkit.openYamlParametersManager",
-          "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "4_tools@2"
-        },
-        {
-          "command": "kotTestToolkit.managePlatforms",
-          "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "4_tools@3"
+          "group": "1_create@1"
         },
         {
           "command": "kotTestToolkit.openSettings",
           "when": "view == kotTestToolkit.phaseSwitcherView",
-          "group": "4_tools@4"
+          "group": "2_tools@1"
         },
         {
-          "command": "kotTestToolkit.refreshStepLibrarySidebar",
-          "when": "view == kotTestToolkit.stepLibrarySidebarView",
-          "group": "navigation@1"
+          "command": "kotTestToolkit.openYamlParametersManager",
+          "when": "view == kotTestToolkit.phaseSwitcherView",
+          "group": "2_tools@2"
+        },
+        {
+          "command": "kotTestToolkit.managePlatforms",
+          "when": "view == kotTestToolkit.phaseSwitcherView",
+          "group": "2_tools@3"
+        },
+        {
+          "submenu": "kotTestToolkit.phaseSwitcher.maintenance",
+          "when": "view == kotTestToolkit.phaseSwitcherView",
+          "group": "3_maintenance@1"
+        },
+        {
+          "submenu": "kotTestToolkit.phaseSwitcher.ai",
+          "when": "view == kotTestToolkit.phaseSwitcherView",
+          "group": "4_ai@1"
         },
         {
           "command": "kotTestToolkit.showCreateScenarioMenu",
           "when": "view == kotTestToolkit.stepLibrarySidebarView",
+          "group": "navigation@1"
+        },
+        {
+          "submenu": "kotTestToolkit.stepLibrary.relationships",
+          "when": "view == kotTestToolkit.stepLibrarySidebarView && !kotTestToolkit.stepLibraryScenarioRelationshipsActive",
           "group": "navigation@2"
         },
         {
-          "command": "kotTestToolkit.openStepLibrary",
+          "submenu": "kotTestToolkit.stepLibrary.relationshipsActive",
+          "when": "view == kotTestToolkit.stepLibrarySidebarView && kotTestToolkit.stepLibraryScenarioRelationshipsActive",
+          "group": "navigation@2"
+        },
+        {
+          "command": "kotTestToolkit.toggleStepLibraryGroups",
           "when": "view == kotTestToolkit.stepLibrarySidebarView",
           "group": "navigation@3"
         },
         {
-          "command": "kotTestToolkit.refreshInfobaseSidebar",
-          "when": "view == kotTestToolkit.infobaseSidebarView",
-          "group": "navigation@1"
+          "command": "kotTestToolkit.refreshStepLibrarySidebar",
+          "when": "view == kotTestToolkit.stepLibrarySidebarView",
+          "group": "navigation@4"
+        },
+        {
+          "command": "kotTestToolkit.openStepLibrary",
+          "when": "view == kotTestToolkit.stepLibrarySidebarView",
+          "group": "navigation@5"
         },
         {
           "command": "kotTestToolkit.createInfobase",
           "when": "view == kotTestToolkit.infobaseSidebarView",
-          "group": "navigation@2"
+          "group": "navigation@1"
         },
         {
           "command": "kotTestToolkit.openFormExplorer",
           "when": "view == kotTestToolkit.infobaseSidebarView",
-          "group": "navigation@3"
+          "group": "navigation@2"
+        },
+        {
+          "command": "kotTestToolkit.refreshInfobaseSidebar",
+          "when": "view == kotTestToolkit.infobaseSidebarView",
+          "group": "navigation@4"
         },
         {
           "command": "kotTestToolkit.openInfobaseManager",
           "when": "view == kotTestToolkit.infobaseSidebarView",
-          "group": "navigation@4"
+          "group": "navigation@5"
+        }
+      ],
+      "kotTestToolkit.testManager.relationships": [
+        {
+          "command": "kotTestToolkit.setTestManagerStatusFilterAll",
+          "when": "!kotTestToolkit.testManagerStatusFilterAll",
+          "group": "0_status@1"
+        },
+        {
+          "command": "kotTestToolkit.setTestManagerStatusFilterAllChecked",
+          "when": "kotTestToolkit.testManagerStatusFilterAll",
+          "group": "0_status@1"
+        },
+        {
+          "command": "kotTestToolkit.setTestManagerStatusFilterBuilt",
+          "when": "!kotTestToolkit.testManagerStatusFilterBuilt",
+          "group": "0_status@2"
+        },
+        {
+          "command": "kotTestToolkit.setTestManagerStatusFilterBuiltChecked",
+          "when": "kotTestToolkit.testManagerStatusFilterBuilt",
+          "group": "0_status@2"
+        },
+        {
+          "command": "kotTestToolkit.setTestManagerStatusFilterRunning",
+          "when": "!kotTestToolkit.testManagerStatusFilterRunning",
+          "group": "0_status@3"
+        },
+        {
+          "command": "kotTestToolkit.setTestManagerStatusFilterRunningChecked",
+          "when": "kotTestToolkit.testManagerStatusFilterRunning",
+          "group": "0_status@3"
+        },
+        {
+          "command": "kotTestToolkit.toggleTestManagerRelationshipHighlight",
+          "when": "!kotTestToolkit.testManagerRelationshipHighlightEnabled",
+          "group": "navigation@1"
+        },
+        {
+          "command": "kotTestToolkit.toggleTestManagerRelationshipHighlightChecked",
+          "when": "kotTestToolkit.testManagerRelationshipHighlightEnabled",
+          "group": "navigation@1"
+        },
+        {
+          "command": "kotTestToolkit.toggleTestManagerRelationshipFilter",
+          "when": "!kotTestToolkit.testManagerRelationshipFilterEnabled",
+          "group": "navigation@2"
+        },
+        {
+          "command": "kotTestToolkit.toggleTestManagerRelationshipFilterChecked",
+          "when": "kotTestToolkit.testManagerRelationshipFilterEnabled",
+          "group": "navigation@2"
+        }
+      ],
+      "kotTestToolkit.testManager.relationshipsActive": [
+        {
+          "command": "kotTestToolkit.setTestManagerStatusFilterAll",
+          "when": "!kotTestToolkit.testManagerStatusFilterAll",
+          "group": "0_status@1"
+        },
+        {
+          "command": "kotTestToolkit.setTestManagerStatusFilterAllChecked",
+          "when": "kotTestToolkit.testManagerStatusFilterAll",
+          "group": "0_status@1"
+        },
+        {
+          "command": "kotTestToolkit.setTestManagerStatusFilterBuilt",
+          "when": "!kotTestToolkit.testManagerStatusFilterBuilt",
+          "group": "0_status@2"
+        },
+        {
+          "command": "kotTestToolkit.setTestManagerStatusFilterBuiltChecked",
+          "when": "kotTestToolkit.testManagerStatusFilterBuilt",
+          "group": "0_status@2"
+        },
+        {
+          "command": "kotTestToolkit.setTestManagerStatusFilterRunning",
+          "when": "!kotTestToolkit.testManagerStatusFilterRunning",
+          "group": "0_status@3"
+        },
+        {
+          "command": "kotTestToolkit.setTestManagerStatusFilterRunningChecked",
+          "when": "kotTestToolkit.testManagerStatusFilterRunning",
+          "group": "0_status@3"
+        },
+        {
+          "command": "kotTestToolkit.toggleTestManagerRelationshipHighlight",
+          "when": "!kotTestToolkit.testManagerRelationshipHighlightEnabled",
+          "group": "navigation@1"
+        },
+        {
+          "command": "kotTestToolkit.toggleTestManagerRelationshipHighlightChecked",
+          "when": "kotTestToolkit.testManagerRelationshipHighlightEnabled",
+          "group": "navigation@1"
+        },
+        {
+          "command": "kotTestToolkit.toggleTestManagerRelationshipFilter",
+          "when": "!kotTestToolkit.testManagerRelationshipFilterEnabled",
+          "group": "navigation@2"
+        },
+        {
+          "command": "kotTestToolkit.toggleTestManagerRelationshipFilterChecked",
+          "when": "kotTestToolkit.testManagerRelationshipFilterEnabled",
+          "group": "navigation@2"
+        }
+      ],
+      "kotTestToolkit.stepLibrary.relationships": [
+        {
+          "command": "kotTestToolkit.toggleStepLibraryRelationshipHighlight",
+          "when": "!kotTestToolkit.stepLibraryRelationshipHighlightEnabled",
+          "group": "navigation@1"
+        },
+        {
+          "command": "kotTestToolkit.toggleStepLibraryRelationshipHighlightChecked",
+          "when": "kotTestToolkit.stepLibraryRelationshipHighlightEnabled",
+          "group": "navigation@1"
+        },
+        {
+          "command": "kotTestToolkit.toggleStepLibraryRelationshipFilter",
+          "when": "!kotTestToolkit.stepLibraryRelationshipFilterEnabled",
+          "group": "navigation@2"
+        },
+        {
+          "command": "kotTestToolkit.toggleStepLibraryRelationshipFilterChecked",
+          "when": "kotTestToolkit.stepLibraryRelationshipFilterEnabled",
+          "group": "navigation@2"
+        }
+      ],
+      "kotTestToolkit.stepLibrary.relationshipsActive": [
+        {
+          "command": "kotTestToolkit.toggleStepLibraryRelationshipHighlight",
+          "when": "!kotTestToolkit.stepLibraryRelationshipHighlightEnabled",
+          "group": "navigation@1"
+        },
+        {
+          "command": "kotTestToolkit.toggleStepLibraryRelationshipHighlightChecked",
+          "when": "kotTestToolkit.stepLibraryRelationshipHighlightEnabled",
+          "group": "navigation@1"
+        },
+        {
+          "command": "kotTestToolkit.toggleStepLibraryRelationshipFilter",
+          "when": "!kotTestToolkit.stepLibraryRelationshipFilterEnabled",
+          "group": "navigation@2"
+        },
+        {
+          "command": "kotTestToolkit.toggleStepLibraryRelationshipFilterChecked",
+          "when": "kotTestToolkit.stepLibraryRelationshipFilterEnabled",
+          "group": "navigation@2"
+        }
+      ],
+      "kotTestToolkit.phaseSwitcher.create": [
+        {
+          "command": "kotTestToolkit.createMainScenario",
+          "group": "1_create@1"
+        },
+        {
+          "command": "kotTestToolkit.createNestedScenario",
+          "group": "1_create@2"
+        },
+        {
+          "command": "kotTestToolkit.createExportScenario",
+          "group": "1_create@3"
+        },
+        {
+          "command": "kotTestToolkit.createUserStep",
+          "group": "1_create@4"
+        },
+        {
+          "command": "kotTestToolkit.createFirstLaunchZip",
+          "when": "kotTestToolkit.firstLaunchArchiveAvailable",
+          "group": "1_create@5"
+        }
+      ],
+      "kotTestToolkit.phaseSwitcher.maintenance": [
+        {
+          "command": "kotTestToolkit.refreshGherkinSteps",
+          "group": "1_maintenance@1"
+        },
+        {
+          "command": "kotTestToolkit.processQueuedScenarioFiles",
+          "group": "1_maintenance@2"
+        },
+        {
+          "command": "kotTestToolkit.processAllScenarioFiles",
+          "group": "1_maintenance@3"
+        },
+        {
+          "command": "kotTestToolkit.cancelScenarioRepair",
+          "group": "1_maintenance@4"
+        }
+      ],
+      "kotTestToolkit.phaseSwitcher.ai": [
+        {
+          "command": "kotTestToolkit.generateConfigurationDiffImpactReportWithAi",
+          "group": "1_ai@1"
+        },
+        {
+          "command": "kotTestToolkit.openConfigurationDiffReport",
+          "group": "1_ai@2"
+        },
+        {
+          "command": "kotTestToolkit.reviewChangedTestsWithAi",
+          "group": "1_ai@3"
+        },
+        {
+          "command": "kotTestToolkit.openTestReviewReport",
+          "group": "1_ai@4"
         }
       ],
       "explorer/context": [
@@ -1251,6 +1547,22 @@
       ],
       "commandPalette": [
         {
+          "command": "kotTestToolkit.toggleTestManagerRelationshipHighlightChecked",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.toggleTestManagerRelationshipFilterChecked",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.toggleStepLibraryRelationshipHighlightChecked",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.toggleStepLibraryRelationshipFilterChecked",
+          "when": "false"
+        },
+        {
           "command": "kotTestToolkit.openProjectDefinition",
           "when": "false"
         },
@@ -1280,7 +1592,7 @@
         },
         {
           "command": "kotTestToolkit.createFirstLaunchZip",
-          "when": "true"
+          "when": "kotTestToolkit.firstLaunchArchiveAvailable"
         },
         {
           "command": "kotTestToolkit.openYamlParametersManager",
@@ -1381,7 +1693,12 @@
         {
           "id": "kotTestToolkitContainer",
           "title": "%ext.displayName%",
-          "icon": "res/icons/KOTfor1CTransparent.png"
+          "icon": "res/icons/KOTCommon.png"
+        },
+        {
+          "id": "kotTestToolkitLibraryContainer",
+          "title": "%ext.displayName%",
+          "icon": "res/icons/KOTLibrary.png"
         }
       ]
     },
@@ -1490,21 +1807,26 @@
           "id": "kotTestToolkit.phaseSwitcherView",
           "name": "%view.phaseSwitcher.name%",
           "type": "webview",
-          "contextualTitle": "%view.phaseSwitcher.contextualTitle%"
-        },
-        {
-          "id": "kotTestToolkit.stepLibrarySidebarView",
-          "name": "%view.stepLibrary.name%",
-          "type": "webview",
-          "contextualTitle": "%view.stepLibrary.contextualTitle%",
-          "visibility": "collapsed"
+          "contextualTitle": "KOT for 1C",
+          "icon": "res/icons/KOTTestManager.png",
+          "initialSize": 2
         },
         {
           "id": "kotTestToolkit.infobaseSidebarView",
           "name": "%view.infobases.name%",
           "type": "webview",
-          "contextualTitle": "%view.infobases.contextualTitle%",
-          "visibility": "collapsed"
+          "contextualTitle": "KOT for 1C",
+          "icon": "res/icons/KOTInfobases.png",
+          "initialSize": 1
+        }
+      ],
+      "kotTestToolkitLibraryContainer": [
+        {
+          "id": "kotTestToolkit.stepLibrarySidebarView",
+          "name": "%view.stepLibrary.name%",
+          "type": "webview",
+          "contextualTitle": "KOT for 1C",
+          "icon": "res/icons/KOTLibrary.png"
         }
       ]
     }
@@ -1537,6 +1859,8 @@
     "typescript": "^5.8.2"
   },
   "dependencies": {
+    "@cucumber/gherkin": "^42.0.1",
+    "@cucumber/messages": "^34.0.0",
     "jszip": "^3.10.1",
     "node-html-parser": "^7.0.1",
     "uuid": "^11.1.1",

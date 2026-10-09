@@ -29,6 +29,7 @@ import {
     applyScenarioCategoryToTemplate,
     validateScenarioCategoryValue
 } from './scenarioCategory';
+import { resolveMainScenarioGroupSeed } from './scenarioCreationSeed';
 
 type ScenarioIndex = {
     names: Set<string>;
@@ -2441,7 +2442,10 @@ export async function handleCreateNestedScenario(
  * Запрашивает имя, папку, создает папку с именем, файл scen.yaml, папку test с файлом name.yaml и папку files.
  * @param context Контекст расширения для доступа к ресурсам (шаблонам).
  */
-export async function handleCreateMainScenario(context: vscode.ExtensionContext): Promise<void> {
+export async function handleCreateMainScenario(
+    context: vscode.ExtensionContext,
+    seed?: unknown
+): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     const config = vscode.workspace.getConfiguration('kotTestToolkit');
     const newScenarioDefaults = getNewScenarioDefaults(config);
@@ -2485,7 +2489,8 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
     }
 
     // 2. Запрос имени вкладки/фазы
-    const tabName = await promptForMainScenarioGroup(t, knownMainScenarioGroups);
+    const tabName = resolveMainScenarioGroupSeed(seed)
+        ?? await promptForMainScenarioGroup(t, knownMainScenarioGroups);
     if (tabName === undefined) { console.log("[Cmd:createMainScenario] Cancelled at tab name input."); return; }
     const trimmedTabName = tabName.trim();
 
@@ -2500,17 +2505,6 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
     if (orderStr === undefined) { console.log("[Cmd:createMainScenario] Cancelled at order input."); return; }
     // Сохраняем как строку (или пустую строку) для замены плейсхолдера
     const orderForTemplate = orderStr?.trim() || ""; // Если пусто, плейсхолдер заменится на пустую строку
-
-    // 4. Запрос состояния по умолчанию (QuickPick)
-    const defaultStatePick = await vscode.window.showQuickPick(['true', 'false'], {
-        placeHolder: t('Default state in Test Manager (optional)'),
-        canPickMany: false,
-        ignoreFocusOut: true,
-        title: t('Checkbox enabled by default?')
-    });
-    // Если пользователь нажал Esc, defaultStatePick будет undefined. Считаем это как 'true'.
-    const defaultStateStr = defaultStatePick || 'true'; // Строка 'true' или 'false'
-
 
     // 2. Определение пути по умолчанию для диалога выбора папки
     let defaultDialogUri: vscode.Uri | undefined;
@@ -2611,7 +2605,6 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
                     Code_Placeholder: escapeYamlDoubleQuotedString(trimmedName),
                     UID_Placeholder: escapeYamlDoubleQuotedString(mainUid),
                     Phase_Placeholder: escapeYamlDoubleQuotedString(trimmedTabName),
-                    Default_Placeholder: defaultStateStr,
                     Order_Placeholder: orderForTemplate
                 }),
                 newScenarioLanguage

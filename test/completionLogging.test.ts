@@ -111,3 +111,90 @@ test('project definition completion logging does not grow with the number of mat
     assert.equal(many.itemCount, 100);
     assert.equal(many.logCount, one.logCount);
 });
+
+test('Feature IntelliSense offers structural Gherkin keywords outside a scenario body', async () => {
+    const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
+    const source = fs.readFileSync(path.join(process.cwd(), 'src', 'completionProvider.ts'), 'utf8');
+    const compiled = ts.transpileModule(source, {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+    }).outputText;
+    const vscode = {
+        CompletionItem: class {
+            public insertText?: unknown;
+            public range?: unknown;
+            public sortText?: string;
+            public constructor(public label: string, public kind: number) {}
+        },
+        CompletionItemKind: { Keyword: 14, Snippet: 1 },
+        CompletionList: class {
+            public constructor(public items: unknown[] = []) {}
+        },
+        MarkdownString: class {
+            public appendMarkdown(): this { return this; }
+            public appendCodeblock(): this { return this; }
+        },
+        Range: class {
+            public constructor(
+                public startLine: number,
+                public startCharacter: number,
+                public endLine: number,
+                public endCharacter: number
+            ) {}
+        },
+        SnippetString: class { public constructor(public value = '') {} },
+        l10n: { t: (message: string) => message }
+    };
+    const moduleObject = { exports: {} as Record<string, unknown> };
+    vm.runInNewContext(compiled, {
+        module: moduleObject,
+        exports: moduleObject.exports,
+        require: (specifier: string) => {
+            if (specifier === 'vscode') {
+                return vscode;
+            }
+            if (specifier === './gherkinLanguage') {
+                return {
+                    getScenarioLanguageForDocument: () => 'en',
+                    getScenarioCallKeyword: () => 'Call'
+                };
+            }
+            if (specifier === './gherkinInsertionContext') {
+                return { getGherkinInsertionContext: () => null };
+            }
+            if (specifier === './projectDefinitionSnippet') {
+                return projectDefinitionSnippet;
+            }
+            if (specifier === './blockKeywordParser') {
+                return { parseBlockKeyword: () => null, getBlockClosingKeyword: () => null };
+            }
+            if (specifier === './gherkinTableUtils') {
+                return { normalizeMultilineStepInsertText: (value: string) => value };
+            }
+            return {};
+        },
+        console: { log: () => undefined }
+    });
+
+    const Provider = moduleObject.exports.DriveCompletionProvider as { prototype: object };
+    const provider = Object.create(Provider.prototype);
+    const lines = ['# language: en', 'Feature: Project feature', ''];
+    const document = {
+        fileName: '/repo/project.feature',
+        uri: { toString: () => 'file:///repo/project.feature' },
+        lineCount: lines.length,
+        getText: () => lines.join('\n'),
+        lineAt: (line: number) => ({ text: lines[line] })
+    };
+
+    const result = await provider.provideCompletionItems(
+        document,
+        { line: 2, character: 0 },
+        { isCancellationRequested: false },
+        {}
+    );
+    const labels = Array.from(result.items ?? result, (item: { label: string }) => item.label);
+
+    assert.ok(labels.includes('Scenario'));
+    assert.ok(labels.includes('Scenario Outline'));
+    assert.ok(labels.includes('Background'));
+});

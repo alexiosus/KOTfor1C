@@ -98,12 +98,32 @@ function builtInVariant(
 
 function builtInDefinitions(catalog: ResolvedStepCatalog): readonly ProjectDefinition[] {
     const result: ProjectDefinition[] = [];
+    const aliases = new Set<string>();
+    const append = (
+        step: BuiltInStepDefinition,
+        language: 'ru' | 'en',
+        variant: StepTextVariant
+    ): void => {
+        const definition = builtInVariant(catalog, step, language, variant);
+        const invocationLine = variant.pattern.split(/\r\n|\r|\n/u, 1)[0] ?? variant.pattern;
+        const aliasKey = [
+            language,
+            normalizeProjectDefinitionTemplate(invocationLine).toLocaleLowerCase(),
+            normalizeProjectDefinitionTemplate(variant.description || '').toLocaleLowerCase(),
+            definition.parameters.map(parameter => parameter.source).join(',')
+        ].join('\0');
+        if (aliases.has(aliasKey)) {
+            return;
+        }
+        aliases.add(aliasKey);
+        result.push(definition);
+    };
     for (const step of executableStepDefinitions(catalog.steps)) {
         if (step.ru) {
-            result.push(builtInVariant(catalog, step, 'ru', step.ru));
+            append(step, 'ru', step.ru);
         }
         if (step.en) {
-            result.push(builtInVariant(catalog, step, 'en', step.en));
+            append(step, 'en', step.en);
         }
     }
     return result;

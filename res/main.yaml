@@ -14,11 +14,9 @@
 KOTМетаданные:
     Описание: |
         
-        -
     PhaseSwitcher:
         Tab: "Phase_Placeholder"
         OrderOnTab: Order_Placeholder
-        Default: Default_Placeholder
 
 ПараметрыСценария:
 

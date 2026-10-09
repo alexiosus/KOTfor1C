@@ -76,6 +76,16 @@ const MAINTENANCE_ACTIONS = new Set<InfobaseMaintenanceAction>([
     'importCf'
 ]);
 
+const ACTIONS_AVAILABLE_WHILE_RUNNING = new Set<keyof InfobaseSidebarOperations>([
+    'openEnterprise',
+    'openDesigner',
+    'openFormExplorer',
+    'reveal',
+    'logs'
+]);
+
+const PASSIVE_ACTIONS = new Set<keyof InfobaseSidebarOperations>(['reveal', 'logs']);
+
 function cleanId(value: unknown): string | null {
     if (typeof value !== 'string') {
         return null;
@@ -118,8 +128,12 @@ export function createDeferredInfobaseSidebarOperations(
     return () => {
         cached ??= import('./infobaseManager.js').then(manager => Object.freeze({
             createInfobase: () => manager.createInfobaseInteractive(context),
-            openEnterprise: (infobase: ManagedInfobaseRecord) => manager.openInfobaseInEnterprise(context, infobase),
-            openDesigner: (infobase: ManagedInfobaseRecord) => manager.openInfobaseInDesigner(context, infobase),
+            openEnterprise: (infobase: ManagedInfobaseRecord) => manager.openInfobaseInEnterprise(context, infobase, {
+                forcePlatformPicker: true
+            }),
+            openDesigner: (infobase: ManagedInfobaseRecord) => manager.openInfobaseInDesigner(context, infobase, {
+                forcePlatformPicker: true
+            }),
             openFormExplorer: async (infobase: ManagedInfobaseRecord) => await vscode.commands.executeCommand(
                 'kotTestToolkit.openFormExplorerForInfobase',
                 infobase.infobasePath
@@ -186,7 +200,8 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
     private loadGeneration = 0;
     private refreshInProgress = false;
     private expectedRefreshInvalidation = false;
-    private pendingAction: string | null = null;
+    private readonly pendingActions = new Map<string, keyof InfobaseSidebarOperations>();
+    private refreshAfterActions = false;
     private snapshot: ManagedInfobaseSnapshot | null = null;
     private model: InfobaseSidebarModel | null = null;
 
@@ -242,6 +257,7 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
         this.view = null;
         this.snapshot = null;
         this.model = null;
+        this.pendingActions.clear();
     }
 
     public async refresh(): Promise<void> {
@@ -264,7 +280,7 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
             return;
         }
         this.loadGeneration += 1;
-        if (this.refreshInProgress || this.pendingAction || !this.ready || !this.view?.visible) {
+        if (this.refreshInProgress || this.pendingActions.size > 0 || !this.ready || !this.view?.visible) {
             this.pendingReload = true;
             return;
         }
@@ -317,15 +333,22 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
         infobaseId: string,
         action: keyof InfobaseSidebarOperations
     ): Promise<void> {
-        if (this.pendingAction) {
-            return;
-        }
         const record = action === 'createInfobase' ? null : this.findRecord(infobaseId);
         if (action !== 'createInfobase' && !record) {
             return;
         }
-        this.pendingAction = `${action}\0${infobaseId}`;
-        await this.view?.webview.postMessage({ command: 'pending', infobaseId, action });
+        const passive = PASSIVE_ACTIONS.has(action);
+        if (this.pendingActions.has(infobaseId) && !passive) {
+            return;
+        }
+        const item = this.model?.items.find(candidate => candidate.id === infobaseId);
+        if (item?.running && !ACTIONS_AVAILABLE_WHILE_RUNNING.has(action)) {
+            return;
+        }
+        if (!passive) {
+            this.pendingActions.set(infobaseId, action);
+            await this.view?.webview.postMessage({ command: 'pending', infobaseId, action });
+        }
         try {
             const operations = await this.services.loadOperations();
             if (action === 'createInfobase') {
@@ -333,12 +356,19 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
             } else {
                 await operations[action](record!);
             }
-            await this.load(true);
+            this.refreshAfterActions = true;
         } catch (error) {
             await this.postError(error);
         } finally {
-            this.pendingAction = null;
-            await this.view?.webview.postMessage({ command: 'pending', infobaseId: null, action: null });
+            if (!passive) {
+                this.pendingActions.delete(infobaseId);
+                await this.view?.webview.postMessage({ command: 'pending', infobaseId, action: null });
+            }
+            if (this.pendingActions.size === 0 && this.refreshAfterActions) {
+                this.refreshAfterActions = false;
+                this.pendingReload = false;
+                await this.load(true);
+            }
         }
     }
 
@@ -348,6 +378,10 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
             return;
         }
         if (!view.visible) {
+            this.pendingReload = true;
+            return;
+        }
+        if (this.pendingActions.size > 0) {
             this.pendingReload = true;
             return;
         }
@@ -418,8 +452,8 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
     <title>${t('Infobases')}</title>
 </head>
 <body>
-    <main class="infobase-sidebar" data-runtime-marker="${t('Running from KOT')}" data-open-enterprise="${t('Open in 1C:Enterprise')}" data-open-designer="${t('Open in Designer')}" data-maintenance="${t('Maintenance actions')}" data-open-form-explorer="${t('Open KOT Form Explorer')}" data-copy="${t('Copy infobase')}" data-recreate="${t('Recreate infobase')}" data-update-configuration="${t('Update configuration')}" data-update-from-sources="${t('Update from configured source directory')}" data-edit="${t('Edit infobase')}" data-add-to-launcher="${t('Add to 1C launcher')}" data-remove-from-launcher="${t('Remove from launcher')}" data-reveal="${t('Open infobase folder')}" data-logs="${t('Show infobase logs')}" data-export-dt="${t('Export DT')}" data-import-dt="${t('Import DT')}" data-export-cf="${t('Export CF')}" data-import-cf="${t('Import CF')}" data-general-heading="${t('Other actions')}" data-dt-heading="${t('Infobase data · DT')}" data-cf-heading="${t('Configuration · CF and files')}" data-refreshing="${t('Refreshing infobases...')}" data-loading="${t('Loading infobases...')}" data-empty="${t('No managed infobases')}" data-running="${t('Running action...')}" data-error="${t('Unable to load infobases')}">
-        <div id="list" class="infobase-list" role="listbox" aria-label="${t('Infobases')}"></div>
+    <main class="infobase-sidebar" data-runtime-marker="${t('Running from KOT')}" data-pending-marker="${t('Infobase operation in progress')}" data-open-enterprise="${t('Open in 1C:Enterprise')}" data-open-designer="${t('Open in Designer')}" data-maintenance="${t('Maintenance actions')}" data-open-form-explorer="${t('Open KOT Form Explorer')}" data-copy="${t('Copy infobase')}" data-recreate="${t('Recreate infobase')}" data-update-configuration="${t('Update configuration')}" data-edit="${t('Edit infobase')}" data-add-to-launcher="${t('Add to 1C launcher')}" data-remove-from-launcher="${t('Remove from launcher')}" data-reveal="${t('Open infobase folder')}" data-logs="${t('Show infobase logs')}" data-export-dt="${t('Export DT')}" data-import-dt="${t('Import DT')}" data-export-cf="${t('Export .cf')}" data-general-heading="${t('Other actions')}" data-dt-heading="${t('Infobase data · DT')}" data-cf-heading="${t('Configuration · CF and files')}" data-kot-heading="${t('KOT tools')}" data-refreshing="${t('Refreshing infobases...')}" data-loading="${t('Loading infobases...')}" data-empty="${t('No managed infobases')}" data-running="${t('Running action...')}" data-error="${t('Unable to load infobases')}">
+        <div id="list" class="infobase-list" role="list" aria-label="${t('Infobases')}"></div>
         <div id="status" class="infobase-status" role="status" aria-live="polite"></div>
     </main>
     <script nonce="${nonce}" src="${protocolUri}"></script>

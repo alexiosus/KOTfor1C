@@ -118,8 +118,7 @@ jobs:
             --ref "$SOURCE_TAG" \
             --commit "$SOURCE_COMMIT" \
             --timestamp "$SOURCE_TIMESTAMP" \
-            --output "$PUBLICATION_ROOT" \
-            --legacy-html res/steps.htm
+            --output "$PUBLICATION_ROOT"
 
           node - "$PUBLICATION_ROOT" "$VERSION" "$SOURCE_COMMIT" <<'NODE'
           const crypto = require('node:crypto');

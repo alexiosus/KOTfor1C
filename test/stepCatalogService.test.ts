@@ -18,11 +18,6 @@ import { VersionedCatalogResult } from '../src/stepCatalogClient';
 const VERSION = '1.2.043.28';
 const INDEX_URL = 'https://catalog.example.test/index.json';
 const SOURCE_COMMIT = '0123456789abcdef0123456789abcdef01234567';
-const LEGACY_HTML = `
-<table><tr class="R1">
-<td>И пауза 1</td><td>Пауза</td><td>And 1 second pause</td><td>Pause</td>
-</tr></table>`;
-
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
     let resolve!: (value: T) => void;
     const promise = new Promise<T>(accept => { resolve = accept; });
@@ -80,15 +75,12 @@ function cachedResult(catalog: BuiltInStepCatalog): VersionedCatalogResult {
 interface CoordinatorFixtureOptions {
     readonly folders?: readonly WorkspaceStepCatalogFolder[];
     readonly configuration?: Partial<WorkspaceStepCatalogConfiguration>;
-    readonly bundledHtml?: string;
-    readonly customHtml?: string;
     readonly changelog?: string;
     readonly changelogMtime?: number;
     readonly getWorkspaceFolder?: (
         documentUri: string | undefined,
         folders: readonly WorkspaceStepCatalogFolder[]
     ) => WorkspaceStepCatalogFolder | undefined;
-    readonly readCustomHtml?: (url: string) => Promise<string>;
     readonly getCachedExactCatalog?: (
         indexUrl: string,
         version: string
@@ -97,6 +89,9 @@ interface CoordinatorFixtureOptions {
         indexUrl: string,
         version: string
     ) => Promise<VersionedCatalogResult | null>;
+    readonly getLatestCatalog?: (
+        indexUrl: string
+    ) => Promise<VersionedCatalogResult | null>;
 }
 
 function createCoordinator(options: CoordinatorFixtureOptions = {}): {
@@ -104,6 +99,7 @@ function createCoordinator(options: CoordinatorFixtureOptions = {}): {
     dependencies: WorkspaceStepCatalogDependencies;
     cachedExactCalls: Array<{ indexUrl: string; version: string }>;
     exactCalls: Array<{ indexUrl: string; version: string }>;
+    latestCalls: string[];
     configurationFolderUris: Array<string | undefined>;
     setConfiguration(value: Partial<WorkspaceStepCatalogConfiguration>): void;
     setChangelog(value: string, mtime: number): void;
@@ -113,13 +109,13 @@ function createCoordinator(options: CoordinatorFixtureOptions = {}): {
         vanessaVersion: '',
         vanessaEpfPath: 'tools/vanessa/vanessa-automation.epf',
         catalogIndexUrl: INDEX_URL,
-        externalUrl: '',
         ...options.configuration
     };
     let changelog = options.changelog ?? `# Changelog\n## ${VERSION}\n`;
     let changelogMtime = options.changelogMtime ?? 100;
     const cachedExactCalls: Array<{ indexUrl: string; version: string }> = [];
     const exactCalls: Array<{ indexUrl: string; version: string }> = [];
+    const latestCalls: string[] = [];
     const configurationFolderUris: Array<string | undefined> = [];
 
     const dependencies: WorkspaceStepCatalogDependencies = {
@@ -142,9 +138,6 @@ function createCoordinator(options: CoordinatorFixtureOptions = {}): {
             ? { mtime: changelogMtime, size: changelog.length }
             : null,
         readTextFile: async () => changelog,
-        readBundledHtml: async () => options.bundledHtml ?? LEGACY_HTML,
-        readCustomHtml: url => options.readCustomHtml?.(url)
-            ?? Promise.resolve(options.customHtml ?? LEGACY_HTML),
         getCachedExactCatalog: async (indexUrl, version) => {
             cachedExactCalls.push({ indexUrl, version });
             return options.getCachedExactCatalog?.(indexUrl, version) ?? null;
@@ -157,6 +150,14 @@ function createCoordinator(options: CoordinatorFixtureOptions = {}): {
             exactCalls.push({ indexUrl, version });
             return options.getExactCatalog?.(indexUrl, version) ?? null;
         },
+        getLatestCatalog: async indexUrl => {
+            latestCalls.push(indexUrl);
+            return options.getLatestCatalog?.(indexUrl) ?? null;
+        },
+        refreshLatestCatalog: async indexUrl => {
+            latestCalls.push(indexUrl);
+            return options.getLatestCatalog?.(indexUrl) ?? null;
+        },
         warn: () => undefined
     };
 
@@ -165,6 +166,7 @@ function createCoordinator(options: CoordinatorFixtureOptions = {}): {
         dependencies,
         cachedExactCalls,
         exactCalls,
+        latestCalls,
         configurationFolderUris,
         setConfiguration(value) {
             configuration = { ...configuration, ...value };
@@ -243,113 +245,49 @@ test('versioned category metadata is not exposed as IntelliSense steps', async (
     assert.deepEqual(resolved.steps.map(step => step.ru?.pattern), ['И пауза 1']);
 });
 
-test('first offline request returns bundled catalog without waiting for remote completion', async () => {
-    const remote = deferred<VersionedCatalogResult | null>();
-    const { coordinator } = createCoordinator({ getExactCatalog: () => remote.promise });
-
-    const resolved = await Promise.race([
-        coordinator.getCatalog('file:///workspace/test.yaml'),
-        new Promise<never>((_, reject) => setTimeout(
-            () => reject(new Error('fallback waited for remote catalog')),
-            50
-        ))
-    ]);
-    assert.equal(resolved.source, 'bundled-html');
-    assert.equal(resolved.steps.length, 1);
-});
-
-test('background exact catalog emits one change after fallback was returned', async () => {
-    const remote = deferred<VersionedCatalogResult | null>();
-    const { coordinator } = createCoordinator({ getExactCatalog: () => remote.promise });
-    const events: WorkspaceStepCatalogChangeEvent[] = [];
-    coordinator.onDidChangeCatalog(event => events.push(event));
-
-    await coordinator.getCatalog('file:///workspace/test.yaml');
-    const catalog = createCatalog();
-    remote.resolve(downloadedResult(catalog));
-    await coordinator.whenIdle();
-
-    assert.deepEqual(events.map(event => event.newIdentity), [
-        `versioned:${sha256Hex(JSON.stringify(catalog))}`
-    ]);
-});
-
-test('unknown or malformed configured version uses fallback without a catalog request', async () => {
-    const unknown = createCoordinator({ changelog: '# No supported version\n' });
-    assert.equal((await unknown.coordinator.getCatalog('file:///workspace/a.yaml')).source, 'bundled-html');
+test('unknown or malformed Vanessa version resolves the latest versioned catalog', async () => {
+    const latest = createCatalog('1.2.043.29');
+    const unknown = createCoordinator({
+        changelog: '# No supported version\n',
+        getLatestCatalog: async () => downloadedResult(latest)
+    });
+    const unknownResult = await unknown.coordinator.getCatalog('file:///workspace/a.yaml');
+    assert.equal(unknownResult.catalogVersion, '1.2.043.29');
+    assert.equal(unknownResult.source, 'versioned-download');
+    assert.deepEqual(unknown.latestCalls, [INDEX_URL]);
     assert.equal(unknown.exactCalls.length, 0);
 
     const malformed = createCoordinator({
         configuration: { vanessaVersion: '1.2.43' },
-        changelog: `## ${VERSION}\n`
+        getLatestCatalog: async () => downloadedResult(latest)
     });
-    assert.equal((await malformed.coordinator.getCatalog('file:///workspace/a.yaml')).source, 'bundled-html');
-    assert.equal(malformed.exactCalls.length, 0);
-});
-
-test('invalid custom HTML falls through to the bundled catalog', async () => {
-    const { coordinator } = createCoordinator({
-        configuration: { vanessaVersion: '', externalUrl: 'https://custom.example/steps.htm' },
-        customHtml: '<html>not a steps table</html>',
-        changelog: '# Unknown\n'
-    });
-
-    const resolved = await coordinator.getCatalog('file:///workspace/a.yaml');
-    assert.equal(resolved.source, 'bundled-html');
-    assert.equal(resolved.steps[0].ru?.pattern, 'И пауза 1');
-    await coordinator.whenIdle();
-});
-
-test('custom legacy HTML never blocks the first bundled catalog result', async () => {
-    const custom = deferred<string>();
-    const { coordinator } = createCoordinator({
-        configuration: { vanessaVersion: '', externalUrl: 'https://custom.example/steps.htm' },
-        changelog: '# Unknown\n',
-        readCustomHtml: () => custom.promise
-    });
-
-    const resolved = await Promise.race([
-        coordinator.getCatalog('file:///workspace/a.yaml'),
-        new Promise<never>((_, reject) => setTimeout(
-            () => reject(new Error('bundled fallback waited for custom HTML')),
-            50
-        ))
-    ]);
-    assert.equal(resolved.source, 'bundled-html');
-});
-
-test('background custom HTML replaces only the bundled fallback and emits a change', async () => {
-    const custom = deferred<string>();
-    const { coordinator } = createCoordinator({
-        configuration: { vanessaVersion: '', externalUrl: 'https://custom.example/steps.htm' },
-        changelog: '# Unknown\n',
-        readCustomHtml: () => custom.promise
-    });
-    const events: WorkspaceStepCatalogChangeEvent[] = [];
-    coordinator.onDidChangeCatalog(event => events.push(event));
-
     assert.equal(
-        (await coordinator.getCatalog('file:///workspace/a.yaml')).source,
-        'bundled-html'
+        (await malformed.coordinator.getCatalog('file:///workspace/a.yaml')).catalogVersion,
+        '1.2.043.29'
     );
-    custom.resolve(LEGACY_HTML.replace('И пауза 1', 'И пауза 2'));
-    await coordinator.whenIdle();
-
-    const resolved = await coordinator.getCatalog('file:///workspace/a.yaml');
-    assert.equal(resolved.source, 'custom-html');
-    assert.equal(resolved.steps[0].ru?.pattern, 'И пауза 2');
-    assert.equal(events.length, 1);
+    assert.deepEqual(malformed.latestCalls, [INDEX_URL]);
 });
 
-test('folders using the same version reuse one background exact lookup', async () => {
-    const remote = deferred<VersionedCatalogResult | null>();
+test('missing versioned catalog returns an unavailable empty catalog instead of legacy HTML', async () => {
+    const fixture = createCoordinator({
+        changelog: '# Unknown\n',
+        getLatestCatalog: async () => null
+    });
+
+    const resolved = await fixture.coordinator.getCatalog('file:///workspace/a.yaml');
+
+    assert.equal(resolved.source, 'unavailable');
+    assert.deepEqual(resolved.steps, []);
+});
+
+test('folders using the same version reuse one exact lookup', async () => {
     const { coordinator, exactCalls } = createCoordinator({
         folders: [
             { uri: 'file:///first', fsPath: '/first' },
             { uri: 'file:///second', fsPath: '/second' }
         ],
         configuration: { vanessaVersion: VERSION },
-        getExactCatalog: () => remote.promise
+        getExactCatalog: async () => downloadedResult(createCatalog())
     });
 
     await Promise.all([
@@ -379,17 +317,17 @@ test('configuration invalidation suppresses a stale background result', async ()
     const events: WorkspaceStepCatalogChangeEvent[] = [];
     fixture.coordinator.onDidChangeCatalog(event => events.push(event));
 
-    await fixture.coordinator.getCatalog('file:///workspace/a.yaml');
+    const oldRequest = fixture.coordinator.getCatalog('file:///workspace/a.yaml');
     fixture.setConfiguration({ vanessaVersion: '1.2.043.29' });
     fixture.coordinator.invalidateConfiguration('file:///workspace');
-    await fixture.coordinator.getCatalog('file:///workspace/a.yaml');
+    const newRequest = fixture.coordinator.getCatalog('file:///workspace/a.yaml');
 
     oldRemote.resolve(downloadedResult(createCatalog(VERSION, '-old')));
     const newest = createCatalog('1.2.043.29', '-new');
     newRemote.resolve(downloadedResult(newest));
+    const [, resolvedNewest] = await Promise.all([oldRequest, newRequest]);
     await fixture.coordinator.whenIdle();
 
-    assert.deepEqual(events.map(event => event.newIdentity), [
-        `versioned:${sha256Hex(JSON.stringify(newest))}`
-    ]);
+    assert.equal(resolvedNewest.identity, `versioned:${sha256Hex(JSON.stringify(newest))}`);
+    assert.deepEqual(events, []);
 });

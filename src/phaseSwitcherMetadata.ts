@@ -1,9 +1,7 @@
 interface LegacyPhaseSwitcherMetadata {
     hasTab: boolean;
-    hasDefault: boolean;
     hasOrder: boolean;
     tabRaw?: string;
-    defaultRaw?: string;
     orderRaw?: string;
     lineIndexes: Set<number>;
 }
@@ -17,19 +15,15 @@ interface KotMetadataStructure {
     phaseIndent: number;
     phaseEndIndex: number;
     hasTab: boolean;
-    hasDefault: boolean;
     hasOrder: boolean;
     tabRaw?: string;
-    defaultRaw?: string;
     orderRaw?: string;
 }
 
 export interface PhaseSwitcherMetadata {
     tabName?: string;
-    defaultState?: boolean;
     order?: number;
     hasTab: boolean;
-    hasDefault: boolean;
     hasOrder: boolean;
     hasAny: boolean;
     source: 'none' | 'legacy' | 'kot' | 'both';
@@ -50,7 +44,6 @@ interface KotMetadataPresence {
     hasPhaseSwitcher: boolean;
     hasTab: boolean;
     hasOrder: boolean;
-    hasDefault: boolean;
 }
 
 function normalizeLeadingTabs(line: string): string {
@@ -114,17 +107,6 @@ function parseYamlScalar(rawValue: string | undefined): string {
     return raw;
 }
 
-function parseBoolean(rawValue: string | undefined): boolean | undefined {
-    const normalized = parseYamlScalar(rawValue).trim().toLowerCase();
-    if (normalized === 'true') {
-        return true;
-    }
-    if (normalized === 'false') {
-        return false;
-    }
-    return undefined;
-}
-
 function parseNumber(rawValue: string | undefined): number | undefined {
     const normalized = parseYamlScalar(rawValue).trim();
     if (!normalized) {
@@ -150,20 +132,6 @@ function formatStringScalar(rawValue: string | undefined): string {
     return `"${escapeDoubleQuotedString(value)}"`;
 }
 
-function formatBooleanScalar(rawValue: string | undefined): string {
-    const parsed = parseBoolean(rawValue);
-    if (parsed !== undefined) {
-        return parsed ? 'true' : 'false';
-    }
-
-    const normalized = parseYamlScalar(rawValue).trim();
-    if (!normalized) {
-        return '';
-    }
-
-    return `"${escapeDoubleQuotedString(normalized)}"`;
-}
-
 function formatOrderScalar(rawValue: string | undefined): string {
     const parsed = parseNumber(rawValue);
     if (parsed !== undefined) {
@@ -181,14 +149,13 @@ function formatOrderScalar(rawValue: string | undefined): string {
 function parseLegacyPhaseSwitcherMetadata(lines: string[]): LegacyPhaseSwitcherMetadata {
     const result: LegacyPhaseSwitcherMetadata = {
         hasTab: false,
-        hasDefault: false,
         hasOrder: false,
         lineIndexes: new Set<number>()
     };
 
     for (let index = 0; index < lines.length; index++) {
         const line = lines[index];
-        const markerMatch = line.match(/^\s*#\s*PhaseSwitcher_(Tab|Default|OrderOnTab):\s*(.*)$/);
+        const markerMatch = line.match(/^\s*#\s*PhaseSwitcher_(Tab|OrderOnTab):\s*(.*)$/);
         if (!markerMatch) {
             continue;
         }
@@ -200,9 +167,6 @@ function parseLegacyPhaseSwitcherMetadata(lines: string[]): LegacyPhaseSwitcherM
         if (key === 'Tab') {
             result.hasTab = true;
             result.tabRaw = value;
-        } else if (key === 'Default') {
-            result.hasDefault = true;
-            result.defaultRaw = value;
         } else if (key === 'OrderOnTab') {
             result.hasOrder = true;
             result.orderRaw = value;
@@ -222,7 +186,6 @@ function findKotMetadataStructure(lines: string[]): KotMetadataStructure {
         phaseIndent: -1,
         phaseEndIndex: -1,
         hasTab: false,
-        hasDefault: false,
         hasOrder: false
     };
 
@@ -276,7 +239,7 @@ function findKotMetadataStructure(lines: string[]): KotMetadataStructure {
             continue;
         }
 
-        const match = stripBom(line).trim().match(/^(Tab|Default|OrderOnTab):\s*(.*)$/);
+        const match = stripBom(line).trim().match(/^(Tab|OrderOnTab):\s*(.*)$/);
         if (!match) {
             continue;
         }
@@ -287,9 +250,6 @@ function findKotMetadataStructure(lines: string[]): KotMetadataStructure {
         if (key === 'Tab') {
             empty.hasTab = true;
             empty.tabRaw = value;
-        } else if (key === 'Default') {
-            empty.hasDefault = true;
-            empty.defaultRaw = value;
         } else if (key === 'OrderOnTab') {
             empty.hasOrder = true;
             empty.orderRaw = value;
@@ -324,18 +284,14 @@ function findTopLevelKotMetadataRanges(lines: string[]): KotMetadataBlockRange[]
 
 function parsePhaseSwitcherMetadataFromRaw(
     hasTab: boolean,
-    hasDefault: boolean,
     hasOrder: boolean,
     tabRaw?: string,
-    defaultRaw?: string,
     orderRaw?: string
 ): Omit<PhaseSwitcherMetadata, 'source' | 'hasAny'> {
     return {
         tabName: hasTab ? parseString(tabRaw) : undefined,
-        defaultState: hasDefault ? parseBoolean(defaultRaw) : undefined,
         order: hasOrder ? parseNumber(orderRaw) : undefined,
         hasTab,
-        hasDefault,
         hasOrder
     };
 }
@@ -347,30 +303,24 @@ export function parsePhaseSwitcherMetadata(documentText: string): PhaseSwitcherM
 
     const legacyParsed = parsePhaseSwitcherMetadataFromRaw(
         legacy.hasTab,
-        legacy.hasDefault,
         legacy.hasOrder,
         legacy.tabRaw,
-        legacy.defaultRaw,
         legacy.orderRaw
     );
     const kotParsed = parsePhaseSwitcherMetadataFromRaw(
         kot.hasTab,
-        kot.hasDefault,
         kot.hasOrder,
         kot.tabRaw,
-        kot.defaultRaw,
         kot.orderRaw
     );
 
-    const hasLegacyAny = legacy.hasTab || legacy.hasDefault || legacy.hasOrder;
-    const hasKotAny = kot.hasTab || kot.hasDefault || kot.hasOrder;
+    const hasLegacyAny = legacy.hasTab || legacy.hasOrder;
+    const hasKotAny = kot.hasTab || kot.hasOrder;
 
     const result: PhaseSwitcherMetadata = {
         tabName: legacyParsed.tabName,
-        defaultState: legacyParsed.defaultState,
         order: legacyParsed.order,
         hasTab: legacyParsed.hasTab,
-        hasDefault: legacyParsed.hasDefault,
         hasOrder: legacyParsed.hasOrder,
         hasAny: hasLegacyAny,
         source: hasLegacyAny ? 'legacy' : 'none'
@@ -381,17 +331,13 @@ export function parsePhaseSwitcherMetadata(documentText: string): PhaseSwitcherM
             result.tabName = kotParsed.tabName;
             result.hasTab = true;
         }
-        if (kotParsed.hasDefault) {
-            result.defaultState = kotParsed.defaultState;
-            result.hasDefault = true;
-        }
         if (kotParsed.hasOrder) {
             result.order = kotParsed.order;
             result.hasOrder = true;
         }
     }
 
-    result.hasAny = result.hasTab || result.hasDefault || result.hasOrder;
+    result.hasAny = result.hasTab || result.hasOrder;
     if (hasKotAny && hasLegacyAny) {
         result.source = 'both';
     } else if (hasKotAny) {
@@ -415,18 +361,13 @@ function buildPhaseSwitcherLinesFromLegacy(legacy: LegacyPhaseSwitcherMetadata, 
     if (legacy.hasOrder) {
         lines.push(`${keyIndent}OrderOnTab: ${formatOrderScalar(legacy.orderRaw)}`);
     }
-    if (legacy.hasDefault) {
-        lines.push(`${keyIndent}Default: ${formatBooleanScalar(legacy.defaultRaw)}`);
-    }
-
     return lines;
 }
 
 function buildDescriptionLines(metadataIndent: number): string[] {
     return [
         `${' '.repeat(metadataIndent + 4)}Описание: |`,
-        `${' '.repeat(metadataIndent + 8)}`,
-        `${' '.repeat(metadataIndent + 4)}-`
+        `${' '.repeat(metadataIndent + 8)}`
     ];
 }
 
@@ -585,8 +526,7 @@ function getKotMetadataPresenceFromBlockLines(blockLines: string[]): KotMetadata
         hasDescription: structure.hasDescription,
         hasPhaseSwitcher: structure.phaseLineIndex !== -1,
         hasTab: structure.hasTab,
-        hasOrder: structure.hasOrder,
-        hasDefault: structure.hasDefault
+        hasOrder: structure.hasOrder
     };
 }
 
@@ -606,10 +546,6 @@ function isKotMetadataMissingComparedTo(
     if (baseline.hasOrder && !current.hasOrder) {
         return true;
     }
-    if (baseline.hasDefault && !current.hasDefault) {
-        return true;
-    }
-
     return false;
 }
 
@@ -680,7 +616,7 @@ export function migrateLegacyPhaseSwitcherMetadata(
     const originalLines = documentText.split(/\r\n|\r|\n/);
     const legacy = parseLegacyPhaseSwitcherMetadata(originalLines);
     const migrateLegacyPhaseSwitcherTags = options.migrateLegacyPhaseSwitcherTags ?? true;
-    const hasLegacyMetadata = migrateLegacyPhaseSwitcherTags && (legacy.hasTab || legacy.hasDefault || legacy.hasOrder);
+    const hasLegacyMetadata = migrateLegacyPhaseSwitcherTags && (legacy.hasTab || legacy.hasOrder);
     const cachedKotMetadataBlockLines = normalizeCachedKotMetadataBlockLines(options.cachedKotMetadataBlock);
     const cachedKotMetadataPresence = getKotMetadataPresenceFromBlockLines(cachedKotMetadataBlockLines);
 
@@ -713,8 +649,7 @@ export function migrateLegacyPhaseSwitcherMetadata(
             hasDescription: kot.hasDescription,
             hasPhaseSwitcher: kot.phaseLineIndex !== -1,
             hasTab: kot.hasTab,
-            hasOrder: kot.hasOrder,
-            hasDefault: kot.hasDefault
+            hasOrder: kot.hasOrder
         };
 
         if (isKotMetadataMissingComparedTo(currentKotPresence, cachedKotMetadataPresence)) {
@@ -758,10 +693,6 @@ export function migrateLegacyPhaseSwitcherMetadata(
             if (legacy.hasOrder && !kot.hasOrder) {
                 missingLines.push(`${keyIndent}OrderOnTab: ${formatOrderScalar(legacy.orderRaw)}`);
             }
-            if (legacy.hasDefault && !kot.hasDefault) {
-                missingLines.push(`${keyIndent}Default: ${formatBooleanScalar(legacy.defaultRaw)}`);
-            }
-
             if (missingLines.length > 0) {
                 lines.splice(kot.phaseEndIndex, 0, ...missingLines);
                 kot = findKotMetadataStructure(lines);

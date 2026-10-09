@@ -100,7 +100,7 @@ export function migrateLegacySelectionStates(
             continue;
         }
 
-        migrated[key] = scenario.defaultState === true;
+        migrated[key] = false;
     }
 
     return migrated;

@@ -35,17 +35,20 @@
 
     function parseRelationshipState(value) {
         const source = value && typeof value === 'object' ? value : {};
-        const byKey = new Map();
-        if (Array.isArray(source.relationships)) {
-            for (const candidate of source.relationships) {
-                if (!candidate || typeof candidate !== 'object' || typeof candidate.scenarioKey !== 'string') {
+        const normalizeRelationships = (values, keyName) => {
+            const byKey = new Map();
+            if (!Array.isArray(values)) {
+                return Object.freeze([]);
+            }
+            for (const candidate of values) {
+                if (!candidate || typeof candidate !== 'object' || typeof candidate[keyName] !== 'string') {
                     continue;
                 }
-                const scenarioKey = candidate.scenarioKey.trim();
-                if (!scenarioKey) {
+                const key = candidate[keyName].trim();
+                if (!key) {
                     continue;
                 }
-                const current = byKey.get(scenarioKey) || { scenarioKey };
+                const current = byKey.get(key) || { [keyName]: key };
                 const incomingDistance = positiveDistance(candidate.incomingDistance);
                 const outgoingDistance = positiveDistance(candidate.outgoingDistance);
                 if (incomingDistance !== undefined) {
@@ -58,16 +61,23 @@
                         ? outgoingDistance
                         : Math.min(current.outgoingDistance, outgoingDistance);
                 }
-                byKey.set(scenarioKey, current);
+                byKey.set(key, current);
             }
-        }
-        const relationships = Object.freeze([...byKey.values()]
-            .sort((left, right) => left.scenarioKey.localeCompare(right.scenarioKey))
+            return Object.freeze([...byKey.values()]
+            .sort((left, right) => left[keyName].localeCompare(right[keyName]))
             .map(entry => Object.freeze(entry)));
+        };
+        const relationships = normalizeRelationships(source.relationships, 'scenarioKey');
+        const definitionRelationships = normalizeRelationships(
+            source.definitionRelationships,
+            'definitionId'
+        );
         return Object.freeze({
             enabled: source.enabled !== false,
             currentScenarioKeys: uniqueStrings(source.currentScenarioKeys),
             relationships,
+            currentDefinitionIds: uniqueStrings(source.currentDefinitionIds),
+            definitionRelationships,
             affectedMainScenarioKeys: uniqueStrings(source.affectedMainScenarioKeys),
             affectedPhaseNames: uniqueStrings(source.affectedPhaseNames),
             currentLabel: typeof source.currentLabel === 'string' && source.currentLabel.trim()
@@ -172,23 +182,35 @@
         const scenarioKey = node && typeof node === 'object' && typeof node.scenarioKey === 'string'
             ? node.scenarioKey.trim()
             : '';
-        if (!scenarioKey) {
+        const definitionId = node && typeof node === 'object' && typeof node.definitionId === 'string'
+            ? node.definitionId.trim()
+            : '';
+        if (!scenarioKey && !definitionId) {
             return noDecoration();
         }
         const relationshipState = asState(state).relationshipState;
         if (!relationshipState.enabled) {
             return noDecoration();
         }
-        if (relationshipState.currentScenarioKeys.includes(scenarioKey)) {
+        if ((scenarioKey && relationshipState.currentScenarioKeys.includes(scenarioKey))
+            || (definitionId && relationshipState.currentDefinitionIds.includes(definitionId))) {
             return Object.freeze({
                 state: 'current',
                 icon: null,
-                classNames: Object.freeze(['is-current']),
+                classNames: Object.freeze(['is-related']),
                 direct: true,
                 accessibleLabel: label('current', 'Currently open scenario')
             });
         }
-        const relationship = relationshipState.relationships.find(entry => entry.scenarioKey === scenarioKey);
+        const relationship = (
+            scenarioKey
+                ? relationshipState.relationships.find(entry => entry.scenarioKey === scenarioKey)
+                : undefined
+        ) ?? (
+            definitionId
+                ? relationshipState.definitionRelationships.find(entry => entry.definitionId === definitionId)
+                : undefined
+        );
         if (relationship) {
             const incoming = relationship.incomingDistance;
             const outgoing = relationship.outgoingDistance;
@@ -196,7 +218,6 @@
             const distance = useIncoming ? incoming : outgoing;
             const direct = distance === 1;
             const stateName = useIncoming ? 'incoming' : 'outgoing';
-            const icon = useIncoming ? 'arrow-right-to-line' : 'arrow-right-from-line';
             const classNames = ['is-related', `is-${stateName}`];
             if (!direct) {
                 classNames.push('is-transitive');
@@ -210,13 +231,13 @@
                     : distanceLabel('outgoingTransitive', 'Called by the open scenario through {0} scenarios', distance));
             return Object.freeze({
                 state: stateName,
-                icon,
+                icon: null,
                 classNames: Object.freeze(classNames),
                 direct,
                 accessibleLabel
             });
         }
-        if (relationshipState.affectedMainScenarioKeys.includes(scenarioKey)) {
+        if (scenarioKey && relationshipState.affectedMainScenarioKeys.includes(scenarioKey)) {
             return Object.freeze({
                 state: 'related',
                 icon: null,
@@ -228,6 +249,124 @@
         return noDecoration();
     }
 
+    function isNodeRelationshipMatch(node, state) {
+        const relationshipState = asState(state).relationshipState;
+        const scenarioKey = typeof node?.scenarioKey === 'string' ? node.scenarioKey.trim() : '';
+        const definitionId = typeof node?.definitionId === 'string' ? node.definitionId.trim() : '';
+        return (scenarioKey !== '' && (
+            relationshipState.currentScenarioKeys.includes(scenarioKey)
+            || relationshipState.relationships.some(entry => entry.scenarioKey === scenarioKey)
+            || relationshipState.affectedMainScenarioKeys.includes(scenarioKey)
+        )) || (definitionId !== '' && (
+            relationshipState.currentDefinitionIds.includes(definitionId)
+            || relationshipState.definitionRelationships.some(entry => entry.definitionId === definitionId)
+        ));
+    }
+
+    function shouldHighlightRelationshipAncestor(nodeId, relatedAncestorIds, state) {
+        return asState(state).relationshipState.enabled
+            && relatedAncestorIds.has(nodeId);
+    }
+
+    function nodeTooltip(node) {
+        if (!node || typeof node !== 'object') {
+            return '';
+        }
+        const description = typeof node.description === 'string' ? node.description.trim() : '';
+        if (description) {
+            return description;
+        }
+        return typeof node.label === 'string' ? node.label.trim() : '';
+    }
+
+    function resetRelationshipPagingOnFilterChange(
+        previousEnabled,
+        nextEnabled,
+        pageCache,
+        requestCache
+    ) {
+        if ((previousEnabled === true) === (nextEnabled === true)) {
+            return false;
+        }
+        pageCache.clear();
+        requestCache.clear();
+        return true;
+    }
+
+    function displayedNodeCount(node, relationshipFilterEnabled, visibleCounts) {
+        if (!node || typeof node.count !== 'number') {
+            return undefined;
+        }
+        if (!relationshipFilterEnabled || !visibleCounts || typeof visibleCounts !== 'object') {
+            return node.count;
+        }
+        const visibleCount = visibleCounts[node.id];
+        return typeof visibleCount === 'number' ? visibleCount : node.count;
+    }
+
+    function bulkExpansionTransition(previousExpandedIds, nextExpandedIds) {
+        const previous = new Set(uniqueStrings(previousExpandedIds));
+        const next = new Set(uniqueStrings(nextExpandedIds));
+        return Object.freeze({
+            expandingIds: Object.freeze([...next].filter(id => !previous.has(id))),
+            collapsingIds: Object.freeze([...previous].filter(id => !next.has(id)))
+        });
+    }
+
+    function createBulkExpansionController(options) {
+        let active = false;
+        let expandedIds = new Set();
+        const pendingIds = new Set();
+        const requestedIds = new Set();
+
+        const advance = () => {
+            if (!active) {
+                return;
+            }
+            for (const node of options.getExpandableNodes()) {
+                expandedIds.add(node.id);
+                if (options.hasChildren(node.id) || requestedIds.has(node.id)) {
+                    continue;
+                }
+                requestedIds.add(node.id);
+                if (options.requestChildren(node)) {
+                    pendingIds.add(node.id);
+                }
+            }
+            if (pendingIds.size > 0) {
+                return;
+            }
+            active = false;
+            options.onComplete(Object.freeze([...expandedIds]));
+        };
+
+        return Object.freeze({
+            get active() {
+                return active;
+            },
+            start(initialExpandedIds) {
+                active = true;
+                expandedIds = new Set(uniqueStrings(initialExpandedIds));
+                pendingIds.clear();
+                requestedIds.clear();
+                advance();
+            },
+            childrenLoaded(parentId) {
+                if (!active || !pendingIds.delete(parentId)) {
+                    return false;
+                }
+                advance();
+                return true;
+            },
+            cancel() {
+                active = false;
+                expandedIds.clear();
+                pendingIds.clear();
+                requestedIds.clear();
+            }
+        });
+    }
+
     return Object.freeze({
         createState,
         toggleExpanded,
@@ -235,6 +374,13 @@
         moveSelection,
         withRelationshipState,
         relationshipDecorationForNode,
-        parseRelationshipState
+        isNodeRelationshipMatch,
+        shouldHighlightRelationshipAncestor,
+        resetRelationshipPagingOnFilterChange,
+        displayedNodeCount,
+        bulkExpansionTransition,
+        parseRelationshipState,
+        nodeTooltip,
+        createBulkExpansionController
     });
 }));

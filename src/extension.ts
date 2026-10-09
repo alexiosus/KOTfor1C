@@ -116,6 +116,11 @@ import { resolveVanessaTemplateRoot } from './userStepCreator';
 import type { UserStepLibraryRoot } from './userStepCommands';
 import { ManagedInfobaseService } from './managedInfobaseService';
 import { ScenarioRelationshipService } from './scenarioRelationshipService';
+import {
+    ScenarioRelationshipPresentationService,
+    type ScenarioRelationshipSurface
+} from './scenarioRelationshipPresentation';
+import { TestManagerStatusFilterService } from './testManagerStatusFilter';
 import { StepLibrarySnapshotService } from './stepLibrarySnapshotService';
 import { StepLibraryActionService } from './stepLibraryActions';
 import { StepLibrarySidebarProvider } from './stepLibrarySidebarProvider';
@@ -125,6 +130,7 @@ import {
 } from './infobaseSidebarProvider';
 import { managedInfobaseRuntimeTracker } from './infobaseRuntimeTracker';
 import { StepLibraryFavoritesService } from './stepLibraryFavorites';
+import { deleteFileWithTrashFallback, ScenarioFilesService } from './scenarioFilesService';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -369,7 +375,8 @@ async function loadUserStepLibraryRoots(
 
 function createProjectDefinitionReferenceService(
     context: vscode.ExtensionContext,
-    resolver: ProjectDefinitionResolver
+    resolver: ProjectDefinitionResolver,
+    includeOpenDocuments = true
 ): ProjectDefinitionReferenceService {
     return new ProjectDefinitionReferenceService({
         resolver,
@@ -426,7 +433,9 @@ function createProjectDefinitionReferenceService(
             readFile: filePath => fs.promises.readFile(filePath, 'utf8'),
             toUri: filePath => vscode.Uri.file(filePath).toString()
         },
-        getOpenDocuments: () => vscode.workspace.textDocuments,
+        ...(includeOpenDocuments ? {
+            getOpenDocuments: () => vscode.workspace.textDocuments
+        } : {}),
         directoryConcurrency: 8,
         readConcurrency: 4,
         yieldEvery: 24,
@@ -894,37 +903,14 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(phaseSwitcherProvider.onDidChangeFavoriteScenarios(() => {
         stepLibraryFavoritesService.notifyLegacyFavoritesChanged();
     }));
-    const relationshipService = new ScenarioRelationshipService({
-        catalogProvider: phaseSwitcherProvider,
-        configuration: vscode.workspace.getConfiguration('kotTestToolkit'),
+    const relationshipPresentation = new ScenarioRelationshipPresentationService({
+        getConfiguration: () => vscode.workspace.getConfiguration('kotTestToolkit'),
         workspaceConfigurationTarget: vscode.ConfigurationTarget.Workspace,
-        onDidChangeConfiguration: vscode.workspace.onDidChangeConfiguration,
-        getScanRootPaths: () => {
-            const workspaceRootUri = vscode.workspace.workspaceFolders?.[0]?.uri;
-            if (!workspaceRootUri) {
-                return null;
-            }
-            const scanRootPath = path.resolve(resolveScenarioScanRootFsPath(workspaceRootUri));
-            let canonicalScanRootPath = scanRootPath;
-            try {
-                canonicalScanRootPath = fs.realpathSync.native(scanRootPath);
-            } catch {
-                // The scan root can be configured before it is created.
-            }
-            return { scanRootPath, canonicalScanRootPath };
-        }
+        onDidChangeConfiguration: vscode.workspace.onDidChangeConfiguration
     });
-    phaseSwitcherProvider.attachRelationshipService(relationshipService);
-    context.subscriptions.push(relationshipService);
-    const updateRelationshipHighlightContext = (enabled: boolean) => vscode.commands.executeCommand(
-        'setContext',
-        'kotTestToolkit.scenarioRelationshipsEnabled',
-        enabled
-    );
-    void updateRelationshipHighlightContext(relationshipService.getState().enabled);
-    context.subscriptions.push(relationshipService.onDidChangeState(state => {
-        void updateRelationshipHighlightContext(state.enabled);
-    }));
+    context.subscriptions.push(relationshipPresentation);
+    const testManagerStatusFilter = new TestManagerStatusFilterService(context.workspaceState);
+    context.subscriptions.push(testManagerStatusFilter);
     context.subscriptions.push(
         onDidChangeScenarioScanRoot(() => {
             phaseSwitcherProvider.handleScenarioScanRootChanged();
@@ -960,12 +946,12 @@ export function activate(context: vscode.ExtensionContext) {
             () => phaseSwitcherProvider.openVanessaFromSidebar()
         ),
         vscode.commands.registerCommand(
-            'kotTestToolkit.toggleScenarioRelationships',
-            () => relationshipService.setEnabled(!relationshipService.getState().enabled)
-        ),
-        vscode.commands.registerCommand(
             'kotTestToolkit.toggleTestManagerGroups',
             () => phaseSwitcherProvider.toggleAllGroupsFromSidebar()
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.toggleStepLibraryGroups',
+            () => stepLibrarySidebarProvider.toggleAllGroupsFromSidebar()
         ),
         vscode.commands.registerCommand(
             'kotTestToolkit.showCreateScenarioMenu',
@@ -1011,10 +997,171 @@ export function activate(context: vscode.ExtensionContext) {
         context,
         projectDefinitionResolver
     );
+    const relationshipService = new ScenarioRelationshipService({
+        catalogProvider: phaseSwitcherProvider,
+        getConfiguration: () => vscode.workspace.getConfiguration('kotTestToolkit'),
+        workspaceConfigurationTarget: vscode.ConfigurationTarget.Workspace,
+        onDidChangeConfiguration: vscode.workspace.onDidChangeConfiguration,
+        getScanRootPaths: () => {
+            const workspaceRootUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+            if (!workspaceRootUri) {
+                return null;
+            }
+            const scanRootPath = path.resolve(resolveScenarioScanRootFsPath(workspaceRootUri));
+            let canonicalScanRootPath = scanRootPath;
+            try {
+                canonicalScanRootPath = fs.realpathSync.native(scanRootPath);
+            } catch {
+                // The scan root can be configured before it is created.
+            }
+            return { scanRootPath, canonicalScanRootPath };
+        },
+        resolveAdditionalScenarioKeysForUri: uri =>
+            phaseSwitcherProvider.resolveCompiledScenarioKeysForUri(uri),
+        projectDefinitions: {
+            getView: resource => projectDefinitionResolver.getView(resource),
+            findReferencesForDefinitions: (definitionIds, resource, options, token) =>
+                projectDefinitionReferenceService.findReferencesForDefinitions(
+                    definitionIds,
+                    resource,
+                    options ?? { includeDeclaration: false },
+                    token ?? { isCancellationRequested: false }
+                ),
+            createUri: value => vscode.Uri.parse(value),
+            onDidChangeView: projectDefinitionResolver.onDidChangeView
+        }
+    });
+    phaseSwitcherProvider.attachRelationshipService(relationshipService);
+    phaseSwitcherProvider.attachStatusFilterService(testManagerStatusFilter);
+
+    const updateRelationshipModeContext = (surface: ScenarioRelationshipSurface) => {
+        const mode = relationshipPresentation.getMode(surface);
+        const prefix = surface === 'testManager' ? 'testManager' : 'stepLibrary';
+        const updates = [
+            vscode.commands.executeCommand(
+                'setContext',
+                `kotTestToolkit.${prefix}ScenarioRelationshipsActive`,
+                mode.highlight || mode.filter
+            ),
+            vscode.commands.executeCommand(
+                'setContext',
+                `kotTestToolkit.${prefix}RelationshipHighlightEnabled`,
+                mode.highlight
+            ),
+            vscode.commands.executeCommand(
+                'setContext',
+                `kotTestToolkit.${prefix}RelationshipFilterEnabled`,
+                mode.filter
+            )
+        ];
+        if (surface === 'testManager') {
+            updates.push(vscode.commands.executeCommand(
+                'setContext',
+                'kotTestToolkit.testManagerFiltersActive',
+                relationshipPresentation.isActive('testManager')
+                    || testManagerStatusFilter.isActive()
+            ));
+        }
+        return Promise.all(updates);
+    };
+    const updateTestManagerStatusFilterContext = () => {
+        const mode = testManagerStatusFilter.getMode();
+        return Promise.all([
+            vscode.commands.executeCommand(
+                'setContext',
+                'kotTestToolkit.testManagerStatusFilterAll',
+                mode === 'all'
+            ),
+            vscode.commands.executeCommand(
+                'setContext',
+                'kotTestToolkit.testManagerStatusFilterBuilt',
+                mode === 'built'
+            ),
+            vscode.commands.executeCommand(
+                'setContext',
+                'kotTestToolkit.testManagerStatusFilterRunning',
+                mode === 'running'
+            ),
+            vscode.commands.executeCommand(
+                'setContext',
+                'kotTestToolkit.testManagerFiltersActive',
+                relationshipPresentation.isActive('testManager')
+                    || testManagerStatusFilter.isActive()
+            )
+        ]);
+    };
+    void updateRelationshipModeContext('testManager');
+    void updateRelationshipModeContext('stepLibrary');
+    void updateTestManagerStatusFilterContext();
     context.subscriptions.push(
         projectDefinitionIndex,
         projectDefinitionResolver,
         projectDefinitionReferenceService
+    );
+    context.subscriptions.push(
+        relationshipService,
+        relationshipPresentation.onDidChangeMode(event => {
+            void updateRelationshipModeContext(event.surface);
+        }),
+        testManagerStatusFilter.onDidChangeMode(() => {
+            void updateTestManagerStatusFilterContext();
+        }),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.toggleTestManagerRelationshipHighlight',
+            () => relationshipPresentation.toggleMode('testManager', 'highlight')
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.toggleTestManagerRelationshipHighlightChecked',
+            () => relationshipPresentation.toggleMode('testManager', 'highlight')
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.toggleTestManagerRelationshipFilter',
+            () => relationshipPresentation.toggleMode('testManager', 'filter')
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.toggleTestManagerRelationshipFilterChecked',
+            () => relationshipPresentation.toggleMode('testManager', 'filter')
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.setTestManagerStatusFilterAll',
+            () => testManagerStatusFilter.setMode('all')
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.setTestManagerStatusFilterAllChecked',
+            () => testManagerStatusFilter.setMode('all')
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.setTestManagerStatusFilterBuilt',
+            () => testManagerStatusFilter.setMode('built')
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.setTestManagerStatusFilterBuiltChecked',
+            () => testManagerStatusFilter.setMode('built')
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.setTestManagerStatusFilterRunning',
+            () => testManagerStatusFilter.setMode('running')
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.setTestManagerStatusFilterRunningChecked',
+            () => testManagerStatusFilter.setMode('running')
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.toggleStepLibraryRelationshipHighlight',
+            () => relationshipPresentation.toggleMode('stepLibrary', 'highlight')
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.toggleStepLibraryRelationshipHighlightChecked',
+            () => relationshipPresentation.toggleMode('stepLibrary', 'highlight')
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.toggleStepLibraryRelationshipFilter',
+            () => relationshipPresentation.toggleMode('stepLibrary', 'filter')
+        ),
+        vscode.commands.registerCommand(
+            'kotTestToolkit.toggleStepLibraryRelationshipFilterChecked',
+            () => relationshipPresentation.toggleMode('stepLibrary', 'filter')
+        )
     );
     const snapshotService = new StepLibrarySnapshotService({
         resolver: projectDefinitionResolver,
@@ -1040,12 +1187,82 @@ export function activate(context: vscode.ExtensionContext) {
         await projectDefinitionIndex.waitForIdle();
         await phaseSwitcherProvider.refreshFromExternalStateChange({ refreshCache: true });
     };
+    const scenarioFilesService = new ScenarioFilesService({
+        parseUri: value => vscode.Uri.parse(value),
+        dirname: uri => (uri as vscode.Uri).with({
+            path: path.posix.dirname((uri as vscode.Uri).path)
+        }),
+        joinPath: (base, ...segments) => vscode.Uri.joinPath(
+            base as vscode.Uri,
+            ...segments
+        ),
+        readDirectory: async uri => (await vscode.workspace.fs.readDirectory(uri as vscode.Uri))
+            .map(([name, fileType]) => ({
+                name,
+                kind: (fileType & vscode.FileType.SymbolicLink) !== 0
+                    ? 'symbolicLink' as const
+                    : (fileType & vscode.FileType.Directory) !== 0
+                        ? 'directory' as const
+                        : 'file' as const
+            })),
+        isFileNotFound: error => error instanceof vscode.FileSystemError
+            && error.code === 'FileNotFound',
+        openExternal: uri => vscode.env.openExternal(uri as vscode.Uri),
+        openInEditor: async uri => {
+            const document = await vscode.workspace.openTextDocument(uri as vscode.Uri);
+            await vscode.window.showTextDocument(document, { preview: true });
+            return true;
+        },
+        revealInOs: async uri => {
+            await vscode.commands.executeCommand('revealFileInOS', uri as vscode.Uri);
+        },
+        confirmDelete: async relativePath => {
+            const deleteLabel = vscode.l10n.t('Delete');
+            const choice = await vscode.window.showWarningMessage(
+                vscode.l10n.t('Delete scenario attachment "{0}"?', relativePath),
+                { modal: true },
+                deleteLabel
+            );
+            return choice === deleteLabel;
+        },
+        deleteFile: uri => deleteFileWithTrashFallback(
+            uri as vscode.Uri,
+            (target, options) => vscode.workspace.fs.delete(target, options)
+        ),
+        createWatcher: root => {
+            const watcher = vscode.workspace.createFileSystemWatcher(
+                new vscode.RelativePattern(root as vscode.Uri, '**/*')
+            );
+            return {
+                onDidCreate: listener => watcher.onDidCreate(listener as (uri: vscode.Uri) => void),
+                onDidChange: listener => watcher.onDidChange(listener as (uri: vscode.Uri) => void),
+                onDidDelete: listener => watcher.onDidDelete(listener as (uri: vscode.Uri) => void),
+                dispose: () => watcher.dispose()
+            };
+        },
+        chooseConflict: async relativePath => {
+            const replace = vscode.l10n.t('Replace');
+            const saveCopy = vscode.l10n.t('Save copy');
+            const skip = vscode.l10n.t('Skip');
+            const choice = await vscode.window.showWarningMessage(
+                vscode.l10n.t('A resource named "{0}" already exists.', relativePath),
+                { modal: true },
+                replace,
+                saveCopy,
+                skip
+            );
+            return choice === replace ? 'replace' : choice === saveCopy ? 'copy' : 'skip';
+        }
+    });
+    phaseSwitcherProvider.attachScenarioFilesService(scenarioFilesService);
     const stepLibrarySidebarProvider = new StepLibrarySidebarProvider({
         extensionUri: context.extensionUri,
         snapshotService,
         actionService,
         relationshipService,
+        relationshipPresentation,
         favoritesService: stepLibraryFavoritesService,
+        scenarioFilesService,
         refreshDefinitions: refreshStepDefinitions
     });
     const infobaseSidebarProvider = new InfobaseSidebarProvider({
@@ -1057,6 +1274,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         snapshotService,
         actionService,
+        scenarioFilesService,
         stepLibrarySidebarProvider,
         infobaseSidebarProvider,
         vscode.window.registerWebviewViewProvider(
@@ -1094,6 +1312,7 @@ export function activate(context: vscode.ExtensionContext) {
                     snapshotService,
                     actionService,
                     favoritesService: stepLibraryFavoritesService,
+                    scenarioFilesService,
                     refreshDefinitions: refreshStepDefinitions
                 });
                 context.subscriptions.push(panel);
@@ -1227,7 +1446,10 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         scenarioDiagnosticsProvider,
         vscode.languages.registerCodeActionsProvider(
-            { pattern: '**/*.yaml', scheme: 'file' },
+            [
+                { pattern: '**/*.yaml', scheme: 'file' },
+                { pattern: '**/*.feature', scheme: 'file' }
+            ],
             scenarioDiagnosticsProvider,
             { providedCodeActionKinds: ScenarioDiagnosticsProvider.providedCodeActionKinds }
         )
@@ -1566,9 +1788,9 @@ export function activate(context: vscode.ExtensionContext) {
         }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.createMainScenario', async () => {
+        'kotTestToolkit.createMainScenario', async (seed?: unknown) => {
             const { handleCreateMainScenario } = await loadScenarioCreator();
-            await handleCreateMainScenario(context);
+            await handleCreateMainScenario(context, seed);
         }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
@@ -1630,12 +1852,13 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.refreshPhaseSwitcher',
         async (options?: { refreshCache?: boolean }) => {
-            if (options?.refreshCache === true) {
+            const refreshCache = options?.refreshCache !== false;
+            if (refreshCache) {
                 await projectDefinitionIndex.reloadConfigurations();
                 await projectDefinitionIndex.waitForIdle();
             }
             await phaseSwitcherProvider.refreshFromExternalStateChange({
-                refreshCache: options?.refreshCache === true
+                refreshCache
             });
         }
     ));

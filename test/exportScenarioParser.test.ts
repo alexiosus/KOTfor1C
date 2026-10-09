@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { parseExportScenarios } from '../src/exportScenarioParser';
+import { parseExportScenarios, validateGherkinSyntax } from '../src/exportScenarioParser';
 import { createProjectDefinitionView } from '../src/projectDefinition';
 import { resolveProjectInvocation } from '../src/projectDefinitionMatcher';
 
@@ -68,6 +68,28 @@ test('parses scenario-level English exports, outlines and warnings while ignorin
     assert.equal(result.definitions.some(item => item.template.includes('not exported')), false);
     assert.equal(result.warnings.length, 1);
     assert.match(result.warnings[0].message, /empty scenario title/i);
+});
+
+test('reports malformed Gherkin syntax with the source location', () => {
+    const source = [
+        '# language: en',
+        'Feature: Broken feature',
+        'Scenario: Unclosed document string',
+        '    Given the following text:',
+        '        """',
+        '        never closes'
+    ].join('\n');
+
+    const warnings = validateGherkinSyntax(
+        source,
+        'file:///workspace/libraries/broken.feature'
+    );
+
+    const syntaxWarning = warnings.find(warning =>
+        /syntax|parse|expected|unexpected|token|document string/iu.test(warning.message)
+    );
+    assert.ok(syntaxWarning);
+    assert.ok((syntaxWarning.range?.start.line ?? -1) >= 4);
 });
 
 test('export definitions match calls through the shared matcher', () => {

@@ -7,12 +7,28 @@ import {
 import type { StepLibraryActionService } from './stepLibraryActions';
 import type { StepLibrarySnapshotService } from './stepLibrarySnapshotService';
 import type { StepLibraryFavoritesService } from './stepLibraryFavorites';
+import type { ScenarioFilesService } from './scenarioFilesService';
+import {
+    parseScenarioFilesMessage,
+    type ScenarioFilesMessage
+} from './scenarioFilesWebviewProtocol';
 
 export interface StepLibraryPanelServices {
     readonly extensionUri: vscode.Uri;
     readonly snapshotService: StepLibrarySnapshotService;
     readonly actionService: StepLibraryActionService;
     readonly favoritesService?: Pick<StepLibraryFavoritesService, 'favoriteItemIds' | 'toggle' | 'onDidChange'>;
+    readonly scenarioFilesService: Pick<ScenarioFilesService,
+        | 'listChildren'
+        | 'openCompiledFeature'
+        | 'openExternal'
+        | 'revealInOs'
+        | 'deleteFile'
+        | 'watch'
+        | 'prepareDrop'
+        | 'appendTransferChunk'
+        | 'completeTransfer'
+        | 'cancelTransfer'>;
     readonly refreshDefinitions: (resource?: vscode.Uri) => Promise<void>;
 }
 
@@ -23,7 +39,8 @@ export type StepLibraryInboundMessage =
     | { readonly command: 'insert'; readonly itemId: string }
     | { readonly command: 'copy'; readonly itemId: string }
     | { readonly command: 'openDefinition'; readonly itemId: string }
-    | { readonly command: 'toggleFavorite'; readonly itemId: string };
+    | { readonly command: 'toggleFavorite'; readonly itemId: string }
+    | ScenarioFilesMessage;
 
 type Translator = (message: string, ...args: string[]) => string;
 
@@ -58,6 +75,10 @@ function errorMessage(error: unknown): string {
 }
 
 export function parseStepLibraryInboundMessage(value: unknown): StepLibraryInboundMessage | null {
+    const scenarioFilesMessage = parseScenarioFilesMessage(value);
+    if (scenarioFilesMessage) {
+        return scenarioFilesMessage;
+    }
     if (!value || typeof value !== 'object') {
         return null;
     }
@@ -90,6 +111,11 @@ export class StepLibraryPanel implements vscode.Disposable {
     private lastPostedIdentity: string | null = null;
     private lastSuccessfulSnapshot: StepLibrarySnapshot | null = null;
     private readonly pendingActions = new Set<string>();
+    private readonly scenarioFileWatches = new Map<string, { dispose(): void }>();
+    private readonly scenarioFileTransfers = new Map<string, {
+        readonly itemId: string;
+        readonly targetRelativePath: string;
+    }>();
     private refreshDefinitionsInProgress = false;
 
     constructor(private readonly services: StepLibraryPanelServices) {
@@ -123,7 +149,7 @@ export class StepLibraryPanel implements vscode.Disposable {
         }
         const t = await getTranslator(this.services.extensionUri);
         if (this.panel) {
-            this.panel.title = t('KOT Library');
+            this.panel.title = t('KOT for 1C: Library');
             this.panel.reveal(vscode.ViewColumn.One);
             await this.refreshSnapshot();
             return;
@@ -132,7 +158,7 @@ export class StepLibraryPanel implements vscode.Disposable {
         const mediaUri = vscode.Uri.joinPath(this.services.extensionUri, 'media');
         const panel = vscode.window.createWebviewPanel(
             StepLibraryPanel.panelType,
-            t('KOT Library'),
+            t('KOT for 1C: Library'),
             vscode.ViewColumn.One,
             {
                 enableScripts: true,
@@ -144,6 +170,7 @@ export class StepLibraryPanel implements vscode.Disposable {
         this.lastPostedIdentity = null;
         this.lastSuccessfulSnapshot = null;
         this.pendingActions.clear();
+        this.disposeScenarioFileState();
         panel.webview.html = this.getWebviewHtml(panel.webview, t);
         this.panelDisposables = [
             panel.onDidDispose(() => {
@@ -191,6 +218,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     }
 
     private disposePanelSubscriptions(): void {
+        this.disposeScenarioFileState();
         for (const disposable of this.panelDisposables.splice(0)) {
             disposable.dispose();
         }
@@ -231,7 +259,7 @@ export class StepLibraryPanel implements vscode.Disposable {
                 return;
             }
             this.lastSuccessfulSnapshot = snapshot;
-            await this.postSnapshotIfChanged(snapshot, force);
+            await this.postSnapshotIfChanged(snapshot, force, true);
         } catch (error) {
             if (generation !== this.loadGeneration || this.panel !== panel) {
                 return;
@@ -248,7 +276,8 @@ export class StepLibraryPanel implements vscode.Disposable {
 
     private async postSnapshotIfChanged(
         snapshot: StepLibrarySnapshot,
-        force = false
+        force = false,
+        rebindScenarioFileWatches = false
     ): Promise<void> {
         if (!this.panel) {
             return;
@@ -260,6 +289,9 @@ export class StepLibraryPanel implements vscode.Disposable {
         const identity = `${snapshot.viewIdentity}\0${insertionTarget.identity}\0${favoriteItemIds.join(',')}`;
         if (!force && identity === this.lastPostedIdentity) {
             return;
+        }
+        if (rebindScenarioFileWatches) {
+            this.disposeScenarioFileWatches();
         }
         this.lastPostedIdentity = identity;
         await this.panel.webview.postMessage({
@@ -373,22 +405,294 @@ export class StepLibraryPanel implements vscode.Disposable {
                 }
                 return;
             }
+            case 'listScenarioFiles':
+                await this.listScenarioFiles(message);
+                return;
+            case 'setScenarioFilesExpanded':
+                this.setScenarioFilesExpanded(message.itemId, message.expanded);
+                return;
+            case 'openScenarioFile':
+                await this.runScenarioFileAction(message.itemId, message.relativePath, 'open');
+                return;
+            case 'openCompiledScenarioFeature':
+                await this.openCompiledScenarioFeature(message.itemId);
+                return;
+            case 'revealScenarioFile':
+                await this.runScenarioFileAction(message.itemId, message.relativePath, 'reveal');
+                return;
+            case 'deleteScenarioFile':
+                await this.deleteScenarioFile(message);
+                return;
+            case 'prepareScenarioFileDrop':
+                await this.prepareScenarioFileDrop(message);
+                return;
+            case 'appendScenarioFileChunk':
+                await this.appendScenarioFileChunk(message.transferId, message.offset, message.base64);
+                return;
+            case 'completeScenarioFileTransfer':
+                await this.completeScenarioFileTransfer(message.transferId);
+                return;
+            case 'cancelScenarioFileTransfer':
+                await this.cancelScenarioFileTransfer(message.transferId);
+                return;
         }
+    }
+
+    private async listScenarioFiles(
+        message: Extract<ScenarioFilesMessage, { command: 'listScenarioFiles' }>
+    ): Promise<void> {
+        const item = this.findItem(message.itemId);
+        if (!item) {
+            await this.postScenarioFileFailure(undefined, new Error('Unknown scenario file item.'), message.requestId);
+            return;
+        }
+        try {
+            const nodes = await this.services.scenarioFilesService.listChildren(
+                item,
+                message.relativePath
+            );
+            await this.panel?.webview.postMessage({
+                command: 'scenarioFileChildren',
+                requestId: message.requestId,
+                itemId: item.id,
+                relativePath: message.relativePath,
+                nodes
+            });
+        } catch (error) {
+            await this.postScenarioFileFailure(undefined, error, message.requestId);
+        }
+    }
+
+    private setScenarioFilesExpanded(itemId: string, expanded: boolean): void {
+        this.scenarioFileWatches.get(itemId)?.dispose();
+        this.scenarioFileWatches.delete(itemId);
+        if (!expanded) {
+            return;
+        }
+        const item = this.findItem(itemId);
+        if (!item) {
+            return;
+        }
+        try {
+            this.scenarioFileWatches.set(itemId, this.services.scenarioFilesService.watch(
+                item,
+                event => {
+                    void this.panel?.webview.postMessage({
+                        command: 'scenarioFileInvalidated',
+                        itemId: event.itemId
+                    });
+                }
+            ));
+        } catch (error) {
+            void this.postScenarioFileFailure(undefined, error);
+        }
+    }
+
+    private async runScenarioFileAction(
+        itemId: string,
+        relativePath: string,
+        action: 'open' | 'reveal'
+    ): Promise<void> {
+        const item = this.findItem(itemId);
+        if (!item) {
+            return;
+        }
+        const succeeded = action === 'open'
+            ? await this.services.scenarioFilesService.openExternal(item, relativePath)
+            : await this.services.scenarioFilesService.revealInOs(item, relativePath);
+        await this.panel?.webview.postMessage({
+            command: 'scenarioFileActionResult',
+            action,
+            itemId,
+            relativePath,
+            succeeded
+        });
+    }
+
+    private async openCompiledScenarioFeature(itemId: string): Promise<void> {
+        const item = this.findItem(itemId);
+        if (!item) {
+            return;
+        }
+        const succeeded = await this.services.scenarioFilesService.openCompiledFeature(item);
+        await this.panel?.webview.postMessage({
+            command: 'scenarioFileActionResult',
+            action: 'openFeature',
+            itemId,
+            succeeded
+        });
+    }
+
+    private async deleteScenarioFile(
+        message: Extract<ScenarioFilesMessage, { command: 'deleteScenarioFile' }>
+    ): Promise<void> {
+        const item = this.findItem(message.itemId);
+        if (!item) {
+            await this.postScenarioFileFailure(
+                undefined,
+                new Error('Unknown scenario file item.')
+            );
+            return;
+        }
+        try {
+            const result = await this.services.scenarioFilesService.deleteFile(
+                item,
+                message.relativePath
+            );
+            await this.panel?.webview.postMessage({
+                command: 'scenarioFileActionResult',
+                action: 'delete',
+                itemId: item.id,
+                relativePath: message.relativePath,
+                succeeded: result === 'deleted',
+                ...(result === 'cancelled' ? { cancelled: true } : {})
+            });
+        } catch (error) {
+            await this.postScenarioFileFailure(undefined, error);
+        }
+    }
+
+    private async prepareScenarioFileDrop(
+        message: Extract<ScenarioFilesMessage, { command: 'prepareScenarioFileDrop' }>
+    ): Promise<void> {
+        const item = this.findItem(message.itemId);
+        if (!item) {
+            await this.postScenarioFileFailure(
+                undefined,
+                new Error('Unknown scenario file item.'),
+                undefined,
+                message.dropId
+            );
+            return;
+        }
+        try {
+            const plan = await this.services.scenarioFilesService.prepareDrop(
+                item,
+                message.targetRelativePath,
+                message.entries
+            );
+            for (const file of plan.files) {
+                this.scenarioFileTransfers.set(file.transferId, {
+                    itemId: item.id,
+                    targetRelativePath: message.targetRelativePath
+                });
+            }
+            await this.panel?.webview.postMessage({
+                command: 'scenarioFileDropPrepared',
+                dropId: message.dropId,
+                itemId: item.id,
+                files: plan.files,
+                skipped: plan.skipped
+            });
+        } catch (error) {
+            await this.postScenarioFileFailure(undefined, error, undefined, message.dropId);
+        }
+    }
+
+    private async appendScenarioFileChunk(
+        transferId: string,
+        offset: number,
+        base64: string
+    ): Promise<void> {
+        if (!this.scenarioFileTransfers.has(transferId)) {
+            return;
+        }
+        try {
+            const nextOffset = await this.services.scenarioFilesService.appendTransferChunk(
+                transferId,
+                offset,
+                base64
+            );
+            await this.panel?.webview.postMessage({
+                command: 'scenarioFileChunkAccepted',
+                transferId,
+                nextOffset
+            });
+        } catch (error) {
+            this.scenarioFileTransfers.delete(transferId);
+            await this.postScenarioFileFailure(transferId, error);
+        }
+    }
+
+    private async completeScenarioFileTransfer(transferId: string): Promise<void> {
+        const transfer = this.scenarioFileTransfers.get(transferId);
+        if (!transfer) {
+            return;
+        }
+        try {
+            await this.services.scenarioFilesService.completeTransfer(transferId);
+            this.scenarioFileTransfers.delete(transferId);
+            await this.panel?.webview.postMessage({
+                command: 'scenarioFileTransferCompleted',
+                transferId,
+                itemId: transfer.itemId
+            });
+            await this.panel?.webview.postMessage({
+                command: 'scenarioFileInvalidated',
+                itemId: transfer.itemId
+            });
+        } catch (error) {
+            this.scenarioFileTransfers.delete(transferId);
+            await this.postScenarioFileFailure(transferId, error);
+        }
+    }
+
+    private async cancelScenarioFileTransfer(transferId: string): Promise<void> {
+        if (!this.scenarioFileTransfers.has(transferId)) {
+            return;
+        }
+        this.scenarioFileTransfers.delete(transferId);
+        await this.services.scenarioFilesService.cancelTransfer(transferId);
+    }
+
+    private async postScenarioFileFailure(
+        transferId: string | undefined,
+        error: unknown,
+        requestId?: string,
+        dropId?: string
+    ): Promise<void> {
+        await this.panel?.webview.postMessage({
+            command: 'scenarioFileTransferFailed',
+            ...(transferId ? { transferId } : {}),
+            ...(requestId ? { requestId } : {}),
+            ...(dropId ? { dropId } : {}),
+            message: errorMessage(error)
+        });
+    }
+
+    private disposeScenarioFileState(): void {
+        this.disposeScenarioFileWatches();
+        for (const transferId of this.scenarioFileTransfers.keys()) {
+            void this.services.scenarioFilesService.cancelTransfer(transferId);
+        }
+        this.scenarioFileTransfers.clear();
+    }
+
+    private disposeScenarioFileWatches(): void {
+        for (const watch of this.scenarioFileWatches.values()) {
+            watch.dispose();
+        }
+        this.scenarioFileWatches.clear();
     }
 
     private getWebviewHtml(webview: vscode.Webview, t: Translator): string {
         const nonce = getNonce();
         const mediaUri = vscode.Uri.joinPath(this.services.extensionUri, 'media');
         const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'codicon.css'));
+        const sharedStylesUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'kotSidebar.css'));
         const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'stepLibrary.css'));
         const protocolUri = webview.asWebviewUri(
             vscode.Uri.joinPath(mediaUri, 'stepLibraryProtocol.js')
         );
+        const scenarioFilesProtocolUri = webview.asWebviewUri(
+            vscode.Uri.joinPath(mediaUri, 'scenarioFilesProtocol.js')
+        );
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'stepLibrary.js'));
         const labels = {
-            title: t('KOT Library'),
-            search: t('Search steps'),
-            searchPlaceholder: t('Search templates, descriptions, codes, categories, and parameters'),
+            title: t('KOT for 1C: Library'),
+            search: t('Search steps and scenarios'),
+            searchPlaceholder: t('Search steps and scenarios'),
+            clearSearch: t('Clear search'),
             categories: t('Sources and categories'),
             definitions: t('Definitions'),
             details: t('Step details'),
@@ -433,7 +737,13 @@ export class StepLibraryPanel implements vscode.Disposable {
             showCategories: t('Show sources and categories'),
             resizeCategories: t('Resize sources and categories pane'),
             resizeDetails: t('Resize step details pane'),
-            back: t('Back')
+            back: t('Back'),
+            files: t('Files'),
+            openExternally: t('Open externally'),
+            showInFileManager: t('Show in Finder / Explorer'),
+            delete: t('Delete'),
+            resourceActionFailed: t('The resource action could not be completed.'),
+            emptyDirectory: t('Empty directory')
         };
         const documentLanguage = (vscode.env.language || 'en').toLocaleLowerCase().startsWith('ru')
             ? 'ru'
@@ -446,6 +756,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
     <title>${escapeHtml(labels.title)}</title>
     <link href="${codiconsUri}" rel="stylesheet">
+    <link href="${sharedStylesUri}" rel="stylesheet">
     <link href="${stylesUri}" rel="stylesheet">
 </head>
 <body
@@ -472,19 +783,32 @@ export class StepLibraryPanel implements vscode.Disposable {
     data-inserted="${escapeHtml(labels.inserted)}"
     data-copied="${escapeHtml(labels.copied)}"
     data-opened="${escapeHtml(labels.opened)}"
+    data-insert="${escapeHtml(labels.insert)}"
+    data-copy="${escapeHtml(labels.copy)}"
+    data-open-definition="${escapeHtml(labels.openDefinition)}"
     data-add-favorite="${escapeHtml(labels.addFavorite)}"
     data-remove-favorite="${escapeHtml(labels.removeFavorite)}"
     data-action-failed="${escapeHtml(labels.actionFailed)}"
     data-load-failed="${escapeHtml(labels.loadFailed)}"
+    data-files="${escapeHtml(labels.files)}"
+    data-open-externally="${escapeHtml(labels.openExternally)}"
+    data-show-in-file-manager="${escapeHtml(labels.showInFileManager)}"
+    data-delete="${escapeHtml(labels.delete)}"
+    data-resource-action-failed="${escapeHtml(labels.resourceActionFailed)}"
+    data-empty-directory="${escapeHtml(labels.emptyDirectory)}"
     data-preferred-language="${documentLanguage}"
 >
     <div class="library-shell">
         <header class="library-toolbar">
             <button id="categoryToggle" class="icon-button mobile-only" type="button" aria-label="${escapeHtml(labels.showCategories)}">☰</button>
-            <label class="search-field">
-                <span class="sr-only">${escapeHtml(labels.search)}</span>
-                <input id="searchInput" type="search" autocomplete="off" placeholder="${escapeHtml(labels.searchPlaceholder)}">
-            </label>
+            <div class="search-field">
+                <label class="sr-only" for="searchInput">${escapeHtml(labels.search)}</label>
+                <span class="codicon codicon-search search-field-icon" aria-hidden="true"></span>
+                <input id="searchInput" type="text" autocomplete="off" placeholder="${escapeHtml(labels.searchPlaceholder)}">
+                <button id="searchClearBtn" class="search-clear-button hidden" type="button" title="${escapeHtml(labels.clearSearch)}" aria-label="${escapeHtml(labels.clearSearch)}">
+                    <span class="codicon codicon-close" aria-hidden="true"></span>
+                </button>
+            </div>
             <select id="languageFilter" aria-label="${escapeHtml(labels.allLanguages)}">
                 <option value="both">${escapeHtml(labels.allLanguages)}</option>
                 <option value="ru">${escapeHtml(labels.russian)}</option>
@@ -536,6 +860,7 @@ export class StepLibraryPanel implements vscode.Disposable {
         <div id="liveRegion" class="sr-only" aria-live="polite"></div>
     </div>
     <script nonce="${nonce}" src="${protocolUri}"></script>
+    <script nonce="${nonce}" src="${scenarioFilesProtocolUri}"></script>
     <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

@@ -3,6 +3,7 @@ import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 import type { ScenarioCatalogProvider } from './scenarioCatalog';
 import {
     buildStepLibrarySnapshot,
+    type CompiledScenarioResources,
     type StepLibrarySnapshot
 } from './stepLibraryModel';
 
@@ -34,7 +35,12 @@ export interface StepLibrarySnapshotServiceDependencies {
     readonly scenarios: Pick<
         ScenarioCatalogProvider,
         'getScenarioCatalog' | 'onDidUpdateScenarioCatalog'
-    >;
+    > & {
+        readonly getCompiledScenarioResources?: (
+            resource?: vscode.Uri
+        ) => Promise<ReadonlyMap<string, CompiledScenarioResources>>;
+        readonly onDidChangeScenarioArtifacts?: vscode.Event<void>;
+    };
 }
 
 export class StepLibrarySnapshotService implements vscode.Disposable {
@@ -51,6 +57,11 @@ export class StepLibrarySnapshotService implements vscode.Disposable {
             dependencies.resolver.onDidChangeView(() => this.invalidate()),
             dependencies.scenarios.onDidUpdateScenarioCatalog(() => this.invalidate())
         );
+        if (dependencies.scenarios.onDidChangeScenarioArtifacts) {
+            this.disposables.push(
+                dependencies.scenarios.onDidChangeScenarioArtifacts(() => this.invalidate())
+            );
+        }
     }
 
     public getCurrent(resource?: vscode.Uri): StepLibrarySnapshot | null {
@@ -107,6 +118,8 @@ export class StepLibrarySnapshotService implements vscode.Disposable {
     private async buildSnapshot(resource?: vscode.Uri): Promise<StepLibrarySnapshot> {
         const view = await this.dependencies.resolver.ensureReady(resource);
         const scenarios = this.dependencies.scenarios.getScenarioCatalog()?.all ?? [];
-        return buildStepLibrarySnapshot(view, scenarios);
+        const compiledResources = await this.dependencies.scenarios.getCompiledScenarioResources?.(resource)
+            ?? new Map<string, CompiledScenarioResources>();
+        return buildStepLibrarySnapshot(view, scenarios, compiledResources);
     }
 }

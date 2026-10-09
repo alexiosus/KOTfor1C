@@ -63,9 +63,18 @@ interface Protocol {
         deltaPixels: number,
         containerWidth: number
     ): { categoryWidth: number; detailsWidth: number };
-    createResultPager<T>(items: readonly T[], batchSize: number): {
+    createResultPager<T>(items: readonly T[], batchSize: number, initialVisibleCount?: number): {
         readonly hasMore: boolean;
         next(): readonly T[];
+    };
+    definitionRowActionOrder(item: {
+        insertable?: boolean;
+        navigable?: boolean;
+    }): Array<'insert' | 'copy' | 'openDefinition' | 'favorite'>;
+    overflowPresentation(scrollWidth: number, clientWidth: number): {
+        overflowing: boolean;
+        distance: number;
+        duration: number;
     };
 }
 
@@ -214,6 +223,17 @@ test('pages definition rows on demand instead of scheduling the complete result 
     assert.deepEqual(pager.next(), items.slice(200));
     assert.equal(pager.hasMore, false);
     assert.deepEqual(pager.next(), []);
+});
+
+test('recreated result pager preserves rows already revealed by lazy loading', () => {
+    const { protocol } = loadProtocol();
+    const items = Array.from({ length: 251 }, (_, index) => index);
+    const pager = protocol.createResultPager(items, 100, 200);
+
+    assert.deepEqual(pager.next(), items.slice(0, 200));
+    assert.equal(pager.hasMore, true);
+    assert.deepEqual(pager.next(), items.slice(200));
+    assert.equal(pager.hasMore, false);
 });
 
 test('filters by source, ancestor category, and built-in language without hiding project definitions', () => {
@@ -460,6 +480,34 @@ test('allows insertion only for callable library items with an active editor tar
     assert.equal(protocol.canInsertItem(callable, false), false);
     assert.equal(protocol.canInsertItem(mainScenario, true), false);
     assert.equal(protocol.canInsertItem(undefined, true), false);
+});
+
+test('keeps the favorite action at the trailing edge while optional actions appear before it', () => {
+    const { protocol } = loadProtocol();
+
+    assert.deepEqual(protocol.definitionRowActionOrder({
+        insertable: true,
+        navigable: true
+    }), ['insert', 'copy', 'openDefinition', 'favorite']);
+    assert.deepEqual(protocol.definitionRowActionOrder({
+        insertable: false,
+        navigable: false
+    }), ['copy', 'favorite']);
+});
+
+test('computes a fade and hover-scroll distance only for content that really overflows', () => {
+    const { protocol } = loadProtocol();
+
+    assert.deepEqual(protocol.overflowPresentation(100, 100), {
+        overflowing: false,
+        distance: 0,
+        duration: 1.2
+    });
+    assert.deepEqual(protocol.overflowPresentation(240, 100), {
+        overflowing: true,
+        distance: 152,
+        duration: 152 / 45
+    });
 });
 
 test('exports under Node, attaches to globalThis, and contains no edit-distance implementation', () => {

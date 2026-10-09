@@ -163,6 +163,59 @@ test('does not fall forward when the exact version is absent', async () => {
     assert.equal(transport.calls, 1);
 });
 
+test('latest-version lookup selects the numerically newest catalog from the index', async () => {
+    const olderVersion = '1.2.099.99';
+    const latestVersion = '1.10.001.01';
+    const latestCatalog = createCatalog(latestVersion);
+    const latestBytes = jsonBytes(latestCatalog);
+    const transport = new FakeTransport([
+        Promise.resolve(indexResponse({
+            [olderVersion]: {
+                ...catalogEntry(jsonBytes(createCatalog(olderVersion))),
+                path: `${olderVersion}/catalog.json`
+            },
+            [latestVersion]: {
+                ...catalogEntry(latestBytes),
+                path: `${latestVersion}/catalog.json`
+            }
+        })),
+        Promise.resolve(catalogResponse(latestCatalog))
+    ]);
+    const client = new VersionedStepCatalogClient(new MemoryStorage(), transport, () => 1_000);
+
+    const result = await client.getLatestCatalog(INDEX_URL);
+
+    assert.equal(result?.catalog.vanessaVersion, latestVersion);
+    assert.equal(result?.source, 'versioned-download');
+    assert.equal(transport.calls, 2);
+});
+
+test('latest-version lookup uses the cached index and catalog while offline', async () => {
+    const latestVersion = '1.2.043.29';
+    const catalog = createCatalog(latestVersion);
+    const catalogBytes = jsonBytes(catalog);
+    const paths = getStepCatalogCachePaths(INDEX_URL, latestVersion);
+    const storage = new MemoryStorage({
+        [paths.index]: indexResponse({
+            [latestVersion]: {
+                ...catalogEntry(catalogBytes),
+                path: `${latestVersion}/catalog.json`
+            }
+        }).body,
+        [paths.catalog]: catalogBytes
+    });
+    const client = new VersionedStepCatalogClient(
+        storage,
+        new FakeTransport([Promise.reject(new Error('offline'))]),
+        () => 1_000
+    );
+
+    const result = await client.getLatestCatalog(INDEX_URL);
+
+    assert.equal(result?.catalog.vanessaVersion, latestVersion);
+    assert.equal(result?.source, 'versioned-cache');
+});
+
 test('returns a valid exact cache without contacting the network', async () => {
     const catalog = createCatalog();
     const catalogBytes = jsonBytes(catalog);

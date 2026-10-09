@@ -87,9 +87,25 @@ select:focus-visible,
     background: var(--vscode-sideBar-background);
 }
 
-.search-field,
+.search-field {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    height: 28px;
+    padding: 0 4px;
+    border: 1px solid var(--vscode-input-border, transparent);
+    border-radius: 3px;
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+}
+
+.search-field:focus-within {
+    border-color: var(--vscode-focusBorder);
+}
+
 .search-field input {
-    display: block;
+    flex: 1 1 0;
     width: 100%;
     min-width: 0;
 }
@@ -100,6 +116,51 @@ select:focus-visible,
     padding: 3px 8px;
     color: var(--vscode-input-foreground);
     background: var(--vscode-input-background);
+}
+
+.search-field input {
+    padding: 3px 2px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+}
+
+.search-field input:focus,
+.search-field input:focus-visible {
+    outline: 0;
+}
+
+.search-field-icon {
+    flex: 0 0 18px;
+    width: 18px;
+    color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+    text-align: center;
+}
+
+.search-clear-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 20px;
+    width: 20px;
+    min-width: 20px;
+    height: 20px;
+    min-height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+}
+
+.search-clear-button:hover,
+.search-clear-button:focus-visible {
+    background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.search-clear-button.hidden {
+    visibility: hidden;
+    pointer-events: none;
 }
 
 .search-field input::placeholder {
@@ -269,12 +330,23 @@ select:focus-visible,
     font-size: 11px;
 }
 
-.tree-children[hidden] {
-    display: none;
-}
-
 .tree-children {
     margin-left: 14px;
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    transition:
+        max-height 0.2s ease,
+        opacity 0.16s ease;
+}
+
+.tree-children.expanded {
+    max-height: none;
+    opacity: 1;
+}
+
+.tree-children.animating {
+    pointer-events: none;
 }
 
 .status-message {
@@ -303,8 +375,8 @@ select:focus-visible,
 .definition-list-content {
     display: flex;
     flex-direction: column;
-    width: max-content;
-    min-width: 100%;
+    width: 100%;
+    min-width: 0;
     align-items: stretch;
     padding: 4px;
 }
@@ -312,40 +384,83 @@ select:focus-visible,
 .definition-row {
     position: relative;
     display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
     width: 100%;
-    min-width: 100%;
+    min-width: 0;
     flex: 0 0 auto;
     gap: 4px;
     min-height: 52px;
     padding: 8px 10px;
+    padding-inline-start: 30px;
     border: 1px solid transparent;
     border-radius: 3px;
     cursor: default;
 }
 
-.definition-favorite {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    width: 24px;
-    min-width: 24px;
-    height: 24px;
-    padding: 0;
+.definition-actions {
+    display: inline-flex;
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: start;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 2px;
+    max-width: 0;
+    overflow: hidden;
     opacity: 0;
+    pointer-events: none;
 }
 
-.definition-row:hover .definition-favorite,
-.definition-row[aria-selected="true"] .definition-favorite,
-.definition-favorite:focus-visible {
+.definition-actions.has-favorite {
+    max-width: 24px;
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.definition-actions.has-favorite > .definition-action:not(.definition-favorite) {
+    display: none;
+}
+
+.definition-favorite.is-favorite {
     opacity: 1;
 }
 
-.definition-row:hover .definition-text,
-.definition-row[aria-selected="true"] .definition-text {
-    padding-inline-end: 28px;
+.definition-row:hover .definition-actions,
+.definition-row:focus-within .definition-actions {
+    max-width: 104px;
+    opacity: 1;
+    pointer-events: auto;
 }
 
-.definition-row:nth-child(even) {
+.definition-row:hover .definition-actions.has-favorite > .definition-action,
+.definition-row:focus-within .definition-actions.has-favorite > .definition-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.definition-action {
+    display: inline-flex;
+    flex: 0 0 24px;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    min-height: 24px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border-color: transparent;
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    background: transparent;
+}
+
+.definition-action:hover:not(:disabled),
+.definition-action:focus-visible {
+    background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.definition-entry:nth-child(even) > .definition-row {
     background: var(--step-row-alternate);
 }
 
@@ -359,7 +474,192 @@ select:focus-visible,
     background: var(--step-row-selected);
 }
 
+.definition-entry {
+    width: 100%;
+    min-width: 0;
+    flex: 0 0 auto;
+}
+
+.definition-resource-disclosure,
+.definition-resource-disclosure-spacer {
+    position: absolute;
+    top: 8px;
+    left: 6px;
+    width: 18px;
+    min-width: 18px;
+    height: 22px;
+    padding: 0;
+    border-color: transparent;
+    color: var(--vscode-descriptionForeground);
+    background: transparent;
+}
+
+.definition-resource-disclosure,
+.scenario-resource-disclosure {
+    font-size: 12px !important;
+    line-height: 1;
+    text-align: center;
+}
+
+.definition-resource-disclosure-spacer {
+    pointer-events: none;
+}
+
+.scenario-resource-tree,
+.scenario-resource-children {
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    transition: max-height 0.2s ease, opacity 0.16s ease;
+}
+
+.scenario-resource-tree.expanded,
+.scenario-resource-children.expanded {
+    max-height: none;
+    opacity: 1;
+}
+
+.scenario-resource-tree.is-entering,
+.scenario-resource-children.is-entering {
+    max-height: 0;
+    opacity: 0;
+}
+
+.scenario-resource-tree.animating,
+.scenario-resource-children.animating {
+    pointer-events: none;
+}
+
+.scenario-resource-tree {
+    padding: 0 4px 4px 0;
+}
+
+.scenario-resource-branch,
+.scenario-resource-children {
+    width: 100%;
+    min-width: 100%;
+}
+
+.scenario-resource-row {
+    display: flex;
+    width: 100%;
+    min-width: 100%;
+    min-height: 28px;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px 2px calc(6px + var(--resource-depth, 0) * 16px);
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: var(--vscode-foreground);
+}
+
+.scenario-resource-row:hover {
+    background: var(--step-row-hover);
+}
+
+.scenario-resource-row.is-drop-target,
+.definition-row.is-drop-target {
+    border-color: var(--vscode-focusBorder);
+    background: var(--step-row-selected);
+}
+
+.scenario-resource-disclosure,
+.scenario-resource-disclosure-spacer,
+.scenario-resource-action {
+    width: 18px;
+    min-width: 18px;
+    height: 22px;
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+}
+
+.scenario-resource-disclosure-spacer {
+    display: inline-block;
+    pointer-events: none;
+}
+
+.scenario-resource-icon {
+    width: 16px;
+    flex: 0 0 16px;
+    color: var(--vscode-descriptionForeground);
+    text-align: center;
+}
+
+.scenario-resource-name {
+    font-family: var(--vscode-editor-font-family);
+}
+
+.scenario-resource-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 2px;
+    opacity: 0;
+}
+
+.scenario-resource-row:hover .scenario-resource-actions,
+.scenario-resource-row:focus-within .scenario-resource-actions {
+    opacity: 1;
+}
+
+.scenario-resource-context-menu {
+    position: fixed;
+    z-index: 1000;
+    min-width: 190px;
+    padding: 4px;
+    border: 1px solid var(--vscode-menu-border, transparent);
+    border-radius: 5px;
+    color: var(--vscode-menu-foreground);
+    background: var(--vscode-menu-background);
+    box-shadow: 0 4px 14px var(--vscode-widget-shadow);
+}
+
+.scenario-resource-context-action {
+    display: block;
+    width: 100%;
+    min-height: 26px;
+    padding: 3px 8px;
+    border: 0;
+    border-radius: 3px;
+    color: inherit;
+    background: transparent;
+    text-align: start;
+}
+
+.scenario-resource-context-action:hover,
+.scenario-resource-context-action:focus-visible {
+    color: var(--vscode-menu-selectionForeground);
+    background: var(--vscode-menu-selectionBackground);
+    outline: none;
+}
+
+.scenario-resource-context-separator {
+    height: 1px;
+    margin: 4px 6px;
+    background: var(--vscode-menu-separatorBackground, var(--vscode-menu-border));
+}
+
+.scenario-resource-empty {
+    min-height: 28px;
+    padding: 5px 6px 5px calc(44px + var(--resource-depth, 0) * 16px);
+    color: var(--vscode-descriptionForeground);
+    font-style: italic;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tree-children,
+    .scenario-resource-tree,
+    .scenario-resource-children {
+        transition: none;
+    }
+
+}
+
 .definition-text {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    padding-inline-end: 0;
     overflow-wrap: normal;
     font-family: var(--vscode-editor-font-family);
     line-height: 1.35;
@@ -385,6 +685,9 @@ select:focus-visible,
 
 .definition-meta {
     display: flex;
+    grid-column: 1;
+    grid-row: 2;
+    min-width: 0;
     gap: 8px;
     color: var(--vscode-descriptionForeground);
     font-size: 11px;
@@ -396,13 +699,19 @@ select:focus-visible,
 }
 
 .details-content {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     padding: 12px;
+    overflow-x: hidden;
 }
 
 .details-content h3 {
-    width: max-content;
-    min-width: 100%;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     margin: 0 0 14px;
+    overflow: hidden;
     font-size: 15px;
     font-family: var(--vscode-editor-font-family);
     font-weight: 600;
@@ -412,7 +721,38 @@ select:focus-visible,
 }
 
 .details-field {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     margin: 0 0 13px;
+}
+
+.details-resource-list {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--vscode-textBlockQuote-border);
+    border-radius: 3px;
+    background: var(--vscode-textCodeBlock-background);
+}
+
+.details-resource-list.is-drop-target {
+    border-color: var(--vscode-focusBorder);
+}
+
+.details-resource-row {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    padding-inline-start: calc(4px + var(--resource-depth, 0) * 16px);
+}
+
+.details-resource-row.is-openable {
+    cursor: pointer;
+}
+
+.details-resource-children {
+    min-width: 0;
 }
 
 .details-label {
@@ -426,6 +766,9 @@ select:focus-visible,
 }
 
 .details-value {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     margin: 0;
     overflow-wrap: anywhere;
     line-height: 1.45;
@@ -433,8 +776,9 @@ select:focus-visible,
 }
 
 .details-code {
-    width: max-content;
-    min-width: 100%;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     margin: 0;
     padding: 8px;
     overflow-wrap: normal;
@@ -445,6 +789,30 @@ select:focus-visible,
     font-family: var(--vscode-editor-font-family);
     line-height: 1.45;
     white-space: pre;
+}
+
+.details-scroll-label {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: pre;
+}
+
+.details-scroll-label.is-overflowing:hover .kot-scroll-content,
+.details-scroll-label.is-overflowing:focus-visible .kot-scroll-content,
+.details-scroll-label.is-overflowing:has(:focus-visible) .kot-scroll-content {
+    transform: translateX(calc(-1 * var(--kot-overflow-distance, 0px)));
+    transition: transform var(--kot-overflow-duration, 1.2s) ease-in-out 350ms;
+}
+
+.details-scroll-label.is-overflowing:hover,
+.details-scroll-label.is-overflowing:focus-visible,
+.details-scroll-label.is-overflowing:has(:focus-visible) {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 20px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 20px), transparent);
 }
 
 .parameter-list {

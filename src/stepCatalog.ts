@@ -65,8 +65,7 @@ export interface StepCatalogIndex {
 export type ResolvedStepCatalogSource =
     | 'versioned-cache'
     | 'versioned-download'
-    | 'custom-html'
-    | 'bundled-html';
+    | 'unavailable';
 
 export interface ResolvedStepCatalog {
     readonly identity: string;

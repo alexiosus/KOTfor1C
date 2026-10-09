@@ -245,6 +245,7 @@ function createService(
     const exports = loadReferencesModule();
     const Service = exports.ProjectDefinitionReferenceService as new (options: object) => {
         findReferences: (...args: any[]) => Promise<Array<{ uri: ReturnType<typeof uri>; range: Range }>>;
+        findReferencesForDefinitions: (...args: any[]) => Promise<ReadonlyMap<string, Array<{ uri: ReturnType<typeof uri>; range: Range }>>>;
     };
     return new Service({
         resolver: resolverFor(definitions),
@@ -326,6 +327,33 @@ test('keeps reference buckets separated by stable definition id', async () => {
 
     assert.equal((await service.findReferences(first.id, undefined, { includeDeclaration: false }, noCancellation)).length, 1);
     assert.equal((await service.findReferences(second.id, undefined, { includeDeclaration: false }, noCancellation)).length, 0);
+});
+
+test('collects references for several definitions in one source scan', async () => {
+    const first = definition('export:first', 'exportScenario', 'And use first export', 'file:///lib/exports.feature');
+    const second = definition('export:second', 'exportScenario', 'And use second export', 'file:///lib/exports.feature');
+    const fileSystem = new VirtualFileSystem({
+        '/scenario/main.yaml': {
+            text: 'ТекстСценария: |\n    And use first export\n    And use second export\n'
+        }
+    });
+    const service = createService(
+        [first, second],
+        fileSystem,
+        [{ path: '/scenario', extensions: ['.yaml'] }]
+    );
+
+    const references = await service.findReferencesForDefinitions(
+        [first.id, second.id],
+        uri('file:///scenario/main.yaml'),
+        { includeDeclaration: false },
+        noCancellation
+    );
+
+    assert.equal(references.get(first.id)?.length, 1);
+    assert.equal(references.get(second.id)?.length, 1);
+    assert.equal(fileSystem.directoryReads, 1);
+    assert.equal(fileSystem.reads, 1);
 });
 
 test('honors declaration inclusion independently of usages', async () => {

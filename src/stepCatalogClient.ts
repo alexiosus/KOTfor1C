@@ -158,6 +158,103 @@ export class VersionedStepCatalogClient {
         return this.shareRequest(indexUrl, version, true, signal);
     }
 
+    public getLatestCatalog(
+        indexUrl: string,
+        signal?: AbortSignal
+    ): Promise<VersionedCatalogResult | null> {
+        return this.shareLatestRequest(indexUrl, false, signal);
+    }
+
+    public refreshLatestCatalog(
+        indexUrl: string,
+        signal?: AbortSignal
+    ): Promise<VersionedCatalogResult | null> {
+        return this.shareLatestRequest(indexUrl, true, signal);
+    }
+
+    private shareLatestRequest(
+        indexUrl: string,
+        refresh: boolean,
+        signal?: AbortSignal
+    ): Promise<VersionedCatalogResult | null> {
+        let normalizedUrl: string;
+        try {
+            normalizedUrl = normalizedIndexUrl(indexUrl);
+        } catch {
+            return Promise.resolve(null);
+        }
+
+        const key = `${normalizedUrl}\0<latest>\0${refresh ? 'refresh' : 'normal'}`;
+        const existing = this.inFlight.get(key);
+        if (existing) {
+            return existing;
+        }
+
+        const request = this.resolveLatestCatalog(normalizedUrl, refresh, signal);
+        let tracked!: Promise<VersionedCatalogResult | null>;
+        tracked = request.finally(() => {
+            if (this.inFlight.get(key) === tracked) {
+                this.inFlight.delete(key);
+            }
+        });
+        this.inFlight.set(key, tracked);
+        return tracked;
+    }
+
+    private async resolveLatestCatalog(
+        indexUrl: string,
+        refresh: boolean,
+        signal?: AbortSignal
+    ): Promise<VersionedCatalogResult | null> {
+        const indexPaths = getStepCatalogCachePaths(indexUrl, '0.0.0.0');
+        const index = await this.resolveIndex(indexUrl, indexPaths, refresh, signal);
+        if (!index) {
+            return null;
+        }
+
+        const latestVersion = Object.keys(index.catalogs).sort(compareVanessaVersions).at(-1);
+        if (!latestVersion) {
+            return null;
+        }
+
+        const paths = getStepCatalogCachePaths(indexUrl, latestVersion);
+        const cachedCatalog = await this.loadCachedCatalog(paths.catalog, latestVersion);
+        const entry = index.catalogs[latestVersion];
+        if (cachedCatalog?.digest === entry.sha256) {
+            return cachedCatalog;
+        }
+
+        try {
+            const response = await this.transport.get(new URL(entry.path, indexUrl), {
+                signal,
+                maxBytes: CATALOG_MAX_BYTES
+            });
+            if (response.status !== 200) {
+                return cachedCatalog;
+            }
+
+            const digest = sha256Hex(response.body);
+            if (digest !== entry.sha256) {
+                return cachedCatalog;
+            }
+            const catalog = parseBuiltInStepCatalog(parseJsonBytes(response.body), latestVersion);
+            if (catalog.steps.length !== entry.stepCount || catalog.source.commit !== entry.sourceCommit) {
+                return cachedCatalog;
+            }
+
+            const metadata: CatalogCacheMetadata = {
+                sha256: digest,
+                sourceCommit: entry.sourceCommit,
+                etag: response.etag
+            };
+            await this.storage.writeAtomic(paths.catalog, response.body);
+            await this.storage.writeAtomic(paths.catalogMeta, serializeJson(metadata));
+            return { catalog, source: 'versioned-download', digest };
+        } catch {
+            return cachedCatalog;
+        }
+    }
+
     private shareRequest(
         indexUrl: string,
         version: string,
@@ -328,4 +425,16 @@ export class VersionedStepCatalogClient {
             return cached?.index ?? null;
         }
     }
+}
+
+function compareVanessaVersions(left: string, right: string): number {
+    const leftParts = left.split('.').map(Number);
+    const rightParts = right.split('.').map(Number);
+    for (let index = 0; index < 4; index++) {
+        const difference = leftParts[index] - rightParts[index];
+        if (difference !== 0) {
+            return difference;
+        }
+    }
+    return 0;
 }

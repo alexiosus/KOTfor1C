@@ -7,6 +7,7 @@ import {
     type ScenarioRelationshipState
 } from '../src/scenarioRelationshipService';
 import type { TestInfo } from '../src/types';
+import type { ProjectDefinition, ProjectDefinitionView } from '../src/projectDefinition';
 
 interface FakeUri {
     readonly scheme: string;
@@ -54,10 +55,18 @@ function createEvent<T>(): {
     };
 }
 
-function createHarness(initialCatalog: ScenarioCatalog): {
+function createHarness(
+    initialCatalog: ScenarioCatalog,
+    projectDefinitions?: {
+        readonly view: ProjectDefinitionView;
+        readonly references: ReadonlyMap<string, readonly { uri: FakeUri }[]>;
+    },
+    resolveAdditionalScenarioKeysForUri?: (uri: FakeUri) => readonly string[]
+): {
     service: ScenarioRelationshipService;
     replaceCatalog(catalog: ScenarioCatalog): void;
     fireConfigurationChanged(): void;
+    setConfigurationEnabled(enabled: boolean): void;
     ensureCalls(): number;
     updates: Array<{ key: string; value: unknown; target: unknown }>;
 } {
@@ -67,6 +76,16 @@ function createHarness(initialCatalog: ScenarioCatalog): {
     const catalogEvent = createEvent<ScenarioCatalog | null>();
     const configurationEvent = createEvent<unknown>();
     const updates: Array<{ key: string; value: unknown; target: unknown }> = [];
+    const getConfiguration = () => {
+        const snapshot = enabled;
+        return {
+            get: <T>(_key: string, defaultValue?: T): T => (snapshot as T) ?? defaultValue!,
+            update: async (key: string, value: unknown, target?: unknown): Promise<void> => {
+                updates.push({ key, value, target });
+                enabled = value === true;
+            }
+        };
+    };
     const provider: ScenarioCatalogProvider = {
         getScenarioCatalog: () => catalog,
         ensureFreshScenarioCatalog: async () => {
@@ -77,19 +96,25 @@ function createHarness(initialCatalog: ScenarioCatalog): {
     };
     const dependencies: ScenarioRelationshipServiceDependencies = {
         catalogProvider: provider,
-        configuration: {
-            get: <T>(_key: string, defaultValue?: T): T => (enabled as T) ?? defaultValue!,
-            update: async (key: string, value: unknown, target?: unknown): Promise<void> => {
-                updates.push({ key, value, target });
-                enabled = value === true;
-            }
-        },
+        getConfiguration,
         workspaceConfigurationTarget: 'workspace',
         onDidChangeConfiguration: configurationEvent.event,
         getScanRootPaths: () => ({
             scanRootPath: '/repo',
             canonicalScanRootPath: '/repo'
-        })
+        }),
+        ...(resolveAdditionalScenarioKeysForUri ? {
+            resolveAdditionalScenarioKeysForUri: value => resolveAdditionalScenarioKeysForUri(value as FakeUri)
+        } : {}),
+        ...(projectDefinitions ? {
+            projectDefinitions: {
+                getView: async () => projectDefinitions.view,
+                findReferencesForDefinitions: async (definitionIds: readonly string[]) => new Map(
+                    definitionIds.map(id => [id, projectDefinitions.references.get(id) ?? []])
+                ),
+                createUri: (value: string) => uri(value.replace(/^file:\/\//u, '')) as TestInfo['yamlFileUri']
+            }
+        } : {})
     };
 
     return {
@@ -100,6 +125,9 @@ function createHarness(initialCatalog: ScenarioCatalog): {
         },
         fireConfigurationChanged(): void {
             configurationEvent.fire(undefined);
+        },
+        setConfigurationEnabled(nextEnabled: boolean): void {
+            enabled = nextEnabled;
         },
         ensureCalls: () => ensureCallCount,
         updates
@@ -145,6 +173,26 @@ test('uses the directory index only as a fallback for auxiliary scenario files',
     assert.equal(harness.service.getState().currentLabel, 'Nested');
 });
 
+test('treats a compiled feature URI as an alias of its main scenario', () => {
+    const mainKey = 'file:///repo/Main/scen.yaml';
+    const harness = createHarness(
+        relationshipCatalog(),
+        undefined,
+        activeUri => activeUri.fsPath === '/runtime/Main.feature' ? [mainKey] : []
+    );
+
+    harness.service.handleActiveEditorChanged(
+        uri('/runtime/Main.feature') as TestInfo['yamlFileUri']
+    );
+
+    assert.deepEqual(harness.service.getState().currentScenarioKeys, [mainKey]);
+    assert.deepEqual(harness.service.getState().relationships, [{
+        scenarioKey: 'file:///repo/Nested/scen.yaml',
+        outgoingDistance: 1
+    }]);
+    assert.equal(harness.service.getState().currentLabel, 'Main');
+});
+
 test('does not emit twice for the same URI and unchanged relationship state', () => {
     const harness = createHarness(relationshipCatalog());
     let eventCount = 0;
@@ -172,7 +220,7 @@ test('catalog replacement rebuilds the projection and increments its revision', 
     assert.deepEqual(harness.service.getState().affectedPhaseNames, ['Sales']);
 });
 
-test('disabled state retains current identity but clears relationship projection', async () => {
+test('disabling Test Manager highlighting retains the shared relationship projection', async () => {
     const harness = createHarness(relationshipCatalog());
     harness.service.handleActiveEditorChanged(
         uri('/repo/Nested/scen.yaml') as TestInfo['yamlFileUri']
@@ -183,13 +231,69 @@ test('disabled state retains current identity but clears relationship projection
     assert.equal(harness.service.getState().enabled, false);
     assert.equal(harness.service.getState().currentLabel, 'Nested');
     assert.deepEqual(harness.service.getState().currentScenarioKeys, ['file:///repo/Nested/scen.yaml']);
-    assert.deepEqual(harness.service.getState().relationships, []);
-    assert.deepEqual(harness.service.getState().affectedMainScenarioKeys, []);
-    assert.deepEqual(harness.service.getState().affectedPhaseNames, []);
+    assert.deepEqual(harness.service.getState().relationships, [{
+        scenarioKey: 'file:///repo/Main/scen.yaml',
+        incomingDistance: 1
+    }]);
+    assert.deepEqual(harness.service.getState().affectedMainScenarioKeys, ['file:///repo/Main/scen.yaml']);
+    assert.deepEqual(harness.service.getState().affectedPhaseNames, ['Accounting']);
     assert.deepEqual(harness.updates, [{
         key: 'phaseSwitcher.highlightAffectedMainScenarios',
         value: false,
         target: 'workspace'
+    }]);
+});
+
+test('connects export definitions to calling scenarios in both directions', async () => {
+    const exportDefinition: ProjectDefinition = {
+        id: 'export:shared-login',
+        kind: 'exportScenario',
+        template: 'And use shared login',
+        normalizedTemplate: 'And use shared login',
+        parameters: [],
+        sourceLabel: 'Project exports',
+        definitionLocation: {
+            uri: 'file:///library/exports.feature',
+            range: {
+                start: { line: 3, character: 0 },
+                end: { line: 3, character: 24 }
+            }
+        }
+    };
+    const view: ProjectDefinitionView = {
+        identity: 'project-definitions:one',
+        all: [exportDefinition],
+        byId: new Map([[exportDefinition.id, exportDefinition]]),
+        byNormalizedTemplate: new Map([[exportDefinition.normalizedTemplate, [exportDefinition]]])
+    };
+    const catalog = buildScenarioCatalog([
+        scenario('Main', '/repo/Main/scen.yaml', { calls: ['Nested'], phase: 'Accounting' }),
+        scenario('Nested', '/repo/Nested/scen.yaml')
+    ]);
+    const harness = createHarness(catalog, {
+        view,
+        references: new Map([[exportDefinition.id, [{ uri: uri('/repo/Nested/scen.yaml') }]]])
+    });
+
+    harness.service.handleActiveEditorChanged(uri('/library/exports.feature') as TestInfo['yamlFileUri']);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    assert.deepEqual(harness.service.getState().currentDefinitionIds, [exportDefinition.id]);
+    assert.deepEqual(harness.service.getState().relationships, [
+        { scenarioKey: 'file:///repo/Nested/scen.yaml', incomingDistance: 1 },
+        { scenarioKey: 'file:///repo/Main/scen.yaml', incomingDistance: 2 }
+    ]);
+    assert.deepEqual(harness.service.getState().affectedMainScenarioKeys, ['file:///repo/Main/scen.yaml']);
+
+    harness.service.handleActiveEditorChanged(uri('/repo/Nested/scen.yaml') as TestInfo['yamlFileUri']);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    assert.deepEqual(harness.service.getState().currentScenarioKeys, ['file:///repo/Nested/scen.yaml']);
+    assert.deepEqual(harness.service.getState().definitionRelationships, [{
+        definitionId: exportDefinition.id,
+        outgoingDistance: 1
     }]);
 });
 
@@ -203,4 +307,16 @@ test('configuration events synchronize externally changed toggle state', () => {
     harness.fireConfigurationChanged();
 
     assert.equal(harness.service.getState().enabled, false);
+});
+
+test('configuration events re-read a fresh snapshot for Test Manager highlighting', () => {
+    const harness = createHarness(relationshipCatalog());
+
+    harness.setConfigurationEnabled(false);
+    harness.fireConfigurationChanged();
+    assert.equal(harness.service.getState().enabled, false);
+
+    harness.setConfigurationEnabled(true);
+    harness.fireConfigurationChanged();
+    assert.equal(harness.service.getState().enabled, true);
 });

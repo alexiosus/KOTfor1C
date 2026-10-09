@@ -38,10 +38,37 @@ const packageManifest = JSON.parse(fs.readFileSync(
 )) as {
     contributes: {
         commands: Array<{ command: string; title: string; category: string }>;
+        languages?: Array<{ id: string; aliases?: string[]; extensions?: string[]; configuration?: string }>;
+        grammars?: Array<{ language: string; scopeName: string; path: string }>;
         menus: Record<string, Array<{ command: string; when?: string }>>;
-        views: Record<string, Array<{ id: string; name: string; type: string; contextualTitle?: string }>>;
+        viewsContainers: {
+            activitybar: Array<{ id: string; title: string; icon: string }>;
+        };
+        views: Record<string, Array<{
+            id: string;
+            name: string;
+            type: string;
+            contextualTitle?: string;
+            icon?: string;
+            visibility?: string;
+            initialSize?: number;
+        }>>;
     };
 };
+
+test('manifest provides a standalone Feature language and TextMate grammar', () => {
+    const language = packageManifest.contributes.languages?.find(entry => entry.id === 'feature');
+    assert.ok(language);
+    assert.ok(language.extensions?.includes('.feature'));
+    assert.equal(language.configuration, './language-configuration-feature.json');
+
+    const grammar = packageManifest.contributes.grammars?.find(entry => entry.language === 'feature');
+    assert.ok(grammar);
+    assert.equal(grammar.scopeName, 'source.feature.kot');
+    assert.equal(grammar.path, './syntaxes/feature.tmLanguage.json');
+    assert.equal(fs.existsSync(path.join(process.cwd(), grammar.path)), true);
+    assert.equal(fs.existsSync(path.join(process.cwd(), language.configuration)), true);
+});
 
 test('activation does not eagerly provision 1C helper infobases', () => {
     assert.doesNotMatch(source, /warmUpSharedStartupInfobase/);
@@ -70,18 +97,79 @@ test('activation shares a lazy managed-infobase snapshot without eager 1C discov
     assert.doesNotMatch(activationPrefix, /collectManagedInfobases\(context\)(?!,)/u);
 });
 
-test('manifest contributes the three ordered KOT workbench webviews', () => {
+test('activation shares one scenario files service across both Library surfaces', () => {
+    assert.equal(source.match(/new ScenarioFilesService\(/gu)?.length, 1);
+    assert.match(source, /new StepLibrarySidebarProvider\(\{[\s\S]*?scenarioFilesService/u);
+    assert.match(source, /new StepLibraryPanel\(\{[\s\S]*?scenarioFilesService/u);
+    assert.match(source, /context\.subscriptions\.push\([\s\S]*?scenarioFilesService/u);
+});
+
+test('activation does not register artifact hash infrastructure', () => {
+    assert.doesNotMatch(source, /ScenarioArtifactFreshnessService/u);
+    assert.doesNotMatch(source, /ScenarioArtifactDependencyResolver/u);
+    assert.doesNotMatch(source, /attachArtifactFreshnessService/u);
+    assert.doesNotMatch(source, /scenarioArtifactReferenceService/u);
+});
+
+test('manifest contributes Library as an expanded dedicated Activity Bar view', () => {
     assert.deepEqual(
         packageManifest.contributes.views.kotTestToolkitContainer.map(view => ({
             id: view.id,
-            type: view.type
+            type: view.type,
+            initialSize: view.initialSize,
+            visibility: view.visibility
         })),
         [
-            { id: 'kotTestToolkit.phaseSwitcherView', type: 'webview' },
-            { id: 'kotTestToolkit.stepLibrarySidebarView', type: 'webview' },
-            { id: 'kotTestToolkit.infobaseSidebarView', type: 'webview' }
+            {
+                id: 'kotTestToolkit.phaseSwitcherView',
+                type: 'webview',
+                initialSize: 2,
+                visibility: undefined
+            },
+            {
+                id: 'kotTestToolkit.infobaseSidebarView',
+                type: 'webview',
+                initialSize: 1,
+                visibility: undefined
+            }
         ]
     );
+    assert.deepEqual(
+        packageManifest.contributes.views.kotTestToolkitLibraryContainer,
+        [{
+            id: 'kotTestToolkit.stepLibrarySidebarView',
+            name: '%view.stepLibrary.name%',
+            type: 'webview',
+            contextualTitle: 'KOT for 1C',
+            icon: 'res/icons/KOTLibrary.png'
+        }]
+    );
+});
+
+test('manifest assigns the supplied icon to the KOT container and each detachable view', () => {
+    const container = packageManifest.contributes.viewsContainers.activitybar.find(entry =>
+        entry.id === 'kotTestToolkitContainer'
+    );
+    assert.equal(container?.icon, 'res/icons/KOTCommon.png');
+    const libraryContainer = packageManifest.contributes.viewsContainers.activitybar.find(entry =>
+        entry.id === 'kotTestToolkitLibraryContainer'
+    );
+    assert.deepEqual(libraryContainer, {
+        id: 'kotTestToolkitLibraryContainer',
+        title: '%ext.displayName%',
+        icon: 'res/icons/KOTLibrary.png'
+    });
+
+    const expectedViewIcons = new Map([
+        ['kotTestToolkit.phaseSwitcherView', 'res/icons/KOTTestManager.png'],
+        ['kotTestToolkit.stepLibrarySidebarView', 'res/icons/KOTLibrary.png'],
+        ['kotTestToolkit.infobaseSidebarView', 'res/icons/KOTInfobases.png']
+    ]);
+    const views = Object.values(packageManifest.contributes.views).flat();
+    for (const [viewId, iconPath] of expectedViewIcons) {
+        assert.equal(views.find(view => view.id === viewId)?.icon, iconPath);
+        assert.equal(fs.existsSync(path.join(process.cwd(), iconPath)), true, iconPath);
+    }
 });
 
 test('step library is contributed to the palette and only YAML or feature editor titles', () => {
@@ -153,6 +241,45 @@ test('active-editor changes reach the shared relationship service through Test M
     const listener = source.slice(listenerStart, listenerEnd);
     assert.equal(listener.match(/phaseSwitcherProvider\.handleActiveEditorChanged\(editor\)/gu)?.length, 1);
     assert.doesNotMatch(listener, /relationshipService\.handleActiveEditorChanged/u);
+});
+
+test('relationship title menus toggle persisted options without a Quick Pick confirmation step', () => {
+    assert.doesNotMatch(source, /configureScenarioRelationships|showQuickPick\(choices/u);
+    for (const command of [
+        'toggleTestManagerRelationshipHighlight',
+        'toggleTestManagerRelationshipHighlightChecked',
+        'toggleTestManagerRelationshipFilter',
+        'toggleTestManagerRelationshipFilterChecked',
+        'toggleStepLibraryRelationshipHighlight',
+        'toggleStepLibraryRelationshipHighlightChecked',
+        'toggleStepLibraryRelationshipFilter',
+        'toggleStepLibraryRelationshipFilterChecked'
+    ]) {
+        assert.match(source, new RegExp(`registerCommand\\(\\s*'kotTestToolkit\\.${command}'`, 'u'));
+    }
+    assert.match(source, /relationshipPresentation\.toggleMode\('stepLibrary',\s*'filter'\)/u);
+});
+
+test('activation owns one persistent Test Manager status filter and mutually exclusive contexts', () => {
+    assert.match(source, /new TestManagerStatusFilterService\(context\.workspaceState\)/u);
+    assert.match(source, /context\.subscriptions\.push\(testManagerStatusFilter\)/u);
+    for (const suffix of ['All', 'AllChecked', 'Built', 'BuiltChecked', 'Running', 'RunningChecked']) {
+        assert.match(
+            source,
+            new RegExp(`registerCommand\\(\\s*'kotTestToolkit\\.setTestManagerStatusFilter${suffix}'`, 'u')
+        );
+    }
+    for (const [suffix, mode] of [['All', 'all'], ['Built', 'built'], ['Running', 'running']]) {
+        assert.match(
+            source,
+            new RegExp(`setContext'[\\s\\S]*?testManagerStatusFilter${suffix}[\\s\\S]*?mode === '${mode}'`, 'u')
+        );
+    }
+    assert.match(
+        source,
+        /testManagerFiltersActive[\s\S]*relationshipPresentation\.isActive\('testManager'\)[\s\S]*testManagerStatusFilter\.isActive\(\)/u
+    );
+    assert.match(source, /testManagerStatusFilter\.onDidChangeMode/u);
 });
 
 test('activation defers scenario creation and settings commands', () => {

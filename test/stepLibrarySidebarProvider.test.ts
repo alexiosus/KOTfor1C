@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
 import * as sidebarModel from '../src/stepLibrarySidebarModel';
+import * as scenarioFilesWebviewProtocol from '../src/scenarioFilesWebviewProtocol';
 import type { StepLibraryItem, StepLibrarySnapshot } from '../src/stepLibraryModel';
 
 interface Disposable {
@@ -122,6 +123,7 @@ async function flush(): Promise<void> {
 interface HarnessOptions {
     readonly ensureReady?: (resource?: unknown) => Promise<StepLibrarySnapshot>;
     readonly initialSnapshot?: StepLibrarySnapshot;
+    readonly scenarioFileNodes?: readonly unknown[];
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -155,6 +157,9 @@ function createHarness(options: HarnessOptions = {}) {
             if (specifier === './stepLibrarySidebarModel') {
                 return sidebarModel;
             }
+            if (specifier === './scenarioFilesWebviewProtocol') {
+                return scenarioFilesWebviewProtocol;
+            }
             if (specifier === './localization') {
                 return { getTranslator: async () => (message: string) => message };
             }
@@ -168,6 +173,7 @@ function createHarness(options: HarnessOptions = {}) {
     const invalidations = new EventHub<void>();
     const targetChanges = new EventHub<unknown>();
     const relationshipChanges = new EventHub<unknown>();
+    const relationshipModeChanges = new EventHub<{ surface: 'testManager' | 'stepLibrary' }>();
     let current = options.initialSnapshot ?? snapshot('initial', []);
     let ensureReadyCalls = 0;
     let invalidateCalls = 0;
@@ -175,6 +181,38 @@ function createHarness(options: HarnessOptions = {}) {
     const inserted: StepLibraryItem[] = [];
     const copied: StepLibraryItem[] = [];
     const opened: StepLibraryItem[] = [];
+    const scenarioFileLists: Array<{ item: StepLibraryItem; relativePath: string }> = [];
+    const scenarioFileOpens: Array<{ item: StepLibraryItem; relativePath: string }> = [];
+    const scenarioFileReveals: Array<{ item: StepLibraryItem; relativePath: string }> = [];
+    const scenarioFileDeletes: Array<{ item: StepLibraryItem; relativePath: string }> = [];
+    let scenarioFileDeleteResult: 'deleted' | 'cancelled' = 'deleted';
+    let scenarioFileDeleteError: unknown;
+    const scenarioFilesService = {
+        listChildren: async (value: StepLibraryItem, relativePath: string) => {
+            scenarioFileLists.push({ item: value, relativePath });
+            return options.scenarioFileNodes ?? [];
+        },
+        openExternal: async (value: StepLibraryItem, relativePath: string) => {
+            scenarioFileOpens.push({ item: value, relativePath });
+            return true;
+        },
+        revealInOs: async (value: StepLibraryItem, relativePath: string) => {
+            scenarioFileReveals.push({ item: value, relativePath });
+            return true;
+        },
+        deleteFile: async (value: StepLibraryItem, relativePath: string) => {
+            scenarioFileDeletes.push({ item: value, relativePath });
+            if (scenarioFileDeleteError) {
+                throw scenarioFileDeleteError;
+            }
+            return scenarioFileDeleteResult;
+        },
+        watch: () => ({ dispose: () => undefined }),
+        prepareDrop: async () => ({ files: [], skipped: [] }),
+        appendTransferChunk: async (_id: string, offset: number) => offset,
+        completeTransfer: async () => undefined,
+        cancelTransfer: async () => undefined
+    };
     const snapshotService = {
         onDidInvalidate: invalidations.event,
         ensureReady: async (resource?: unknown) => {
@@ -219,8 +257,14 @@ function createHarness(options: HarnessOptions = {}) {
         onDidChangeState: relationshipChanges.event,
         getState: () => relationshipState
     };
+    let relationshipMode = { highlight: true, filter: false };
+    const relationshipPresentation = {
+        onDidChangeMode: relationshipModeChanges.event,
+        getMode: () => relationshipMode
+    };
     const Provider = moduleObject.exports.StepLibrarySidebarProvider as new (services: unknown) => {
         resolveWebviewView(view: unknown): Promise<void> | void;
+        toggleAllGroupsFromSidebar(): void;
         dispose(): void;
     };
     const provider = new Provider({
@@ -228,6 +272,8 @@ function createHarness(options: HarnessOptions = {}) {
         snapshotService,
         actionService,
         relationshipService,
+        relationshipPresentation,
+        scenarioFilesService,
         refreshDefinitions: async () => {
             refreshCalls += 1;
         }
@@ -241,17 +287,170 @@ function createHarness(options: HarnessOptions = {}) {
         invalidations,
         targetChanges,
         relationshipChanges,
+        relationshipModeChanges,
         executedCommands,
         inserted,
         copied,
         opened,
+        scenarioFileLists,
+        scenarioFileOpens,
+        scenarioFileReveals,
+        scenarioFileDeletes,
+        setScenarioFileDeleteResult(value: 'deleted' | 'cancelled') {
+            scenarioFileDeleteResult = value;
+            scenarioFileDeleteError = undefined;
+        },
+        setScenarioFileDeleteError(value: unknown) { scenarioFileDeleteError = value; },
         setSnapshot(value: StepLibrarySnapshot) { current = value; },
         setRelationshipState(value: unknown) { relationshipState = value; },
+        setRelationshipMode(value: { highlight: boolean; filter: boolean }) { relationshipMode = value; },
         get ensureReadyCalls() { return ensureReadyCalls; },
         get invalidateCalls() { return invalidateCalls; },
         get refreshCalls() { return refreshCalls; }
     };
 }
+
+test('scenario Files expansion stays lazy and does not reload the sidebar snapshot', async () => {
+    const definition = item(1, {
+        id: 'nested-files',
+        hasScenarioFiles: true
+    });
+    const nodes = [{
+        id: 'resource-file',
+        kind: 'file',
+        itemId: definition.id,
+        name: 'Expected.xlsx',
+        relativePath: 'Expected.xlsx',
+        depth: 1,
+        expandable: false
+    }];
+    const harness = createHarness({
+        initialSnapshot: snapshot('catalog:files', [definition]),
+        scenarioFileNodes: nodes
+    });
+    await send(harness, { command: 'ready' });
+
+    await send(harness, {
+        command: 'listScenarioFiles',
+        itemId: definition.id,
+        relativePath: '',
+        requestId: 'scenario-file-root'
+    });
+
+    assert.equal(harness.ensureReadyCalls, 1);
+    assert.deepEqual(harness.scenarioFileLists.map(entry => [entry.item.id, entry.relativePath]), [
+        [definition.id, '']
+    ]);
+    const response = harness.view.webview.messages.at(-1) as any;
+    assert.equal(response.command, 'scenarioFileChildren');
+    assert.equal(response.requestId, 'scenario-file-root');
+    assert.deepEqual(response.nodes, nodes);
+
+    await send(harness, {
+        command: 'openScenarioFile',
+        itemId: definition.id,
+        relativePath: 'Expected.xlsx'
+    });
+    await send(harness, {
+        command: 'revealScenarioFile',
+        itemId: definition.id,
+        relativePath: 'Expected.xlsx'
+    });
+    assert.deepEqual(harness.scenarioFileOpens.map(entry => entry.item), [definition]);
+    assert.deepEqual(harness.scenarioFileReveals.map(entry => entry.item), [definition]);
+});
+
+test('compact Library reports attachment deletion success cancellation and failure', async () => {
+    const definition = item(1, {
+        id: 'nested-delete',
+        hasScenarioFiles: true
+    });
+    const harness = createHarness({
+        initialSnapshot: snapshot('catalog:delete', [definition])
+    });
+    await send(harness, { command: 'ready' });
+
+    await send(harness, {
+        command: 'deleteScenarioFile',
+        itemId: definition.id,
+        relativePath: 'Folder\\Input.xlsx'
+    });
+    assert.deepEqual(
+        harness.scenarioFileDeletes.map(entry => [entry.item.id, entry.relativePath]),
+        [[definition.id, 'Folder/Input.xlsx']]
+    );
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.view.webview.messages.at(-1))), {
+        command: 'scenarioFileActionResult',
+        action: 'delete',
+        itemId: definition.id,
+        relativePath: 'Folder/Input.xlsx',
+        succeeded: true
+    });
+
+    harness.setScenarioFileDeleteResult('cancelled');
+    await send(harness, {
+        command: 'deleteScenarioFile',
+        itemId: definition.id,
+        relativePath: 'Cancelled.xlsx'
+    });
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.view.webview.messages.at(-1))), {
+        command: 'scenarioFileActionResult',
+        action: 'delete',
+        itemId: definition.id,
+        relativePath: 'Cancelled.xlsx',
+        succeeded: false,
+        cancelled: true
+    });
+
+    harness.setScenarioFileDeleteError(new Error('Delete denied'));
+    const successCount = harness.view.webview.messages.filter(
+        (message: any) => message.command === 'scenarioFileActionResult'
+            && message.action === 'delete'
+            && message.succeeded
+    ).length;
+    await send(harness, {
+        command: 'deleteScenarioFile',
+        itemId: definition.id,
+        relativePath: 'Denied.xlsx'
+    });
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.view.webview.messages.at(-1))), {
+        command: 'scenarioFileTransferFailed',
+        message: 'Delete denied'
+    });
+    assert.equal(harness.view.webview.messages.filter(
+        (message: any) => message.command === 'scenarioFileActionResult'
+            && message.action === 'delete'
+            && message.succeeded
+    ).length, successCount);
+});
+
+test('scenario file failures preserve request and drop identities for browser cleanup', async () => {
+    const harness = createHarness({ initialSnapshot: snapshot('catalog:files', []) });
+    await send(harness, { command: 'ready' });
+
+    await send(harness, {
+        command: 'listScenarioFiles',
+        itemId: 'missing-item',
+        relativePath: '',
+        requestId: 'missing-request'
+    });
+    const requestFailure = harness.view.webview.messages.at(-1) as any;
+    assert.equal(requestFailure.command, 'scenarioFileTransferFailed');
+    assert.equal(requestFailure.requestId, 'missing-request');
+    assert.equal(requestFailure.message, 'Unknown scenario file item.');
+
+    await send(harness, {
+        command: 'prepareScenarioFileDrop',
+        dropId: 'missing-drop',
+        itemId: 'missing-item',
+        targetRelativePath: '',
+        entries: []
+    });
+    const dropFailure = harness.view.webview.messages.at(-1) as any;
+    assert.equal(dropFailure.command, 'scenarioFileTransferFailed');
+    assert.equal(dropFailure.dropId, 'missing-drop');
+    assert.equal(dropFailure.message, 'Unknown scenario file item.');
+});
 
 async function send(harness: ReturnType<typeof createHarness>, message: unknown): Promise<void> {
     harness.view.webview.inbound.fire(message);
@@ -294,6 +493,40 @@ test('expand and search return bounded host-side pages only', async () => {
     const results = harness.view.webview.messages.at(-1) as any;
     assert.equal(results.command, 'searchResults');
     assert.equal(results.nodes.length, 100);
+});
+
+test('relationship filter pages the related definitions instead of raw catalog batches', async () => {
+    const relatedScenarioKey = 'file:///workspace/related/scen.yaml';
+    const definitions = Array.from({ length: 180 }, (_, index) => item(index, {
+        scenarioKey: index === 179 ? relatedScenarioKey : `file:///workspace/unrelated-${index}/scen.yaml`
+    }));
+    const harness = createHarness({ initialSnapshot: snapshot('catalog:related-page', definitions) });
+    harness.setRelationshipState({
+        enabled: true,
+        currentScenarioKeys: [relatedScenarioKey],
+        relationships: [],
+        affectedMainScenarioKeys: [],
+        affectedPhaseNames: [],
+        currentLabel: 'Bulk step 179',
+        revision: 1
+    });
+    harness.setRelationshipMode({ highlight: true, filter: true });
+
+    await send(harness, { command: 'ready' });
+    const roots = harness.view.webview.messages.at(-1) as any;
+    assert.equal(roots.relationshipVisibleCounts['source:nested'], 1);
+    await send(harness, { command: 'expand', nodeId: 'source:nested', offset: 0 });
+    const sourceChildren = harness.view.webview.messages.at(-1) as any;
+    const category = sourceChildren.nodes.find((node: any) => node.kind === 'category');
+
+    await send(harness, { command: 'expand', nodeId: category.id, offset: 0 });
+    const page = harness.view.webview.messages.at(-1) as any;
+
+    assert.deepEqual(
+        page.nodes.map((node: any) => [node.kind, node.itemId]),
+        [['definition', 'item-179']]
+    );
+    assert.equal(page.nextOffset, null);
 });
 
 test('ignores invalid inbound messages and resolves actions from server-owned items', async () => {
@@ -396,6 +629,18 @@ test('refreshes the shared catalog and opens the full library command', async ()
     }]);
 });
 
+test('native Library title action delegates expand or collapse to the webview', async () => {
+    const harness = createHarness({ initialSnapshot: snapshot('catalog:one', []) });
+
+    harness.provider.toggleAllGroupsFromSidebar();
+    await flush();
+
+    assert.deepEqual(
+        harness.view.webview.messages.map((message: any) => message.command),
+        ['toggleAllGroups']
+    );
+});
+
 test('relationship updates are lightweight and do not rebuild the catalog', async () => {
     const scenarioKey = 'file:///workspace/item-1/scen.yaml';
     const harness = createHarness({
@@ -418,8 +663,53 @@ test('relationship updates are lightweight and do not rebuild the catalog', asyn
     assert.equal(harness.ensureReadyCalls, 1);
     const message = harness.view.webview.messages.at(-1) as any;
     assert.equal(message.command, 'relationshipState');
+    assert.equal(message.relationshipState.enabled, true);
+    assert.equal(message.relationshipFilterEnabled, false);
     assert.deepEqual([...message.relatedAncestorIds], [
         'category:nested:Tests',
         'source:nested'
     ]);
+});
+
+test('Library relationship mode is independent and includes related export definitions', async () => {
+    const exported = item(1, {
+        id: 'export:shared#authored',
+        definitionId: 'export:shared',
+        kind: 'exportScenario',
+        sourceGroup: 'export',
+        categoryPath: ['Shared'],
+        scenarioKey: undefined
+    });
+    const harness = createHarness({
+        initialSnapshot: snapshot('catalog:export', [exported])
+    });
+    harness.setRelationshipState({
+        enabled: false,
+        currentScenarioKeys: [],
+        relationships: [],
+        currentDefinitionIds: [],
+        definitionRelationships: [{ definitionId: 'export:shared', outgoingDistance: 1 }],
+        affectedMainScenarioKeys: [],
+        affectedPhaseNames: [],
+        currentLabel: 'Main',
+        revision: 1
+    });
+    harness.setRelationshipMode({ highlight: false, filter: true });
+
+    await send(harness, { command: 'ready' });
+    let message = harness.view.webview.messages.find((entry: any) => entry.command === 'roots') as any;
+    assert.equal(message.relationshipState.enabled, false);
+    assert.equal(message.relationshipFilterEnabled, true);
+    assert.deepEqual([...message.relatedItemIds], ['export:shared#authored']);
+    assert.deepEqual([...message.relatedAncestorIds], ['category:export:Shared', 'source:export']);
+
+    harness.setRelationshipMode({ highlight: true, filter: false });
+    harness.relationshipModeChanges.fire({ surface: 'stepLibrary' });
+    await flush();
+
+    message = harness.view.webview.messages.at(-1) as any;
+    assert.equal(message.command, 'relationshipState');
+    assert.equal(message.relationshipState.enabled, true);
+    assert.equal(message.relationshipFilterEnabled, false);
+    assert.equal(harness.ensureReadyCalls, 1);
 });

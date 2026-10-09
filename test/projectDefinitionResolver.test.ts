@@ -96,7 +96,7 @@ function catalog(identity: string, pattern: string): ResolvedStepCatalog {
     return {
         identity,
         catalogVersion: identity,
-        source: 'bundled-html',
+        source: 'versioned-cache',
         steps: [{
             id: `${identity}-step`,
             ru: { pattern, description: `RU ${pattern}` },
@@ -279,6 +279,54 @@ test('pairs localized built-in variants into a family and selects their category
     assert.deepEqual(english?.categoryPath, ['UI', 'Forms']);
 });
 
+test('coalesces exact built-in translation aliases without hiding distinct localized definitions', async () => {
+    const aliasCatalog: ResolvedStepCatalog = {
+        identity: 'alias-catalog',
+        catalogVersion: '1.2.043.42',
+        source: 'versioned-cache',
+        steps: [
+            {
+                id: 'close-present',
+                ru: {
+                    pattern: 'И я закрываю все окна клиентского приложения',
+                    description: 'Закрывает все окна.'
+                },
+                en: {
+                    pattern: 'And I close all client application windows',
+                    description: 'Closes all current TestClient windows.'
+                }
+            },
+            {
+                id: 'close-past',
+                ru: {
+                    pattern: 'И я закрыл все окна клиентского приложения',
+                    description: 'Закрывает все окна.'
+                },
+                en: {
+                    pattern: 'And I close all client application windows',
+                    description: 'Closes all current TestClient windows.'
+                }
+            }
+        ]
+    };
+    const { resolver } = createHarness({ catalogs: new Map([['a', aliasCatalog]]) });
+    const resource = uri('file:///workspace-a/test.feature');
+    const view = await resolver.getView(resource);
+
+    assert.equal(
+        view.all.filter(item => item.kind === 'builtInStep' && item.language === 'en').length,
+        1
+    );
+    assert.equal(
+        view.all.filter(item => item.kind === 'builtInStep' && item.language === 'ru').length,
+        2
+    );
+    assert.equal(
+        (await resolver.resolve(resource, 'And I close all client application windows', view)).kind,
+        'unique'
+    );
+});
+
 test('keeps uncategorized schema-v1 built-ins without a category path', async () => {
     const { resolver } = createHarness();
     const view = await resolver.getView(uri('file:///workspace-a/test.feature'));
@@ -298,7 +346,7 @@ test('keeps only positional placeholders as parameters of a multiline built-in s
     const multilineCatalog: ResolvedStepCatalog = {
         identity: 'multiline-catalog',
         catalogVersion: 'test',
-        source: 'bundled-html',
+        source: 'versioned-cache',
         steps: [{
             id: 'multiline-table-step',
             en: { pattern, description: 'Moves to the matching table line.' }
@@ -321,7 +369,7 @@ test('matches the invocation line of a multiline built-in step and retains its f
     const multilineCatalog: ResolvedStepCatalog = {
         identity: 'multiline-catalog',
         catalogVersion: 'test',
-        source: 'bundled-html',
+        source: 'versioned-cache',
         steps: [{
             id: 'multiline-table-step',
             en: { pattern, description: 'Moves to the matching table line.' }

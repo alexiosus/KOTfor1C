@@ -21,6 +21,8 @@ const protocol = require(path.join(process.cwd(), 'media', 'phaseSwitcherProtoco
         direct: boolean;
         accessibleLabel: string;
     };
+    isScenarioRelationshipMatch(scenarioKey: string, state: unknown): boolean;
+    isScenarioRelationshipHighlighted?: (scenarioKey: string, state: unknown) => boolean;
     aggregatePhaseRelationship(scenarioKeys: readonly string[], state: unknown): {
         state: 'related' | 'none';
         icon: 'git-branch' | null;
@@ -37,6 +39,48 @@ const protocol = require(path.join(process.cwd(), 'media', 'phaseSwitcherProtoco
         visibleKeys: readonly string[],
         mode: 'select' | 'clear' | 'toggle'
     ): readonly string[];
+    matchesScenarioSearch(
+        scenario: { name?: string; phaseName?: string },
+        query: string
+    ): boolean;
+    normalizeStatusFilter(value: unknown): 'all' | 'built' | 'running';
+    matchesStatusFilter(runInfo: unknown, mode: unknown): boolean;
+    visibleScenarioAggregate(
+        testInfos: readonly Array<{ scenarioKey?: string; name?: string }>,
+        states: Readonly<Record<string, boolean | 'checked' | 'disabled'>>,
+        runArtifacts: Readonly<Record<string, unknown>>,
+        mode: unknown,
+        relationshipPredicate?: (testInfo: { scenarioKey?: string; name?: string }, key: string) => boolean,
+        searchPredicate?: (testInfo: { scenarioKey?: string; name?: string }, key: string) => boolean
+    ): {
+        visibleKeys: readonly string[];
+        selectedCount: number;
+        totalCount: number;
+    };
+    formatRunProgress(value: {
+        isRunning?: boolean;
+        currentLine?: number;
+        totalLines?: number;
+        percent?: number;
+        iteration?: number;
+    }): {
+        hasLineProgress: boolean;
+        percent: number | null;
+        title: string;
+        counterText: string;
+        badgeText: string;
+    };
+    compiledResourceSignature(runArtifacts: unknown): string;
+    changedCompiledResourceKeys(previousArtifacts: unknown, nextArtifacts: unknown): readonly string[];
+    isCurrentScenarioFileResponse(expectedRequestId: unknown, responseRequestId: unknown): boolean;
+    createPhaseContextMenuActions(
+        groupName: string,
+        labels: { createMainScenario: string; renameGroup: string }
+    ): readonly Array<{
+        icon: string;
+        label: string;
+        message: { command: string; groupName: string };
+    }>;
 };
 
 const relationshipState = {
@@ -53,6 +97,27 @@ const relationshipState = {
     affectedPhaseNames: ['Accounting'],
     currentLabel: 'Open scenario'
 };
+
+test('group context menu creates a main scenario before the rename action', () => {
+    assert.deepEqual(
+        protocol.createPhaseContextMenuActions('  Production 2  ', {
+            createMainScenario: 'Create main scenario',
+            renameGroup: 'Rename group'
+        }),
+        [
+            {
+                icon: 'codicon-add',
+                label: 'Create main scenario',
+                message: { command: 'createMainScenario', groupName: 'Production 2' }
+            },
+            {
+                icon: 'codicon-rename',
+                label: 'Rename group',
+                message: { command: 'renameGroup', groupName: 'Production 2' }
+            }
+        ]
+    );
+});
 
 test('normalizes relationship payloads into immutable stable-key state', () => {
     const parsed = protocol.parseRelationshipState({
@@ -106,6 +171,81 @@ test('Select visible preserves hidden tests and only changes the filtered result
     );
 });
 
+test('status filters include every artifact shape and every displayed running source', () => {
+    assert.equal(protocol.normalizeStatusFilter('built'), 'built');
+    assert.equal(protocol.normalizeStatusFilter('running'), 'running');
+    assert.equal(protocol.normalizeStatusFilter('invalid'), 'all');
+    assert.equal(protocol.normalizeStatusFilter(null), 'all');
+
+    for (const artifact of [
+        { featurePath: '/build/test.feature', runStatus: 'idle' },
+        { compiledFeatureUri: 'file:///build/test.feature', runStatus: 'idle' },
+        { jsonPath: '/build/test.json', runStatus: 'idle' },
+        { combinedJsonPath: '/build/combined.json', runStatus: 'idle' },
+        { featurePath: '/build/test.feature', stale: true, runStatus: 'passed' }
+    ]) {
+        assert.equal(protocol.matchesStatusFilter(artifact, 'built'), true);
+    }
+    assert.equal(protocol.matchesStatusFilter(null, 'built'), false);
+    assert.equal(protocol.matchesStatusFilter({}, 'built'), false);
+    assert.equal(protocol.matchesStatusFilter(null, 'all'), true);
+    assert.equal(protocol.matchesStatusFilter({ runStatus: 'running' }, 'running'), true);
+    assert.equal(protocol.matchesStatusFilter({
+        runStatus: 'running',
+        blocksControls: false
+    }, 'running'), true);
+    assert.equal(protocol.matchesStatusFilter({
+        runStatus: 'idle',
+        featurePath: '/build/test.feature'
+    }, 'running'), false);
+});
+
+test('visible scenario aggregate intersects status relationship and search filters without mutation', () => {
+    const testInfos = [
+        { scenarioKey: 'a', name: 'Alpha' },
+        { scenarioKey: 'b', name: 'Beta' },
+        { scenarioKey: 'c', name: 'Gamma' },
+        { scenarioKey: 'd', name: 'Delta' },
+        { scenarioKey: '', name: 'Invalid' }
+    ];
+    const states = { a: true, b: false, c: 'checked', d: 'disabled' } as const;
+    const runArtifacts = {
+        a: { featurePath: '/a.feature', runStatus: 'idle', stale: true },
+        b: { jsonPath: '/b.json', runStatus: 'idle' },
+        c: { runStatus: 'running', blocksControls: false },
+        d: { combinedJsonPath: '/d.json', runStatus: 'idle' }
+    };
+    const artifactsBefore = JSON.stringify(runArtifacts);
+    const infosBefore = JSON.stringify(testInfos);
+
+    assert.deepEqual(protocol.visibleScenarioAggregate(
+        testInfos,
+        states,
+        runArtifacts,
+        'built',
+        (_info, key) => key !== 'b',
+        info => info.name !== 'Gamma'
+    ), {
+        visibleKeys: ['a', 'd'],
+        selectedCount: 1,
+        totalCount: 1
+    });
+    assert.deepEqual(protocol.visibleScenarioAggregate(
+        testInfos,
+        states,
+        runArtifacts,
+        'running',
+        () => true,
+        () => true
+    ), {
+        visibleKeys: ['c'],
+        selectedCount: 1,
+        totalCount: 1
+    });
+    assert.equal(JSON.stringify(runArtifacts), artifactsBefore);
+    assert.equal(JSON.stringify(testInfos), infosBefore);
+});
+
 test('keeps current editor identity independent from focused row state', () => {
     const parsed = protocol.parseRelationshipState({
         ...relationshipState,
@@ -114,6 +254,19 @@ test('keeps current editor identity independent from focused row state', () => {
 
     assert.equal(protocol.relationshipDecorationForScenario('open', parsed).state, 'current');
     assert.equal(protocol.relationshipDecorationForScenario('focused', parsed).state, 'none');
+});
+
+test('highlights the open scenario with its relationship graph but not when highlighting is disabled', () => {
+    assert.equal(typeof protocol.isScenarioRelationshipHighlighted, 'function');
+    const isHighlighted = protocol.isScenarioRelationshipHighlighted!;
+
+    assert.equal(isHighlighted('open', relationshipState), true);
+    assert.equal(isHighlighted('callee', relationshipState), true);
+    assert.equal(isHighlighted('unrelated', relationshipState), false);
+    assert.equal(isHighlighted('open', { ...relationshipState, enabled: false }), false);
+    assert.equal(protocol.isScenarioRelationshipMatch('open', { ...relationshipState, enabled: false }), true);
+    assert.equal(protocol.isScenarioRelationshipMatch('caller', { ...relationshipState, enabled: false }), true);
+    assert.equal(protocol.isScenarioRelationshipMatch('unrelated', { ...relationshipState, enabled: false }), false);
 });
 
 test('current blue state takes precedence over relationship purple state', () => {
@@ -193,4 +346,119 @@ test('aggregates related phase children without pretending the phase is current'
         direct: false,
         accessibleLabel: ''
     });
+});
+
+test('scenario search filters by scenario or group name like the Library search', () => {
+    assert.equal(protocol.matchesScenarioSearch({ name: 'Create sales order', phaseName: 'CRM / Sales' }, 'sales'), true);
+    assert.equal(protocol.matchesScenarioSearch({ name: 'Create sales order', phaseName: 'CRM / Sales' }, 'CRM'), true);
+    assert.equal(protocol.matchesScenarioSearch({ name: 'Create sales order', phaseName: 'CRM / Sales' }, 'cash'), false);
+    assert.equal(protocol.matchesScenarioSearch({ name: 'Create sales order', phaseName: 'CRM / Sales' }, '  '), true);
+});
+
+test('run progress keeps the feature position and exposes repeated loop visits', () => {
+    assert.deepEqual(protocol.formatRunProgress({
+        isRunning: true,
+        currentLine: 300,
+        totalLines: 2500,
+        percent: 12,
+        iteration: 3
+    }), {
+        hasLineProgress: true,
+        percent: 12,
+        title: '300/2500 (12%) · ×3',
+        counterText: '300/2500 · ×3',
+        badgeText: '12% · ×3'
+    });
+    assert.deepEqual(protocol.formatRunProgress({
+        isRunning: true,
+        currentLine: 301,
+        totalLines: 2500,
+        percent: 12,
+        iteration: 1
+    }), {
+        hasLineProgress: true,
+        percent: 12,
+        title: '301/2500 (12%)',
+        counterText: '301/2500',
+        badgeText: '12%'
+    });
+});
+
+test('compiled resource signature ignores live status but changes with the resource tree', () => {
+    const initial = {
+        'file:///workspace/tests/Production/test.yaml': {
+            compiledFeatureUri: 'file:///workspace/build/004_Production.feature',
+            scenarioFilesRootUri: 'file:///workspace/build/004_Production/Файлы',
+            runStatus: 'idle',
+            progressPercent: 0
+        }
+    };
+    const running = {
+        'file:///workspace/tests/Production/test.yaml': {
+            ...initial['file:///workspace/tests/Production/test.yaml'],
+            runStatus: 'running',
+            progressPercent: 41
+        }
+    };
+    const rebuilt = {
+        'file:///workspace/tests/Production/test.yaml': {
+            ...running['file:///workspace/tests/Production/test.yaml'],
+            compiledFeatureUri: 'file:///workspace/build-next/004_Production.feature',
+            scenarioFilesRootUri: 'file:///workspace/build-next/004_Production/Файлы'
+        }
+    };
+
+    assert.equal(
+        protocol.compiledResourceSignature(initial),
+        protocol.compiledResourceSignature(running)
+    );
+    assert.notEqual(
+        protocol.compiledResourceSignature(initial),
+        protocol.compiledResourceSignature(rebuilt)
+    );
+    assert.equal(protocol.compiledResourceSignature(null), '');
+});
+
+test('resource cache invalidation targets only scenarios whose compiled locations changed', () => {
+    const previous = {
+        stable: {
+            compiledFeatureUri: 'file:///build/stable.feature',
+            scenarioFilesRootUri: 'file:///build/stable/Файлы',
+            runStatus: 'idle'
+        },
+        rebuilt: {
+            compiledFeatureUri: 'file:///build-old/rebuilt.feature',
+            scenarioFilesRootUri: 'file:///build-old/rebuilt/Файлы'
+        },
+        removed: {
+            compiledFeatureUri: 'file:///build/removed.feature',
+            scenarioFilesRootUri: 'file:///build/removed/Файлы'
+        }
+    };
+    const next = {
+        stable: {
+            ...previous.stable,
+            runStatus: 'running',
+            progressPercent: 20
+        },
+        rebuilt: {
+            compiledFeatureUri: 'file:///build-new/rebuilt.feature',
+            scenarioFilesRootUri: 'file:///build-new/rebuilt/Файлы'
+        },
+        added: {
+            compiledFeatureUri: 'file:///build/added.feature',
+            scenarioFilesRootUri: 'file:///build/added/Файлы'
+        }
+    };
+
+    assert.deepEqual(
+        protocol.changedCompiledResourceKeys(previous, next),
+        ['added', 'rebuilt', 'removed']
+    );
+});
+
+test('a file-tree response is accepted only for the latest request', () => {
+    assert.equal(protocol.isCurrentScenarioFileResponse('request-2', 'request-1'), false);
+    assert.equal(protocol.isCurrentScenarioFileResponse('request-2', 'request-2'), true);
+    assert.equal(protocol.isCurrentScenarioFileResponse(undefined, 'request-2'), false);
 });

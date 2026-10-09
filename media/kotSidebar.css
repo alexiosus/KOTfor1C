@@ -1,6 +1,7 @@
 :root {
     --kot-sidebar-row-height: 30px;
     --kot-sidebar-control-height: 28px;
+    --kot-sidebar-disclosure-size: 11px;
     --kot-sidebar-related: var(--vscode-charts-purple, var(--vscode-editorBracketHighlight-foreground4, var(--vscode-list-highlightForeground)));
     --kot-sidebar-current: var(--vscode-focusBorder);
 }
@@ -15,6 +16,86 @@
 .kot-sidebar-search {
     width: 100%;
     min-width: 0;
+}
+
+.kot-search-frame {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    height: 26px;
+    box-sizing: border-box;
+    gap: 0;
+    overflow: hidden;
+    padding: 0 4px;
+    border: 1px solid var(--vscode-input-border, transparent);
+    border-radius: 2px;
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+}
+
+.kot-search-frame:focus-within {
+    border-color: var(--vscode-focusBorder);
+}
+
+.kot-search-icon {
+    flex: 0 0 18px;
+    width: 18px;
+    color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+    text-align: center;
+    pointer-events: none;
+}
+
+.kot-search-input {
+    flex: 1 1 0;
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0 2px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+}
+
+.kot-search-input:focus,
+.kot-search-input:focus-visible {
+    border: 0;
+    outline: 0;
+    box-shadow: none;
+}
+
+.kot-search-clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 20px;
+    width: 20px;
+    min-width: 20px;
+    max-width: 20px;
+    height: 20px;
+    min-height: 20px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    outline-offset: -1px;
+    background: transparent;
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    cursor: pointer;
+}
+
+.kot-search-clear:hover,
+.kot-search-clear:focus-visible {
+    background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.kot-search-clear.hidden {
+    visibility: hidden;
+    pointer-events: none;
 }
 
 .kot-tree {
@@ -38,8 +119,7 @@
     color: var(--vscode-list-hoverForeground, var(--vscode-foreground));
 }
 
-.kot-tree-row:focus-visible,
-.kot-tree-row:focus-within {
+.kot-tree-row:focus-visible {
     outline: 1px solid var(--vscode-focusBorder);
     outline-offset: -1px;
 }
@@ -65,9 +145,47 @@
 }
 
 .kot-tree-row:hover .kot-tree-label.is-overflowing .kot-scroll-content,
-.kot-tree-row:focus-within .kot-tree-label.is-overflowing .kot-scroll-content {
+.kot-tree-row:focus-visible .kot-tree-label.is-overflowing .kot-scroll-content,
+.kot-tree-row:has(:focus-visible) .kot-tree-label.is-overflowing .kot-scroll-content {
     transform: translateX(calc(-1 * var(--kot-overflow-distance, 0px)));
     transition: transform var(--kot-overflow-duration, 1.2s) ease-in-out 350ms;
+}
+
+.kot-tree-row:hover .kot-tree-label.is-overflowing,
+.kot-tree-row:focus-visible .kot-tree-label.is-overflowing,
+.kot-tree-row:has(:focus-visible) .kot-tree-label.is-overflowing {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 20px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 20px), transparent);
+}
+
+.kot-tree-disclosure {
+    display: inline-block;
+    width: 18px;
+    font-size: var(--kot-sidebar-disclosure-size) !important;
+    line-height: 1;
+    text-align: center;
+}
+
+.kot-tree-count {
+    flex: 0 0 auto;
+    min-width: 0;
+    height: auto;
+    margin-inline-start: auto;
+    padding-inline: 4px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    font-family: var(--vscode-font-family);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.35;
+    cursor: default;
+}
+
+.phase-test-count.kot-tree-count:hover {
+    border: 0;
+    background: transparent;
 }
 
 .kot-row-actions {
@@ -103,16 +221,6 @@
 .kot-icon-button:focus-visible {
     outline: 1px solid var(--vscode-focusBorder);
     outline-offset: -1px;
-}
-
-.is-current {
-    border-inline-start: 2px solid var(--kot-sidebar-current);
-    background: var(--vscode-list-activeSelectionBackground);
-    color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
-}
-
-.is-current .kot-tree-label {
-    font-weight: 600;
 }
 
 .is-related {

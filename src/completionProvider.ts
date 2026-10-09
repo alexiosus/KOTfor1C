@@ -708,6 +708,10 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
         const insertionContext = getGherkinInsertionContext(document, position);
         if (!insertionContext) {
+            const structureCompletions = this.buildFeatureStructureCompletions(document, position);
+            if (structureCompletions) {
+                return structureCompletions;
+            }
             console.log("[DriveCompletionProvider:provideCompletionItems] Not in scenario text block. Returning empty.");
             return [];
         }
@@ -2771,6 +2775,63 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
     private isFeatureDocument(document: vscode.TextDocument): boolean {
         return document.fileName.toLowerCase().endsWith('.feature');
+    }
+
+    private buildFeatureStructureCompletions(
+        document: vscode.TextDocument,
+        position: vscode.Position
+    ): vscode.CompletionList | null {
+        if (!this.isFeatureDocument(document)) {
+            return null;
+        }
+
+        const language = getScenarioLanguageForDocument(document);
+        const sourceBeforeCursor = Array.from({ length: position.line }, (_, line) =>
+            document.lineAt(line).text
+        ).join('\n');
+        const hasFeature = /^\s*(?:Feature|Функциональность|Функционал|Функция)\s*:/imu.test(sourceBeforeCursor);
+        const hasBackground = /^\s*(?:Background|Предыстория|Контекст)\s*:/imu.test(sourceBeforeCursor);
+        const isOutline = /^\s*(?:Scenario Outline|Scenario Template|Структура сценария|Шаблон сценария)\s*:/imu
+            .test(sourceBeforeCursor);
+        const definitions = language === 'ru'
+            ? [
+                ...(!hasFeature ? [{ label: 'Функциональность', snippet: 'Функциональность: ${1:Название}\n\n${0}' }] : []),
+                ...(hasFeature ? [
+                    { label: 'Сценарий', snippet: 'Сценарий: ${1:Название}\n    ${0}' },
+                    { label: 'Структура сценария', snippet: 'Структура сценария: ${1:Название}\n    ${0}' },
+                    ...(!hasBackground ? [{ label: 'Предыстория', snippet: 'Предыстория:\n    ${0}' }] : []),
+                    ...(isOutline ? [{ label: 'Примеры', snippet: 'Примеры:\n    | ${1:Параметр} |\n    | ${0} |' }] : [])
+                ] : [])
+            ]
+            : [
+                ...(!hasFeature ? [{ label: 'Feature', snippet: 'Feature: ${1:Name}\n\n${0}' }] : []),
+                ...(hasFeature ? [
+                    { label: 'Scenario', snippet: 'Scenario: ${1:Name}\n    ${0}' },
+                    { label: 'Scenario Outline', snippet: 'Scenario Outline: ${1:Name}\n    ${0}' },
+                    ...(!hasBackground ? [{ label: 'Background', snippet: 'Background:\n    ${0}' }] : []),
+                    ...(isOutline ? [{ label: 'Examples', snippet: 'Examples:\n    | ${1:Parameter} |\n    | ${0} |' }] : [])
+                ] : [])
+            ];
+        if (definitions.length === 0) {
+            return null;
+        }
+
+        const linePrefix = document.lineAt(position.line).text.slice(0, position.character);
+        const startCharacter = linePrefix.search(/\S/u);
+        const range = new vscode.Range(
+            position.line,
+            startCharacter < 0 ? position.character : startCharacter,
+            position.line,
+            position.character
+        );
+        const items = definitions.map(({ label, snippet }, index) => {
+            const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Keyword);
+            item.insertText = new vscode.SnippetString(snippet);
+            item.range = range;
+            item.sortText = `0${String(index).padStart(2, '0')}${label}`;
+            return item;
+        });
+        return new vscode.CompletionList(items, false);
     }
 
     /**

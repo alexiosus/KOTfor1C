@@ -11,6 +11,7 @@ import {
     type GherkinDefinitionKeywords,
     type ScenarioLanguage
 } from './gherkinDefinitionKeywords';
+import { collectGherkinSyntaxErrors } from './gherkinSyntaxValidator.js';
 
 export interface ExportScenarioParseContext {
     readonly sourceUri: string;
@@ -136,6 +137,30 @@ function readLines(source: string): SourceLine[] {
         lines.push({ number, text: '', start: source.length, end: source.length, fullEnd: source.length });
     }
     return lines;
+}
+
+export function validateGherkinSyntax(
+    source: string,
+    sourceUri: string
+): ProjectDefinitionWarning[] {
+    const errors = collectGherkinSyntaxErrors(source);
+    const sourceLines = readLines(source);
+    return errors.map(item => {
+        const requestedLine = Math.max(0, item.line - 1);
+        const line = Math.min(requestedLine, Math.max(0, sourceLines.length - 1));
+        const sourceLine = sourceLines[line] ?? { number: 0, text: '', start: 0, end: 0, fullEnd: 0 };
+        const requestedCharacter = Math.max(0, item.column - 1);
+        const character = Math.min(requestedCharacter, sourceLine.text.length);
+        return {
+            uri: sourceUri,
+            message: `Gherkin syntax error: ${item.message}`,
+            range: rangeForLine(
+                sourceLine,
+                character,
+                Math.max(character, sourceLine.text.length)
+            )
+        };
+    });
 }
 
 function positionAtOffset(source: string, offset: number): { line: number; character: number } {

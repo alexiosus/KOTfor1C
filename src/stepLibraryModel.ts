@@ -8,6 +8,7 @@ import type {
 import { buildProjectDefinitionSnippetData } from './projectDefinitionSnippet';
 import { alignGherkinTablesInText } from './gherkinTableUtils';
 import { getScenarioRuntimeKey } from './scenarioRuntimeIdentity';
+import { scenarioFilesAvailable } from './scenarioFilesModel';
 import type { TestInfo } from './types';
 
 export type StepLibrarySourceGroup = 'builtIn' | 'user' | 'export' | 'nested' | 'main';
@@ -37,8 +38,16 @@ export interface StepLibraryItem {
     readonly navigable: boolean;
     readonly insertable: boolean;
     readonly capturedLocation?: ProjectDefinitionLocation;
+    readonly hasScenarioFiles?: true;
+    readonly compiledFeatureUri?: string;
+    readonly scenarioFilesRootUri?: string;
     readonly scenarioKey?: string;
     readonly searchText: string;
+}
+
+export interface CompiledScenarioResources {
+    readonly featureUri: string;
+    readonly filesRootUri: string;
 }
 
 export interface StepLibrarySnapshot {
@@ -143,7 +152,10 @@ function isMainScenario(scenario: TestInfo): boolean {
     return typeof scenario.tabName === 'string' && scenario.tabName.trim().length > 0;
 }
 
-function mainScenarioItems(scenarios: readonly TestInfo[]): readonly StepLibraryItem[] {
+function mainScenarioItems(
+    scenarios: readonly TestInfo[],
+    compiledResources: ReadonlyMap<string, CompiledScenarioResources>
+): readonly StepLibraryItem[] {
     return scenarios.filter(isMainScenario).map(scenario => {
         const uri = scenario.yamlFileUri.toString();
         const definitionId = `mainScenario:${uri}`;
@@ -153,6 +165,8 @@ function mainScenarioItems(scenarios: readonly TestInfo[]): readonly StepLibrary
         const scenarioCode = scenario.scenarioCode?.trim();
         const description = scenario.scenarioDescription?.trim();
         const capturedLocation = mainScenarioLocation(scenario);
+        const scenarioKey = getScenarioRuntimeKey(scenario);
+        const resources = compiledResources.get(scenarioKey);
         return Object.freeze({
             id: `mainScenario#${uri}`,
             definitionId,
@@ -169,7 +183,12 @@ function mainScenarioItems(scenarios: readonly TestInfo[]): readonly StepLibrary
             navigable: true,
             insertable: false,
             capturedLocation,
-            scenarioKey: getScenarioRuntimeKey(scenario),
+            ...(resources ? {
+                hasScenarioFiles: true as const,
+                compiledFeatureUri: resources.featureUri,
+                scenarioFilesRootUri: resources.filesRootUri
+            } : {}),
+            scenarioKey,
             searchText: normalizeSearchText([
                 scenario.name,
                 description,
@@ -203,14 +222,18 @@ function scenarioKeyForLocation(
     return getScenarioRuntimeKey(candidates[0]);
 }
 
-function mainScenarioIdentity(scenarios: readonly TestInfo[]): string | undefined {
+function mainScenarioIdentity(
+    scenarios: readonly TestInfo[],
+    compiledResources: ReadonlyMap<string, CompiledScenarioResources>
+): string | undefined {
     const signatures = scenarios.filter(isMainScenario).map(scenario => ({
         uri: scenario.yamlFileUri.toString(),
         name: scenario.name,
         code: scenario.scenarioCode ?? '',
         description: scenario.scenarioDescription ?? '',
         tabName: scenario.tabName?.trim() ?? '',
-        relativePath: scenario.relativePath
+        relativePath: scenario.relativePath,
+        compiledResources: compiledResources.get(getScenarioRuntimeKey(scenario)) ?? null
     })).sort((left, right) => compareText(left.uri, right.uri));
     if (signatures.length === 0) {
         return undefined;
@@ -220,7 +243,8 @@ function mainScenarioIdentity(scenarios: readonly TestInfo[]): string | undefine
 
 export function buildStepLibrarySnapshot(
     view: ProjectDefinitionView,
-    scenarios: readonly TestInfo[] = []
+    scenarios: readonly TestInfo[] = [],
+    compiledResources: ReadonlyMap<string, CompiledScenarioResources> = new Map()
 ): StepLibrarySnapshot {
     const builtInsByFamily = new Map<string, ProjectDefinition[]>();
     for (const definition of view.all) {
@@ -272,8 +296,15 @@ export function buildStepLibrarySnapshot(
             definition.sourceLabel,
             ...definitionParameters.flatMap(parameter => [parameter.name, parameter.defaultValue])
         ]);
+        const id = presentationId(definition);
+        const itemSupportsScenarioFiles = scenarioFilesAvailable({
+            id,
+            kind: definition.kind,
+            sourceGroup: group,
+            capturedLocation
+        });
         return Object.freeze({
-            id: presentationId(definition),
+            id,
             definitionId: definition.id,
             familyId,
             kind: definition.kind,
@@ -291,11 +322,12 @@ export function buildStepLibrarySnapshot(
             navigable,
             insertable: true,
             ...(capturedLocation ? { capturedLocation } : {}),
+            ...(itemSupportsScenarioFiles ? { hasScenarioFiles: true as const } : {}),
             ...(scenarioKey ? { scenarioKey } : {}),
             searchText
         });
     });
-    const mainItems = mainScenarioItems(scenarios);
+    const mainItems = mainScenarioItems(scenarios, compiledResources);
     counts.main = mainItems.length;
     items.push(...mainItems);
     items.sort((left, right) =>
@@ -304,7 +336,7 @@ export function buildStepLibrarySnapshot(
         || compareText(left.id, right.id)
     );
 
-    const mainIdentity = mainScenarioIdentity(scenarios);
+    const mainIdentity = mainScenarioIdentity(scenarios, compiledResources);
     return Object.freeze({
         viewIdentity: mainIdentity ? `${view.identity}\0main:${mainIdentity}` : view.identity,
         items: Object.freeze(items),

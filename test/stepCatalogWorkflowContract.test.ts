@@ -48,7 +48,7 @@ test('catalog workflow validates generated output before publishing only catalog
     assert.match(source, /diff --cached --quiet/);
 });
 
-test('versioned catalog settings are folder scoped and legacy HTML is opt-in', () => {
+test('versioned catalog settings are folder scoped and expose no legacy HTML source', () => {
     const packageJson = JSON.parse(projectFile('package.json'));
     const diagnostics = packageJson.contributes.configuration.find(
         (section: { title: string }) => section.title === '%config.diagnosticsSettings.title%'
@@ -68,8 +68,7 @@ test('versioned catalog settings are folder scoped and legacy HTML is opt-in', (
         'https://raw.githubusercontent.com/alexiosus/KOTfor1C/step-catalogs/index.json'
     );
     assert.equal(properties['kotTestToolkit.steps.catalogIndexUrl'].scope, 'resource');
-    assert.equal(properties['kotTestToolkit.steps.externalUrl'].default, '');
-    assert.equal(properties['kotTestToolkit.steps.externalUrl'].order, 3);
+    assert.equal(properties['kotTestToolkit.steps.externalUrl'], undefined);
 });
 
 test('diagnostic codes can be ignored with a resource-scoped configuration', () => {

@@ -7,7 +7,6 @@ import test from 'node:test';
 import { createStepDefinitionId, sha256Hex } from '../src/stepCatalog';
 import { enrichStepCatalogCategories } from '../src/stepCatalogCategories';
 import {
-    compareCatalogWithLegacyHtml,
     createStepCatalogGenerationReport,
     generateBuiltInStepCatalog,
     parseVanessaStepTemplateXml,
@@ -93,18 +92,12 @@ function generatedFixture() {
     });
     const enrichedParsed = { ...parsed, steps: enrichment.steps };
     const catalog = generateBuiltInStepCatalog(enrichedParsed, generationOptions);
-    const compatibility = compareCatalogWithLegacyHtml(catalog, `
-        <table>
-          <tr class="R1"><td>И поле &lt;Имя&gt; равно "Значение"</td><td>Есть</td><td></td><td></td></tr>
-          <tr class="R2"><td>  И старый шаг  </td><td>Нет</td><td>And legacy step</td><td>Missing</td></tr>
-        </table>`);
     const report = createStepCatalogGenerationReport(
         enrichedParsed,
         catalog,
-        compatibility,
         enrichment.report
     );
-    return { parsed: enrichedParsed, catalog, compatibility, report, enrichment };
+    return { parsed: enrichedParsed, catalog, report, enrichment };
 }
 
 test('catalog generation sorts definitions and uses only deterministic source metadata', () => {
@@ -146,15 +139,8 @@ test('catalog generation rejects structurally invalid placeholders', () => {
     }
 });
 
-test('compatibility report lists every normalized legacy pattern missing from generated data', () => {
-    const { compatibility } = generatedFixture();
-
-    assert.deepEqual(compatibility.missingLegacyRuPatterns, ['И старый шаг']);
-    assert.deepEqual(compatibility.missingLegacyEnPatterns, ['And legacy step']);
-});
-
 test('generation report records source, duplicate, and category coverage data', () => {
-    const { parsed, catalog, compatibility, enrichment } = generatedFixture();
+    const { parsed, catalog, enrichment } = generatedFixture();
     const duplicatedCatalog = {
         ...catalog,
         steps: [
@@ -169,7 +155,6 @@ test('generation report records source, duplicate, and category coverage data', 
     const report = createStepCatalogGenerationReport(
         parsed,
         duplicatedCatalog,
-        compatibility,
         {
             ...enrichment.report,
             uncategorizedStepCount: 2

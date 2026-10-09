@@ -35,7 +35,7 @@
 | `src/oneCPlatform.ts` | Автоопределение установленной платформы 1С и разрешение путей `1cv8c.exe` / `1cv8.exe` |
 | `src/formExplorerEnrichment.ts` | Обогащение runtime snapshot-а данными из `Form.xml` и metadata выгрузки конфигурации |
 | `src/formExplorerTypes.ts` | Контракт и нормализация snapshot JSON для Form Explorer |
-| `src/stepsFetcher.ts` | Загрузка и кеширование `steps.htm` |
+| `src/stepCatalogService.ts` | Выбор и кеширование версионного каталога шагов Vanessa |
 | `src/scenarioParameterUtils.ts` | Нормализация и дефолты параметров |
 | `media/phaseSwitcher.*` | UI Test Manager |
 | `media/yamlParameters.*` | UI менеджера параметров |

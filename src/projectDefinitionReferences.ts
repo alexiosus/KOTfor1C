@@ -156,8 +156,27 @@ export class ProjectDefinitionReferenceService {
         options: ProjectDefinitionReferenceOptions,
         token: Pick<vscode.CancellationToken, 'isCancellationRequested'>
     ): Promise<vscode.Location[]> {
+        const references = await this.findReferencesForDefinitions(
+            [definitionId],
+            resource,
+            options,
+            token
+        );
+        return [...(references.get(definitionId) ?? [])];
+    }
+
+    async findReferencesForDefinitions(
+        definitionIds: readonly string[],
+        resource: vscode.Uri | undefined,
+        options: ProjectDefinitionReferenceOptions,
+        token: Pick<vscode.CancellationToken, 'isCancellationRequested'>
+    ): Promise<ReadonlyMap<string, readonly vscode.Location[]>> {
+        const requestedIds = [...new Set(definitionIds.filter(Boolean))];
+        const emptyResult = () => new Map(
+            requestedIds.map(id => [id, Object.freeze([]) as readonly vscode.Location[]])
+        );
         if (token.isCancellationRequested) {
-            return [];
+            return emptyResult();
         }
 
         try {
@@ -166,14 +185,12 @@ export class ProjectDefinitionReferenceService {
                 this.#resolveSearchRoots(resource, token)
             ]);
             if (token.isCancellationRequested) {
-                return [];
+                return emptyResult();
             }
-            if (!view.byId.has(definitionId)) {
-                return [];
-            }
+            const availableIds = requestedIds.filter(id => view.byId.has(id));
             const sources = await this.#enumerateSources(roots, token);
             if (token.isCancellationRequested) {
-                return [];
+                return emptyResult();
             }
             this.#mergeOpenDocuments(sources, roots);
 
@@ -189,7 +206,7 @@ export class ProjectDefinitionReferenceService {
                 }
             );
             if (token.isCancellationRequested) {
-                return [];
+                return emptyResult();
             }
 
             const activeUris = new Set(sources.keys());
@@ -199,37 +216,49 @@ export class ProjectDefinitionReferenceService {
                 }
             }
 
-            const references: vscode.Location[] = [];
-            for (let index = 0; index < records.length; index++) {
-                const ranges = records[index]?.byDefinitionId.get(definitionId) ?? [];
-                const source = sourceList[index];
-                for (const range of ranges) {
-                    references.push(new vscode.Location(vscode.Uri.parse(source.uri), toRange(range)));
+            const referencesById = new Map<string, vscode.Location[]>(
+                requestedIds.map(id => [id, []])
+            );
+            for (const definitionId of availableIds) {
+                const references = referencesById.get(definitionId)!;
+                for (let index = 0; index < records.length; index++) {
+                    const ranges = records[index]?.byDefinitionId.get(definitionId) ?? [];
+                    const source = sourceList[index];
+                    for (const range of ranges) {
+                        references.push(new vscode.Location(vscode.Uri.parse(source.uri), toRange(range)));
+                    }
+                }
+
+                if (options.includeDeclaration) {
+                    const definition = view.byId.get(definitionId);
+                    const declaration = definition?.definitionLocation ?? definition?.implementationLocation;
+                    if (declaration) {
+                        references.push(new vscode.Location(
+                            vscode.Uri.parse(declaration.uri),
+                            locationRange(declaration)
+                        ));
+                    }
                 }
             }
 
-            if (options.includeDeclaration) {
-                const definition = view.byId.get(definitionId);
-                const declaration = definition?.definitionLocation ?? definition?.implementationLocation;
-                if (declaration) {
-                    references.push(new vscode.Location(
-                        vscode.Uri.parse(declaration.uri),
-                        locationRange(declaration)
-                    ));
+            const result = new Map<string, readonly vscode.Location[]>();
+            for (const definitionId of requestedIds) {
+                const unique = new Map<string, vscode.Location>();
+                for (const location of referencesById.get(definitionId) ?? []) {
+                    unique.set(referenceKey(location), location);
                 }
+                result.set(
+                    definitionId,
+                    Object.freeze(Array.from(unique.values()).sort(compareLocations))
+                );
             }
-
-            const unique = new Map<string, vscode.Location>();
-            for (const location of references) {
-                unique.set(referenceKey(location), location);
-            }
-            return Array.from(unique.values()).sort(compareLocations);
+            return result;
         } catch (error) {
             if (error instanceof ConcurrencyCancelledError || token.isCancellationRequested) {
-                return [];
+                return emptyResult();
             }
             this.#options.log?.(`Project definition reference scan failed: ${String(error)}`);
-            return [];
+            return emptyResult();
         }
     }
 

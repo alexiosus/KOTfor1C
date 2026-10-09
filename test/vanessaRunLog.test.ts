@@ -7,7 +7,8 @@ import {
     extractFeatureLineNumberFromRunLogLine,
     extractFeaturePathFromRunLogLine,
     extractLastStepLocation,
-    extractScenarioNameFromRunLogLine
+    extractScenarioNameFromRunLogLine,
+    isRunLogStepCompatibleWithFeatureLine
 } from '../src/vanessaRunLog';
 
 test('run-log metadata parser accepts Russian and English markers with Windows and Unix paths', () => {
@@ -91,5 +92,48 @@ test('last-step parser returns the latest location when scenario markers are abs
     assert.deepEqual(extractLastStepLocation(content, { scenarioName: 'Expected scenario' }), {
         featurePath: '/tmp/features/no-marker.feature',
         featureLineNumber: 5
+    });
+});
+
+test('live-step parser ignores exported-scenario coordinates and counts repeated loop visits', () => {
+    const featureContent = [
+        'Feature: Production',
+        'Scenario: 004_Production',
+        '    And I prepare production data',
+        '    And While "$LineNumber$ < $ItemsCount$" 1C:Enterprise script is True Then',
+        '        And I save "$LineNumber$+1" in "LineNumber" variable'
+    ].join('\n');
+    const content = [
+        'Feature: /tmp/features/004_Production.feature',
+        'Scenario: 004_Production',
+        '10/1/2026 2:50:03 PM (3). Step: And I prepare production data',
+        '10/1/2026 2:50:04 PM (1). Step: Then "Product (create)" window is opened',
+        '10/1/2026 2:50:04 PM (2). Step: And Delay "0.3"',
+        '10/1/2026 2:50:05 PM (4). Step: And While "$LineNumber$ < $ItemsCount$" 1C:Enterprise script is True Then',
+        '10/1/2026 2:50:06 PM (5). Step: And I save "$LineNumber$+1" in "LineNumber" variable',
+        '10/1/2026 2:50:07 PM (4). Step: And While "$LineNumber$ < $ItemsCount$" 1C:Enterprise script is True Then'
+    ].join('\n');
+
+    assert.equal(
+        isRunLogStepCompatibleWithFeatureLine(
+            '10/1/2026 2:50:04 PM (1). Step: Then "Product (create)" window is opened',
+            'Feature: Production'
+        ),
+        false
+    );
+    assert.equal(
+        isRunLogStepCompatibleWithFeatureLine(
+            '10/1/2026 2:50:07 PM (4). Step: And While "$LineNumber$ < $ItemsCount$" 1C:Enterprise script is True Then',
+            '    And While "$LineNumber$ < $ItemsCount$" 1C:Enterprise script is True Then'
+        ),
+        true
+    );
+    assert.deepEqual(extractLastStepLocation(content, {
+        scenarioName: '004_Production',
+        featureContent
+    }), {
+        featurePath: '/tmp/features/004_Production.feature',
+        featureLineNumber: 4,
+        iteration: 2
     });
 });

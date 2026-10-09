@@ -172,6 +172,23 @@
         return emptyScenarioDecoration();
     }
 
+    function isScenarioRelationshipHighlighted(scenarioKey, state) {
+        const parsed = parseRelationshipState(state);
+        return parsed.enabled
+            && relationshipDecorationForScenario(scenarioKey, parsed).state !== 'none';
+    }
+
+    function isScenarioRelationshipMatch(scenarioKey, state) {
+        const key = typeof scenarioKey === 'string' ? scenarioKey.trim() : '';
+        if (!key) {
+            return false;
+        }
+        const parsed = parseRelationshipState(state);
+        return parsed[currentKeySetKey].has(key)
+            || parsed[relationshipByKeyKey].has(key)
+            || parsed[affectedMainKeySetKey].has(key);
+    }
+
     function aggregatePhaseRelationship(scenarioKeys, state) {
         const parsed = parseRelationshipState(state);
         if (!parsed.enabled) {
@@ -249,6 +266,168 @@
             : '';
     }
 
+    function matchesScenarioSearch(scenario, query) {
+        const normalizedQuery = typeof query === 'string' ? query.trim().toLocaleLowerCase() : '';
+        if (!normalizedQuery) {
+            return true;
+        }
+        const name = typeof scenario?.name === 'string' ? scenario.name.toLocaleLowerCase() : '';
+        const phaseName = typeof scenario?.phaseName === 'string' ? scenario.phaseName.toLocaleLowerCase() : '';
+        return name.includes(normalizedQuery) || phaseName.includes(normalizedQuery);
+    }
+
+    function normalizeStatusFilter(value) {
+        return value === 'built' || value === 'running' ? value : 'all';
+    }
+
+    function hasBuiltArtifact(runInfo) {
+        if (!runInfo || typeof runInfo !== 'object') {
+            return false;
+        }
+        return [
+            runInfo.featurePath,
+            runInfo.compiledFeatureUri,
+            runInfo.jsonPath,
+            runInfo.combinedJsonPath
+        ].some(value => typeof value === 'string' && value.trim().length > 0);
+    }
+
+    function matchesStatusFilter(runInfo, mode) {
+        const normalizedMode = normalizeStatusFilter(mode);
+        if (normalizedMode === 'all') {
+            return true;
+        }
+        if (normalizedMode === 'running') {
+            return !!runInfo
+                && typeof runInfo === 'object'
+                && runInfo.runStatus === 'running';
+        }
+        return hasBuiltArtifact(runInfo);
+    }
+
+    function visibleScenarioAggregate(
+        testInfos,
+        states,
+        runArtifacts,
+        mode,
+        relationshipPredicate = () => true,
+        searchPredicate = () => true
+    ) {
+        const stateByKey = states && typeof states === 'object' ? states : {};
+        const artifactsByKey = runArtifacts && typeof runArtifacts === 'object'
+            ? runArtifacts
+            : {};
+        const visibleKeys = [];
+        let selectedCount = 0;
+        let totalCount = 0;
+        for (const testInfo of Array.isArray(testInfos) ? testInfos : []) {
+            const key = getScenarioKey(testInfo);
+            if (!key
+                || !matchesStatusFilter(artifactsByKey[key], mode)
+                || !relationshipPredicate(testInfo, key)
+                || !searchPredicate(testInfo, key)) {
+                continue;
+            }
+            visibleKeys.push(key);
+            const selectionState = stateByKey[key];
+            if (selectionState === 'disabled') {
+                continue;
+            }
+            totalCount += 1;
+            if (selectionState === true || selectionState === 'checked') {
+                selectedCount += 1;
+            }
+        }
+        return Object.freeze({
+            visibleKeys: Object.freeze(visibleKeys),
+            selectedCount,
+            totalCount
+        });
+    }
+
+    function formatRunProgress(value) {
+        const currentLineRaw = Number(value?.currentLine);
+        const totalLinesRaw = Number(value?.totalLines);
+        const percentRaw = Number(value?.percent);
+        const iterationRaw = Number(value?.iteration);
+        const currentLine = Number.isFinite(currentLineRaw) ? Math.max(0, Math.floor(currentLineRaw)) : 0;
+        const totalLines = Number.isFinite(totalLinesRaw) ? Math.max(0, Math.floor(totalLinesRaw)) : 0;
+        const hasLineProgress = value?.isRunning === true && currentLine > 0 && totalLines > 0;
+        let percent = Number.isFinite(percentRaw) ? Math.max(0, Math.min(100, Math.floor(percentRaw))) : null;
+        if (percent === null && hasLineProgress) {
+            percent = Math.max(0, Math.min(100, Math.round((currentLine / totalLines) * 100)));
+        }
+        const iteration = Number.isFinite(iterationRaw) ? Math.max(1, Math.floor(iterationRaw)) : 1;
+        const iterationSuffix = iteration > 1 ? ` · ×${iteration}` : '';
+        return Object.freeze({
+            hasLineProgress,
+            percent,
+            title: hasLineProgress
+                ? `${currentLine}/${totalLines}${percent !== null ? ` (${percent}%)` : ''}${iterationSuffix}`
+                : '',
+            counterText: hasLineProgress ? `${currentLine}/${totalLines}${iterationSuffix}` : '',
+            badgeText: hasLineProgress
+                ? `${percent !== null ? `${percent}%` : `${currentLine}/${totalLines}`}${iterationSuffix}`
+                : ''
+        });
+    }
+
+    function compiledResourceSignature(runArtifacts) {
+        if (!runArtifacts || typeof runArtifacts !== 'object') {
+            return '';
+        }
+        return Object.keys(runArtifacts)
+            .sort()
+            .map(scenarioKey => {
+                const value = runArtifacts[scenarioKey];
+                if (!value || typeof value !== 'object') {
+                    return '';
+                }
+                const featureUri = typeof value.compiledFeatureUri === 'string'
+                    ? value.compiledFeatureUri.trim()
+                    : '';
+                const filesRootUri = typeof value.scenarioFilesRootUri === 'string'
+                    ? value.scenarioFilesRootUri.trim()
+                    : '';
+                return featureUri || filesRootUri
+                    ? `${scenarioKey}\u0000${featureUri}\u0000${filesRootUri}`
+                    : '';
+            })
+            .filter(Boolean)
+            .join('\u0001');
+    }
+
+    function compiledResourceLocation(value) {
+        if (!value || typeof value !== 'object') {
+            return '';
+        }
+        const featureUri = typeof value.compiledFeatureUri === 'string'
+            ? value.compiledFeatureUri.trim()
+            : '';
+        const filesRootUri = typeof value.scenarioFilesRootUri === 'string'
+            ? value.scenarioFilesRootUri.trim()
+            : '';
+        return featureUri || filesRootUri ? `${featureUri}\u0000${filesRootUri}` : '';
+    }
+
+    function changedCompiledResourceKeys(previousArtifacts, nextArtifacts) {
+        const previous = previousArtifacts && typeof previousArtifacts === 'object'
+            ? previousArtifacts
+            : {};
+        const next = nextArtifacts && typeof nextArtifacts === 'object'
+            ? nextArtifacts
+            : {};
+        return Object.freeze([...new Set([...Object.keys(previous), ...Object.keys(next)])]
+            .filter(key => compiledResourceLocation(previous[key]) !== compiledResourceLocation(next[key]))
+            .sort());
+    }
+
+    function isCurrentScenarioFileResponse(expectedRequestId, responseRequestId) {
+        return typeof expectedRequestId === 'string'
+            && expectedRequestId.length > 0
+            && expectedRequestId === responseRequestId;
+    }
+
     function createScenarioCommand(command, testInfo, extra = {}) {
         const key = getScenarioKey(testInfo);
         if (!key) {
@@ -266,13 +445,48 @@
         };
     }
 
+    function createGroupScenarioCommand(command, groupName) {
+        const normalizedGroupName = typeof groupName === 'string' ? groupName.trim() : '';
+        if (!normalizedGroupName) {
+            throw new Error('Scenario group name is required');
+        }
+        return { command, groupName: normalizedGroupName };
+    }
+
+    function createPhaseContextMenuActions(groupName, labels = {}) {
+        return [
+            {
+                icon: 'codicon-add',
+                label: labels.createMainScenario || 'Create main scenario',
+                message: createGroupScenarioCommand('createMainScenario', groupName)
+            },
+            {
+                icon: 'codicon-rename',
+                label: labels.renameGroup || 'Rename group',
+                message: createGroupScenarioCommand('renameGroup', groupName)
+            }
+        ];
+    }
+
     return {
         getScenarioKey,
         createScenarioCommand,
+        createGroupScenarioCommand,
+        createPhaseContextMenuActions,
         parseRelationshipState,
         relationshipDecorationForScenario,
+        isScenarioRelationshipHighlighted,
+        isScenarioRelationshipMatch,
         aggregatePhaseRelationship,
         selectionAggregateForKeys,
-        nextVisibleSelection
+        nextVisibleSelection,
+        matchesScenarioSearch,
+        normalizeStatusFilter,
+        matchesStatusFilter,
+        visibleScenarioAggregate,
+        formatRunProgress,
+        compiledResourceSignature,
+        changedCompiledResourceKeys,
+        isCurrentScenarioFileResponse
     };
 });

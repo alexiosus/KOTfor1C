@@ -150,6 +150,7 @@ interface InfobaseAuthentication {
 
 interface ManagedInfobaseLaunchOptions {
     preferredOneCClientExePath?: string | null;
+    forcePlatformPicker?: boolean;
 }
 
 interface MutableManagedInfobaseRecord {
@@ -1595,12 +1596,17 @@ async function promptInfobaseAuthentication(
         title: retryMode
             ? t('Infobase authentication failed. Enter infobase login')
             : t('Enter infobase login'),
-        placeHolder: t('Example: Administrator'),
-        value: (initialAuthentication?.username || '').trim() || 'Administrator',
+        placeHolder: t('Leave empty if the infobase has no users'),
+        value: (initialAuthentication?.username || '').trim(),
         ignoreFocusOut: true
     });
     if (username === undefined) {
         return undefined;
+    }
+
+    const normalizedUsername = username.trim();
+    if (!normalizedUsername) {
+        return { username: '', password: '' };
     }
 
     const password = await vscode.window.showInputBox({
@@ -1615,7 +1621,7 @@ async function promptInfobaseAuthentication(
     }
 
     return {
-        username: username.trim() || 'Administrator',
+        username: normalizedUsername,
         password
     };
 }
@@ -3024,7 +3030,7 @@ async function resolveManagedInfobaseLaunchPlatform(
     }
 
     const storedClientPath = getManagedInfobasePreferredPlatformClientExePath(context, infobasePath);
-    if (storedClientPath) {
+    if (storedClientPath && !options?.forcePlatformPicker) {
         return {
             platform: resolveConfiguredPlatformByClientPath(configuredPlatforms, storedClientPath) || {
                 name: path.basename(storedClientPath),
@@ -3035,7 +3041,8 @@ async function resolveManagedInfobaseLaunchPlatform(
     }
 
     const selectedPlatform = await resolveOneCPlatformForLaunch(t, {
-        placeHolder
+        placeHolder,
+        forcePicker: options?.forcePlatformPicker === true
     });
     if (!selectedPlatform) {
         return null;
@@ -3043,7 +3050,7 @@ async function resolveManagedInfobaseLaunchPlatform(
 
     return {
         platform: selectedPlatform,
-        persistSelection: true
+        persistSelection: !options?.forcePlatformPicker
     };
 }
 

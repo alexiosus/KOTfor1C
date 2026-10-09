@@ -194,6 +194,9 @@ function loadDiagnosticsModule(ignoredDiagnosticCodes: readonly string[] = []): 
             if (specifier === './stringSimilarity') {
                 return { calculateLevenshteinSimilarity: similarity };
             }
+            if (specifier === './exportScenarioParser') {
+                return { validateGherkinSyntax: () => [] };
+            }
             return {};
         },
         console: { error: () => undefined, log: () => undefined },
@@ -226,6 +229,33 @@ function documentWithLine(invocation: string) {
         fileName: '/repo/scenario.yaml',
         isUntitled: false,
         languageId: 'yaml',
+        lineCount: lines.length,
+        uri,
+        version: 1,
+        getText: () => lines.join('\n'),
+        lineAt: (line: number) => {
+            const text = lines[line];
+            return {
+                text,
+                firstNonWhitespaceCharacterIndex: text.search(/\S|$/),
+                range: new Range(line, 0, line, text.length)
+            };
+        }
+    };
+}
+
+function featureDocumentWithLine(invocation: string) {
+    const lines = [
+        '# language: en',
+        'Feature: Project feature',
+        'Scenario: Project scenario',
+        `    ${invocation}`
+    ];
+    const uri = { scheme: 'file', fsPath: '/repo/project.feature', toString: () => 'file:///repo/project.feature' };
+    return {
+        fileName: '/repo/project.feature',
+        isUntitled: false,
+        languageId: 'feature',
         lineCount: lines.length,
         uri,
         version: 1,
@@ -304,6 +334,23 @@ const fullValidation = {
     includeScenarioSuggestions: true
 };
 
+test('Gherkin diagnostics use the .feature extension instead of a stale language mode', () => {
+    const exports = loadDiagnosticsModule();
+    const isGherkinFeatureDocument = exports.isGherkinFeatureDocument as (
+        document: { fileName: string; languageId: string }
+    ) => boolean;
+
+    assert.equal(typeof isGherkinFeatureDocument, 'function');
+    assert.equal(isGherkinFeatureDocument({
+        fileName: '/repo/test.yaml',
+        languageId: 'feature'
+    }), false);
+    assert.equal(isGherkinFeatureDocument({
+        fileName: '/repo/export.feature',
+        languageId: 'plaintext'
+    }), true);
+});
+
 for (const kind of ['builtInStep', 'userStep', 'exportScenario', 'nestedScenario'] as const) {
     test(`unified diagnostics recognize ${kind}`, async () => {
         const item = definition(kind);
@@ -369,6 +416,24 @@ test('missing project definition produces the existing unknown-step diagnostic',
     const document = documentWithLine('And missing "value"');
 
     await provider.validateDocument(document, {
+        includeSuggestions: false,
+        includeStepChecks: true,
+        includeStepSuggestions: false,
+        includeScenarioSuggestions: false
+    });
+
+    const diagnostics = published.get(document.uri.toString()) ?? [];
+    assert.ok(diagnostics.some(item => item.code === 'kotTestToolkit.unknownStep'));
+});
+
+test('Feature diagnostics reuse project definitions for unknown steps', async () => {
+    const { provider, published } = createProvider({
+        resolve: async () => ({ kind: 'missing', invocation: 'Given a missing project step' }),
+        getView: async () => ({ identity: 'empty', all: [], byId: new Map(), byNormalizedTemplate: new Map() })
+    });
+    const document = featureDocumentWithLine('Given a missing project step');
+
+    await provider.validateDocument(document as ReturnType<typeof documentWithLine>, {
         includeSuggestions: false,
         includeStepChecks: true,
         includeStepSuggestions: false,

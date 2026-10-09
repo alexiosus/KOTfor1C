@@ -122,6 +122,11 @@ function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('o
     let ensureCalls = 0;
     let refreshCalls = 0;
     const calls: Array<{ action: string; id?: string }> = [];
+    const operationGates = new Map<string, Promise<void>>();
+    const runOperation = async (action: string, value?: ManagedInfobaseRecord): Promise<void> => {
+        calls.push({ action, ...(value ? { id: value.id } : {}) });
+        await operationGates.get(`${action}:${value?.id ?? ''}`);
+    };
     const service = {
         onDidInvalidate: invalidations.event,
         ensureReady: async () => {
@@ -136,22 +141,22 @@ function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('o
         }
     };
     const operations = {
-        createInfobase: async () => { calls.push({ action: 'create' }); },
-        openEnterprise: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'enterprise', id: value.id }); },
-        openDesigner: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'designer', id: value.id }); },
-        openFormExplorer: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'formExplorer', id: value.id }); },
-        copy: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'copy', id: value.id }); },
-        recreate: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'recreate', id: value.id }); },
-        updateConfiguration: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'updateConfiguration', id: value.id }); },
-        edit: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'edit', id: value.id }); },
-        addToLauncher: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'addToLauncher', id: value.id }); },
-        removeFromLauncher: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'removeFromLauncher', id: value.id }); },
-        reveal: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'reveal', id: value.id }); },
-        logs: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'logs', id: value.id }); },
-        exportDt: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'exportDt', id: value.id }); },
-        importDt: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'importDt', id: value.id }); },
-        exportCf: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'exportCf', id: value.id }); },
-        importCf: async (value: ManagedInfobaseRecord) => { calls.push({ action: 'importCf', id: value.id }); }
+        createInfobase: async () => runOperation('create'),
+        openEnterprise: async (value: ManagedInfobaseRecord) => runOperation('enterprise', value),
+        openDesigner: async (value: ManagedInfobaseRecord) => runOperation('designer', value),
+        openFormExplorer: async (value: ManagedInfobaseRecord) => runOperation('formExplorer', value),
+        copy: async (value: ManagedInfobaseRecord) => runOperation('copy', value),
+        recreate: async (value: ManagedInfobaseRecord) => runOperation('recreate', value),
+        updateConfiguration: async (value: ManagedInfobaseRecord) => runOperation('updateConfiguration', value),
+        edit: async (value: ManagedInfobaseRecord) => runOperation('edit', value),
+        addToLauncher: async (value: ManagedInfobaseRecord) => runOperation('addToLauncher', value),
+        removeFromLauncher: async (value: ManagedInfobaseRecord) => runOperation('removeFromLauncher', value),
+        reveal: async (value: ManagedInfobaseRecord) => runOperation('reveal', value),
+        logs: async (value: ManagedInfobaseRecord) => runOperation('logs', value),
+        exportDt: async (value: ManagedInfobaseRecord) => runOperation('exportDt', value),
+        importDt: async (value: ManagedInfobaseRecord) => runOperation('importDt', value),
+        exportCf: async (value: ManagedInfobaseRecord) => runOperation('exportCf', value),
+        importCf: async (value: ManagedInfobaseRecord) => runOperation('importCf', value)
     };
     const Provider = moduleObject.exports.InfobaseSidebarProvider as new (services: unknown) => {
         resolveWebviewView(view: unknown): void;
@@ -170,6 +175,9 @@ function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('o
     provider.resolveWebviewView(view);
     return {
         provider, view, invalidations, commands, errors, calls,
+        setOperationGate(action: string, infobaseId: string, gate: Promise<void>) {
+            operationGates.set(`${action}:${infobaseId}`, gate);
+        },
         setSnapshot(value: ManagedInfobaseSnapshot) { current = value; },
         setEnsureError(value: Error | null) { ensureError = value; },
         setRunningIdentities(value: ReadonlySet<string>) {
@@ -297,4 +305,43 @@ test('routes create, refresh, and full-manager commands without accepting caller
     assert.deepEqual(harness.calls, [{ action: 'create' }]);
     assert.equal(harness.refreshCalls, 2);
     assert.deepEqual(harness.commands, ['kotTestToolkit.openInfobaseManager']);
+});
+
+test('allows operations on different infobases while one infobase is busy', async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const harness = createHarness();
+    harness.setOperationGate('updateConfiguration', 'one', firstGate);
+    await send(harness, { command: 'ready' });
+
+    await send(harness, { command: 'maintenance', infobaseId: 'one', action: 'updateConfiguration' });
+    await send(harness, { command: 'maintenance', infobaseId: 'two', action: 'exportDt' });
+
+    assert.deepEqual(harness.calls.slice(-2), [
+        { action: 'updateConfiguration', id: 'one' },
+        { action: 'exportDt', id: 'two' }
+    ]);
+    const pending = harness.view.webview.messages.filter(
+        value => (value as { command?: string }).command === 'pending'
+    ) as Array<{ infobaseId: string; action: string | null }>;
+    assert.deepEqual(pending.slice(0, 2).map(message => [message.infobaseId, message.action]), [
+        ['one', 'updateConfiguration'],
+        ['two', 'exportDt']
+    ]);
+
+    releaseFirst();
+    await flush();
+});
+
+test('blocks exclusive maintenance but keeps launch available for a running infobase', async () => {
+    const harness = createHarness();
+    await send(harness, { command: 'ready' });
+    harness.setRunningIdentities(new Set(['/workspace/one']));
+    await flush();
+
+    await send(harness, { command: 'maintenance', infobaseId: 'one', action: 'updateConfiguration' });
+    await send(harness, { command: 'maintenance', infobaseId: 'one', action: 'exportDt' });
+    await send(harness, { command: 'openEnterprise', infobaseId: 'one' });
+
+    assert.deepEqual(harness.calls, [{ action: 'enterprise', id: 'one' }]);
 });
