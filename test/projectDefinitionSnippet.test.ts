@@ -132,6 +132,18 @@ test('builds a nested parameter block with defaults and aligned names', () => {
     });
 });
 
+test('nested table defaults use unquoted rows and preserve following scalar assignments', () => {
+    const result = buildProjectDefinitionInsertion(definition({
+        kind: 'nestedScenario', template: 'ProcessRows', parameters: [
+            { name: 'Rows', index: 0, source: 'snippet', type: 'table', defaultValue: '| Name |\r\n| $item |' },
+            { name: 'Currency', index: 1, source: 'snippet', defaultValue: '"USD"' }
+        ]
+    }), { fallbackKeyword: 'And', language: 'en', documentFormat: 'yaml', indentation: '    ' });
+    assert.equal(result.displayText, '    And ProcessRows\n        Rows     =\n            | Name |\n            | $item |\n        Currency = "USD"');
+    assert.ok(result.snippetText.includes('\\$item'));
+    assert.ok(result.snippetText.includes('Currency = ${2:"USD"}'));
+});
+
 test('builds export insertion from its usage example and typed keyword', () => {
     const result = buildProjectDefinitionInsertion(definition({
         kind: 'exportScenario',
@@ -147,4 +159,52 @@ test('builds export insertion from its usage example and typed keyword', () => {
     assert.equal(result.displayText, 'And "Add indicator" window is ready');
     assert.equal(result.snippetText, 'And "${1:WindowName}" window is ready');
     assert.equal(result.hasPlaceholders, true);
+});
+
+for (const [language, template, expected] of [
+    ['en', 'And I repeat "%1 Count" times', 'Do I repeat "${1}" times\n    $0\nEndDo'],
+    ['en', 'And While "%1 Condition" 1C:Enterprise script is True I do', 'Do While "${1}" 1C:Enterprise script is True I do\n    $0\nEndDo'],
+    ['en', 'And for each line of "%1 Table" table I do', 'Do for each line of "${1}" table I do\n    $0\nEndDo'],
+    ['en', 'And for "%1 Seconds" seconds I do', 'Do for "${1}" seconds I do\n    $0\nEndDo'],
+    ['ru', 'Do I repeat "%1 Count" times', 'Do I repeat "${1}" times\n    $0\nEndDo'],
+    ['en', 'Цикл я делаю "%1 Количество" раз', 'Цикл я делаю "${1}" раз\n    $0\nКонецЦикла'],
+    ['ru', 'И я делаю "%1 Количество" раз', 'Цикл я делаю "${1}" раз\n    $0\nКонецЦикла'],
+    ['ru', 'И Пока "%1 Условие" выполняется скрипт встроенного языка я выполняю', 'Цикл Пока "${1}" выполняется скрипт встроенного языка я выполняю\n    $0\nКонецЦикла']
+] as const) {
+    test(`YAML library insertion wraps the Vanessa loop ${template} for the compiler`, () => {
+        const result = buildProjectDefinitionInsertion(definition({ template, language }), {
+            fallbackKeyword: language === 'ru' ? 'И' : 'And',
+            language,
+            documentFormat: 'yaml'
+        });
+        assert.equal(result.snippetText, expected);
+        assert.equal(result.hasPlaceholders, true);
+    });
+}
+
+test('YAML loop insertion indents the entire block and preserves literal Vanessa variables', () => {
+    const result = buildProjectDefinitionInsertion(definition({
+        template: 'And While "$counter$ < 10" 1C:Enterprise script is True I do'
+    }), {
+        fallbackKeyword: 'And', language: 'en', indentation: '    ', documentFormat: 'yaml'
+    });
+    assert.equal(result.snippetText, '    Do While "\\$counter\\$ < 10" 1C:Enterprise script is True I do\n        $0\n    EndDo');
+});
+
+test('YAML library insertion preserves scenario names that resemble loops', () => {
+    for (const kind of ['nestedScenario', 'exportScenario'] as const) {
+        for (const template of ['I repeat "10" times', 'Do cleanup']) {
+            const result = buildProjectDefinitionInsertion(definition({ kind, template }), {
+                fallbackKeyword: 'And', language: 'en', documentFormat: 'yaml'
+            });
+            assert.equal(result.snippetText, `And ${template}`, `${kind}: ${template}`);
+        }
+    }
+});
+
+test('feature library insertion retains the native Vanessa loop without compiler delimiters', () => {
+    const result = buildProjectDefinitionInsertion(definition({
+        template: 'And I repeat "%1 Count" times'
+    }), { fallbackKeyword: 'And', language: 'en', documentFormat: 'feature' });
+    assert.equal(result.snippetText, 'And I repeat "${1}" times');
 });

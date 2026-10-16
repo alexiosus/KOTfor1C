@@ -1389,6 +1389,8 @@ export class FormExplorerPanel implements vscode.Disposable {
         const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'codicon.css'));
         const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'formExplorer.css'));
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'formExplorer.js'));
+        const textScriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'kotWebviewText.js'));
+        const splitScriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'kotWebviewSplit.js'));
 
         const loc = {
             title: t('KOT Form Explorer'),
@@ -1409,6 +1411,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             details: t('Details'),
             selectedElement: t('Selected element'),
             currentForm: t('Current form'),
+            resizePanels: t('Resize panels'),
             formAttributes: t('Form attributes'),
             commands: t('Commands'),
             searchPlaceholder: t('Search elements'),
@@ -1605,24 +1608,27 @@ export class FormExplorerPanel implements vscode.Disposable {
             </div>
         </section>
 
-        <section class="workspace">
-            <section class="panel current-form-panel" id="currentFormPanel">
-                <p class="section-label current-form-label">${escapeHtml(loc.currentForm)}</p>
-                <div class="current-form-copy">
-                    <button id="formTitleValue" class="window-title-btn" type="button">${escapeHtml(loc.waitingForSnapshot)}</button>
-                    <p id="formMetaLine" class="meta-line"></p>
-                </div>
-                <div class="current-form-actions">
-                    <button id="manualRefreshBtn" class="ghost-btn small view-hidden" type="button">
-                        <span class="codicon codicon-refresh"></span> ${escapeHtml(loc.refresh)}
-                    </button>
-                    <button id="currentFormOpenSourceBtn" class="ghost-btn small" type="button">
-                        <span class="codicon codicon-go-to-file"></span> ${escapeHtml(loc.openSourceFile)}
-                    </button>
-                </div>
-            </section>
+        <section class="workspace" data-kot-split="before">
+
 
             <aside class="panel sidebar-panel">
+                <section class="current-form-panel" id="currentFormPanel">
+                    <div class="current-form-heading">
+                        <p class="section-label current-form-label">${escapeHtml(loc.currentForm)}</p>
+                        <div class="current-form-actions">
+                            <button id="manualRefreshBtn" class="ghost-btn small view-hidden" type="button">
+                                <span class="codicon codicon-refresh"></span> ${escapeHtml(loc.refresh)}
+                            </button>
+                            <button id="currentFormOpenSourceBtn" class="ghost-btn small view-hidden" type="button" disabled>
+                                <span class="codicon codicon-go-to-file"></span> ${escapeHtml(loc.openSourceFile)}
+                            </button>
+                        </div>
+                    </div>
+                    <div class="current-form-copy">
+                        <button id="formTitleValue" class="window-title-btn" type="button">${escapeHtml(loc.waitingForSnapshot)}</button>
+                        <p id="formMetaLine" class="meta-line view-hidden"></p>
+                    </div>
+                </section>
                 <div class="sidebar-section-head">
                     <p class="section-label">${escapeHtml(loc.formElements)}</p>
                     <span id="elementCountValue" class="count-pill">0</span>
@@ -1685,6 +1691,7 @@ export class FormExplorerPanel implements vscode.Disposable {
                 <div id="elementTree" class="scroll-region outline-scroll"></div>
             </aside>
 
+            <div class="kot-pane-resizer" role="separator" aria-orientation="vertical" aria-label="${escapeHtml(loc.resizePanels)}" tabindex="0"></div>
             <main class="content">
                 <section class="panel tabs-panel">
                     <div id="detailsTabsBar" class="tabs-bar secondary-tabs-bar">
@@ -1730,6 +1737,8 @@ export class FormExplorerPanel implements vscode.Disposable {
         window.__formExplorerInitialState = ${initialStateJson};
         window.__formExplorerLoc = ${locJson};
     </script>
+    <script nonce="${nonce}" src="${textScriptUri}"></script>
+    <script nonce="${nonce}" src="${splitScriptUri}"></script>
     <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

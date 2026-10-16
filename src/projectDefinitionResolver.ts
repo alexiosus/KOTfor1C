@@ -151,7 +151,8 @@ function nestedDefinition(scenario: TestInfo): ProjectDefinition {
             name,
             index,
             source: 'snippet' as const,
-            defaultValue: scenario.parameterDefaults?.[name]
+            defaultValue: scenario.parameterDefaults?.[name],
+            ...(scenario.parameterTypes?.[name] ? { type: scenario.parameterTypes[name] } : {})
         }));
     return Object.freeze({
         id: uri,
@@ -183,6 +184,8 @@ function scenarioIdentity(scenarios: readonly TestInfo[]): string {
         uri: scenario.yamlFileUri.toString(),
         name: scenario.name,
         parameters: scenario.parameters ?? [],
+        parameterDefaults: scenario.parameterDefaults ?? {},
+        parameterTypes: scenario.parameterTypes ?? {},
         description: scenario.scenarioDescription ?? '',
         category: scenario.scenarioCategory ?? '',
         code: scenario.scenarioCode ?? ''

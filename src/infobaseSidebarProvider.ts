@@ -10,6 +10,7 @@ export type InfobaseMaintenanceAction =
     | 'recreate'
     | 'updateConfiguration'
     | 'updateFromSources'
+    | 'updateFromTemplate'
     | 'edit'
     | 'addToLauncher'
     | 'removeFromLauncher'
@@ -38,6 +39,7 @@ export interface InfobaseSidebarOperations {
     readonly recreate: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
     readonly updateConfiguration: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
     readonly updateFromSources: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
+    readonly updateFromTemplate: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
     readonly edit: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
     readonly addToLauncher: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
     readonly removeFromLauncher: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
@@ -65,6 +67,7 @@ const MAINTENANCE_ACTIONS = new Set<InfobaseMaintenanceAction>([
     'recreate',
     'updateConfiguration',
     'updateFromSources',
+    'updateFromTemplate',
     'edit',
     'addToLauncher',
     'removeFromLauncher',
@@ -144,6 +147,8 @@ export function createDeferredInfobaseSidebarOperations(
                 manager.updateInfobaseConfigurationInteractive(context, infobase),
             updateFromSources: (infobase: ManagedInfobaseRecord) =>
                 manager.updateInfobaseConfigurationInteractive(context, infobase, 'sourceDirectory'),
+            updateFromTemplate: (infobase: ManagedInfobaseRecord) =>
+                manager.updateInfobaseConfigurationInteractive(context, infobase, 'template'),
             edit: (infobase: ManagedInfobaseRecord) => manager.editInfobaseInteractive(context, infobase),
             addToLauncher: (infobase: ManagedInfobaseRecord) => manager.addInfobaseToLauncherInteractive(context, infobase),
             removeFromLauncher: (infobase: ManagedInfobaseRecord) => manager.removeInfobaseFromLauncherInteractive(infobase, context),
@@ -452,7 +457,7 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
     <title>${t('Infobases')}</title>
 </head>
 <body>
-    <main class="infobase-sidebar" data-runtime-marker="${t('Running from KOT')}" data-pending-marker="${t('Infobase operation in progress')}" data-open-enterprise="${t('Open in 1C:Enterprise')}" data-open-designer="${t('Open in Designer')}" data-maintenance="${t('Maintenance actions')}" data-open-form-explorer="${t('Open KOT Form Explorer')}" data-copy="${t('Copy infobase')}" data-recreate="${t('Recreate infobase')}" data-update-configuration="${t('Update configuration')}" data-edit="${t('Edit infobase')}" data-add-to-launcher="${t('Add to 1C launcher')}" data-remove-from-launcher="${t('Remove from launcher')}" data-reveal="${t('Open infobase folder')}" data-logs="${t('Show infobase logs')}" data-export-dt="${t('Export DT')}" data-import-dt="${t('Import DT')}" data-export-cf="${t('Export .cf')}" data-general-heading="${t('Other actions')}" data-dt-heading="${t('Infobase data · DT')}" data-cf-heading="${t('Configuration · CF and files')}" data-kot-heading="${t('KOT tools')}" data-refreshing="${t('Refreshing infobases...')}" data-loading="${t('Loading infobases...')}" data-empty="${t('No managed infobases')}" data-running="${t('Running action...')}" data-error="${t('Unable to load infobases')}">
+    <main class="infobase-sidebar" data-runtime-marker="${t('Running from KOT')}" data-pending-marker="${t('Infobase operation in progress')}" data-open-enterprise="${t('Open in 1C:Enterprise')}" data-open-designer="${t('Open in Designer')}" data-maintenance="${t('Maintenance actions')}" data-open-form-explorer="${t('Open KOT Form Explorer')}" data-copy="${t('Copy infobase')}" data-recreate="${t('Recreate infobase')}" data-update-configuration="${t('Update configuration')}" data-update-from-template="${t('Update from installed template')}" data-edit="${t('Edit infobase')}" data-add-to-launcher="${t('Add to 1C launcher')}" data-remove-from-launcher="${t('Remove from launcher')}" data-reveal="${t('Open infobase folder')}" data-logs="${t('Show infobase logs')}" data-export-dt="${t('Export DT')}" data-import-dt="${t('Import DT')}" data-export-cf="${t('Export .cf')}" data-general-heading="${t('Other actions')}" data-dt-heading="${t('Infobase data · DT')}" data-cf-heading="${t('Configuration · CF and files')}" data-kot-heading="${t('KOT tools')}" data-refreshing="${t('Refreshing infobases...')}" data-loading="${t('Loading infobases...')}" data-empty="${t('No managed infobases')}" data-running="${t('Running action...')}" data-error="${t('Unable to load infobases')}">
         <div id="list" class="infobase-list" role="list" aria-label="${t('Infobases')}"></div>
         <div id="status" class="infobase-status" role="status" aria-live="polite"></div>
     </main>

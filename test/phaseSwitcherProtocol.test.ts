@@ -40,7 +40,7 @@ const protocol = require(path.join(process.cwd(), 'media', 'phaseSwitcherProtoco
         mode: 'select' | 'clear' | 'toggle'
     ): readonly string[];
     matchesScenarioSearch(
-        scenario: { name?: string; phaseName?: string },
+        scenario: { name?: string; phaseName?: string; attachmentPaths?: readonly string[] },
         query: string
     ): boolean;
     normalizeStatusFilter(value: unknown): 'all' | 'built' | 'running';
@@ -353,6 +353,14 @@ test('scenario search filters by scenario or group name like the Library search'
     assert.equal(protocol.matchesScenarioSearch({ name: 'Create sales order', phaseName: 'CRM / Sales' }, 'CRM'), true);
     assert.equal(protocol.matchesScenarioSearch({ name: 'Create sales order', phaseName: 'CRM / Sales' }, 'cash'), false);
     assert.equal(protocol.matchesScenarioSearch({ name: 'Create sales order', phaseName: 'CRM / Sales' }, '  '), true);
+});
+
+test('scenario search matches attachment names and nested paths case insensitively', () => {
+    const scenario = { name: 'Create sales order', phaseName: 'CRM', attachmentPaths: ['Fixtures/Данные.MXL', 'Input.xlsx'] };
+    assert.equal(protocol.matchesScenarioSearch(scenario, 'данные.mxl'), true);
+    assert.equal(protocol.matchesScenarioSearch(scenario, 'fixtures/'), true);
+    assert.equal(protocol.matchesScenarioSearch(scenario, 'INPUT.XLSX'), true);
+    assert.equal(protocol.matchesScenarioSearch(scenario, 'unrelated.csv'), false);
 });
 
 test('run progress keeps the feature position and exposes repeated loop visits', () => {

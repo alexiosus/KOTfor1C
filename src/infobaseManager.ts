@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { managedInfobaseRuntimeTracker } from './infobaseRuntimeTracker';
+import { templateCreationArguments } from './oneCInfobaseTemplates';
 import { getFormExplorerBuilderPaths } from './formExplorerBuilder';
 import { getFormExplorerSnapshotPath } from './formExplorerPaths';
 import { parseFormExplorerSnapshotText } from './formExplorerTypes';
@@ -458,7 +459,9 @@ async function saveRunVanessaCustomInfobaseMap(
     context: vscode.ExtensionContext,
     value: Record<string, string>
 ): Promise<void> {
-    await context.workspaceState.update(RUN_VANESSA_CUSTOM_INFOBASE_KEY, value);
+    const stored = context.workspaceState.get<{ version?: unknown }>(RUN_VANESSA_CUSTOM_INFOBASE_KEY);
+    await context.workspaceState.update(RUN_VANESSA_CUSTOM_INFOBASE_KEY,
+        stored?.version === 2 ? { version: 2, byKey: value } : value);
 }
 
 function getStoredManagedInfobaseMetadata(
@@ -687,7 +690,12 @@ async function purgeManagedInfobaseReferences(
 }
 
 function getRunVanessaCustomInfobaseMap(context: vscode.ExtensionContext): Record<string, string> {
-    return context.workspaceState.get<Record<string, string>>(RUN_VANESSA_CUSTOM_INFOBASE_KEY, {});
+    const raw = context.workspaceState.get<unknown>(RUN_VANESSA_CUSTOM_INFOBASE_KEY);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { return {}; }
+    const stored = raw as Record<string, unknown>;
+    const paths = stored.version === 2 ? stored.byKey : stored;
+    if (!paths || typeof paths !== 'object' || Array.isArray(paths)) { return {}; }
+    return Object.fromEntries(Object.entries(paths).filter(([key, value]) => key.trim() && typeof value === 'string' && value.trim()));
 }
 
 function mergeRoles(
@@ -1988,7 +1996,7 @@ export async function createInfobaseWithLauncherRegistration(
     context: vscode.ExtensionContext,
     infobasePath: string,
     launcherRegistrationName: string,
-    options?: { addRoles?: ManagedInfobaseRole[]; progressTitle?: string; }
+    options?: { addRoles?: ManagedInfobaseRole[]; progressTitle?: string; templateFilePath?: string }
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
@@ -2012,7 +2020,7 @@ export async function createInfobaseWithLauncherRegistration(
             await ensureDirectory(infobasePath);
             await runOneCCommand(
                 designerExePath,
-                ['CREATEINFOBASE', buildFileInfobaseConnectionArgument(infobasePath, { trailingSemicolon: true })],
+                templateCreationArguments(buildFileInfobaseConnectionArgument(infobasePath, { trailingSemicolon: true }), options?.templateFilePath),
                 workspaceRootPath,
                 t('Create infobase'),
                 logPath,
@@ -2028,7 +2036,7 @@ export async function createInfobaseWithLauncherRegistration(
     await updateManagedInfobaseMetadata(context, infobasePath, {
         displayName: launcherRegistrationName,
         addRoles: options?.addRoles || [],
-        stateHint: 'empty'
+        stateHint: options?.templateFilePath ? 'ready' : 'empty'
     });
 }
 
@@ -2037,6 +2045,19 @@ export async function createInfobaseInteractive(
     options?: { defaultName?: string; defaultDirectoryPath?: string | null; addRoles?: ManagedInfobaseRole[]; }
 ): Promise<string | null> {
     const t = await getTranslator(context.extensionUri);
+    const mode = await vscode.window.showQuickPick([
+        { label: t('Empty infobase without configuration'), templateKind: 'blank' as const },
+        { label: t('Empty infobase from configuration template'), templateKind: 'configuration' as const },
+        { label: t('Demo infobase from template'), templateKind: 'demo' as const }
+    ], { title: t('Create infobase'), ignoreFocusOut: true });
+    if (!mode) { return null; }
+    let templateFilePath: string | undefined;
+    if (mode.templateKind !== 'blank') {
+        const { pickInstalledInfobaseTemplate } = await import('./oneCInfobaseTemplatePicker.js');
+        const template = await pickInstalledInfobaseTemplate(mode.templateKind, t);
+        if (!template) { return null; }
+        templateFilePath = template.filePath;
+    }
     const creationTarget = await promptNewInfobaseTarget(context, t, {
         defaultName: options?.defaultName,
         defaultDirectoryPath: options?.defaultDirectoryPath || null
@@ -2050,7 +2071,7 @@ export async function createInfobaseInteractive(
         creationTarget.infobasePath,
         creationTarget.launcherRegistrationName,
         {
-            addRoles: options?.addRoles || []
+            addRoles: options?.addRoles || [], templateFilePath
         }
     );
 
@@ -2437,7 +2458,7 @@ export async function restoreInfobaseFromDtInteractive(
 export async function updateInfobaseConfigurationInteractive(
     context: vscode.ExtensionContext,
     infobase: ManagedInfobaseRecord,
-    modeHint?: 'sourceDirectory' | 'cfFile'
+    modeHint?: 'sourceDirectory' | 'cfFile' | 'template'
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     assertNonWebInfobaseRecord(t, infobase, t('Update configuration'));
@@ -2456,6 +2477,12 @@ export async function updateInfobaseConfigurationInteractive(
             description: configuredSourceDirectory || t('Configuration source directory is not configured.'),
             detail: t('Load configuration from the directory set in Form Explorer settings and update DB configuration.'),
             modeKey: 'sourceDirectory' as const
+        },
+        {
+            label: t('Update from installed template'),
+            description: t('Use a .cf from the installed tmplts catalog.'),
+            detail: t('Select an installed configuration version and update the infobase configuration.'),
+            modeKey: 'template' as const
         },
         {
             label: t('Update from .cf file'),
@@ -2490,6 +2517,13 @@ export async function updateInfobaseConfigurationInteractive(
         ];
         importSourcePath = configuredSourceDirectory;
         logSuffix = 'update-from-source';
+    } else if (selection.modeKey === 'template') {
+        const { pickInstalledInfobaseTemplate } = await import('./oneCInfobaseTemplatePicker.js');
+        const template = await pickInstalledInfobaseTemplate('configuration', t);
+        if (!template) { return; }
+        importSourcePath = template.filePath;
+        commandArgs = ['/LoadCfg', importSourcePath, '/UpdateDBCfg'];
+        logSuffix = 'update-from-template';
     } else {
         const selectedCfFile = await vscode.window.showOpenDialog({
             canSelectFiles: true,

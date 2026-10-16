@@ -1,0 +1,272 @@
+.standalone-features {
+    min-width: 0;
+    padding-block: 2px 6px;
+    border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+}
+
+.standalone-row {
+    gap: 4px;
+    padding-inline: 6px 4px;
+    border: 1px solid transparent;
+}
+
+.standalone-row > .codicon {
+    flex: 0 0 16px;
+    color: var(--vscode-icon-foreground);
+}
+
+.standalone-section-row {
+    font-weight: 600;
+}
+
+.standalone-features-manager .standalone-section-row.phase-header-affected,
+.standalone-features-manager .standalone-group-row.phase-header-affected {
+    background: color-mix(in srgb, var(--kot-sidebar-related) 10%, transparent);
+    box-shadow: inset 2px 0 0 var(--kot-sidebar-related);
+}
+
+.standalone-group-row {
+    padding-inline-start: 16px;
+}
+
+.standalone-feature-row {
+    padding-inline-start: 46px;
+    cursor: default;
+}
+
+.standalone-feature-label {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding-block: 3px;
+}
+
+.standalone-feature-title,
+.standalone-feature-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.standalone-feature-path {
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+}
+
+.standalone-count {
+    flex: 0 0 auto;
+    padding-inline: 4px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+    font-weight: normal;
+}
+
+.standalone-actions {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    gap: 1px;
+    max-width: 0;
+    opacity: 0;
+    pointer-events: none;
+    overflow: hidden;
+}
+
+.standalone-row:hover .standalone-actions,
+.standalone-row:focus-visible .standalone-actions,
+.standalone-row:has(:focus-visible) .standalone-actions {
+    max-width: 104px;
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.standalone-action {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0 4px;
+}
+
+.standalone-action:disabled,
+.standalone-context-action:not(.run-mode-menu-item):disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.standalone-empty,
+.standalone-empty-group {
+    display: block;
+    padding: 5px 8px 5px 46px;
+    color: var(--vscode-descriptionForeground);
+    font-style: italic;
+}
+
+.standalone-row.is-drop-target {
+    border-color: var(--vscode-focusBorder);
+    background: var(--vscode-list-dropBackground);
+}
+
+.standalone-row.is-drop-before {
+    border-top-color: var(--vscode-focusBorder);
+    background: var(--vscode-list-dropBackground);
+}
+
+.standalone-row.is-dragging {
+    opacity: 0.62;
+}
+
+.standalone-context-menu:not(.phase-context-menu) {
+    position: fixed;
+    z-index: 1200;
+    min-width: 190px;
+    padding: 4px;
+    border: 1px solid var(--vscode-menu-border, transparent);
+    border-radius: 5px;
+    color: var(--vscode-menu-foreground);
+    background: var(--vscode-menu-background);
+}
+
+.standalone-context-action:not(.run-mode-menu-item) {
+    display: block;
+    width: 100%;
+    min-height: 26px;
+    padding: 3px 8px;
+    border: 0;
+    border-radius: 3px;
+    color: inherit;
+    background: transparent;
+    font: inherit;
+    text-align: start;
+}
+
+.standalone-context-action:not(.run-mode-menu-item):hover:not(:disabled),
+.standalone-context-action:not(.run-mode-menu-item):focus-visible {
+    color: var(--vscode-menu-selectionForeground);
+    background: var(--vscode-menu-selectionBackground);
+    outline: none;
+}
+
+.standalone-features-manager {
+    overflow: visible;
+    padding: 2px 0;
+}
+
+.standalone-features-manager .standalone-row {
+    border: 0;
+    padding-inline-start: calc(4px + var(--standalone-depth, 0) * 18px);
+}
+
+.standalone-features-manager .standalone-section-row {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) 48px auto;
+    gap: 4px;
+    padding-inline-end: 4px;
+    font-weight: 400;
+}
+
+.standalone-features-manager .standalone-group-row {
+    display: grid;
+    grid-template-columns: 18px 18px minmax(0, 1fr) 24px auto;
+    gap: 4px;
+    padding-inline-end: 4px;
+}
+
+.standalone-features-manager label.standalone-feature-row {
+    /* Native file/status icons are 16px; these gaps retain the group's 22px slots. */
+    gap: 6px;
+    padding-inline-start: calc(4px + var(--standalone-depth, 0) * 18px);
+}
+
+.standalone-features-manager .standalone-feature-row .scenario-resource-toggle-spacer {
+    inset-inline-start: calc(4px + var(--standalone-depth, 0) * 18px);
+}
+
+.standalone-features-manager label.standalone-feature-row .kot-row-actions {
+    max-width: 76px;
+}
+
+.standalone-features-manager label.standalone-feature-row .run-scenario-log-btn {
+    display: none;
+}
+
+.standalone-features-manager label.standalone-feature-row:hover .kot-row-actions,
+.standalone-features-manager label.standalone-feature-row:focus-visible .kot-row-actions,
+.standalone-features-manager label.standalone-feature-row:has(:focus-visible) .kot-row-actions {
+    max-width: 132px;
+}
+
+.standalone-features-manager label.standalone-feature-row:hover .run-scenario-log-btn,
+.standalone-features-manager label.standalone-feature-row:focus-visible .run-scenario-log-btn,
+.standalone-features-manager label.standalone-feature-row:has(:focus-visible) .run-scenario-log-btn {
+    display: inline-flex;
+}
+
+.standalone-features-manager .standalone-actions {
+    width: 24px;
+    max-width: none;
+    overflow: visible;
+}
+
+.standalone-features-manager .standalone-section-row .standalone-actions {
+    width: 48px;
+    gap: 0;
+}
+
+.standalone-features-manager .standalone-row .standalone-actions:not(:has(.standalone-action:not(:disabled))) {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.standalone-features-manager .standalone-action {
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
+    padding: 0;
+}
+
+.standalone-selection-spacer {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+}
+
+.standalone-features-manager .standalone-count {
+    font-size: 11px;
+    padding-inline: 4px;
+}
+
+.standalone-features-manager .standalone-row.is-drop-before {
+    box-shadow: inset 0 1px 0 var(--vscode-focusBorder);
+}
+
+.standalone-features-manager .standalone-row.is-drop-target {
+    box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
+}
+
+.standalone-context-menu.phase-context-menu .run-mode-menu-item:focus-visible {
+    outline: none;
+    background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+    color: var(--vscode-menu-selectionForeground, var(--vscode-list-hoverForeground));
+}
+.standalone-features .project-order-drag-handle {
+    display: inline-flex;
+    position: absolute;
+    inset-inline-start: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 14px;
+    z-index: 2;
+    cursor: grab;
+    opacity: 0;
+    pointer-events: none;
+    color: var(--vscode-descriptionForeground);
+}
+.standalone-features .kot-tree-row:has(.project-order-drag-handle) { position: relative; }
+.standalone-features .kot-tree-row:hover .project-order-drag-handle,
+.standalone-features .kot-tree-row:focus-visible .project-order-drag-handle,
+.standalone-features .kot-tree-row:has(:focus-visible) .project-order-drag-handle,
+.standalone-features .is-order-dragging .project-order-drag-handle { opacity: 1; pointer-events: auto; }
+.standalone-features .project-order-drag-handle:active { cursor: grabbing; }
+.standalone-features .is-order-dragging { opacity: 0.55; }
+.standalone-features .is-order-drop-before { box-shadow: inset 0 2px 0 var(--vscode-focusBorder); }
+.standalone-features .is-order-drop-after { box-shadow: inset 0 -2px 0 var(--vscode-focusBorder); }
+.standalone-features .is-order-drop-target { background: var(--vscode-list-dropBackground); }

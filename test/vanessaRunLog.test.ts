@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
     areScenarioNamesEqual,
     extractFailedStepDetails,
+    extractFailedStep,
+    extractFailedStepLocation,
     extractFailedSummaryFromLogLine,
     extractFeatureLineNumberFromRunLogLine,
     extractFeaturePathFromRunLogLine,
@@ -23,6 +25,81 @@ test('run-log metadata parser accepts Russian and English markers with Windows a
     assert.equal(extractScenarioNameFromRunLogLine('ScenarioName: "Create sale"'), 'Create sale');
     assert.equal(extractScenarioNameFromRunLogLine('ordinary log line'), undefined);
     assert.equal(areScenarioNamesEqual(' "Create sale" ', 'create SALE'), true);
+});
+
+test('failure location retains the failed scenario when a later scenario passes and totals follow', () => {
+    const content = [
+        'Feature: /tmp/features/checkout.feature',
+        'Scenario: Declined payment',
+        '(8). Step: Then payment is accepted',
+        'Step (Then payment is accepted) failed',
+        '    Payment was declined',
+        'ErrorFileJson: /tmp/error.json',
+        'Scenario: Cash payment',
+        '(15). Step: Then checkout succeeds',
+        'PASSED: 1',
+        'FAILED: 1'
+    ].join('\n');
+
+    assert.deepEqual(extractFailedStepLocation(content), {
+        featurePath: '/tmp/features/checkout.feature', featureLineNumber: 8
+    });
+    assert.deepEqual(extractFailedStep(content), {
+        details: {
+            failureSummary: 'Step (Then payment is accepted) failed',
+            failureDetails: 'Payment was declined\nErrorFileJson: /tmp/error.json',
+            failureStepDescription: 'Then payment is accepted'
+        },
+        location: { featurePath: '/tmp/features/checkout.feature', featureLineNumber: 8 }
+    });
+    assert.equal(extractFailedStepLocation(content, { scenarioName: 'Cash payment' }), null);
+});
+
+test('failure location selects the latest explicit failure and supports scenario filtering', () => {
+    const content = [
+        'Фича: /tmp/features/first.feature',
+        'Сценарий: Первый',
+        '(5). Шаг: И первый шаг',
+        'Шаг (И первый шаг) не выполнен',
+        'ErrorFileJson: /tmp/first.json',
+        'Feature: /tmp/features/second.feature',
+        'Scenario: Second',
+        '(12). Step: Then second step',
+        'Step (Then second step) failed',
+        'ErrorFileJson: /tmp/second.json',
+        '(14). Step: Then cleanup succeeds',
+        'FAILED: 2'
+    ].join('\n');
+    assert.deepEqual(extractFailedStepLocation(content), {
+        featurePath: '/tmp/features/second.feature', featureLineNumber: 12
+    });
+    assert.deepEqual(extractFailedStepLocation(content, { scenarioName: 'Первый' }), {
+        featurePath: '/tmp/features/first.feature', featureLineNumber: 5
+    });
+});
+
+test('failure location never borrows a coordinate from a prior scenario or a summary-only report', () => {
+    assert.equal(extractFailedStepLocation('Feature: /tmp/test.feature\n(5). Step: Then pass\nFAILED: 1'), null);
+    assert.equal(extractFailedStepLocation([
+        'Feature: /tmp/test.feature', 'Scenario: Earlier', '(5). Step: Then pass',
+        'Scenario: Failing startup', 'Step (Given startup) failed'
+    ].join('\n')), null);
+    assert.deepEqual(extractFailedStepLocation([
+        'Feature: /tmp/test.feature', '(5). Step: Then fails', 'Step (Then fails) failed'
+    ].join('\n'), { scenarioName: 'Unmarked scenario' }), {
+        featurePath: '/tmp/test.feature', featureLineNumber: 5
+    });
+});
+
+test('failure location ignores exported step coordinates that do not match the authored source', () => {
+    const featureContent = 'Feature: Test\nScenario: Run\n And call helper';
+    const content = [
+        'Feature: /tmp/test.feature', 'Scenario: Run', '(3). Step: And call helper',
+        '(1). Step: Then nested assertion', 'Step (Then nested assertion) failed', 'FAILED: 1'
+    ].join('\n');
+    assert.deepEqual(extractFailedStepLocation(content, { featureContent }), {
+        featurePath: '/tmp/test.feature', featureLineNumber: 3
+    });
 });
 
 test('run-log line parser recognizes current Russian and English step location formats', () => {

@@ -9,6 +9,7 @@ import {
     type ProjectDefinition
 } from '../src/projectDefinition';
 import { resolveProjectInvocation } from '../src/projectDefinitionMatcher';
+import * as compilerSyntax from '../src/scenarioCompilerSyntax';
 
 class Position {
     public constructor(public line: number, public character: number) {}
@@ -114,6 +115,7 @@ function loadReferencesModule(): Record<string, unknown> {
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './scenarioCompilerSyntax') { return compilerSyntax; }
             if (specifier === 'vscode') {
                 return vscode;
             }
@@ -264,6 +266,51 @@ function createService(
 }
 
 const noCancellation = { isCancellationRequested: false };
+
+test('strict reference searches reject inaccessible roots, directories and caller files', async () => {
+    for (const failedMethod of ['realpath', 'readDirectory', 'readFile'] as const) {
+        const exported = definition('export:open', 'exportScenario', 'open window', 'file:///library/export.feature');
+        const fileSystem = new VirtualFileSystem({ '/scenario/caller.feature': { text: 'Feature: A\nScenario: B\n    And open window\n' } });
+        fileSystem[failedMethod] = async () => { throw new Error('Access denied'); };
+        const service = createService([exported], fileSystem, [{ path: '/scenario', extensions: ['.feature'] }]);
+        await assert.rejects(() => service.findReferences(exported.id, undefined, { includeDeclaration: false, failOnScanError: true }, noCancellation), /Access denied/);
+        assert.equal((await service.findReferences(exported.id, undefined, { includeDeclaration: false }, noCancellation)).length, 0);
+    }
+});
+
+test('strict rename searches include saved calls hidden by an unsaved edit', async () => {
+    const exported = definition('export:open', 'exportScenario', 'open window', 'file:///library/export.feature');
+    const fileSystem = new VirtualFileSystem({ '/scenario/caller.feature': { text: 'Feature: A\nScenario: B\n    And open window\n' } });
+    const document = {
+        uri: uri('file:///scenario/caller.feature'), fileName: '/scenario/caller.feature', version: 2, isUntitled: false, isDirty: true,
+        getText: () => 'Feature: A\nScenario: B\n    And different call\n'
+    };
+    const service = createService([exported], fileSystem, [{ path: '/scenario', extensions: ['.feature'] }], [document]);
+    assert.equal((await service.findReferences(exported.id, undefined, { includeDeclaration: false }, noCancellation)).length, 0);
+    const references = await service.findReferences(exported.id, undefined, { includeDeclaration: false, failOnScanError: true }, noCancellation);
+    assert.equal(references.length, 1);
+    assert.equal(references[0].uri.toString(), document.uri.toString());
+});
+
+test('indexes compiler loop openings with ranges starting after their delimiters', async () => {
+    for (const [template, opening, body] of [
+        ['And I repeat "%1 Count" times', 'Do', 'I repeat "10" times'],
+        ['И я делаю "%1 Count" раз', 'Цикл', 'я делаю "10" раз']
+    ]) {
+        const loop = definition('loop', 'builtInStep', template, 'file:///library/loops.bsl', [
+            { name: 'Count', index: 0, source: 'quoted' }
+        ]);
+        const fileSystem = new VirtualFileSystem({
+            '/scenario/loop.yaml': { text: `ТекстСценария: |\n    ${opening} ${body}\n    EndDo\n` }
+        });
+        const service = createService([loop], fileSystem, [{ path: '/scenario', extensions: ['.yaml'] }]);
+        const references = await service.findReferences(loop.id, undefined, { includeDeclaration: false }, noCancellation);
+        assert.equal(references.length, 1, opening);
+        assert.equal(references[0].range.start.line, 1);
+        assert.equal(references[0].range.start.character, 4 + opening.length + 1);
+        assert.equal(references[0].range.end.character, 4 + opening.length + 1 + body.length);
+    }
+});
 
 test('indexes YAML and feature calls with parameterized templates and exact ranges', async () => {
     const nested = definition(

@@ -26,7 +26,7 @@
       "patterns": [
         {
           "name": "entity.name.tag.feature",
-          "match": "@[\\p{L}\\p{N}_-]+"
+          "match": "@[^\\s@]+"
         }
       ]
     },
@@ -34,7 +34,7 @@
       "patterns": [
         {
           "name": "meta.feature",
-          "match": "^\\s*(Feature|Business Need|Ability|Rule|Background|Scenario Outline|Scenario Template|Scenario|Examples|Scenarios|Функциональность|Функционал|Правило|Контекст|Предыстория|Структура сценария|Шаблон сценария|Сценарий|Примеры)\\s*(:)",
+          "match": "^\\s*(Feature|Functionality|Business Need|Ability|Variables|Hyperlinks|Links|Переменные|Гиперссылки|Ссылки|Rule|Background|Scenario Outline|Scenario Template|Scenario|Examples|Scenarios|Функциональность|Функционал|Правило|Контекст|Предыстория|Структура сценария|Шаблон сценария|Сценарий|Примеры)\\s*(:)",
           "captures": {
             "1": { "name": "keyword.control.feature" },
             "2": { "name": "punctuation.separator.feature" }

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import type {
     ProjectDefinition,
     ProjectDefinitionKind,
@@ -9,10 +10,12 @@ import { buildProjectDefinitionSnippetData } from './projectDefinitionSnippet';
 import { alignGherkinTablesInText } from './gherkinTableUtils';
 import { getScenarioRuntimeKey } from './scenarioRuntimeIdentity';
 import { scenarioFilesAvailable } from './scenarioFilesModel';
-import type { TestInfo } from './types';
+import type { ProcessStepReference, TestInfo } from './types';
+import type { StandaloneFeatureGroup, StandaloneFeatureSnapshot } from './standaloneFeatureModel';
+import type { ProjectGroup } from './projectLibraryStore';
 
-export type StepLibrarySourceGroup = 'builtIn' | 'user' | 'export' | 'nested' | 'main';
-export type StepLibraryItemKind = ProjectDefinitionKind | 'mainScenario';
+export type StepLibrarySourceGroup = 'builtIn' | 'user' | 'export' | 'nested' | 'main' | 'process' | 'standalone';
+export type StepLibraryItemKind = ProjectDefinitionKind | 'mainScenario' | 'process' | 'standaloneFeature';
 
 export interface StepLibraryParameter {
     readonly name: string;
@@ -41,7 +44,20 @@ export interface StepLibraryItem {
     readonly hasScenarioFiles?: true;
     readonly compiledFeatureUri?: string;
     readonly scenarioFilesRootUri?: string;
+    readonly sourceScenarioFilesRootUri?: string;
+    readonly attachmentPaths?: readonly string[];
     readonly scenarioKey?: string;
+    readonly processUri?: string;
+    readonly processUid?: string;
+    readonly processSteps?: readonly Readonly<ProcessStepReference>[];
+    readonly processStepsSignature?: string;
+    readonly featureId?: string;
+    readonly groupId?: string;
+    readonly order?: number;
+    readonly groupOrder?: number;
+    readonly scenarioGroupKey?: string;
+    readonly standaloneGroupKey?: string;
+    readonly jsonPath?: string;
     readonly searchText: string;
 }
 
@@ -53,7 +69,9 @@ export interface CompiledScenarioResources {
 export interface StepLibrarySnapshot {
     readonly viewIdentity: string;
     readonly items: readonly StepLibraryItem[];
-    readonly counts: Readonly<Record<StepLibrarySourceGroup, number>>;
+    readonly counts: Readonly<Record<Exclude<StepLibrarySourceGroup, 'standalone' | 'process'>, number> & { standalone?: number; process?: number }>;
+    readonly standaloneGroups?: readonly StandaloneFeatureGroup[];
+    readonly scenarioGroups?: readonly ProjectGroup[];
 }
 
 const SOURCE_ORDER: Readonly<Record<StepLibrarySourceGroup, number>> = Object.freeze({
@@ -61,7 +79,9 @@ const SOURCE_ORDER: Readonly<Record<StepLibrarySourceGroup, number>> = Object.fr
     user: 1,
     export: 2,
     nested: 3,
-    main: 4
+    main: 4,
+    process: 5,
+    standalone: 6
 });
 
 function compareText(left: string, right: string): number {
@@ -149,20 +169,38 @@ function mainScenarioLocation(scenario: TestInfo): ProjectDefinitionLocation {
 }
 
 function isMainScenario(scenario: TestInfo): boolean {
-    return typeof scenario.tabName === 'string' && scenario.tabName.trim().length > 0;
+    return scenario.kind === 'process' || (typeof scenario.tabName === 'string' && scenario.tabName.trim().length > 0);
+}
+
+export function getProcessStepsSignature(uid: string | undefined, steps: readonly ProcessStepReference[]): string {
+    return createHash('sha256').update(JSON.stringify([uid ?? '', steps.map(step => [
+        step.uid ?? '', step.name ?? '', step.type, step.scenarioUid ?? '', step.scenarioName ?? '',
+        step.scenarioCode ?? '', step.processUid ?? '', step.processName ?? ''
+    ])]), 'utf8').digest('hex');
 }
 
 function mainScenarioItems(
     scenarios: readonly TestInfo[],
-    compiledResources: ReadonlyMap<string, CompiledScenarioResources>
+    compiledResources: ReadonlyMap<string, CompiledScenarioResources>,
+    scenarioGroups?: readonly ProjectGroup[]
 ): readonly StepLibraryItem[] {
     return scenarios.filter(isMainScenario).map(scenario => {
         const uri = scenario.yamlFileUri.toString();
         const definitionId = `mainScenario:${uri}`;
-        const tabName = scenario.tabName!.trim();
+        const tabName = scenario.tabName?.trim() || 'Processes';
+        const declaredGroup = scenarioGroups?.filter(group => {
+            if (group.name !== tabName || !group.sections.includes(scenario.kind === 'process' ? 'process' : 'main')) { return false; }
+            const root = (group as import('./projectGroupDisplayOrder').ProjectDisplayGroup).projectRoot;
+            if (!root) { return true; }
+            const relative = path.relative(root, scenario.yamlFileUri.fsPath);
+            return !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`);
+        }).sort((left, right) => {
+            const rootLength = (group: typeof left) => (group as import('./projectGroupDisplayOrder').ProjectDisplayGroup).projectRoot?.length ?? 0;
+            return rootLength(right) - rootLength(left);
+        })[0];
         const relativePath = scenario.relativePath || scenario.name;
-        const sourceLabel = `Main scenario (${relativePath})`;
-        const scenarioCode = scenario.scenarioCode?.trim();
+        const sourceLabel = `${scenario.kind === 'process' ? 'Process' : 'Main scenario'} (${relativePath})`;
+        const scenarioCode = (scenario.kind === 'process' ? scenario.processCode : scenario.scenarioCode)?.trim();
         const description = scenario.scenarioDescription?.trim();
         const capturedLocation = mainScenarioLocation(scenario);
         const scenarioKey = getScenarioRuntimeKey(scenario);
@@ -171,31 +209,48 @@ function mainScenarioItems(
             id: `mainScenario#${uri}`,
             definitionId,
             familyId: definitionId,
-            kind: 'mainScenario' as const,
-            sourceGroup: 'main' as const,
+            kind: scenario.kind === 'process' ? 'process' as const : 'mainScenario' as const,
+            sourceGroup: scenario.kind === 'process' ? 'process' as const : 'main' as const,
             template: scenario.name,
             displayText: scenario.name,
             ...(description ? { description } : {}),
             ...(scenarioCode ? { scenarioCode } : {}),
             categoryPath: Object.freeze([tabName]),
+            ...(Number.isFinite(scenario.order) ? { order: scenario.order } : {}),
+            ...(declaredGroup ? { groupOrder: (declaredGroup as import('./projectGroupDisplayOrder').ProjectDisplayGroup)
+                .displayOrders?.[scenario.kind === 'process' ? 'process' : 'main'] ?? declaredGroup.order,
+                ...((declaredGroup as import('./projectGroupDisplayOrder').ProjectDisplayGroup).key
+                    ? { scenarioGroupKey: (declaredGroup as import('./projectGroupDisplayOrder').ProjectDisplayGroup).key } : {}) } : {}),
             parameters: Object.freeze([]),
             sourceLabel,
             navigable: true,
             insertable: false,
             capturedLocation,
+            ...(/^file:/iu.test(uri) ? {
+                hasScenarioFiles: true as const,
+                sourceScenarioFilesRootUri: new URL('./files', uri).toString(),
+                scenarioFilesRootUri: new URL('./files', uri).toString()
+            } : {}),
             ...(resources ? {
                 hasScenarioFiles: true as const,
                 compiledFeatureUri: resources.featureUri,
                 scenarioFilesRootUri: resources.filesRootUri
             } : {}),
             scenarioKey,
+            ...(scenario.kind === 'process' ? {
+                processUri: uri,
+                ...(scenario.uid ? { processUid: scenario.uid } : {}),
+                processSteps: Object.freeze((scenario.processSteps ?? []).map(step => Object.freeze({ ...step }))),
+                processStepsSignature: getProcessStepsSignature(scenario.uid, scenario.processSteps ?? [])
+            } : {}),
             searchText: normalizeSearchText([
                 scenario.name,
                 description,
                 scenarioCode,
                 tabName,
                 sourceLabel,
-                relativePath
+                relativePath,
+                ...(scenario.processSteps ?? []).flatMap(step => [step.name, step.scenarioName, step.processName])
             ])
         });
     });
@@ -232,7 +287,9 @@ function mainScenarioIdentity(
         code: scenario.scenarioCode ?? '',
         description: scenario.scenarioDescription ?? '',
         tabName: scenario.tabName?.trim() ?? '',
+        order: Number.isFinite(scenario.order) ? scenario.order : null,
         relativePath: scenario.relativePath,
+        ...(scenario.kind === 'process' ? { kind: scenario.kind, uid: scenario.uid, processCode: scenario.processCode, processSteps: scenario.processSteps } : {}),
         compiledResources: compiledResources.get(getScenarioRuntimeKey(scenario)) ?? null
     })).sort((left, right) => compareText(left.uri, right.uri));
     if (signatures.length === 0) {
@@ -244,7 +301,9 @@ function mainScenarioIdentity(
 export function buildStepLibrarySnapshot(
     view: ProjectDefinitionView,
     scenarios: readonly TestInfo[] = [],
-    compiledResources: ReadonlyMap<string, CompiledScenarioResources> = new Map()
+    compiledResources: ReadonlyMap<string, CompiledScenarioResources> = new Map(),
+    standalone?: StandaloneFeatureSnapshot,
+    scenarioGroups?: readonly ProjectGroup[]
 ): StepLibrarySnapshot {
     const builtInsByFamily = new Map<string, ProjectDefinition[]>();
     for (const definition of view.all) {
@@ -257,12 +316,13 @@ export function buildStepLibrarySnapshot(
         builtInsByFamily.set(familyId, family);
     }
 
-    const counts: Record<StepLibrarySourceGroup, number> = {
+    const counts: Record<Exclude<StepLibrarySourceGroup, 'standalone'>, number> & { standalone?: number } = {
         builtIn: 0,
         user: 0,
         export: 0,
         nested: 0,
-        main: 0
+        main: 0,
+        process: 0
     };
     const items: StepLibraryItem[] = view.all.map(definition => {
         const group = sourceGroup(definition.kind);
@@ -327,19 +387,60 @@ export function buildStepLibrarySnapshot(
             searchText
         });
     });
-    const mainItems = mainScenarioItems(scenarios, compiledResources);
-    counts.main = mainItems.length;
+    const declaredScenarioGroups = scenarioGroups?.filter(group => group.sections.some(section => section === 'main' || section === 'process'))
+        .map(group => Object.freeze({ ...group, sections: Object.freeze([...group.sections]) }))
+        .sort((left, right) => left.order - right.order || compareText(left.name, right.name) || compareText(left.id, right.id));
+    const mainItems = mainScenarioItems(scenarios, compiledResources, declaredScenarioGroups);
+    counts.main = mainItems.filter(item => item.sourceGroup === 'main').length;
+    counts.process = mainItems.filter(item => item.sourceGroup === 'process').length;
     items.push(...mainItems);
+    if (standalone) {
+        for (const feature of standalone.features) {
+            const definitionId = `standaloneFeature:${feature.id}`;
+            const groupIndex = standalone.groups.findIndex(group => group.id === feature.groupId
+                && (!group.projectRoot || standalone.ordering?.featureRoots[feature.id] === group.projectRoot));
+            const group = standalone.groups[groupIndex];
+            const groupName = group?.name;
+            items.push(Object.freeze({
+                id: `standaloneFeature#${feature.id}`,
+                definitionId, familyId: definitionId,
+                kind: 'standaloneFeature', sourceGroup: 'standalone',
+                featureId: feature.id, scenarioKey: feature.id, groupId: feature.groupId, order: feature.order,
+                groupOrder: feature.groupId ? groupIndex + 1 : 0,
+                ...(group?.projectRoot ? { standaloneGroupKey: JSON.stringify([group.projectRoot, group.id]) } : {}),
+                ...(feature.jsonPath ? { jsonPath: feature.jsonPath } : {}),
+                template: feature.name, displayText: feature.title || feature.name,
+                description: feature.relativePath,
+                categoryPath: Object.freeze(groupName ? [groupName] : []),
+                parameters: Object.freeze([]), language: feature.language,
+                sourceLabel: feature.relativePath,
+                navigable: true, insertable: false,
+                capturedLocation: cloneLocation({ uri: feature.uri, range: {
+                    start: { line: 0, character: 0 }, end: { line: 0, character: 0 }
+                } }),
+                searchText: normalizeSearchText([feature.title, feature.name, feature.relativePath, groupName, feature.jsonPath])
+            }));
+        }
+        counts.standalone = standalone.features.length;
+    }
     items.sort((left, right) =>
         SOURCE_ORDER[left.sourceGroup] - SOURCE_ORDER[right.sourceGroup]
+        || (left.sourceGroup === 'standalone' && right.sourceGroup === 'standalone'
+            ? (left.groupOrder ?? 0) - (right.groupOrder ?? 0) || (left.order ?? 0) - (right.order ?? 0) : 0)
         || compareText(left.displayText.toLowerCase(), right.displayText.toLowerCase())
         || compareText(left.id, right.id)
     );
 
     const mainIdentity = mainScenarioIdentity(scenarios, compiledResources);
+    const standaloneIdentity = standalone ? createHash('sha256')
+        .update(JSON.stringify(standalone), 'utf8').digest('hex') : undefined;
+    const scenarioGroupsIdentity = declaredScenarioGroups ? createHash('sha256')
+        .update(JSON.stringify(declaredScenarioGroups), 'utf8').digest('hex') : undefined;
     return Object.freeze({
-        viewIdentity: mainIdentity ? `${view.identity}\0main:${mainIdentity}` : view.identity,
+        viewIdentity: `${view.identity}${mainIdentity ? `\0main:${mainIdentity}` : ''}${standaloneIdentity ? `\0standalone:${standaloneIdentity}` : ''}${scenarioGroupsIdentity ? `\0groups:${scenarioGroupsIdentity}` : ''}`,
         items: Object.freeze(items),
-        counts: Object.freeze(counts)
+        counts: Object.freeze(counts),
+        ...(standalone ? { standaloneGroups: Object.freeze(standalone.groups.map(group => Object.freeze({ ...group }))) } : {}),
+        ...(declaredScenarioGroups ? { scenarioGroups: Object.freeze(declaredScenarioGroups) } : {})
     });
 }

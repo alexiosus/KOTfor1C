@@ -132,7 +132,7 @@ test('builds stable serializable rows for all callable sources', () => {
     const snapshot = buildStepLibrarySnapshot(view(allSources()));
 
     assert.equal(snapshot.viewIdentity, 'view:visual-library');
-    assert.deepEqual(snapshot.counts, { builtIn: 2, user: 1, export: 1, nested: 1, main: 0 });
+    assert.deepEqual(snapshot.counts, { builtIn: 2, user: 1, export: 1, nested: 1, main: 0, process: 0 });
     assert.equal(snapshot.items.length, 5);
     assert.equal(JSON.parse(JSON.stringify(snapshot)).viewIdentity, snapshot.viewIdentity);
     assert.equal(JSON.stringify(snapshot).includes('snippetText'), false);
@@ -208,7 +208,8 @@ test('adds non-callable main scenarios as a separate searchable source grouped b
         user: 0,
         export: 0,
         nested: 0,
-        main: 1
+        main: 1,
+        process: 0
     });
     assert.equal(snapshot.items.length, 1);
     assert.deepEqual(snapshot.items[0], {
@@ -217,6 +218,9 @@ test('adds non-callable main scenarios as a separate searchable source grouped b
         familyId: 'mainScenario:file:///workspace/main/scen.yaml',
         kind: 'mainScenario',
         sourceGroup: 'main',
+        hasScenarioFiles: true,
+        sourceScenarioFilesRootUri: 'file:///workspace/main/files',
+        scenarioFilesRootUri: 'file:///workspace/main/files',
         template: 'Monthly close',
         displayText: 'Monthly close',
         description: 'Builds the monthly close feature.',
@@ -238,7 +242,7 @@ test('adds non-callable main scenarios as a separate searchable source grouped b
     });
 });
 
-test('makes a main scenario expandable only when its compiled feature resources exist', () => {
+test('shows authored main-scenario attachments before assembly and retains compiled resources after assembly', () => {
     const main = scenario({
         name: 'Compiled production',
         tabName: 'Production',
@@ -254,9 +258,11 @@ test('makes a main scenario expandable only when its compiled feature resources 
         }]
     ])).items[0];
 
-    assert.equal(withoutBuild?.hasScenarioFiles, undefined);
+    assert.equal(withoutBuild?.hasScenarioFiles, true);
     assert.equal(withoutBuild?.compiledFeatureUri, undefined);
-    assert.equal(withoutBuild?.scenarioFilesRootUri, undefined);
+    const sourceFiles = new URL('./files', main.yamlFileUri.toString()).toString();
+    assert.equal(withoutBuild?.scenarioFilesRootUri, sourceFiles);
+    assert.equal(withBuild?.sourceScenarioFilesRootUri, sourceFiles);
     assert.equal(withBuild?.hasScenarioFiles, true);
     assert.equal(withBuild?.compiledFeatureUri, 'file:///workspace/build/004_Production.feature');
     assert.equal(
@@ -384,4 +390,23 @@ test('precomputes normalized search text and orders rows deterministically', () 
         forward.items.map(item => item.id),
         reversed.items.map(item => item.id)
     );
+});
+
+test('process details expose immutable ordered steps and change snapshot identity on reorder', () => {
+    const process = scenario({ name: 'Process', kind: 'process', uid: 'process-uid', processCode: 'P.1',
+        processSteps: [
+            { uid: 'first', type: 'scenario', scenarioUid: 'scenario', scenarioName: 'Invoice' },
+            { uid: 'second', type: 'process', processUid: 'child', processName: 'Nested process' }
+        ] });
+    const initial = snapshotWithScenarios([], [process]);
+    const selected = initial.items[0] as any;
+    assert.equal(selected.processUri, 'file:///workspace/main/scen.yaml');
+    assert.equal(selected.processUid, 'process-uid');
+    assert.equal(selected.scenarioCode, 'P.1');
+    assert.deepEqual(selected.processSteps.map((step: any) => step.uid), ['first', 'second']);
+    assert.equal(Object.isFrozen(selected.processSteps[0]), true);
+    const reordered = snapshotWithScenarios([], [{ ...process, processSteps: [...process.processSteps!].reverse() }]);
+    assert.notEqual(initial.viewIdentity, reordered.viewIdentity);
+    assert.notEqual(selected.processStepsSignature, (reordered.items[0] as any).processStepsSignature);
+    assert.match(selected.searchText, /nested process/u);
 });

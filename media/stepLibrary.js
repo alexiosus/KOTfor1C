@@ -57,6 +57,7 @@
         sourceGroup: typeof persisted.sourceGroup === 'string' ? persisted.sourceGroup : null,
         favoritesOnly: persisted.favoritesOnly === true,
         categoryPath: Array.isArray(persisted.categoryPath) ? persisted.categoryPath : [],
+        groupId: typeof persisted.groupId === 'string' ? persisted.groupId : undefined,
         uncategorized: persisted.uncategorized === true,
         expandedNodes: new Set(Array.isArray(persisted.expandedNodes)
             ? persisted.expandedNodes
@@ -80,6 +81,25 @@
                 : 380
         }
     };
+    const featureLabels = window.__standaloneFeatureLabels || {};
+    const featureActions = globalThis.StepLibraryFeatureProtocol.createController({
+        postMessage: message => vscode.postMessage(message),
+        getFeatures: () => state.snapshot?.items.filter(item => item.featureId) || [],
+        getItemActions: item => item.definitionId ? protocol.definitionRowActionOrder(item).map(action => ({
+            id: action === 'favorite' ? 'toggleFavorite' : action,
+            label: action === 'favorite'
+                ? state.favoriteItemIds.has(item.id) ? labels.removeFavorite : labels.addFavorite
+                : labels[action],
+            disabled: action !== 'favorite' && (state.pendingActions.has(`${action}\0${item.id}`)
+                || (action === 'insert' && !state.insertionTarget.available))
+        })) : [],
+        runItemAction: (action, item) => {
+            if (action === 'toggleFavorite') { vscode.postMessage({ command: action, itemId: item.id }); }
+            else if (action === 'insert') { requestInsert(item.id); }
+            else { sendAction(action, item.id); }
+        },
+        labels: featureLabels
+    });
     const transferController = filesProtocol.createTransferController(message => {
         vscode.postMessage(message);
     });
@@ -96,6 +116,7 @@
             sourceGroup: state.sourceGroup,
             favoritesOnly: state.favoritesOnly,
             categoryPath: [...state.categoryPath],
+            groupId: state.groupId,
             uncategorized: state.uncategorized,
             expandedNodes: [...state.expandedNodes],
             selectedItemId: state.selectedItemId,
@@ -237,7 +258,7 @@
     function categoryLabel(item) {
         return item.categoryPath && item.categoryPath.length > 0
             ? item.categoryPath.join(' / ')
-            : labels.uncategorized;
+            : item.featureId ? labels.ungrouped : labels.uncategorized;
     }
 
     function allItemsForLanguage() {
@@ -268,6 +289,7 @@
             [...state.favoriteItemIds].sort(),
             state.sourceGroup,
             state.categoryPath,
+            state.groupId,
             state.uncategorized,
             state.sortMode
         ]);
@@ -291,6 +313,7 @@
         const items = protocol.searchItems(sourceItems, state.query, languageOptions({
             sourceGroup: state.sourceGroup || undefined,
             categoryPath: state.uncategorized ? undefined : state.categoryPath,
+            groupId: state.sourceGroup === 'standalone' ? state.groupId : undefined,
             uncategorized: state.uncategorized,
             limit: Number.MAX_SAFE_INTEGER
         }));
@@ -317,6 +340,7 @@
             [...state.favoriteItemIds].sort(),
             state.sourceGroup,
             state.categoryPath,
+            state.groupId,
             state.uncategorized,
             state.sortMode
         ]);
@@ -329,11 +353,14 @@
         if (!state.favoritesOnly) {
             const reconciled = protocol.reconcileCategorySelection(
                 allItemsForLanguage(),
-                state
+                state,
+                state.snapshot.standaloneGroups,
+                state.snapshot.scenarioGroups
             );
             state.sourceGroup = reconciled.sourceGroup;
             state.categoryPath = reconciled.categoryPath;
             state.uncategorized = reconciled.uncategorized;
+            state.groupId = reconciled.groupId;
         }
         const visibleItems = filteredItems();
         if (!visibleItems.some(item => item.id === state.selectedItemId)) {
@@ -349,6 +376,9 @@
         if (node.id === 'favorites') {
             return state.favoritesOnly;
         }
+        if (node.sourceGroup === 'standalone') {
+            return state.sourceGroup === 'standalone' && node.groupId === state.groupId;
+        }
         if (protocol.isUncategorizedNodeId(node.id)) {
             return state.sourceGroup === node.sourceGroup && state.uncategorized;
         }
@@ -359,6 +389,7 @@
     }
 
     function selectTreeNode(node) {
+        state.groupId = node.sourceGroup === 'standalone' ? node.groupId : undefined;
         if (node.id === 'all') {
             state.favoritesOnly = false;
             state.sourceGroup = null;
@@ -389,10 +420,26 @@
         shell.classList.remove('categories-open');
     }
 
+    function treeNodeIconName(node, level) {
+        if (level > 1) { return 'folder'; }
+        if (node.id === 'favorites') { return 'star-full'; }
+        return {
+            builtIn: 'extensions',
+            user: 'symbol-method',
+            export: 'package',
+            nested: 'references',
+            main: 'files',
+            process: 'list-ordered',
+            standalone: 'file-code'
+        }[node.sourceGroup] || 'library';
+    }
+
     function createTreeNode(node, level) {
         const container = document.createElement('div');
         container.className = 'tree-node';
-        const button = document.createElement('button');
+        const standaloneNode = node.sourceGroup === 'standalone';
+        const renameableGroup = featureActions.canRenameGroup(node);
+        const button = document.createElement(standaloneNode || renameableGroup ? 'div' : 'button');
         const children = document.createElement('div');
         const expandable = node.children.length > 0;
         const expanded = state.expandedNodes.has(node.id);
@@ -402,6 +449,7 @@
         button.setAttribute('aria-level', String(level));
         button.setAttribute('aria-selected', String(isSelectedTreeNode(node)));
         button.dataset.nodeId = node.id;
+        featureActions.install(button, node);
         if (expandable) {
             button.setAttribute('aria-expanded', String(expanded));
         }
@@ -418,7 +466,24 @@
         const count = document.createElement('span');
         count.className = 'tree-count';
         count.textContent = String(node.count);
-        button.append(chevron, label, count);
+        const icon = document.createElement('span');
+        icon.className = `tree-node-icon codicon codicon-${treeNodeIconName(node, level)}`;
+        icon.setAttribute('aria-hidden', 'true');
+        button.append(chevron, icon, label);
+        if (standaloneNode || renameableGroup) {
+            const actions = document.createElement('span');
+            actions.className = 'tree-feature-actions';
+            if (renameableGroup) { featureActions.appendMenuButton(actions, node, 'tree-feature-action icon-button'); }
+            else { featureActions.appendTreeActionButton(actions, node, 'tree-feature-action icon-button'); }
+            button.append(actions);
+            button.addEventListener('keydown', event => {
+                if (event.target === button && event.key === ' ') {
+                    event.preventDefault();
+                    selectTreeNode(node);
+                }
+            });
+        }
+        button.append(count);
         if (expandable) {
             chevron.addEventListener('click', event => {
                 event.stopPropagation();
@@ -426,6 +491,7 @@
             });
         }
         button.addEventListener('click', () => {
+            if (standaloneNode || renameableGroup) { button.focus({ preventScroll: true }); }
             selectTreeNode(node);
         });
         button.addEventListener('dblclick', () => {
@@ -542,9 +608,14 @@
                 user: labels.sourceUser,
                 export: labels.sourceExport,
                 nested: labels.sourceNested,
-                main: labels.sourceMain
+                main: labels.sourceMain,
+                process: labels.sourceProcess,
+                standalone: labels.sourceStandalone
             },
-            uncategorized: labels.uncategorized
+            uncategorized: labels.uncategorized,
+            ungrouped: labels.ungrouped,
+            standaloneGroups: state.snapshot?.standaloneGroups,
+            scenarioGroups: state.snapshot?.scenarioGroups
         });
         const allNode = {
             id: 'all',
@@ -588,6 +659,7 @@
         vscode.postMessage({
             command: 'listScenarioFiles',
             itemId: node.itemId,
+            ...(node.resource ? { resource: node.resource } : {}),
             relativePath: node.relativePath || '',
             requestId: node.id
         });
@@ -769,6 +841,7 @@
             vscode.postMessage({
                 command: 'openScenarioFile',
                 itemId: node.itemId,
+                ...(node.resource ? { resource: node.resource } : {}),
                 relativePath: node.relativePath
             });
         }
@@ -783,14 +856,16 @@
             vscode.postMessage({
                 command: 'revealScenarioFile',
                 itemId: node.itemId,
+                ...(node.resource ? { resource: node.resource } : {}),
                 relativePath: node.relativePath || ''
             });
             return;
         }
-        if (actionId === 'delete' && node.kind === 'file') {
+        if ((actionId === 'delete' || actionId === 'rename') && node.kind === 'file') {
             vscode.postMessage({
-                command: 'deleteScenarioFile',
+                command: actionId === 'rename' ? 'renameScenarioFile' : 'deleteScenarioFile',
                 itemId: node.itemId,
+                ...(node.resource ? { resource: node.resource } : {}),
                 relativePath: node.relativePath
             });
         }
@@ -937,10 +1012,18 @@
             vscode.postMessage({
                 command: 'revealScenarioFile',
                 itemId: node.itemId,
+                ...(node.resource ? { resource: node.resource } : {}),
                 relativePath: node.relativePath || ''
             });
         });
         actions.append(reveal);
+        if (node.kind === 'file') {
+            const rename = document.createElement('button');
+            rename.type = 'button'; rename.className = 'scenario-resource-action icon-button codicon codicon-edit';
+            rename.title = labels.renameAttachment || 'Rename attachment'; rename.setAttribute('aria-label', rename.title);
+            rename.addEventListener('click', event => { event.stopPropagation(); runScenarioResourceContextAction('rename', node); });
+            actions.append(rename);
+        }
         if (node.kind === 'feature') {
             const open = document.createElement('button');
             open.type = 'button';
@@ -987,6 +1070,7 @@
         if (node.kind === 'directory' || node.kind === 'attachments') {
             installResourceDropTarget(row, {
                 itemId: node.itemId,
+                ...(node.resource ? { resource: node.resource } : {}),
                 relativePath: node.relativePath || ''
             });
         }
@@ -1077,7 +1161,8 @@
         row.setAttribute('aria-selected', String(item.id === state.selectedItemId));
         row.tabIndex = item.id === state.selectedItemId ? 0 : -1;
         row.dataset.itemId = item.id;
-        const isScenarioDefinition = item.sourceGroup === 'main' || item.sourceGroup === 'nested';
+        featureActions.install(row, item);
+        const isScenarioDefinition = ['main', 'process', 'nested', 'standalone'].includes(item.sourceGroup);
         if (isScenarioDefinition) {
             row.classList.add('is-scenario-definition');
         }
@@ -1112,8 +1197,16 @@
         const meta = document.createElement('div');
         meta.className = 'definition-meta';
         const source = document.createElement('span');
-        source.textContent = sourceLabel(item.sourceGroup);
+        const presentation = protocol.definitionPresentation(item, labels);
+        source.className = 'definition-type';
+        const icon = document.createElement('span');
+        icon.className = `codicon codicon-${presentation.icon}`;
+        icon.setAttribute('aria-hidden', 'true');
+        const label = document.createElement('span');
+        label.textContent = presentation.label;
+        source.append(icon, label);
         const category = document.createElement('span');
+        category.className = 'definition-category';
         category.textContent = categoryLabel(item);
         meta.append(source, category);
         const actions = document.createElement('span');
@@ -1160,6 +1253,9 @@
                 actions.append(actionButton);
             }
         }
+        if (item.featureId) {
+            row.addEventListener('dblclick', () => featureActions.send('openFeature', item));
+        }
         row.append(text, meta, actions);
         row.addEventListener('click', event => {
             const originatedFromInteractiveControl = event.target instanceof Element
@@ -1183,7 +1279,7 @@
         }
         if (item.hasScenarioFiles === true) {
             row.classList.add('has-scenario-resources');
-            installResourceDropTarget(row, { itemId: item.id, relativePath: '' });
+            installResourceDropTarget(row, { itemId: item.id, relativePath: '', ...(item.sourceScenarioFilesRootUri ? { resource: 'source' } : {}) });
         }
         entry.append(row);
         if (resourcesExpanded) {
@@ -1218,8 +1314,7 @@
                     itemId: item.id,
                     depth: -1
                 }, labels);
-                const attachments = children.find(node => node.kind === 'attachments');
-                if (attachments) {
+                for (const attachments of children.filter(node => node.kind === 'attachments')) {
                     parents.add(attachments.id);
                 }
             } else {
@@ -1266,12 +1361,12 @@
         }
     }
 
-    function renderResults() {
+    function renderResults(preserveVisibleCount = false) {
         const items = filteredItems();
         const nextResultIdentity = currentResultIdentity();
         if (nextResultIdentity !== resultIdentity) {
             resultIdentity = nextResultIdentity;
-            visibleResultCount = BATCH_SIZE;
+            if (!preserveVisibleCount) { visibleResultCount = BATCH_SIZE; }
         }
         resultCount.textContent = String(items.length);
         renderedRowsById.clear();
@@ -1437,10 +1532,18 @@
             vscode.postMessage({
                 command: 'revealScenarioFile',
                 itemId: node.itemId,
+                ...(node.resource ? { resource: node.resource } : {}),
                 relativePath: node.relativePath || ''
             });
         });
         actions.append(reveal);
+        if (node.kind === 'file') {
+            const rename = document.createElement('button');
+            rename.type = 'button'; rename.className = 'scenario-resource-action icon-button codicon codicon-edit';
+            rename.title = labels.renameAttachment || 'Rename attachment'; rename.setAttribute('aria-label', rename.title);
+            rename.addEventListener('click', event => { event.stopPropagation(); runScenarioResourceContextAction('rename', node); });
+            actions.append(rename);
+        }
         row.append(actions);
 
         if (node.kind === 'feature' || node.kind === 'file') {
@@ -1459,6 +1562,7 @@
         if (isContainer) {
             installResourceDropTarget(row, {
                 itemId: node.itemId,
+                ...(node.resource ? { resource: node.resource } : {}),
                 relativePath: node.relativePath || ''
             });
         }
@@ -1507,46 +1611,16 @@
         const list = document.createElement('div');
         list.className = 'details-resource-list';
         list.setAttribute('role', 'tree');
-        installResourceDropTarget(list, { itemId: item.id, relativePath: '' });
+        installResourceDropTarget(list, { itemId: item.id, relativePath: '', ...(item.sourceScenarioFilesRootUri ? { resource: 'source' } : {}) });
 
         if (item.compiledFeatureUri && item.scenarioFilesRootUri) {
-            const projected = filesProtocol.projectCompiledScenarioChildren({
-                ...item,
-                itemId: item.id,
-                depth: -1
-            }, labels);
-            const feature = projected.find(node => node.kind === 'feature');
-            const attachments = projected.find(node => node.kind === 'attachments');
-            if (feature) {
-                list.append(renderDetailsResourceNode(feature, 0));
+            const projected = filesProtocol.projectCompiledScenarioChildren({ ...item, itemId: item.id, depth: -1 }, labels);
+            const parents = resourceParentIdsByItem.get(item.id) || new Set();
+            for (const node of projected) {
+                if (node.expandable) { parents.add(node.id); }
+                list.append(renderDetailsResourceNode(node, 0));
             }
-            if (attachments) {
-                resourceNodesById.set(attachments.id, attachments);
-                const parents = resourceParentIdsByItem.get(item.id) || new Set();
-                parents.add(attachments.id);
-                resourceParentIdsByItem.set(item.id, parents);
-                if (!resourceChildrenByParent.has(attachments.id)) {
-                    requestScenarioFileChildren(attachments);
-                }
-                const childrenKnown = resourceChildrenByParent.has(attachments.id);
-                const children = resourceChildrenByParent.get(attachments.id) || [];
-                for (const child of children) {
-                    list.append(renderDetailsResourceNode(child, 0));
-                }
-                if (children.length === 0) {
-                    const empty = document.createElement('div');
-                    empty.className = 'scenario-resource-empty';
-                    empty.style.setProperty('--resource-depth', '0');
-                    if (childrenKnown) {
-                        empty.textContent = labels.emptyDirectory;
-                    } else {
-                        const spinner = document.createElement('span');
-                        spinner.className = 'codicon codicon-loading codicon-modifier-spin';
-                        empty.append(spinner);
-                    }
-                    list.append(empty);
-                }
-            }
+            resourceParentIdsByItem.set(item.id, parents);
         } else {
             const root = {
                 id: scenarioExpansionId(item.id),
@@ -1585,6 +1659,117 @@
         scheduleScenarioResourceLabelOverflowUpdate();
     }
 
+    function renderProcessSteps(item) {
+        if (!item.processUri || !Array.isArray(item.processSteps)) { return; }
+        const dragType = 'application/vnd.kot.process-step';
+        const pendingKey = `processSteps\0${item.id}`;
+        const pending = state.pendingActions.has(pendingKey);
+        const identity = state.snapshot?.viewIdentity;
+        const uidCounts = new Map();
+        for (const step of item.processSteps) {
+            const uid = String(step.uid || '').trim().toLowerCase();
+            uidCounts.set(uid, (uidCounts.get(uid) || 0) + 1);
+        }
+        const editable = Boolean(item.processUid && item.processStepsSignature && identity)
+            && item.processSteps.every(step => step.uid && uidCounts.get(step.uid.trim().toLowerCase()) === 1);
+        const section = document.createElement('section');
+        section.className = 'details-field process-steps';
+        const header = document.createElement('div');
+        header.className = 'process-steps-header';
+        const heading = document.createElement('span');
+        heading.className = 'details-label'; heading.textContent = labels.processSteps;
+        const add = document.createElement('button');
+        add.type = 'button'; add.className = 'icon-button codicon codicon-add';
+        add.dataset.action = 'addProcessSteps'; add.title = labels.addProcessSteps;
+        add.setAttribute('aria-label', labels.addProcessSteps); add.disabled = pending || !editable;
+        header.append(heading, add); section.append(header);
+        const list = document.createElement('ol'); list.className = 'process-step-list';
+        let dragging = null;
+        const send = (command, extra) => {
+            if (!editable || state.pendingActions.has(pendingKey) || state.snapshot?.viewIdentity !== identity) { return; }
+            state.pendingActions.add(pendingKey); renderDetails();
+            vscode.postMessage({ command, itemId: item.id, processUri: item.processUri, processUid: item.processUid,
+                viewIdentity: identity, stepsSignature: item.processStepsSignature, ...extra });
+        };
+        const reorder = (stepUid, beforeStepUid) => {
+            const from = item.processSteps.findIndex(step => step.uid === stepUid);
+            const before = beforeStepUid === null ? item.processSteps.length : item.processSteps.findIndex(step => step.uid === beforeStepUid);
+            if (from < 0 || before < 0 || before === from || before === from + 1) { return; }
+            send('reorderProcessStep', { stepUid, beforeStepUid });
+        };
+        const clearDropTargets = () => {
+            for (const row of list.querySelectorAll('.process-step-row')) { row.classList.remove('is-drop-before', 'is-drop-after'); }
+            list.classList.remove('is-drop-end');
+        };
+        const readDrag = event => {
+            if (!editable || pending || !dragging || state.snapshot?.viewIdentity !== identity
+                || !Array.from(event.dataTransfer?.types || []).includes(dragType)) { return null; }
+            return dragging;
+        };
+        add.addEventListener('click', () => { if (!add.disabled) { send('addProcessSteps', {}); } });
+        if (!item.processSteps.length) {
+            const empty = document.createElement('p'); empty.className = 'details-value'; empty.textContent = labels.emptyProcessSteps; section.append(empty);
+        }
+        item.processSteps.forEach((step, index) => {
+            const row = document.createElement('li'); row.className = 'process-step-row'; row.dataset.stepUid = step.uid || '';
+            row.tabIndex = 0; row.draggable = editable && !pending;
+            const handle = document.createElement('span'); handle.className = 'process-step-drag codicon codicon-gripper';
+            handle.title = labels.dragProcessStep; handle.setAttribute('aria-hidden', 'true');
+            const number = document.createElement('span'); number.className = 'process-step-number'; number.textContent = String(index + 1);
+            const content = document.createElement('div'); content.className = 'process-step-content';
+            const name = document.createElement('span'); name.className = 'process-step-name';
+            name.textContent = step.name || step.scenarioName || step.processName || step.uid || '';
+            const kind = document.createElement('span'); kind.className = 'process-step-kind';
+            kind.textContent = step.type === 'process' ? labels.processStep : labels.scenarioStep;
+            content.append(name, kind);
+            row.setAttribute('aria-label', `${number.textContent}. ${name.textContent}. ${labels.dragProcessStep}`);
+            const remove = document.createElement('button'); remove.type = 'button';
+            remove.className = 'icon-button codicon codicon-trash'; remove.dataset.action = 'removeProcessStep';
+            remove.title = labels.removeProcessStep; remove.setAttribute('aria-label', `${labels.removeProcessStep}: ${name.textContent}`);
+            remove.disabled = pending || !editable;
+            remove.addEventListener('click', () => { if (!remove.disabled) { send('removeProcessStep', { stepUid: step.uid }); } });
+            row.addEventListener('dragstart', event => {
+                if (!row.draggable || !event.dataTransfer || event.target.closest('button')) { event.preventDefault(); return; }
+                event.stopPropagation(); dragging = { stepUid: step.uid };
+                event.dataTransfer.effectAllowed = 'move';
+                event.dataTransfer.setData(dragType, JSON.stringify({ processUri: item.processUri, processUid: item.processUid, stepUid: step.uid, stepsSignature: item.processStepsSignature }));
+                row.classList.add('is-dragging');
+            });
+            row.addEventListener('dragend', () => { dragging = null; row.classList.remove('is-dragging'); clearDropTargets(); });
+            row.addEventListener('dragover', event => {
+                if (!readDrag(event)) { return; }
+                event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move'; clearDropTargets();
+                const rect = row.getBoundingClientRect();
+                row.classList.add(event.clientY >= rect.top + rect.height / 2 ? 'is-drop-after' : 'is-drop-before');
+            });
+            row.addEventListener('dragleave', () => row.classList.remove('is-drop-before', 'is-drop-after'));
+            row.addEventListener('drop', event => {
+                const payload = readDrag(event); if (!payload) { return; }
+                event.preventDefault(); event.stopPropagation(); clearDropTargets();
+                const rect = row.getBoundingClientRect();
+                const after = event.clientY >= rect.top + rect.height / 2;
+                reorder(payload.stepUid, after ? item.processSteps[index + 1]?.uid || null : step.uid);
+            });
+            row.addEventListener('keydown', event => {
+                if (event.target !== row || !editable || pending || !event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) { return; }
+                event.preventDefault();
+                if (event.key === 'ArrowUp' && index > 0) { reorder(step.uid, item.processSteps[index - 1].uid); }
+                if (event.key === 'ArrowDown' && index < item.processSteps.length - 1) { reorder(step.uid, item.processSteps[index + 2]?.uid || null); }
+            });
+            row.append(handle, number, content, remove); list.append(row);
+        });
+        list.addEventListener('dragover', event => {
+            if (!readDrag(event)) { return; }
+            event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move'; clearDropTargets(); list.classList.add('is-drop-end');
+        });
+        list.addEventListener('dragleave', () => list.classList.remove('is-drop-end'));
+        list.addEventListener('drop', event => {
+            const payload = readDrag(event); if (!payload) { return; }
+            event.preventDefault(); event.stopPropagation(); clearDropTargets(); reorder(payload.stepUid, null);
+        });
+        section.append(list); detailsContent.append(section);
+    }
+
     function renderDetails() {
         detailsContent.replaceChildren();
         const item = state.selectedItemId
@@ -1593,6 +1778,7 @@
         const insertPending = item && state.pendingActions.has(`insert\0${item.id}`);
         const copyPending = item && state.pendingActions.has(`copy\0${item.id}`);
         const openPending = item && state.pendingActions.has(`openDefinition\0${item.id}`);
+        insertButton.classList.toggle('hidden', Boolean(item?.featureId));
         insertButton.disabled = !protocol.canInsertItem(
             item,
             state.insertionTarget.available
@@ -1614,6 +1800,7 @@
         const title = document.createElement('h3');
         title.append(createDetailsScrollLabel(item.displayText, true));
         detailsContent.append(title);
+        addDetailsField(labels.definitionType || 'Type', protocol.definitionPresentation(item, labels).label, false);
         addDetailsField(
             labels.sourceLabel,
             item.sourceLabel || sourceLabel(item.sourceGroup),
@@ -1621,6 +1808,20 @@
             true
         );
         addDetailsField(labels.categoryLabel, categoryLabel(item), false, true);
+        renderProcessSteps(item);
+        if (item.featureId) {
+            if (item.jsonPath) { addDetailsField(featureLabels.openJson || 'Launch JSON', item.jsonPath, false, true); }
+            const actions = document.createElement('div');
+            actions.className = 'feature-details-actions';
+            for (const action of ['generateJson', 'selectJson', 'openJson', 'moveFeature']) {
+                const button = document.createElement('button');
+                button.type = 'button'; button.textContent = featureLabels[action];
+                button.dataset.action = action;
+                button.addEventListener('click', () => featureActions.send(action, item));
+                actions.append(button);
+            }
+            detailsContent.append(actions);
+        }
         if (item.scenarioCode) {
             addDetailsField(labels.scenarioCodeLabel, item.scenarioCode, true, true);
         }
@@ -1649,10 +1850,10 @@
             targetHint.className = 'target-hint';
             targetHint.textContent = labels.insertionUnavailable;
             detailsContent.append(targetHint);
-        } else if (item.insertable === false) {
+        } else if (item.insertable === false && !item.featureId) {
             const targetHint = document.createElement('p');
             targetHint.className = 'target-hint';
-            targetHint.textContent = labels.itemNotInsertable;
+            targetHint.textContent = item.kind === 'process' ? labels.processNotInsertable : labels.itemNotInsertable;
             detailsContent.append(targetHint);
         }
     }
@@ -1669,10 +1870,14 @@
 
     function requestInsert(itemId) {
         const item = snapshotItemsById.get(itemId);
+        if (item?.featureId) {
+            featureActions.send('openFeature', item);
+            return;
+        }
         if (!protocol.canInsertItem(item, state.insertionTarget.available)) {
             shell.classList.add('details-open');
             announce(item?.insertable === false
-                ? labels.itemNotInsertable
+                ? item.kind === 'process' ? labels.processNotInsertable : labels.itemNotInsertable
                 : labels.insertionUnavailable);
             return;
         }
@@ -1903,12 +2108,27 @@
             return;
         }
         closeScenarioResourceContextMenu();
+        featureActions.closeMenu();
+        if (message.command === 'standaloneFeatureActionResult') {
+            if (message.succeeded === false) { announce(message.message || labels.actionFailed); }
+            return;
+        }
         if (message.command === 'loading') {
             definitionList.setAttribute('aria-busy', 'true');
             setStatus(labels.loading);
             return;
         }
         if (message.command === 'snapshot' && message.snapshot) {
+            const active = document.activeElement;
+            const focusedFeature = active instanceof HTMLElement && definitionListContent.contains(active)
+                && active.classList.contains('definition-row') && active.dataset.featureId ? active : null;
+            const previousRows = [...definitionListContent.querySelectorAll('[role="option"]')];
+            const focusedIndex = focusedFeature ? previousRows.indexOf(focusedFeature) : -1;
+            const focusedItemId = focusedFeature?.dataset.itemId;
+            const listScroll = { top: definitionList.scrollTop, left: definitionList.scrollLeft };
+            const previousFilter = JSON.stringify([state.query, state.favoritesOnly, state.sourceGroup,
+                state.sourceGroup === 'standalone' ? state.groupId : state.categoryPath,
+                state.uncategorized, state.language, state.sortMode]);
             const preparedItems = state.snapshot?.viewIdentity === message.snapshot.viewIdentity
                 ? state.snapshot.items
                 : protocol.prepareItems(message.snapshot.items);
@@ -1932,9 +2152,27 @@
                 ? message.favoriteItemIds
                 : []);
             reconcileFiltersAndSelection();
+            const sameFilter = previousFilter === JSON.stringify([state.query, state.favoritesOnly, state.sourceGroup,
+                state.sourceGroup === 'standalone' ? state.groupId : state.categoryPath,
+                state.uncategorized, state.language, state.sortMode]);
             refreshButton.disabled = false;
             renderTree();
-            renderResults();
+            renderResults(sameFilter);
+            if (focusedFeature && sameFilter) {
+                const rows = [...definitionListContent.querySelectorAll('[role="option"]')];
+                const target = rows.find(row => row.dataset.itemId === focusedItemId)
+                    || rows[Math.min(focusedIndex, rows.length - 1)];
+                if (target) {
+                    selectItem(target.dataset.itemId, false);
+                    target.focus({ preventScroll: true });
+                } else {
+                    definitionList.focus({ preventScroll: true });
+                }
+            }
+            if (sameFilter) {
+                definitionList.scrollTop = listScroll.top;
+                definitionList.scrollLeft = listScroll.left;
+            }
             announce(`${message.snapshot.items.length}`);
             return;
         }
@@ -1983,7 +2221,7 @@
             return;
         }
         if (message.command === 'scenarioFileActionResult') {
-            if (message.action === 'delete' && message.succeeded) {
+            if ((message.action === 'delete' || message.action === 'rename') && message.succeeded) {
                 for (const parentId of resourceParentIdsByItem.get(message.itemId) || []) {
                     resourceChildrenByParent.delete(parentId);
                     requestedResourceNodes.delete(parentId);
@@ -2008,13 +2246,21 @@
         if (message.command === 'actionResult' && typeof message.itemId === 'string') {
             const key = `${message.action}\0${message.itemId}`;
             state.pendingActions.delete(key);
+            if (['moveProcessStep', 'reorderProcessStep', 'removeProcessStep', 'addProcessSteps'].includes(message.action)) {
+                state.pendingActions.delete(`processSteps\0${message.itemId}`);
+            }
             renderDetails();
+            if (message.action === 'deleteDefinition' && !message.message) { return; }
             const successLabels = {
                 insert: labels.inserted,
                 copy: labels.copied,
-                openDefinition: labels.opened
+                openDefinition: labels.opened,
+                moveProcessStep: labels.processStepMoved,
+                reorderProcessStep: labels.processStepMoved,
+                removeProcessStep: labels.processStepRemoved
             };
-            announce(message.success ? successLabels[message.action] : labels.actionFailed);
+            announce(message.success ? successLabels[message.action]
+                : message.message || (['moveProcessStep', 'reorderProcessStep'].includes(message.action) ? labels.processStepMoveFailed : labels.actionFailed));
         }
     });
 

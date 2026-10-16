@@ -11,6 +11,7 @@ import { normalizeGeneratedKotDescription, upsertKotScenarioDescription } from '
 import { migrateLegacyPhaseSwitcherMetadata, parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { isScenarioYamlFile } from './yamlValidator';
+import { persistProjectMetadata, projectedProjectScenario } from './projectLibraryIntegration';
 
 interface ScenarioAiSettings extends AiConnectionSettings {
     maxLineLength: number;
@@ -721,6 +722,7 @@ function buildScenarioAnalysisContext(
 ): ScenarioAnalysisContext {
     const declaredParameters = parseScenarioParameterDefaults(documentText);
     const phaseSwitcherMetadata = parsePhaseSwitcherMetadata(documentText);
+    const projected = projectedProjectScenario({ uri: documentUri, getText: () => documentText });
 
     return {
         documentText,
@@ -735,8 +737,8 @@ function buildScenarioAnalysisContext(
         scenarioBody: extractTopLevelSection(documentText, 'ТекстСценария'),
         structureHints: extractScenarioStructureHints(extractTopLevelSection(documentText, 'ТекстСценария'), 12),
         reportHints: extractScenarioReportHints(extractTopLevelSection(documentText, 'ТекстСценария'), 12),
-        isStandaloneMainScenario: phaseSwitcherMetadata.hasTab,
-        phaseSwitcherTabName: phaseSwitcherMetadata.tabName
+        isStandaloneMainScenario: projected ? !!projected.tabName?.trim() : phaseSwitcherMetadata.hasTab,
+        phaseSwitcherTabName: projected?.tabName ?? phaseSwitcherMetadata.tabName
     };
 }
 
@@ -4310,7 +4312,8 @@ function buildScenarioAnalysisPrompt(
         extractTopLevelSection(documentText, 'ТекстСценария'),
         10
     );
-    const isStandaloneMainScenario = phaseSwitcherMetadata.hasTab;
+    const projected = projectedProjectScenario({ uri: documentUri, getText: () => documentText });
+    const isStandaloneMainScenario = projected ? !!projected.tabName?.trim() : phaseSwitcherMetadata.hasTab;
 
     return [
         'Проанализируй текущий YAML-сценарий KOT для 1С и составь описание для блока KOTМетаданные.Описание.',
@@ -4525,6 +4528,17 @@ export async function handleGenerateScenarioDescriptionWithAi(editor: vscode.Tex
             vscode.window.showWarningMessage(vscode.l10n.t(
                 'The scenario file changed while AI description was being generated. Nothing was applied.'
             ));
+            return;
+        }
+
+        const normalizedDescription = normalizeGeneratedKotDescription(generatedDescription);
+        if (projectedProjectScenario(currentDocument)?.scenarioDescription === normalizedDescription) {
+            vscode.window.showInformationMessage(vscode.l10n.t('AI description is already up to date.'));
+            return;
+        }
+        if (await persistProjectMetadata(currentDocument, { description: normalizedDescription })) {
+            await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcher', { refreshCache: true });
+            vscode.window.showInformationMessage(vscode.l10n.t('Scenario description was generated with AI.'));
             return;
         }
 

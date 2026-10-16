@@ -56,6 +56,8 @@ class RecordingHost implements ScenarioFilesHost {
     readonly deleteConfirmations: string[] = [];
     readonly deleted: string[] = [];
     confirmDeleteResult = true;
+    renameTo: string | undefined = 'Renamed.csv';
+    async promptRename(): Promise<string | undefined> { return this.renameTo; }
     readonly createdWatchers: Array<{ root: string; watcher: RecordingWatcher }> = [];
     conflictDecision: ScenarioFileConflictDecision = 'skip';
     readonly conflicts: string[] = [];
@@ -119,6 +121,48 @@ class RecordingHost implements ScenarioFilesHost {
         return this.conflictDecision;
     }
 }
+
+test('attachment rename preserves the folder and content, invalidates search, and never overwrites another file', async t => {
+    const f = await createScenarioFilesFixture(t, { 'Fixtures/Data.csv': 'contents', 'Fixtures/Existing.csv': 'existing' });
+    assert.deepEqual(await f.service.listAttachmentPaths(f.item), ['Fixtures/Data.csv', 'Fixtures/Existing.csv']);
+    assert.equal(await f.service.renameFile(f.item, 'Fixtures/Data.csv'), 'renamed');
+    assert.equal(await fs.readFile(path.join(f.directory, 'files/Fixtures/Renamed.csv'), 'utf8'), 'contents');
+    assert.deepEqual(await f.service.listAttachmentPaths(f.item), ['Fixtures/Existing.csv', 'Fixtures/Renamed.csv']);
+    f.host.renameTo = 'Existing.csv';
+    await assert.rejects(f.service.renameFile(f.item, 'Fixtures/Renamed.csv'), /exists/i);
+    assert.equal(await fs.readFile(path.join(f.directory, 'files/Fixtures/Existing.csv'), 'utf8'), 'existing');
+});
+
+test('attachment rename rejects traversal, folders, symlinks, stale selections, and cancellation', async t => {
+    const f = await createScenarioFilesFixture(t, { 'Data.csv': 'contents', 'Folder/data.csv': 'nested' });
+    for (const name of ['../escape.csv', 'folder/file.csv', 'bad\\file.csv', '.', '..', '', 'bad\0name']) {
+        f.host.renameTo = name;
+        await assert.rejects(f.service.renameFile(f.item, 'Data.csv'), /name|path/i);
+    }
+    f.host.renameTo = undefined;
+    assert.equal(await f.service.renameFile(f.item, 'Data.csv'), 'cancelled');
+    f.host.renameTo = 'Changed.csv';
+    await assert.rejects(f.service.renameFile(f.item, 'Folder'), /file|regular/i);
+    await fs.symlink(path.join(f.directory, 'files/Data.csv'), path.join(f.directory, 'files/link.csv'));
+    await assert.rejects(f.service.renameFile(f.item, 'link.csv'), /symbolic/i);
+    await assert.rejects(f.service.renameFile(f.item, 'Data.csv', () => false), /changed/i);
+    assert.equal(await fs.readFile(path.join(f.directory, 'files/Data.csv'), 'utf8'), 'contents');
+});
+
+test('a changed source cancels attachment deletion after confirmation', async t => {
+    const fixture = await createScenarioFilesFixture(t, { 'data.txt': 'Keep' }); let current = true;
+    fixture.host.confirmDelete = async () => { current = false; return true; };
+    await assert.rejects(fixture.service.deleteFile(fixture.item, 'data.txt', () => current), /changed|cancel/i);
+    assert.deepEqual(fixture.host.deleted, []);
+});
+
+test('a changed source cancels a conflicting attachment upload before transfer allocation', async t => {
+    const fixture = await createScenarioFilesFixture(t, { 'data.txt': 'Keep' }); let current = true;
+    fixture.host.chooseConflict = async () => { current = false; return 'replace'; };
+    await assert.rejects(fixture.service.prepareDrop(fixture.item, '', [{ clientPath: 'data.txt', kind: 'file', size: 3 }], () => current), /changed|cancel/i);
+    assert.equal(await fs.readFile(path.join(fixture.directory, 'files', 'data.txt'), 'utf8'), 'Keep');
+    assert.deepEqual(await fs.readdir(path.join(fixture.directory, 'files')), ['data.txt']);
+});
 
 function nestedItem(scenarioDirectory: string, overrides: Partial<StepLibraryItem> = {}): StepLibraryItem {
     return {
@@ -231,6 +275,52 @@ test('scenario files service lists one directory level with directories first', 
     ]);
     assert.equal(fixture.host.readDirectoryCalls.length, 1);
     assert.equal(fixture.host.readDirectoryCalls[0], pathToFileURL(path.join(fixture.directory, 'files')).toString());
+});
+
+test('attachment search lists safe files recursively and reuses the root cache', async t => {
+    const fixture = await createScenarioFilesFixture(t, {
+        'invoice.xlsx': 'invoice',
+        'Fixtures/Данные.MXL': 'data',
+        '.DS_Store': 'metadata',
+        '.pending.kot-upload': 'upload'
+    });
+    const first = await fixture.service.listAttachmentPaths(fixture.item);
+    assert.deepEqual(first, ['Fixtures/Данные.MXL', 'invoice.xlsx']);
+    const readCount = fixture.host.readDirectoryCalls.length;
+
+    const again = await fixture.service.listAttachmentPaths({ ...fixture.item, id: 'same-root' });
+    assert.deepEqual(again, first);
+    assert.equal(fixture.host.readDirectoryCalls.length, readCount);
+});
+
+test('attachment search includes authored main files before any compilation', async t => {
+    const fixture = await createScenarioFilesFixture(t, { 'Входная таблица.xlsx': 'input' });
+    const main = { ...fixture.item, kind: 'mainScenario' as const, sourceGroup: 'main' as const, hasScenarioFiles: undefined };
+    assert.deepEqual(await fixture.service.listAttachmentPaths(main), ['Входная таблица.xlsx']);
+});
+
+test('attachment search merges authored and compiled resource files', async t => {
+    const fixture = await createScenarioFilesFixture(t, { 'authored.csv': 'input', 'shared.txt': 'source' });
+    const compiledRoot = path.join(fixture.directory, 'build', 'Sales', 'Файлы');
+    await fs.mkdir(compiledRoot, { recursive: true });
+    await fs.writeFile(path.join(compiledRoot, 'compiled.mxl'), 'output');
+    await fs.writeFile(path.join(compiledRoot, 'shared.txt'), 'copy');
+    const main = {
+        ...fixture.item,
+        ...compiledMainItem(path.join(fixture.directory, 'build', 'Sales.feature'), compiledRoot),
+        capturedLocation: fixture.item.capturedLocation
+    };
+    assert.deepEqual(await fixture.service.listAttachmentPaths(main), ['authored.csv', 'compiled.mxl', 'shared.txt']);
+});
+
+test('attachment search updates a cached missing files root after watcher creation', async t => {
+    const fixture = await createScenarioFilesFixture(t, {}, false);
+    assert.deepEqual(await fixture.service.listAttachmentPaths(fixture.item), []);
+    const created = path.join(fixture.directory, 'files', 'new.csv');
+    await fs.mkdir(path.dirname(created), { recursive: true });
+    await fs.writeFile(created, 'new');
+    fixture.host.createdWatchers[0].watcher.creates.fire(pathToFileURL(created));
+    assert.deepEqual(await fixture.service.listAttachmentPaths(fixture.item), ['new.csv']);
 });
 
 test('scenario files service hides transfer artifacts and operating-system metadata', async t => {

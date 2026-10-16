@@ -4,6 +4,8 @@ import {
     type ScenarioYamlField,
     type SourceRange
 } from './scenarioYamlDocument';
+import { scanCompilerLines } from './scenarioCompilerSyntax';
+import { findScenarioReference } from './scenarioReferenceMatcher';
 
 export interface ScenarioYamlContentMutation {
     changed: boolean;
@@ -318,28 +320,20 @@ export function updateNestedScenarioNameReferencesInScenarioContent(
         const sectionStart = textField.blockScalarContentRange.start;
         const sectionText = source.slice(sectionStart, textField.blockScalarContentRange.end);
         const linePattern = /([^\r\n]*)(\r\n|\r|\n|$)/g;
-        const callLinePattern = /^(\s*)(And|Then|When|Given|But|Но|Тогда|Когда|Если|И|К тому же|Допустим|Дано)(\s+)(.*)$/i;
+        const scanned = scanCompilerLines(sectionText.split(/\r\n|\r|\n/u));
+        let lineIndex = 0;
         let lineMatch: RegExpExecArray | null;
         while ((lineMatch = linePattern.exec(sectionText)) !== null) {
             const line = lineMatch[1];
+            const kind = scanned[lineIndex++]?.kind;
             if (line.length === 0 && lineMatch[2].length === 0) {
                 break;
             }
-            const callMatch = line.match(callLinePattern);
-            if (!callMatch) {
+            const call = kind === 'code' ? findScenarioReference(line.replace(/\s+#.*$/u, ''), previousName) : null;
+            if (!call) {
                 continue;
             }
-            const body = callMatch[4] || '';
-            const bodyMatch = body.match(/^(.*?)(\s+#.*)?$/);
-            const rawMainPart = bodyMatch?.[1] ?? body;
-            if (rawMainPart.trim() !== previousName) {
-                continue;
-            }
-            const leadingWhitespace = rawMainPart.match(/^\s*/)?.[0] ?? '';
-            const trailingWhitespace = rawMainPart.match(/\s*$/)?.[0] ?? '';
-            const commentPart = bodyMatch?.[2] ?? '';
-            const nextBody = `${leadingWhitespace}${nextName}${trailingWhitespace}${commentPart}`;
-            const replacement = `${callMatch[1]}${callMatch[2]}${callMatch[3]}${nextBody}`;
+            const replacement = line.slice(0, call.start) + nextName + line.slice(call.start + call.length);
             if (replacement !== line) {
                 const start = sectionStart + lineMatch.index;
                 replacements.push({ range: { start, end: start + line.length }, text: replacement });

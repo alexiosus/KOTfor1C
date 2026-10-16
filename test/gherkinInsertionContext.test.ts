@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type * as vscode from 'vscode';
-import { getGherkinInsertionContext } from '../src/gherkinInsertionContext';
+import { getGherkinDocumentFormat, getGherkinInsertionContext } from '../src/gherkinInsertionContext';
+import { buildStepLibraryDropSnippet } from '../src/stepLibraryActions';
 
 function position(line: number, character: number): vscode.Position {
     return { line, character } as vscode.Position;
@@ -45,6 +46,16 @@ test('returns English feature context with typed keyword and indentation', () =>
         typedKeyword: 'When',
         indentation: '    '
     });
+});
+
+test('Functionality declarations prevent inserting steps in the new feature header and description', () => {
+    const feature = document('/repo/example.feature', 'gherkin', [
+        'Feature: Previous', 'Scenario: Previous test', '    And ready',
+        'Functionality: Checkout', 'As a customer', 'Scenario: Pay', '    '
+    ].join('\n'));
+    assert.equal(getGherkinInsertionContext(feature, position(3, 8)), null);
+    assert.equal(getGherkinInsertionContext(feature, position(4, 8)), null);
+    assert.equal(getGherkinInsertionContext(feature, position(6, 4))?.language, 'en');
 });
 
 test('infers Russian feature context from nearby steps and preserves blank-line indentation', () => {
@@ -149,4 +160,17 @@ test('validates both ends of a multiline selection independently', () => {
     assert.equal(end?.supported, true);
     assert.equal(start?.indentation, '  ');
     assert.equal(end?.indentation, '  ');
+});
+
+test('does not insert library steps into a Vanessa Variables section', () => {
+    const feature = document('/repo/example.feature', 'feature', 'Feature: Demo\nBackground:\n    Given ready\nVariables:\n    Amount = "1"\n');
+    assert.equal(getGherkinInsertionContext(feature, position(3, 0)), null);
+    assert.equal(getGherkinInsertionContext(feature, position(4, 4)), null);
+});
+
+test('does not treat declarations inside a multiline Variables value as step insertion context', () => {
+    const feature = document('/repo/example.feature', 'feature', 'Feature: Demo\nVariables:\n    Payload =\n    """\n    Scenario: sample text\n    ordinary payload\n    """\n    Another = "v"\nScenario: Real\n    Given ready');
+    assert.equal(getGherkinInsertionContext(feature, position(5, 4)), null);
+    assert.equal(getGherkinInsertionContext(feature, position(7, 4)), null);
+    assert.equal(getGherkinInsertionContext(feature, position(9, 4))?.supported, true);
 });

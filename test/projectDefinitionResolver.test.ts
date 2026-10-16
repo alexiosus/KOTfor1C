@@ -4,6 +4,7 @@ import type * as vscode from 'vscode';
 import type { TestInfo } from '../src/types';
 import type { ResolvedStepCatalog } from '../src/stepCatalog';
 import { buildScenarioCatalog, type ScenarioCatalog } from '../src/scenarioCatalog';
+import { buildProjectDefinitionInsertion } from '../src/projectDefinitionSnippet';
 import type {
     ProjectDefinition,
     ProjectDefinitionSnapshot
@@ -26,6 +27,18 @@ class EventHub<T> {
         }
     }
 }
+
+test('changing a parameter default or type refreshes callable snippets and view identity', async () => {
+    const nested = scenario('ProcessRows', 'file:///workspace-a/nested/scen.yaml', 'nested', ['Rows']);
+    const harness = createHarness({ scenarios: buildScenarioCatalog([{ ...nested, parameterDefaults: { Rows: '"old"' } }]) });
+    const before = await harness.resolver.getView(uri('file:///workspace-a/scen.yaml'));
+    harness.setScenarios(buildScenarioCatalog([{ ...nested, parameterDefaults: { Rows: '| Name |\n| A |' }, parameterTypes: { Rows: 'table' } }]));
+    const after = await harness.resolver.getView(uri('file:///workspace-a/scen.yaml'));
+    assert.notEqual(after.identity, before.identity);
+    const definition = after.all.find(item => item.kind === 'nestedScenario')!;
+    assert.equal(buildProjectDefinitionInsertion(definition, { fallbackKeyword: 'And', language: 'en', documentFormat: 'yaml' }).displayText,
+        'And ProcessRows\n    Rows =\n        | Name |\n        | A |');
+});
 
 function uri(value: string): vscode.Uri {
     return { toString: () => value } as vscode.Uri;
@@ -110,6 +123,7 @@ function createHarness(options: {
     snapshotLookupUnavailable?: boolean;
     scenarios?: ScenarioCatalog;
     catalogs?: ReadonlyMap<string, ResolvedStepCatalog>;
+    resolveResource?: (resource?: vscode.Uri) => vscode.Uri | undefined;
 } = {}) {
     let local = options.local ?? null;
     let scenarios = options.scenarios ?? buildScenarioCatalog([]);
@@ -127,11 +141,14 @@ function createHarness(options: {
     const defaultCatalog = catalog('default-catalog', 'И встроенный шаг');
     const catalogs = options.catalogs ?? new Map([['default', defaultCatalog]]);
     const catalogResources: Array<string | undefined> = [];
+    const snapshotResources: Array<string | undefined> = [];
 
     const resolver = new ProjectDefinitionResolver({
+        resolveResource: options.resolveResource,
         local: {
-            getSnapshot: () => options.snapshotLookupUnavailable ? null : local,
-            ensureReady: async () => {
+            getSnapshot: resource => { snapshotResources.push(resource?.toString()); return options.snapshotLookupUnavailable ? null : local; },
+            ensureReady: async resource => {
+                snapshotResources.push(resource?.toString());
                 if (!local) {
                     throw new Error('not ready');
                 }
@@ -157,6 +174,7 @@ function createHarness(options: {
     return {
         resolver,
         catalogResources,
+        snapshotResources,
         localEvents,
         scenarioEvents,
         catalogEvents,
@@ -171,6 +189,8 @@ function createHarness(options: {
         }
     };
 }
+
+
 
 test('ensureReady retains the physically routed local snapshot when its URI alias cannot be looked up synchronously', async () => {
     const exportDefinition = localDefinition(

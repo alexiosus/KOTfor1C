@@ -12,10 +12,16 @@ import {
 const SCENARIO_TOP_LEVEL_KEYS = new Set([
     'ТипФайла',
     'ДанныеСценария',
+    'ДанныеПроцесса',
     'ДанныеТеста',
     'KOTМетаданные',
     'ПараметрыСценария',
+    'ПараметрыТеста',
     'ВложенныеСценарии',
+    'ШагиПроцесса',
+    'ТегиПроцесса',
+    'ТегиСценария',
+    'ТегиТеста',
     'ТекстСценария'
 ]);
 
@@ -61,6 +67,7 @@ export interface ScenarioYamlSection {
 
 export interface ScenarioYamlRecord {
     key: string;
+    keyRange: SourceRange;
     fields: ReadonlyMap<string, unknown>;
     range: SourceRange;
 }
@@ -401,6 +408,23 @@ export class ScenarioYamlDocument {
 
     findSection(sectionName: string): ScenarioYamlSection | null {
         const pair = this.findTopLevelPair(sectionName);
+        return pair ? this.describeSection(pair, sectionName) : null;
+    }
+
+    findRecordSection(sectionName: string, index: number, fieldName: string): ScenarioYamlSection | null {
+        const matches = this.findMapPairs(this.parsed.contents, sectionName);
+        const section = matches.length === 1 ? matches[0] : null;
+        if (!section || !isSeq(section.value)) { return null; }
+        const item = section.value.items[index];
+        if (!isMap(item) || item.items.length !== 1) { return null; }
+        const record = item.items[0];
+        if (!isPair(record) || !isMap(record.value)) { return null; }
+        const fields = this.findMapPairs(record.value, fieldName);
+        const pair = fields.length === 1 ? fields[0] : null;
+        return pair ? this.describeSection(pair, fieldName) : null;
+    }
+
+    private describeSection(pair: Pair, sectionName: string): ScenarioYamlSection | null {
         if (!pair) {
             return null;
         }
@@ -479,7 +503,9 @@ export class ScenarioYamlDocument {
                     if (fieldKey) {
                         fields.set(
                             fieldKey,
-                            readOriginalScalar(this.source, fieldPair)?.value ?? getNodeValue(fieldPair.value)
+                            getValueKind(fieldPair.value) === 'blockScalar'
+                                ? getNodeValue(fieldPair.value)
+                                : readOriginalScalar(this.source, fieldPair)?.value ?? getNodeValue(fieldPair.value)
                         );
                     }
                 }
@@ -489,6 +515,7 @@ export class ScenarioYamlDocument {
             const rawEnd = itemRange?.[1] ?? keyRange[1];
             records.push({
                 key: recordKey,
+                keyRange: { start: keyRange[0], end: keyRange[1] },
                 fields,
                 range: {
                     start: keyRange[0],
@@ -552,7 +579,7 @@ export class ScenarioYamlDocument {
                 throw new Error(`Unsafe YAML edit: section "${sectionName}" contains an invalid record`);
             }
             const recordPair = item.items[0];
-            if (!isPair(recordPair) || !isMap(recordPair.value)) {
+            if (!isPair(recordPair) || !getScalarKey(recordPair.key) || !isMap(recordPair.value)) {
                 throw new Error(`Unsafe YAML edit: section "${sectionName}" contains an invalid record`);
             }
             const fieldPairs = this.findMapPairs(recordPair.value, fieldName);
@@ -697,6 +724,13 @@ export function getSectionInsertion(
     if (!section) {
         return null;
     }
+
+    return getSectionInsertionForSection(source, section, itemText);
+}
+
+export function getSectionInsertionForSection(
+    source: string, section: ScenarioYamlSection, itemText: string
+): SourceEdit {
 
     const newline = getSourceNewline(source);
     const renderedItem = renderSectionItems(itemText, section.itemIndent, newline);

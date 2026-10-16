@@ -3,10 +3,36 @@
 
 (function() {
     const vscode = acquireVsCodeApi();
+    const standaloneFeatureContainer = document.getElementById('standaloneFeatureTree');
     const scenarioProtocol = globalThis.PhaseSwitcherProtocol;
     if (!scenarioProtocol) {
         throw new Error('PhaseSwitcherProtocol is not loaded');
     }
+    const standaloneFeatures = standaloneFeatureContainer && globalThis.KotStandaloneFeatures
+        ? globalThis.KotStandaloneFeatures.create({
+            container: standaloneFeatureContainer, vscode, mode: 'manager', labels: {
+                ...(window.__standaloneFeatureLabels || {}),
+                run: (window.__loc?.runScenarioModeAutomatic || 'Run test (auto close)').replace(/\s*\([^)]*\)\s*$/, ''),
+                runTitle: window.__loc?.runScenarioJsonTitle || 'Run scenario in Vanessa Automation by json: {0}',
+                openFeatureTitle: window.__loc?.openScenarioFileTitle || 'Open scenario file {0}',
+                openLog: window.__loc?.runScenarioOpenRunLogFile || 'Open run log file',
+                watchLog: window.__loc?.runScenarioWatchLiveOutput || 'Watch live log output',
+                openRunStep: window.__loc?.runScenarioOpenFailedStepTitle || 'Open failed step in feature',
+                running: window.__loc?.runScenarioRunningSuffix || 'Run in progress',
+                passed: window.__loc?.runScenarioPassedSuffix || 'Last run passed',
+                failed: window.__loc?.runScenarioFailedSuffix || 'Last run failed',
+                stale: window.__loc?.runScenarioStaleSuffix || 'Build is stale',
+                tracked: window.__loc?.runScenarioTrackedSourceSuffix || 'Tracked log',
+                selectedLog: window.__loc?.runScenarioSelectedLog || 'Log: {0}'
+            },
+            managerUi: {
+                relationshipProtocol: scenarioProtocol,
+                beforeMenu: () => { closeAssembleOptionsMenu(); closeContextMenu(); },
+                expand: setPhaseListExpandedState,
+                updateOverflow: updateScenarioLabelOverflowFor,
+                formatRunProgress: scenarioProtocol.formatRunProgress
+            }
+        }) : null;
     const scenarioFilesProtocol = globalThis.KotScenarioFilesProtocol;
     if (!scenarioFilesProtocol) {
         throw new Error('ScenarioFilesProtocol is not loaded');
@@ -17,11 +43,22 @@
 
     // === Глобальные переменные состояния ===
     let testDataByPhase = {};
+    let scenarioGroups = [];
+    let projectOrderDrag = null;
+    const projectOrderDragType = 'application/x-kot-project-library-order';
     let initialTestStates = {};
     let currentCheckboxStates = {};
     let testInfoByKey = new Map();
-    let phaseExpandedState = {}; 
+    const savedScenarioSections = vscode.getState?.()?.scenarioSections || {};
+    let phaseExpandedState = savedScenarioSections.expandedGroups && typeof savedScenarioSections.expandedGroups === 'object'
+        ? { ...savedScenarioSections.expandedGroups }
+        : {};
+    const scenarioSectionCollapsedState = {
+        main: savedScenarioSections.collapsed?.main === true,
+        process: savedScenarioSections.collapsed?.process === true
+    };
     let runArtifacts = {};
+    let attachmentPathsByScenario = {};
     const expandedScenarioResources = new Set();
     const expandedScenarioFileDirectories = new Set();
     const scenarioFileChildrenByParent = new Map();
@@ -57,6 +94,7 @@
     const assembleMenuBtn = document.getElementById('assembleMenuBtn');
     const assembleDropdownContent = document.getElementById('assembleDropdownContent');
     const openVanessaBtn = document.getElementById('openVanessaBtn');
+    const openCompilerBuildReportBtn = document.getElementById('openCompilerBuildReportBtn');
     const openYamlParametersQuickBtn = document.getElementById('openYamlParametersQuickBtn');
 
     const scenarioSearchRow = document.getElementById('scenarioSearchRow');
@@ -90,6 +128,7 @@
      * @param {string} message - Сообщение для логирования.
      */
     function log(message) {
+        if (settings.advancedLoggingEnabled !== true) { return; }
         console.log("[Webview]", message);
         vscode.postMessage({ command: 'log', text: "[Webview] " + message });
     }
@@ -158,6 +197,7 @@
      * @param {boolean} enable - True для включения, false для отключения.
      */
     function enablePhaseControls(enable) {
+        standaloneFeatures?.setEnabled(!isBuildInProgress && !isScenarioRepairInProgress);
         const isPhaseSwitcherVisible = settings.switcherEnabled;
         const effectiveEnable = enable && isPhaseSwitcherVisible && !isBuildInProgress;
         phaseControlsActive = effectiveEnable;
@@ -166,6 +206,9 @@
         if (selectAllBtn instanceof HTMLInputElement) selectAllBtn.disabled = isDisabled;
 
         if (phaseTreeContainer) {
+            phaseTreeContainer.querySelectorAll('.scenario-section-action').forEach(button => {
+                button.disabled = !isPhaseSwitcherVisible || isBuildInProgress || isScenarioRepairInProgress;
+            });
             const checkboxes = phaseTreeContainer.querySelectorAll('.checkbox-item input[type="checkbox"]');
             checkboxes.forEach(cb => {
                 if (cb instanceof HTMLInputElement) {
@@ -187,15 +230,14 @@
                 if (isDisabled) header.classList.add('disabled-header');
                 else header.classList.remove('disabled-header');
 
-                const createScenarioButton = header.querySelector('.phase-create-main-btn');
-                if (createScenarioButton instanceof HTMLButtonElement) {
-                    createScenarioButton.disabled = isDisabled;
+                for (const createScenarioButton of header.querySelectorAll('.phase-create-main-btn')) {
+                    if (createScenarioButton instanceof HTMLButtonElement) { createScenarioButton.disabled = isDisabled; }
                 }
 
                 const countElement = header.querySelector('.phase-test-count');
                 if (countElement instanceof HTMLElement) {
                     const phaseName = header instanceof HTMLElement ? header.dataset.phaseName : '';
-                    const aggregate = phaseVisibilityAggregate(phaseName || '');
+                    const aggregate = phaseVisibilityAggregate(phaseName || '', undefined, header.dataset.scenarioKind);
                     updatePhaseCountButton(
                         countElement,
                         phaseName || '',
@@ -206,6 +248,7 @@
             });
         }
         updateRunButtonsState();
+        updateScenarioLabelOverflow();
         log(`Phase controls enabled: ${effectiveEnable} (request ${enable}, feature ${isPhaseSwitcherVisible})`);
     }
 
@@ -242,7 +285,7 @@
                 const runInfo = scenarioKey && runArtifacts ? runArtifacts[scenarioKey] : null;
                 const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
                 const isBlockingRunInProgress = runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false;
-                button.disabled = isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact;
+                button.disabled = isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact || runInfo?.canRun === false;
             }
         });
         updateTopRunButtonState();
@@ -346,6 +389,7 @@
 
     function applyAffectedMainScenarioHighlighting() {
         patchScenarioRelationshipDecorations();
+        standaloneFeatures?.setRelationshipState(relationshipState, settings.filterRelatedScenarios === true);
     }
 
     function visibilitySelectionStates() {
@@ -364,19 +408,59 @@
     }
 
     function scenarioSearchPredicate(testInfo) {
-        return scenarioProtocol.matchesScenarioSearch(testInfo, activeScenarioSearchQuery);
+        return scenarioProtocol.matchesScenarioSearch({
+            ...testInfo,
+            attachmentPaths: attachmentPathsByScenario[scenarioProtocol.getScenarioKey(testInfo)] || []
+        }, activeScenarioSearchQuery);
     }
 
-    function phaseTestInfos(phaseName) {
+    function scenarioSectionKind(testInfo) {
+        return testInfo?.kind === 'process' ? 'process' : 'main';
+    }
+
+    function declaredScenarioGroup(phaseName) {
+        return scenarioGroups.find(group => (group.key || group.name) === phaseName);
+    }
+
+    function phaseBelongsToSection(phaseName, kind, allPhaseData) {
+        const tests = allPhaseData[phaseName];
+        return (Array.isArray(tests) && tests.some(testInfo => scenarioSectionKind(testInfo) === kind))
+            || declaredScenarioGroup(phaseName)?.sections.includes(kind) === true;
+    }
+
+    function phaseGroupStateKey(phaseName, kind) {
+        return JSON.stringify([kind, phaseName]);
+    }
+
+    function phaseGroupDomSuffix(phaseName, kind) {
+        return `${kind}-${Array.from(phaseName, character => character.codePointAt(0).toString(16)).join('-')}`;
+    }
+
+    function persistScenarioSectionState() {
+        if (typeof vscode.setState !== 'function') {
+            return;
+        }
+        vscode.setState({
+            ...(vscode.getState?.() || {}),
+            scenarioSections: {
+                collapsed: { ...scenarioSectionCollapsedState },
+                expandedGroups: { ...phaseExpandedState }
+            }
+        });
+    }
+
+    function phaseTestInfos(phaseName, kind) {
         const items = Array.isArray(testDataByPhase?.[phaseName])
             ? testDataByPhase[phaseName]
             : [];
-        return items.map(testInfo => Object.assign({}, testInfo, { phaseName }));
+        return items
+            .filter(testInfo => !kind || scenarioSectionKind(testInfo) === kind)
+            .map(testInfo => Object.assign({}, testInfo, { phaseName: declaredScenarioGroup(phaseName)?.name || phaseName }));
     }
 
-    function phaseVisibilityAggregate(phaseName, states = visibilitySelectionStates()) {
+    function phaseVisibilityAggregate(phaseName, states = visibilitySelectionStates(), kind) {
         return scenarioProtocol.visibleScenarioAggregate(
-            phaseTestInfos(phaseName),
+            phaseTestInfos(phaseName, kind),
             states,
             runArtifacts,
             statusFilter,
@@ -437,8 +521,13 @@
             }
             const header = group.querySelector('.phase-header');
             const phaseName = header instanceof HTMLElement ? header.dataset.phaseName || '' : '';
-            const phaseAggregate = phaseVisibilityAggregate(phaseName, states);
-            const hasVisibleScenario = phaseAggregate.visibleKeys.length > 0;
+            const kind = header instanceof HTMLElement ? header.dataset.scenarioKind : '';
+            const phaseAggregate = phaseVisibilityAggregate(phaseName, states, kind);
+            const emptyGroupAvailable = phaseTestInfos(phaseName, kind).length === 0
+                && statusFilter === 'all'
+                && settings.filterRelatedScenarios !== true
+                && !activeScenarioSearchQuery;
+            const hasVisibleScenario = phaseAggregate.visibleKeys.length > 0 || emptyGroupAvailable;
             group.classList.remove('relationship-hidden', 'search-hidden');
             group.classList.toggle('filter-hidden', !hasVisibleScenario);
             if (header instanceof HTMLElement) {
@@ -456,10 +545,23 @@
                 const phaseVisibleKeys = new Set(phaseAggregate.visibleKeys);
                 updatePhaseCompiledIndicator(
                     compiledIndicator,
-                    phaseTestInfos(phaseName).filter(testInfo =>
+                    phaseTestInfos(phaseName, kind).filter(testInfo =>
                         phaseVisibleKeys.has(scenarioProtocol.getScenarioKey(testInfo))
                     )
                 );
+            }
+        });
+
+        phaseTreeContainer.querySelectorAll('.scenario-type-section').forEach(section => {
+            if (!(section instanceof HTMLElement)) {
+                return;
+            }
+            const keys = Array.from(section.querySelectorAll('.checkbox-item[data-key]'))
+                .map(row => row.getAttribute('data-key') || '')
+                .filter(key => visibleKeys.has(key));
+            const count = section.querySelector('.scenario-section-count');
+            if (count instanceof HTMLElement) {
+                count.textContent = String(keys.length);
             }
         });
 
@@ -643,8 +745,9 @@
         if (!(content instanceof HTMLElement)) {
             return;
         }
-        const distance = Math.max(0, content.scrollWidth - label.clientWidth + 12);
-        label.classList.toggle('is-overflowing', distance > 1);
+        const overflow = content.scrollWidth - label.clientWidth;
+        const distance = overflow > 1 ? overflow + 12 : 0;
+        label.classList.toggle('is-overflowing', distance > 0);
         label.style.setProperty('--kot-overflow-distance', `${distance}px`);
         label.style.setProperty('--kot-overflow-duration', `${Math.max(1.2, distance / 45)}s`);
     }
@@ -652,6 +755,9 @@
     function updateScenarioLabelOverflow() {
         requestAnimationFrame(() => {
             for (const label of phaseTreeContainer?.querySelectorAll('.kot-tree-label') || []) {
+                updateScenarioLabelOverflowFor(label);
+            }
+            for (const label of standaloneFeatureContainer?.querySelectorAll('.kot-tree-label') || []) {
                 updateScenarioLabelOverflowFor(label);
             }
         });
@@ -662,6 +768,9 @@
         : null;
     if (phaseTreeContainer && scenarioLabelResizeObserver) {
         scenarioLabelResizeObserver.observe(phaseTreeContainer);
+    }
+    if (standaloneFeatureContainer && scenarioLabelResizeObserver) {
+        scenarioLabelResizeObserver.observe(standaloneFeatureContainer);
     }
 
     function updateScenarioSearchClearButtonState() {
@@ -729,6 +838,7 @@
 
     function applyScenarioSearch(query, scrollToMatch = true) {
         activeScenarioSearchQuery = (query || '').trim();
+        standaloneFeatures?.setSearch(activeScenarioSearchQuery);
         clearScenarioSearchHighlights();
         applyAffectedMainScenarioHighlighting();
         updateScenarioSearchClearButtonState();
@@ -746,12 +856,19 @@
                 return false;
             }
             const phaseName = node.closest('.phase-group')?.querySelector('.phase-header')?.getAttribute('data-phase-name') || '';
+            const scenarioKey = node.getAttribute('data-key') || '';
             return scenarioProtocol.matchesScenarioSearch({
                 name: node.getAttribute('data-name') || '',
-                phaseName
+                phaseName: declaredScenarioGroup(phaseName)?.name || phaseName,
+                attachmentPaths: attachmentPathsByScenario[scenarioKey] || []
             }, activeScenarioSearchQuery);
         });
 
+        // Search forces business-group lists to their natural height. Finish
+        // any in-flight group animation before that CSS override takes over.
+        phaseTreeContainer.querySelectorAll('.phase-group > .phase-tests-list.animating').forEach(list => {
+            setPhaseListExpandedState(list, list.classList.contains('expanded'), false);
+        });
         phaseTreeContainer.classList.add('scenario-search-active');
 
         const matchedPhaseGroups = new Set();
@@ -917,7 +1034,7 @@
                     ${viewState.leadingControlHtml}
                     ${viewState.relationshipIconHtml}
                     ${viewState.openButtonHtml}
-                    <span class="checkbox-label-text kot-tree-label"><span class="kot-scroll-content">${escapeHtmlText(viewState.name)}</span></span>
+                    <span class="checkbox-label-text kot-tree-label">${testInfo.projectRoot && testInfo.entityKey ? '<span class="project-order-drag-handle codicon codicon-gripper" draggable="true" title="' + escapeHtmlAttr(window.__loc?.dragToReorder || 'Drag to reorder') + '" aria-label="' + escapeHtmlAttr(window.__loc?.dragToReorder || 'Drag to reorder') + '"></span>' : ''}<span class="kot-scroll-content">${escapeHtmlText(viewState.name)}</span></span>
                     <span class="kot-row-actions">
                         ${viewState.runLogButtonHtml}
                         ${viewState.progressHtml}
@@ -1041,9 +1158,12 @@
                <span class="codicon codicon-play-circle run-scenario-icon-retry"></span>`
             : `<span class="${runButtonIconClass}"></span>`;
         const selectedLogTemplate = window.__loc?.runScenarioSelectedLog || 'Log: {0}';
-        const runButtonTitle = `${runTitle}${statusSuffix}${trackedSourceSuffix}${staleSuffix}${progressTitle ? ` • ${progressTitle}` : ''}${runMessage ? `\n${runMessage}` : ''}${activeRunLogPath ? `\n${selectedLogTemplate.replace('{0}', activeRunLogPath)}` : ''}`;
+        const sharedHint = Array.isArray(runInfo?.sharedScenarioNames) && runInfo.sharedScenarioNames.length > 1
+            ? (window.__loc?.sharedFeatureRun || 'Runs all scenarios in this feature: {0}').replace('{0}', runInfo.sharedScenarioNames.join(', ')) : '';
+        const featureOnlyHint = runInfo?.canRun === false ? window.__loc?.featureOnlyRunUnavailable || 'Enable CreateJson or configure a Vanessa command template to run this build.' : '';
+        const runButtonTitle = `${featureOnlyHint || sharedHint || runTitle}${statusSuffix}${trackedSourceSuffix}${staleSuffix}${progressTitle ? ` • ${progressTitle}` : ''}${runMessage ? `\n${runMessage}` : ''}${activeRunLogPath ? `\n${selectedLogTemplate.replace('{0}', activeRunLogPath)}` : ''}`;
         const escapedRunTitle = escapeHtmlAttr(runButtonTitle);
-        const runButtonDisabledAttr = ((isBuildInProgress && !isDemoMode) || isBlockingRunInProgress || !hasRunArtifact) ? ' disabled' : '';
+        const runButtonDisabledAttr = ((isBuildInProgress && !isDemoMode) || isBlockingRunInProgress || !hasRunArtifact || runInfo?.canRun === false) ? ' disabled' : '';
         const canOpenFailedStepInFeature = isRunFailed && !!runInfo?.featurePath;
         const runStepTitleTemplate = window.__loc?.runScenarioOpenFailedStepTitle || 'Open failed step in feature: {0}';
         const runStepTitle = escapeHtmlAttr(runStepTitleTemplate.replace('{0}', name));
@@ -1064,9 +1184,10 @@
                </span>`
             : '';
 
+        const fileIcon = testInfo.kind === 'process' ? 'list-ordered' : 'file';
         const openButtonHtml = fileUriString
             ? `<button type="button" class="open-scenario-btn scenario-file-icon" data-key="${escapedScenarioKeyAttr}" data-name="${escapedNameAttr}" data-uri="${escapedFileUriAttr}" title="${escapedIconTitle}" aria-label="${escapedIconTitle}">
-                   <span class="codicon codicon-file open-scenario-icon-idle" aria-hidden="true"></span>
+                   <span class="codicon codicon-${fileIcon} open-scenario-icon-idle" aria-hidden="true"></span>
                    <span class="codicon codicon-go-to-file open-scenario-icon-action" aria-hidden="true"></span>
                </button>`
             : '';
@@ -1306,8 +1427,9 @@
         const focusedRow = document.activeElement instanceof Element
             ? document.activeElement.closest('.checkbox-item[data-key]')
             : null;
+        const scrollContainer = phaseTreeContainer.closest('.manager-trees-scroll') || phaseTreeContainer;
         return {
-            scrollTop: phaseTreeContainer.scrollTop,
+            scrollTop: scrollContainer.scrollTop,
             focusedScenarioKey: focusedRow instanceof HTMLElement
                 ? (focusedRow.getAttribute('data-key') || '')
                 : '',
@@ -1321,7 +1443,8 @@
         if (!(phaseTreeContainer instanceof HTMLElement) || !viewState) {
             return;
         }
-        phaseTreeContainer.scrollTop = Number.isFinite(viewState.scrollTop) ? viewState.scrollTop : 0;
+        const scrollContainer = phaseTreeContainer.closest('.manager-trees-scroll') || phaseTreeContainer;
+        scrollContainer.scrollTop = Number.isFinite(viewState.scrollTop) ? viewState.scrollTop : 0;
         if (!viewState.focusedScenarioKey) {
             return;
         }
@@ -1331,6 +1454,219 @@
         if (row instanceof HTMLElement) {
             row.focus({ preventScroll: true });
         }
+    }
+
+    function createGroupDefinitionActions(phaseName, kind) {
+        const choices = [
+            {
+                icon: 'codicon-file',
+                label: window.__loc?.createMainScenario || 'Main scenario',
+                command: 'createMainScenario'
+            },
+            {
+                icon: 'codicon-list-ordered',
+                label: window.__loc?.createProcess || 'Process',
+                command: 'createProcess'
+            }
+        ];
+        if (kind === 'process') {
+            choices.reverse();
+        }
+        return choices.map(choice => ({
+            icon: choice.icon,
+            label: choice.label,
+            onClick: () => {
+                const group = declaredScenarioGroup(phaseName);
+                const groupName = group?.id === '' ? '' : group?.name || phaseName;
+                vscode.postMessage(scenarioProtocol.createGroupScenarioCommand(choice.command, groupName));
+            }
+        }));
+    }
+
+    function projectGroupIds(projectRoot, section) {
+        return scenarioGroups.filter(group => group.projectRoot === projectRoot && group.sections.includes(section) && group.id)
+            .sort((left, right) => (left.displayOrders?.[section] ?? left.order) - (right.displayOrders?.[section] ?? right.order)
+                || left.name.localeCompare(right.name)).map(group => group.id);
+    }
+
+    function projectGroupContents(phaseName, section) {
+        return (testDataByPhase[phaseName] || []).filter(info => scenarioSectionKind(info) === section)
+            .map(info => ({ key: info.entityKey, order: Number.isFinite(info.order) ? info.order : null }));
+    }
+
+    function clearProjectOrderingDrag() {
+        projectOrderDrag = null;
+        phaseTreeContainer?.querySelectorAll('.is-order-dragging, .is-order-drop-before, .is-order-drop-after, .is-order-drop-target')
+            .forEach(node => node.classList.remove('is-order-dragging', 'is-order-drop-before', 'is-order-drop-after', 'is-order-drop-target'));
+    }
+
+    function projectOrderingEnabled() {
+        return phaseControlsActive && !settings.buildInProgress && !settings.scenarioRepairInProgress;
+    }
+
+    function bindProjectOrderingHandle(handle, source) {
+        handle.addEventListener('click', event => {
+            event.preventDefault(); event.stopPropagation();
+            const disclosure = source.type === 'group' ? '.phase-expand-collapse-btn' : '.scenario-resource-toggle';
+            handle.closest('.kot-tree-row')?.querySelector(disclosure)?.click();
+        });
+        handle.addEventListener('dragstart', event => {
+            if (!projectOrderingEnabled() || !event.dataTransfer) { event.preventDefault(); return; }
+            clearProjectOrderingDrag();
+            projectOrderDrag = { ...source, ...(source.type === 'group'
+                ? { expectedIds: projectGroupIds(source.projectRoot, source.section) }
+                : { expectedSource: projectGroupContents(source.phaseName, source.section) }) };
+            event.dataTransfer.setData(projectOrderDragType, source.type);
+            event.dataTransfer.effectAllowed = 'move';
+            handle.closest('.kot-tree-row')?.classList.add('is-order-dragging');
+            event.stopPropagation();
+        });
+        handle.addEventListener('dragend', clearProjectOrderingDrag);
+    }
+
+    function bindProjectOrderingTarget(node, target) {
+        const valid = () => projectOrderingEnabled() && projectOrderDrag
+            && projectOrderDrag.projectRoot === target.projectRoot && projectOrderDrag.section === target.section
+            && (projectOrderDrag.type !== 'group' || (!target.beforeId && target.groupId));
+        const after = event => !!target.beforeId || projectOrderDrag?.type === 'group'
+            ? event.clientY > node.getBoundingClientRect().top + node.getBoundingClientRect().height / 2 : false;
+        node.addEventListener('dragover', event => {
+            if (!valid()) { return; }
+            event.preventDefault(); event.stopPropagation();
+            node.classList.remove('is-order-drop-before', 'is-order-drop-after', 'is-order-drop-target');
+            node.classList.add(target.beforeId || projectOrderDrag.type === 'group'
+                ? (after(event) ? 'is-order-drop-after' : 'is-order-drop-before') : 'is-order-drop-target');
+            if (event.dataTransfer) { event.dataTransfer.dropEffect = 'move'; }
+        });
+        node.addEventListener('dragleave', () => node.classList.remove('is-order-drop-before', 'is-order-drop-after', 'is-order-drop-target'));
+        node.addEventListener('drop', event => {
+            if (!valid()) { return; }
+            event.preventDefault(); event.stopPropagation();
+            const source = projectOrderDrag;
+            const fields = { command: 'reorderProjectLibrary', type: source.type, projectRoot: source.projectRoot, section: source.section };
+            if (source.type === 'group') {
+                const ids = source.expectedIds;
+                const beforeId = after(event) ? ids[ids.indexOf(target.groupId) + 1] : target.groupId;
+                vscode.postMessage({ ...fields, groupId: source.groupId, ...(beforeId ? { beforeId } : {}), expectedIds: ids });
+            } else {
+                const destination = projectGroupContents(target.phaseName, target.section);
+                const beforeId = target.beforeId && after(event)
+                    ? destination[destination.findIndex(value => value.key === target.beforeId) + 1]?.key : target.beforeId;
+                vscode.postMessage({ ...fields, uri: source.uri, groupId: target.groupId, ...(beforeId ? { beforeId } : {}),
+                    expectedSource: source.expectedSource, expectedDestination: destination });
+            }
+            clearProjectOrderingDrag();
+        });
+    }
+
+    function createScenarioTypeSection(kind) {
+        const isProcess = kind === 'process';
+        const title = isProcess
+            ? window.__loc?.processesSection || 'Processes'
+            : window.__loc?.mainScenariosSection || 'Main scenarios';
+        const section = document.createElement('div');
+        section.className = 'scenario-type-section';
+        section.dataset.scenarioKind = kind;
+        const heading = document.createElement('div');
+        heading.className = 'scenario-section-header kot-tree-row';
+        heading.dataset.scenarioKind = kind;
+        heading.setAttribute('role', 'treeitem');
+        heading.tabIndex = 0;
+        const disclosure = document.createElement('span');
+        disclosure.className = 'codicon kot-tree-disclosure';
+        const titleLabel = document.createElement('span');
+        titleLabel.className = 'scenario-section-title kot-tree-label';
+        const titleContent = document.createElement('span');
+        titleContent.className = 'kot-scroll-content';
+        titleContent.textContent = title;
+        titleLabel.appendChild(titleContent);
+        const createButton = document.createElement('button');
+        createButton.type = 'button';
+        createButton.className = 'scenario-section-create-btn scenario-section-action toolbar-btn ghost-btn icon-only kot-icon-button';
+        createButton.title = isProcess
+            ? window.__loc?.createProcess || 'Create process'
+            : window.__loc?.createMainScenario || 'Create main scenario';
+        createButton.setAttribute('aria-label', createButton.title);
+        createButton.disabled = settings.switcherEnabled === false || isBuildInProgress || isScenarioRepairInProgress;
+        const createIcon = document.createElement('span');
+        createIcon.className = 'codicon codicon-add';
+        createButton.appendChild(createIcon);
+        createButton.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!createButton.disabled) {
+                vscode.postMessage({ command: isProcess ? 'createProcess' : 'createMainScenario' });
+            }
+        });
+        const newGroupButton = document.createElement('button');
+        newGroupButton.type = 'button';
+        newGroupButton.className = 'scenario-section-new-group-btn scenario-section-action toolbar-btn ghost-btn icon-only kot-icon-button';
+        newGroupButton.title = window.__loc?.createGroup || 'New group';
+        newGroupButton.setAttribute('aria-label', newGroupButton.title);
+        newGroupButton.disabled = createButton.disabled;
+        const newGroupIcon = document.createElement('span');
+        newGroupIcon.className = 'codicon codicon-new-folder';
+        newGroupButton.appendChild(newGroupIcon);
+        newGroupButton.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!newGroupButton.disabled) {
+                vscode.postMessage({ command: 'createScenarioGroup', kind });
+            }
+        });
+        const actions = document.createElement('span');
+        actions.className = 'scenario-section-actions';
+        actions.append(createButton, newGroupButton);
+        const count = document.createElement('span');
+        count.className = 'scenario-section-count kot-tree-count';
+        heading.append(disclosure, titleLabel, actions, count);
+        const groups = document.createElement('div');
+        groups.id = `scenario-section-${kind}-groups`;
+        groups.className = 'scenario-section-groups phase-tests-list';
+        groups.setAttribute('role', 'group');
+        heading.setAttribute('aria-controls', groups.id);
+        section.append(heading, groups);
+        const updateExpanded = (animate = false) => {
+            const expanded = !scenarioSectionCollapsedState[kind];
+            heading.setAttribute('aria-expanded', String(expanded));
+            disclosure.classList.toggle('codicon-chevron-right', !expanded);
+            disclosure.classList.toggle('codicon-chevron-down', expanded);
+            setPhaseListExpandedState(groups, expanded, animate);
+        };
+        const toggleSection = () => {
+            scenarioSectionCollapsedState[kind] = !scenarioSectionCollapsedState[kind];
+            updateExpanded(true);
+            persistScenarioSectionState();
+            updateAreAllPhasesExpandedState();
+        };
+        heading.addEventListener('click', toggleSection);
+        heading.addEventListener('contextmenu', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (newGroupButton.disabled) { return; }
+            showContextMenuAt(event.clientX, event.clientY, [{
+                icon: 'codicon-add', label: createButton.title,
+                onClick: () => vscode.postMessage({ command: isProcess ? 'createProcess' : 'createMainScenario' })
+            }, {
+                icon: 'codicon-new-folder', label: newGroupButton.title,
+                onClick: () => vscode.postMessage({ command: 'createScenarioGroup', kind })
+            }], `scenario-section:${kind}`);
+        });
+        heading.addEventListener('keydown', event => {
+            if (event.target !== heading) {
+                return;
+            }
+            const expanded = !scenarioSectionCollapsedState[kind];
+            if (event.key === 'Enter' || event.key === ' '
+                || (event.key === 'ArrowRight' && !expanded)
+                || (event.key === 'ArrowLeft' && expanded)) {
+                event.preventDefault();
+                toggleSection();
+            }
+        });
+        updateExpanded();
+        phaseTreeContainer.appendChild(section);
+        return groups;
     }
 
     /**
@@ -1343,163 +1679,223 @@
         const preservedViewState = capturePhaseTreeViewState();
         phaseTreeContainer.innerHTML = '';
 
-        const sortedPhaseNames = Object.keys(allPhaseData).sort();
-
-        if (sortedPhaseNames.length === 0) {
-            const noPhasesMessage = window.__loc?.noPhasesToDisplay || 'No groups to display.';
-            phaseTreeContainer.innerHTML = `<p>${noPhasesMessage}</p>`;
-            return;
-        }
+        const sortedPhaseNames = [...new Set([...Object.keys(allPhaseData), ...scenarioGroups.map(group => group.key || group.name)])]
+            .sort((left, right) => {
+                const leftOrder = declaredScenarioGroup(left)?.order ?? Infinity;
+                const rightOrder = declaredScenarioGroup(right)?.order ?? Infinity;
+                return leftOrder - rightOrder || (left < right ? -1 : left > right ? 1 : 0);
+            });
 
         const newPhaseExpandedState = {};
-        sortedPhaseNames.forEach(phaseName => {
-            newPhaseExpandedState[phaseName] = phaseExpandedState.hasOwnProperty(phaseName) ? phaseExpandedState[phaseName] : false;
-        });
+        for (const kind of ['main', 'process']) {
+            sortedPhaseNames.forEach(phaseName => {
+                if (phaseBelongsToSection(phaseName, kind, allPhaseData)) {
+                    const groupKey = phaseGroupStateKey(phaseName, kind);
+                    newPhaseExpandedState[groupKey] = phaseExpandedState[groupKey] === true;
+                }
+            });
+        }
         phaseExpandedState = newPhaseExpandedState;
         updateAreAllPhasesExpandedState();
 
-        sortedPhaseNames.forEach(phaseName => {
-            const testsInPhase = allPhaseData[phaseName];
-            const phaseGroupId = 'phase-group-' + phaseName.replace(/[^a-zA-Z0-9_\\-]/g, '_');
-            const phaseHeaderId = 'phase-header-' + phaseName.replace(/[^a-zA-Z0-9_\\-]/g, '_');
-            const testsListId = 'tests-list-' + phaseName.replace(/[^a-zA-Z0-9_\\-]/g, '_');
+        for (const kind of ['main', 'process']) {
+            const sectionGroups = createScenarioTypeSection(kind);
+            sortedPhaseNames.slice().sort((left, right) => {
+                const leftGroup = declaredScenarioGroup(left);
+                const rightGroup = declaredScenarioGroup(right);
+                if (leftGroup?.projectRoot && rightGroup?.projectRoot && leftGroup.projectRoot !== rightGroup.projectRoot) {
+                    return leftGroup.projectRoot.localeCompare(rightGroup.projectRoot);
+                }
+                return (leftGroup?.displayOrders?.[kind] ?? leftGroup?.order ?? Infinity)
+                    - (rightGroup?.displayOrders?.[kind] ?? rightGroup?.order ?? Infinity);
+            }).forEach(phaseName => {
+                if (!phaseBelongsToSection(phaseName, kind, allPhaseData)) { return; }
+                const sourceTests = allPhaseData[phaseName];
+                const testsInPhase = Array.isArray(sourceTests)
+                    ? sourceTests.filter(testInfo => scenarioSectionKind(testInfo) === kind)
+                    : [];
+                const declaredGroup = declaredScenarioGroup(phaseName);
+                const displayName = declaredGroup?.name || phaseName;
+                const groupKey = phaseGroupStateKey(phaseName, kind);
+                const domSuffix = phaseGroupDomSuffix(phaseName, kind);
+                const phaseGroupId = 'phase-group-' + domSuffix;
+                const phaseHeaderId = 'phase-header-' + domSuffix;
+                const testsListId = 'tests-list-' + domSuffix;
 
-            let enabledCount = 0;
-            let totalInPhase = 0;
+                let enabledCount = 0;
+                let totalInPhase = 0;
 
-            if (Array.isArray(testsInPhase)) {
-                testsInPhase.forEach(testInfo => {
-                    const scenarioKey = scenarioProtocol.getScenarioKey(testInfo);
-                    if (scenarioKey && initialTestStates[scenarioKey] !== 'disabled') {
-                        totalInPhase++;
-                        if (currentCheckboxStates[scenarioKey]) {
-                            enabledCount++;
+                if (Array.isArray(testsInPhase)) {
+                    testsInPhase.forEach(testInfo => {
+                        const scenarioKey = scenarioProtocol.getScenarioKey(testInfo);
+                        if (scenarioKey && initialTestStates[scenarioKey] !== 'disabled') {
+                            totalInPhase++;
+                            if (currentCheckboxStates[scenarioKey]) {
+                                enabledCount++;
+                            }
                         }
+                    });
+                }
+
+                const phaseGroupDiv = document.createElement('div');
+                phaseGroupDiv.className = 'phase-group';
+                phaseGroupDiv.id = phaseGroupId;
+                phaseGroupDiv.setAttribute('role', 'group');
+
+                const phaseHeaderDiv = document.createElement('div');
+                phaseHeaderDiv.className = 'phase-header kot-tree-row';
+                phaseHeaderDiv.id = phaseHeaderId;
+                phaseHeaderDiv.dataset.phaseName = phaseName;
+                phaseHeaderDiv.dataset.scenarioKind = kind;
+                phaseHeaderDiv.dataset.groupKey = groupKey;
+                const groupId = declaredScenarioGroup(phaseName)?.id;
+                if (groupId) { phaseHeaderDiv.dataset.groupId = groupId; }
+                if (declaredGroup?.projectRoot) {
+                    phaseHeaderDiv.dataset.projectRoot = declaredGroup.projectRoot;
+                    phaseHeaderDiv.dataset.groupId = groupId || '';
+                }
+
+                const expandCollapseButton = document.createElement('button');
+                expandCollapseButton.type = 'button';
+                expandCollapseButton.className = 'phase-expand-collapse-btn button-with-icon';
+                expandCollapseButton.setAttribute('aria-expanded', phaseExpandedState[groupKey] ? 'true' : 'false');
+                expandCollapseButton.setAttribute('aria-controls', testsListId);
+                expandCollapseButton.title = phaseExpandedState[groupKey]
+                    ? (window.__loc?.collapsePhaseTitle || 'Collapse group')
+                    : (window.__loc?.expandPhaseTitle || 'Expand group');
+                expandCollapseButton.setAttribute('aria-label', expandCollapseButton.title);
+
+                const iconSpan = document.createElement('span');
+                iconSpan.className = `codicon phase-toggle-icon kot-tree-disclosure ${phaseExpandedState[groupKey] ? 'codicon-chevron-down' : 'codicon-chevron-right'}`;
+                expandCollapseButton.appendChild(iconSpan);
+
+                const phaseCheckbox = document.createElement('input');
+                phaseCheckbox.type = 'checkbox';
+                phaseCheckbox.className = 'phase-select-checkbox';
+                phaseCheckbox.dataset.phaseName = phaseName;
+                phaseCheckbox.dataset.scenarioKind = kind;
+                phaseCheckbox.title = window.__loc?.toggleAllInPhaseTitle || 'Toggle all tests in this group';
+                phaseCheckbox.setAttribute('aria-label', phaseCheckbox.title);
+
+                const folderSpan = document.createElement('span');
+                folderSpan.className = 'codicon codicon-folder phase-folder-icon';
+                folderSpan.setAttribute('aria-hidden', 'true');
+
+                const titleSpan = document.createElement('span');
+                titleSpan.className = 'phase-title kot-tree-label';
+                const titleContent = document.createElement('span');
+                titleContent.className = 'kot-scroll-content';
+                titleContent.textContent = displayName;
+                titleSpan.appendChild(titleContent);
+
+                const phaseLabelButton = document.createElement('button');
+                phaseLabelButton.type = 'button';
+                phaseLabelButton.className = 'phase-label-button';
+                phaseLabelButton.title = displayName;
+                let groupOrderHandle = null;
+                if (groupId && declaredGroup?.projectRoot) {
+                    const handle = document.createElement('span');
+                    handle.className = 'project-order-drag-handle codicon codicon-gripper';
+                    handle.setAttribute('draggable', 'true');
+                    handle.title = window.__loc?.dragToReorder || 'Drag to reorder';
+                    handle.setAttribute('aria-label', handle.title);
+                    groupOrderHandle = handle;
+                    bindProjectOrderingHandle(handle, { type: 'group', projectRoot: declaredGroup.projectRoot, section: kind,
+                        groupId, phaseName });
+                }
+                phaseLabelButton.append(folderSpan, titleSpan);
+
+                const countElement = document.createElement('span');
+                countElement.className = 'phase-test-count kot-tree-count';
+
+                const compiledIndicator = document.createElement('span');
+                compiledIndicator.className = 'phase-compiled-indicator';
+                compiledIndicator.setAttribute('aria-hidden', 'true');
+
+                const phaseCountCluster = document.createElement('span');
+                phaseCountCluster.className = 'phase-count-cluster';
+                phaseCountCluster.append(compiledIndicator, countElement);
+
+                const createScenarioButton = document.createElement('button');
+                createScenarioButton.type = 'button';
+                createScenarioButton.className = 'phase-create-main-btn toolbar-btn ghost-btn icon-only kot-icon-button';
+                createScenarioButton.title = `${window.__loc?.createScenarioOrProcessTitle || 'Create scenario or process'}: ${displayName}`;
+                createScenarioButton.setAttribute('aria-label', createScenarioButton.title);
+                createScenarioButton.disabled = !phaseControlsActive;
+                const createScenarioIcon = document.createElement('span');
+                createScenarioIcon.className = 'codicon codicon-add';
+                createScenarioButton.appendChild(createScenarioIcon);
+
+                phaseHeaderDiv.appendChild(expandCollapseButton);
+                phaseHeaderDiv.appendChild(phaseCheckbox);
+                phaseHeaderDiv.appendChild(phaseLabelButton);
+                phaseHeaderDiv.appendChild(createScenarioButton);
+                phaseHeaderDiv.appendChild(phaseCountCluster);
+                if (groupOrderHandle) { phaseHeaderDiv.appendChild(groupOrderHandle); }
+                // The aggregate checkbox lives in the header, so calculate its
+                // checked/indeterminate state only after the controls share a DOM
+                // parent. Calling this before appendChild left every group looking
+                // unchecked even when all of its scenarios were selected.
+                updatePhaseCountButton(countElement, phaseName, enabledCount, totalInPhase);
+                updatePhaseCompiledIndicator(compiledIndicator, testsInPhase);
+
+                const testsListDiv = document.createElement('div');
+                testsListDiv.className = 'phase-tests-list';
+                testsListDiv.id = testsListId;
+
+                if (Array.isArray(testsInPhase)) {
+                    if (testsInPhase.length === 0) {
+                        const txt = window.__loc?.noTestsInPhase || 'No tests in this group.';
+                        testsListDiv.innerHTML = `<p class="no-tests-in-phase">${txt}</p>`;
+                    } else {
+                        testsListDiv.innerHTML = testsInPhase
+                            .filter(info => !!info?.name)
+                            .map(info => createCheckboxHtml(info))
+                            .join('');
                     }
-                });
-            }
-
-            const phaseGroupDiv = document.createElement('div');
-            phaseGroupDiv.className = 'phase-group';
-            phaseGroupDiv.id = phaseGroupId;
-            phaseGroupDiv.setAttribute('role', 'group');
-
-            const phaseHeaderDiv = document.createElement('div');
-            phaseHeaderDiv.className = 'phase-header kot-tree-row';
-            phaseHeaderDiv.id = phaseHeaderId;
-            phaseHeaderDiv.dataset.phaseName = phaseName;
-
-            const expandCollapseButton = document.createElement('button');
-            expandCollapseButton.type = 'button';
-            expandCollapseButton.className = 'phase-expand-collapse-btn button-with-icon';
-            expandCollapseButton.setAttribute('aria-expanded', phaseExpandedState[phaseName] ? 'true' : 'false');
-            expandCollapseButton.setAttribute('aria-controls', testsListId);
-            expandCollapseButton.title = phaseExpandedState[phaseName]
-                ? (window.__loc?.collapsePhaseTitle || 'Collapse group')
-                : (window.__loc?.expandPhaseTitle || 'Expand group');
-            expandCollapseButton.setAttribute('aria-label', expandCollapseButton.title);
-
-            const iconSpan = document.createElement('span');
-            iconSpan.className = `codicon phase-toggle-icon kot-tree-disclosure ${phaseExpandedState[phaseName] ? 'codicon-chevron-down' : 'codicon-chevron-right'}`;
-            expandCollapseButton.appendChild(iconSpan);
-
-            const phaseCheckbox = document.createElement('input');
-            phaseCheckbox.type = 'checkbox';
-            phaseCheckbox.className = 'phase-select-checkbox';
-            phaseCheckbox.dataset.phaseName = phaseName;
-            phaseCheckbox.title = window.__loc?.toggleAllInPhaseTitle || 'Toggle all tests in this group';
-            phaseCheckbox.setAttribute('aria-label', phaseCheckbox.title);
-
-            const folderSpan = document.createElement('span');
-            folderSpan.className = 'codicon codicon-folder phase-folder-icon';
-            folderSpan.setAttribute('aria-hidden', 'true');
-
-            const titleSpan = document.createElement('span');
-            titleSpan.className = 'phase-title kot-tree-label';
-            const titleContent = document.createElement('span');
-            titleContent.className = 'kot-scroll-content';
-            titleContent.textContent = phaseName;
-            titleSpan.appendChild(titleContent);
-
-            const phaseLabelButton = document.createElement('button');
-            phaseLabelButton.type = 'button';
-            phaseLabelButton.className = 'phase-label-button';
-            phaseLabelButton.title = phaseName;
-            phaseLabelButton.append(folderSpan, titleSpan);
-
-            const countElement = document.createElement('span');
-            countElement.className = 'phase-test-count kot-tree-count';
-
-            const compiledIndicator = document.createElement('span');
-            compiledIndicator.className = 'phase-compiled-indicator';
-            compiledIndicator.setAttribute('aria-hidden', 'true');
-
-            const phaseCountCluster = document.createElement('span');
-            phaseCountCluster.className = 'phase-count-cluster';
-            phaseCountCluster.append(compiledIndicator, countElement);
-
-            const createScenarioButton = document.createElement('button');
-            createScenarioButton.type = 'button';
-            createScenarioButton.className = 'phase-create-main-btn toolbar-btn ghost-btn icon-only kot-icon-button';
-            createScenarioButton.title = `${window.__loc?.createMainScenario || 'Create main scenario'}: ${phaseName}`;
-            createScenarioButton.setAttribute('aria-label', createScenarioButton.title);
-            createScenarioButton.disabled = !phaseControlsActive;
-            const createScenarioIcon = document.createElement('span');
-            createScenarioIcon.className = 'codicon codicon-add';
-            createScenarioButton.appendChild(createScenarioIcon);
-
-            phaseHeaderDiv.appendChild(expandCollapseButton);
-            phaseHeaderDiv.appendChild(phaseCheckbox);
-            phaseHeaderDiv.appendChild(phaseLabelButton);
-            phaseHeaderDiv.appendChild(createScenarioButton);
-            phaseHeaderDiv.appendChild(phaseCountCluster);
-            // The aggregate checkbox lives in the header, so calculate its
-            // checked/indeterminate state only after the controls share a DOM
-            // parent. Calling this before appendChild left every group looking
-            // unchecked even when all of its scenarios were selected.
-            updatePhaseCountButton(countElement, phaseName, enabledCount, totalInPhase);
-            updatePhaseCompiledIndicator(compiledIndicator, testsInPhase);
-
-            const testsListDiv = document.createElement('div');
-            testsListDiv.className = 'phase-tests-list';
-            testsListDiv.id = testsListId;
-
-            if (Array.isArray(testsInPhase)) {
-                if (testsInPhase.length === 0) {
-                    const txt = window.__loc?.noTestsInPhase || 'No tests in this group.';
-                    testsListDiv.innerHTML = `<p class="no-tests-in-phase">${txt}</p>`;
                 } else {
-                    testsListDiv.innerHTML = testsInPhase
-                        .filter(info => !!info?.name)
-                        .map(info => createCheckboxHtml(info))
-                        .join('');
+                    const txt = window.__loc?.errorLoadingTests || 'Error loading tests.';
+                    testsListDiv.innerHTML = `<p style="color:var(--vscode-errorForeground);">${txt}</p>`;
                 }
-            } else {
-                const txt = window.__loc?.errorLoadingTests || 'Error loading tests.';
-                testsListDiv.innerHTML = `<p style="color:var(--vscode-errorForeground);">${txt}</p>`;
-            }
 
-            setPhaseListExpandedState(testsListDiv, !!phaseExpandedState[phaseName], false);
+                setPhaseListExpandedState(testsListDiv, !!phaseExpandedState[groupKey], false);
 
-            phaseGroupDiv.appendChild(phaseHeaderDiv);
-            phaseGroupDiv.appendChild(testsListDiv);
-            phaseTreeContainer.appendChild(phaseGroupDiv);
+                phaseGroupDiv.appendChild(phaseHeaderDiv);
+                phaseGroupDiv.appendChild(testsListDiv);
+                sectionGroups.appendChild(phaseGroupDiv);
 
-            expandCollapseButton.addEventListener('click', handlePhaseHeaderClick);
-            phaseLabelButton.addEventListener('click', handlePhaseHeaderClick);
-            phaseCheckbox.addEventListener('change', handleTogglePhaseCheckboxesClick);
-            createScenarioButton.addEventListener('click', event => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (createScenarioButton.disabled) {
-                    return;
+                expandCollapseButton.addEventListener('click', handlePhaseHeaderClick);
+                phaseLabelButton.addEventListener('click', handlePhaseHeaderClick);
+                phaseCheckbox.addEventListener('change', handleTogglePhaseCheckboxesClick);
+                createScenarioButton.addEventListener('click', event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (createScenarioButton.disabled) {
+                        return;
+                    }
+                    const rect = createScenarioButton.getBoundingClientRect();
+                    showContextMenuAt(
+                        rect.left,
+                        rect.bottom,
+                        createGroupDefinitionActions(phaseName, kind),
+                        `create-group:${phaseGroupStateKey(phaseName, kind)}`
+                    );
+                });
+                phaseHeaderDiv.addEventListener('contextmenu', handlePhaseContextMenu);
+                if (declaredGroup?.projectRoot) {
+                    bindProjectOrderingTarget(phaseHeaderDiv, { projectRoot: declaredGroup.projectRoot, section: kind, groupId: groupId || '', phaseName });
+                    bindProjectOrderingTarget(testsListDiv, { projectRoot: declaredGroup.projectRoot, section: kind, groupId: groupId || '', phaseName });
                 }
-                vscode.postMessage(
-                    scenarioProtocol.createGroupScenarioCommand('createMainScenario', phaseName)
-                );
             });
-            phaseHeaderDiv.addEventListener('contextmenu', handlePhaseContextMenu);
-        });
+            if (sectionGroups.children.length === 0) {
+                const empty = document.createElement('p');
+                empty.className = 'scenario-section-empty';
+                empty.textContent = kind === 'process'
+                    ? window.__loc?.noProcesses || 'No processes.'
+                    : window.__loc?.noMainScenarios || 'No main scenarios.';
+                sectionGroups.appendChild(empty);
+            }
+        }
         applyCheckboxStatesToVisible();
         syncScenarioSearchHighlightState(false);
         log('Phase tree rendered.');
@@ -1666,18 +2062,21 @@
         if (!phaseHeader || !(phaseHeader instanceof HTMLElement)) return;
 
         const phaseName = phaseHeader.dataset.phaseName;
-        if (!phaseName) return;
+        const groupKey = phaseHeader.dataset.groupKey;
+        if (!phaseName || !groupKey) return;
 
-        const testsListId = 'tests-list-' + phaseName.replace(/[^a-zA-Z0-9_\\-]/g, '_');
-        const testsList = document.getElementById(testsListId);
+        const testsList = phaseHeader.closest('.phase-group')?.querySelector('.phase-tests-list');
         const toggleButton = phaseHeader.querySelector('.phase-expand-collapse-btn');
         const icon = toggleButton?.querySelector('.phase-toggle-icon');
 
         if (!testsList || !icon || !(toggleButton instanceof HTMLButtonElement)) return;
 
-        const nextExpanded = !phaseExpandedState[phaseName];
-        phaseExpandedState[phaseName] = nextExpanded;
-        setPhaseListExpandedState(testsList, nextExpanded, true);
+        const nextExpanded = !phaseExpandedState[groupKey];
+        phaseExpandedState[groupKey] = nextExpanded;
+        persistScenarioSectionState();
+        // Search reveals matching rows regardless of stored group expansion,
+        // so these toggles cannot produce a max-height transition until cleared.
+        setPhaseListExpandedState(testsList, nextExpanded, !activeScenarioSearchQuery);
         icon.classList.toggle('codicon-chevron-right', !nextExpanded);
         icon.classList.toggle('codicon-chevron-down', nextExpanded);
         toggleButton.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
@@ -1706,8 +2105,7 @@
         }
         log(`Phase count toggle for phase '${phaseName}' clicked.`);
 
-        const testsListId = 'tests-list-' + phaseName.replace(/[^a-zA-Z0-9_\\-]/g, '_');
-        const testsList = document.getElementById(testsListId);
+        const testsList = button.closest('.phase-group')?.querySelector('.phase-tests-list');
         if (!testsList) return;
 
         const visibleKeySet = new Set(currentVisibleScenarioKeys);
@@ -1737,16 +2135,23 @@
     function updateAreAllPhasesExpandedState() {
         if (!phaseTreeContainer) return;
         const phaseHeaders = phaseTreeContainer.querySelectorAll('.phase-header');
-        if (phaseHeaders.length === 0) {
+        const sections = phaseTreeContainer.querySelectorAll('.scenario-type-section');
+        if (phaseHeaders.length === 0 && sections.length === 0) {
             areAllPhasesCurrentlyExpanded = false;
             return;
         }
 
         let allExpanded = true;
+        for (const section of sections) {
+            if (scenarioSectionCollapsedState[section.dataset.scenarioKind]) {
+                allExpanded = false;
+                break;
+            }
+        }
         for (const header of phaseHeaders) {
             if (header instanceof HTMLElement) {
-                const phaseName = header.dataset.phaseName;
-                if (phaseName && !phaseExpandedState[phaseName]) {
+                const groupKey = header.dataset.groupKey;
+                if (groupKey && !phaseExpandedState[groupKey]) {
                     allExpanded = false;
                     break;
                 }
@@ -1767,16 +2172,24 @@
 
         const shouldExpandAll = !areAllPhasesCurrentlyExpanded;
 
+        phaseTreeContainer.querySelectorAll('.scenario-type-section').forEach(section => {
+            const heading = section.querySelector('.scenario-section-header');
+            const kind = section.dataset.scenarioKind;
+            if (heading instanceof HTMLElement && scenarioSectionCollapsedState[kind] === shouldExpandAll) {
+                heading.click();
+            }
+        });
+
         const phaseHeaderButtons = phaseTreeContainer.querySelectorAll('.phase-header .phase-expand-collapse-btn');
         phaseHeaderButtons.forEach(button => {
             if (button instanceof HTMLElement) {
                 const phaseHeader = button.closest('.phase-header');
                 if (!phaseHeader || !(phaseHeader instanceof HTMLElement)) return;
 
-                const phaseName = phaseHeader.dataset.phaseName;
-                if (!phaseName) return;
+                const groupKey = phaseHeader.dataset.groupKey;
+                if (!groupKey) return;
 
-                if (phaseExpandedState[phaseName] !== shouldExpandAll) {
+                if (phaseExpandedState[groupKey] !== shouldExpandAll) {
                     button.click();
                 }
             }
@@ -2218,6 +2631,7 @@
     }
 
     function handleScenarioResourceDragOver(event) {
+        if (projectOrderDrag || event.dataTransfer?.types?.includes(projectOrderDragType)) { return; }
         if (!event.dataTransfer?.types?.includes('Files')) {
             return;
         }
@@ -2232,6 +2646,7 @@
     }
 
     function handleScenarioResourceDrop(event) {
+        if (projectOrderDrag || event.dataTransfer?.types?.includes(projectOrderDragType)) { return; }
         event.currentTarget.classList.remove('is-drop-target');
         if (!event.dataTransfer?.files?.length && !event.dataTransfer?.items?.length) {
             return;
@@ -2333,6 +2748,7 @@
             return;
         }
         closeAssembleOptionsMenu();
+        standaloneFeatures?.closeMenu();
 
         if (activeContextMenu && activeContextMenu.getAttribute('data-scope') === scopeKey) {
             closeContextMenu();
@@ -2396,7 +2812,10 @@
 
     function handlePhaseContextMenu(event) {
         if (!(event.currentTarget instanceof HTMLElement)) return;
-        const phaseName = event.currentTarget.dataset.phaseName;
+        const phaseKey = event.currentTarget.dataset.phaseName;
+        const phaseName = declaredScenarioGroup(phaseKey)?.name || phaseKey;
+        const kind = event.currentTarget.dataset.scenarioKind;
+        const groupId = event.currentTarget.dataset.groupId;
         if (!phaseName) return;
 
         event.preventDefault();
@@ -2404,11 +2823,12 @@
         const actions = scenarioProtocol.createPhaseContextMenuActions(phaseName, {
             createMainScenario: window.__loc?.createMainScenario || 'Create main scenario',
             renameGroup: window.__loc?.renameGroupTitle || 'Rename group'
-        }).map(action => ({
-            ...action,
-            onClick: () => vscode.postMessage(action.message)
-        }));
-        showContextMenuAt(event.clientX, event.clientY, actions, `phase:${phaseName}`);
+        }).filter(action => action.message.command !== 'createMainScenario'
+            && (declaredScenarioGroup(phaseKey)?.id !== '' || action.message.command !== 'renameGroup'))
+            .map(action => ({ ...action, onClick: () => vscode.postMessage(groupId && action.message.command === 'renameGroup'
+                ? { ...action.message, groupId } : action.message) }));
+        actions.unshift(...createGroupDefinitionActions(phaseKey, kind));
+        showContextMenuAt(event.clientX, event.clientY, actions, `phase:${phaseGroupStateKey(phaseKey, kind)}`);
     }
 
     function handleScenarioContextMenu(event) {
@@ -2435,7 +2855,7 @@
         const canOpenRunLog = !!runInfo?.canOpenRunLog;
         const isRunInProgress = runInfo?.runStatus === 'running';
         const isBlockingRunInProgress = isRunInProgress && runInfo?.blocksControls !== false;
-        const runDisabled = isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact;
+        const runDisabled = isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact || runInfo?.canRun === false;
         const runModeAutomaticLabel = window.__loc?.runScenarioModeAutomatic || 'Run test (auto close)';
         const runLabel = runModeAutomaticLabel.replace(/\s*\([^)]*\)\s*$/, '') || 'Run test';
         const runHint = window.__loc?.runScenarioModeAutomaticHint || 'Runs scenario with StartFeaturePlayer and waits for completion.';
@@ -2465,9 +2885,22 @@
             },
             {
                 icon: 'codicon-settings-gear',
+                label: window.__loc?.openScenarioProperties || 'Open test properties',
+                onClick: () => postScenarioCommand('openScenarioProperties')
+            },
+            {
+                icon: 'codicon-folder', label: window.__loc?.changeScenarioGroup || 'Change group',
+                onClick: () => postScenarioCommand('changeScenarioGroup')
+            },
+            {
+                icon: 'codicon-settings-gear',
                 label: window.__loc?.openTestSettingsTitle || 'Open test settings',
                 onClick: () => postScenarioCommand('openMainScenarioTestSettings')
             },
+            ...(testInfo.kind === 'process' ? [
+                { icon: 'codicon-add', label: window.__loc?.addProcessSteps || 'Add process steps', onClick: () => postScenarioCommand('addProcessSteps') },
+                { icon: 'codicon-list-ordered', label: window.__loc?.editProcessSteps || 'Edit process steps', onClick: () => postScenarioCommand('editProcessSteps') }
+            ] : []),
             { separator: true },
             {
                 icon: 'codicon-play-circle',
@@ -2475,6 +2908,11 @@
                 title: runDisabled ? runUnavailable : runHint,
                 disabled: runDisabled,
                 onClick: () => postScenarioCommand('runScenarioInVanessa')
+            },
+            {
+                icon: 'codicon-settings-gear',
+                label: window.__loc?.configureVanessaDebugClients || 'Configure debug clients',
+                onClick: () => vscode.postMessage({ command: 'configureVanessaDebugClients' })
             },
             {
                 icon: 'codicon-go-to-file',
@@ -2523,12 +2961,12 @@
             },
             {
                 icon: 'codicon-rename',
-                label: window.__loc?.renameScenarioTitle || 'Rename scenario',
+                label: testInfo.kind === 'process' ? window.__loc?.renameProcessTitle || 'Rename process' : window.__loc?.renameScenarioTitle || 'Rename scenario',
                 onClick: () => postScenarioCommand('renameScenario')
             },
             {
                 icon: 'codicon-trash',
-                label: window.__loc?.deleteMainScenarioTitle || 'Delete main scenario',
+                label: testInfo.kind === 'process' ? window.__loc?.deleteProcessTitle || 'Delete process' : window.__loc?.deleteMainScenarioTitle || 'Delete main scenario',
                 onClick: () => postScenarioCommand('deleteMainScenario')
             }
         ], `scenario:${name}`);
@@ -2582,6 +3020,16 @@
             label.addEventListener('contextmenu', handleScenarioContextMenu);
             label.removeEventListener('click', handleScenarioRowClick);
             label.addEventListener('click', handleScenarioRowClick);
+            const info = getTestInfoByKey(label.dataset.key);
+            const handle = label.querySelector('.project-order-drag-handle');
+            if (handle) { label.appendChild(handle); }
+            if (handle && info?.projectRoot && info.entityKey) {
+                const header = label.closest('.phase-group')?.querySelector('.phase-header');
+                const target = { projectRoot: info.projectRoot, section: scenarioSectionKind(info), groupId: info.groupId || '',
+                    phaseName: header?.dataset.phaseName, beforeId: info.entityKey };
+                bindProjectOrderingHandle(handle, { ...target, type: 'item', uri: info.yamlFileUriString });
+                bindProjectOrderingTarget(label, target);
+            }
         });
 
         const openButtons = phaseTreeContainer.querySelectorAll('.open-scenario-btn');
@@ -2621,7 +3069,7 @@
             const runInfo = runArtifacts ? runArtifacts[scenarioKey] : null;
             const hasRunArtifact = !!(runInfo && (runInfo.featurePath || runInfo.jsonPath));
             const isBlockingRunInProgress = runInfo?.runStatus === 'running' && runInfo?.blocksControls !== false;
-            btn.disabled = isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact;
+            btn.disabled = isBuildInProgress || isBlockingRunInProgress || !hasRunArtifact || runInfo?.canRun === false;
             btn.removeEventListener('click', handleRunScenarioClick);
             btn.addEventListener('click', handleRunScenarioClick);
         });
@@ -2677,8 +3125,9 @@
             const phaseName = header.dataset.phaseName;
             if (!phaseName || !testDataByPhase[phaseName]) return;
 
-            const testsInPhase = testDataByPhase[phaseName];
-            const phaseAggregate = phaseVisibilityAggregate(phaseName, states);
+            const kind = header.dataset.scenarioKind;
+            const testsInPhase = phaseTestInfos(phaseName, kind);
+            const phaseAggregate = phaseVisibilityAggregate(phaseName, states, kind);
             const countElement = header.querySelector('.phase-test-count');
             if (countElement instanceof HTMLElement) {
                 updatePhaseCountButton(
@@ -2801,6 +3250,10 @@
                 break;
             case 'toggleAllGroups':
                 handleCollapseAllClick();
+                standaloneFeatures?.toggleAllGroups();
+                break;
+            case 'standaloneFeatures':
+                standaloneFeatures?.setSnapshot(message.snapshot);
                 break;
             case 'loadInitialState':
                 if (message.error) {
@@ -2808,6 +3261,7 @@
                      closeContextMenu();
                      applyYamlParametersProfilesState(undefined);
                      runArtifacts = {};
+                     attachmentPathsByScenario = {};
                      const errorTemplate = window.__loc?.errorWithDetails || 'Error: {0}';
                      updateStatus(errorTemplate.replace('{0}', message.error), 'main');
                       phaseSwitcherSectionElements.forEach(el => { if (el instanceof HTMLElement) el.style.display = 'none'; });
@@ -2816,8 +3270,23 @@
                     closeAssembleOptionsMenu();
                     closeContextMenu();
                     testDataByPhase = message.tabData || {};
+                    clearProjectOrderingDrag();
+                    scenarioGroups = Array.isArray(message.scenarioGroups)
+                        ? message.scenarioGroups.filter(group => group && typeof group.id === 'string'
+                            && typeof group.name === 'string' && group.name.trim()
+                            && Array.isArray(group.sections)).map(group => ({
+                                id: group.id, name: group.name,
+                                key: typeof group.key === 'string' ? group.key : group.name,
+                                projectRoot: typeof group.projectRoot === 'string' ? group.projectRoot : '',
+                                displayOrders: group.displayOrders && typeof group.displayOrders === 'object' ? group.displayOrders : {},
+                                sections: group.sections.filter(kind => kind === 'main' || kind === 'process'),
+                                order: Number.isFinite(group.order) ? group.order : Infinity
+                            }))
+                        : [];
                     initialTestStates = message.states || {};
                     runArtifacts = message.runArtifacts || {};
+                    attachmentPathsByScenario = message.attachmentPathsByScenario || {};
+                    standaloneFeatures?.setRunArtifacts(runArtifacts);
                     relationshipState = scenarioProtocol.parseRelationshipState(message.relationshipState);
                     applyYamlParametersProfilesState(message.yamlParametersProfiles);
                     rebuildTestInfoIndex();
@@ -2840,15 +3309,9 @@
                     settings.statusFilter = statusFilter;
                     isBuildInProgress = !!settings.buildInProgress;
                     log("Received settings in webview:");
-                    console.log(settings);
+                    log('Test Manager settings updated.');
 
                     currentCheckboxStates = {};
-                    if (Object.keys(phaseExpandedState).length === 0 && testDataByPhase) {
-                        Object.keys(testDataByPhase).forEach(phaseName => {
-                            phaseExpandedState[phaseName] = false;
-                        });
-                    }
-
                     Object.keys(testDataByPhase).forEach(phaseName => {
                         if (Array.isArray(testDataByPhase[phaseName])) {
                             testDataByPhase[phaseName].forEach(info => {
@@ -2908,6 +3371,12 @@
                 }
                 break;
 
+            case 'updateScenarioAttachmentSearchPaths':
+                attachmentPathsByScenario = message.attachmentPathsByScenario || {};
+                syncScenarioSearchHighlightState(false);
+                updatePhaseCounts();
+                break;
+
             case 'updateRunArtifactsState':
                 isDemoMode = false;
                 {
@@ -2924,6 +3393,7 @@
                         }
                     }
                     runArtifacts = nextRunArtifacts;
+                    standaloneFeatures?.setRunArtifacts(runArtifacts);
                     updateTopRunButtonState();
                     updatePhaseCounts();
                     if (settings.switcherEnabled && testDataByPhase && Object.keys(testDataByPhase).length > 0) {
@@ -3165,9 +3635,19 @@
         };
         phaseTreeContainer.addEventListener('mouseover', refreshHoveredScenarioOverflow);
         phaseTreeContainer.addEventListener('mouseout', refreshHoveredScenarioOverflow);
+        phaseTreeContainer.addEventListener('focusin', refreshHoveredScenarioOverflow);
+        phaseTreeContainer.addEventListener('focusout', refreshHoveredScenarioOverflow);
     }
 
     if (openVanessaBtn instanceof HTMLButtonElement) {
+        openVanessaBtn.addEventListener('contextmenu', event => {
+            event.preventDefault(); event.stopPropagation();
+            showContextMenuAt(event.clientX, event.clientY, [{
+                icon: 'codicon-settings-gear',
+                label: window.__loc?.configureVanessaDebugClients || 'Configure debug clients',
+                onClick: () => vscode.postMessage({ command: 'configureVanessaDebugClients' })
+            }], 'vanessa-debug');
+        });
         openVanessaBtn.addEventListener('click', () => {
             if (!openVanessaBtn.disabled) {
                 vscode.postMessage({ command: 'openVanessa' });
@@ -3234,6 +3714,13 @@
             assembleDropdownContent.style.right = 'auto';
             assembleDropdownContent.style.left = `${leftOffset}px`;
         }
+    }
+
+    if (openCompilerBuildReportBtn) {
+        openCompilerBuildReportBtn.addEventListener('click', event => {
+            event.preventDefault(); event.stopPropagation();
+            vscode.postMessage({ command: 'openCompilerBuildReport' });
+        });
     }
 
     if (openYamlParametersQuickBtn) {

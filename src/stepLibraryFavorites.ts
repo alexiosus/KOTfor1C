@@ -76,7 +76,7 @@ export class StepLibraryFavoritesService {
         ).map(entry => entry.uri));
         for (const item of snapshot.items) {
             if (
-                item.sourceGroup === 'main'
+                (item.sourceGroup === 'main' || item.sourceGroup === 'process')
                 && item.capturedLocation
                 && legacyUris.has(item.capturedLocation.uri)
             ) {
@@ -87,7 +87,7 @@ export class StepLibraryFavoritesService {
     }
 
     public async toggle(item: StepLibraryItem): Promise<boolean> {
-        if (item.sourceGroup === 'main' && item.capturedLocation) {
+        if ((item.sourceGroup === 'main' || item.sourceGroup === 'process') && item.capturedLocation) {
             const entries = legacyEntries(
                 this.workspaceState.get<unknown>(legacyFavoriteScenariosKey, [])
             );

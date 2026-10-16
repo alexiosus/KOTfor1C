@@ -3,6 +3,7 @@ import test from 'node:test';
 import type * as vscode from 'vscode';
 import {
     findScenarioHeaderFieldLines,
+    findProcessHeaderFieldLines,
     findTestSettingsFieldLines,
     parseYamlSectionFieldValues
 } from '../src/yamlHeaderFields';
@@ -41,6 +42,59 @@ test('YAML header fields resolve direct map entries and ignore comments and nest
         systemFunctionLine: 7,
         systemFunctionUidLine: 8,
         kotDescriptionLine: 12
+    });
+});
+
+test('process header fields resolve process identity without scenario-only actions', () => {
+    const source = [
+        'ТипФайла: "Процесс"',
+        'ДанныеСценария:',
+        '  Имя: "Не сценарий"',
+        'ДанныеПроцесса:',
+        '  # Имя: "Комментарий"',
+        '  ДополнительныеДанные:',
+        '    Имя: "Не процесс"',
+        '  Имя: "Продажи: этап #1"',
+        '  Код: 001',
+        '  ФункцияСистемы: Продажи',
+        '  UIDФункцияСистемы: uid-function',
+        'KOTМетаданные:',
+        '  Описание: "Описание процесса"'
+    ].join('\r\n');
+
+    assert.deepEqual(findProcessHeaderFieldLines(textDocument(source)), {
+        fileTypeLine: 0,
+        nameLine: 7,
+        codeLine: 8,
+        systemFunctionLine: null,
+        systemFunctionUidLine: null,
+        kotDescriptionLine: null
+    });
+});
+
+test('process test settings expose linked process identity and existing base and user fields', () => {
+    const source = [
+        'ТипФайла: "НастройкаПроцесса"',
+        'ДанныеТеста:',
+        '  Код: PROCESS-1',
+        '  Имя: "Продажи"',
+        '  UIDПроцесса: process-uid',
+        '  ПроцессНаименование: Процесс',
+        '  UIDСценария: wrong-uid',
+        '  СценарийНаименование: Не сценарий',
+        '  ЭталоннаяБазаИмя: Эталон',
+        '  ПрофильПользователя: Администратор',
+        '  ИдентификаторБазы: base-id'
+    ].join('\n');
+
+    assert.deepEqual(findTestSettingsFieldLines(textDocument(source)), {
+        codeLine: 2,
+        nameLine: 3,
+        scenarioUidLine: 4,
+        scenarioNameLine: 5,
+        etalonBaseNameLine: 8,
+        userProfileLine: 9,
+        modelDbIdLine: 10
     });
 });
 

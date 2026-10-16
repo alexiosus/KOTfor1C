@@ -60,6 +60,19 @@ body {
     border-radius: 0;
 }
 
+.step-content {
+    min-width: 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+.step-content .step-tree {
+    overflow: visible;
+    scrollbar-gutter: auto;
+}
+
 .step-row {
     padding-left: calc(4px + var(--step-depth, 0) * 10px);
     border: 1px solid transparent;

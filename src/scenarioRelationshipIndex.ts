@@ -1,6 +1,6 @@
 import type { ScenarioCatalog } from './scenarioCatalog';
 import { getScenarioRuntimeKey } from './scenarioRuntimeIdentity';
-import type { TestInfo } from './types';
+import type { ProcessStepReference, TestInfo } from './types';
 
 export interface ScenarioRelationshipEntry {
     readonly scenarioKey: string;
@@ -16,7 +16,7 @@ export interface ScenarioRelationshipProjection {
 }
 
 function isMainScenario(scenario: TestInfo): boolean {
-    return typeof scenario.tabName === 'string' && scenario.tabName.trim().length > 0;
+    return scenario.kind === 'process' || (typeof scenario.tabName === 'string' && scenario.tabName.trim().length > 0);
 }
 
 function compareText(left: string, right: string): number {
@@ -37,16 +37,47 @@ export class ScenarioRelationshipIndex {
         const outgoingByKey = new Map<string, Set<string>>();
         const incomingByKey = new Map<string, Set<string>>();
         const callerNames = new Map<string, Set<string>>();
+        const targetsByUid = new Map<string, TestInfo[]>();
 
         for (const scenario of catalog.all) {
             const key = getScenarioRuntimeKey(scenario);
             scenariosByKey.set(key, scenario);
             outgoingByKey.set(key, new Set<string>());
             incomingByKey.set(key, new Set<string>());
+            if (scenario.uid?.trim()) {
+                const uid = `${scenario.kind === 'process' ? 'process' : 'scenario'}:${scenario.uid.trim().toLowerCase()}`;
+                targetsByUid.set(uid, [...(targetsByUid.get(uid) ?? []), scenario]);
+            }
         }
 
-        for (const caller of catalog.all) {
+        const resolveProcessStep = (step: ProcessStepReference): TestInfo | undefined => {
+            const uid = (step.type === 'process' ? step.processUid : step.scenarioUid)?.trim();
+            const name = (step.type === 'process' ? step.processName : step.scenarioName)?.trim();
+            const candidates = uid
+                ? targetsByUid.get(`${step.type}:${uid.toLowerCase()}`) ?? []
+                : (catalog.byName.get(name ?? '') ?? []).filter(candidate =>
+                    (candidate.kind === 'process' ? 'process' : 'scenario') === step.type);
+            return candidates.length === 1 ? candidates[0] : undefined;
+        };
+
+        const connect = (caller: TestInfo, callee: TestInfo): void => {
             const callerKey = getScenarioRuntimeKey(caller);
+            const calleeKey = getScenarioRuntimeKey(callee);
+            outgoingByKey.get(callerKey)?.add(calleeKey);
+            incomingByKey.get(calleeKey)?.add(callerKey);
+            const callers = callerNames.get(callee.name) ?? new Set<string>();
+            callers.add(caller.name);
+            callerNames.set(callee.name, callers);
+        };
+
+        for (const caller of catalog.all) {
+            if (caller.kind === 'process') {
+                for (const step of caller.processSteps ?? []) {
+                    const callee = resolveProcessStep(step);
+                    if (callee) { connect(caller, callee); }
+                }
+                continue;
+            }
             for (const rawCalleeName of caller.nestedScenarioNames ?? []) {
                 const calleeName = rawCalleeName.trim();
                 if (!calleeName) {
@@ -58,14 +89,13 @@ export class ScenarioRelationshipIndex {
                 callerNames.set(calleeName, callers);
 
                 const candidates = [...(catalog.byName.get(calleeName) ?? [])]
+                    .filter(candidate => candidate.kind !== 'process')
                     .sort((left, right) => compareText(
                         getScenarioRuntimeKey(left),
                         getScenarioRuntimeKey(right)
                     ));
                 for (const callee of candidates) {
-                    const calleeKey = getScenarioRuntimeKey(callee);
-                    outgoingByKey.get(callerKey)?.add(calleeKey);
-                    incomingByKey.get(calleeKey)?.add(callerKey);
+                    connect(caller, callee);
                 }
             }
         }
@@ -133,7 +163,10 @@ export class ScenarioRelationshipIndex {
             })
             .sort((left, right) => this.compareScenarioKeys(left, right));
         const affectedPhaseNames = [...new Set(affectedMainScenarioKeys
-            .map(key => this.scenariosByKey.get(key)?.tabName?.trim() ?? '')
+            .map(key => {
+                const scenario = this.scenariosByKey.get(key);
+                return scenario?.tabName?.trim() || (scenario?.kind === 'process' ? 'Processes' : '');
+            })
             .filter(Boolean))]
             .sort(compareText);
 

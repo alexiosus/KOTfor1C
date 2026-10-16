@@ -6,8 +6,45 @@
 const { AstBuilder, GherkinClassicTokenMatcher, Parser } = require('@cucumber/gherkin');
 const { IdGenerator } = require('@cucumber/messages');
 
+function maskVanessaSections(source) {
+    const lines = source.split(/\n/u);
+    let variables = false;
+    let delimiter = '';
+    return lines.map((line, index) => {
+        const marker = /^\s*("""|```)/u.exec(line)?.[1];
+        const inDocString = !!delimiter || !!marker;
+        if (marker && (!delimiter || marker === delimiter)) { delimiter = delimiter ? '' : marker; }
+        if (!inDocString && /^\s*(?:Variables|Hyperlinks|Links|Переменные|Гиперссылки|Ссылки)\s*:/iu.test(line)) {
+            variables = true;
+        } else if (!inDocString && /^\s*(?:Feature|Functionality|Business Need|Ability|Функциональность|Функционал|Функция|Background|Предыстория|Контекст|Scenario(?: Outline| Template)?|Сценарий|Структура сценария|Шаблон сценария|Rule|Правило)\s*:/iu.test(line)) {
+            variables = false;
+        }
+        if (variables) { return line.replace(/[^\r]/gu, ' '); }
+        if (!inDocString && /^\s*@(?:screenshot|recordvideo|StopRecordVideo|StartRecordVideo)\s*$/iu.test(line)) {
+            const next = lines.slice(index + 1).find(value => value.trim() && !/^\s*(?:#|\/\/|@)/u.test(value));
+            if (next && /^\s*(?:\*\s*|(?:Given|When|Then|And|But|If|Дано|Допустим|Когда|Тогда|И|Но|К тому же|Если)\s)/iu.test(next)) {
+                return line.replace(/[^\r]/gu, ' ');
+            }
+        }
+        if (!inDocString) {
+            const control = /^([ \t]*)(Try|Except|Else|Попытка|Исключение|Иначе)(?=[ \t]*\r?$)/iu.exec(line)
+                || /^([ \t]*)(ElseIf(?=[ \t]+.+[ \t]+Then[ \t]*\r?$)|ИначеЕсли(?=[ \t]+.+[ \t]+Тогда[ \t]*\r?$))/iu.exec(line);
+            if (control) {
+                // Vanessa uses indentation for these feature blocks. Keep each control as a
+                // generic step for Cucumber, preserving source positions and parser errors.
+                return `${control[1]}*${' '.repeat(control[2].length - 1)}${line.slice(control[0].length)}`;
+            }
+        }
+        return line;
+    }).join('\n');
+}
+
 function maskVanessaMetadata(source) {
-    return source
+    return maskVanessaSections(source)
+        .replace(
+            /^(\uFEFF?[ \t]*)Functionality([ \t]*):/gimu,
+            (_value, indent, space) => `${indent}Feature${space}:${' '.repeat(6)}`
+        )
         .replace(
             /^([ \t]*)(?:@(?:steptype|типшага|description|описание|exampleofuse|примериспользования)\s*:|@[\p{L}\p{N}_-]+\s*=|\/\/).*$/gimu,
             value => value.replace(/[^\r\n]/gu, ' ')

@@ -1,3 +1,7 @@
+import { VANESSA_PARAMETER_CATALOG } from './vanessaParameterCatalog.generated';
+import type { VanessaParameterValueKind } from './vanessaParameterParser';
+export type AdditionalParameterValueKind = Exclude<VanessaParameterValueKind, 'unknown'> | 'null';
+
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 export type JsonPointer = readonly (string | number)[];
@@ -6,6 +10,7 @@ export interface AdditionalLaunchVanessaParameter {
     key: string;
     value: string;
     overrideExisting: boolean;
+    valueKind?: AdditionalParameterValueKind;
 }
 
 export interface JsonTransformationResult {
@@ -14,6 +19,9 @@ export interface JsonTransformationResult {
 }
 
 const VANESSA_PARAM_ALIAS_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
+    ...VANESSA_PARAMETER_CATALOG.flatMap(entry => entry.aliases.flatMap(alias => [
+        [entry.key, alias], [entry.key.split('.').at(-1)!, alias.split('.').at(-1)!]
+    ])),
     ['ВерсияVA', 'VersionVA'],
     ['КаталогФич', 'featurepath'],
     ['КаталогПроекта', 'projectpath'],
@@ -108,12 +116,12 @@ const VANESSA_PARAM_ALIAS_INDEX = (() => {
         if (normalizedGroup.length < 2) {
             continue;
         }
-        const normalizedLookup = normalizedGroup.map(key => key.toLowerCase());
-        for (const lookupKey of normalizedLookup) {
-            const bucket = index.get(lookupKey) ?? new Set<string>();
-            normalizedGroup.forEach(key => bucket.add(key));
-            index.set(lookupKey, bucket);
+        const bucket = new Set(normalizedGroup);
+        for (const key of normalizedGroup) {
+            for (const alias of index.get(key.toLowerCase()) ?? []) { bucket.add(alias); }
         }
+        // Generated and compatibility groups can overlap; every spelling needs the full identity.
+        for (const alias of bucket) { index.set(alias.toLowerCase(), bucket); }
     }
     return index;
 })();
@@ -429,7 +437,8 @@ function ensureJsonPointerContainers(root: JsonValue, pointer: JsonPointer): boo
 function parseAdditionalParameterValue(
     rawValue: string,
     hasExisting: boolean,
-    existingValue: JsonValue | undefined
+    existingValue: JsonValue | undefined,
+    valueKind?: AdditionalParameterValueKind
 ): JsonValue {
     const source = String(rawValue ?? '');
     const trimmed = source.trim();
@@ -440,6 +449,18 @@ function parseAdditionalParameterValue(
             return { ok: false, value: source };
         }
     };
+
+    // Imported JSON has an explicit type, even when a string looks like a JSON literal.
+    if (valueKind === 'string') { return source; }
+    if (valueKind === 'number' && /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/iu.test(trimmed) && Number.isFinite(Number(trimmed))) { return Number(trimmed); }
+    if (valueKind === 'boolean' && /^(?:true|false)$/iu.test(trimmed)) { return trimmed.toLowerCase() === 'true'; }
+    if (valueKind) {
+        const parsed = tryParseJson();
+        if (parsed.ok && (valueKind === 'null' ? parsed.value === null
+            : valueKind === 'array' ? Array.isArray(parsed.value)
+                : valueKind === 'object' ? parsed.value !== null && typeof parsed.value === 'object' && !Array.isArray(parsed.value)
+                    : typeof parsed.value === valueKind)) { return parsed.value; }
+    }
 
     if (hasExisting) {
         if (typeof existingValue === 'string') {
@@ -523,7 +544,7 @@ export function applyAdditionalVanessaParameters(
         }
 
         const currentValue = hasExisting ? getMutableJsonValueAtPointer(nextRoot, pointer) : undefined;
-        const nextValue = parseAdditionalParameterValue(parameter.value, hasExisting, currentValue);
+        const nextValue = parseAdditionalParameterValue(parameter.value, hasExisting, currentValue, parameter.valueKind);
         if (!areJsonValuesEqual(currentValue, nextValue)) {
             setMutableJsonValueAtPointer(nextRoot, pointer, nextValue);
             changedCount += 1;

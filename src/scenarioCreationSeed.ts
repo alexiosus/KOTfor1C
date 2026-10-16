@@ -6,5 +6,5 @@ export function resolveMainScenarioGroupSeed(seed: unknown): string | undefined 
     if (typeof groupName !== 'string') {
         return undefined;
     }
-    return groupName.trim() || undefined;
+    return groupName.trim();
 }

@@ -123,6 +123,23 @@ function loadBrowserProtocol(): any {
     return context.KotScenarioFilesProtocol;
 }
 
+test('source attachment messages retain scope and reject forged selectors and unsafe rename paths', () => {
+    const message = { command: 'renameScenarioFile', itemId: 'main#004', resource: 'source', relativePath: 'Folder\\Data.csv' };
+    assert.deepEqual(parseScenarioFilesMessage(message), { ...message, relativePath: 'Folder/Data.csv' });
+    for (const patch of [{ resource: 'file:///foreign' }, { relativePath: '../foreign' }, { relativePath: '' }]) {
+        assert.equal(parseScenarioFilesMessage({ ...message, ...patch }), null);
+    }
+});
+
+test('compiled main trees keep authored attachments separate from generated files', () => {
+    const protocol = loadBrowserProtocol();
+    const nodes = protocol.projectCompiledScenarioChildren({ id: 'main#004', compiledFeatureUri: 'file:///build/main.feature',
+        sourceScenarioFilesRootUri: 'file:///source/files', scenarioFilesRootUri: 'file:///build/main/Файлы' }, {}) as any[];
+    assert.deepEqual(Array.from(nodes, node => [node.kind, node.name, node.resource]), [
+        ['attachments', 'Source files', 'source'], ['feature', 'main.feature', undefined], ['attachments', 'Compiled files', undefined]
+    ]);
+});
+
 test('scenario files browser projects a compiled feature and a separate attachments group', () => {
     const protocol = loadBrowserProtocol();
     const nodes = protocol.projectCompiledScenarioChildren?.({
@@ -196,7 +213,7 @@ test('scenario resource context actions are ordered consistently and delete only
         protocol.scenarioResourceContextActions(kind, labels)
     )).map((action: { id: string }) => action.id);
 
-    assert.deepEqual(ids('file'), ['open', 'reveal', 'separator', 'delete']);
+    assert.deepEqual(ids('file'), ['open', 'reveal', 'separator', 'rename', 'delete']);
     assert.deepEqual(ids('directory'), ['reveal']);
     assert.deepEqual(ids('attachments'), ['reveal']);
     assert.deepEqual(ids('feature'), ['open']);

@@ -1,0 +1,11 @@
+.kot-pane-resizer { position: relative; z-index: 2; min-width: 4px; min-height: 4px; cursor: col-resize; touch-action: none; outline: none; }
+.kot-pane-resizer::before { content: ''; position: absolute; inset: 0 1px; background: var(--vscode-panel-border); transition: background-color 80ms ease, inset 80ms ease; }
+.kot-pane-resizer:hover::before,
+.kot-pane-resizer:focus-visible::before,
+.kot-resizing-panes > .kot-pane-resizer::before { inset: 0; background: var(--vscode-focusBorder); }
+.kot-resizing-panes { user-select: none; }
+.kot-pane-resizer[aria-orientation="horizontal"] { cursor: row-resize; }
+.kot-pane-resizer[aria-orientation="horizontal"]::before { inset: 1px 0; }
+.kot-pane-resizer[aria-orientation="horizontal"]:hover::before,
+.kot-pane-resizer[aria-orientation="horizontal"]:focus-visible::before,
+.kot-resizing-panes > .kot-pane-resizer[aria-orientation="horizontal"]::before { inset: 0; }

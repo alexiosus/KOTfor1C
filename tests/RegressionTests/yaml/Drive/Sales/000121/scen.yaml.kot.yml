@@ -1,0 +1,8 @@
+version: 2
+identity:
+  kind: scenario
+  uid: 955fb7fa-9d86-47a5-83c1-dc803bd6b688
+metadata:
+  description: |-
+    - Small nested helper that fills one document line.
+    - Used from another nested scenario to demonstrate deeper reuse chains.

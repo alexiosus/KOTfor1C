@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
 import * as sidebarModel from '../src/stepLibrarySidebarModel';
+import { buildStepLibrarySnapshot } from '../src/stepLibraryModel';
 import * as scenarioFilesWebviewProtocol from '../src/scenarioFilesWebviewProtocol';
 import type { StepLibraryItem, StepLibrarySnapshot } from '../src/stepLibraryModel';
 
@@ -121,9 +122,11 @@ async function flush(): Promise<void> {
 }
 
 interface HarnessOptions {
+    translations?: Readonly<Record<string, string>>;
     readonly ensureReady?: (resource?: unknown) => Promise<StepLibrarySnapshot>;
     readonly initialSnapshot?: StepLibrarySnapshot;
     readonly scenarioFileNodes?: readonly unknown[];
+    readonly standalone?: boolean;
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -144,7 +147,9 @@ function createHarness(options: HarnessOptions = {}) {
             executeCommand: async (command: string, ...args: unknown[]) => {
                 executedCommands.push({ command, args });
             }
-        }
+        },
+        l10n: { t: (message: string) => options.translations?.[message] ?? message },
+        window: { showInputBox: async () => 'Added group', showErrorMessage: async () => undefined }
     };
     const moduleObject = { exports: {} as Record<string, unknown> };
     vm.runInNewContext(compiled, {
@@ -159,6 +164,16 @@ function createHarness(options: HarnessOptions = {}) {
             }
             if (specifier === './scenarioFilesWebviewProtocol') {
                 return scenarioFilesWebviewProtocol;
+            }
+            if (specifier === './standaloneFeatureController') {
+                const controllerModule = { exports: {} };
+                const controllerSource = fs.readFileSync(path.join(process.cwd(), 'src', 'standaloneFeatureController.ts'), 'utf8');
+                const controllerCompiled = ts.transpileModule(controllerSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+                vm.runInNewContext(controllerCompiled, {
+                    module: controllerModule, exports: controllerModule.exports,
+                    require: (name: string) => name === 'vscode' ? vscode : { createFeature: async () => undefined, generateFeatureJson: async () => undefined }
+                });
+                return controllerModule.exports;
             }
             if (specifier === './localization') {
                 return { getTranslator: async () => (message: string) => message };
@@ -181,13 +196,17 @@ function createHarness(options: HarnessOptions = {}) {
     const inserted: StepLibraryItem[] = [];
     const copied: StepLibraryItem[] = [];
     const opened: StepLibraryItem[] = [];
+    const renamed: StepLibraryItem[] = [];
+    const renamedGroups: StepLibraryItem[] = [];
     const scenarioFileLists: Array<{ item: StepLibraryItem; relativePath: string }> = [];
     const scenarioFileOpens: Array<{ item: StepLibraryItem; relativePath: string }> = [];
     const scenarioFileReveals: Array<{ item: StepLibraryItem; relativePath: string }> = [];
     const scenarioFileDeletes: Array<{ item: StepLibraryItem; relativePath: string }> = [];
+    const scenarioFileRenames: Array<{ item: StepLibraryItem; relativePath: string }> = [];
     let scenarioFileDeleteResult: 'deleted' | 'cancelled' = 'deleted';
     let scenarioFileDeleteError: unknown;
     const scenarioFilesService = {
+        renameFile: async (value: StepLibraryItem, relativePath: string) => { scenarioFileRenames.push({ item: value, relativePath }); return 'renamed'; },
         listChildren: async (value: StepLibraryItem, relativePath: string) => {
             scenarioFileLists.push({ item: value, relativePath });
             return options.scenarioFileNodes ?? [];
@@ -217,6 +236,9 @@ function createHarness(options: HarnessOptions = {}) {
         onDidInvalidate: invalidations.event,
         ensureReady: async (resource?: unknown) => {
             ensureReadyCalls += 1;
+            if (options.standalone) {
+                return buildStepLibrarySnapshot({ identity: 'standalone-native', all: [], byId: new Map(), byNormalizedTemplate: new Map() }, [], new Map(), standaloneSnapshot);
+            }
             return options.ensureReady ? options.ensureReady(resource) : current;
         },
         invalidate: () => {
@@ -242,7 +264,9 @@ function createHarness(options: HarnessOptions = {}) {
         openDefinition: async (value: StepLibraryItem) => {
             opened.push(value);
             return true;
-        }
+        },
+        rename: async (value: StepLibraryItem) => { renamed.push(value); return true; },
+        renameMainGroup: async (value: StepLibraryItem) => { renamedGroups.push(value); return true; }
     };
     let relationshipState: unknown = {
         enabled: true,
@@ -262,6 +286,22 @@ function createHarness(options: HarnessOptions = {}) {
         onDidChangeMode: relationshipModeChanges.event,
         getMode: () => relationshipMode
     };
+    const standaloneChanges = new EventHub<unknown>();
+    const standaloneSnapshot = { features: [], groups: [] as Array<{ id: string; name: string }>, revision: 1 };
+    const standaloneService = {
+        getSnapshot: () => standaloneSnapshot,
+        ensureReady: async () => standaloneSnapshot,
+        refresh: async () => standaloneSnapshot,
+        onDidChange: standaloneChanges.event,
+        createGroup: async (name: string) => {
+            const group = { id: 'group-added', name };
+            standaloneSnapshot.groups.push(group);
+            standaloneSnapshot.revision += 1;
+            standaloneChanges.fire(standaloneSnapshot);
+            return group;
+        }
+    };
+    if (options.standalone) { standaloneChanges.event(() => snapshotService.invalidate()); }
     const Provider = moduleObject.exports.StepLibrarySidebarProvider as new (services: unknown) => {
         resolveWebviewView(view: unknown): Promise<void> | void;
         toggleAllGroupsFromSidebar(): void;
@@ -274,6 +314,7 @@ function createHarness(options: HarnessOptions = {}) {
         relationshipService,
         relationshipPresentation,
         scenarioFilesService,
+        ...(options.standalone ? { context: {}, standaloneFeatureService: standaloneService } : {}),
         refreshDefinitions: async () => {
             refreshCalls += 1;
         }
@@ -292,10 +333,15 @@ function createHarness(options: HarnessOptions = {}) {
         inserted,
         copied,
         opened,
+        renamed,
+        renamedGroups,
+        standaloneChanges,
+        standaloneSnapshot,
         scenarioFileLists,
         scenarioFileOpens,
         scenarioFileReveals,
         scenarioFileDeletes,
+        scenarioFileRenames,
         setScenarioFileDeleteResult(value: 'deleted' | 'cancelled') {
             scenarioFileDeleteResult = value;
             scenarioFileDeleteError = undefined;
@@ -358,6 +404,35 @@ test('scenario Files expansion stays lazy and does not reload the sidebar snapsh
     });
     assert.deepEqual(harness.scenarioFileOpens.map(entry => entry.item), [definition]);
     assert.deepEqual(harness.scenarioFileReveals.map(entry => entry.item), [definition]);
+});
+
+test('compact Library integrates standalone groups in native roots and replays hidden changes', async () => {
+    const harness = createHarness({ standalone: true });
+    await send(harness, { command: 'ready' });
+    const rootMessages = () => harness.view.webview.messages.filter((value: any) => value.command === 'roots');
+    assert.ok((rootMessages().at(-1) as any).nodes.some((node: any) => node.id === 'source:standalone'));
+    assert.equal(harness.view.webview.messages.some((value: any) => value.command === 'standaloneFeatures'), false);
+    await send(harness, { command: 'standaloneFeatureAction', action: 'createGroup' });
+    assert.equal(harness.standaloneSnapshot.groups[0]?.name, 'Added group');
+    await send(harness, { command: 'expand', nodeId: 'source:standalone', offset: 0 });
+    const children = harness.view.webview.messages.at(-1) as any;
+    assert.equal(children.nodes[0].label, 'Ungrouped');
+    assert.equal(children.nodes[1].label, 'Added group');
+    assert.equal(children.nodes[1].groupId, 'group-added');
+    harness.view.setVisible(false);
+    const count = rootMessages().length;
+    harness.standaloneSnapshot.revision = 5;
+    harness.standaloneChanges.fire(harness.standaloneSnapshot);
+    await flush();
+    assert.equal(rootMessages().length, count);
+    harness.view.setVisible(true);
+    await flush();
+    assert.equal(rootMessages().length, count + 1);
+    harness.provider.dispose();
+    const disposedCount = harness.view.webview.messages.length;
+    harness.standaloneChanges.fire(harness.standaloneSnapshot);
+    await flush();
+    assert.equal(harness.view.webview.messages.length, disposedCount);
 });
 
 test('compact Library reports attachment deletion success cancellation and failure', async () => {
@@ -457,7 +532,7 @@ async function send(harness: ReturnType<typeof createHarness>, message: unknown)
     await flush();
 }
 
-test('initial ready posts loading and six roots without transferring the snapshot', async () => {
+test('initial ready posts loading and seven roots without transferring the snapshot', async () => {
     const catalog = snapshot('catalog:one', [item(1)]);
     const harness = createHarness({ initialSnapshot: catalog });
 
@@ -468,10 +543,21 @@ test('initial ready posts loading and six roots without transferring the snapsho
     assert.equal((harness.view.webview.messages[0] as any).command, 'loading');
     const roots = harness.view.webview.messages.find((message: any) => message.command === 'roots') as any;
     assert.equal(roots.identity, 'catalog:one');
-    assert.equal(roots.nodes.length, 6);
+    assert.equal(roots.nodes.length, 7);
     assert.equal(roots.nodes[4].count, 1);
     assert.equal(Object.hasOwn(roots, 'snapshot'), false);
     assert.doesNotMatch(JSON.stringify(roots), /Bulk step 001/u);
+});
+
+test('compact Library localizes source section titles while retaining authored business group names', async () => {
+    const h = createHarness({ translations: { 'Main scenarios': 'Главные сценарии', Processes: 'Процессы' },
+        initialSnapshot: snapshot('localized-types', [item(1, { kind: 'process', sourceGroup: 'process', categoryPath: ['Processes'] })]) });
+    await send(h, { command: 'ready' });
+    const roots = h.view.webview.messages.find((message: any) => message.command === 'roots') as any;
+    assert.equal(roots.nodes.find((node: any) => node.id === 'source:main').label, 'Главные сценарии');
+    assert.equal(roots.nodes.find((node: any) => node.id === 'source:process').label, 'Процессы');
+    await send(h, { command: 'expand', nodeId: 'source:process', offset: 0 });
+    assert.equal((h.view.webview.messages.at(-1) as any).nodes[0].label, 'Processes');
 });
 
 test('expand and search return bounded host-side pages only', async () => {
@@ -544,9 +630,14 @@ test('ignores invalid inbound messages and resolves actions from server-owned it
     await send(harness, { command: 'insert', itemId: 'safe-item' });
     await send(harness, { command: 'copy', itemId: 'safe-item' });
     await send(harness, { command: 'openDefinition', itemId: 'safe-item' });
+    await send(harness, { command: 'rename', itemId: 'safe-item', uri: 'file:///forged/scen.yaml' });
+    await send(harness, { command: 'renameMainGroup', itemId: 'safe-item', groupName: 'Forged' });
+    await send(harness, { command: 'renameMainGroup', itemId: 'unknown' });
     assert.deepEqual(harness.inserted.map(value => value.id), ['safe-item']);
     assert.deepEqual(harness.copied.map(value => value.id), ['safe-item']);
     assert.deepEqual(harness.opened.map(value => value.id), ['safe-item']);
+    assert.deepEqual(harness.renamed, [definition]);
+    assert.deepEqual(harness.renamedGroups, [definition]);
 });
 
 test('discards stale generations and publishes only the newest snapshot', async () => {
@@ -712,4 +803,19 @@ test('Library relationship mode is independent and includes related export defin
     assert.equal(message.relationshipState.enabled, true);
     assert.equal(message.relationshipFilterEnabled, false);
     assert.equal(harness.ensureReadyCalls, 1);
+});
+
+
+test('compact Library file actions resolve authored roots independently of compiled files', async () => {
+    const definition = item(1, { id: 'main-file-roots', kind: 'mainScenario', sourceGroup: 'main', hasScenarioFiles: true,
+        sourceScenarioFilesRootUri: 'file:///source/files', scenarioFilesRootUri: 'file:///build/Файлы' });
+    const h = createHarness({ initialSnapshot: snapshot('file-roots', [definition]) });
+    await send(h, { command: 'ready' });
+    await send(h, { command: 'listScenarioFiles', itemId: definition.id, resource: 'source', relativePath: '', requestId: 'source-root' });
+    assert.equal(h.scenarioFileLists[0].item.scenarioFilesRootUri, 'file:///source/files');
+    await send(h, { command: 'renameScenarioFile', itemId: definition.id, resource: 'source', relativePath: 'Data.csv' });
+    assert.equal(h.scenarioFileRenames[0].item.scenarioFilesRootUri, 'file:///source/files');
+    assert.equal(h.view.webview.messages.at(-1).action, 'rename');
+    await send(h, { command: 'openScenarioFile', itemId: definition.id, relativePath: 'Generated.csv' });
+    assert.equal(h.scenarioFileOpens[0].item.scenarioFilesRootUri, 'file:///build/Файлы');
 });

@@ -65,11 +65,16 @@ test('does not offer nested category action for main or structurally unsafe scen
         'file:///nested.yaml',
         1
     ), null);
-    assert.equal(buildScenarioCategoryAction(
-        'ДанныеСценария:\n    Имя: Nested\n',
-        'file:///nested.yaml',
-        1
-    ), null);
+});
+
+test('category action works without legacy KOT and respects projected classification and category', () => {
+    const source = 'ДанныеСценария:\n    Имя: Nested\n';
+    const action = buildScenarioCategoryAction(source, 'file:///nested.yaml', 1,
+        message => message, { isMainScenario: false, category: 'Shared category' });
+    assert.equal(action?.range.start.line, 0);
+    assert.equal(action?.title, 'Change category');
+    assert.equal(buildScenarioCategoryAction(source, 'file:///main.yaml', 1,
+        message => message, { isMainScenario: true }), null);
 });
 
 test('applies optional category to a nested scenario template exactly once', () => {

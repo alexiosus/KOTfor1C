@@ -303,7 +303,7 @@ test('full Library exposes one attachment context menu in results and details', 
     assert.match(client, /scenarioResourceContextActions/u);
     assert.match(client.slice(resultsStart, resultsEnd), /contextmenu/u);
     assert.match(client.slice(detailsStart, detailsEnd), /contextmenu/u);
-    assert.match(client, /command:\s*'deleteScenarioFile'/u);
+    assert.match(client, /'deleteScenarioFile'/u);
     assert.match(client, /event\.preventDefault\(\)/u);
     assert.match(client, /event\.stopPropagation\(\)/u);
     assert.match(client, /closeScenarioResourceContextMenu/u);

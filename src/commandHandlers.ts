@@ -9,7 +9,8 @@ import { findFileByName } from './navigationUtils';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { TestInfo } from './types';
 import { resolveScenarioByName, type ScenarioCatalog } from './scenarioCatalog';
-import { normalizeScenarioParameterName } from './scenarioParameterUtils';
+import { normalizeScenarioParameterName, parseScenarioParameterDefinitions, renderScenarioParameterDefault } from './scenarioParameterUtils';
+import { collectCompilerParameterReferences, getCompilerScenarioBody, parseCompilerParameterBinding, scanCompilerLines } from './scenarioCompilerSyntax';
 import { getFeatureNestedScenarioContextAtPosition } from './featureNestedScenarioUtils';
 import { alignGherkinTablesInText } from './gherkinTableUtils';
 import {
@@ -660,7 +661,7 @@ export async function insertScenarioParamHandler(textEditor: vscode.TextEditor, 
         + '    Имя: "$2"\n'
         + '    Значение: "$3"\n'
         + '    ТипПараметра: "${4|Строка,Число,Булево,Массив,Дата|}"\n'
-        + '    ИсходящийПараметр: "${5|No,Yes|}"$0';
+        + '    ИсходящийПараметр: "${5|Нет,Да|}"$0';
     let sectionEdit;
     try {
         sectionEdit = getSectionInsertion(text, 'ПараметрыСценария', parameterItem);
@@ -679,15 +680,7 @@ export async function insertScenarioParamHandler(textEditor: vscode.TextEditor, 
         await textEditor.insertSnippet(new vscode.SnippetString(sectionEdit.text), range);
     } else {
         // Если блок не найден, вставляем в текущую позицию как раньше
-        const snippet = new vscode.SnippetString(
-            '- ПараметрыСценария:\n' +
-            '\tНомерСтроки: "$1"\n' +
-            '\tИмя: "$2"\n' +
-            '\tЗначение: "$3"\n' +
-            '\tТипПараметра: "\${4\\|Строка,Число,Булево,Массив,Дата}"\n' +
-            '\tИсходящийПараметр: "\${5\\|No,Yes}"\n$0'
-        );
-        textEditor.insertSnippet(snippet);
+        await textEditor.insertSnippet(new vscode.SnippetString(parameterItem));
     }
 }
 /**
@@ -771,15 +764,15 @@ function parseExistingNestedScenarios(documentText: string): string[] {
  */
 export function parseCalledScenariosFromScriptBody(documentText: string): string[] {
     const calledScenarios = new Set<string>(); // Используем Set для автоматического удаления дубликатов
-    const scriptBodyRegex = /ТекстСценария:\s*\|?\s*([\s\S]*?)(?=\n[А-Яа-яЁёA-Za-z]+:|\n*$)/;
-    const scriptBodyMatch = documentText.match(scriptBodyRegex);
-
-    if (scriptBodyMatch && scriptBodyMatch[1]) {
-        const scriptContent = scriptBodyMatch[1];
-        const lines = scriptContent.split('\n');
+    const body = getCompilerScenarioBody(documentText);
+    if (body) {
+        const lines = body.lines;
         const callRegex = /^(?!.*")\s*(?:And|И)\s+(.+)/i;
 
-        for (const line of lines) {
+        const scanned = scanCompilerLines(lines);
+        for (let index = 0; index < lines.length; index++) {
+            const line = lines[index];
+            if (scanned[index].kind !== 'code') { continue; }
             const trimmedLine = line.trim();
             if (trimmedLine.startsWith('#') || trimmedLine === '') {
                 continue; // Пропускаем комментарии и пустые строки
@@ -857,26 +850,10 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
  * @returns Массив уникальных имен используемых параметров.
  */
 export function parseUsedParametersFromScriptBody(documentText: string): string[] {
-    const usedParameters = new Set<string>();
-    const scriptBodyRegex = /ТекстСценария:\s*\|?\s*([\s\S]*?)(?=\n[А-Яа-яЁёA-Za-z]+:|\n*$)/;
-    const scriptBodyMatch = documentText.match(scriptBodyRegex);
-
-    if (scriptBodyMatch && scriptBodyMatch[1]) {
-        const scriptContent = scriptBodyMatch[1];
-        // Регулярное выражение для поиска параметров вида [ИмяПараметра]
-        // Параметры могут содержать только: буквы (A-Z, a-z, А-Я, а-я), цифры (0-9), подчеркивания (_) и дефисы (-)
-        // Исключаются строки с точками, запятыми и другими специальными символами
-        const paramRegex = /(?<!\\)\[([A-Za-zА-Яа-яЁё0-9_-]+)(?<!\\)\]/g;
-        let match;
-        while ((match = paramRegex.exec(scriptContent)) !== null) {
-            const paramName = match[1].trim();
-            // Дополнительная проверка: параметр не должен быть пустым
-            if (paramName.length > 0) {
-                usedParameters.add(paramName);
-            }
-        }
+    const result = collectCompilerParameterReferences(getCompilerScenarioBody(documentText)?.lines ?? []);
+    for (const definition of parseScenarioParameterDefinitions(documentText).values()) {
+        if (definition.outgoing && !result.includes(definition.name)) { result.push(definition.name); }
     }
-    const result = Array.from(usedParameters);
     console.log(`[parseUsedParametersFromScriptBody] Found: ${result.join(', ')}`);
     return result;
 }
@@ -1231,6 +1208,7 @@ interface ExistingScenarioParameterData {
     value: string;
     type: string;
     outgoing: string;
+    defaultSource?: string;
 }
 
 const scenarioParameterSessionCache = new Map<string, Map<string, ExistingScenarioParameterData>>();
@@ -1274,6 +1252,13 @@ export function clearScenarioParameterSessionCache(documentOrUri: vscode.TextDoc
     scenarioParameterSessionCache.delete(key);
 }
 
+function normalizeScenarioParameterOutgoingFlag(value: string | null): string {
+    const normalized = value?.trim() ?? '';
+    if (/^(?:да|yes|true)$/iu.test(normalized)) { return 'Да'; }
+    if (!normalized || /^(?:нет|no|false)$/iu.test(normalized)) { return 'Нет'; }
+    return value ?? 'Нет';
+}
+
 /**
  * Parses existing parameter values and attributes from the ScenarioParameters section.
  * @param documentText The full document text
@@ -1281,6 +1266,7 @@ export function clearScenarioParameterSessionCache(documentOrUri: vscode.TextDoc
  */
 function parseExistingParameterData(documentText: string): Map<string, ExistingScenarioParameterData> {
     const existingData = new Map<string, ExistingScenarioParameterData>();
+    const definitions = parseScenarioParameterDefinitions(documentText);
     const scalarField = (fields: ReadonlyMap<string, unknown>, fieldName: string): string | null => {
         const value = fields.get(fieldName);
         if (value === null || value === undefined || typeof value === 'object') {
@@ -1297,11 +1283,35 @@ function parseExistingParameterData(documentText: string): Map<string, ExistingS
 
         const paramName = parsedName ? normalizeScenarioParameterName(parsedName) : '';
 
-        if (paramName && parsedValue !== null && !existingData.has(paramName)) {
+        if (paramName && !existingData.has(paramName)) {
+            const definition = definitions.get(paramName);
+            const valueRange = definition?.valueRange;
+            let defaultSource: string | undefined;
+            if (valueRange) {
+                const lineStart = documentText.lastIndexOf('\n', valueRange.startOffset - 1) + 1;
+                const fieldIndent = /^[ \t]*/u.exec(documentText.slice(lineStart, valueRange.startOffset))![0].length;
+                let sourceEnd = valueRange.endOffset;
+                if (/^[|>]/u.test(documentText.slice(valueRange.startOffset, sourceEnd))) {
+                    // YAML's AST may exclude blank rows after a clipped literal.
+                    // They still belong to the original default's source spelling.
+                    let blankRow: RegExpExecArray | null;
+                    while ((blankRow = /^(?:\r\n|\r(?!\n)|\n)[ \t]*(?=\r\n|\r(?!\n)|\n|$)/u.exec(documentText.slice(sourceEnd, record.range.end)))) {
+                        sourceEnd += blankRow[0].length;
+                    }
+                }
+                // Rebase the original token and literal rows to the section renderer's
+                // four-space field indent. Decoding and re-encoding would change
+                // legacy escapes, leading spaces and block scalar blank rows.
+                defaultSource = documentText.slice(valueRange.startOffset, sourceEnd)
+                    .split(/\r\n|\r|\n/u)
+                    .map((line, index) => index === 0 || line.length === 0 ? line : `    ${line.slice(fieldIndent)}`)
+                    .join('\n');
+            }
             existingData.set(paramName, {
-                value: parsedValue,
+                value: definition?.value ?? parsedValue ?? (parsedType === 'Таблица' ? '' : paramName),
                 type: parsedType || "Строка",
-                outgoing: parsedOutgoing || "No"
+                outgoing: normalizeScenarioParameterOutgoingFlag(parsedOutgoing),
+                defaultSource
             });
             console.log(`[parseExistingParameterData] Found existing data for "${paramName}"`);
         }
@@ -1357,8 +1367,8 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
             const existingParamData = mergedData.get(paramName);
             const paramValue = existingParamData?.value ?? paramName;
             const paramType = existingParamData?.type ?? "Строка";
-            const paramOutgoing = existingParamData?.outgoing ?? "No";
-            itemsToInsertString += `    Значение: "${paramValue.replace(/"/g, '\\"')}"\n`;
+            const paramOutgoing = existingParamData?.outgoing ?? "Нет";
+            itemsToInsertString += `    Значение: ${existingParamData?.defaultSource ?? renderScenarioParameterDefault(paramValue, paramType)}\n`;
 
             itemsToInsertString += `    ТипПараметра: "${paramType.replace(/"/g, '\\"')}"\n`;
             itemsToInsertString += `    ИсходящийПараметр: "${paramOutgoing.replace(/"/g, '\\"')}"`;
@@ -1398,7 +1408,7 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
                 refreshedSessionData.set(paramName, {
                     value: paramName,
                     type: "Строка",
-                    outgoing: "No"
+                    outgoing: "Нет"
                 });
             }
         });
@@ -1427,17 +1437,11 @@ interface ScenarioTextRange {
 }
 
 function getScenarioTextRange(fullText: string): ScenarioTextRange | null {
-    const scenarioBlockStartRegex = /ТекстСценария:\s*\|?\s*(\r\n|\r|\n)/m;
-    const startMatch = scenarioBlockStartRegex.exec(fullText);
-    if (!startMatch || startMatch.index === undefined) {
+    const field = ScenarioYamlDocument.parse(fullText).findFieldAtPath(['ТекстСценария']);
+    if (!field || field.ambiguous || !field.blockScalarContentRange) {
         return null;
     }
-
-    const startOffset = startMatch.index + startMatch[0].length;
-    const nextMajorKeyRegex = /\n(?![ \t])([А-Яа-яЁёA-Za-z]+:)/g;
-    nextMajorKeyRegex.lastIndex = startOffset;
-    const nextMajorKeyMatchResult = nextMajorKeyRegex.exec(fullText);
-    const endOffset = nextMajorKeyMatchResult ? nextMajorKeyMatchResult.index : fullText.length;
+    const { start: startOffset, end: endOffset } = field.blockScalarContentRange;
     const content = fullText.substring(startOffset, endOffset);
 
     const eol = fullText.includes('\r\n') ? '\r\n' : '\n';
@@ -1464,16 +1468,18 @@ async function replaceDocumentRange(
     return await vscode.workspace.applyEdit(edit);
 }
 
-function alignNestedScenarioCallParametersInText(
+export function alignNestedScenarioCallParametersInText(
     scriptText: string,
     eol: string,
     knownNestedScenarioNames: Set<string>
 ): string {
     const lines = scriptText.split(/\r\n|\r|\n/);
+    const scanned = scanCompilerLines(lines);
     let changed = false;
 
     for (let i = 0; i < lines.length; i++) {
         const callLine = lines[i];
+        if (scanned[i].kind !== 'code') { continue; }
         const callMatch = callLine.match(/^(\s*)(?:And|И|Допустим)\s+(.+)$/i);
         if (!callMatch) {
             continue;
@@ -1498,9 +1504,10 @@ function alignNestedScenarioCallParametersInText(
             const currentLine = lines[j];
             const trimmed = currentLine.trim();
 
-            if (trimmed === '' || trimmed.startsWith('#')) {
-                break;
-            }
+            if (trimmed === '' || scanned[j].kind === 'comment') { j++; continue; }
+            if (scanned[j].kind === 'table' && params.at(-1)?.value === '') { j++; continue; }
+            const binding = parseCompilerParameterBinding(currentLine);
+            if (binding?.kind === 'return') { j++; continue; }
 
             const assignmentMatch = currentLine.match(/^(\s*)([A-Za-zА-Яа-яЁё0-9_-]+)\s*=\s*(.*)$/);
             if (!assignmentMatch) {

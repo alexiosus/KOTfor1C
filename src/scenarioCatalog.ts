@@ -159,11 +159,23 @@ function areDefaultsEqual(
 export function areScenarioCatalogEntriesEqual(left: TestInfo, right: TestInfo): boolean {
     return (
         left.name === right.name
+        && (left.kind ?? 'scenario') === (right.kind ?? 'scenario')
+        && (left.processCode ?? '') === (right.processCode ?? '')
+        && (left.processSteps?.length ?? 0) === (right.processSteps?.length ?? 0)
+        && (left.processSteps ?? []).every((step, index) => {
+            const other = right.processSteps?.[index];
+            return other !== undefined && step.type === other.type
+                && step.uid === other.uid && step.name === other.name
+                && step.scenarioName === other.scenarioName && step.scenarioUid === other.scenarioUid
+                && step.scenarioCode === other.scenarioCode
+                && step.processName === other.processName && step.processUid === other.processUid;
+        })
         && left.yamlFileUri.toString() === right.yamlFileUri.toString()
         && left.relativePath === right.relativePath
         && (left.uid || '') === (right.uid || '')
         && (left.scenarioDescription || '') === (right.scenarioDescription || '')
         && (left.scenarioCategory || '') === (right.scenarioCategory || '')
+        && JSON.stringify(left.catalogValues) === JSON.stringify(right.catalogValues)
         && (left.scenarioCode || '') === (right.scenarioCode || '')
         && (left.scenarioCodeLine ?? -1) === (right.scenarioCodeLine ?? -1)
         && (left.scenarioCodeLineStartCharacter ?? -1) === (right.scenarioCodeLineStartCharacter ?? -1)

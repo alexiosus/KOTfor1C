@@ -12,6 +12,7 @@ import { StepLibrarySnapshotService } from '../src/stepLibrarySnapshotService';
 import type { ProjectDefinition } from '../src/projectDefinition';
 import type { ProjectDefinitionView } from '../src/projectDefinition';
 import type { TestInfo } from '../src/types';
+import { parseScenarioDescriptor } from '../src/scenarioDescriptor';
 
 interface Disposable {
     dispose(): void;
@@ -180,7 +181,8 @@ function loadPanelModule(
             get activeTextEditor() { return runtime.activeEditor; },
             get visibleTextEditors() { return runtime.visibleEditors; },
             onDidChangeActiveTextEditor: runtime.activeEditorEvents.event,
-            onDidChangeTextEditorSelection: runtime.selectionEvents.event
+            onDidChangeTextEditorSelection: runtime.selectionEvents.event,
+            showInputBox: async () => 'Added group', showErrorMessage: async () => undefined
         },
         workspace: {
             onDidChangeTextDocument: runtime.documentEvents.event
@@ -206,6 +208,16 @@ function loadPanelModule(
             }
             if (specifier === './scenarioFilesWebviewProtocol') {
                 return scenarioFilesWebviewProtocol;
+            }
+            if (specifier === './standaloneFeatureController') {
+                const controllerModule = { exports: {} };
+                const controllerSource = fs.readFileSync(path.join(process.cwd(), 'src', 'standaloneFeatureController.ts'), 'utf8');
+                const controllerCompiled = ts.transpileModule(controllerSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+                vm.runInNewContext(controllerCompiled, {
+                    module: controllerModule, exports: controllerModule.exports,
+                    require: (name: string) => name === 'vscode' ? vscode : { createFeature: async () => undefined, generateFeatureJson: async () => undefined }
+                });
+                return controllerModule.exports;
             }
             if (specifier === './projectDefinitionSnippet') {
                 return projectDefinitionSnippet;
@@ -242,9 +254,14 @@ function createHarness(
     getView: (resource?: unknown) => Promise<ProjectDefinitionView>,
     activeEditor?: any,
     getScenarios: () => readonly TestInfo[] = () => [],
-    ensureReady: (resource?: unknown) => Promise<ProjectDefinitionView> = getView
+    ensureReady: (resource?: unknown) => Promise<ProjectDefinitionView> = getView,
+    standalone = false,
+    processStepHost?: any,
+    onRefreshDefinitions?: () => Promise<void>
 ) {
     const fakePanel = new FakePanel();
+    const renamed: any[] = [];
+    const renamedGroups: any[] = [];
     const runtime = createRuntime(activeEditor);
     const moduleExports = loadPanelModule(fakePanel, runtime);
     const Panel = moduleExports.StepLibraryPanel as new (services: unknown) => {
@@ -271,6 +288,8 @@ function createHarness(
         openCalls: [] as Array<{ item: any; relativePath: string }>,
         revealCalls: [] as Array<{ item: any; relativePath: string }>,
         deleteCalls: [] as Array<{ item: any; relativePath: string }>,
+        renameCalls: [] as Array<{ item: any; relativePath: string }>,
+        async renameFile(item: any, relativePath: string) { scenarioFiles.renameCalls.push({ item, relativePath }); return 'renamed'; },
         async listChildren(item: any, relativePath: string) {
             scenarioFiles.listCalls.push({ item, relativePath });
             return scenarioFileNodes.map(node => ({ ...node, itemId: item.id }));
@@ -312,8 +331,19 @@ function createHarness(
         ensureReady,
         onDidChangeView: changes.event
     };
+    const standaloneChanges = new EventHub<any>();
+    const standaloneSnapshot = { features: [], groups: [] as Array<{ id: string; name: string }>, revision: 1 };
+    const standaloneService = {
+        getSnapshot: () => standaloneSnapshot, ensureReady: async () => standaloneSnapshot,
+        refresh: async () => standaloneSnapshot, onDidChange: standaloneChanges.event,
+        createGroup: async (name: string) => {
+            const group = { id: 'added', name }; standaloneSnapshot.groups.push(group);
+            standaloneSnapshot.revision += 1; standaloneChanges.fire(standaloneSnapshot); return group;
+        }
+    };
     const snapshotService = new StepLibrarySnapshotService({
         resolver,
+        ...(standalone ? { standaloneFeatures: standaloneService } : {}),
         scenarios: {
             getScenarioCatalog: () => ({
                 all: getScenarios(),
@@ -326,6 +356,9 @@ function createHarness(
     });
     const actionService = new StepLibraryActionService({
         resolver,
+        ...(processStepHost ? { processStepHost } : {}),
+        renameDefinition: async value => { renamed.push(value); return true; },
+        renameMainGroup: async value => { renamedGroups.push(value); return true; },
         openDefinition: async (...args: any[]) => {
             runtime.navigationCalls.push(args);
             return true;
@@ -348,15 +381,20 @@ function createHarness(
         snapshotService,
         actionService,
         scenarioFilesService: scenarioFiles,
+        ...(standalone ? { context: {}, standaloneFeatureService: standaloneService } : {}),
         refreshDefinitions: async () => {
             refreshDefinitionsCalls += 1;
+            await onRefreshDefinitions?.();
         }
     });
     return {
         panel,
+        renamed,
+        renamedGroups,
         fakePanel,
         runtime,
         changes,
+        standaloneSnapshot,
         scenarioFiles,
         get activeScenarioFileWatches() { return activeScenarioFileWatches; },
         setScenarioFileDeleteResult(value: 'deleted' | 'cancelled') {
@@ -379,6 +417,112 @@ function projectDefinition(
         ...overrides
     };
 }
+
+test('full Library routes native standalone group actions and publishes groups in its shared snapshot', async () => {
+    const getView = async () => view('native-standalone');
+    const harness = createHarness(getView, undefined, () => [], getView, true);
+    await harness.panel.open();
+    harness.fakePanel.webview.inbound.fire({ command: 'standaloneFeatureAction', action: 'createGroup' });
+    await flush();
+    assert.equal(harness.standaloneSnapshot.groups[0]?.name, 'Added group');
+    const messages = harness.fakePanel.webview.messages as any[];
+    const snapshot = messages.filter(message => message.command === 'snapshot').at(-1)?.snapshot;
+    assert.equal(snapshot.standaloneGroups[0]?.name, 'Added group');
+    assert.equal(messages.some(message => message.command === 'standaloneFeatures'), false);
+    harness.panel.dispose();
+});
+
+test('process move messages reject stale snapshots and forged URIs before saving and refresh after a guarded edit', async () => {
+    let source = [
+        'ДанныеПроцесса:', '    UID: "parent"', '    Имя: "Process"', '    ПолныйКод: "P"', 'ШагиПроцесса:',
+        '    - ШагиПроцесса1:', '        UID: "a"', '        ТипШага: "0"', '        СценарийНаименование: "First"', '        ПолныйКод: "P.1"',
+        '    - ШагиПроцесса2:', '        UID: "b"', '        ТипШага: "1"', '        ВложенныйПроцессНаименование: "Second"', '        ПолныйКод: "P.2"', ''
+    ].join('\n');
+    let saves = 0;
+    const document = { uri: uri('file:///process.yaml'), version: 1, getText: () => source, save: async () => { saves += 1; return true; } };
+    const scenarios = () => [{ name: 'Process', kind: 'process' as const, uid: 'parent', tabName: 'Processes', relativePath: 'process.yaml',
+        yamlFileUri: document.uri as TestInfo['yamlFileUri'], processSteps: [...parseScenarioDescriptor(source).processSteps!] }];
+    const h = createHarness(async () => view('process-moves'), undefined, scenarios, undefined, false, {
+        openDocument: async () => document,
+        replaceDocument: async (_document: unknown, replacement: string, version: number, old: string) => {
+            assert.equal(document.version, version); assert.equal(source, old);
+            source = replacement; document.version += 1; return true;
+        }
+    });
+    await h.panel.open();
+    const snapshot = (h.fakePanel.webview.messages.find((message: any) => message.command === 'snapshot') as any).snapshot;
+    const selected = snapshot.items[0];
+    const request = { command: 'moveProcessStep', itemId: selected.id, processUri: 'file:///process.yaml', processUid: 'parent',
+        stepUid: 'b', direction: 'up', viewIdentity: snapshot.viewIdentity, stepsSignature: selected.processStepsSignature };
+    for (const patch of [{ viewIdentity: 'stale' }, { processUri: 'file:///forged.yaml' }, { processUid: 'forged' }, { stepsSignature: 'stale' }]) {
+        await sendWebviewMessage(h, { ...request, ...patch });
+        assert.deepEqual(JSON.parse(JSON.stringify(h.fakePanel.webview.messages.at(-1))), { command: 'actionResult', action: 'moveProcessStep', itemId: selected.id, success: false });
+        assert.equal(saves, 0);
+    }
+    await sendWebviewMessage(h, request);
+    assert.equal(saves, 1);
+    assert.deepEqual(parseScenarioDescriptor(source).processSteps?.map(step => step.uid), ['b', 'a']);
+    const refreshed = h.fakePanel.webview.messages.filter((message: any) => message.command === 'snapshot').at(-1) as any;
+    assert.notEqual(refreshed.snapshot.viewIdentity, snapshot.viewIdentity);
+    assert.deepEqual(refreshed.snapshot.items[0].processSteps.map((step: any) => step.uid), ['b', 'a']);
+    assert.deepEqual(JSON.parse(JSON.stringify(h.fakePanel.webview.messages.at(-1))), { command: 'actionResult', action: 'moveProcessStep', itemId: selected.id, success: true });
+    await sendWebviewMessage(h, request);
+    assert.equal(saves, 1, 'a repeated move from the previous snapshot cannot reorder again');
+    h.panel.dispose();
+});
+
+test('process drag, removal and Add messages validate snapshot and exact process document', async () => {
+    let source = 'ТипФайла: "Процесс"\nДанныеПроцесса:\n    UID: "parent"\n    Имя: "Process"\nШагиПроцесса:\n    - ШагиПроцесса1:\n        UID: "a"\n    - ШагиПроцесса2:\n        UID: "b"\n';
+    let saves = 0; let additions = 0;
+    const document = { uri: uri('file:///process.yaml'), version: 1, getText: () => source, save: async () => { saves += 1; return true; } };
+    const h = createHarness(async () => view('process-drag'), undefined, () => [{ name: 'Process', kind: 'process', uid: 'parent',
+        relativePath: 'process.yaml', yamlFileUri: document.uri as TestInfo['yamlFileUri'], processSteps: [...parseScenarioDescriptor(source).processSteps!] }], undefined, false, {
+        openDocument: async () => document,
+        replaceDocument: async (_document: unknown, replacement: string) => { source = replacement; document.version += 1; return true; },
+        addSteps: async (actual: unknown, version: number, old: string) => { assert.equal(actual, document); assert.equal(version, document.version); assert.equal(old, source); additions += 1; return true; }
+    });
+    await h.panel.open();
+    const target = () => {
+        const snapshot = (h.fakePanel.webview.messages.filter((message: any) => message.command === 'snapshot').at(-1) as any).snapshot;
+        return { itemId: snapshot.items[0].id, processUri: document.uri.toString(), processUid: 'parent',
+            viewIdentity: snapshot.viewIdentity, stepsSignature: snapshot.items[0].processStepsSignature };
+    };
+    for (const command of ['reorderProcessStep', 'removeProcessStep', 'addProcessSteps']) {
+        await sendWebviewMessage(h, { command, ...target(), stepUid: 'b', beforeStepUid: 'a', viewIdentity: 'stale' });
+        assert.equal((h.fakePanel.webview.messages.at(-1) as any).success, false);
+    }
+    assert.equal(saves, 0); assert.equal(additions, 0);
+    await sendWebviewMessage(h, { command: 'reorderProcessStep', ...target(), stepUid: 'b', beforeStepUid: 'a' });
+    assert.deepEqual(parseScenarioDescriptor(source).processSteps?.map(step => step.uid), ['b', 'a']);
+    await sendWebviewMessage(h, { command: 'removeProcessStep', ...target(), stepUid: 'a' });
+    assert.deepEqual(parseScenarioDescriptor(source).processSteps?.map(step => step.uid), ['b']);
+    await sendWebviewMessage(h, { command: 'addProcessSteps', ...target() });
+    assert.equal(additions, 1); assert.equal(saves, 2);
+    h.panel.dispose();
+});
+
+test('a saved process move remains successful when the subsequent catalog refresh fails', async () => {
+    let source = 'ДанныеПроцесса:\n    UID: "parent"\n    ПолныйКод: "P"\nШагиПроцесса:\n    - ШагиПроцесса1:\n        UID: "a"\n    - ШагиПроцесса2:\n        UID: "b"\n';
+    let saved = false;
+    const document = { uri: uri('file:///process.yaml'), version: 1, getText: () => source, save: async () => { saved = true; return true; } };
+    const h = createHarness(async () => view('failed-process-refresh'), undefined, () => [{
+        name: 'Process', kind: 'process', uid: 'parent', relativePath: 'process.yaml', yamlFileUri: document.uri as TestInfo['yamlFileUri'],
+        processSteps: [...parseScenarioDescriptor(source).processSteps!]
+    }], undefined, false, {
+        openDocument: async () => document,
+        replaceDocument: async (_document: unknown, replacement: string) => { source = replacement; document.version += 1; return true; }
+    }, async () => { throw new Error('Catalog refresh failed'); });
+    await h.panel.open();
+    const snapshot = (h.fakePanel.webview.messages.find((message: any) => message.command === 'snapshot') as any).snapshot;
+    const selected = snapshot.items[0];
+    await sendWebviewMessage(h, { command: 'moveProcessStep', itemId: selected.id, processUri: 'file:///process.yaml', processUid: 'parent',
+        stepUid: 'b', direction: 'up', viewIdentity: snapshot.viewIdentity, stepsSignature: selected.processStepsSignature });
+    assert.equal(saved, true);
+    assert.deepEqual(parseScenarioDescriptor(source).processSteps?.map(step => step.uid), ['b', 'a']);
+    assert.equal(h.fakePanel.webview.messages.some((message: any) => message.command === 'error' && message.message === 'Catalog refresh failed'), true);
+    assert.deepEqual(JSON.parse(JSON.stringify(h.fakePanel.webview.messages.at(-1))), { command: 'actionResult', action: 'moveProcessStep', itemId: selected.id, success: true });
+    h.panel.dispose();
+});
 
 function definitionView(identity: string, definitions: readonly ProjectDefinition[]): ProjectDefinitionView {
     return {
@@ -721,6 +865,12 @@ test('publishes main scenarios from the scenario catalog and opens their capture
         harness.runtime.navigationCalls[0][3].uri,
         'file:///workspace/main/scen.yaml'
     );
+    await sendWebviewMessage(harness, { command: 'rename', itemId: item.id, uri: 'file:///forged/scen.yaml' });
+    await sendWebviewMessage(harness, { command: 'renameMainGroup', itemId: item.id, groupName: 'Forged' });
+    assert.equal(harness.renamed[0].capturedLocation.uri, 'file:///workspace/main/scen.yaml');
+    assert.deepEqual(harness.renamedGroups[0].categoryPath, ['Accounting']);
+    await sendWebviewMessage(harness, { command: 'renameMainGroup', itemId: 'unknown' });
+    assert.equal(harness.renamedGroups.length, 1);
 });
 
 test('defers resolver work while hidden and refreshes when visible again', async () => {
@@ -780,6 +930,14 @@ test('accepts only the five inbound commands and strips untrusted fields', () =>
     }
     assert.equal(parseMessage({ command: 'openUri', uri: 'file:///evil' }), null);
     assert.equal(parseMessage(null), null);
+    const processTarget = { itemId: 'process', processUri: 'file:///process.yaml', processUid: 'p', viewIdentity: 'v', stepsSignature: 's' };
+    for (const command of ['addProcessSteps', 'removeProcessStep', 'reorderProcessStep']) {
+        const request = { command, ...processTarget, stepUid: 'a', beforeStepUid: null };
+        assert.ok(parseMessage(request));
+        for (const key of Object.keys(processTarget)) { assert.equal(parseMessage({ ...request, [key]: '' }), null); }
+    }
+    assert.equal(parseMessage({ command: 'reorderProcessStep', ...processTarget, stepUid: 'a' }), null);
+    assert.equal(parseMessage({ command: 'reorderProcessStep', ...processTarget, stepUid: 'a', beforeStepUid: 1 }), null);
 });
 
 test('inserts into the last eligible editor after the webview takes focus', async () => {
@@ -1019,4 +1177,17 @@ test('opens only navigable project items using their server-captured location', 
         command: 'openDefinition', itemId: `${builtIn.id}#en`
     });
     assert.equal(harness.runtime.navigationCalls.length, 1);
+});
+
+
+test('full Library renames authored attachments and resolves source scope independently of compiled files', async () => {
+    const main = { name: 'Main', uid: 'main', tabName: 'Smoke', relativePath: 'main', yamlFileUri: uri('file:///workspace/main/scen.yaml') } as TestInfo;
+    const h = createHarness(async () => definitionView('files', []), undefined, () => [main]);
+    await h.panel.open();
+    const message = h.fakePanel.webview.messages.findLast((value: any) => value.command === 'snapshot');
+    const entry = message.snapshot.items[0];
+    await sendWebviewMessage(h, { command: 'renameScenarioFile', itemId: entry.id, resource: 'source', relativePath: 'Folder/Input.csv' });
+    assert.equal(h.scenarioFiles.renameCalls[0].item.scenarioFilesRootUri, 'file:///workspace/main/files');
+    assert.equal(h.fakePanel.webview.messages.at(-1).action, 'rename');
+    assert.equal(h.fakePanel.webview.messages.at(-1).succeeded, true);
 });

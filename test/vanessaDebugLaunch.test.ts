@@ -4,8 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import * as vanessaDebugClients from '../src/vanessaDebugClients';
+import * as vanessaDebugClientConfiguration from '../src/vanessaDebugClientConfiguration';
+import * as vanessaLaunchJson from '../src/vanessaLaunchJson';
+import * as oneCInfobaseConnection from '../src/oneCInfobaseConnection';
 
-test('debug launch uses the built JSON without opening the auto-run infobase preparation flow', async () => {
+test('debug launch copies the built JSON safely without opening the auto-run infobase preparation flow', async () => {
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
     const source = fs.readFileSync(path.join(process.cwd(), 'src', 'phaseSwitcher.ts'), 'utf8');
     const compiled = ts.transpileModule(source, {
@@ -17,7 +21,8 @@ test('debug launch uses the built JSON without opening the auto-run infobase pre
     const jsonPath = path.join(tempDirectory, 'launch.json');
     fs.writeFileSync(executablePath, 'client');
     fs.writeFileSync(epfPath, 'epf');
-    fs.writeFileSync(jsonPath, JSON.stringify({ LaunchDBFolder: tempDirectory }));
+    const original = JSON.stringify({ LaunchDBFolder: tempDirectory, ExecuteScenarios: true, CloseSystemOnComplete: true });
+    fs.writeFileSync(jsonPath, original);
     let designerResolutionCalls = 0;
 
     const vscode = {
@@ -69,6 +74,10 @@ test('debug launch uses the built JSON without opening the auto-run infobase pre
             if (specifier === './infobaseManager.js') {
                 return { updateManagedInfobaseMetadata: async () => undefined };
             }
+            if (specifier === './vanessaDebugClients') { return vanessaDebugClients; }
+            if (specifier === './vanessaDebugClientConfiguration.js') { return vanessaDebugClientConfiguration; }
+            if (specifier === './vanessaLaunchJson') { return vanessaLaunchJson; }
+            if (specifier === './oneCInfobaseConnection') { return oneCInfobaseConnection; }
             return {};
         },
         Buffer,
@@ -85,7 +94,13 @@ test('debug launch uses the built JSON without opening the auto-run infobase pre
     const provider = Object.create(Provider.prototype) as Record<string, any>;
     let preparationCalls = 0;
     let detachedArguments: string[] | undefined;
-    provider._context = {};
+    const state = new Map<string, unknown>(); const secrets = new Map<string, string>();
+    provider._context = {
+        workspaceState: { get: (key: string) => state.get(key), update: async (key: string, value: unknown) => { state.set(key, value); } },
+        secrets: { get: async (key: string) => secrets.get(key), store: async (key: string, value: string) => { secrets.set(key, value); }, delete: async (key: string) => { secrets.delete(key); } }
+    };
+    await new vanessaDebugClients.VanessaDebugClientStore(provider._context.workspaceState, provider._context.secrets).save({ mode: 'scenario', clients: [] });
+    provider.resolveVanessaRuntimeDirectory = () => path.join(tempDirectory, 'runtime');
     provider.t = (message: string) => message;
     provider.ensureSharedStartupInfobaseReady = async () => ({
         infobaseDirectory: tempDirectory,
@@ -130,7 +145,15 @@ test('debug launch uses the built JSON without opening the auto-run infobase pre
         assert.equal(designerResolutionCalls, 0);
         assert.equal(preparationCalls, 0);
         assert.ok(detachedArguments?.includes('/C'));
-        assert.ok(detachedArguments?.some(argument => argument.includes(`VAParams=${jsonPath}`)));
+        const command = detachedArguments?.find(argument => argument.includes('VAParams='));
+        assert.ok(command);
+        const runtimePath = command.match(/VAParams=([^;]+)/u)?.[1];
+        assert.ok(runtimePath);
+        assert.notEqual(runtimePath, jsonPath);
+        const runtime = JSON.parse(fs.readFileSync(runtimePath, 'utf8'));
+        assert.equal(runtime.ExecuteScenarios, false);
+        assert.equal(runtime.CloseSystemOnComplete, false);
+        assert.equal(fs.readFileSync(jsonPath, 'utf8'), original);
         assert.ok(detachedArguments?.some(argument => argument.includes('UseEditor')));
     } finally {
         fs.rmSync(tempDirectory, { recursive: true, force: true });

@@ -1,0 +1,10 @@
+version: 2
+identity:
+  kind: scenario
+  uid: 3c04c1f6-7ef1-4730-9ed7-2f06e17c1f03
+metadata:
+  description: >-
+    - Validates that an imported item can be found in the list.
+
+    - Keeps a default expected item value so the main scenario can stay
+    parameterless.

@@ -336,4 +336,3 @@ navigation, paging, search, and favorites behavior.
 7. Add inbound manifest, conflict workflow, and chunked copy.
 8. Add scoped watchers and lifecycle cleanup.
 9. Add localization, contract coverage, and end-to-end verification.
-

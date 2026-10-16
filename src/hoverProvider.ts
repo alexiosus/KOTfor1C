@@ -87,7 +87,8 @@ export class DriveHoverProvider implements vscode.HoverProvider {
                 this.stepStateRequestsByDocument.clear();
             }),
             vscode.workspace.onDidSaveTextDocument(document => {
-                this.scenarioHoverCache.delete(document.uri.toString());
+                const prefix = `${document.uri.toString()}\0`;
+                for (const key of this.scenarioHoverCache.keys()) { if (key.startsWith(prefix)) { this.scenarioHoverCache.delete(key); } }
             }),
             vscode.workspace.onDidCreateFiles(() => {
                 this.scenarioHoverCache.clear();
@@ -535,7 +536,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
     }
 
     private async getScenarioHoverCachedData(testInfo: TestInfo): Promise<ScenarioHoverCachedData> {
-        const key = testInfo.yamlFileUri.toString();
+        const key = `${testInfo.yamlFileUri.toString()}\0${testInfo.scenarioDescription ?? ''}`;
         const now = Date.now();
         const cached = this.scenarioHoverCache.get(key);
         if (cached && cached.expiresAt > now) {
@@ -543,7 +544,9 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         }
 
         const [descriptionInfo, filesCount] = await Promise.all([
-            this.getScenarioDescriptionInfo(testInfo.yamlFileUri),
+            testInfo.scenarioDescription !== undefined
+                ? Promise.resolve({ hasKotMetadata: true, description: testInfo.scenarioDescription })
+                : this.getScenarioDescriptionInfo(testInfo.yamlFileUri),
             this.countFilesInScenarioFilesFolder(testInfo.yamlFileUri)
         ]);
 

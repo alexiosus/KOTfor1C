@@ -134,7 +134,7 @@ test('Test Manager reveals the group create button on hover or visible keyboard 
     );
     assert.match(
         stabilizedCss,
-        /\.phase-header:hover\s+\.phase-create-main-btn,\s*\.phase-header:has\(:focus-visible\)\s+\.phase-create-main-btn\s*\{[^}]*opacity:\s*1[^}]*pointer-events:\s*auto/isu
+        /\.phase-header:hover\s+\.phase-create-main-btn:not\(:disabled\),\s*\.phase-header:has\(:focus-visible\)\s+\.phase-create-main-btn:not\(:disabled\)\s*\{[^}]*opacity:\s*1[^}]*pointer-events:\s*auto/isu
     );
     assert.doesNotMatch(
         stabilizedCss,
@@ -281,7 +281,7 @@ test('Test Manager uses the leading file icon as the open action without occupyi
     const openButtonSource = script.slice(openButtonStart, runButtonStart);
     assert.match(openButtonSource, /<button type="button" class="open-scenario-btn scenario-file-icon"/u);
     assert.match(openButtonSource, /aria-label="\$\{escapedIconTitle\}"/u);
-    assert.match(openButtonSource, /codicon-file open-scenario-icon-idle/u);
+    assert.match(openButtonSource, /codicon-\$\{fileIcon\} open-scenario-icon-idle/u);
     assert.match(openButtonSource, /codicon-go-to-file open-scenario-icon-action/u);
     assert.doesNotMatch(openButtonSource, /codicon-edit/u);
 
@@ -341,7 +341,7 @@ test('Library matches compact tree rhythm without persistent click selection', (
     );
 });
 
-test('Library scenario titles follow the disclosure without reserving a node-icon slot', () => {
+test('Library definition titles have type icons and preserve compact layout', () => {
     const stepCss = read('media/stepLibrarySidebar.css');
     const compactScript = read('media/stepLibrarySidebar.js');
 
@@ -351,8 +351,9 @@ test('Library scenario titles follow the disclosure without reserving a node-ico
     );
     assert.match(
         compactScript,
-        /if\s*\(node\.kind\s*!==\s*'definition'\)\s*\{[\s\S]*?row\.appendChild\(nodeIcon\);[\s\S]*?\}/u
+        /const nodeIcon = document\.createElement\('span'\);[\s\S]*?row\.appendChild\(nodeIcon\);/u
     );
+    assert.match(compactScript, /process:\s*'list-ordered',\s*mainScenario:\s*'file'/u);
     assert.doesNotMatch(compactScript, /node\.kind\s*===\s*'definition'[\s\S]{0,80}corner-down-right/u);
 });
 
@@ -403,7 +404,7 @@ test('sidebar colors use VS Code theme tokens without separately highlighting th
 });
 
 test('tree toggles and icon-only controls expose localized accessible names', () => {
-    assert.match(script, /setAttribute\('aria-expanded',\s*phaseExpandedState\[phaseName\] \? 'true' : 'false'\)/u);
+    assert.match(script, /setAttribute\('aria-expanded',\s*phaseExpandedState\[groupKey\] \? 'true' : 'false'\)/u);
     assert.match(script, /toggleButton\.setAttribute\('aria-expanded', nextExpanded \? 'true' : 'false'\)/u);
 
     const iconOnlyButtons = [...html.matchAll(/<button\b(?=[^>]*\bicon-only\b)[^>]*>/gsu)]
@@ -446,7 +447,7 @@ test('relationship state updates remain independent from build checkboxes', () =
 test('structural renders restore tree scroll, focus, and expanded phases', () => {
     assert.match(script, /function capturePhaseTreeViewState\(\)/u);
     assert.match(script, /function restorePhaseTreeViewState\(viewState\)/u);
-    assert.match(script, /scrollTop:\s*phaseTreeContainer\.scrollTop/u);
+    assert.match(script, /scrollTop:\s*scrollContainer\.scrollTop/u);
     assert.match(script, /focusedScenarioKey/u);
     assert.match(script, /expandedPhaseNames/u);
     assert.match(script, /focus\(\{ preventScroll: true \}\)/u);
@@ -627,6 +628,8 @@ test('Test Manager overflow menu starts with create and groups settings with bui
         manifest.contributes.menus['kotTestToolkit.phaseSwitcher.create'].map(item => item.command),
         [
             'kotTestToolkit.createMainScenario',
+            'kotTestToolkit.createFeature',
+            'kotTestToolkit.createProcess',
             'kotTestToolkit.createNestedScenario',
             'kotTestToolkit.createExportScenario',
             'kotTestToolkit.createUserStep',
@@ -736,7 +739,7 @@ test('compact Library attachment rows use the shared dismissible context menu', 
     assert.match(client, /function showScenarioResourceContextMenu\(/u);
     assert.match(client, /scenarioResourceContextActions/u);
     assert.match(makeRowSource, /contextmenu/u);
-    assert.match(client, /command:\s*'deleteScenarioFile'/u);
+    assert.match(client, /'deleteScenarioFile'/u);
     assert.match(client, /event\.preventDefault\(\)/u);
     assert.match(client, /event\.stopPropagation\(\)/u);
     assert.match(client, /closeScenarioResourceContextMenu/u);
@@ -989,7 +992,7 @@ test('workbench performance gates are structural rather than wall-clock threshol
     assert.doesNotMatch(performanceTests, /assert\.(?:ok|equal)\([^\n]*durationMs/u);
 
     const compactProviderTests = read('test/stepLibrarySidebarProvider.test.ts');
-    assert.match(compactProviderTests, /initial ready posts loading and six roots without transferring the snapshot/u);
+    assert.match(compactProviderTests, /initial ready posts loading and seven roots without transferring the snapshot/u);
     assert.match(compactProviderTests, /expand and search return bounded host-side pages only/u);
     assert.match(compactProviderTests, /defers hidden invalidation and publishes the latest revision when shown again/u);
 });

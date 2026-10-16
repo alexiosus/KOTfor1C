@@ -63,14 +63,29 @@ export function findScenarioHeaderFieldLines(document: vscode.TextDocument): Sce
     };
 }
 
+export function findProcessHeaderFieldLines(document: vscode.TextDocument): ScenarioHeaderFieldLines {
+    const source = document.getText();
+    const yamlDocument = ScenarioYamlDocument.parse(source);
+    const fileType = yamlDocument.findSection('ТипФайла');
+    return {
+        fileTypeLine: fileType ? lineNumberAtOffset(source, fileType.pairRange.start) : null,
+        nameLine: findFieldLine(source, yamlDocument, 'ДанныеПроцесса', 'Имя'),
+        codeLine: findFieldLine(source, yamlDocument, 'ДанныеПроцесса', 'Код'),
+        systemFunctionLine: null,
+        systemFunctionUidLine: null,
+        kotDescriptionLine: null
+    };
+}
+
 export function findTestSettingsFieldLines(document: vscode.TextDocument): TestSettingsFieldLines {
     const source = document.getText();
     const yamlDocument = ScenarioYamlDocument.parse(source);
+    const isProcessSettings = String(yamlDocument.findFieldAtPath(['ТипФайла'])?.value ?? '').toLowerCase() === 'настройкапроцесса';
     return {
         codeLine: findFieldLine(source, yamlDocument, 'ДанныеТеста', 'Код'),
         nameLine: findFieldLine(source, yamlDocument, 'ДанныеТеста', 'Имя'),
-        scenarioUidLine: findFieldLine(source, yamlDocument, 'ДанныеТеста', 'UIDСценария'),
-        scenarioNameLine: findFieldLine(source, yamlDocument, 'ДанныеТеста', 'СценарийНаименование'),
+        scenarioUidLine: findFieldLine(source, yamlDocument, 'ДанныеТеста', isProcessSettings ? 'UIDПроцесса' : 'UIDСценария'),
+        scenarioNameLine: findFieldLine(source, yamlDocument, 'ДанныеТеста', isProcessSettings ? 'ПроцессНаименование' : 'СценарийНаименование'),
         etalonBaseNameLine: findFieldLine(source, yamlDocument, 'ДанныеТеста', 'ЭталоннаяБазаИмя'),
         userProfileLine: findFieldLine(source, yamlDocument, 'ДанныеТеста', 'ПрофильПользователя'),
         modelDbIdLine: findFieldLine(source, yamlDocument, 'ДанныеТеста', 'ИдентификаторБазы')

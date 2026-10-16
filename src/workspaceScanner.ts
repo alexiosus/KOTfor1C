@@ -2,10 +2,12 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import type { TestInfo } from './types';
-import { getScenarioScanRootPath, resolveScenarioScanRootFsPath } from './scenarioScanRoot';
+import { getScenarioScanRootPath, resolveScenarioScanRootFsPath, resolveProcessScanRootFsPath } from './scenarioScanRoot';
 import { buildScenarioCatalog, type ScenarioCatalog } from './scenarioCatalog';
 import { collectTreeWithConcurrencyLimit, mapWithConcurrencyLimit } from './boundedConcurrency';
-import { parseTestInfoFromScenarioSource } from './scenarioDescriptor';
+import { parseTestInfoFromScenarioSource, parseTestSettingsTarget, type ParsedTestSettingsTarget } from './scenarioDescriptor';
+import { loadProjectScenarioMetadata, resolveProjectLibraryRoot } from './projectLibraryMetadata';
+import { assertProjectMetadataSaved, loadSingleProjectScenario } from './projectLibraryIntegration';
 
 const SCENARIO_READ_CONCURRENCY = 32;
 const SCENARIO_DIRECTORY_CONCURRENCY = 16;
@@ -71,9 +73,10 @@ async function collectFilesFromScanDirectory(
     workspaceRootUri: vscode.Uri,
     fileMatcher: (fileName: string) => boolean,
     token?: vscode.CancellationToken,
-    metrics?: ScenarioScanMetrics
+    metrics?: ScenarioScanMetrics,
+    explicitRoot?: string
 ): Promise<vscode.Uri[]> {
-    const scanDirFsPath = resolveScenarioScanRootFsPath(workspaceRootUri);
+    const scanDirFsPath = explicitRoot || resolveScenarioScanRootFsPath(workspaceRootUri);
 
     try {
         const stat = await fs.promises.stat(scanDirFsPath);
@@ -119,7 +122,7 @@ async function collectFilesFromScanDirectory(
                 const entryFsPath = path.join(currentDirFsPath, entryName);
 
                 if (entry.isDirectory()) {
-                    if (entryName !== 'node_modules' && entryName !== '.git') {
+                    if (entryName !== 'node_modules' && entryName !== '.git' && entryName !== '.kot') {
                         children.push(entryFsPath);
                     }
                     continue;
@@ -160,12 +163,11 @@ export async function findScenarioDescriptorUris(
     token?: vscode.CancellationToken,
     metrics?: ScenarioScanMetrics
 ): Promise<vscode.Uri[]> {
-    return collectFilesFromScanDirectory(
-        workspaceRootUri,
-        fileName => fileName.toLowerCase() === 'scen.yaml',
-        token,
-        metrics
-    );
+    const roots = [resolveScenarioScanRootFsPath(workspaceRootUri)];
+    const processRoot = typeof resolveProcessScanRootFsPath === 'function' ? resolveProcessScanRootFsPath(workspaceRootUri) : roots[0];
+    if (path.resolve(processRoot) !== path.resolve(roots[0])) { roots.push(processRoot); }
+    const files = await Promise.all(roots.map(root => collectFilesFromScanDirectory(workspaceRootUri, fileName => fileName.toLowerCase().endsWith('.yaml'), token, metrics, root)));
+    return [...new Map(files.flat().map(uri => [uri.toString(), uri])).values()];
 }
 
 export async function findYamlFilesUnderScanDir(
@@ -190,9 +192,8 @@ export function resolveScanDirFsPath(workspaceRootUri: vscode.Uri): string {
     return resolveScenarioScanRootFsPath(workspaceRootUri);
 }
 
-// Паттерн для поиска файлов сценариев внутри SCAN_DIR_RELATIVE_PATH
-// Используем scen.yaml, т.к. он содержит метаданные
-export const SCAN_GLOB_PATTERN = '**/scen.yaml';
+// Компилятор принимает YAML с произвольным именем; parser отбирает описания.
+export const SCAN_GLOB_PATTERN = '**/*.yaml';
 
 function computeRelativeScenarioPath(
     fileUri: vscode.Uri,
@@ -215,7 +216,9 @@ async function readScenarioDefinitions(
     scanDirUri: vscode.Uri,
     token?: vscode.CancellationToken,
     metrics?: ScenarioScanMetrics,
-    fromEnumeratedScan = false
+    fromEnumeratedScan = false,
+    legacySourceTexts?: Map<string, string>,
+    settingsTargets?: Map<string, ParsedTestSettingsTarget>
 ): Promise<TestInfo[]> {
     const definitions: TestInfo[] = [];
     try {
@@ -234,7 +237,9 @@ async function readScenarioDefinitions(
                     metrics.pathTotalMs += performance.now() - pathStartedAt;
                 }
                 const parseStartedAt = performance.now();
-                const testInfo = parseTestInfoFromScenarioSource(
+                const settingsTarget = settingsTargets && parseTestSettingsTarget(source);
+                if (settingsTarget) { settingsTargets.set(fileUri.fsPath, settingsTarget); }
+                const testInfo = settingsTarget ? null : parseTestInfoFromScenarioSource(
                     source,
                     fileUri,
                     relativePath
@@ -244,6 +249,7 @@ async function readScenarioDefinitions(
                 }
                 if (testInfo) {
                     definitions.push(testInfo);
+                    if (/^KOTМетаданные\s*:/mu.test(source)) { legacySourceTexts?.set(fileUri.fsPath, source); }
                 }
             } catch {
                 // A malformed or transiently unavailable descriptor is skipped like before.
@@ -267,7 +273,8 @@ export async function readScenarioInfo(
     token?: vscode.CancellationToken,
     metrics?: ScenarioScanMetrics
 ): Promise<TestInfo | null> {
-    return (await readScenarioDefinitions([fileUri], scanRootUri, token, metrics))[0] || null;
+    const info = (await readScenarioDefinitions([fileUri], scanRootUri, token, metrics))[0];
+    return info ? loadSingleProjectScenario(info) : null;
 }
 
 export async function scanWorkspaceForScenarioCatalog(
@@ -282,17 +289,29 @@ export async function scanWorkspaceForScenarioCatalog(
     };
     const potentialFiles = await findScenarioDescriptorUris(workspaceRootUri, token, metrics);
     const enumerationMs = Date.now() - startedAt;
+    const legacySourceTexts = new Map<string, string>();
+    const settingsTargets = new Map<string, ParsedTestSettingsTarget>();
     const parsedDefinitions = await mapWithConcurrencyLimit(
         potentialFiles,
         SCENARIO_READ_CONCURRENCY,
         // These paths came from readdir beneath scanDirUri; symlink entries are not traversed.
-        async fileUri => (await readScenarioDefinitions([fileUri], scanDirUri, token, metrics, true))[0] || null
+        async fileUri => (await readScenarioDefinitions([fileUri], scanDirUri, token, metrics, true, legacySourceTexts, settingsTargets))[0] || null
     );
     const readAndParseMs = Date.now() - startedAt - enumerationMs;
     if (token?.isCancellationRequested) {
         throw new vscode.CancellationError();
     }
-    const definitions = parsedDefinitions.filter((item): item is TestInfo => item !== null);
+    const workspaceRoots = [...new Set([workspaceRootUri.fsPath, ...(vscode.workspace.workspaceFolders ?? []).filter(folder => folder.uri.scheme === 'file').map(folder => folder.uri.fsPath)])];
+    const scanRoots = [scanDirUri.fsPath, resolveProcessScanRootFsPath(workspaceRootUri)];
+    const settingsKey = (file: string, kind: string, uid: string) => JSON.stringify([
+        resolveProjectLibraryRoot(file, workspaceRoots, scanRoots), kind, uid.toLowerCase()
+    ]);
+    const referenced = new Set([...settingsTargets].map(([file, target]) => settingsKey(file, target.kind, target.uid)));
+    const infos = parsedDefinitions.filter((item): item is TestInfo => item !== null).map(info =>
+        referenced.size && info.uid && referenced.has(settingsKey(info.yamlFileUri.fsPath, info.kind === 'process' ? 'process' : 'scenario', info.uid))
+            ? { ...info, hasTestSettings: true } : info);
+    const definitions = await loadProjectScenarioMetadata(infos, workspaceRoots, scanRoots, true, assertProjectMetadataSaved, legacySourceTexts);
+    const metadataMs = Date.now() - startedAt - enumerationMs - readAndParseMs;
     const catalog = buildScenarioCatalog(definitions);
     const duplicateNames = [...catalog.byName.values()].filter(items => items.length > 1).length;
 
@@ -304,7 +323,7 @@ export async function scanWorkspaceForScenarioCatalog(
         + `p50 ${percentileMs(metrics.directoryReadLatenciesMs, 0.5)} ms, `
         + `p95 ${percentileMs(metrics.directoryReadLatenciesMs, 0.95)} ms, `
         + `max in flight ${metrics.maxDirectoryReadsInFlight}; `
-        + `read/parse ${readAndParseMs} ms; `
+        + `read/parse ${readAndParseMs} ms; metadata ${metadataMs} ms; `
         + `read p50 ${percentileMs(metrics.readLatenciesMs, 0.5)} ms, `
         + `p95 ${percentileMs(metrics.readLatenciesMs, 0.95)} ms, `
         + `path ${Math.round(metrics.pathTotalMs)} ms, `

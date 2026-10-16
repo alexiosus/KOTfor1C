@@ -273,7 +273,9 @@
         }
         const name = typeof scenario?.name === 'string' ? scenario.name.toLocaleLowerCase() : '';
         const phaseName = typeof scenario?.phaseName === 'string' ? scenario.phaseName.toLocaleLowerCase() : '';
-        return name.includes(normalizedQuery) || phaseName.includes(normalizedQuery);
+        return name.includes(normalizedQuery) || phaseName.includes(normalizedQuery)
+            || (Array.isArray(scenario?.attachmentPaths) && scenario.attachmentPaths.some(value =>
+                typeof value === 'string' && value.toLocaleLowerCase().includes(normalizedQuery)));
     }
 
     function normalizeStatusFilter(value) {
@@ -447,7 +449,7 @@
 
     function createGroupScenarioCommand(command, groupName) {
         const normalizedGroupName = typeof groupName === 'string' ? groupName.trim() : '';
-        if (!normalizedGroupName) {
+        if (typeof groupName !== 'string' || (!normalizedGroupName && command !== 'createMainScenario' && command !== 'createProcess')) {
             throw new Error('Scenario group name is required');
         }
         return { command, groupName: normalizedGroupName };

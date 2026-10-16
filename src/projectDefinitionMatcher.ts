@@ -40,9 +40,11 @@ interface InternalCompiledProjectDefinitionMatcher extends CompiledProjectDefini
 
 const compiledViews = new WeakMap<ProjectDefinitionView, readonly InternalCompiledProjectDefinitionMatcher[]>();
 
-function stripGherkinPrefix(value: string): { start: number; end: number } {
-    const prefix = GHERKIN_PREFIX.exec(value);
-    let start = prefix?.[0].length ?? 0;
+function stripGherkinPrefix(value: string, stripCompilerLoop = false): { start: number; end: number } {
+    const loopPrefix = stripCompilerLoop ? /^\s*(?:Do|Цикл)\s+/iu.exec(value) : null;
+    let start = loopPrefix?.[0].length ?? 0;
+    const prefix = GHERKIN_PREFIX.exec(value.slice(start));
+    start += prefix?.[0].length ?? 0;
     while (start < value.length && /\s/u.test(value[start])) {
         start += 1;
     }
@@ -88,7 +90,7 @@ function fold(value: string): string {
 }
 
 function prepareProjectInvocation(invocation: string): PreparedProjectInvocation {
-    const bodyRange = stripGherkinPrefix(invocation);
+    const bodyRange = stripGherkinPrefix(invocation, true);
     const normalized = normalizeWithOffsets(invocation, bodyRange.start, bodyRange.end);
     return {
         source: invocation,
@@ -172,7 +174,7 @@ function compileProjectDefinitionMatcherInternal(
     const matchingTemplate = definition.kind === 'builtInStep'
         ? (definition.template.split(/\r\n|\r|\n/u, 1)[0] ?? definition.template)
         : definition.template;
-    const templateRange = stripGherkinPrefix(matchingTemplate);
+    const templateRange = stripGherkinPrefix(matchingTemplate, definition.kind === 'builtInStep');
     const template = normalizeProjectDefinitionTemplate(
         matchingTemplate.slice(templateRange.start, templateRange.end)
     );

@@ -1,0 +1,8 @@
+version: 2
+identity:
+  kind: scenario
+  uid: 4c5d1200-c9e9-4354-856c-61fd4004a769
+metadata:
+  description: |-
+    - Synthetic helper scenario used by demo main scenarios.
+    - Shows a minimal reusable nested scenario with no parameters.

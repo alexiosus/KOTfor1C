@@ -5,6 +5,7 @@ import test from 'node:test';
 import { parseExportScenarios, validateGherkinSyntax } from '../src/exportScenarioParser';
 import { createProjectDefinitionView } from '../src/projectDefinition';
 import { resolveProjectInvocation } from '../src/projectDefinitionMatcher';
+import { renderFeatureTemplate } from '../src/featureTemplate';
 
 const fixtureRoot = path.join(process.cwd(), 'test', 'fixtures', 'project-definitions');
 
@@ -18,6 +19,21 @@ function context(sourceUri: string) {
         defaultLanguage: 'en' as const
     };
 }
+
+test('recognizes Functionality as a feature declaration and applies its export tag', () => {
+    const result = parseExportScenarios('# language: en\n@ExportScenarios\nFunctionality: Shared checkout\nScenario: Pay\n Given ready', context('file:///workspace/checkout.feature'));
+    assert.equal(result.feature?.title, 'Shared checkout');
+    assert.equal(result.feature?.hasExportTag, true);
+    assert.deepEqual(result.definitions.map(definition => definition.template), ['Pay']);
+    assert.equal(result.warnings.length, 0);
+});
+
+test('supplied Vanessa ru and en feature templates pass editor syntax validation', () => {
+    for (const language of ['ru', 'en'] as const) {
+        const source = renderFeatureTemplate({ language, featureTitle: 'Checkout', scenarioTitle: 'Pay' });
+        assert.deepEqual(validateGherkinSyntax(source, 'file:///tests/checkout.feature'), []);
+    }
+});
 
 test('parses a BOM and CRLF Russian feature-level export without indexing its background', () => {
     const fixture = fs.readFileSync(path.join(fixtureRoot, 'export-ru.feature'), 'utf8').trimEnd();

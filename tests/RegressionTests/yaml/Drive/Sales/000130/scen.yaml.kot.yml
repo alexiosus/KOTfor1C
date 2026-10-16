@@ -1,0 +1,8 @@
+version: 2
+identity:
+  kind: scenario
+  uid: a88ad0c7-b78f-44be-ad82-e6d11da81273
+metadata:
+  description: |-
+    - Finalizes the demo order and checks that the expected line is visible.
+    - Keeps the example short while still showing a verification step.

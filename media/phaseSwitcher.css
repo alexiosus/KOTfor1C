@@ -1204,6 +1204,18 @@ body {
     overflow-y: auto;
 }
 
+.manager-trees-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+.manager-trees-scroll .phase-tree-container {
+    overflow: visible;
+}
+
 #phaseTreeContainer {
     flex: 1 1 auto;
     min-height: 0;
@@ -1654,7 +1666,7 @@ label.checkbox-item.search-match {
     display: none !important;
 }
 
-.scenario-search-active .phase-tests-list {
+.scenario-search-active .phase-group > .phase-tests-list {
     max-height: none !important;
     opacity: 1;
     padding-block: 2px;
@@ -1662,7 +1674,7 @@ label.checkbox-item.search-match {
 
 .phase-header.kot-tree-row {
     display: grid;
-    grid-template-columns: 18px 18px minmax(0, 1fr) 24px auto;
+    grid-template-columns: 18px 18px minmax(0, 1fr) auto;
     align-items: center;
     gap: 4px;
     min-width: 0;
@@ -1670,7 +1682,13 @@ label.checkbox-item.search-match {
     padding-inline: 4px;
 }
 
-.phase-create-main-btn {
+.phase-header.kot-tree-row:hover:has(.phase-create-main-btn:not(:disabled)),
+.phase-header.kot-tree-row:has(:focus-visible):has(.phase-create-main-btn:not(:disabled)) {
+    grid-template-columns: 18px 18px minmax(0, 1fr) 24px auto;
+}
+
+.phase-header .phase-create-main-btn {
+    display: none;
     width: 24px;
     min-width: 24px;
     height: 24px;
@@ -1679,8 +1697,9 @@ label.checkbox-item.search-match {
     pointer-events: none;
 }
 
-.phase-header:hover .phase-create-main-btn,
-.phase-header:has(:focus-visible) .phase-create-main-btn {
+.phase-header:hover .phase-create-main-btn:not(:disabled),
+.phase-header:has(:focus-visible) .phase-create-main-btn:not(:disabled) {
+    display: inline-flex;
     opacity: 1;
     pointer-events: auto;
 }
@@ -2141,6 +2160,69 @@ label.checkbox-item .scenario-file-icon:focus-visible {
         display: none !important;
     }
 
+.scenario-type-section + .scenario-type-section {
+    border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+}
+
+.scenario-section-header.kot-tree-row {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) 48px auto;
+    align-items: center;
+    gap: 4px;
+    min-height: 30px;
+    padding-inline: 4px;
+    cursor: pointer;
+}
+
+.scenario-section-actions {
+    display: inline-flex;
+    align-items: center;
+    width: 48px;
+    gap: 0;
+}
+
+.scenario-section-header .scenario-section-action {
+    display: inline-flex;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    min-height: 24px;
+    padding: 0;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.scenario-section-header:hover .scenario-section-action:not(:disabled),
+.scenario-section-header:focus-visible .scenario-section-action:not(:disabled),
+.scenario-section-header:has(:focus-visible) .scenario-section-action:not(:disabled) {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.scenario-section-header .scenario-section-action:disabled {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.scenario-section-groups,
+.scenario-section-groups.expanded {
+    padding-inline-start: 0;
+}
+
+/* Indent contents instead of row containers so every highlight spans the tree. */
+.scenario-section-groups .phase-header.kot-tree-row { padding-inline-start: 22px; }
+.scenario-section-groups label.checkbox-item { padding-inline-start: 66px; }
+.scenario-section-groups .scenario-resource-toggle,
+.scenario-section-groups .scenario-resource-toggle-spacer { inset-inline-start: 40px; }
+.scenario-section-groups .scenario-resource-row { padding-inline-start: calc(63px + (var(--resource-depth, 1) * 15px)); }
+.scenario-section-groups label.checkbox-item .project-order-drag-handle { inset-inline-start: 18px; }
+
+.scenario-section-empty {
+    padding: 6px 4px;
+    margin: 0;
+    color: var(--vscode-descriptionForeground);
+}
+
 /* Bottom primary actions share a row while their labels fit, then wrap. */
 .controls-row.controls-row-primary {
     display: flex;
@@ -2180,3 +2262,33 @@ label.checkbox-item .scenario-file-icon:focus-visible {
     flex: 0 0 20px;
     object-fit: contain;
 }
+.project-order-drag-handle {
+    display: inline-flex;
+    position: absolute;
+    inset-inline-start: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 14px;
+    z-index: 2;
+    cursor: grab;
+    opacity: 0;
+    pointer-events: none;
+    color: var(--vscode-descriptionForeground);
+}
+.kot-tree-row:has(.project-order-drag-handle) { position: relative; }
+.phase-header.kot-tree-row:has(> .project-order-drag-handle) {
+    padding-inline-start: 22px;
+}
+.phase-header > .project-order-drag-handle { inset-inline-start: 4px; }
+.kot-tree-row:hover .project-order-drag-handle,
+.kot-tree-row:focus-visible .project-order-drag-handle,
+.kot-tree-row:has(:focus-visible) .project-order-drag-handle,
+.is-order-dragging .project-order-drag-handle {
+    opacity: 1;
+    pointer-events: auto;
+}
+.project-order-drag-handle:active { cursor: grabbing; }
+.is-order-dragging { opacity: 0.55; }
+.is-order-drop-before { box-shadow: inset 0 2px 0 var(--vscode-focusBorder); }
+.is-order-drop-after { box-shadow: inset 0 -2px 0 var(--vscode-focusBorder); }
+.is-order-drop-target { background: var(--vscode-list-dropBackground); }

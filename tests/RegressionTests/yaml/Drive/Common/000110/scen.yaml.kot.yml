@@ -1,0 +1,10 @@
+version: 2
+identity:
+  kind: scenario
+  uid: 27365c28-5470-4f93-8327-b09616d411c8
+metadata:
+  description: >-
+    - Creates a compact set of demo master data.
+
+    - Demonstrates defaulted nested-scenario parameters without requiring values
+    from the main scenario.

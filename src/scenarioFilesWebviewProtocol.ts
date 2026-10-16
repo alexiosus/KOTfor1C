@@ -1,17 +1,20 @@
 import type { ScenarioFileManifestEntry } from './scenarioFilesModel';
 import { normalizeScenarioFileRelativePath } from './scenarioFilesModel';
+import type { ScenarioFileResource } from './scenarioFilesModel';
+export { scenarioFilesItemForResource, scopeScenarioFileNodes, type ScenarioFileResource } from './scenarioFilesModel';
 
 export const MAX_SCENARIO_FILE_CHUNK_CHARACTERS = 360_000;
 const MAX_ID_LENGTH = 2_048;
 const MAX_PATH_LENGTH = 8_192;
 const MAX_MANIFEST_ENTRIES = 5_000;
 
-export type ScenarioFilesMessage =
+export type ScenarioFilesMessage = (
     | { readonly command: 'listScenarioFiles'; readonly itemId: string; readonly relativePath: string; readonly requestId: string }
     | { readonly command: 'setScenarioFilesExpanded'; readonly itemId: string; readonly expanded: boolean }
     | { readonly command: 'openScenarioFile'; readonly itemId: string; readonly relativePath: string }
     | { readonly command: 'revealScenarioFile'; readonly itemId: string; readonly relativePath: string }
     | { readonly command: 'deleteScenarioFile'; readonly itemId: string; readonly relativePath: string }
+    | { readonly command: 'renameScenarioFile'; readonly itemId: string; readonly relativePath: string }
     | { readonly command: 'openCompiledScenarioFeature'; readonly itemId: string }
     | {
         readonly command: 'prepareScenarioFileDrop';
@@ -22,7 +25,8 @@ export type ScenarioFilesMessage =
     }
     | { readonly command: 'appendScenarioFileChunk'; readonly transferId: string; readonly offset: number; readonly base64: string }
     | { readonly command: 'completeScenarioFileTransfer'; readonly transferId: string }
-    | { readonly command: 'cancelScenarioFileTransfer'; readonly transferId: string };
+    | { readonly command: 'cancelScenarioFileTransfer'; readonly transferId: string }
+) & { readonly resource?: ScenarioFileResource };
 
 function cleanId(value: unknown): string | null {
     if (typeof value !== 'string') {
@@ -78,12 +82,14 @@ export function parseScenarioFilesMessage(value: unknown): ScenarioFilesMessage 
         return null;
     }
     const record = value as Record<string, unknown>;
+    if (record.resource !== undefined && record.resource !== 'source' && record.resource !== 'compiled') { return null; }
+    const resource = record.resource ? { resource: record.resource as ScenarioFileResource } : {};
     if (record.command === 'listScenarioFiles') {
         const itemId = cleanId(record.itemId);
         const relativePath = cleanPath(record.relativePath, true);
         const requestId = cleanId(record.requestId);
         return itemId && relativePath !== null && requestId
-            ? { command: record.command, itemId, relativePath, requestId }
+            ? { command: record.command, itemId, relativePath, requestId, ...resource }
             : null;
     }
     if (record.command === 'setScenarioFilesExpanded') {
@@ -96,14 +102,14 @@ export function parseScenarioFilesMessage(value: unknown): ScenarioFilesMessage 
         const itemId = cleanId(record.itemId);
         const relativePath = cleanPath(record.relativePath, record.command === 'revealScenarioFile');
         return itemId && relativePath !== null
-            ? { command: record.command, itemId, relativePath }
+            ? { command: record.command, itemId, relativePath, ...resource }
             : null;
     }
-    if (record.command === 'deleteScenarioFile') {
+    if (record.command === 'deleteScenarioFile' || record.command === 'renameScenarioFile') {
         const itemId = cleanId(record.itemId);
         const relativePath = cleanPath(record.relativePath, false);
         return itemId && relativePath
-            ? { command: record.command, itemId, relativePath }
+            ? { command: record.command, itemId, relativePath, ...resource }
             : null;
     }
     if (record.command === 'openCompiledScenarioFeature') {
@@ -116,7 +122,7 @@ export function parseScenarioFilesMessage(value: unknown): ScenarioFilesMessage 
         const targetRelativePath = cleanPath(record.targetRelativePath, true);
         const entries = cleanManifest(record.entries);
         return dropId && itemId && targetRelativePath !== null && entries
-            ? { command: record.command, dropId, itemId, targetRelativePath, entries }
+            ? { command: record.command, dropId, itemId, targetRelativePath, entries, ...resource }
             : null;
     }
     if (record.command === 'appendScenarioFileChunk') {

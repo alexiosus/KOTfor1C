@@ -9,9 +9,13 @@ import {
     type ScenarioYamlField,
     type ScenarioYamlRecord
 } from './scenarioYamlDocument';
-import type { TestInfo } from './types';
+import type { ProcessStepReference, TestInfo } from './types';
 
 export interface ParsedScenarioDescriptor {
+    readonly catalogValues?: TestInfo['catalogValues'];
+    readonly kind?: 'process';
+    readonly processCode?: string;
+    readonly processSteps?: readonly ProcessStepReference[];
     readonly name?: string;
     readonly uid?: string;
     readonly scenarioCode?: string;
@@ -20,6 +24,7 @@ export interface ParsedScenarioDescriptor {
     readonly scenarioCodeLineEndCharacter?: number;
     readonly parameters?: readonly string[];
     readonly parameterDefaults?: Readonly<Record<string, string>>;
+    readonly parameterTypes?: Readonly<Record<string, 'scalar' | 'table'>>;
     readonly nestedScenarioNames?: readonly string[];
     readonly scenarioDescription?: string;
     readonly scenarioCategory?: string;
@@ -28,6 +33,25 @@ export interface ParsedScenarioDescriptor {
         readonly tabName?: string;
         readonly order?: number;
     };
+}
+
+export interface ParsedTestSettingsTarget {
+    readonly kind: 'scenario' | 'process';
+    readonly uid: string;
+}
+
+/** Reuse settings already read by discovery to identify main scenarios without KOT tags. */
+export function parseTestSettingsTarget(source: string): ParsedTestSettingsTarget | undefined {
+    if (!/^\uFEFF?ТипФайла\s*:\s*["']?Настройка/mu.test(source)) { return undefined; }
+    const yaml = ScenarioYamlDocument.parse(source);
+    if (yaml.errors.length) { return undefined; }
+    const type = yaml.findFieldAtPath(['ТипФайла']);
+    if (!type || type.ambiguous) { return undefined; }
+    const kind = type.value === 'НастройкаТеста' ? 'scenario' : type.value === 'НастройкаПроцесса' ? 'process' : undefined;
+    if (!kind) { return undefined; }
+    const link = yaml.findField('ДанныеТеста', kind === 'scenario' ? 'UIDСценария' : 'UIDПроцесса');
+    const uid = link && !link.ambiguous ? trimOptional(link.value) : undefined;
+    return uid ? { kind, uid: uid.toLowerCase() } : undefined;
 }
 
 function trimOptional(value: unknown): string | undefined {
@@ -60,7 +84,10 @@ function readParameterDefaults(records: readonly ScenarioYamlRecord[]): Map<stri
         }
         defaults.set(
             name,
-            normalizeScenarioCallParameterValue(getRecordString(record, 'Значение'), name)
+            record.fields.get('ТипПараметра') === 'Таблица'
+                ? getRecordString(record, 'Значение') ?? ''
+                : normalizeScenarioCallParameterValue(typeof record.fields.get('Значение') === 'string'
+                    ? record.fields.get('Значение') as string : undefined, name)
         );
     }
     return defaults;
@@ -94,26 +121,69 @@ function getFieldCoordinates(
 
 export function parseScenarioDescriptor(source: string): ParsedScenarioDescriptor {
     const yaml = ScenarioYamlDocument.parse(source);
-    const codeField = yaml.findField('ДанныеСценария', 'Код');
+    const isProcess = yaml.findSection('ДанныеПроцесса') !== null;
+    const dataSection = isProcess ? 'ДанныеПроцесса' : 'ДанныеСценария';
+    const codeField = yaml.findField(dataSection, 'Код');
+    const processSteps = isProcess ? yaml.readRecords('ШагиПроцесса').map(record => {
+        const type = getRecordString(record, 'ТипШага') === '1' ? 'process' : 'scenario';
+        const reference: ProcessStepReference = {
+            ...(getRecordString(record, 'UID') ? { uid: getRecordString(record, 'UID') } : {}),
+            ...(getRecordString(record, 'Наименование') ? { name: getRecordString(record, 'Наименование') } : {}),
+            type
+        };
+        const fields = type === 'process'
+            ? { processName: 'ВложенныйПроцессНаименование', processUid: 'ВложенныйПроцессUID' }
+            : { scenarioName: 'СценарийНаименование', scenarioUid: 'СценарийUID', scenarioCode: 'СценарийКод' };
+        for (const [key, field] of Object.entries(fields)) {
+            const value = getRecordString(record, field);
+            if (value) {
+                Object.assign(reference, { [key]: value });
+            }
+        }
+        return reference;
+    }) : undefined;
     const parameterDefaults = readParameterDefaults(yaml.readRecords('ПараметрыСценария'));
+    const parameterTypes = Object.fromEntries(yaml.readRecords('ПараметрыСценария').flatMap(record => {
+        const rawName = getRecordString(record, 'Имя');
+        const name = rawName ? extractScenarioParameterNameFromText(rawName) : '';
+        return name && record.fields.get('ТипПараметра') === 'Таблица' ? [[name, 'table' as const]] : [];
+    }));
     const nestedScenarioNames = unique(
-        yaml.readRecords('ВложенныеСценарии')
+        isProcess ? (processSteps ?? []).map(step => step.scenarioName ?? step.processName ?? '') : yaml.readRecords('ВложенныеСценарии')
             .map(record => getRecordString(record, 'ИмяСценария'))
             .filter((value): value is string => typeof value === 'string')
     );
     const scenarioDescription = trimOptional(parseKotScenarioDescription(source));
     const scenarioCategory = trimOptional(yaml.readScalar('KOTМетаданные', 'Категория'));
     const phaseSwitcher = parsePhaseSwitcherMetadata(source);
+    const header = (field: string) => trimOptional(yaml.readScalar(dataSection, field));
+    const functionName = header('ФункцияСистемы'); const functionUid = header('UIDФункцияСистемы');
+    const catalogValues: NonNullable<TestInfo['catalogValues']> = {};
+    if (!yaml.errors.length) {
+        for (const [key, field] of Object.entries({ project: 'Проект', reportLevel1: 'УровеньОтчета1', reportLevel2: 'УровеньОтчета2', responsible: 'Ответственный' })) {
+            const value = header(field); if (value && !/[\r\n\0]/u.test(value)) { Object.assign(catalogValues, { [key]: value }); }
+        }
+        if (functionName && !/[\r\n\0]/u.test(functionName) && functionUid && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(functionUid)) {
+            catalogValues.systemFunction = { name: functionName, uid: functionUid.toLocaleLowerCase() };
+        }
+    }
 
     return {
-        name: trimOptional(yaml.readScalar('ДанныеСценария', 'Имя')),
-        uid: trimOptional(yaml.readScalar('ДанныеСценария', 'UID')),
+        ...(Object.keys(catalogValues).length ? { catalogValues } : {}),
+        ...(isProcess ? {
+            kind: 'process' as const,
+            processCode: trimOptional(yaml.readScalar(dataSection, 'ПолныйКод')) ?? trimOptional(codeField?.value),
+            processSteps
+        } : {}),
+        name: trimOptional(yaml.readScalar(dataSection, 'Имя')),
+        uid: trimOptional(yaml.readScalar(dataSection, 'UID')),
         scenarioCode: trimOptional(codeField?.value),
         ...getFieldCoordinates(source, codeField),
         parameters: parameterDefaults.size > 0 ? [...parameterDefaults.keys()] : undefined,
         parameterDefaults: parameterDefaults.size > 0
             ? Object.fromEntries(parameterDefaults.entries())
             : undefined,
+        ...(Object.keys(parameterTypes).length ? { parameterTypes } : {}),
         nestedScenarioNames,
         scenarioDescription,
         ...(scenarioCategory ? { scenarioCategory } : {}),
@@ -135,6 +205,12 @@ export function buildTestInfoFromScenarioDescriptor(
     }
 
     const result: TestInfo = {
+        ...(descriptor.catalogValues ? { catalogValues: descriptor.catalogValues } : {}),
+        ...(descriptor.kind === 'process' ? {
+            kind: 'process',
+            processCode: descriptor.processCode,
+            processSteps: descriptor.processSteps?.map(step => ({ ...step }))
+        } : {}),
         name: descriptor.name,
         yamlFileUri,
         relativePath,
@@ -142,6 +218,8 @@ export function buildTestInfoFromScenarioDescriptor(
         parameterDefaults: descriptor.parameterDefaults
             ? { ...descriptor.parameterDefaults }
             : undefined,
+        ...(descriptor.parameterTypes && Object.keys(descriptor.parameterTypes).length
+            ? { parameterTypes: { ...descriptor.parameterTypes } } : {}),
         nestedScenarioNames: descriptor.nestedScenarioNames
             ? [...descriptor.nestedScenarioNames]
             : undefined,

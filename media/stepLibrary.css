@@ -317,6 +317,15 @@ select:focus-visible,
     text-align: center;
 }
 
+.tree-node-icon {
+    display: inline-flex;
+    width: 16px;
+    flex: 0 0 16px;
+    align-items: center;
+    justify-content: center;
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+}
+
 .tree-label {
     min-width: 0;
     flex: 1;
@@ -427,14 +436,18 @@ select:focus-visible,
 }
 
 .definition-row:hover .definition-actions,
-.definition-row:focus-within .definition-actions {
+.definition-row:not([data-feature-id]):focus-within .definition-actions,
+.definition-row[data-feature-id]:focus-visible .definition-actions,
+.definition-row[data-feature-id]:has(:focus-visible) .definition-actions {
     max-width: 104px;
     opacity: 1;
     pointer-events: auto;
 }
 
 .definition-row:hover .definition-actions.has-favorite > .definition-action,
-.definition-row:focus-within .definition-actions.has-favorite > .definition-action {
+.definition-row:not([data-feature-id]):focus-within .definition-actions.has-favorite > .definition-action,
+.definition-row[data-feature-id]:focus-visible .definition-actions.has-favorite > .definition-action,
+.definition-row[data-feature-id]:has(:focus-visible) .definition-actions.has-favorite > .definition-action {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -685,12 +698,14 @@ select:focus-visible,
 
 .definition-meta {
     display: flex;
+    align-items: center;
     grid-column: 1;
     grid-row: 2;
     min-width: 0;
     gap: 8px;
     color: var(--vscode-descriptionForeground);
     font-size: 11px;
+    line-height: 16px;
 }
 
 .definition-row[aria-selected="true"] .definition-meta {
@@ -725,6 +740,93 @@ select:focus-visible,
     max-width: 100%;
     min-width: 0;
     margin: 0 0 13px;
+}
+
+.process-step-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    padding-bottom: 12px;
+}
+
+.process-steps-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.process-steps-header .details-label {
+    margin-bottom: 0;
+}
+
+.process-step-drag {
+    flex-shrink: 0;
+    cursor: grab;
+    color: var(--vscode-descriptionForeground);
+}
+
+.process-step-row.is-dragging {
+    opacity: 0.5;
+}
+
+.process-step-row.is-drop-before {
+    box-shadow: inset 0 2px var(--vscode-focusBorder);
+}
+
+.process-step-row.is-drop-after,
+.process-step-list.is-drop-end {
+    box-shadow: inset 0 -2px var(--vscode-focusBorder);
+}
+
+.process-step-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--vscode-widget-border, transparent);
+}
+
+.process-step-number {
+    min-width: 16px;
+    color: var(--vscode-descriptionForeground);
+    font-variant-numeric: tabular-nums;
+}
+
+.process-step-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.process-step-name {
+    display: block;
+    overflow-wrap: anywhere;
+}
+
+.process-step-kind {
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+}
+
+.process-step-actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: 2px;
+}
+
+.definition-type {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.definition-category {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .details-resource-list {
@@ -845,6 +947,10 @@ select:focus-visible,
     border-top: 1px solid var(--vscode-panel-border);
 }
 
+#insertButton.hidden {
+    display: none;
+}
+
 .primary-button {
     color: var(--vscode-button-foreground);
     background: var(--vscode-button-background);
@@ -934,4 +1040,57 @@ select:focus-visible,
     .library-shell.details-open .details-pane {
         display: grid;
     }
+}
+
+.tree-node {
+    position: relative;
+}
+
+.tree-feature-actions {
+    display: inline-flex;
+    flex: 0 0 auto;
+    max-width: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.tree-feature-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    min-height: 24px;
+    padding: 0;
+    border: 0;
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    background: transparent;
+}
+
+.tree-feature-action:hover:not(:disabled),
+.tree-feature-action:focus-visible {
+    background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.tree-item:hover > .tree-feature-actions,
+.tree-item:focus-visible > .tree-feature-actions,
+.tree-item:has(:focus-visible) > .tree-feature-actions {
+    max-width: 24px;
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.tree-item.is-drop-target,
+.definition-row.is-drop-target {
+    outline: 1px solid var(--vscode-list-dropBackground, var(--vscode-focusBorder));
+    background: var(--vscode-list-dropBackground);
+}
+
+.feature-details-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 18px;
 }

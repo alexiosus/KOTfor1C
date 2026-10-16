@@ -8,13 +8,15 @@
 }(typeof globalThis === 'object' ? globalThis : this, function createStepLibraryProtocol() {
     'use strict';
 
-    const SOURCE_ORDER = ['builtIn', 'user', 'export', 'nested', 'main'];
+    const SOURCE_ORDER = ['builtIn', 'user', 'export', 'nested', 'main', 'process', 'standalone'];
     const DEFAULT_SOURCE_LABELS = Object.freeze({
         builtIn: 'Vanessa',
         user: 'User steps',
         export: 'Export scenarios',
         nested: 'Nested scenarios',
-        main: 'Main scenarios'
+        main: 'Main scenarios',
+        process: 'Processes',
+        standalone: 'Standalone features'
     });
     const DEFAULT_RESULT_LIMIT = 100;
     const UNCATEGORIZED_SENTINEL = '#uncategorized';
@@ -230,6 +232,9 @@
             if (!isCategoryAncestor(resolvedOptions.categoryPath, item.categoryPath)) {
                 continue;
             }
+            if (resolvedOptions.groupId !== undefined && item.groupId !== resolvedOptions.groupId) {
+                continue;
+            }
             if (
                 resolvedOptions.uncategorized === true
                 && Array.isArray(item.categoryPath)
@@ -252,6 +257,8 @@
         }
         ranked.sort((left, right) =>
             left.rank - right.rank
+            || (!normalizedQuery && left.item.sourceGroup === 'standalone' && right.item.sourceGroup === 'standalone'
+                ? (left.item.groupOrder || 0) - (right.item.groupOrder || 0) || (left.item.order || 0) - (right.item.order || 0) : 0)
             || compareText(left.display, right.display)
             || compareText(String(left.item.id), String(right.item.id))
         );
@@ -339,6 +346,13 @@
     function serializableNode(node, uncategorizedId) {
         const children = [...node.children]
             .sort((left, right) => {
+                if (node.sourceGroup === 'standalone') {
+                    return 0;
+                }
+                if (node.sourceGroup === 'main' || node.sourceGroup === 'process') {
+                    const groupOrder = (left.groupOrder ?? Infinity) - (right.groupOrder ?? Infinity);
+                    if (groupOrder) { return groupOrder; }
+                }
                 if (left.id === uncategorizedId) {
                     return 1;
                 }
@@ -354,6 +368,9 @@
             label: node.label,
             path: [...node.path],
             count: node.count,
+            ...(node.groupId !== undefined ? { groupId: node.groupId } : {}),
+            ...(node.scenarioGroupId !== undefined ? { scenarioGroupId: node.scenarioGroupId, groupOrder: node.groupOrder } : {}),
+            ...(node.renameGroupItemId ? { renameGroupItemId: node.renameGroupItemId } : {}),
             children
         };
     }
@@ -366,6 +383,34 @@
         };
         const uncategorizedLabel = resolvedLabels.uncategorized || 'Uncategorized';
         const roots = new Map();
+        for (const group of resolvedLabels.scenarioGroups || []) {
+            for (const section of group.sections) {
+                if (section !== 'main' && section !== 'process') { continue; }
+                let root = roots.get(section);
+                if (!root) {
+                    root = categoryNode(section, sourceLabels[section], []);
+                    root.id = section;
+                    roots.set(section, root);
+                }
+                const node = categoryNode(section, group.name, [group.name]);
+                node.scenarioGroupId = group.id;
+                node.groupOrder = group.order;
+                root.childByLabel.set(node.id, node);
+                root.children.push(node);
+            }
+        }
+        if (resolvedLabels.standaloneGroups !== undefined || (items || []).some(item => item.sourceGroup === 'standalone')) {
+            const root = categoryNode('standalone', sourceLabels.standalone, []);
+            root.id = 'standalone';
+            for (const group of [{ id: '', name: resolvedLabels.ungrouped || 'Ungrouped' }, ...(resolvedLabels.standaloneGroups || [])]) {
+                const node = categoryNode('standalone', group.name, group.id ? [group.name] : []);
+                node.id = `standalone::group:${encodeURIComponent(group.id)}`;
+                node.groupId = group.id;
+                root.childByLabel.set(group.id, node);
+                root.children.push(node);
+            }
+            roots.set('standalone', root);
+        }
         for (const item of items || []) {
             const group = item.sourceGroup;
             let rootNode = roots.get(group);
@@ -375,6 +420,19 @@
                 roots.set(group, rootNode);
             }
             rootNode.count += 1;
+            if (group === 'standalone') {
+                const groupId = item.groupId || '';
+                let child = rootNode.childByLabel.get(groupId);
+                if (!child) {
+                    child = categoryNode(group, item.categoryPath?.[0] || uncategorizedLabel, item.categoryPath || []);
+                    child.id = `standalone::group:${encodeURIComponent(groupId)}`;
+                    child.groupId = groupId;
+                    rootNode.childByLabel.set(groupId, child);
+                    rootNode.children.push(child);
+                }
+                child.count += 1;
+                continue;
+            }
             const path = Array.isArray(item.categoryPath) ? item.categoryPath : [];
             if (path.length === 0) {
                 const uncategorizedId = uncategorizedNodeId(group);
@@ -402,6 +460,9 @@
                 child.count += 1;
                 parent = child;
             }
+            if ((group === 'main' || group === 'process') && path.length === 1 && (item.kind === 'mainScenario' || item.kind === 'process')) {
+                parent.renameGroupItemId ||= item.id;
+            }
         }
         return SOURCE_ORDER
             .filter(group => roots.has(group))
@@ -411,10 +472,20 @@
             ));
     }
 
-    function reconcileCategorySelection(items, selection) {
+    function reconcileCategorySelection(items, selection, standaloneGroups, scenarioGroups) {
+        if (selection?.sourceGroup === 'standalone' && standaloneGroups !== undefined) {
+            const group = (standaloneGroups || []).find(value => value.id === selection.groupId);
+            return {
+                sourceGroup: 'standalone',
+                categoryPath: group ? [group.name] : [],
+                uncategorized: false,
+                groupId: group ? group.id : selection.groupId === '' ? '' : undefined
+            };
+        }
         const requestedSource = selection?.sourceGroup;
+        const declaredGroups = (scenarioGroups || []).filter(group => group.sections.includes(requestedSource));
         const sourceGroup = SOURCE_ORDER.includes(requestedSource)
-            && (items || []).some(item => item.sourceGroup === requestedSource)
+            && ((items || []).some(item => item.sourceGroup === requestedSource) || declaredGroups.length > 0)
             ? requestedSource
             : null;
         if (!sourceGroup) {
@@ -437,7 +508,7 @@
         while (categoryPath.length > 0) {
             const survives = sourceItems.some(item =>
                 isCategoryAncestor(categoryPath, item.categoryPath)
-            );
+            ) || declaredGroups.some(group => isCategoryAncestor(categoryPath, [group.name]));
             if (survives) {
                 break;
             }
@@ -448,6 +519,19 @@
 
     function canInsertItem(item, insertionTargetAvailable) {
         return Boolean(item && item.insertable !== false && insertionTargetAvailable);
+    }
+
+    function definitionPresentation(item, labels) {
+        if (item.processUri) { return { icon: 'list-ordered', label: labels.processDefinition || 'Process' }; }
+        return {
+            builtIn: { icon: 'extensions', label: labels.builtInDefinition || 'Vanessa step' },
+            user: { icon: 'symbol-method', label: labels.userDefinition || 'User step' },
+            export: { icon: 'package', label: labels.exportDefinition || 'Export scenario' },
+            nested: { icon: 'references', label: labels.nestedDefinition || 'Nested scenario' },
+            main: { icon: 'file', label: labels.mainScenarioDefinition || 'Main scenario' },
+            process: { icon: 'list-ordered', label: labels.processDefinition || 'Process' },
+            standalone: { icon: 'file-code', label: labels.standaloneDefinition || 'Feature' }
+        }[item.sourceGroup] || { icon: 'symbol-method', label: item.sourceLabel || '' };
     }
 
     function definitionRowActionOrder(item) {
@@ -484,6 +568,7 @@
         buildCategoryTree,
         reconcileCategorySelection,
         canInsertItem,
+        definitionPresentation,
         isUncategorizedNodeId,
         tokenizeGherkinText,
         preserveScrollPosition,

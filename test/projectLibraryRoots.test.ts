@@ -23,6 +23,47 @@ test('prefers effective Vanessa librarycatalogs over build fallbacks', () => {
     assert.deepEqual(result.libraryRootPaths, ['C:\\repo\\one', 'C:\\repo\\two']);
 });
 
+test('resolves compiler pipe-separated Libraries on both platforms without splitting drive letters', () => {
+    for (const pathApi of [path.posix, path.win32]) {
+        const result = resolveProjectLibraryConfiguration({
+            workspaceFolderPath: pathApi === path.win32 ? 'C:\\repo' : '/repo', profileId: 'active',
+            buildParameters: [{ key: 'Libraries', value: pathApi === path.win32 ? 'C:\\Steps|D:\\Exports' : 'steps|exports' }],
+            additionalVanessaParameters: [], pathApi
+        });
+        assert.deepEqual(result.libraryRootPaths, pathApi === path.win32 ? ['C:\\Steps', 'D:\\Exports'] : ['/repo/steps', '/repo/exports']);
+    }
+});
+
+test('an explicitly empty Libraries suppresses VanessaLibraries like the compiler does', () => {
+    const result = resolveProjectLibraryConfiguration({ workspaceFolderPath: '/repo', profileId: 'active',
+        buildParameters: [{ key: 'VanessaLibraries', value: 'old' }, { key: 'Libraries', value: '' }],
+        additionalVanessaParameters: [] });
+    assert.deepEqual(result.libraryRootPaths, []);
+});
+
+test('a colon in a single POSIX library folder remains part of its name', () => {
+    const result = resolveProjectLibraryConfiguration({ workspaceFolderPath: '/repo', profileId: 'active',
+        buildParameters: [{ key: 'Libraries', value: 'steps:shared' }], additionalVanessaParameters: [], pathApi: path.posix });
+    assert.deepEqual(result.libraryRootPaths, ['/repo/steps:shared']);
+});
+
+test('Additional cannot replace the automatic compiler library catalog without priority even if Libraries was removed', () => {
+    const result = resolveProjectLibraryConfiguration({ workspaceFolderPath: '/repo', profileId: 'active', buildParameters: [],
+        additionalVanessaParameters: [{ key: 'librarycatalogs', value: '["ignored"]', overrideExisting: false }] });
+    assert.deepEqual(result.libraryRootPaths, []);
+});
+
+test('Additional library catalogs respect priority against the SPPR library list, including an empty override', () => {
+    const input = { workspaceFolderPath: '/repo', profileId: 'active',
+        buildParameters: [{ key: 'Libraries', value: 'steps|exports' }] };
+    const withoutPriority = resolveProjectLibraryConfiguration({ ...input,
+        additionalVanessaParameters: [{ key: 'librarycatalogs', value: '["ignored"]', overrideExisting: false }] });
+    assert.deepEqual(withoutPriority.libraryRootPaths, ['/repo/steps', '/repo/exports']);
+    const emptyOverride = resolveProjectLibraryConfiguration({ ...input,
+        additionalVanessaParameters: [{ key: 'librarycatalogs', value: '[]', overrideExisting: true }] });
+    assert.deepEqual(emptyOverride.libraryRootPaths, []);
+});
+
 test('applies alias and override semantics before resolving library roots', () => {
     const result = resolveProjectLibraryConfiguration({
         workspaceFolderPath: '/repo',
@@ -39,12 +80,12 @@ test('applies alias and override semantics before resolving library roots', () =
     assert.deepEqual(result.libraryRootPaths, ['/libraries/final']);
 });
 
-test('falls back from Libraries to VanessaLibraries only when the earlier value is empty', () => {
+test('Libraries takes priority over VanessaLibraries including an explicitly empty value', () => {
     const libraries = resolveProjectLibraryConfiguration({
         workspaceFolderPath: '/repo',
         profileId: 'active',
         buildParameters: [
-            { key: 'Libraries', value: 'libraries/one:libraries/two' },
+            { key: 'Libraries', value: 'libraries/one|libraries/two' },
             { key: 'VanessaLibraries', value: 'libraries/three' }
         ],
         additionalVanessaParameters: [],
@@ -62,7 +103,7 @@ test('falls back from Libraries to VanessaLibraries only when the earlier value 
     });
 
     assert.deepEqual(libraries.libraryRootPaths, ['/repo/libraries/one', '/repo/libraries/two']);
-    assert.deepEqual(vanessaLibraries.libraryRootPaths, ['/repo/libraries/three']);
+    assert.deepEqual(vanessaLibraries.libraryRootPaths, []);
 });
 
 test('keeps Windows drive and UNC roots absolute and removes duplicates case-insensitively', () => {
@@ -71,7 +112,7 @@ test('keeps Windows drive and UNC roots absolute and removes duplicates case-ins
         profileId: 'active',
         buildParameters: [{
             key: 'Libraries',
-            value: 'C:\\Libraries;\\\\server\\share\\steps;c:\\libraries'
+            value: 'C:\\Libraries|\\\\server\\share\\steps|c:\\libraries'
         }],
         additionalVanessaParameters: [],
         pathApi: path.win32
@@ -86,7 +127,7 @@ test('resolves project tokens per owning workspace and excludes unresolved token
         profileId: 'profile-a',
         buildParameters: [{
             key: 'Libraries',
-            value: '["#SourcesPath/libs", "#Libraries/shared", "#Unknown/missing"]'
+            value: '#SourcesPath/libs|#Libraries/shared|#Unknown/missing'
         }],
         additionalVanessaParameters: [],
         pathApi: path.posix
@@ -132,7 +173,7 @@ test('deduplicates warnings and configuration identity is stable', () => {
     const input = {
         workspaceFolderPath: '/repo',
         profileId: 'active',
-        buildParameters: [{ key: 'Libraries', value: '#Missing/a:#Missing/a' }],
+        buildParameters: [{ key: 'Libraries', value: '#Missing/a|#Missing/a' }],
         additionalVanessaParameters: [],
         pathApi: path.posix
     };

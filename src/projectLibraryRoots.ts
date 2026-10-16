@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import * as path from 'node:path';
+import { getEffectiveCompilerLibraries } from './compilerBuildParameters';
 import type {
     AdditionalVanessaParameter,
     YamlParameter
@@ -45,9 +46,10 @@ function findBuildParameter(
 
 function getEffectiveAdditionalValue(
     parameters: readonly AdditionalVanessaParameter[],
-    alias: string
+    alias: string,
+    base: Record<string, JsonValue> = {}
 ): JsonValue | undefined {
-    const transformed = applyAdditionalVanessaParameters({}, parameters);
+    const transformed = applyAdditionalVanessaParameters(base, parameters);
     if (!transformed.value || typeof transformed.value !== 'object' || Array.isArray(transformed.value)) {
         return undefined;
     }
@@ -84,7 +86,8 @@ function parsePathValues(value: JsonValue | undefined, delimiter: string): strin
             // Treat malformed JSON-looking values as scalar path lists.
         }
     }
-    return trimmed.split(delimiter).map(entry => entry.trim()).filter(Boolean);
+    // SPPR uses | on every OS. Keep legacy platform lists when no pipe is present.
+    return trimmed.split(trimmed.includes('|') ? '|' : delimiter).map(entry => entry.trim()).filter(Boolean);
 }
 
 function stripOuterQuotes(value: string): string {
@@ -160,23 +163,10 @@ export function resolveProjectLibraryConfiguration(
     const workspaceFolderPath = pathApi.normalize(input.workspaceFolderPath);
     const warnings = new Set<string>();
 
-    const effectiveLibraries = parsePathValues(
-        getEffectiveAdditionalValue(input.additionalVanessaParameters, 'librarycatalogs'),
-        pathApi.delimiter
-    );
-    const librariesFallback = parsePathValues(
-        findBuildParameter(input.buildParameters, ['Libraries']),
-        pathApi.delimiter
-    );
-    const vanessaLibrariesFallback = parsePathValues(
-        findBuildParameter(input.buildParameters, ['VanessaLibraries']),
-        pathApi.delimiter
-    );
-    const libraryValues = effectiveLibraries.length > 0
-        ? effectiveLibraries
-        : librariesFallback.length > 0
-            ? librariesFallback
-            : vanessaLibrariesFallback;
+    const compilerLibraries = getEffectiveCompilerLibraries(input.buildParameters);
+    // The compiler always emits this key, including its built-in Vanessa library.
+    const libraryValues = parsePathValues(getEffectiveAdditionalValue(input.additionalVanessaParameters, 'librarycatalogs',
+        { КаталогиБиблиотек: compilerLibraries }), pathApi.delimiter);
 
     const effectiveFeatureFolders = parsePathValues(
         getEffectiveAdditionalValue(input.additionalVanessaParameters, 'featurepath'),

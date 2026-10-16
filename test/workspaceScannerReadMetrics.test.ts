@@ -105,9 +105,13 @@ test('scanner overlaps 32 descriptor reads and reports read diagnostics', async 
                 case './scenarioCatalog': return { buildScenarioCatalog };
                 case './scenarioScanRoot': return {
                     resolveScenarioScanRootFsPath: () => root,
+                    resolveProcessScanRootFsPath: () => root,
                     getScenarioScanRootPath: () => root
                 };
+                case './projectLibraryMetadata': return { loadProjectScenarioMetadata: async (infos: unknown) => infos };
+                case './projectLibraryIntegration': return { loadSingleProjectScenario: async (info: unknown) => info };
                 case './scenarioDescriptor': return {
+                    parseTestSettingsTarget: () => undefined,
                     parseTestInfoFromScenarioSource: (name: string, uri: ReturnType<typeof makeUri>, relativePath: string) => {
                         clockMs += 2;
                         return { name, yamlFileUri: uri, relativePath };

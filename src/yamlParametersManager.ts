@@ -2,9 +2,24 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { getExtensionUri } from './appContext';
-import { updateScenarioScanRoot } from './scenarioScanRoot';
+import { updateScenarioScanRoot, updateProcessScanRoot, getScenarioScanRootPath } from './scenarioScanRoot';
 import { getDefaultModelDbSettingsValue } from './etalonBases';
-import { ensureDefaultLibrariesParameter } from './yamlParameterDefaults';
+import { applyCompilerProfileDefaults, getDefaultAdditionalVanessaParameters } from './yamlParameterDefaults';
+import type { AdditionalParameterValueKind } from './vanessaLaunchJson';
+import { collectCompilerBuildValueIssues, getCompilerBuildValueHint, type CompilerBuildValueHint } from './compilerBuildValueValidation';
+import {
+    compilerCreatesLaunchJson,
+    getCompilerBuildParameterValue,
+    getEffectiveLaunchInfobase,
+    getEffectiveVanessaFolder,
+    importCompilerBuildParameters,
+    isTruthyCompilerParameter,
+    normalizeBuildParameterKey,
+    normalizeCompilerBuildParameters,
+    normalizeCompilerParameterRows,
+    normalizeVanessaFolderValue,
+    serializeCompilerBuildParameters
+} from './compilerBuildParameters';
 import {
     createActiveYamlParametersProfileSnapshot,
     getActiveYamlParametersProfileChange,
@@ -29,6 +44,7 @@ export interface AdditionalVanessaParameter {
     key: string;
     value: string;
     overrideExisting: boolean;
+    valueKind?: AdditionalParameterValueKind;
 }
 
 export interface GlobalVanessaVariable {
@@ -47,11 +63,10 @@ export interface YamlParametersProfilesSummary {
     profiles: YamlParametersProfileSummary[];
 }
 
-interface BuildParameterDefinition {
+interface BuildParameterDefinition extends Partial<CompilerBuildValueHint> {
     key: string;
     description: string;
     fixed?: boolean;
-    valueKind?: 'boolean';
 }
 
 interface YamlParametersProfile {
@@ -67,8 +82,8 @@ interface YamlParametersState {
     profiles: YamlParametersProfile[];
 }
 
-interface YamlParametersStorageV4 {
-    version: 4;
+interface YamlParametersStorageV5 {
+    version: 5;
     activeProfileId: string;
     profiles: YamlParametersProfile[];
 }
@@ -78,12 +93,6 @@ interface ProfileQuickPickItem extends vscode.QuickPickItem {
     profileId?: string;
 }
 
-const LAUNCH_INFOBASE_PARAMETER_ALIASES = [
-    'LaunchDBFolder',
-    'TestClientDBPath',
-    'InfobasePath',
-    'TestClientDB'
-] as const;
 const DEFAULT_YAML_PARAMETERS_PROFILE_ID = 'default';
 const DEFAULT_YAML_PARAMETERS_PROFILE_NAME = 'Default';
 
@@ -93,6 +102,8 @@ export class YamlParametersManager {
     private _context: vscode.ExtensionContext;
     private _langOverride: 'System' | 'English' | 'Русский' = 'System';
     private _ruBundle: Record<string, string> | null = null;
+    private parametersSaveQueue: Promise<void> = Promise.resolve();
+    private vanessaCatalogRevision = 0;
     private readonly activeProfileChangeEmitter = new vscode.EventEmitter<ActiveYamlParametersProfileChangeEvent>();
     public readonly onDidChangeActiveProfile = this.activeProfileChangeEmitter.event;
 
@@ -156,39 +167,24 @@ export class YamlParametersManager {
     }
 
     /**
-     * Получает параметры по умолчанию из примера
+     * Defaults for compiler, launch and diagnostic artifacts.
      */
     public getDefaultParameters(): YamlParameter[] {
         // Получаем BuildPath из настроек
         const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const buildPath = config.get<string>('runtime.directory') || '.vscode/kot-runtime';
-        return ensureDefaultLibrariesParameter([
-            { key: 'ScenarioFolder', value: 'tests/' },
+        return applyCompilerProfileDefaults([
+            { key: 'ScenarioFolder', value: getScenarioScanRootPath() },
             { key: 'FeatureFolder', value: path.join(buildPath, 'tests') },
             { key: 'VanessaFolder', value: this.getDefaultVanessaFolderValue() },
-            { key: 'ModelDBSettings', value: getDefaultModelDbSettingsValue() },
+            { key: 'ModelDBSettings', value: getDefaultModelDbSettingsValue(buildPath) },
             { key: 'AuthCompile', value: 'False' },
             { key: 'LaunchDBFolder', value: path.join(buildPath, 'launch-infobase') }
-        ]);
+        ], buildPath);
     }
 
     private normalizeVanessaFolderValue(rawValue: string): string {
-        const trimmedValue = String(rawValue ?? '').trim();
-        if (!trimmedValue) {
-            return '';
-        }
-
-        const withoutTrailingSeparators = trimmedValue.replace(/[\\/]+$/, '');
-        if (!withoutTrailingSeparators) {
-            return trimmedValue;
-        }
-
-        const basename = path.basename(withoutTrailingSeparators);
-        if (/\.epf$/i.test(basename)) {
-            return path.dirname(withoutTrailingSeparators);
-        }
-
-        return withoutTrailingSeparators;
+        return normalizeVanessaFolderValue(rawValue);
     }
 
     private getDefaultVanessaFolderValue(): string {
@@ -198,7 +194,7 @@ export class YamlParametersManager {
     }
 
     private normalizeBuildParameterKey(key: string): string {
-        return String(key).trim().toLowerCase().replace(/[_\-\s]/g, '');
+        return normalizeBuildParameterKey(key);
     }
 
     private createDefaultProfile(
@@ -209,7 +205,7 @@ export class YamlParametersManager {
             id,
             name,
             buildParameters: this.normalizeBuildParametersForUi(this.getDefaultParameters()),
-            additionalVanessaParameters: [],
+            additionalVanessaParameters: getDefaultAdditionalVanessaParameters(),
             globalVanessaVariables: []
         };
     }
@@ -255,7 +251,7 @@ export class YamlParametersManager {
             : this.t('Profile {0}', String(fallbackIndex + 1));
     }
 
-    private normalizeProfile(raw: unknown, fallbackIndex: number): YamlParametersProfile | null {
+    private normalizeProfile(raw: unknown, fallbackIndex: number, upgradeDefaults: boolean): YamlParametersProfile | null {
         if (!raw || typeof raw !== 'object') {
             return null;
         }
@@ -266,7 +262,7 @@ export class YamlParametersManager {
             id: this.normalizeProfileId(source.id, fallbackIndex),
             name: this.normalizeProfileName(source.name, fallbackIndex),
             buildParameters: this.normalizeBuildParametersForUi(
-                buildParameters.length > 0 ? buildParameters : this.getDefaultParameters()
+                buildParameters.length > 0 ? buildParameters : this.getDefaultParameters(), upgradeDefaults
             ),
             additionalVanessaParameters: this.normalizeAdditionalVanessaParameters(source.additionalVanessaParameters),
             globalVanessaVariables: this.normalizeGlobalVanessaVariables(source.globalVanessaVariables)
@@ -275,11 +271,12 @@ export class YamlParametersManager {
 
     private normalizeProfiles(
         rawProfiles: unknown,
-        fallbackProfile?: YamlParametersProfile
+        fallbackProfile?: YamlParametersProfile,
+        upgradeDefaults = false
     ): YamlParametersProfile[] {
         const normalizedProfiles = Array.isArray(rawProfiles)
             ? rawProfiles
-                .map((item, index) => this.normalizeProfile(item, index))
+                .map((item, index) => this.normalizeProfile(item, index, upgradeDefaults))
                 .filter((item): item is YamlParametersProfile => item !== null)
             : [];
 
@@ -320,36 +317,35 @@ export class YamlParametersManager {
         const t = this.t.bind(this);
         const genericDescription = t('Additional SPPR parameter passed to СборкаТекстовСценариев.');
         const showDriveSpecificParameters = this.shouldShowDriveSpecificBuildParameters();
-        const launchInfobaseDescription = t('Target infobase used for Vanessa launch. Use either a file infobase folder like `C:\\Bases\\Demo` or a full connection string such as `File="C:\\Bases\\Demo";` / `Srvr="server";Ref="base";`. KOT may temporarily replace this path at launch when you choose another infobase.');
+        const launchFolderDescription = t('File infobase folder or full connection string used for Vanessa launch. InfobasePath and TestClientDB take priority over this folder. KOT may replace the target when you select another infobase.');
+        const launchConnectionDescription = t('Full connection string used for Vanessa launch, such as `File="C:\\Bases\\Demo";` or `Srvr="server";Ref="base";`. Takes priority over LaunchDBFolder and TestClientDBPath. TestClientDB overrides InfobasePath.');
         const definitions: BuildParameterDefinition[] = [
             { key: 'ScenarioFolder', description: t('Root folder with YAML scenarios used by SPPR build. KOT also synchronizes this value with the YAML scan root.'), fixed: true },
             { key: 'FeatureFolder', description: t('Output folder where SPPR writes built feature/json artifacts.'), fixed: true },
             { key: 'VanessaFolder', description: t('Path to the Vanessa Automation directory. By default, KOT derives it from Run Vanessa: Vanessa Epf Path.'), fixed: true },
             { key: 'ModelDBSettings', description: t('Path to the model DB settings YAML with etalon database definitions and user credentials. Needed for automatic TestClient profile resolution; required when AuthCompile=true.'), fixed: true },
             { key: 'AuthCompile', description: t('Enables strict validation that SPPR can resolve TestClient authorization data from ModelDBSettings. It does not provide credentials by itself.'), fixed: true },
-            { key: 'LaunchDBFolder', description: launchInfobaseDescription, fixed: true },
-            { key: 'TestClientDBPath', description: launchInfobaseDescription, fixed: true },
-            { key: 'InfobasePath', description: launchInfobaseDescription, fixed: true },
-            { key: 'TestClientDB', description: launchInfobaseDescription, fixed: true },
+            { key: 'LaunchDBFolder', description: launchFolderDescription, fixed: true },
+            { key: 'TestClientDBPath', description: launchFolderDescription, fixed: true },
+            { key: 'InfobasePath', description: launchConnectionDescription },
+            { key: 'TestClientDB', description: launchConnectionDescription },
             { key: 'ProcessFolder', description: t('Separate root folder for process YAML files if they are stored outside ScenarioFolder.') },
             { key: 'ModelDBid', description: t('Identifier of the model database used to filter or route build artifacts.') },
             { key: 'CompileFile', description: t('Custom path to compile.txt written by the SPPR processing.') },
             { key: 'CreateJson', description: t('Controls whether SPPR creates per-test JSON launch files.') },
-            { key: 'CreateJUnit', description: t('Controls whether SPPR creates a JUnit report.') },
-            { key: 'JUnitPath', description: t('Folder where the JUnit report will be written.') },
-            { key: 'JUnitFile', description: t('Explicit file path for the JUnit report.') },
-            { key: 'LogFile', description: t('Path to the SPPR processing log file.') },
-            { key: 'ResultFile', description: t('Path to the SPPR processing result code file.') },
-            { key: 'ErrorFolder', description: t('Folder where SPPR writes detailed build errors.') },
+            { key: 'CreateJUnit', description: t('Controls whether the compiler creates a JUnit report for compilation.') },
+            { key: 'JUnitPath', description: t('Folder for junit_compile.xml; also supplies the Vanessa execution JUnit folder unless JUnitFolder overrides it.') },
+            { key: 'JUnitFile', description: t('Explicit file path for the compilation JUnit report. Does not set the Vanessa execution report folder.') },
+            { key: 'LogFile', description: t('Compiler log path. KOT manages this value during Test Manager builds.') },
+            { key: 'ResultFile', description: t('Compiler result code path. KOT manages this value during Test Manager builds.') },
+            { key: 'ErrorFolder', description: t('Compiler error folder. KOT manages this value during Test Manager builds.') },
             { key: 'ScenarioLogFile', description: t('Path to Vanessa progress log for scenario execution.') },
             { key: 'ScenarioOutFile', description: t('Path to Vanessa status/result file for scenario execution.') },
             { key: 'BDDLogFolder', description: t('Folder for Vanessa Automation error logs.') },
             { key: 'ScreenshotsFolder', description: t('Folder where screenshots are stored.') },
-            { key: 'VanessaDir', description: t('Alternative key for the Vanessa Automation directory.') },
-            { key: 'VanessaPath', description: t('Alternative key for the Vanessa Automation directory or EPF path.') },
-            { key: 'Libraries', description: t('Path to Vanessa feature libraries used during launch.') },
-            { key: 'VanessaLibraries', description: t('Alternative key for Vanessa feature libraries path.') },
-            { key: 'JUnitFolder', description: t('Folder used for JUnit output or related build reports.') },
+            { key: 'Libraries', description: t('Additional Vanessa library folders separated by |. Overrides VanessaLibraries. The built-in library is added automatically.') },
+            { key: 'VanessaLibraries', description: t('Additional Vanessa library folders separated by |. Libraries takes priority when both are present.') },
+            { key: 'JUnitFolder', description: t('Folder for Vanessa execution JUnit reports. Overrides the execution folder set by JUnitPath.') },
             { key: 'AllurePath', description: t('Path for Allure report artifacts.') },
             { key: 'AllureFolder', description: t('Alternative folder for Allure report artifacts.') },
             { key: 'CucumberFolder', description: t('Folder for Cucumber-style reports.') },
@@ -361,22 +357,22 @@ export class YamlParametersManager {
             { key: 'UseExternalComponent', description: t('Enables usage of the 1C external component.') },
             { key: 'PidInformation', description: t('Enables collection of OS process information.') },
             { key: 'TestClientType', description: t('Type of test client that should be launched.') },
-            { key: 'TestClientPort', description: t('Port used to launch the test client.') },
-            { key: 'DebugMode', description: t('Enables SPPR debug mode.') },
-            { key: 'PauseOnWindowsOpening', description: t('Pause in seconds when opening windows during automation.') },
+            { key: 'TestClientPort', description: t('TestClient TCP port from 1 to 65535. Leave empty to use 48000.') },
+            { key: 'DebugMode', description: t('Vanessa debug behavior: stop on errors and leave the test client and system open after execution.') },
+            { key: 'PauseOnWindowsOpening', description: t('Pause when opening windows, in seconds. Use a finite nonnegative number; empty keeps the compiler default.') },
             { key: 'AllureReport', description: t('Enables Allure report generation.') },
             { key: 'SafeStepsExecution', description: t('Enables safe execution mode for Vanessa steps.') },
-            { key: 'JUnitReport', description: t('Enables JUnit report generation.') },
+            { key: 'JUnitReport', description: t('Enables Vanessa execution JUnit reports. Compilation reports are controlled by CreateJUnit.') },
             { key: 'CucumberReport', description: t('Enables Cucumber report generation.') },
             { key: 'SpprReport', description: t('Enables SPPR-format report generation.') },
             { key: 'ExtraParams', description: t('Additional startup parameters passed to the test client.') },
-            { key: 'WaitWindowTime', description: t('Timeout for waiting for windows during automation.') },
-            { key: 'NumberOfAttempts', description: t('Number of retry attempts for actions.') },
-            { key: 'TimeoutForAsyncSteps', description: t('Timeout for asynchronous steps.') },
-            { key: 'TimeoutTestClientStart', description: t('Timeout for starting the 1C test client.') },
+            { key: 'WaitWindowTime', description: t('Maximum wait for a window, in seconds. Use a finite nonnegative number; empty keeps the compiler default.') },
+            { key: 'NumberOfAttempts', description: t('Number of attempts for an action. Use a positive integer; empty keeps the compiler default.') },
+            { key: 'TimeoutForAsyncSteps', description: t('Timeout for asynchronous steps, in seconds. Use a finite nonnegative number; empty keeps the compiler default.') },
+            { key: 'TimeoutTestClientStart', description: t('Timeout for starting the 1C test client, in seconds. Use a finite nonnegative number; empty keeps the compiler default.') },
             { key: 'ErrorAddInfo', description: t('Additional error text appended to build errors.') },
             { key: 'AddImportantInfo', description: t('Additional reproduction information inserted into build errors.') },
-            { key: 'DetectionTime', description: t('Custom detection time for SPPR error output.') },
+            { key: 'DetectionTime', description: t('Detection time for SPPR error output in XML dateTime format: YYYY-MM-DDTHH:mm:ss, optionally with Z or a timezone offset. Empty keeps the compiler default.') },
             { key: 'RepoPath', description: t('Repository URL included into SPPR error output.') },
             { key: 'Branch', description: t('Repository branch included into SPPR error output.') },
             { key: 'PipelineId', description: t('Pipeline identifier included into SPPR error output.') },
@@ -389,14 +385,14 @@ export class YamlParametersManager {
             { key: 'ScenarioFilterHasPriority', description: t('Prioritize ScenarioFilter over other filters.') },
             { key: 'ProcessSettingsFilter', description: t('Filter build by process settings codes.') },
             { key: 'ProcessFilter', description: t('Filter build by process codes.') },
-            { key: 'ThreadsCount', description: t('Number of build threads used by SPPR.') },
-            { key: 'ThreadNumber', description: t('Zero-based or one-based current thread number depending on pipeline usage.') },
-            { key: 'ThreadTotal', description: t('Alternative key for total number of build threads.') },
-            { key: 'ThreadIndex', description: t('Alternative key for the current build thread index.') },
+            { key: 'ThreadsCount', description: t('Number of compilation partitions. Test Manager builds each partition in its own output folder and merges the results.') },
+            { key: 'ThreadNumber', description: t('Zero-based compilation partition number: 0 is the first partition. ThreadIndex takes priority.') },
+            { key: 'ThreadTotal', description: t('Number of compilation partitions. Overrides ThreadsCount.') },
+            { key: 'ThreadIndex', description: t('One-based compilation partition index: 1 is the first partition. Overrides ThreadNumber.') },
             { key: 'ExternalMode', description: t('Enables external mode for the SPPR processing.') },
             { key: 'CreateModellingXml', description: t('Enables creation of SPPR modelling XML error output.') },
             { key: 'FilterTags', description: t('Include only tests/scenarios matching the specified tags.') },
-            { key: 'ExceptionTags', description: t('Exclude tests/scenarios matching the specified tags.') },
+            { key: 'ExceptionTags', description: t('Exclude matching tags from main-scenario settings. The supplied compiler ignores this option for processes.') },
             { key: 'SeveralScenariosInOneFile', description: t('Enables grouping of several scenarios into one feature file when SPPR allows it.') }
         ];
 
@@ -409,9 +405,9 @@ export class YamlParametersManager {
 
         const keys = [
             'ExternalMode', 'ErrorFolder', 'CreateModellingXml', 'CreateJUnit', 'JUnitPath', 'JUnitFile',
-            'CreateJson', 'FilterTags', 'ExceptionTags', 'TestFolder', 'ScenarioFolder', 'ProcessFolder',
+            'CreateJson', 'FilterTags', 'ExceptionTags', 'ScenarioFolder', 'ProcessFolder',
             'FeatureFolder', 'ModelDBid', 'ModelDBSettings', 'AuthCompile', 'LaunchDBFolder',
-            'VanessaDir', 'VanessaFolder', 'VanessaPath', 'AllurePath', 'AllureFolder', 'JUnitFolder',
+            'VanessaFolder', 'AllurePath', 'AllureFolder', 'JUnitFolder',
             'SpprReportFolder', 'CucumberFolder', 'VanessaLibraries', 'Libraries', 'ScenarioLogFile',
             'BDDLogFolder', 'ScenarioOutFile', 'CaptureScreen', 'ScreenshotCaptureCommand', 'ScreenshotsPath',
             'ScreenshotsFolder', 'UseScreenshotComponent', 'UseExternalComponent', 'PidInformation', 'ResultFile',
@@ -438,128 +434,25 @@ export class YamlParametersManager {
             definitions.push({ key, description: genericDescription });
         }
 
-        const booleanKeys = new Set([
-            'authcompile',
-            'createjson',
-            'createjunit',
-            'capturescreen',
-            'usescreenshotcomponent',
-            'useexternalcomponent',
-            'pidinformation',
-            'debugmode',
-            'allurereport',
-            'safestepsexecution',
-            'junitreport',
-            'cucumberreport',
-            'spprreport',
-            'externalmode',
-            'createmodellingxml',
-            'severalscenariosinonefile',
-            'scenariofilterhaspriority',
-            'splitfeaturefiles'
-        ]);
-
         definitions.forEach(definition => {
-            if (booleanKeys.has(this.normalizeBuildParameterKey(definition.key))) {
-                definition.valueKind = 'boolean';
-            }
+            const hint = getCompilerBuildValueHint(definition.key);
+            if (hint) { Object.assign(definition, hint); }
         });
 
         return definitions;
     }
 
-    private normalizeBuildParametersForUi(parameters: YamlParameter[]): YamlParameter[] {
-        const scenarioFolderValue = this.getBuildParameterValue(parameters, 'ScenarioFolder', 'TestFolder');
-        const featureFolderValue = this.getBuildParameterValue(parameters, 'FeatureFolder');
-        const hasExplicitVanessaFolder = this.hasBuildParameterKey(parameters, 'VanessaFolder', 'VanessaDir', 'VanessaPath');
-        const vanessaFolderValue = hasExplicitVanessaFolder
-            ? this.normalizeVanessaFolderValue(this.getBuildParameterValue(parameters, 'VanessaFolder', 'VanessaDir', 'VanessaPath'))
-            : this.getDefaultVanessaFolderValue();
-        const authCompileValue = this.getBuildParameterValue(parameters, 'AuthCompile') || 'False';
-        const modelDbSettingsValue = this.getBuildParameterValue(parameters, 'ModelDBSettings') || getDefaultModelDbSettingsValue();
-        const launchInfobaseParameter = this.findBuildParameter(parameters, ...LAUNCH_INFOBASE_PARAMETER_ALIASES);
-        const launchInfobaseKey = launchInfobaseParameter?.key?.trim() || 'LaunchDBFolder';
-        const launchInfobaseValue = String(launchInfobaseParameter?.value || '');
-        const showDriveSpecificParameters = this.shouldShowDriveSpecificBuildParameters();
-        const fixedNormalizedKeys = new Set([
-            'scenariofolder',
-            'testfolder',
-            'featurefolder',
-            'vanessafolder',
-            'vanessadir',
-            'vanessapath',
-            'authcompile',
-            'modeldbsettings',
-            ...LAUNCH_INFOBASE_PARAMETER_ALIASES.map(alias => this.normalizeBuildParameterKey(alias))
-        ]);
-        const result: YamlParameter[] = [
-            { key: 'ScenarioFolder', value: scenarioFolderValue },
-            { key: 'FeatureFolder', value: featureFolderValue },
-            { key: 'VanessaFolder', value: vanessaFolderValue },
-            { key: 'ModelDBSettings', value: modelDbSettingsValue },
-            { key: 'AuthCompile', value: authCompileValue },
-            { key: launchInfobaseKey, value: launchInfobaseValue }
-        ];
-
-        for (const parameter of parameters) {
-            const normalizedKey = this.normalizeBuildParameterKey(parameter.key);
-            if (fixedNormalizedKeys.has(normalizedKey)) {
-                continue;
-            }
-            if (normalizedKey === 'uc') {
-                continue;
-            }
-            if (!showDriveSpecificParameters && normalizedKey === 'splitfeaturefiles') {
-                continue;
-            }
-            result.push(parameter);
-        }
-
-        return ensureDefaultLibrariesParameter(result);
+    private normalizeBuildParametersForUi(parameters: YamlParameter[], upgradeDefaults = false): YamlParameter[] {
+        const runtimeDirectory = vscode.workspace.getConfiguration('kotTestToolkit').get<string>('runtime.directory') || '.vscode/kot-runtime';
+        const normalized = normalizeCompilerBuildParameters(parameters, {
+            defaultVanessaFolder: this.getDefaultVanessaFolderValue(),
+            defaultModelDbSettings: getDefaultModelDbSettingsValue(runtimeDirectory)
+        });
+        return upgradeDefaults ? applyCompilerProfileDefaults(normalized, runtimeDirectory) : normalized;
     }
 
     private getBuildParameterValue(parameters: YamlParameter[], ...aliases: string[]): string {
-        const normalizedAliases = aliases.map(alias => this.normalizeBuildParameterKey(alias));
-        for (const parameter of parameters) {
-            const normalizedKey = this.normalizeBuildParameterKey(parameter.key);
-            if (!normalizedAliases.includes(normalizedKey)) {
-                continue;
-            }
-            const value = String(parameter.value ?? '').trim();
-            if (value) {
-                return value;
-            }
-        }
-        return '';
-    }
-
-    private findBuildParameter(parameters: YamlParameter[], ...aliases: string[]): YamlParameter | null {
-        const normalizedAliases = new Set(aliases.map(alias => this.normalizeBuildParameterKey(alias)));
-        let firstMatch: YamlParameter | null = null;
-        for (const parameter of parameters) {
-            if (!normalizedAliases.has(this.normalizeBuildParameterKey(parameter.key))) {
-                continue;
-            }
-
-            if (!firstMatch) {
-                firstMatch = parameter;
-            }
-
-            if (String(parameter.value ?? '').trim()) {
-                return parameter;
-            }
-        }
-        return firstMatch;
-    }
-
-    private hasBuildParameterKey(parameters: YamlParameter[], ...aliases: string[]): boolean {
-        const normalizedAliases = new Set(aliases.map(alias => this.normalizeBuildParameterKey(alias)));
-        return parameters.some(parameter => normalizedAliases.has(this.normalizeBuildParameterKey(parameter.key)));
-    }
-
-    private isTruthyBuildParameterValue(value: string): boolean {
-        const normalized = String(value ?? '').trim().toLowerCase();
-        return normalized === 'true' || normalized === 'истина';
+        return getCompilerBuildParameterValue(parameters, ...aliases).trim();
     }
 
     private getWorkspaceRootPath(): string | null {
@@ -622,37 +515,39 @@ export class YamlParametersManager {
         return configuredRuntimePath;
     }
 
+    /** Preflight validation available before preparing or starting the compiler infobase. */
+    public validateCompilerBuildParameters(parameters: readonly YamlParameter[]): readonly string[] {
+        return this.validateBuildParameters([...parameters]);
+    }
+
     private validateBuildParameters(parameters: YamlParameter[]): string[] {
         const errors: string[] = [];
-        const scenarioFolder = this.getBuildParameterValue(parameters, 'ScenarioFolder', 'TestFolder');
+        const scenarioFolder = this.getBuildParameterValue(parameters, 'TestFolder', 'ScenarioFolder');
         const featureFolder = this.getBuildParameterValue(parameters, 'FeatureFolder');
-        const vanessaFolder = this.normalizeVanessaFolderValue(
-            this.getBuildParameterValue(parameters, 'VanessaFolder', 'VanessaDir', 'VanessaPath')
-        );
-        const authCompile = this.isTruthyBuildParameterValue(this.getBuildParameterValue(parameters, 'AuthCompile'));
+        const vanessaFolder = getEffectiveVanessaFolder(parameters);
+        const authCompile = isTruthyCompilerParameter(this.getBuildParameterValue(parameters, 'AuthCompile'));
         const modelDbSettings = this.getBuildParameterValue(parameters, 'ModelDBSettings');
-        const launchInfobasePath = this.getBuildParameterValue(parameters, ...LAUNCH_INFOBASE_PARAMETER_ALIASES);
+        const createsLaunchJson = compilerCreatesLaunchJson(parameters);
+        const launchInfobasePath = getEffectiveLaunchInfobase(parameters);
 
         if (!scenarioFolder) {
             errors.push(this.t('ScenarioFolder or TestFolder is required for SPPR build.'));
         }
-
         if (!featureFolder) {
             errors.push(this.t('FeatureFolder is required for SPPR build.'));
         }
-
-        if (!vanessaFolder) {
-            errors.push(this.t('VanessaFolder is required for SPPR build.'));
+        if (createsLaunchJson && !vanessaFolder) {
+            errors.push(this.t('VanessaFolder is required when CreateJson=true.'));
         }
-
         if (authCompile && !modelDbSettings) {
             errors.push(this.t('ModelDBSettings is required when AuthCompile=true.'));
         }
-
-        if (!launchInfobasePath) {
+        if (createsLaunchJson && !launchInfobasePath.trim()) {
             errors.push(this.t('LaunchDBFolder, TestClientDBPath, InfobasePath or TestClientDB is required for Vanessa launch.'));
         }
-
+        const serialized = this.shouldShowDriveSpecificBuildParameters() ? parameters
+            : parameters.filter(parameter => normalizeBuildParameterKey(parameter.key) !== 'splitfeaturefiles');
+        for (const issue of collectCompilerBuildValueIssues(serialized)) { errors.push(this.t(issue.message, issue.parameter)); }
         return errors;
     }
 
@@ -667,36 +562,22 @@ export class YamlParametersManager {
     }
 
     private async syncYamlSourceDirectorySettingFromBuildParameters(parameters: YamlParameter[]): Promise<boolean> {
-        const scenarioFolder = this.getBuildParameterValue(parameters, 'ScenarioFolder', 'TestFolder');
+        const scenarioFolder = this.getBuildParameterValue(parameters, 'TestFolder', 'ScenarioFolder');
         if (!scenarioFolder) {
             return false;
         }
 
-        return updateScenarioScanRoot(this._context, scenarioFolder);
+        const scenarioChanged = await updateScenarioScanRoot(this._context, scenarioFolder);
+        const processFolder = this.getBuildParameterValue(parameters, 'TestFolder', 'ProcessFolder');
+        const processChanged = await updateProcessScanRoot(this._context, processFolder);
+        return scenarioChanged || processChanged;
     }
 
     /**
      * Нормализует список параметров
      */
     private normalizeParameters(raw: unknown): YamlParameter[] {
-        if (!Array.isArray(raw)) {
-            return [];
-        }
-
-        const result: YamlParameter[] = [];
-        for (const item of raw) {
-            if (!item || typeof item !== 'object') {
-                continue;
-            }
-            const key = String((item as { key?: unknown }).key || '').trim();
-            const value = String((item as { value?: unknown }).value || '');
-            if (!key) {
-                continue;
-            }
-            result.push({ key, value });
-        }
-
-        return result;
+        return normalizeCompilerParameterRows(raw);
     }
 
     /**
@@ -713,7 +594,8 @@ export class YamlParametersManager {
                 continue;
             }
             const key = String((item as { key?: unknown }).key || '').trim();
-            const value = String((item as { value?: unknown }).value || '');
+            const rawValue = (item as { value?: unknown }).value;
+            const value = this.stringifyAnyJsonValue(rawValue);
             if (!key) {
                 continue;
             }
@@ -721,7 +603,10 @@ export class YamlParametersManager {
                 (item as { overrideExisting?: unknown }).overrideExisting
                 ?? (item as { priority?: unknown }).priority
             );
-            result.push({ key, value, overrideExisting });
+            const declaredKind = (item as { valueKind?: unknown }).valueKind;
+            const valueKind = typeof declaredKind === 'string' && ['string', 'number', 'boolean', 'array', 'object', 'null'].includes(declaredKind)
+                ? declaredKind as AdditionalParameterValueKind : typeof rawValue !== 'string' && rawValue !== undefined ? this.jsonValueKind(rawValue) : undefined;
+            result.push({ key, value, overrideExisting, ...(valueKind ? { valueKind } : {}) });
         }
 
         return result;
@@ -756,7 +641,8 @@ export class YamlParametersManager {
     }
 
     private stringifyAnyJsonValue(value: unknown): string {
-        if (value === undefined || value === null) {
+        if (value === null) { return 'null'; }
+        if (value === undefined) {
             return '';
         }
         if (typeof value === 'string') {
@@ -772,27 +658,17 @@ export class YamlParametersManager {
         }
     }
 
+    private jsonValueKind(value: unknown): AdditionalParameterValueKind {
+        return value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value as AdditionalParameterValueKind;
+    }
+
     private flattenAdditionalParametersFromJson(
         value: unknown,
         currentPath: string,
         result: AdditionalVanessaParameter[]
     ): void {
         if (Array.isArray(value)) {
-            if (value.length === 0) {
-                if (currentPath) {
-                    result.push({
-                        key: currentPath,
-                        value: '[]',
-                        overrideExisting: false
-                    });
-                }
-                return;
-            }
-
-            value.forEach((item, index) => {
-                const nextPath = currentPath ? `${currentPath}[${index}]` : `[${index}]`;
-                this.flattenAdditionalParametersFromJson(item, nextPath, result);
-            });
+            if (currentPath) { result.push({ key: currentPath, value: this.stringifyAnyJsonValue(value), overrideExisting: false, valueKind: 'array' }); }
             return;
         }
 
@@ -803,6 +679,7 @@ export class YamlParametersManager {
                     result.push({
                         key: currentPath,
                         value: '{}',
+                        valueKind: 'object',
                         overrideExisting: false
                     });
                 }
@@ -814,7 +691,10 @@ export class YamlParametersManager {
                 if (!key) {
                     return;
                 }
-                const nextPath = currentPath ? `${currentPath}.${key}` : key;
+                const escape = (part: string) => part.replace(/~/g, '~0').replace(/\//g, '~1');
+                const nextPath = currentPath.startsWith('/') ? `${currentPath}/${escape(key)}`
+                    : /[.\[\]/~]/u.test(key) ? `/${[...(currentPath ? currentPath.split('.') : []), key].map(escape).join('/')}`
+                        : currentPath ? `${currentPath}.${key}` : key;
                 this.flattenAdditionalParametersFromJson(item, nextPath, result);
             });
             return;
@@ -827,6 +707,7 @@ export class YamlParametersManager {
         result.push({
             key: currentPath,
             value: this.stringifyAnyJsonValue(value),
+            valueKind: this.jsonValueKind(value),
             overrideExisting: false
         });
     }
@@ -920,21 +801,22 @@ export class YamlParametersManager {
                     profiles: [{
                         ...defaultProfile,
                         buildParameters: this.normalizeBuildParametersForUi(
-                            legacyBuild.length > 0 ? legacyBuild : this.getDefaultParameters()
+                            legacyBuild.length > 0 ? legacyBuild : this.getDefaultParameters(), true
                         )
                     }]
                 };
             }
 
             if (parsed && typeof parsed === 'object') {
-                const payload = parsed as Partial<YamlParametersStorageV4> & {
+                const payload = parsed as Partial<Omit<YamlParametersStorageV5, 'version'>> & {
+                    version?: number;
                     buildParameters?: unknown;
                     additionalVanessaParameters?: unknown;
                     globalVanessaVariables?: unknown;
                 };
 
                 if (Array.isArray(payload.profiles)) {
-                    const profiles = this.normalizeProfiles(payload.profiles);
+                    const profiles = this.normalizeProfiles(payload.profiles, undefined, (payload.version ?? 0) < 5);
                     const activeProfileId = String(payload.activeProfileId || '').trim();
                     const resolvedActiveProfileId = profiles.some(profile => profile.id === activeProfileId)
                         ? activeProfileId
@@ -953,7 +835,7 @@ export class YamlParametersManager {
                     profiles: [{
                         ...defaultProfile,
                         buildParameters: this.normalizeBuildParametersForUi(
-                            buildParameters.length > 0 ? buildParameters : this.getDefaultParameters()
+                            buildParameters.length > 0 ? buildParameters : this.getDefaultParameters(), true
                         ),
                         additionalVanessaParameters: this.normalizeAdditionalVanessaParameters(payload.additionalVanessaParameters),
                         globalVanessaVariables: this.normalizeGlobalVanessaVariables(payload.globalVanessaVariables)
@@ -968,25 +850,30 @@ export class YamlParametersManager {
     }
 
     private async saveParametersState(state: YamlParametersState): Promise<void> {
-        const previousState = await this.loadParametersState();
-        const normalizedProfiles = this.normalizeProfiles(state.profiles);
-        const activeProfileId = normalizedProfiles.some(profile => profile.id === state.activeProfileId)
-            ? state.activeProfileId
-            : normalizedProfiles[0].id;
-        const payload: YamlParametersStorageV4 = {
-            version: 4,
-            activeProfileId,
-            profiles: normalizedProfiles
-        };
-        await this._context.secrets.store(YAML_PARAMETERS_KEY, JSON.stringify(payload));
+        // Preserve request order when an autosave and a profile selection overlap.
+        const save = this.parametersSaveQueue.then(async () => {
+            const previousState = await this.loadParametersState();
+            const normalizedProfiles = this.normalizeProfiles(state.profiles);
+            const activeProfileId = normalizedProfiles.some(profile => profile.id === state.activeProfileId)
+                ? state.activeProfileId
+                : normalizedProfiles[0].id;
+            const payload: YamlParametersStorageV5 = {
+                version: 5,
+                activeProfileId,
+                profiles: normalizedProfiles
+            };
+            await this._context.secrets.store(YAML_PARAMETERS_KEY, JSON.stringify(payload));
 
-        const change = getActiveYamlParametersProfileChange(previousState, {
-            activeProfileId,
-            profiles: normalizedProfiles
+            const change = getActiveYamlParametersProfileChange(previousState, {
+                activeProfileId,
+                profiles: normalizedProfiles
+            });
+            if (change) {
+                this.activeProfileChangeEmitter.fire(change);
+            }
         });
-        if (change) {
-            this.activeProfileChangeEmitter.fire(change);
-        }
+        this.parametersSaveQueue = save.catch(() => undefined);
+        await save;
     }
 
     /**
@@ -1015,6 +902,16 @@ export class YamlParametersManager {
 
     public async loadActiveProfileSnapshot(): Promise<ActiveYamlParametersProfile> {
         return createActiveYamlParametersProfileSnapshot(await this.loadParametersState());
+    }
+
+    /** Reads a saved profile without changing the active profile or scan root. */
+    public async loadProfileSnapshot(profileId: string): Promise<ActiveYamlParametersProfile | undefined> {
+        const state = await this.loadParametersState();
+        const selectedId = profileId.trim();
+        if (!state.profiles.some(profile => profile.id === selectedId)) {
+            return undefined;
+        }
+        return createActiveYamlParametersProfileSnapshot({ ...state, activeProfileId: selectedId });
     }
 
     public async getProfilesSummary(): Promise<YamlParametersProfilesSummary> {
@@ -1110,13 +1007,8 @@ export class YamlParametersManager {
      * Создает JSON файл для дополнительных параметров Vanessa
      */
     public async createAdditionalVanessaParametersFile(targetPath: string, parameters: AdditionalVanessaParameter[]): Promise<void> {
-        const payload: Record<string, string> = {};
-        parameters.forEach(param => {
-            if (!param.key.trim()) {
-                return;
-            }
-            payload[param.key.trim()] = param.value;
-        });
+        const { applyAdditionalVanessaParameters } = await import('./vanessaLaunchJson.js');
+        const payload = applyAdditionalVanessaParameters({}, parameters.map(param => ({ ...param, overrideExisting: true }))).value;
 
         const targetDir = path.dirname(targetPath);
         await fs.promises.mkdir(targetDir, { recursive: true });
@@ -1165,33 +1057,8 @@ export class YamlParametersManager {
             }
             const workspaceRoot = workspaceFolders[0].uri.fsPath;
 
-            // Создаем объект из параметров
-            const yamlParams: Record<string, string> = {};
-            parameters.forEach(param => {
-                let value = param.value;
-
-                // Проверяем, является ли значение путем
-                if (this.isPath(param.value)) {
-                    // Это путь - обрабатываем соответственно
-                    if (this.isAbsolutePath(param.value)) {
-                        // Это абсолютный путь, оставляем как есть
-                        value = param.value;
-                    } else if (param.value.startsWith('./') || param.value.startsWith('../')) {
-                        // Это относительный путь от текущей директории, оставляем как есть
-                        value = param.value;
-                    } else if (param.value.startsWith('~/')) {
-                        // Это путь от домашней директории, оставляем как есть
-                        value = param.value;
-                    } else {
-                        // Это относительный путь к корню проекта, преобразуем в абсолютный
-                        value = path.resolve(workspaceRoot, param.value);
-                    }
-                } else {
-                    // Это не путь (например, TRUE, FALSE, GodMode), оставляем как есть
-                    value = param.value;
-                }
-
-                yamlParams[param.key] = value;
+            const yamlParams = serializeCompilerBuildParameters(parameters, workspaceRoot, {
+                showDriveFeatures: this.shouldShowDriveSpecificBuildParameters()
             });
 
             // Создаем директорию если не существует
@@ -1199,7 +1066,7 @@ export class YamlParametersManager {
             await fs.promises.mkdir(targetDir, { recursive: true });
 
             // Записываем файл с правильным форматированием путей
-            const jsonContent = this.formatYamlParametersJson(yamlParams);
+            const jsonContent = JSON.stringify(yamlParams, null, 2);
             await fs.promises.writeFile(targetPath, jsonContent, 'utf8');
         } catch (error) {
             console.error('Error creating build scenario parameters file:', error);
@@ -1220,84 +1087,6 @@ export class YamlParametersManager {
 
         const document = await vscode.workspace.openTextDocument(vscode.Uri.file(targetPath));
         await vscode.window.showTextDocument(document, { preview: false });
-    }
-
-    /**
-     * Форматирует JSON для yaml_parameters.json с правильными слешами
-     */
-    private formatYamlParametersJson(yamlParams: Record<string, string>): string {
-        // Используем стандартный JSON.stringify, но заменяем двойные слеши на одинарные
-        let jsonContent = JSON.stringify(yamlParams, null, 2);
-
-        // Заменяем двойные обратные слеши на прямые слеши (только в путях, не в кавычках)
-        jsonContent = jsonContent.replace(/\\\\/g, '/');
-
-        return jsonContent;
-    }
-
-    /**
-     * Проверяет, является ли строка путем к файлу/папке
-     */
-    private isPath(value: string): boolean {
-        // Пустая строка или очень короткая строка - не путь
-        if (!value || value.length < 2) {
-            return false;
-        }
-
-        // Содержит расширение файла - скорее всего путь
-        if (/\.[a-zA-Z0-9]{1,10}$/.test(value)) {
-            return true;
-        }
-
-        // Содержит слэши или обратные слэши - скорее всего путь
-        if (value.includes('/') || value.includes('\\')) {
-            return true;
-        }
-
-        // Начинается с ~ (домашняя директория) - путь
-        if (value.startsWith('~')) {
-            return true;
-        }
-
-        // Простые строки без слэшей и расширений - не пути
-        // Например: TRUE, FALSE, GodMode, EtalonDrive
-        if (/^[a-zA-Z0-9_-]+$/.test(value)) {
-            return false;
-        }
-
-        // Строки с параметрами (содержат = и ;) - не пути
-        // Например: Srvr="#ServerName";Ref="#InfobaseName"
-        if (value.includes('=') && value.includes(';')) {
-            return false;
-        }
-
-        // Строки с кавычками и параметрами - не пути
-        // Например: "Srvr=\"#ServerName\";Ref=\"#InfobaseName\""
-        if (value.includes('"') && (value.includes('=') || value.includes(';'))) {
-            return false;
-        }
-
-        // Содержит двоеточие (но не в начале) - скорее всего путь
-        if (value.includes(':') && !value.startsWith(':')) {
-            return true;
-        }
-
-        // Содержит # (но не в кавычках и не как часть параметра) - может быть путь
-        if (value.includes('#')) {
-            // Если это просто # без других признаков пути - не путь
-            if (value === '#' || value.startsWith('#') && !value.includes('/') && !value.includes('\\')) {
-                return false;
-            }
-            // Если содержит # и слэши - путь
-            if (value.includes('/') || value.includes('\\')) {
-                return true;
-            }
-            // По умолчанию для строк с # считаем, что это не путь
-            return false;
-        }
-
-        // По умолчанию считаем, что это не путь
-        return false;
     }
 
     /**
@@ -1358,10 +1147,50 @@ export class YamlParametersManager {
         );
         panel.webview.html = html;
 
+        let watchedModelDbFile = '';
+        let modelDbWatcher: vscode.FileSystemWatcher | undefined;
+        const watchModelDbFile = (file: string) => {
+            if (file === watchedModelDbFile) { return; }
+            modelDbWatcher?.dispose();
+            watchedModelDbFile = file;
+            if (!file) { modelDbWatcher = undefined; return; }
+            modelDbWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(path.dirname(file), path.basename(file)));
+            const changed = () => { void panel.webview.postMessage({ command: 'refreshModelDbSettings' }); };
+            modelDbWatcher.onDidChange(changed); modelDbWatcher.onDidCreate(changed); modelDbWatcher.onDidDelete(changed);
+        };
+        panel.onDidDispose(() => modelDbWatcher?.dispose());
+
         // Обработка сообщений от webview
         panel.webview.onDidReceiveMessage(
             async (message) => {
                 switch (message.command) {
+                    case 'inspectModelDbSettings': {
+                        const parameters = this.normalizeParameters(message.parameters);
+                        const root = this.getWorkspaceRootPath();
+                        const configured = getCompilerBuildParameterValue(parameters, 'ModelDBSettings').trim();
+                        const foreignPath = process.platform !== 'win32' && path.win32.isAbsolute(configured) && !path.isAbsolute(configured);
+                        const file = root && configured && !foreignPath ? path.resolve(root, configured) : '';
+                        watchModelDbFile(file);
+                        const { inspectCompilerModelDbStatus } = await import('./compilerModelDbStatus.js');
+                        const status = await inspectCompilerModelDbStatus(parameters, root);
+                        const descriptions = {
+                            unconfigured: 'ModelDBSettings is empty. Select a catalog to resolve infobases and user profiles.',
+                            inaccessible: 'ModelDBSettings cannot be read on this computer.',
+                            missing: 'ModelDBSettings file does not exist. Create it with the etalon bases manager or select an existing catalog.',
+                            invalid: 'ModelDBSettings is not a valid etalon bases YAML catalog.',
+                            empty: 'ModelDBSettings contains no infobases. Add an infobase in the etalon bases manager.',
+                            selectedBaseMissing: 'ModelDBid was not found in ModelDBSettings.',
+                            noProfiles: 'ModelDBSettings: {0} infobases, {1} user profiles. Some selected infobases have no user profiles.',
+                            ready: 'ModelDBSettings: {0} infobases, {1} user profiles.'
+                        };
+                        await panel.webview.postMessage({ command: 'modelDbSettingsStatus', requestId: message.requestId,
+                            activeProfileId: message.activeProfileId, state: status.state,
+                            message: this.t(descriptions[status.state], String(status.baseCount), String(status.profileCount)) });
+                        break;
+                    }
+                    case 'selectAdditionalParameter':
+                        await this.selectAdditionalParameter(panel, message.keys);
+                        break;
                     case 'saveParameters':
                         try {
                             const result = await this.persistManagerStateFromMessage(message, {
@@ -1375,7 +1204,7 @@ export class YamlParametersManager {
                                 kind: result.validationErrors.length > 0 ? 'warning' : 'saved',
                                 savedAt,
                                 message: result.validationErrors.length > 0
-                                    ? this.t('Saved, but required fields are still missing: {0}', result.validationErrors.join(' '))
+                                    ? this.t('Saved, but build parameters need attention: {0}', result.validationErrors.join(' '))
                                     : result.scanRootChanged
                                         ? this.t('Saved. YAML scan root synchronized from ScenarioFolder.')
                                         : this.t('Saved')
@@ -1402,7 +1231,7 @@ export class YamlParametersManager {
                                 kind: result.validationErrors.length > 0 ? 'warning' : 'saved',
                                 savedAt,
                                 message: result.validationErrors.length > 0
-                                    ? this.t('Saved, but required fields are still missing: {0}', result.validationErrors.join(' '))
+                                    ? this.t('Saved, but build parameters need attention: {0}', result.validationErrors.join(' '))
                                     : result.scanRootChanged
                                         ? this.t('Saved. YAML scan root synchronized from ScenarioFolder.')
                                         : this.t('Saved')
@@ -1473,6 +1302,7 @@ export class YamlParametersManager {
                             console.warn('[YamlParametersManager] Failed to manage profiles:', error);
                             await panel.webview.postMessage({
                                 command: 'saveStatus',
+                                requestId: message.requestId,
                                 kind: 'error',
                                 message: this.t('Auto-save failed: {0}', String(error))
                             });
@@ -1495,16 +1325,13 @@ export class YamlParametersManager {
 
                                 // Проверяем, что это объект с ключ-значение
                                 if (typeof jsonData === 'object' && jsonData !== null && !Array.isArray(jsonData)) {
-                                const buildParameters: YamlParameter[] = Object.entries(jsonData).map(([key, value]) => ({
-                                    key: String(key),
-                                    value: String(value)
-                                }));
+                                    const buildParameters = importCompilerBuildParameters(jsonData) ?? [];
 
-                                // Отправляем новые параметры в webview
-                                panel.webview.postMessage({
-                                    command: 'loadBuildParameters',
-                                    buildParameters: this.normalizeBuildParametersForUi(buildParameters)
-                                });
+                                    // Отправляем новые параметры в webview
+                                    panel.webview.postMessage({
+                                        command: 'loadBuildParameters',
+                                        buildParameters: this.normalizeBuildParametersForUi(buildParameters)
+                                    });
 
                                     vscode.window.showInformationMessage(this.t('Loaded {0} parameters from {1}', buildParameters.length.toString(), path.basename(filePath)));
                                 } else {
@@ -1648,6 +1475,56 @@ export class YamlParametersManager {
         );
     }
 
+    private async selectAdditionalParameter(panel: vscode.WebviewPanel, keys: unknown): Promise<void> {
+        try {
+            const { loadVanessaParameterCatalogSnapshot, createVanessaParameterFieldDefinitions } = await import('./vanessaParameterCatalog.js');
+            const { getVanessaParameterAliases } = await import('./vanessaLaunchJson.js');
+            const current = Array.isArray(keys) ? keys.filter((key: unknown): key is string => typeof key === 'string') : [];
+            const same = (key: string) => current.some((old: string) => getVanessaParameterAliases(key).some(alias => alias.toLocaleLowerCase() === old.trim().toLocaleLowerCase()));
+            const profile = await this.loadActiveProfileSnapshot();
+            const snapshot = await loadVanessaParameterCatalogSnapshot(this.getVanessaCatalogFolder(profile.buildParameters), this.getWorkspaceRootPath());
+            const catalog = snapshot.definitions;
+            const selected = await vscode.window.showQuickPick([
+                { label: `$(add) ${this.t('Custom parameter…')}`, definition: undefined },
+                ...catalog.filter(entry => !same(entry.key) && !entry.aliases.some(same)).map(definition => ({ label: definition.key,
+                    description: definition.aliases.join(', '), detail: definition.description, definition }))
+            ], { title: this.t('Additional Vanessa Automation parameters'), matchOnDescription: true, matchOnDetail: true, ignoreFocusOut: true });
+            if (!selected) { return; }
+            const key = selected.definition?.key ?? await vscode.window.showInputBox({
+                title: this.t('Custom parameter…'), prompt: this.t('Parameter name or nested JSON path'), ignoreFocusOut: true,
+                validateInput: value => !value.trim() ? this.t('Name cannot be empty') : same(value.trim()) ? this.t('This parameter is already added.') : undefined
+            });
+            if (key?.trim()) { await panel.webview.postMessage({ command: 'appendAdditionalParameter', activeProfileId: profile.id,
+                catalogStatus: this.vanessaCatalogStatus(snapshot), definitions: createVanessaParameterFieldDefinitions(catalog, snapshot.authoritative), parameter: {
+                key: key.trim(), value: selected.definition?.value ?? '', overrideExisting: false,
+                ...(selected.definition && selected.definition.valueKind !== 'unknown' ? { valueKind: selected.definition.valueKind } : {})
+            } }); }
+        } catch (error) { vscode.window.showErrorMessage(this.t('Could not load Vanessa parameters: {0}', String(error))); }
+    }
+
+    private getVanessaCatalogFolder(parameters: readonly YamlParameter[]): string {
+        let folder = getEffectiveVanessaFolder(parameters) || this.getDefaultVanessaFolderValue();
+        const root = this.getWorkspaceRootPath();
+        if (root) { folder = folder.replace(/\$\{workspaceFolder\}|^#SourcesPath(?=$|[\\/])/gi, root); }
+        if (!folder || this.isAbsolutePath(folder) || path.win32.isAbsolute(folder)) { return folder; }
+        return root ? path.resolve(root, folder) : folder;
+    }
+
+    private vanessaCatalogStatus(snapshot: { authoritative: boolean; version?: string; source?: string }): string {
+        if (snapshot.source === 'documentation') {
+            return snapshot.version ? this.t('Vanessa documentation: {0}', snapshot.version) : this.t('Catalog from selected Vanessa documentation');
+        }
+        return snapshot.authoritative ? snapshot.version ? this.t('Vanessa sources: {0}', snapshot.version) : this.t('Catalog from selected Vanessa sources')
+            : this.t('Built-in parameter catalog');
+    }
+
+    private async refreshVanessaParameterDefinitions(panel: vscode.WebviewPanel, profile: YamlParametersProfile, revision: number): Promise<void> {
+        const { loadVanessaParameterCatalogSnapshot, createVanessaParameterFieldDefinitions } = await import('./vanessaParameterCatalog.js');
+        const snapshot = await loadVanessaParameterCatalogSnapshot(this.getVanessaCatalogFolder(profile.buildParameters), this.getWorkspaceRootPath());
+        await panel.webview.postMessage({ command: 'vanessaParameterDefinitionsUpdated', activeProfileId: profile.id, revision,
+            catalogStatus: this.vanessaCatalogStatus(snapshot), definitions: createVanessaParameterFieldDefinitions(snapshot.definitions, snapshot.authoritative) });
+    }
+
     private async persistManagerStateFromMessage(
         message: {
             profiles?: unknown;
@@ -1733,26 +1610,32 @@ export class YamlParametersManager {
     private async postProfilesStateUpdated(
         panel: vscode.WebviewPanel,
         state: YamlParametersState,
-        savedAt: string
+        savedAt: string,
+        requestId?: string
     ): Promise<boolean> {
         const activeProfile = this.getActiveProfileFromState(state);
         const validationErrors = this.validateBuildParameters(activeProfile.buildParameters);
-        const scanRootChanged = await this.syncYamlSourceDirectorySettingFromBuildParameters(activeProfile.buildParameters);
-        await vscode.commands.executeCommand('kotTestToolkit.refreshCombinedRunJsonArtifacts');
-
+        const catalogRevision = ++this.vanessaCatalogRevision;
+        // Publish the saved profile before refreshing derived files and the Test Manager.
         await panel.webview.postMessage({
             command: 'profilesStateUpdated',
+            catalogRevision,
+            requestId,
             activeProfileId: state.activeProfileId,
             profiles: state.profiles,
             savedAt,
             kind: validationErrors.length > 0 ? 'warning' : 'saved',
             message: validationErrors.length > 0
-                ? this.t('Saved, but required fields are still missing: {0}', validationErrors.join(' '))
-                : scanRootChanged
-                    ? this.t('Saved. YAML scan root synchronized from ScenarioFolder.')
-                    : this.t('Saved')
+                ? this.t('Saved, but build parameters need attention: {0}', validationErrors.join(' '))
+                : this.t('Saved')
         });
 
+        void this.refreshVanessaParameterDefinitions(panel, activeProfile, catalogRevision).catch(error => {
+            console.warn('[YamlParametersManager] Could not refresh the selected Vanessa catalog:', error);
+        });
+
+        const scanRootChanged = await this.syncYamlSourceDirectorySettingFromBuildParameters(activeProfile.buildParameters);
+        await vscode.commands.executeCommand('kotTestToolkit.refreshCombinedRunJsonArtifacts');
         return scanRootChanged;
     }
 
@@ -1777,6 +1660,7 @@ export class YamlParametersManager {
     private async manageProfiles(
         panel: vscode.WebviewPanel,
         message: {
+            requestId?: unknown;
             profiles?: unknown;
             activeProfileId?: unknown;
             buildParameters?: unknown;
@@ -1787,9 +1671,13 @@ export class YamlParametersManager {
     ): Promise<void> {
         const currentStoredState = await this.loadParametersState();
         let state = this.normalizeStateFromMessage(message, currentStoredState);
-        await this.saveParametersState(state);
-        const initialSavedAt = new Date().toISOString();
-        await this.postProfilesStateUpdated(panel, state, initialSavedAt);
+        const persistSelection = async () => {
+            await this.saveParametersState(state);
+            const scanRootChanged = await this.postProfilesStateUpdated(
+                panel, state, new Date().toISOString(), String(message.requestId || '')
+            );
+            if (!scanRootChanged) { await this.notifyPhaseSwitcherStateChanged(); }
+        };
 
         const activeProfile = this.getActiveProfileFromState(state);
         const items: ProfileQuickPickItem[] = [
@@ -1830,12 +1718,14 @@ export class YamlParametersManager {
         });
 
         if (!selection) {
+            await persistSelection();
             return;
         }
 
         switch (selection.action) {
             case 'select': {
                 if (!selection.profileId || selection.profileId === state.activeProfileId) {
+                    await persistSelection();
                     return;
                 }
                 state = {
@@ -1851,6 +1741,7 @@ export class YamlParametersManager {
                     this.t('Profile name')
                 );
                 if (!profileName) {
+                    await persistSelection();
                     return;
                 }
                 const nextProfile = this.createDefaultProfile(
@@ -1870,6 +1761,7 @@ export class YamlParametersManager {
                     this.t('Profile name')
                 );
                 if (!duplicatedName) {
+                    await persistSelection();
                     return;
                 }
                 const duplicatedProfile = this.cloneProfile(activeProfile, {
@@ -1889,6 +1781,7 @@ export class YamlParametersManager {
                     this.t('Profile name')
                 );
                 if (!renamedValue) {
+                    await persistSelection();
                     return;
                 }
                 state = {
@@ -1902,6 +1795,7 @@ export class YamlParametersManager {
             case 'delete': {
                 if (state.profiles.length <= 1) {
                     void vscode.window.showWarningMessage(this.t('At least one profile must remain.'));
+                    await persistSelection();
                     return;
                 }
                 const confirmation = await vscode.window.showWarningMessage(
@@ -1910,6 +1804,7 @@ export class YamlParametersManager {
                     this.t('Delete profile')
                 );
                 if (confirmation !== this.t('Delete profile')) {
+                    await persistSelection();
                     return;
                 }
                 const activeIndex = state.profiles.findIndex(profile => profile.id === activeProfile.id);
@@ -1923,11 +1818,7 @@ export class YamlParametersManager {
             }
         }
 
-        await this.saveParametersState(state);
-        const scanRootChanged = await this.postProfilesStateUpdated(panel, state, new Date().toISOString());
-        if (!scanRootChanged) {
-            await this.notifyPhaseSwitcherStateChanged();
-        }
+        await persistSelection();
     }
 
     /**
@@ -1946,6 +1837,12 @@ export class YamlParametersManager {
             const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'codicon.css'));
             const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'yamlParameters.css'));
             const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'yamlParameters.js'));
+            const textScriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'kotWebviewText.js'));
+            const splitScriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'kotWebviewSplit.js'));
+            const buildParameterStateScriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'yamlBuildParameterState.js'));
+            const { loadVanessaParameterCatalogSnapshot, createVanessaParameterFieldDefinitions } = await import('./vanessaParameterCatalog.js');
+            const vanessaCatalog = await loadVanessaParameterCatalogSnapshot(this.getVanessaCatalogFolder(buildParameters), this.getWorkspaceRootPath());
+            const vanessaParameterDefinitions = createVanessaParameterFieldDefinitions(vanessaCatalog.definitions, vanessaCatalog.authoritative);
 
             // Nonce для CSP
             const nonce = this.getNonce();
@@ -1959,6 +1856,7 @@ export class YamlParametersManager {
             const loc = {
                 title: this.t('Build Scenario Parameters Manager'),
                 buildSectionTitle: this.t('SPPR build parameters'),
+                resizePanels: this.t('Resize panels'),
                 buildSectionDescription: this.t('Parameters saved into yaml_parameters.json for СборкаТекстовСценариев processing.'),
                 buildModelDbWarning: this.t('ModelDBSettings is empty. SPPR can still build with AuthCompile=False, but it will not resolve TestClient logins/passwords by profile automatically.'),
                 buildModelDbWarningStrict: this.t('ModelDBSettings is empty. SPPR cannot validate or resolve TestClient credentials while AuthCompile=True, so Apply/export is blocked until you fill it.'),
@@ -2010,6 +1908,7 @@ export class YamlParametersManager {
                 parameter: this.t('Parameter'),
                 value: this.t('Value'),
                 priority: this.t('Priority'),
+                priorityDescription: this.t('When enabled, this value replaces an existing value in the generated Vanessa JSON. Otherwise, it is added only when the key is absent.'),
                 overrideExistingValue: this.t('Override existing value'),
                 actions: this.t('Actions'),
                 createFile: this.t('Save file'),
@@ -2029,6 +1928,11 @@ export class YamlParametersManager {
                 additionalMoreActionsLabel: this.t('Additional actions'),
                 globalVarsMoreActionsLabel: this.t('GlobalVars actions'),
                 searchByParameterName: this.t('Search by parameter name'),
+                customVanessaParameterDescription: this.t('Custom parameter passed to Vanessa Automation.'),
+                expectedBoolean: this.t('Choose true or false.'), expectedNumber: this.t('Enter a finite number.'),
+                expectedArray: this.t('Enter a JSON array.'), expectedObject: this.t('Enter a JSON object.'),
+                expectedString: this.t('Enter a string.'),
+                unsupportedVanessaParameter: this.t('This parameter is absent from the selected Vanessa sources. Check version compatibility.'),
                 clearSearch: this.t('Clear search')
             };
 
@@ -2042,20 +1946,24 @@ export class YamlParametersManager {
                 loc.parameterNamePlaceholder,
                 loc.parameterValuePlaceholder,
                 loc.removeParameter,
-                loc.overrideExistingValue
+                loc.priorityDescription,
+                true
             );
             const globalVariablesRows = this.renderAdditionalParametersRows(
                 globalVanessaVariables,
                 loc.parameterNamePlaceholder,
                 loc.parameterValuePlaceholder,
                 loc.removeParameter,
-                loc.overrideExistingValue
+                loc.priorityDescription
             );
 
             // Заменяем технические плейсхолдеры как в PhaseSwitcher
             htmlContent = htmlContent.replace(/\$\{nonce\}/g, nonce);
             htmlContent = htmlContent.replace('${stylesUri}', stylesUri.toString());
-            htmlContent = htmlContent.replace('${scriptUri}', scriptUri.toString());
+            htmlContent = htmlContent.replace(
+                /<script\b[^>]*src="\$\{scriptUri\}"[^>]*><\/script>/,
+                `<script nonce="${nonce}" src="${textScriptUri}"></script>\n    <script nonce="${nonce}" src="${splitScriptUri}"></script>\n    <script nonce="${nonce}" src="${buildParameterStateScriptUri}"></script>\n    <script nonce="${nonce}" src="${scriptUri}"></script>`
+            );
             htmlContent = htmlContent.replace('${codiconsUri}', codiconsUri.toString());
             htmlContent = htmlContent.replace(/\$\{webview.cspSource\}/g, webview.cspSource);
             htmlContent = htmlContent.replace('${buildParametersRows}', buildParametersRows);
@@ -2068,6 +1976,8 @@ export class YamlParametersManager {
                     .join('')
             );
             htmlContent = htmlContent.replace('${buildParameterDefinitionsJson}', JSON.stringify(this.getBuildParameterDefinitions()));
+            htmlContent = htmlContent.replace('${vanessaParameterDefinitionsJson}', JSON.stringify(vanessaParameterDefinitions).replace(/</g, '\\u003c'));
+            htmlContent = htmlContent.replace('${vanessaCatalogStatusJson}', JSON.stringify(this.vanessaCatalogStatus(vanessaCatalog)).replace(/</g, '\\u003c'));
             htmlContent = htmlContent.replace('${fixedBuildParameterKeysJson}', JSON.stringify(this.getFixedBuildParameterKeys()));
             htmlContent = htmlContent.replace('${buildParametersJson}', JSON.stringify(buildParameters));
             htmlContent = htmlContent.replace('${additionalParametersJson}', JSON.stringify(additionalVanessaParameters));
@@ -2112,12 +2022,13 @@ export class YamlParametersManager {
         keyPlaceholder: string,
         valuePlaceholder: string,
         removeTitle: string,
-        overrideTitle: string
+        overrideTitle: string,
+        lockNames = false
     ): string {
         return parameters.map((param, index) => `
                 <tr data-index="${index}">
                     <td>
-                        <input type="text" class="param-key" value="${this.escapeHtml(param.key)}" placeholder="${this.escapeHtml(keyPlaceholder)}">
+                        <input type="text" class="param-key" ${lockNames ? 'readonly' : ''} value="${this.escapeHtml(param.key)}" placeholder="${this.escapeHtml(keyPlaceholder)}">
                     </td>
                     <td>
                         <input type="text" class="param-value" value="${this.escapeHtml(param.value)}" placeholder="${this.escapeHtml(valuePlaceholder)}">

@@ -11,9 +11,13 @@ import type { StepLibrarySnapshotService } from './stepLibrarySnapshotService';
 import type { StepLibraryFavoritesService } from './stepLibraryFavorites';
 import type { ScenarioFilesService } from './scenarioFilesService';
 import {
-    parseScenarioFilesMessage,
+    parseScenarioFilesMessage, scenarioFilesItemForResource, scopeScenarioFileNodes, type ScenarioFileResource,
     type ScenarioFilesMessage
 } from './scenarioFilesWebviewProtocol';
+import {
+    StandaloneFeatureController, getStandaloneFeatureLabels, parseStandaloneFeatureMessage,
+    type StandaloneFeatureCatalog, type StandaloneFeatureMessage, type StandaloneFeatureControllerOptions
+} from './standaloneFeatureController';
 
 export interface StepLibrarySidebarServices {
     readonly extensionUri: vscode.Uri;
@@ -28,12 +32,17 @@ export interface StepLibrarySidebarServices {
         | 'openExternal'
         | 'revealInOs'
         | 'deleteFile'
+        | 'renameFile'
         | 'watch'
         | 'prepareDrop'
         | 'appendTransferChunk'
         | 'completeTransfer'
         | 'cancelTransfer'>;
     readonly refreshDefinitions: (resource?: vscode.Uri) => Promise<void>;
+    readonly context?: vscode.ExtensionContext;
+    readonly standaloneFeatureService?: StandaloneFeatureCatalog;
+    readonly prepareStandaloneFeatures?: () => Promise<void>;
+    readonly standaloneFeatureControllerOptions?: StandaloneFeatureControllerOptions;
 }
 
 export type StepLibrarySidebarMessage =
@@ -42,11 +51,15 @@ export type StepLibrarySidebarMessage =
     | { readonly command: 'search'; readonly query: string }
     | { readonly command: 'insert'; readonly itemId: string }
     | { readonly command: 'copy'; readonly itemId: string }
-    | { readonly command: 'openDefinition'; readonly itemId: string }
+    | { readonly command: 'openDefinition' | 'openScenarioProperties'; readonly itemId: string }
+    | { readonly command: 'rename'; readonly itemId: string }
+    | { readonly command: 'renameMainGroup'; readonly itemId: string }
+    | { readonly command: 'deleteDefinition'; readonly itemId: string }
     | { readonly command: 'toggleFavorite'; readonly itemId: string }
     | { readonly command: 'refresh' }
     | { readonly command: 'openFullLibrary' }
-    | ScenarioFilesMessage;
+    | ScenarioFilesMessage
+    | StandaloneFeatureMessage;
 
 function getNonce(): string {
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -88,6 +101,10 @@ function cleanId(value: unknown): string | null {
 }
 
 export function parseStepLibrarySidebarMessage(value: unknown): StepLibrarySidebarMessage | null {
+    const standaloneMessage = parseStandaloneFeatureMessage(value);
+    if (standaloneMessage) {
+        return standaloneMessage;
+    }
     const scenarioFilesMessage = parseScenarioFilesMessage(value);
     if (scenarioFilesMessage) {
         return scenarioFilesMessage;
@@ -120,6 +137,10 @@ export function parseStepLibrarySidebarMessage(value: unknown): StepLibrarySideb
         record.command === 'insert'
         || record.command === 'copy'
         || record.command === 'openDefinition'
+        || record.command === 'openScenarioProperties'
+        || record.command === 'rename'
+        || record.command === 'renameMainGroup'
+        || record.command === 'deleteDefinition'
         || record.command === 'toggleFavorite'
     ) {
         const itemId = cleanId(record.itemId);
@@ -147,6 +168,7 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
     private loadGeneration = 0;
     private revision = 0;
     private readonly pendingActions = new Set<string>();
+    private standaloneController: StandaloneFeatureController | undefined;
     private readonly scenarioFileWatches = new Map<string, { dispose(): void }>();
     private readonly scenarioFileTransfers = new Map<string, {
         readonly itemId: string;
@@ -187,6 +209,13 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
             localResourceRoots: [mediaUri]
         };
         webviewView.webview.html = this.getWebviewHtml(webviewView.webview);
+        if (this.services.context && this.services.standaloneFeatureService) {
+            this.standaloneController = new StandaloneFeatureController(
+                this.services.context, this.services.standaloneFeatureService, webviewView.webview,
+                this.services.standaloneFeatureControllerOptions
+            );
+            this.standaloneController.setVisible(webviewView.visible);
+        }
         this.viewDisposables = [
             webviewView.webview.onDidReceiveMessage(rawMessage => {
                 const message = parseStepLibrarySidebarMessage(rawMessage);
@@ -195,6 +224,7 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
                 }
             }),
             webviewView.onDidChangeVisibility(() => {
+                this.standaloneController?.setVisible(webviewView.visible);
                 if (webviewView.visible && this.ready && (this.pendingReload || !this.index)) {
                     this.pendingReload = false;
                     void this.loadIndex();
@@ -220,6 +250,8 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
     }
 
     private disposeViewSubscriptions(): void {
+        this.standaloneController?.dispose();
+        this.standaloneController = undefined;
         this.disposeScenarioFileState();
         for (const disposable of this.viewDisposables.splice(0)) {
             disposable.dispose();
@@ -260,6 +292,11 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
         switch (message.command) {
             case 'ready':
                 this.ready = true;
+                try {
+                    await this.services.prepareStandaloneFeatures?.();
+                } catch (error) {
+                    await this.postError(error);
+                }
                 if (!this.view?.visible) {
                     this.pendingReload = true;
                     return;
@@ -280,10 +317,12 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
                 const visibleItemIds = relationship.relationshipFilterEnabled
                     ? new Set(relationship.relatedItemIds)
                     : undefined;
+                const page = this.index.children(message.nodeId, message.offset, 100, visibleItemIds);
                 await this.view.webview.postMessage({
                     command: 'children',
                     offset: message.offset,
-                    ...this.index.children(message.nodeId, message.offset, 100, visibleItemIds)
+                    ...page,
+                    nodes: page.nodes.map(node => this.localizeNode(node))
                 });
                 return;
             case 'search':
@@ -302,8 +341,20 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
             case 'copy':
                 await this.runItemAction(message.itemId, 'copy');
                 return;
+            case 'openScenarioProperties':
+                await this.runItemAction(message.itemId, 'openScenarioProperties');
+                return;
             case 'openDefinition':
                 await this.runItemAction(message.itemId, 'openDefinition');
+                return;
+            case 'rename':
+                await this.runItemAction(message.itemId, 'rename');
+                return;
+            case 'renameMainGroup':
+                await this.runItemAction(message.itemId, 'renameMainGroup');
+                return;
+            case 'deleteDefinition':
+                await this.runItemAction(message.itemId, 'deleteDefinition');
                 return;
             case 'toggleFavorite':
                 await this.toggleFavorite(message.itemId);
@@ -314,6 +365,9 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
             case 'openFullLibrary':
                 await vscode.commands.executeCommand('kotTestToolkit.openStepLibrary');
                 return;
+            case 'standaloneFeatureAction':
+                await this.standaloneController?.handleMessage(message);
+                return;
             case 'listScenarioFiles':
                 await this.listScenarioFiles(message);
                 return;
@@ -321,14 +375,15 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
                 this.setScenarioFilesExpanded(message.itemId, message.expanded);
                 return;
             case 'openScenarioFile':
-                await this.runScenarioFileAction(message.itemId, message.relativePath, 'open');
+                await this.runScenarioFileAction(message.itemId, message.relativePath, 'open', message.resource);
                 return;
             case 'openCompiledScenarioFeature':
                 await this.openCompiledScenarioFeature(message.itemId);
                 return;
             case 'revealScenarioFile':
-                await this.runScenarioFileAction(message.itemId, message.relativePath, 'reveal');
+                await this.runScenarioFileAction(message.itemId, message.relativePath, 'reveal', message.resource);
                 return;
+            case 'renameScenarioFile':
             case 'deleteScenarioFile':
                 await this.deleteScenarioFile(message);
                 return;
@@ -386,7 +441,7 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
         }
     }
 
-    private async runItemAction(itemId: string, action: 'insert' | 'copy' | 'openDefinition'): Promise<void> {
+    private async runItemAction(itemId: string, action: 'insert' | 'copy' | 'openDefinition' | 'openScenarioProperties' | 'rename' | 'renameMainGroup' | 'deleteDefinition'): Promise<void> {
         const item = this.index?.getItem(itemId);
         const actionKey = `${action}\0${itemId}`;
         if (!item || this.pendingActions.has(actionKey)) {
@@ -398,7 +453,18 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
                 ? await this.services.actionService.insert(item, this.resource)
                 : action === 'copy'
                     ? await this.services.actionService.copy(item)
-                    : await this.services.actionService.openDefinition(item, this.resource);
+                    : action === 'openScenarioProperties'
+                        ? await this.services.actionService.openScenarioProperties(item, this.resource,
+                            async uri => { await vscode.commands.executeCommand('kotTestToolkit.openScenarioEditor', vscode.Uri.parse(uri)); })
+                    : action === 'rename'
+                        ? await this.services.actionService.rename(item, this.resource)
+                    : action === 'renameMainGroup'
+                        ? await this.services.actionService.renameMainGroup(item)
+                    : action === 'deleteDefinition'
+                        ? await this.services.actionService.delete(item, this.resource)
+                    : item.featureId && this.standaloneController
+                        ? await this.standaloneController.handleMessage({ command: 'standaloneFeatureAction', action: 'openFeature', featureId: item.featureId })
+                        : await this.services.actionService.openDefinition(item, this.resource);
             await this.view?.webview.postMessage({
                 command: 'actionResult',
                 action,
@@ -427,6 +493,11 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
             this.refreshInProgress = false;
         }
         this.pendingReload = false;
+        try {
+            await this.services.standaloneFeatureService?.refresh();
+        } catch (error) {
+            await this.postError(error);
+        }
         await this.loadIndex();
     }
 
@@ -483,13 +554,24 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
             revision: this.revision,
             identity: snapshot.viewIdentity,
             favoriteItemIds,
-            nodes: index.roots(),
+            nodes: index.roots().map(node => this.localizeNode(node)),
+            standaloneItems: snapshot.items.filter(item => item.featureId),
             insertionTarget: {
                 identity: target.identity,
                 available: target.available
             },
             ...relationship
         });
+    }
+
+    private localizeNode(node: StepLibrarySidebarNode): StepLibrarySidebarNode {
+        if (node.kind === 'source') {
+            return { ...node, label: translate(node.label) };
+        }
+        if (node.sourceGroup === 'standalone' && node.kind === 'category' && node.groupId === '') {
+            return { ...node, label: translate('Ungrouped') };
+        }
+        return node;
     }
 
     private relationshipPayload(state: ScenarioRelationshipState): {
@@ -565,7 +647,7 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
     private async listScenarioFiles(
         message: Extract<ScenarioFilesMessage, { command: 'listScenarioFiles' }>
     ): Promise<void> {
-        const item = this.index?.getItem(message.itemId);
+        const item = scenarioFilesItemForResource(this.index?.getItem(message.itemId), message.resource);
         if (!item) {
             await this.postScenarioFileFailure(
                 undefined,
@@ -584,7 +666,7 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
                 requestId: message.requestId,
                 itemId: item.id,
                 relativePath: message.relativePath,
-                nodes
+                nodes: scopeScenarioFileNodes(nodes, message.resource)
             });
         } catch (error) {
             await this.postScenarioFileFailure(undefined, error, message.requestId);
@@ -617,9 +699,10 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
     private async runScenarioFileAction(
         itemId: string,
         relativePath: string,
-        action: 'open' | 'reveal'
+        action: 'open' | 'reveal',
+        resource?: ScenarioFileResource
     ): Promise<void> {
-        const item = this.index?.getItem(itemId);
+        const item = scenarioFilesItemForResource(this.index?.getItem(itemId), resource);
         if (!item) {
             return;
         }
@@ -650,9 +733,9 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
     }
 
     private async deleteScenarioFile(
-        message: Extract<ScenarioFilesMessage, { command: 'deleteScenarioFile' }>
+        message: Extract<ScenarioFilesMessage, { command: 'deleteScenarioFile' | 'renameScenarioFile' }>
     ): Promise<void> {
-        const item = this.index?.getItem(message.itemId);
+        const item = scenarioFilesItemForResource(this.index?.getItem(message.itemId), message.resource);
         if (!item) {
             await this.postScenarioFileFailure(
                 undefined,
@@ -661,16 +744,13 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
             return;
         }
         try {
-            const result = await this.services.scenarioFilesService.deleteFile(
-                item,
-                message.relativePath
-            );
+            const result = await this.services.scenarioFilesService[message.command === 'renameScenarioFile' ? 'renameFile' : 'deleteFile'](item, message.relativePath);
             await this.view?.webview.postMessage({
                 command: 'scenarioFileActionResult',
-                action: 'delete',
+                action: message.command === 'renameScenarioFile' ? 'rename' : 'delete',
                 itemId: item.id,
                 relativePath: message.relativePath,
-                succeeded: result === 'deleted',
+                succeeded: result !== 'cancelled',
                 ...(result === 'cancelled' ? { cancelled: true } : {})
             });
         } catch (error) {
@@ -681,7 +761,7 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
     private async prepareScenarioFileDrop(
         message: Extract<ScenarioFilesMessage, { command: 'prepareScenarioFileDrop' }>
     ): Promise<void> {
-        const item = this.index?.getItem(message.itemId);
+        const item = scenarioFilesItemForResource(this.index?.getItem(message.itemId), message.resource);
         if (!item) {
             await this.postScenarioFileFailure(
                 undefined,
@@ -809,6 +889,8 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
         const codiconStylesUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'codicon.css'));
         const protocolUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'stepLibrarySidebarProtocol.js'));
         const scenarioFilesProtocolUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'scenarioFilesProtocol.js'));
+        const featureProtocolUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'stepLibraryFeatureProtocol.js'));
+        const standaloneLabels = JSON.stringify(getStandaloneFeatureLabels()).replace(/</gu, '\\u003c');
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'stepLibrarySidebar.js'));
         const t = (message: string) => escapeHtmlAttribute(translate(message));
         return `<!DOCTYPE html>
@@ -823,7 +905,7 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
     <title>${t('Library')}</title>
 </head>
 <body>
-    <main class="step-sidebar" data-loading="${t('Loading step library...')}" data-no-matches="${t('No steps match the current filters.')}" data-error="${t('Unable to load the Step Library')}" data-contains-related-scenarios="${t('Contains scenarios related to the open scenario')}" data-insert-step="${t('Insert step')}" data-copy-step="${t('Copy step')}" data-open-definition="${t('Open definition')}" data-add-favorite="${t('Add to favorites')}" data-remove-favorite="${t('Remove from favorites')}" data-insertion-unavailable="${t('Insertion target unavailable')}" data-files="${t('Files')}" data-open-externally="${t('Open externally')}" data-show-in-file-manager="${t('Show in Finder / Explorer')}" data-delete="${t('Delete')}" data-resource-action-failed="${t('The resource action could not be completed.')}" data-empty-directory="${t('Empty directory')}" data-relationship-current="${t('Currently open scenario')}" data-relationship-incoming-direct="${t('Calls the open scenario directly')}" data-relationship-incoming-transitive="${t('Calls the open scenario through {0} scenarios')}" data-relationship-outgoing-direct="${t('Called by the open scenario directly')}" data-relationship-outgoing-transitive="${t('Called by the open scenario through {0} scenarios')}" data-relationship-contains-related="${t('Contains a scenario related to the open scenario')}">
+    <main class="step-sidebar" data-loading="${t('Loading step library...')}" data-no-matches="${t('No steps match the current filters.')}" data-error="${t('Unable to load the Step Library')}" data-contains-related-scenarios="${t('Contains scenarios related to the open scenario')}" data-insert-step="${t('Insert step')}" data-copy-step="${t('Copy step')}" data-open-definition="${t('Open definition')}" data-add-favorite="${t('Add to favorites')}" data-remove-favorite="${t('Remove from favorites')}" data-insertion-unavailable="${t('Insertion target unavailable')}" data-files="${t('Files')}" data-source-files="${t('Source files')}" data-compiled-files="${t('Compiled files')}" data-rename-attachment="${t('Rename attachment')}" data-open-externally="${t('Open externally')}" data-show-in-file-manager="${t('Show in Finder / Explorer')}" data-delete="${t('Delete')}" data-resource-action-failed="${t('The resource action could not be completed.')}" data-empty-directory="${t('Empty directory')}" data-relationship-current="${t('Currently open scenario')}" data-relationship-incoming-direct="${t('Calls the open scenario directly')}" data-relationship-incoming-transitive="${t('Calls the open scenario through {0} scenarios')}" data-relationship-outgoing-direct="${t('Called by the open scenario directly')}" data-relationship-outgoing-transitive="${t('Called by the open scenario through {0} scenarios')}" data-relationship-contains-related="${t('Contains a scenario related to the open scenario')}">
         <div class="step-toolbar">
             <div class="step-search-wrap kot-search-frame">
                 <span class="codicon codicon-search kot-search-icon" aria-hidden="true"></span>
@@ -833,11 +915,15 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
                 </button>
             </div>
         </div>
-        <div id="tree" class="kot-tree step-tree" role="tree" aria-label="${t('Steps')}"></div>
+        <div id="treeScroll" class="step-content">
+            <div id="tree" class="kot-tree step-tree" role="tree" aria-label="${t('Steps')}"></div>
+        </div>
         <div id="status" class="step-status" role="status" aria-live="polite"></div>
     </main>
     <script nonce="${nonce}" src="${protocolUri}"></script>
     <script nonce="${nonce}" src="${scenarioFilesProtocolUri}"></script>
+    <script nonce="${nonce}">window.__standaloneFeatureLabels = ${standaloneLabels};</script>
+    <script nonce="${nonce}" src="${featureProtocolUri}"></script>
     <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

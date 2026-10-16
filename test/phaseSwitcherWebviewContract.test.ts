@@ -86,9 +86,13 @@ test('group creation protocol sends the exact trimmed Test Manager group', () =>
         groupName: 'Production 2'
     });
     assert.throws(
-        () => protocol.createGroupScenarioCommand('createMainScenario', '   '),
+        () => protocol.createGroupScenarioCommand('createMainScenario', undefined),
         /group name/i
     );
+    for (const command of ['createMainScenario', 'createProcess']) {
+        assert.deepEqual(protocol.createGroupScenarioCommand(command, ''), { command, groupName: '' });
+    }
+    assert.throws(() => protocol.createGroupScenarioCommand('renameGroup', ''), /group name/i);
 });
 
 test('group context menu posts the protocol actions for the selected group', () => {
@@ -102,7 +106,8 @@ test('group context menu posts the protocol actions for the selected group', () 
     assert.notEqual(handlerStart, -1);
     assert.notEqual(handlerEnd, -1);
     assert.match(handlerSource, /createPhaseContextMenuActions\(phaseName/u);
-    assert.match(handlerSource, /vscode\.postMessage\(action\.message\)/u);
+    assert.match(handlerSource, /vscode\.postMessage\(groupId && action\.message\.command === 'renameGroup'/u);
+    assert.match(handlerSource, /\{ \.\.\.action\.message, groupId \} : action\.message/u);
 });
 
 test('Accounting mode uses the same native dropdown control as profiles', () => {

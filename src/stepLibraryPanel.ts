@@ -4,14 +4,19 @@ import {
     type StepLibraryItem,
     type StepLibrarySnapshot
 } from './stepLibraryModel';
-import type { StepLibraryActionService } from './stepLibraryActions';
+import type { StepLibraryActionService, StepLibraryProcessStepMove, StepLibraryProcessStepReorder,
+    StepLibraryProcessStepRemove, StepLibraryProcessTarget } from './stepLibraryActions';
 import type { StepLibrarySnapshotService } from './stepLibrarySnapshotService';
 import type { StepLibraryFavoritesService } from './stepLibraryFavorites';
 import type { ScenarioFilesService } from './scenarioFilesService';
 import {
-    parseScenarioFilesMessage,
+    parseScenarioFilesMessage, scenarioFilesItemForResource, scopeScenarioFileNodes, type ScenarioFileResource,
     type ScenarioFilesMessage
 } from './scenarioFilesWebviewProtocol';
+import {
+    StandaloneFeatureController, getStandaloneFeatureLabels, parseStandaloneFeatureMessage,
+    type StandaloneFeatureCatalog, type StandaloneFeatureMessage, type StandaloneFeatureControllerOptions
+} from './standaloneFeatureController';
 
 export interface StepLibraryPanelServices {
     readonly extensionUri: vscode.Uri;
@@ -24,12 +29,17 @@ export interface StepLibraryPanelServices {
         | 'openExternal'
         | 'revealInOs'
         | 'deleteFile'
+        | 'renameFile'
         | 'watch'
         | 'prepareDrop'
         | 'appendTransferChunk'
         | 'completeTransfer'
         | 'cancelTransfer'>;
     readonly refreshDefinitions: (resource?: vscode.Uri) => Promise<void>;
+    readonly context?: vscode.ExtensionContext;
+    readonly standaloneFeatureService?: StandaloneFeatureCatalog;
+    readonly prepareStandaloneFeatures?: () => Promise<void>;
+    readonly standaloneFeatureControllerOptions?: StandaloneFeatureControllerOptions;
 }
 
 export type StepLibraryInboundMessage =
@@ -38,9 +48,17 @@ export type StepLibraryInboundMessage =
     | { readonly command: 'create' }
     | { readonly command: 'insert'; readonly itemId: string }
     | { readonly command: 'copy'; readonly itemId: string }
-    | { readonly command: 'openDefinition'; readonly itemId: string }
+    | { readonly command: 'openDefinition' | 'openScenarioProperties'; readonly itemId: string }
+    | { readonly command: 'rename'; readonly itemId: string }
+    | { readonly command: 'renameMainGroup'; readonly itemId: string }
+    | { readonly command: 'deleteDefinition'; readonly itemId: string }
     | { readonly command: 'toggleFavorite'; readonly itemId: string }
-    | ScenarioFilesMessage;
+    | ({ readonly command: 'moveProcessStep'; readonly itemId: string; readonly viewIdentity: string } & StepLibraryProcessStepMove)
+    | ({ readonly command: 'reorderProcessStep'; readonly itemId: string; readonly viewIdentity: string } & StepLibraryProcessStepReorder)
+    | ({ readonly command: 'removeProcessStep'; readonly itemId: string; readonly viewIdentity: string } & StepLibraryProcessStepRemove)
+    | ({ readonly command: 'addProcessSteps'; readonly itemId: string; readonly viewIdentity: string } & StepLibraryProcessTarget)
+    | ScenarioFilesMessage
+    | StandaloneFeatureMessage;
 
 type Translator = (message: string, ...args: string[]) => string;
 
@@ -75,6 +93,8 @@ function errorMessage(error: unknown): string {
 }
 
 export function parseStepLibraryInboundMessage(value: unknown): StepLibraryInboundMessage | null {
+    const standaloneMessage = parseStandaloneFeatureMessage(value);
+    if (standaloneMessage) { return standaloneMessage; }
     const scenarioFilesMessage = parseScenarioFilesMessage(value);
     if (scenarioFilesMessage) {
         return scenarioFilesMessage;
@@ -83,6 +103,25 @@ export function parseStepLibraryInboundMessage(value: unknown): StepLibraryInbou
         return null;
     }
     const record = value as Record<string, unknown>;
+    if (record.command === 'reorderProcessStep' || record.command === 'removeProcessStep' || record.command === 'addProcessSteps') {
+        const keys = ['itemId', 'processUri', 'processUid', 'viewIdentity', 'stepsSignature'] as const;
+        if (keys.some(key => typeof record[key] !== 'string' || !(record[key] as string).trim())) { return null; }
+        const target = { itemId: record.itemId as string, processUri: record.processUri as string, processUid: record.processUid as string,
+            viewIdentity: record.viewIdentity as string, stepsSignature: record.stepsSignature as string };
+        if (record.command === 'addProcessSteps') { return { command: record.command, ...target }; }
+        if (typeof record.stepUid !== 'string' || !record.stepUid.trim()) { return null; }
+        if (record.command === 'removeProcessStep') { return { command: record.command, ...target, stepUid: record.stepUid }; }
+        if (record.beforeStepUid !== null && (typeof record.beforeStepUid !== 'string' || !record.beforeStepUid.trim())) { return null; }
+        return { command: record.command, ...target, stepUid: record.stepUid, beforeStepUid: record.beforeStepUid as string | null };
+    }
+    if (record.command === 'moveProcessStep') {
+        const keys = ['itemId', 'processUri', 'processUid', 'stepUid', 'viewIdentity', 'stepsSignature'] as const;
+        if (keys.some(key => typeof record[key] !== 'string' || !(record[key] as string).trim())
+            || (record.direction !== 'up' && record.direction !== 'down')) { return null; }
+        return { command: 'moveProcessStep', itemId: record.itemId as string, processUri: record.processUri as string,
+            processUid: record.processUid as string, stepUid: record.stepUid as string, viewIdentity: record.viewIdentity as string,
+            stepsSignature: record.stepsSignature as string, direction: record.direction };
+    }
     if (record.command === 'ready' || record.command === 'refresh' || record.command === 'create') {
         return { command: record.command };
     }
@@ -90,6 +129,10 @@ export function parseStepLibraryInboundMessage(value: unknown): StepLibraryInbou
         record.command === 'insert'
         || record.command === 'copy'
         || record.command === 'openDefinition'
+        || record.command === 'openScenarioProperties'
+        || record.command === 'rename'
+        || record.command === 'renameMainGroup'
+        || record.command === 'deleteDefinition'
         || record.command === 'toggleFavorite'
     ) {
         const itemId = typeof record.itemId === 'string' ? record.itemId.trim() : '';
@@ -117,6 +160,7 @@ export class StepLibraryPanel implements vscode.Disposable {
         readonly targetRelativePath: string;
     }>();
     private refreshDefinitionsInProgress = false;
+    private standaloneController: StandaloneFeatureController | undefined;
 
     constructor(private readonly services: StepLibraryPanelServices) {
         this.disposables.push(
@@ -172,6 +216,12 @@ export class StepLibraryPanel implements vscode.Disposable {
         this.pendingActions.clear();
         this.disposeScenarioFileState();
         panel.webview.html = this.getWebviewHtml(panel.webview, t);
+        if (this.services.context && this.services.standaloneFeatureService) {
+            this.standaloneController = new StandaloneFeatureController(
+                this.services.context, this.services.standaloneFeatureService, panel.webview,
+                this.services.standaloneFeatureControllerOptions
+            );
+        }
         this.panelDisposables = [
             panel.onDidDispose(() => {
                 this.loadGeneration += 1;
@@ -200,6 +250,7 @@ export class StepLibraryPanel implements vscode.Disposable {
             })
         ];
 
+        await this.services.prepareStandaloneFeatures?.();
         await this.refreshSnapshot();
     }
 
@@ -218,6 +269,8 @@ export class StepLibraryPanel implements vscode.Disposable {
     }
 
     private disposePanelSubscriptions(): void {
+        this.standaloneController?.dispose();
+        this.standaloneController = undefined;
         this.disposeScenarioFileState();
         for (const disposable of this.panelDisposables.splice(0)) {
             disposable.dispose();
@@ -310,20 +363,22 @@ export class StepLibraryPanel implements vscode.Disposable {
     }
 
     private async postActionResult(
-        action: 'insert' | 'copy' | 'openDefinition',
+        action: 'insert' | 'copy' | 'openDefinition' | 'openScenarioProperties' | 'rename' | 'renameMainGroup' | 'deleteDefinition' | 'moveProcessStep' | 'reorderProcessStep' | 'removeProcessStep' | 'addProcessSteps',
         itemId: string,
-        success: boolean
+        success: boolean,
+        message?: string
     ): Promise<void> {
         await this.panel?.webview.postMessage({
             command: 'actionResult',
             action,
             itemId,
-            success
+            success,
+            ...(message ? { message } : {})
         });
     }
 
     private async runItemAction(
-        action: 'insert' | 'copy' | 'openDefinition',
+        action: 'insert' | 'copy' | 'openDefinition' | 'openScenarioProperties' | 'rename' | 'renameMainGroup' | 'deleteDefinition' | 'moveProcessStep' | 'reorderProcessStep' | 'removeProcessStep' | 'addProcessSteps',
         itemId: string,
         operation: (item: StepLibraryItem) => Promise<boolean>
     ): Promise<void> {
@@ -339,8 +394,9 @@ export class StepLibraryPanel implements vscode.Disposable {
         this.pendingActions.add(key);
         try {
             await this.postActionResult(action, itemId, await operation(item));
-        } catch {
-            await this.postActionResult(action, itemId, false);
+        } catch (error) {
+            const t = await getTranslator(this.services.extensionUri);
+            await this.postActionResult(action, itemId, false, t(errorMessage(error)));
         } finally {
             this.pendingActions.delete(key);
         }
@@ -362,6 +418,7 @@ export class StepLibraryPanel implements vscode.Disposable {
                 this.refreshDefinitionsInProgress = true;
                 try {
                     await this.services.refreshDefinitions(this.resource);
+                    await this.services.standaloneFeatureService?.refresh();
                     this.services.snapshotService.invalidate();
                     await this.refreshSnapshot(true);
                 } catch (error) {
@@ -377,6 +434,9 @@ export class StepLibraryPanel implements vscode.Disposable {
             case 'create':
                 await vscode.commands.executeCommand('kotTestToolkit.showCreateScenarioMenu');
                 return;
+            case 'standaloneFeatureAction':
+                await this.standaloneController?.handleMessage(message);
+                return;
             case 'insert':
                 await this.runItemAction(
                     'insert',
@@ -391,11 +451,17 @@ export class StepLibraryPanel implements vscode.Disposable {
                     item => this.services.actionService.copy(item)
                 );
                 return;
+            case 'openScenarioProperties':
+                await this.runItemAction('openScenarioProperties', message.itemId, item => this.services.actionService.openScenarioProperties(item, this.resource,
+                    async uri => { await vscode.commands.executeCommand('kotTestToolkit.openScenarioEditor', vscode.Uri.parse(uri)); }));
+                return;
             case 'openDefinition':
                 await this.runItemAction(
                     'openDefinition',
                     message.itemId,
-                    item => this.services.actionService.openDefinition(item, this.resource)
+                    item => item.featureId && this.standaloneController
+                        ? this.standaloneController.handleMessage({ command: 'standaloneFeatureAction', action: 'openFeature', featureId: item.featureId })
+                        : this.services.actionService.openDefinition(item, this.resource)
                 );
                 return;
             case 'toggleFavorite': {
@@ -405,6 +471,39 @@ export class StepLibraryPanel implements vscode.Disposable {
                 }
                 return;
             }
+            case 'rename':
+                await this.runItemAction('rename', message.itemId, item => this.services.actionService.rename(item, this.resource));
+                return;
+            case 'renameMainGroup':
+                await this.runItemAction('renameMainGroup', message.itemId, item => this.services.actionService.renameMainGroup(item));
+                return;
+            case 'deleteDefinition':
+                await this.runItemAction('deleteDefinition', message.itemId, item => this.services.actionService.delete(item, this.resource));
+                return;
+            case 'moveProcessStep':
+            case 'reorderProcessStep':
+            case 'removeProcessStep':
+            case 'addProcessSteps':
+                await this.runItemAction(message.command, message.itemId, async item => {
+                    if (this.lastSuccessfulSnapshot?.viewIdentity !== message.viewIdentity) { return false; }
+                    const moved = message.command === 'moveProcessStep' ? await this.services.actionService.moveProcessStep(item, message)
+                        : message.command === 'reorderProcessStep' ? await this.services.actionService.reorderProcessStep(item, message)
+                        : message.command === 'removeProcessStep' ? await this.services.actionService.removeProcessStep(item, message)
+                        : await this.services.actionService.addProcessSteps(item, message);
+                    if (moved) {
+                        try {
+                            await this.services.refreshDefinitions(this.resource);
+                            this.services.snapshotService.invalidate();
+                            await this.refreshSnapshot(true);
+                        } catch (error) {
+                            await this.panel?.webview.postMessage({
+                                command: 'error', message: errorMessage(error), hasSnapshot: this.lastSuccessfulSnapshot !== null
+                            });
+                        }
+                    }
+                    return moved;
+                });
+                return;
             case 'listScenarioFiles':
                 await this.listScenarioFiles(message);
                 return;
@@ -412,14 +511,15 @@ export class StepLibraryPanel implements vscode.Disposable {
                 this.setScenarioFilesExpanded(message.itemId, message.expanded);
                 return;
             case 'openScenarioFile':
-                await this.runScenarioFileAction(message.itemId, message.relativePath, 'open');
+                await this.runScenarioFileAction(message.itemId, message.relativePath, 'open', message.resource);
                 return;
             case 'openCompiledScenarioFeature':
                 await this.openCompiledScenarioFeature(message.itemId);
                 return;
             case 'revealScenarioFile':
-                await this.runScenarioFileAction(message.itemId, message.relativePath, 'reveal');
+                await this.runScenarioFileAction(message.itemId, message.relativePath, 'reveal', message.resource);
                 return;
+            case 'renameScenarioFile':
             case 'deleteScenarioFile':
                 await this.deleteScenarioFile(message);
                 return;
@@ -441,7 +541,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     private async listScenarioFiles(
         message: Extract<ScenarioFilesMessage, { command: 'listScenarioFiles' }>
     ): Promise<void> {
-        const item = this.findItem(message.itemId);
+        const item = scenarioFilesItemForResource(this.findItem(message.itemId), message.resource);
         if (!item) {
             await this.postScenarioFileFailure(undefined, new Error('Unknown scenario file item.'), message.requestId);
             return;
@@ -456,7 +556,7 @@ export class StepLibraryPanel implements vscode.Disposable {
                 requestId: message.requestId,
                 itemId: item.id,
                 relativePath: message.relativePath,
-                nodes
+                nodes: scopeScenarioFileNodes(nodes, message.resource)
             });
         } catch (error) {
             await this.postScenarioFileFailure(undefined, error, message.requestId);
@@ -491,9 +591,10 @@ export class StepLibraryPanel implements vscode.Disposable {
     private async runScenarioFileAction(
         itemId: string,
         relativePath: string,
-        action: 'open' | 'reveal'
+        action: 'open' | 'reveal',
+        resource?: ScenarioFileResource
     ): Promise<void> {
-        const item = this.findItem(itemId);
+        const item = scenarioFilesItemForResource(this.findItem(itemId), resource);
         if (!item) {
             return;
         }
@@ -524,9 +625,9 @@ export class StepLibraryPanel implements vscode.Disposable {
     }
 
     private async deleteScenarioFile(
-        message: Extract<ScenarioFilesMessage, { command: 'deleteScenarioFile' }>
+        message: Extract<ScenarioFilesMessage, { command: 'deleteScenarioFile' | 'renameScenarioFile' }>
     ): Promise<void> {
-        const item = this.findItem(message.itemId);
+        const item = scenarioFilesItemForResource(this.findItem(message.itemId), message.resource);
         if (!item) {
             await this.postScenarioFileFailure(
                 undefined,
@@ -535,16 +636,13 @@ export class StepLibraryPanel implements vscode.Disposable {
             return;
         }
         try {
-            const result = await this.services.scenarioFilesService.deleteFile(
-                item,
-                message.relativePath
-            );
+            const result = await this.services.scenarioFilesService[message.command === 'renameScenarioFile' ? 'renameFile' : 'deleteFile'](item, message.relativePath);
             await this.panel?.webview.postMessage({
                 command: 'scenarioFileActionResult',
-                action: 'delete',
+                action: message.command === 'renameScenarioFile' ? 'rename' : 'delete',
                 itemId: item.id,
                 relativePath: message.relativePath,
-                succeeded: result === 'deleted',
+                succeeded: result !== 'cancelled',
                 ...(result === 'cancelled' ? { cancelled: true } : {})
             });
         } catch (error) {
@@ -555,7 +653,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     private async prepareScenarioFileDrop(
         message: Extract<ScenarioFilesMessage, { command: 'prepareScenarioFileDrop' }>
     ): Promise<void> {
-        const item = this.findItem(message.itemId);
+        const item = scenarioFilesItemForResource(this.findItem(message.itemId), message.resource);
         if (!item) {
             await this.postScenarioFileFailure(
                 undefined,
@@ -688,6 +786,8 @@ export class StepLibraryPanel implements vscode.Disposable {
             vscode.Uri.joinPath(mediaUri, 'scenarioFilesProtocol.js')
         );
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'stepLibrary.js'));
+        const featureProtocolUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'stepLibraryFeatureProtocol.js'));
+        const standaloneLabels = JSON.stringify(getStandaloneFeatureLabels(t)).replace(/</gu, '\\u003c');
         const labels = {
             title: t('KOT for 1C: Library'),
             search: t('Search steps and scenarios'),
@@ -721,6 +821,7 @@ export class StepLibraryPanel implements vscode.Disposable {
             openDefinition: t('Open definition'),
             insertionUnavailable: t('Open a supported Feature or scenario text block to insert a step.'),
             itemNotInsertable: t('Main scenarios cannot be inserted.'),
+            processNotInsertable: t('Use Add process steps to include a subprocess.'),
             inserted: t('Step inserted.'),
             copied: t('Step copied.'),
             opened: t('Definition opened.'),
@@ -732,6 +833,17 @@ export class StepLibraryPanel implements vscode.Disposable {
             export: t('Export scenarios'),
             nested: t('Nested scenarios'),
             main: t('Main scenarios'),
+            process: t('Processes'),
+            mainScenarioDefinition: t('Main scenario'),
+            processDefinition: t('Process'),
+            builtInDefinition: t('Vanessa step'),
+            userDefinition: t('User step'),
+            exportDefinition: t('Export scenario'),
+            nestedDefinition: t('Nested scenario'),
+            standaloneDefinition: t('Feature'),
+            definitionType: t('Type'),
+            standalone: t('Standalone features'),
+            ungrouped: t('Ungrouped'),
             uncategorized: t('Uncategorized'),
             loadFailed: t('Could not refresh the step library.'),
             showCategories: t('Show sources and categories'),
@@ -739,11 +851,24 @@ export class StepLibraryPanel implements vscode.Disposable {
             resizeDetails: t('Resize step details pane'),
             back: t('Back'),
             files: t('Files'),
+            sourceFiles: t('Source files'), compiledFiles: t('Compiled files'), renameAttachment: t('Rename attachment'),
             openExternally: t('Open externally'),
             showInFileManager: t('Show in Finder / Explorer'),
             delete: t('Delete'),
             resourceActionFailed: t('The resource action could not be completed.'),
-            emptyDirectory: t('Empty directory')
+            emptyDirectory: t('Empty directory'),
+            processSteps: t('Process steps'),
+            addProcessSteps: t('Add process steps'),
+            removeProcessStep: t('Remove process step'),
+            dragProcessStep: t('Drag to reorder. Alt+Up/Down moves the focused step.'),
+            processStepRemoved: t('Process step removed.'),
+            moveStepUp: t('Move process step up'),
+            moveStepDown: t('Move process step down'),
+            scenarioStep: t('Scenario step'),
+            processStep: t('Process step'),
+            emptyProcessSteps: t('This process has no steps.'),
+            processStepMoved: t('Process step moved.'),
+            processStepMoveFailed: t('Could not move the process step. Refresh the Library and try again.')
         };
         const documentLanguage = (vscode.env.language || 'en').toLocaleLowerCase().startsWith('ru')
             ? 'ru'
@@ -765,6 +890,17 @@ export class StepLibraryPanel implements vscode.Disposable {
     data-source-export="${escapeHtml(labels.export)}"
     data-source-nested="${escapeHtml(labels.nested)}"
     data-source-main="${escapeHtml(labels.main)}"
+    data-source-process="${escapeHtml(labels.process)}"
+    data-main-scenario-definition="${escapeHtml(labels.mainScenarioDefinition)}"
+    data-process-definition="${escapeHtml(labels.processDefinition)}"
+    data-built-in-definition="${escapeHtml(labels.builtInDefinition)}"
+    data-user-definition="${escapeHtml(labels.userDefinition)}"
+    data-export-definition="${escapeHtml(labels.exportDefinition)}"
+    data-nested-definition="${escapeHtml(labels.nestedDefinition)}"
+    data-standalone-definition="${escapeHtml(labels.standaloneDefinition)}"
+    data-definition-type="${escapeHtml(labels.definitionType)}"
+    data-source-standalone="${escapeHtml(labels.standalone)}"
+    data-ungrouped="${escapeHtml(labels.ungrouped)}"
     data-uncategorized="${escapeHtml(labels.uncategorized)}"
     data-no-results="${escapeHtml(labels.noResults)}"
     data-no-definitions="${escapeHtml(labels.noDefinitions)}"
@@ -780,6 +916,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     data-template-label="${escapeHtml(labels.template)}"
     data-insertion-unavailable="${escapeHtml(labels.insertionUnavailable)}"
     data-item-not-insertable="${escapeHtml(labels.itemNotInsertable)}"
+    data-process-not-insertable="${escapeHtml(labels.processNotInsertable)}"
     data-inserted="${escapeHtml(labels.inserted)}"
     data-copied="${escapeHtml(labels.copied)}"
     data-opened="${escapeHtml(labels.opened)}"
@@ -791,11 +928,24 @@ export class StepLibraryPanel implements vscode.Disposable {
     data-action-failed="${escapeHtml(labels.actionFailed)}"
     data-load-failed="${escapeHtml(labels.loadFailed)}"
     data-files="${escapeHtml(labels.files)}"
+    data-source-files="${escapeHtml(labels.sourceFiles)}" data-compiled-files="${escapeHtml(labels.compiledFiles)}" data-rename-attachment="${escapeHtml(labels.renameAttachment)}"
     data-open-externally="${escapeHtml(labels.openExternally)}"
     data-show-in-file-manager="${escapeHtml(labels.showInFileManager)}"
     data-delete="${escapeHtml(labels.delete)}"
     data-resource-action-failed="${escapeHtml(labels.resourceActionFailed)}"
     data-empty-directory="${escapeHtml(labels.emptyDirectory)}"
+    data-process-steps="${escapeHtml(labels.processSteps)}"
+    data-add-process-steps="${escapeHtml(labels.addProcessSteps)}"
+    data-remove-process-step="${escapeHtml(labels.removeProcessStep)}"
+    data-drag-process-step="${escapeHtml(labels.dragProcessStep)}"
+    data-process-step-removed="${escapeHtml(labels.processStepRemoved)}"
+    data-move-step-up="${escapeHtml(labels.moveStepUp)}"
+    data-move-step-down="${escapeHtml(labels.moveStepDown)}"
+    data-scenario-step="${escapeHtml(labels.scenarioStep)}"
+    data-process-step="${escapeHtml(labels.processStep)}"
+    data-empty-process-steps="${escapeHtml(labels.emptyProcessSteps)}"
+    data-process-step-moved="${escapeHtml(labels.processStepMoved)}"
+    data-process-step-move-failed="${escapeHtml(labels.processStepMoveFailed)}"
     data-preferred-language="${documentLanguage}"
 >
     <div class="library-shell">
@@ -861,6 +1011,8 @@ export class StepLibraryPanel implements vscode.Disposable {
     </div>
     <script nonce="${nonce}" src="${protocolUri}"></script>
     <script nonce="${nonce}" src="${scenarioFilesProtocolUri}"></script>
+    <script nonce="${nonce}">window.__standaloneFeatureLabels = ${standaloneLabels};</script>
+    <script nonce="${nonce}" src="${featureProtocolUri}"></script>
     <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

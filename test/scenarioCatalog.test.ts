@@ -109,6 +109,20 @@ test('scenario catalog entry equality detects category-only metadata changes', (
     assert.equal(areScenarioCatalogEntriesEqual(original, updated), false);
 });
 
+test('catalog refresh detects process code and UID-only step changes', () => {
+    const original: TestInfo = {
+        ...scenario('Process', 'process', 'file:///process/process.yaml'),
+        kind: 'process', processCode: 'Sales.001',
+        processSteps: [{ type: 'scenario', name: 'Order', scenarioName: 'Order', scenarioUid: 'old-uid' }]
+    };
+    assert.equal(areScenarioCatalogEntriesEqual(original, { ...original, processCode: 'Sales.002' }), false);
+    assert.equal(areScenarioCatalogEntriesEqual(original, {
+        ...original, processSteps: [{ ...original.processSteps![0], scenarioUid: 'new-uid' }]
+    }), false);
+    assert.equal(areScenarioCatalogEntriesEqual(original, { ...original, kind: 'scenario' }), false);
+    assert.equal(areScenarioCatalogEntriesEqual(original, { ...original, processSteps: original.processSteps?.map(step => ({ ...step })) }), true);
+});
+
 test('collapses case-only Windows URI aliases into one scenario definition', () => {
     const original = windowsScenario(
         'test',

@@ -1,4 +1,6 @@
 import type { ProjectDefinition } from './projectDefinition';
+import { parseBlockKeyword } from './blockKeywordParser';
+import { isMultilineScalarDefault } from './scenarioParameterUtils';
 
 const STEP_TEMPLATE_PLACEHOLDER_REGEX = /%(\d+)\s+([^"'\r\n]+)/g;
 const GHERKIN_KEYWORD_CAPTURE_REGEX = /^(?:\*\s*)?(and|but|then|when|given|if|и|тогда|когда|если|допустим|дано|к тому же|но)\s+/i;
@@ -15,6 +17,7 @@ export interface ProjectDefinitionInsertionOptions {
     readonly fallbackKeyword: string;
     readonly indentation?: string;
     readonly language: 'ru' | 'en';
+    readonly documentFormat?: 'yaml' | 'feature';
     readonly parameterDefaults?: Readonly<Record<string, string>>;
 }
 
@@ -171,6 +174,35 @@ export function buildProjectDefinitionSnippetData(
     };
 }
 
+export function buildYamlLoopSnippet(
+    data: ProjectDefinitionSnippetData,
+    language: 'ru' | 'en'
+): ProjectDefinitionSnippetData {
+    if (parseBlockKeyword(data.snippetText) !== 'Do') {
+        return data;
+    }
+
+    const explicitOpening = /^(do|цикл)(?:\s|$)/i.exec(
+        data.snippetText.replace(GHERKIN_KEYWORD_CAPTURE_REGEX, '')
+    );
+    const loopLanguage = explicitOpening
+        ? explicitOpening[1].toLowerCase() === 'do' ? 'en' : 'ru'
+        : language;
+    const opening = loopLanguage === 'ru' ? 'Цикл' : 'Do';
+    const closing = loopLanguage === 'ru' ? 'КонецЦикла' : 'EndDo';
+    const adaptOpening = (value: string): string => {
+        const body = value.replace(GHERKIN_KEYWORD_CAPTURE_REGEX, '');
+        return /^(?:do|цикл)(?:\s|$)/i.test(body) ? body : `${opening} ${body}`;
+    };
+
+    // The YAML compiler recognizes loop delimiters rather than Vanessa step wording.
+    return {
+        displayText: `${adaptOpening(data.displayText)}\n    \n${closing}`,
+        snippetText: `${adaptOpening(data.snippetText)}\n    $0\n${closing}`,
+        hasPlaceholders: true
+    };
+}
+
 export function buildProjectDefinitionInsertion(
     definition: ProjectDefinition,
     options: ProjectDefinitionInsertionOptions
@@ -184,8 +216,11 @@ export function buildProjectDefinitionInsertion(
         options.fallbackKeyword
     );
     if (definition.kind !== 'nestedScenario') {
+        const snippet = buildProjectDefinitionSnippetData(definition, { preferredText: callableText });
         return applyBaseIndentation(
-            buildProjectDefinitionSnippetData(definition, { preferredText: callableText }),
+            options.documentFormat === 'yaml' && definition.kind === 'builtInStep'
+                ? buildYamlLoopSnippet(snippet, options.language)
+                : snippet,
             options.indentation
         );
     }
@@ -197,22 +232,29 @@ export function buildProjectDefinitionInsertion(
         );
     }
 
-    const ordered = [...definition.parameters].sort((left, right) => left.index - right.index);
+    const ordered = [...definition.parameters]
+        .filter(parameter => !isMultilineScalarDefault(parameter.defaultValue, parameter.type))
+        .sort((left, right) => left.index - right.index);
     const maxNameLength = ordered.reduce((maximum, parameter) =>
         Math.max(maximum, parameter.name.length), 0);
     let displayText = callableText;
     let snippetText = escapeStepSnippetText(callableText);
     ordered.forEach((parameter, index) => {
         const defaultValue = parameter.defaultValue
+            ?? (isMultilineScalarDefault(options.parameterDefaults?.[parameter.name], parameter.type) ? `[${parameter.name}]` : undefined)
             ?? options.parameterDefaults?.[parameter.name]
             ?? `"${parameter.name}"`;
-        const prefix = `\n    ${parameter.name.padEnd(maxNameLength, ' ')} = `;
-        displayText += `${prefix}${defaultValue}`;
-        snippetText += `${escapeStepSnippetText(prefix)}\${${index + 1}:${escapeSnippetPlaceholderDefault(defaultValue)}}`;
+        const table = parameter.type === 'table';
+        const prefix = `\n    ${parameter.name.padEnd(maxNameLength, ' ')} =${table ? '\n' : ' '}`;
+        const renderedValue = table
+            ? defaultValue.trimEnd().split(/\r\n|\r|\n/u).map(line => `        ${line}`).join('\n')
+            : defaultValue;
+        displayText += `${prefix}${renderedValue}`;
+        snippetText += `${escapeStepSnippetText(prefix)}\${${index + 1}:${escapeSnippetPlaceholderDefault(renderedValue)}}`;
     });
     return applyBaseIndentation({
         displayText,
         snippetText,
-        hasPlaceholders: true
+        hasPlaceholders: ordered.length > 0
     }, options.indentation);
 }

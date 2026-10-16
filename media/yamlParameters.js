@@ -4,6 +4,10 @@
 (function() {
     const vscode = acquireVsCodeApi();
     const persistedState = vscode.getState() || {};
+    let paneSizes = persistedState.paneSizes;
+    const paneSplitter = window.KotWebviewSplit?.attach(document.querySelector('.parameters-workspace'), paneSizes, sizes => {
+        paneSizes = sizes; persistPanelState();
+    });
     let buildParameters = window.__buildParameters || [];
     let additionalVanessaParameters = window.__additionalParameters || [];
     let globalVanessaVariables = window.__globalVanessaVariables || [];
@@ -11,20 +15,49 @@
     let activeProfileId = String(window.__activeProfileId || '');
     const defaultBuildParameters = window.__defaultBuildParameters || [];
     const buildParameterDefinitions = Array.isArray(window.__buildParameterDefinitions) ? window.__buildParameterDefinitions : [];
+    let additionalParameterDefinitions = Array.isArray(window.__vanessaParameterDefinitions) ? window.__vanessaParameterDefinitions : [];
+    let additionalCatalogStatus = window.__vanessaCatalogStatus || '';
+    let expectedCatalogRevision = 0;
     const fixedBuildParameterKeys = new Set((window.__fixedBuildParameterKeys || []).map(key => normalizeBuildKey(key)));
+    function inspectParameter(event) {
+        const row = event.target instanceof HTMLElement ? event.target.closest('tr[data-index]') : null;
+        const additional = row?.closest('#additionalParametersTable');
+        if (!row || (!row.closest('#buildParametersTable') && !additional)) { return; }
+        const key = row.querySelector('.param-key')?.value || '';
+        const title = document.getElementById('parameterInspectorTitle');
+        const description = document.getElementById('parameterInspectorDescription');
+        if (!title || !description) { return; }
+        const definition = additional ? getAdditionalParameterDefinition(key) : getBuildParameterDefinition(key);
+        title.textContent = key || uiLoc.paramNamePlaceholder;
+        description.textContent = definition?.description || (additional ? uiLoc.customVanessaParameterDescription : uiLoc.customBuildParameterDescription);
+        const meta = document.getElementById('parameterInspectorMeta');
+        if (meta) { meta.textContent = additional ? [definition?.valueKind !== 'unknown' ? definition?.valueKind || row.dataset.valueKind : row.dataset.valueKind, ...(definition?.aliases || [])].filter(Boolean).join(' · ') : ''; }
+        document.querySelectorAll('tr.is-inspected').forEach(candidate => candidate.classList.remove('is-inspected'));
+        row.classList.add('is-inspected');
+    }
+    document.addEventListener('focusin', inspectParameter, true);
+    document.addEventListener('click', inspectParameter, true);
+    document.addEventListener('input', inspectParameter, true);
     const launchInfobaseBuildParameterOptions = ['LaunchDBFolder', 'TestClientDBPath', 'InfobasePath', 'TestClientDB'];
-    let cachedModelDbSettingsValue = '';
+    const buildState = window.KotYamlBuildParameterState;
     const uiLoc = {
         paramNamePlaceholder: document.body.dataset.paramNamePlaceholder || 'Parameter name',
         paramValuePlaceholder: document.body.dataset.paramValuePlaceholder || 'Parameter value',
         removeParameter: document.body.dataset.removeParameter || 'Remove parameter',
-        overrideTitle: document.body.dataset.overrideTitle || 'Override existing value',
+        overrideTitle: document.body.dataset.overrideTitle || 'When enabled, this value replaces an existing value in the generated Vanessa JSON. Otherwise, it is added only when the key is absent.',
         fixedBuildParameterHint: document.body.dataset.fixedBuildParameterHint || 'This parameter is fixed and cannot be removed.',
         resetBuildParameterValue: document.body.dataset.resetBuildParameterValue || 'Reset value to default',
         genericBuildParameterDescription: document.body.dataset.genericBuildParameterDescription || 'Additional SPPR parameter passed to СборкаТекстовСценариев.',
         addBuildParameter: document.body.dataset.addBuildParameter || 'Add build parameter',
         noMatchingBuildParameters: document.body.dataset.noMatchingBuildParameters || 'No parameters found',
         customBuildParameterDescription: document.body.dataset.customBuildParameterDescription || 'User parameter added manually and passed to SPPR processing.',
+        customVanessaParameterDescription: document.body.dataset.customVanessaParameterDescription || 'Custom parameter passed to Vanessa Automation.',
+        expectedBoolean: document.body.dataset.expectedBoolean || 'Choose true or false.',
+        expectedNumber: document.body.dataset.expectedNumber || 'Enter a finite number.',
+        expectedArray: document.body.dataset.expectedArray || 'Enter a JSON array.',
+        expectedObject: document.body.dataset.expectedObject || 'Enter a JSON object.',
+        expectedString: document.body.dataset.expectedString || 'Enter a string.',
+        unsupportedVanessaParameter: document.body.dataset.unsupportedVanessaParameter || 'This parameter is absent from the selected Vanessa sources. Check version compatibility.',
         addCustomBuildParameter: document.body.dataset.addCustomBuildParameter || 'Add custom parameter',
         profileNamePrompt: document.body.dataset.profileNamePrompt || 'Profile name',
         createProfileTitle: document.body.dataset.createProfileTitle || 'Create profile',
@@ -44,9 +77,72 @@
         savedWithIssues: document.body.dataset.savedWithIssues || 'Saved with issues',
         autosaveError: document.body.dataset.autosaveError || 'Auto-save error'
     };
+    const priorityTooltip = document.getElementById('priorityTooltip');
+    let priorityHover = null;
+    let priorityFocus = null;
+    let priorityDismissed = false;
+    function updatePriorityTooltip() {
+        if (!priorityTooltip) { return; }
+        const trigger = priorityHover || priorityFocus;
+        priorityTooltip.hidden = !trigger || priorityDismissed;
+        if (priorityTooltip.hidden) { return; }
+        const anchor = trigger.getBoundingClientRect();
+        const rect = priorityTooltip.getBoundingClientRect();
+        const left = Math.max(12, Math.min(anchor.right - rect.width, window.innerWidth - rect.width - 12));
+        const below = anchor.bottom + 8;
+        const top = below + rect.height <= window.innerHeight - 12 ? below : anchor.top - rect.height - 8;
+        priorityTooltip.style.left = `${left}px`;
+        priorityTooltip.style.top = `${Math.max(12, top)}px`;
+    }
+    function hidePriorityTooltip() {
+        priorityHover = null; priorityFocus = null; priorityDismissed = false;
+        if (priorityTooltip) { priorityTooltip.hidden = true; }
+    }
+    function priorityTrigger(target) { return target instanceof HTMLElement ? target.closest('.priority-heading') : null; }
+    document.addEventListener('mouseover', event => {
+        const trigger = priorityTrigger(event.target);
+        if (trigger && trigger !== priorityHover) { priorityHover = trigger; priorityDismissed = false; updatePriorityTooltip(); }
+    });
+    document.addEventListener('mouseout', event => {
+        const trigger = priorityTrigger(event.target);
+        if (trigger && !(event.relatedTarget instanceof HTMLElement && trigger.contains(event.relatedTarget))) {
+            priorityHover = null; if (!priorityFocus) { priorityDismissed = false; } updatePriorityTooltip();
+        }
+    });
+    document.addEventListener('focusin', event => {
+        const trigger = priorityTrigger(event.target);
+        if (trigger) { priorityFocus = trigger; priorityDismissed = false; updatePriorityTooltip(); }
+    });
+    document.addEventListener('focusout', event => {
+        const trigger = priorityTrigger(event.target);
+        if (trigger && !(event.relatedTarget instanceof HTMLElement && trigger.contains(event.relatedTarget))) {
+            priorityFocus = null; if (!priorityHover) { priorityDismissed = false; } updatePriorityTooltip();
+        }
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && priorityTooltip && !priorityTooltip.hidden) { priorityDismissed = true; updatePriorityTooltip(); }
+    });
+    document.addEventListener('click', event => { if (!priorityTrigger(event.target)) { hidePriorityTooltip(); } });
+    window.addEventListener('resize', hidePriorityTooltip);
+    window.addEventListener('scroll', hidePriorityTooltip, true);
     let activeTab = 'build';
+    let modelDbRequestId = 0;
+    let modelDbStatusTimer;
+    function requestModelDbStatus() {
+        const status = document.getElementById('modelDbSettingsStatus');
+        if (status) { status.hidden = true; }
+        const requestId = ++modelDbRequestId;
+        clearTimeout(modelDbStatusTimer);
+        modelDbStatusTimer = setTimeout(() => vscode.postMessage({ command: 'inspectModelDbSettings',
+            requestId, activeProfileId, parameters: getBuildParametersFromTable() }), 200);
+    }
+    document.addEventListener('input', event => {
+        const row = event.target.closest?.('#buildParametersTableBody tr');
+        if (row && ['modeldbsettings', 'modeldbid'].includes(normalizeBuildKey(row.querySelector('.param-key')?.value))) { requestModelDbStatus(); }
+    });
     let buildParameterCatalogQuery = '';
     let autoSaveTimer = null;
+    let pendingProfileRequest = null;
     let lastAutoSavedStateSignature = '';
     let lastSavedAt = typeof persistedState.lastSavedAt === 'string' ? persistedState.lastSavedAt : '';
     let lastSaveKind = typeof persistedState.lastSaveKind === 'string' ? persistedState.lastSaveKind : 'idle';
@@ -162,7 +258,8 @@
         vscode.setState({
             lastSavedAt,
             lastSaveKind,
-            lastSaveMessage
+            lastSaveMessage,
+            paneSizes
         });
     }
 
@@ -177,6 +274,7 @@
         const activeProfile = getActiveProfile();
         profilePickerBtnLabel.textContent = activeProfile?.name || uiLoc.selectProfile;
         profilePickerBtn.title = activeProfile?.name || uiLoc.selectProfile;
+        profilePickerBtn.disabled = Boolean(pendingProfileRequest);
     }
 
     function renderUpdatedAtChip() {
@@ -205,6 +303,18 @@
         renderUpdatedAtChip();
     }
 
+    function resetParameterInspector() {
+        const title = document.getElementById('parameterInspectorTitle');
+        const description = document.getElementById('parameterInspectorDescription');
+        const meta = document.getElementById('parameterInspectorMeta');
+        if (title) { title.textContent = uiLoc.paramNamePlaceholder; }
+        if (description) { description.textContent = document.querySelector(activeTab === 'additional' ? '#additionalTabPanel .section-description' : '#buildTabPanel .section-description')?.textContent || ''; }
+        if (meta) { meta.textContent = ''; }
+        const catalog = document.getElementById('parameterCatalogStatus');
+        if (catalog) { catalog.textContent = additionalCatalogStatus; catalog.hidden = activeTab !== 'additional'; }
+        document.querySelectorAll('tr.is-inspected').forEach(row => row.classList.remove('is-inspected'));
+    }
+
     function getBuildParameterDefinition(key) {
         const normalized = normalizeBuildKey(key);
         return buildParameterDefinitions.find(definition => normalizeBuildKey(definition.key) === normalized) || null;
@@ -220,9 +330,7 @@
     }
 
     function getAvailableBuildParameterDefinitions() {
-        const currentRows = getBuildParametersFromTable();
-        const existingKeys = new Set(currentRows.map(param => normalizeBuildKey(param.key)));
-        return buildParameterDefinitions.filter(definition => !definition.fixed && !existingKeys.has(normalizeBuildKey(definition.key)));
+        return buildState.availableDefinitions(getBuildParametersFromTable(), buildParameterDefinitions);
     }
 
     function isFixedBuildParameter(key) {
@@ -230,9 +338,7 @@
     }
 
     function getDefaultBuildParameterValue(key) {
-        const normalizedKey = normalizeBuildKey(key);
-        const found = defaultBuildParameters.find(param => normalizeBuildKey(param.key) === normalizedKey);
-        return found ? String(found.value || '') : '';
+        return buildState.defaultValue(key, defaultBuildParameters);
     }
 
     function normalizeVanessaFolderValue(value) {
@@ -260,89 +366,12 @@
     }
 
     function createBuildParameterState(params) {
-        const map = new Map();
-        const blankRows = [];
-        params.forEach(param => {
-            const normalizedKey = normalizeBuildKey(param.key);
-            if (!normalizedKey) {
-                blankRows.push({
-                    key: String(param.key || ''),
-                    value: String(param.value || '')
-                });
-                return;
-            }
-            if (!normalizedKey || map.has(normalizedKey)) {
-                return;
-            }
-            map.set(normalizedKey, {
-                key: String(param.key || '').trim(),
-                value: String(param.value || '')
-            });
-        });
-
-        const scenarioFolder = map.get('scenariofolder') || map.get('testfolder');
-        const featureFolder = map.get('featurefolder');
-        const vanessaFolder = map.get('vanessafolder') || map.get('vanessadir') || map.get('vanessapath');
-        const hasExplicitVanessaFolder = map.has('vanessafolder') || map.has('vanessadir') || map.has('vanessapath');
-        const authCompile = normalizeBooleanBuildValue(map.get('authcompile') ? map.get('authcompile').value : 'False');
-        const modelDbSettings = map.get('modeldbsettings')
-            ? String(map.get('modeldbsettings').value || '')
-            : '';
-        const launchInfobaseParameter = params.find(param => isLaunchInfobaseBuildParameter(param.key) && String(param.value || '').trim())
-            || params.find(param => isLaunchInfobaseBuildParameter(param.key));
-        if (modelDbSettings.trim()) {
-            cachedModelDbSettingsValue = modelDbSettings.trim();
-        } else if (!cachedModelDbSettingsValue) {
-            cachedModelDbSettingsValue = getDefaultBuildParameterValue('ModelDBSettings');
-        }
-
-        const normalizedParameters = [
-            { key: 'ScenarioFolder', value: scenarioFolder ? scenarioFolder.value : '' },
-            { key: 'FeatureFolder', value: featureFolder ? featureFolder.value : '' },
-            {
-                key: 'VanessaFolder',
-                value: hasExplicitVanessaFolder
-                    ? normalizeVanessaFolderValue(vanessaFolder ? vanessaFolder.value : '')
-                    : getDefaultBuildParameterValue('VanessaFolder')
-            },
-            {
-                key: 'ModelDBSettings',
-                value: modelDbSettings || cachedModelDbSettingsValue || getDefaultBuildParameterValue('ModelDBSettings')
-            },
-            { key: 'AuthCompile', value: authCompile },
-            {
-                key: launchInfobaseParameter && String(launchInfobaseParameter.key || '').trim()
-                    ? String(launchInfobaseParameter.key || '').trim()
-                    : 'LaunchDBFolder',
-                value: launchInfobaseParameter ? String(launchInfobaseParameter.value || '') : ''
-            }
-        ];
-
-        params.forEach(param => {
-            const normalizedKey = normalizeBuildKey(param.key);
-            if (!normalizedKey
-                || normalizedKey === 'scenariofolder'
-                || normalizedKey === 'testfolder'
-                || normalizedKey === 'featurefolder'
-                || normalizedKey === 'vanessafolder'
-                || normalizedKey === 'vanessadir'
-                || normalizedKey === 'vanessapath'
-                || normalizedKey === 'authcompile'
-                || normalizedKey === 'modeldbsettings'
-                || isLaunchInfobaseBuildParameter(param.key)) {
-                return;
-            }
-            normalizedParameters.push({
-                key: String(param.key || '').trim(),
-                value: String(param.value || '')
-            });
-        });
-
-        return [...normalizedParameters, ...blankRows];
+        return buildState.normalize(params, defaultBuildParameters);
     }
 
     function buildRowHtml(param, index) {
         const definition = getBuildParameterDefinition(param.key);
+        const policy = buildState.rowPolicy(param.key, buildParameterDefinitions);
         const normalizedKey = normalizeBuildKey(param.key);
         const isLaunchInfobaseParameter = isLaunchInfobaseBuildParameter(param.key);
         const fixed = isFixedBuildParameter(param.key);
@@ -351,16 +380,26 @@
         const keyClassName = definition ? 'param-key is-catalog' : 'param-key';
         const description = definition?.description || uiLoc.customBuildParameterDescription;
         const isBooleanParameter = isBooleanBuildParameter(param.key);
+        const rawValue = String(param.value ?? '');
+        const isNumericParameter = definition?.valueKind === 'number';
+        // Native number inputs sanitize malformed values; keep imported drafts as text.
+        const numericValue = rawValue === '' || (/^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(rawValue) && Number.isFinite(Number(rawValue)));
+        const valueInputType = isNumericParameter && numericValue ? 'number' : 'text';
+        const numericAttributes = isNumericParameter
+            ? `inputmode="decimal" ${definition.min !== undefined ? `min="${definition.min}"` : ''} ${definition.max !== undefined ? `max="${definition.max}"` : ''} step="${definition.step ?? 'any'}"`
+            : '';
+        const retainedBooleanOption = ['False', 'True'].includes(rawValue) ? ''
+            : `<option value="${escapeHtml(rawValue)}" selected>${escapeHtml(rawValue)}</option>`;
         const hintHtml = `<span class="param-hint codicon codicon-info" title="${escapeHtml(description)}" aria-label="${escapeHtml(description)}"></span>`;
         const keyInputHtml = isLaunchInfobaseParameter
             ? `<div class="param-key-select-wrap">
                     <input type="hidden" class="param-key" value="${escapeHtml(param.key || 'LaunchDBFolder')}">
                     <select class="param-bool-select param-key-select param-launch-key-select" aria-label="${escapeHtml(param.key || 'LaunchDBFolder')}">
-                        ${launchInfobaseBuildParameterOptions.map(option => `<option value="${escapeHtml(option)}" ${normalizeBuildKey(param.key) === normalizeBuildKey(option) ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
+                        ${(buildState.connectionAliases.some(option => normalizeBuildKey(option) === normalizedKey) ? buildState.connectionAliases : buildState.folderAliases).map(option => `<option value="${escapeHtml(option)}" ${normalizeBuildKey(param.key) === normalizeBuildKey(option) ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
                     </select>
                </div>`
             : `<input type="text" class="${keyClassName}" list="buildParameterSuggestions" value="${escapeHtml(param.key || '')}" placeholder="${escapeHtml(uiLoc.paramNamePlaceholder)}" ${keyReadonly}>`;
-        const removeButtonHtml = fixed
+        const removeButtonHtml = policy.readOnly ? '' : fixed
             ? `<button class="button-with-icon reset-row-btn" type="button" title="${escapeHtml(uiLoc.resetBuildParameterValue)}" aria-label="${escapeHtml(uiLoc.resetBuildParameterValue)}">
                     <span class="codicon codicon-discard"></span>
                </button>`
@@ -369,13 +408,14 @@
                </button>`;
         const valueHtml = isBooleanParameter
             ? `<select class="param-bool-select param-value-bool-select" aria-label="${escapeHtml(param.key || 'AuthCompile')}">
-                    <option value="False" ${isTruthyBuildValue(param.value) ? '' : 'selected'}>False</option>
-                    <option value="True" ${isTruthyBuildValue(param.value) ? 'selected' : ''}>True</option>
+                    ${retainedBooleanOption}
+                    <option value="False" ${rawValue === 'False' ? 'selected' : ''}>False</option>
+                    <option value="True" ${rawValue === 'True' ? 'selected' : ''}>True</option>
                </select>`
-            : `<input type="text" class="param-value ${missingRequired ? 'is-required-missing' : ''}" value="${escapeHtml(param.value || '')}" placeholder="${escapeHtml(uiLoc.paramValuePlaceholder)}" title="${escapeHtml(description)}">`;
+            : `<input type="${valueInputType}" ${numericAttributes} class="param-value ${missingRequired ? 'is-required-missing' : ''}" value="${escapeHtml(param.value || '')}" placeholder="${escapeHtml(uiLoc.paramValuePlaceholder)}" title="${escapeHtml(description)}" ${policy.readOnly ? 'readonly' : ''}>`;
 
         return `
-            <tr data-index="${index}" ${fixed ? 'data-fixed="true"' : ''} ${missingRequired ? 'data-required-missing="true"' : ''}>
+            <tr data-index="${index}" ${policy.hidden ? 'hidden' : ''} ${fixed ? 'data-fixed="true"' : ''} ${missingRequired ? 'data-required-missing="true"' : ''}>
                 <td>
                     <div class="param-key-cell">
                         ${hintHtml}
@@ -392,15 +432,87 @@
         `;
     }
 
-    function additionalRowHtml(param, index) {
+    function getAdditionalParameterDefinition(rawKey) {
+        const key = String(rawKey || '').trim().replace(/^\//, '').replace(/~[01]/g, token => token === '~1' ? '/' : '~').replace(/\//g, '.').toLocaleLowerCase();
+        return additionalParameterDefinitions.find(definition => definition.keys.some(alias => alias.toLocaleLowerCase() === key)) || null;
+    }
+
+    function sameAdditionalParameter(first, second) {
+        const definition = getAdditionalParameterDefinition(first);
+        return (definition && definition === getAdditionalParameterDefinition(second))
+            || String(first).trim().toLocaleLowerCase() === String(second).trim().toLocaleLowerCase();
+    }
+
+    function additionalValueError(kind, rawValue, sourceKind) {
+        const value = String(rawValue ?? '').trim();
+        if (sourceKind && kind && kind !== 'unknown' && sourceKind !== kind) {
+            return ({ boolean: uiLoc.expectedBoolean, number: uiLoc.expectedNumber, array: uiLoc.expectedArray, object: uiLoc.expectedObject, string: uiLoc.expectedString })[kind];
+        }
+        if (kind === 'boolean' && !/^(?:true|false)$/i.test(value)) { return uiLoc.expectedBoolean; }
+        if (kind === 'number' && (!/^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) || !Number.isFinite(Number(value)))) { return uiLoc.expectedNumber; }
+        if (kind === 'array' || kind === 'object') {
+            try {
+                const parsed = JSON.parse(value);
+                if (kind === 'array' ? Array.isArray(parsed) : parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) { return ''; }
+            } catch { /* Retain invalid drafts for correction. */ }
+            return kind === 'array' ? uiLoc.expectedArray : uiLoc.expectedObject;
+        }
+        return '';
+    }
+
+    function additionalValueHtml(param, typed = true) {
+        const declaredKind = typed ? getAdditionalParameterDefinition(param.key)?.valueKind : undefined;
+        const kind = typed ? (declaredKind && declaredKind !== 'unknown' ? declaredKind : param.valueKind) : 'unknown';
+        const rawValue = String(param.value ?? '');
+        const error = additionalValueError(kind, rawValue, param.valueKind);
+        const attrs = `class="param-value ${kind === 'boolean' ? 'param-bool-select' : ''}" aria-label="${escapeHtml(param.key || uiLoc.paramValuePlaceholder)}" aria-invalid="${error ? 'true' : 'false'}"`;
+        let html;
+        if (kind === 'boolean') {
+            const valid = /^(?:true|false)$/i.test(rawValue.trim());
+            html = `<select ${attrs}>${!valid ? `<option value="${escapeHtml(rawValue)}" selected>${escapeHtml(rawValue)}</option>` : ''}
+                ${['true', 'false'].map(value => {
+                    const selected = valid && rawValue.trim().toLocaleLowerCase() === value;
+                    return `<option value="${escapeHtml(selected ? rawValue : value)}" ${selected ? 'selected' : ''}>${value}</option>`;
+                }).join('')}</select>`;
+        } else if (kind === 'array' || kind === 'object') {
+            html = `<textarea ${attrs} rows="3" spellcheck="false" placeholder="${kind === 'array' ? '[]' : '{}'}">${escapeHtml(rawValue)}</textarea>`;
+        } else {
+            html = `<input ${attrs} type="${kind === 'number' && (!rawValue || !error) ? 'number' : 'text'}" ${kind === 'number' ? 'step="any" inputmode="decimal"' : ''} value="${escapeHtml(rawValue)}" placeholder="${escapeHtml(uiLoc.paramValuePlaceholder)}">`;
+        }
+        const unsupported = typed && getAdditionalParameterDefinition(param.key)?.availability === 'unsupported';
+        return `${html}<div class="param-value-error" role="status" ${error ? '' : 'hidden'}>${escapeHtml(error)}</div>
+            <div class="param-compatibility-warning" role="status" ${unsupported ? '' : 'hidden'}>${escapeHtml(uiLoc.unsupportedVanessaParameter)}</div>`;
+    }
+
+    function validateAdditionalValue(row) {
+        const field = row?.querySelector('.param-value');
+        if (!field) { return; }
+        const declaredKind = getAdditionalParameterDefinition(row.querySelector('.param-key')?.value)?.valueKind;
+        const error = additionalValueError(declaredKind && declaredKind !== 'unknown' ? declaredKind : row.dataset.valueKind, field.value, row.dataset.valueKind);
+        field.setAttribute('aria-invalid', error ? 'true' : 'false');
+        const message = row.querySelector('.param-value-error');
+        if (message) { message.textContent = error; message.hidden = !error; }
+    }
+
+    function additionalRowHtml(param, index, typed = true) {
         const isOverride = Boolean(param.overrideExisting);
+        const definition = typed ? getAdditionalParameterDefinition(param.key) : null;
+        const options = [...new Set(definition?.keyOptions || [])];
+        if (options.length && !options.includes(param.key)) { options.unshift(param.key); }
+        const nameHtml = typed && options.length > 1
+            ? `<div class="param-key-select-wrap"><input type="hidden" class="param-key" readonly value="${escapeHtml(param.key)}">
+                <select class="param-bool-select param-additional-key-select" aria-label="${escapeHtml(param.key)}">
+                    ${options.map(key => `<option value="${escapeHtml(key)}" ${key === param.key ? 'selected' : ''}>${escapeHtml(key)}</option>`).join('')}
+                </select></div>`
+            : `<input type="text" class="param-key ${typed ? 'is-catalog' : ''}" ${typed ? 'readonly' : ''} value="${escapeHtml(param.key || '')}" placeholder="${escapeHtml(uiLoc.paramNamePlaceholder)}">`;
+        const hint = typed ? definition?.description || uiLoc.customVanessaParameterDescription : '';
         return `
-            <tr data-index="${index}">
+            <tr data-index="${index}" ${typed && param.valueKind ? `data-value-kind="${escapeHtml(param.valueKind)}" data-original-key="${escapeHtml(param.key)}"` : ''}>
                 <td>
-                    <input type="text" class="param-key" value="${escapeHtml(param.key || '')}" placeholder="${escapeHtml(uiLoc.paramNamePlaceholder)}">
+                    <div class="param-key-cell">${typed ? `<span class="codicon codicon-info param-hint" tabindex="0" title="${escapeHtml(hint)}" aria-label="${escapeHtml(hint)}"></span>` : ''}${nameHtml}</div>
                 </td>
                 <td>
-                    <input type="text" class="param-value" value="${escapeHtml(param.value || '')}" placeholder="${escapeHtml(uiLoc.paramValuePlaceholder)}">
+                    ${additionalValueHtml(param, typed)}
                 </td>
                 <td class="param-priority-cell">
                     <input type="checkbox" class="param-override" ${isOverride ? 'checked' : ''} title="${escapeHtml(uiLoc.overrideTitle)}">
@@ -426,7 +538,10 @@
     }
 
     function syncBuildParametersStateFromTable() {
+        const modelFields = rows => JSON.stringify(rows.filter(row => ['modeldbsettings', 'modeldbid'].includes(normalizeBuildKey(row.key))));
+        const previous = modelFields(buildParameters);
         buildParameters = createBuildParameterState(getBuildParametersFromTable());
+        if (previous !== modelFields(buildParameters)) { requestModelDbStatus(); }
     }
 
     function isTruthyBuildValue(value) {
@@ -447,29 +562,7 @@
     }
 
     function isRequiredBuildParameterMissing(normalizedKey, params) {
-        const paramMap = getBuildParameterMap(params);
-        const hasScenarioFolder = Boolean(paramMap.get('testfolder') || paramMap.get('scenariofolder'));
-        const hasFeatureFolder = Boolean(paramMap.get('featurefolder'));
-        const hasVanessaFolder = Boolean(paramMap.get('vanessafolder'));
-        const authCompileEnabled = isTruthyBuildValue(paramMap.get('authcompile'));
-        const hasModelDbSettings = Boolean(paramMap.get('modeldbsettings'));
-
-        if (normalizedKey === 'scenariofolder' || normalizedKey === 'testfolder') {
-            return !hasScenarioFolder;
-        }
-        if (normalizedKey === 'featurefolder') {
-            return !hasFeatureFolder;
-        }
-        if (normalizedKey === 'vanessafolder') {
-            return !hasVanessaFolder;
-        }
-        if (normalizedKey === 'modeldbsettings') {
-            return authCompileEnabled && !hasModelDbSettings;
-        }
-        if (isLaunchInfobaseBuildParameter(normalizedKey)) {
-            return !launchInfobaseBuildParameterOptions.some(option => Boolean(paramMap.get(normalizeBuildKey(option))));
-        }
-        return false;
+        return buildState.requiredMissing(normalizedKey, params);
     }
 
     function updateBuildRequiredFieldHighlighting() {
@@ -525,7 +618,7 @@
         }
 
         return !buildParameterDefinitions.some(definition => normalizeBuildKey(definition.key) === normalizedQuery)
-            && !getBuildParametersFromTable().some(param => normalizeBuildKey(param.key) === normalizedQuery);
+            && buildState.canAddParameter(trimmedQuery, getBuildParametersFromTable(), buildParameterDefinitions);
     }
 
     function renderBuildParameterCatalogList() {
@@ -588,7 +681,7 @@
 
     function addBuildParameterByKey(key) {
         const trimmedKey = String(key || '').trim();
-        if (!trimmedKey) {
+        if (!trimmedKey || !buildState.canAddParameter(trimmedKey, getBuildParametersFromTable(), buildParameterDefinitions)) {
             return;
         }
 
@@ -659,7 +752,9 @@
             const keyText = (keyInput && 'value' in keyInput)
                 ? String(keyInput.value || '').toLocaleLowerCase()
                 : '';
-            row.hidden = query.length > 0 && !keyText.includes(query);
+            const policyHidden = tabName === 'build' && buildState.rowPolicy(keyInput?.value || '', buildParameterDefinitions).hidden;
+            const names = tabName === 'additional' ? [keyText, ...(getAdditionalParameterDefinition(keyInput?.value)?.keys || [])] : [keyText];
+            row.hidden = policyHidden || (query.length > 0 && !names.some(name => name.toLocaleLowerCase().includes(query)));
         });
 
         const clearButton = getSearchClearButton(tabName);
@@ -692,8 +787,8 @@
                 params.push({
                     key: keyInput.value.trim(),
                     value: boolSelect instanceof HTMLSelectElement
-                        ? normalizeBooleanBuildValue(boolSelect.value)
-                        : (valueInput instanceof HTMLInputElement ? valueInput.value.trim() : '')
+                        ? boolSelect.value
+                        : (valueInput instanceof HTMLInputElement ? valueInput.value : '')
                 });
             }
         });
@@ -713,8 +808,9 @@
             if (keyInput && valueInput && keyInput.value.trim()) {
                 params.push({
                     key: keyInput.value.trim(),
-                    value: valueInput.value.trim(),
-                    overrideExisting: Boolean(overrideInput && overrideInput.checked)
+                    value: valueInput.value,
+                    overrideExisting: Boolean(overrideInput && overrideInput.checked),
+                    ...(row.dataset.valueKind ? { valueKind: row.dataset.valueKind } : {})
                 });
             }
         });
@@ -773,10 +869,6 @@
             textInput.value = defaultValue;
         }
 
-        if (normalizeBuildKey(keyValue) === 'modeldbsettings' && defaultValue.trim()) {
-            cachedModelDbSettingsValue = defaultValue.trim();
-        }
-
         syncBuildParametersStateFromTable();
         updateBuildRequiredFieldHighlighting();
         applySearchFilter('build');
@@ -790,9 +882,14 @@
         }
         buildParameters = createBuildParameterState(buildParameters);
         body.innerHTML = buildParameters.map((param, index) => buildRowHtml(param, index)).join('');
+        const inspectorTitle = document.getElementById('parameterInspectorTitle');
+        const inspectorDescription = document.getElementById('parameterInspectorDescription');
+        if (inspectorTitle) { inspectorTitle.textContent = uiLoc.paramNamePlaceholder; }
+        if (inspectorDescription) { inspectorDescription.textContent = document.querySelector('#buildTabPanel .section-description')?.textContent || ''; }
         updateBuildRequiredFieldHighlighting();
         updateBuildParameterCatalogOptions();
         applySearchFilter('build');
+        requestModelDbStatus();
     }
 
     function updateAdditionalTable() {
@@ -801,6 +898,7 @@
             return;
         }
         body.innerHTML = additionalVanessaParameters.map((param, index) => additionalRowHtml(param, index)).join('');
+        if (activeTab === 'additional') { resetParameterInspector(); }
         applySearchFilter('additional');
     }
 
@@ -809,35 +907,24 @@
         if (!body) {
             return;
         }
-        body.innerHTML = globalVanessaVariables.map((param, index) => additionalRowHtml(param, index)).join('');
+        body.innerHTML = globalVanessaVariables.map((param, index) => additionalRowHtml(param, index, false)).join('');
         applySearchFilter('globalVars');
     }
 
-    function appendAdditionalRow() {
+    function appendAdditionalRow(parameter = { key: '', value: '', overrideExisting: false }) {
         const body = getTableBody('additionalParametersTableBody');
         if (!body) {
             return;
         }
         const row = document.createElement('tr');
         row.setAttribute('data-index', String(body.children.length));
-        row.innerHTML = `
-            <td>
-                <input type="text" class="param-key" value="" placeholder="${escapeHtml(uiLoc.paramNamePlaceholder)}">
-            </td>
-            <td>
-                <input type="text" class="param-value" value="" placeholder="${escapeHtml(uiLoc.paramValuePlaceholder)}">
-            </td>
-            <td class="param-priority-cell">
-                <input type="checkbox" class="param-override" title="${escapeHtml(uiLoc.overrideTitle)}">
-            </td>
-            <td>
-                <button class="button-with-icon remove-row-btn" title="${escapeHtml(uiLoc.removeParameter)}">
-                    <span class="codicon codicon-trash"></span>
-                </button>
-            </td>
-        `;
+        if (parameter.valueKind) { row.setAttribute('data-value-kind', parameter.valueKind); row.setAttribute('data-original-key', parameter.key); }
+        const rendered = additionalRowHtml(parameter, body.children.length);
+        row.innerHTML = rendered.slice(rendered.indexOf('>') + 1, rendered.lastIndexOf('</tr>'));
         body.appendChild(row);
-        row.querySelector('.param-key')?.focus();
+        row.querySelector('.param-key').value = parameter.key;
+        row.querySelector('.param-override').checked = Boolean(parameter.overrideExisting);
+        row.querySelector(parameter.key ? '.param-value' : '.param-key')?.focus();
         applySearchFilter('additional');
     }
 
@@ -892,6 +979,7 @@
             clearTimeout(autoSaveTimer);
             autoSaveTimer = null;
         }
+        if (pendingProfileRequest) { return; }
         const state = getCurrentState();
         const nextSignature = JSON.stringify(state);
         if (nextSignature === lastAutoSavedStateSignature) {
@@ -945,17 +1033,47 @@
         additionalTabPanel.hidden = !showAdditional;
         globalVarsTabPanel.classList.toggle('active', showGlobalVars);
         globalVarsTabPanel.hidden = !showGlobalVars;
+        const inspector = document.getElementById('parameterInspector');
+        if (inspector) { inspector.hidden = showGlobalVars; }
+        document.querySelector('.parameters-workspace')?.classList.toggle('has-build-inspector', !showGlobalVars);
+        resetParameterInspector();
+        paneSplitter?.update();
+    }
+
+    function applyProfilesResponse(message) {
+        let hasLocalEdits = false;
+        const localState = pendingProfileRequest && message.requestId === pendingProfileRequest.id ? getCurrentState() : null;
+        profiles = Array.isArray(message.profiles) ? message.profiles.map(profile => {
+            const original = pendingProfileRequest?.profiles.find(item => item.id === profile.id);
+            const local = localState?.profiles.find(item => item.id === profile.id);
+            if (!original || !local) { return profile; }
+            const merged = { ...profile };
+            for (const section of ['buildParameters', 'additionalVanessaParameters', 'globalVanessaVariables']) {
+                if (JSON.stringify(local[section]) !== JSON.stringify(original[section])) {
+                    merged[section] = local[section];
+                    hasLocalEdits = true;
+                }
+            }
+            return merged;
+        }) : profiles;
+        activeProfileId = String(message.activeProfileId || activeProfileId);
+        if (message.requestId === pendingProfileRequest?.id) { pendingProfileRequest = null; }
+        return hasLocalEdits;
     }
 
     function manageProfiles() {
+        if (pendingProfileRequest) { return; }
         if (autoSaveTimer) {
             clearTimeout(autoSaveTimer);
             autoSaveTimer = null;
         }
         const state = getCurrentState();
+        pendingProfileRequest = { id: makeProfileId(), profiles: JSON.parse(JSON.stringify(state.profiles)) };
+        renderProfilePicker();
         setSaveStatus('saving', uiLoc.saving);
         vscode.postMessage({
             command: 'manageProfiles',
+            requestId: pendingProfileRequest.id,
             activeProfileId: state.activeProfileId,
             profiles: state.profiles
         });
@@ -1066,7 +1184,7 @@
 
     document.addEventListener('input', (event) => {
         const target = event.target;
-        if (!(target instanceof HTMLInputElement)) {
+        if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
             return;
         }
 
@@ -1091,6 +1209,12 @@
         if (!target.classList.contains('param-key')) {
             if (target.classList.contains('param-value')) {
                 const body = target.closest('tbody');
+                if (body?.id === 'additionalParametersTableBody') {
+                    const row = target.closest('tr');
+                    const kind = getAdditionalParameterDefinition(row.querySelector('.param-key')?.value)?.valueKind;
+                    if (kind && kind !== 'unknown') { row.setAttribute('data-value-kind', kind); row.setAttribute('data-original-key', row.querySelector('.param-key').value.trim()); }
+                    validateAdditionalValue(row);
+                }
                 if (body?.id === 'buildParametersTableBody') {
                     syncBuildParametersStateFromTable();
                     updateBuildRequiredFieldHighlighting();
@@ -1113,6 +1237,8 @@
             return;
         }
         if (body.id === 'additionalParametersTableBody') {
+            const row = target.closest('tr');
+            if (row.dataset.originalKey && row.dataset.originalKey !== target.value.trim()) { row.setAttribute('data-value-kind', ''); }
             applySearchFilter('additional');
             scheduleAutoSave(800);
             return;
@@ -1125,7 +1251,23 @@
 
     document.addEventListener('change', (event) => {
         const target = event.target;
+        if (target instanceof HTMLSelectElement && target.classList.contains('param-value') && target.closest('tbody')?.id === 'additionalParametersTableBody') {
+            const row = target.closest('tr');
+            row.setAttribute('data-value-kind', 'boolean'); row.setAttribute('data-original-key', row.querySelector('.param-key').value.trim());
+            validateAdditionalValue(target.closest('tr')); scheduleAutoSave(); return;
+        }
         if (!(target instanceof HTMLSelectElement)) {
+            return;
+        }
+
+        if (target.classList.contains('param-additional-key-select')) {
+            const row = target.closest('tr');
+            const keyInput = row?.querySelector('.param-key');
+            if (keyInput && sameAdditionalParameter(keyInput.value, target.value)) {
+                keyInput.value = target.value;
+                if (row.dataset.originalKey) { row.setAttribute('data-original-key', target.value); }
+                inspectParameter({ target }); applySearchFilter('additional'); scheduleAutoSave();
+            }
             return;
         }
 
@@ -1137,7 +1279,9 @@
             }
             syncBuildParametersStateFromTable();
             updateBuildRequiredFieldHighlighting();
+            updateBuildParameterCatalogOptions();
             applySearchFilter('build');
+            scheduleAutoSave();
             return;
         }
 
@@ -1170,9 +1314,7 @@
     });
 
     document.getElementById('addAdditionalRowBtn').addEventListener('click', () => {
-        log('Add additional Vanessa parameter button clicked.');
-        appendAdditionalRow();
-        scheduleAutoSave();
+        vscode.postMessage({ command: 'selectAdditionalParameter', keys: getAdditionalParametersFromTable().map(row => row.key) });
     });
 
     document.getElementById('addGlobalVarRowBtn').addEventListener('click', () => {
@@ -1306,6 +1448,38 @@
     window.addEventListener('message', event => {
         const message = event.data;
         switch (message.command) {
+            case 'refreshModelDbSettings':
+                requestModelDbStatus();
+                break;
+            case 'modelDbSettingsStatus': {
+                if (message.requestId !== modelDbRequestId || message.activeProfileId !== activeProfileId) { break; }
+                const status = document.getElementById('modelDbSettingsStatus');
+                if (status) {
+                    status.textContent = message.message;
+                    status.hidden = false;
+                    status.dataset.state = message.state;
+                }
+                break;
+            }
+            case 'appendAdditionalParameter':
+                if (message.activeProfileId && message.activeProfileId !== activeProfileId) { break; }
+                if (typeof message.catalogStatus === 'string') { additionalCatalogStatus = message.catalogStatus; }
+                if (Array.isArray(message.definitions)) {
+                    additionalVanessaParameters = getAdditionalParametersFromTable();
+                    additionalParameterDefinitions = message.definitions; updateAdditionalTable();
+                }
+                if (message.parameter && !getAdditionalParametersFromTable().some(row => sameAdditionalParameter(row.key, message.parameter.key))) {
+                    appendAdditionalRow(message.parameter);
+                    scheduleAutoSave();
+                }
+                break;
+            case 'vanessaParameterDefinitionsUpdated':
+                if (message.activeProfileId !== activeProfileId || message.revision !== expectedCatalogRevision || !Array.isArray(message.definitions)) { break; }
+                additionalVanessaParameters = getAdditionalParametersFromTable();
+                additionalParameterDefinitions = message.definitions;
+                additionalCatalogStatus = String(message.catalogStatus || '');
+                updateAdditionalTable();
+                break;
             case 'loadBuildParameters':
                 log('Loading build parameters from extension.');
                 buildParameters = createBuildParameterState(message.buildParameters || []);
@@ -1331,9 +1505,11 @@
                 updateBuildTable();
                 scheduleAutoSave();
                 break;
-            case 'profilesStateUpdated':
-                profiles = Array.isArray(message.profiles) ? message.profiles : profiles;
-                activeProfileId = String(message.activeProfileId || activeProfileId);
+            case 'profilesStateUpdated': {
+                expectedCatalogRevision = message.catalogRevision ?? expectedCatalogRevision;
+                additionalParameterDefinitions = additionalParameterDefinitions.map(definition => ({ ...definition, availability: 'unverified' }));
+                additionalCatalogStatus = '';
+                const hasLocalEdits = applyProfilesResponse(message);
                 ensureProfilesState();
                 loadProfileIntoTables(activeProfileId);
                 renderProfilePicker();
@@ -1343,7 +1519,7 @@
                 applySearchFilter('build');
                 applySearchFilter('additional');
                 applySearchFilter('globalVars');
-                lastAutoSavedStateSignature = getCurrentStateSignature();
+                lastAutoSavedStateSignature = hasLocalEdits ? '' : getCurrentStateSignature();
                 if (message.kind === 'warning') {
                     setSaveStatus('warning', message.message || uiLoc.savedWithIssues, message.savedAt);
                 } else if (message.kind === 'error') {
@@ -1351,8 +1527,14 @@
                 } else {
                     setSaveStatus('saved', message.message || uiLoc.saved, message.savedAt);
                 }
+                if (hasLocalEdits) { setSaveStatus('saving', uiLoc.saving); scheduleAutoSave(); }
                 break;
+            }
             case 'saveStatus':
+                if (pendingProfileRequest && message.requestId !== pendingProfileRequest.id) { break; }
+                if (pendingProfileRequest && message.requestId === pendingProfileRequest.id) {
+                    pendingProfileRequest = null; renderProfilePicker(); scheduleAutoSave();
+                }
                 if (message.kind === 'warning') {
                     setSaveStatus('warning', message.message || uiLoc.savedWithIssues, message.savedAt);
                 } else if (message.kind === 'error') {

@@ -120,7 +120,7 @@
         const kind = typeof node?.kind === 'string' ? node.kind : '';
         const itemId = typeof node?.itemId === 'string' ? node.itemId : '';
         const relativePath = typeof node?.relativePath === 'string' ? node.relativePath : '';
-        return [kind, itemId, relativePath].map(encodeURIComponent).join('|');
+        return [kind, itemId, relativePath, ...(node?.resource ? [node.resource] : [])].map(encodeURIComponent).join('|');
     }
 
     function scenarioResourceRowAction(kind, originatedFromButton) {
@@ -149,6 +149,7 @@
                 Object.freeze({ id: 'open', label: openLabel }),
                 reveal,
                 Object.freeze({ id: 'separator' }),
+                Object.freeze({ id: 'rename', label: labels.renameAttachment || 'Rename attachment' }),
                 Object.freeze({ id: 'delete', label: labels.delete || 'Delete' })
             ]);
         }
@@ -295,7 +296,14 @@
         const filesLabel = typeof labels?.files === 'string' && labels.files
             ? labels.files
             : 'Files';
+        const sourceFilesRootUri = typeof item?.sourceScenarioFilesRootUri === 'string' ? item.sourceScenarioFilesRootUri : '';
+        const sourceAttachments = sourceFilesRootUri && sourceFilesRootUri !== filesRootUri ? [Object.freeze({
+            id: `scenario-source-attachments:${encodedItemId}`, kind: 'attachments', itemId, resource: 'source',
+            label: labels?.sourceFiles || 'Source files', name: labels?.sourceFiles || 'Source files',
+            relativePath: '', depth, expandable: true
+        })] : [];
         return Object.freeze([
+            ...sourceAttachments,
             Object.freeze({
                 id: `scenario-feature:${encodedItemId}`,
                 kind: 'feature',
@@ -310,8 +318,8 @@
                 id: `scenario-attachments:${encodedItemId}`,
                 kind: 'attachments',
                 itemId,
-                label: filesLabel,
-                name: filesLabel,
+                label: sourceAttachments.length ? labels?.compiledFiles || 'Compiled files' : filesLabel,
+                name: sourceAttachments.length ? labels?.compiledFiles || 'Compiled files' : filesLabel,
                 relativePath: '',
                 depth,
                 expandable: true
@@ -345,6 +353,7 @@
                 command: 'prepareScenarioFileDrop',
                 dropId,
                 itemId: target.itemId,
+                ...(target.resource ? { resource: target.resource } : {}),
                 targetRelativePath: target.relativePath || '',
                 entries: collected.entries
             });

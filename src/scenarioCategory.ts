@@ -61,28 +61,31 @@ export function buildScenarioCategoryAction(
     source: string,
     documentUri: string,
     documentVersion: number,
-    translate: Translate = message => message
+    translate: Translate = message => message,
+    projected?: { readonly isMainScenario: boolean; readonly category?: string }
 ): ScenarioCategoryAction | null {
     try {
         const document = ScenarioYamlDocument.parse(source);
         document.requireValidForEdit();
         const metadata = document.findFieldAtPath(['KOTМетаданные']);
-        if (!metadata || metadata.ambiguous || metadata.valueKind !== 'mapping') {
+        if (metadata && (metadata.ambiguous || metadata.valueKind !== 'mapping')) {
             return null;
         }
-        if (parseScenarioDescriptor(source).phaseSwitcher.hasTab) {
+        if (projected?.isMainScenario ?? parseScenarioDescriptor(source).phaseSwitcher.hasTab) {
             return null;
         }
+        const anchor = metadata ?? document.findFieldAtPath(['ДанныеСценария']);
+        if (!anchor || anchor.ambiguous || anchor.valueKind !== 'mapping') { return null; }
         const category = document.findField('KOTМетаданные', 'Категория');
         if (category && (category.ambiguous || category.valueKind !== 'scalar')) {
             return null;
         }
         return Object.freeze({
-            title: translate(category ? 'Change category' : '+ Category'),
+            title: translate((projected ? projected.category : category) ? 'Change category' : '+ Category'),
             command: SCENARIO_CATEGORY_COMMAND,
             range: Object.freeze({
-                start: Object.freeze(offsetPosition(source, metadata.lineStart)),
-                end: Object.freeze(offsetPosition(source, metadata.lineEnd))
+                start: Object.freeze(offsetPosition(source, anchor.lineStart)),
+                end: Object.freeze(offsetPosition(source, anchor.lineEnd))
             }),
             target: Object.freeze({ documentUri, documentVersion })
         });

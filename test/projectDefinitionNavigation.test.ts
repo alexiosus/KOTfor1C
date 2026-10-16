@@ -343,8 +343,9 @@ test('activation registers navigation for file-backed YAML and feature documents
 
     assert.match(
         extension,
-        /registerDefinitionProvider\(\s*completionAndHoverSelector,\s*new ProjectDefinitionProvider\(projectDefinitionResolver\)/
+        /registerDefinitionProvider\(\s*completionAndHoverSelector,\s*definitionProvider/
     );
+    assert.match(extension, /const definitionProvider = new ProjectDefinitionProvider\(projectDefinitionResolver\)/);
     assert.match(extension, /pattern: '\*\*\/\*\.yaml', scheme: 'file'/);
     assert.match(extension, /pattern: '\*\*\/\*\.feature', scheme: 'file'/);
     assert.ok(

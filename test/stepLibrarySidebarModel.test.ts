@@ -56,7 +56,18 @@ function childByLabel(index: StepLibrarySidebarIndex, parentId: string, label: s
     return node;
 }
 
-test('projects favorites plus five stable source roots and only immediate category branches', () => {
+test('main groups expose a trusted member identity for rename without making source roots renameable', () => {
+    const index = StepLibrarySidebarIndex.fromSnapshot(snapshot([
+        item({ id: 'main-smoke', sourceGroup: 'main', displayText: 'Smoke test', categoryPath: ['Smoke'] }),
+        item({ id: 'export', sourceGroup: 'export', displayText: 'Export', categoryPath: ['Smoke'] })
+    ]), 'en');
+    const group = childByLabel(index, 'source:main', 'Smoke');
+    assert.equal((group as any).renameGroupItemId, 'main-smoke');
+    assert.equal((childByLabel(index, 'source:export', 'Smoke') as any).renameGroupItemId, undefined);
+    assert.equal((index.roots().find(node => node.sourceGroup === 'main') as any).renameGroupItemId, undefined);
+});
+
+test('projects favorites plus six stable source roots and only immediate category branches', () => {
     const index = StepLibrarySidebarIndex.fromSnapshot(snapshot([
         item({ id: 'forms', sourceGroup: 'builtIn', displayText: 'Open form', categoryPath: ['UI', 'Forms'] }),
         item({ id: 'tables', sourceGroup: 'builtIn', displayText: 'Check table', categoryPath: ['UI', 'Tables'] }),
@@ -74,7 +85,8 @@ test('projects favorites plus five stable source roots and only immediate catego
         ['source:user', 'User steps', 1, 'source'],
         ['source:export', 'Export scenarios', 1, 'source'],
         ['source:nested', 'Nested scenarios', 1, 'source'],
-        ['source:main', 'Main scenarios', 1, 'source']
+        ['source:main', 'Main scenarios', 1, 'source'],
+        ['source:process', 'Processes', 0, 'source']
     ]);
 
     const builtInChildren = index.children('source:builtIn').nodes;
@@ -195,7 +207,7 @@ test('projects mixed favorite definitions in one bounded root', () => {
 test('returns an empty bounded projection for empty or unknown branches', () => {
     const model = StepLibrarySidebarIndex.fromSnapshot(snapshot([]), 'ru');
 
-    assert.deepEqual(model.roots().map(node => node.count), [0, 0, 0, 0, 0, 0]);
+    assert.deepEqual(model.roots().map(node => node.count), [0, 0, 0, 0, 0, 0, 0]);
     assert.deepEqual(model.children('source:builtIn'), {
         parentId: 'source:builtIn',
         nodes: [],

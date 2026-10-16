@@ -10,6 +10,8 @@ import {
 } from './scenarioCategory';
 import { parseScenarioDescriptor } from './scenarioDescriptor';
 import { updateScenarioCategoryInMetadataContent } from './scenarioYamlMutations';
+import { persistProjectMetadata, projectedProjectScenario } from './projectLibraryIntegration';
+import { migrateLegacyPhaseSwitcherMetadata } from './phaseSwitcherMetadata';
 
 export interface ScenarioCategoryCommandServices {
     readonly resolver: ProjectDefinitionResolver;
@@ -31,6 +33,12 @@ function toVsRange(range: {
         range.end.line,
         range.end.character
     );
+}
+
+function categoryAction(document: vscode.TextDocument, translate: Translator) {
+    const info = projectedProjectScenario(document);
+    return buildScenarioCategoryAction(document.getText(), document.uri.toString(), document.version, translate,
+        info ? { isMainScenario: info.kind === 'process' || !!info.tabName?.trim(), category: info.scenarioCategory } : undefined);
 }
 
 async function promptNewCategory(
@@ -85,6 +93,11 @@ async function promptCategory(
 
 export class ScenarioCategoryCodeLensProvider implements vscode.CodeLensProvider {
     private readonly translator: Promise<Translator>;
+    private readonly changes = new vscode.EventEmitter<void>();
+    readonly onDidChangeCodeLenses = this.changes.event;
+
+    refresh(): void { this.changes.fire(); }
+    dispose(): void { this.changes.dispose(); }
 
     constructor(extensionUri: vscode.Uri) {
         this.translator = getTranslator(extensionUri);
@@ -101,12 +114,7 @@ export class ScenarioCategoryCodeLensProvider implements vscode.CodeLensProvider
         if (token.isCancellationRequested) {
             return [];
         }
-        const action = buildScenarioCategoryAction(
-            document.getText(),
-            document.uri.toString(),
-            document.version,
-            translate
-        );
+        const action = categoryAction(document, translate);
         return action ? [new vscode.CodeLens(toVsRange(action.range), {
             title: action.title,
             command: action.command,
@@ -130,14 +138,13 @@ export async function setScenarioCategoryCommand(
         vscode.window.showWarningMessage(translate('The scenario changed. Run the command again.'));
         return;
     }
-    if (!buildScenarioCategoryAction(
-        document.getText(), document.uri.toString(), document.version, translate
-    )) {
+    if (!categoryAction(document, translate)) {
         vscode.window.showWarningMessage(translate('The nested scenario is no longer available.'));
         return;
     }
 
-    const currentValue = parseScenarioDescriptor(document.getText()).scenarioCategory ?? '';
+    const currentValue = projectedProjectScenario(document)?.scenarioCategory
+        ?? parseScenarioDescriptor(document.getText()).scenarioCategory ?? '';
     const category = await promptCategory(uri, currentValue, services, translate);
     if (category === undefined) {
         return;
@@ -148,7 +155,12 @@ export async function setScenarioCategoryCommand(
     }
 
     try {
-        const mutation = updateScenarioCategoryInMetadataContent(document.getText(), category);
+        if (await persistProjectMetadata(document, { category })) {
+            await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcher', { refreshCache: true });
+            return;
+        }
+        const legacy = migrateLegacyPhaseSwitcherMetadata(document.getText(), { migrateLegacyPhaseSwitcherTags: false });
+        const mutation = updateScenarioCategoryInMetadataContent(legacy.content, category);
         if (!mutation.changed) {
             return;
         }

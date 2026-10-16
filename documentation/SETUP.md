@@ -6,7 +6,7 @@
 
 Для полного цикла (build + run) нужны:
 
-- VS Code `1.98+`.
+- VS Code `1.106+`.
 - Установленная платформа 1С на Windows.
 - `СборкаТекстовСценариев.epf` из СППР.
 - `vanessa-automation.epf`.
@@ -53,6 +53,23 @@
 | `kotTestToolkit.editor.autoFillScenarioParametersOnSave` | `true` | Автоподдержка секции `ПараметрыСценария` |
 | `kotTestToolkit.editor.showRefillMessages` | `true` | Показывать уведомления о перезаполнении секций |
 
+### 3.2.1 Каталоги проекта и нумерация
+
+Раздел обычных настроек **Каталоги проекта и нумерация** позволяет заполнять каталоги без палитры команд. Общие списки редактируйте на вкладке **Workspace** или нужной **Folder**, личный префикс — на вкладке **User**.
+
+| Ключ | Default | Назначение |
+|---|---|---|
+| `kotTestToolkit.catalogs.projects` | `[]` | Список проектов |
+| `kotTestToolkit.catalogs.responsibles` | `[]` | Список ответственных |
+| `kotTestToolkit.catalogs.reportLevel1` | `[]` | Уровни отчёта 1 |
+| `kotTestToolkit.catalogs.reportLevel2` | `[]` | Уровни отчёта 2 |
+| `kotTestToolkit.catalogs.categories` | `[]` | Категории KOT |
+| `kotTestToolkit.catalogs.systemFunctions` | `{}` | Таблица «имя функции → UID»; пустой UID новой записи создаётся автоматически |
+| `kotTestToolkit.numbering.series` | `{}` | Таблица «шестизначный префикс → автор»; счётчики выдачи скрыты |
+| `kotTestToolkit.numbering.prefix` | `""` | Личный префикс; `manual` включает ручной ввод, пустая строка использует выбор в мастере |
+
+Настройки синхронизируются с общими `.kot/property-catalogs.yml` и `.kot/test-numbering.yml`. Добавьте эти файлы в Git. Подробнее: [каталоги в настройках](./blocks/shared-project-library.md#редактирование-в-обычных-настройках-vs-code), [авторские серии](./blocks/scenario-creation.md#авторские-серии-и-автонумерация).
+
 ### 3.3 New scenario defaults
 
 Эти настройки использует мастер создания новых сценариев.
@@ -61,7 +78,7 @@
 |---|---|---|
 | `kotTestToolkit.editor.newScenarioLanguage` | `en` | Язык новых сценариев (`#language: en/ru`) |
 | `kotTestToolkit.newScenarioDefaults.project` | `Drive` | Значение по умолчанию для `ДанныеСценария.Проект` |
-| `kotTestToolkit.newScenarioDefaults.systemFunctions` | `[{"name":"Drive automation testing","uid":"98999f57-13dc-11e8-aed1-005056a5c4e8"}]` | Список доступных функций системы для новых сценариев; первая запись считается значением по умолчанию |
+| `kotTestToolkit.newScenarioDefaults.systemFunctions` | `[{"name":"Drive automation testing","uid":"98999f57-13dc-11e8-aed1-005056a5c4e8"}]` | Старый источник для однократного заполнения отсутствующего общего каталога; редактируйте каталог через `catalogs.systemFunctions` |
 | `kotTestToolkit.newScenarioDefaults.allowCrossFunctionUsage` | `true` | Значение по умолчанию для `ДанныеСценария.РазрешеноИспользоватьВДругихФункциях` |
 | `kotTestToolkit.newScenarioDefaults.userProfile` | `Administrator` | Значение по умолчанию для `ДанныеСценария.ПрофильПользователя` |
 | `kotTestToolkit.newScenarioDefaults.reportLevel1` | `Drive` | Значение по умолчанию для `ДанныеСценария.УровеньОтчета1` |
@@ -145,7 +162,7 @@
 
 ### 3.10 AI settings
 
-Настройки этой секции используются для AI-описания `KOTМетаданные.Описание`, AI-отчета по diff конфигурации и AI-ревью измененных тестов через внешнюю или локальную LLM.
+Настройки этой секции используются для AI-описания сценария в соседнем `*.kot.yml`, AI-отчета по diff конфигурации и AI-ревью измененных тестов через внешнюю или локальную LLM.
 
 | Ключ | Default | Назначение |
 |---|---|---|
@@ -155,7 +172,7 @@
 | `kotTestToolkit.ai.apiKey` | `local` | API-ключ; для локальных серверов можно оставить фиктивное значение, если сервер его игнорирует |
 | `kotTestToolkit.ai.model` | `qwen3:4b` | Точный идентификатор модели, который ожидает выбранный AI-сервер |
 | `kotTestToolkit.ai.outputLanguage` | `ru` | Язык генерируемого текста (`ru` / `en`) для AI-описания, AI-отчета по diff конфигурации и AI-ревью тестов |
-| `kotTestToolkit.ai.maxLineLength` | `100` | Максимальная длина строки при записи `KOTМетаданные.Описание` перед переносом |
+| `kotTestToolkit.ai.maxLineLength` | `100` | Максимальная длина строки при формировании описания сценария перед переносом |
 | `kotTestToolkit.ai.timeoutSeconds` | `180` | Таймаут AI-запроса в секундах |
 | `kotTestToolkit.ai.systemPrompt` | `""` | Пользовательский system prompt; если заполнен, полностью заменяет встроенный prompt расширения |
 
@@ -192,8 +209,6 @@
 
 | Ключ | Default | Назначение |
 |---|---|---|
-| `kotTestToolkit.editor.autoEnsureKotMetadataForMainScenarios` | `true` | Автодобавление/восстановление `KOTМетаданные` для всех типов сценариев при save/repair |
-| `kotTestToolkit.editor.enableLegacyMetadataMigrationForMainScenarios` | `true` | Опциональная миграция legacy-тегов `# PhaseSwitcher_*` в `KOTМетаданные` только для главных сценариев (работает при включенном `autoEnsureKotMetadataForMainScenarios`) |
 | `kotTestToolkit.legacy.enableDisabledTestsDirectoryMoveOnBuild` | `false` | Опциональный legacy-режим: при `Build tests` временно переносить `test/*.yaml` выключенных сценариев в системную temp-папку и возвращать их после завершения сборки |
 
 ## 4) Менеджер параметров: как работает

@@ -19,8 +19,12 @@ Thumbs.db
 !.vscode/extensions.json
 *.code-workspace
 /coverage
+/.kot/test-numbering.lock
+/.kot/test-numbering.yml.*.tmp
 /reports
 junit.xml
 .env
 .env.*
 !.env.example
+
+/.superpowers/

@@ -12,12 +12,12 @@
     let focusAfterLocatorPending = false;
     let locatorFocusBaseline = '';
     const suggestedStepsCache = new Map();
-    const autoScrollAnimations = new WeakMap();
     const ELEMENT_TYPE_FILTERS = ['button', 'field', 'table', 'group', 'decoration', 'other'];
 
     const uiState = {
         selectedElementPath: typeof persistedState.selectedElementPath === 'string' ? persistedState.selectedElementPath : '',
         searchQuery: typeof persistedState.searchQuery === 'string' ? persistedState.searchQuery : '',
+        paneSizes: persistedState.paneSizes,
         showTechnical: Boolean(persistedState.showTechnical),
         showGroups: Boolean(persistedState.showGroups),
         showInvisible: Boolean(persistedState.showInvisible),
@@ -90,6 +90,10 @@
 
     const tabButtons = Array.from(document.querySelectorAll('[data-tab]'));
     const tabPanels = Array.from(document.querySelectorAll('[data-tab-panel]'));
+
+    window.KotWebviewSplit?.attach(document.querySelector('.workspace'), uiState.paneSizes, sizes => {
+        uiState.paneSizes = sizes; persistUiState();
+    });
 
     initialize();
 
@@ -209,64 +213,7 @@
     }
 
     function syncAutoScrollText(root, selector) {
-        if (!(root instanceof HTMLElement)) {
-            return;
-        }
-
-        root.querySelectorAll(selector).forEach(node => {
-            if (!(node instanceof HTMLElement)) {
-                return;
-            }
-
-            const originalText = node.dataset.autoScrollSource ?? node.textContent ?? '';
-            node.dataset.autoScrollSource = originalText;
-            node.classList.add('auto-scroll-text');
-
-            let track = node.firstElementChild;
-            if (!(track instanceof HTMLElement) || !track.classList.contains('auto-scroll-track')) {
-                node.textContent = '';
-                track = document.createElement('span');
-                track.className = 'auto-scroll-track';
-                track.textContent = originalText;
-                node.appendChild(track);
-            } else if (track.textContent !== originalText) {
-                track.textContent = originalText;
-            }
-
-            const runningAnimation = autoScrollAnimations.get(node);
-            if (runningAnimation) {
-                runningAnimation.cancel();
-                autoScrollAnimations.delete(node);
-            }
-
-            track.style.transform = 'translateX(0)';
-            const overflowWidth = Math.ceil(track.scrollWidth - node.clientWidth);
-            if (overflowWidth <= 6) {
-                return;
-            }
-
-            const edgePauseDuration = 560;
-            const travelDuration = Math.min(Math.max(overflowWidth * 55, 2400), 9000);
-            const totalDuration = travelDuration * 2 + edgePauseDuration * 2;
-            const startHoldOffset = edgePauseDuration / totalDuration;
-            const endReachOffset = (edgePauseDuration + travelDuration) / totalDuration;
-            const endHoldOffset = (edgePauseDuration + travelDuration + edgePauseDuration) / totalDuration;
-            const animation = track.animate(
-                [
-                    { transform: 'translateX(0)', offset: 0 },
-                    { transform: 'translateX(0)', offset: startHoldOffset },
-                    { transform: `translateX(${-overflowWidth}px)`, offset: endReachOffset },
-                    { transform: `translateX(${-overflowWidth}px)`, offset: endHoldOffset },
-                    { transform: 'translateX(0)', offset: 1 }
-                ],
-                {
-                    duration: totalDuration,
-                    easing: 'linear',
-                    iterations: Infinity
-                }
-            );
-            autoScrollAnimations.set(node, animation);
-        });
+        window.KotWebviewText?.refresh(root, selector);
     }
 
     function initialize() {
@@ -901,9 +848,11 @@
             refs.formTitleValue.removeAttribute('data-value');
         }
         setText(refs.formMetaLine, '');
+        refs.formMetaLine?.classList.toggle('view-hidden', true);
         setText(refs.elementCountValue, '0');
         if (refs.currentFormOpenSourceBtn instanceof HTMLButtonElement) {
             refs.currentFormOpenSourceBtn.disabled = true;
+            refs.currentFormOpenSourceBtn.classList.toggle('view-hidden', true);
             delete refs.currentFormOpenSourceBtn.dataset.path;
             delete refs.currentFormOpenSourceBtn.dataset.line;
             delete refs.currentFormOpenSourceBtn.dataset.column;
@@ -913,16 +862,10 @@
             refs.focusActiveBtn.classList.toggle('is-active', uiState.followActive);
         }
         if (refs.elementTree) {
-            refs.elementTree.innerHTML = renderEmptyState(
-                t('waitingForSnapshot', 'Waiting for snapshot'),
-                ''
-            );
+            refs.elementTree.innerHTML = '';
         }
         if (refs.selectedKeyFacts) {
-            refs.selectedKeyFacts.innerHTML = renderEmptyState(
-                t('noSelection', 'Select an element in the tree to inspect its details.'),
-                ''
-            );
+            refs.selectedKeyFacts.innerHTML = '';
         }
         if (refs.selectedStateRow) {
             refs.selectedStateRow.innerHTML = '';
@@ -948,12 +891,11 @@
         const formLabel = getFormLabel(snapshot.form);
         setText(refs.formTitleValue, formLabel);
         setText(refs.elementCountValue, String(flatElements.length));
-        setText(
-            refs.formMetaLine,
-            [snapshot.form?.metadataPath, firstDefined(snapshot.form?.type, snapshot.form?.viewKind)]
-                .filter(Boolean)
-                .join(' • ')
-        );
+        const formMetadata = [snapshot.form?.metadataPath, firstDefined(snapshot.form?.type, snapshot.form?.viewKind)]
+            .filter(Boolean)
+            .join(' • ');
+        setText(refs.formMetaLine, formMetadata);
+        refs.formMetaLine?.classList.toggle('view-hidden', !formMetadata);
         if (refs.formTitleValue instanceof HTMLButtonElement) {
             refs.formTitleValue.disabled = !formLabel;
             refs.formTitleValue.dataset.action = 'copy';
@@ -967,6 +909,7 @@
         if (refs.currentFormOpenSourceBtn instanceof HTMLButtonElement) {
             const source = snapshot.form?.source;
             refs.currentFormOpenSourceBtn.disabled = !source?.path;
+            refs.currentFormOpenSourceBtn.classList.toggle('view-hidden', !source?.path);
             if (source?.path) {
                 refs.currentFormOpenSourceBtn.dataset.path = source.path;
                 refs.currentFormOpenSourceBtn.dataset.line = source.line ? String(source.line) : '';
@@ -1067,10 +1010,7 @@
 
         if (refs.selectedKeyFacts) {
             if (!selectedElement) {
-                refs.selectedKeyFacts.innerHTML = renderEmptyState(
-                    t('noSelection', 'Select an element in the tree to inspect its details.'),
-                    ''
-                );
+                refs.selectedKeyFacts.innerHTML = '';
             } else {
                 const linkedAttribute = selectedElement.boundAttributePath
                     ? (snapshot.attributes || []).find(attribute => attribute.path === selectedElement.boundAttributePath) || null

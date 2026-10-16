@@ -185,6 +185,7 @@
                 maintenanceItem(`${loc.exportDt}…`, 'cloud-upload', 'exportDt', item),
                 maintenanceHeading(loc.cfHeading),
                 maintenanceItem(loc.updateConfiguration, 'settings-gear', 'updateConfiguration', item),
+                maintenanceItem(loc.updateFromTemplate || 'Update from installed template', 'package', 'updateFromTemplate', item),
                 maintenanceItem(`${loc.exportCf}…`, 'save', 'exportCf', item),
                 maintenanceHeading(loc.kotHeading),
                 maintenanceItem(loc.openFormExplorer, 'telescope', 'openFormExplorer', item),

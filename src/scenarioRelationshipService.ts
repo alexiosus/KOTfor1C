@@ -1,4 +1,5 @@
 import type * as vscode from 'vscode';
+import { pathToFileURL } from 'node:url';
 import type { ProjectDefinitionView } from './projectDefinition';
 import { ScenarioDirectoryIndex, type ScenarioCatalog, type ScenarioCatalogProvider } from './scenarioCatalog';
 import {
@@ -7,6 +8,7 @@ import {
     type ScenarioRelationshipProjection
 } from './scenarioRelationshipIndex';
 import { getScenarioRuntimeKey } from './scenarioRuntimeIdentity';
+import type { StandaloneFeatureSnapshot } from './standaloneFeatureModel';
 
 const relationshipHighlightConfigurationKey = 'phaseSwitcher.highlightAffectedMainScenarios';
 const relationshipHighlightConfigurationPath = `kotTestToolkit.${relationshipHighlightConfigurationKey}`;
@@ -43,6 +45,11 @@ export interface ScenarioRelationshipServiceDependencies {
     readonly getScanRootPaths: () => ScenarioRelationshipScanRootPaths | null;
     readonly resolveAdditionalScenarioKeysForUri?: (uri: vscode.Uri) => readonly string[];
     readonly projectDefinitions?: ScenarioProjectDefinitions;
+    readonly standaloneFeatures?: {
+        getSnapshot(): StandaloneFeatureSnapshot;
+        onDidChange(listener: (snapshot: StandaloneFeatureSnapshot) => void): vscode.Disposable;
+        onDidRefresh?(listener: (snapshot: StandaloneFeatureSnapshot) => void): vscode.Disposable;
+    };
 }
 
 export interface ScenarioDefinitionRelationshipEntry {
@@ -152,6 +159,11 @@ export class ScenarioRelationshipService implements vscode.Disposable {
         if (dependencies.projectDefinitions?.onDidChangeView) {
             this.subscriptions.push(dependencies.projectDefinitions.onDidChangeView(() => this.publishState(true)));
         }
+        if (dependencies.standaloneFeatures) {
+            const standalone = dependencies.standaloneFeatures;
+            const refresh = () => this.publishState(true);
+            this.subscriptions.push(standalone.onDidRefresh ? standalone.onDidRefresh(refresh) : standalone.onDidChange(refresh));
+        }
     }
 
     public getState(): ScenarioRelationshipState { return this.state; }
@@ -212,8 +224,12 @@ export class ScenarioRelationshipService implements vscode.Disposable {
         const projection = this.relationshipIndex
             ? this.relationshipIndex.project(currentScenarioKeys)
             : { ...emptyProjection, currentScenarioKeys: Object.freeze([...currentScenarioKeys]) };
+        const standaloneIds = new Set(this.dependencies.standaloneFeatures?.getSnapshot().features.map(feature => feature.id) ?? []);
         return {
             ...projection,
+            currentScenarioKeys: Object.freeze([...new Set([
+                ...projection.currentScenarioKeys, ...currentScenarioKeys.filter(key => standaloneIds.has(key))
+            ])]),
             enabled: this.enabled,
             currentLabel: this.resolveCurrentLabel(currentScenarioKeys),
             currentDefinitionIds: emptyStrings,
@@ -275,7 +291,7 @@ export class ScenarioRelationshipService implements vscode.Disposable {
                 .map(definition => Object.freeze({ definitionId: definition.id, outgoingDistance: 1 }))
                 .sort((left, right) => compareText(left.definitionId, right.definitionId)));
 
-        if (currentDefinitionIds.length === 0 || !this.relationshipIndex) {
+        if (currentDefinitionIds.length === 0) {
             return {
                 ...base,
                 currentDefinitionIds: Object.freeze(currentDefinitionIds),
@@ -294,7 +310,7 @@ export class ScenarioRelationshipService implements vscode.Disposable {
         const affectedPhaseNames = new Set<string>();
         for (const callerKey of directCallers) {
             relationshipMap.set(callerKey, { scenarioKey: callerKey, incomingDistance: 1 });
-            const projection = this.relationshipIndex.project([callerKey]);
+            const projection = this.relationshipIndex?.project([callerKey]) ?? emptyProjection;
             for (const entry of projection.relationships) {
                 if (entry.incomingDistance === undefined) {
                     continue;
@@ -328,9 +344,15 @@ export class ScenarioRelationshipService implements vscode.Disposable {
 
     private resolveScenarioKeysForUri(uri: vscode.Uri | undefined): readonly string[] {
         const catalog = this.catalog;
-        if (!catalog || !uri) {
+        if (!uri) {
             return emptyProjection.currentScenarioKeys;
         }
+        const canonicalUri = uri.scheme === 'file'
+            ? pathToFileURL(process.platform === 'win32' ? uri.fsPath.toLocaleLowerCase() : uri.fsPath).toString()
+            : uri.toString();
+        const standalone = this.dependencies.standaloneFeatures?.getSnapshot().features.find(feature => feature.uri === canonicalUri);
+        if (standalone) { return Object.freeze([standalone.id]); }
+        if (!catalog) { return emptyProjection.currentScenarioKeys; }
         const additionalKeys = this.dependencies.resolveAdditionalScenarioKeysForUri?.(uri) ?? [];
         const normalizedAdditionalKeys = [...new Set(additionalKeys
             .map(key => typeof key === 'string' ? key.trim() : '')
@@ -371,12 +393,13 @@ export class ScenarioRelationshipService implements vscode.Disposable {
     }
 
     private resolveCurrentLabel(currentScenarioKeys: readonly string[]): string | null {
-        if (!this.catalog || currentScenarioKeys.length === 0) {
+        if (currentScenarioKeys.length === 0) {
             return null;
         }
-        const scenariosByKey = new Map(this.catalog.all.map(info => [getScenarioRuntimeKey(info), info] as const));
+        const scenariosByKey = new Map((this.catalog?.all ?? []).map(info => [getScenarioRuntimeKey(info), info] as const));
+        const featuresById = new Map(this.dependencies.standaloneFeatures?.getSnapshot().features.map(feature => [feature.id, feature]) ?? []);
         const names = [...new Set(currentScenarioKeys
-            .map(key => scenariosByKey.get(key)?.name?.trim() ?? '')
+            .map(key => featuresById.get(key)?.title?.trim() || featuresById.get(key)?.name?.trim() || scenariosByKey.get(key)?.name?.trim() || '')
             .filter(Boolean))];
         return names.length > 0 ? names.join(' / ') : null;
     }

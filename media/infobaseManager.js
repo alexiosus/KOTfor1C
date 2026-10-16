@@ -14,6 +14,7 @@
     const uiState = {
         searchQuery: typeof persistedUiState.searchQuery === 'string' ? persistedUiState.searchQuery : '',
         technicalExpanded: Boolean(persistedUiState.technicalExpanded),
+        paneSizes: persistedUiState.paneSizes,
         moreActionsOpen: false,
         sortMenuOpen: false,
         launchPlatformMenuOpen: false
@@ -27,7 +28,6 @@
         lastInfobasePath: '',
         lastTimestamp: 0
     };
-    const autoScrollAnimations = new WeakMap();
 
     const refs = {
         infobaseCountValue: document.getElementById('infobaseCountValue'),
@@ -47,6 +47,8 @@
         infobaseTitle: document.getElementById('infobaseTitle'),
         infobasePath: document.getElementById('infobasePath'),
         stateBadge: document.getElementById('stateBadge'),
+        activityBadge: document.getElementById('activityBadge'),
+        launcherStatus: document.getElementById('launcherStatus'),
         lastLaunchValue: document.getElementById('lastLaunchValue'),
         lastRunLogValue: document.getElementById('lastRunLogValue'),
         startupParametersValue: document.getElementById('startupParametersValue'),
@@ -76,9 +78,14 @@
     function persistUiState() {
         vscode.setState({
             searchQuery: uiState.searchQuery,
-            technicalExpanded: uiState.technicalExpanded
+            technicalExpanded: uiState.technicalExpanded,
+            paneSizes: uiState.paneSizes
         });
     }
+
+    window.KotWebviewSplit?.attach(document.querySelector('.manager-workspace'), uiState.paneSizes, sizes => {
+        uiState.paneSizes = sizes; persistUiState();
+    });
 
     function escapeHtml(text) {
         return String(text || '')
@@ -177,64 +184,7 @@
     }
 
     function syncAutoScrollText(root, selector) {
-        if (!(root instanceof HTMLElement)) {
-            return;
-        }
-
-        root.querySelectorAll(selector).forEach(node => {
-            if (!(node instanceof HTMLElement)) {
-                return;
-            }
-
-            const originalText = node.dataset.autoScrollSource ?? node.textContent ?? '';
-            node.dataset.autoScrollSource = originalText;
-            node.classList.add('auto-scroll-text');
-
-            let track = node.firstElementChild;
-            if (!(track instanceof HTMLElement) || !track.classList.contains('auto-scroll-track')) {
-                node.textContent = '';
-                track = document.createElement('span');
-                track.className = 'auto-scroll-track';
-                track.textContent = originalText;
-                node.appendChild(track);
-            } else if (track.textContent !== originalText) {
-                track.textContent = originalText;
-            }
-
-            const runningAnimation = autoScrollAnimations.get(node);
-            if (runningAnimation) {
-                runningAnimation.cancel();
-                autoScrollAnimations.delete(node);
-            }
-
-            track.style.transform = 'translateX(0)';
-            const overflowWidth = Math.ceil(track.scrollWidth - node.clientWidth);
-            if (overflowWidth <= 6) {
-                return;
-            }
-
-            const edgePauseDuration = 560;
-            const travelDuration = Math.min(Math.max(overflowWidth * 55, 2400), 9000);
-            const totalDuration = travelDuration * 2 + edgePauseDuration * 2;
-            const startHoldOffset = edgePauseDuration / totalDuration;
-            const endReachOffset = (edgePauseDuration + travelDuration) / totalDuration;
-            const endHoldOffset = (edgePauseDuration + travelDuration + edgePauseDuration) / totalDuration;
-            const animation = track.animate(
-                [
-                    { transform: 'translateX(0)', offset: 0 },
-                    { transform: 'translateX(0)', offset: startHoldOffset },
-                    { transform: `translateX(${-overflowWidth}px)`, offset: endReachOffset },
-                    { transform: `translateX(${-overflowWidth}px)`, offset: endHoldOffset },
-                    { transform: 'translateX(0)', offset: 1 }
-                ],
-                {
-                    duration: totalDuration,
-                    easing: 'linear',
-                    iterations: Infinity
-                }
-            );
-            autoScrollAnimations.set(node, animation);
-        });
+        window.KotWebviewText?.refresh(root, selector);
     }
 
     function supportsFileOperations(record) {
@@ -247,19 +197,6 @@
 
     function getInfobaseByPath(infobasePath) {
         return (state.infobases || []).find(item => item.infobasePath === infobasePath) || null;
-    }
-
-    function getLastActivity(record) {
-        const candidates = [
-            record.lastLaunchAt || null,
-            record.lastRunLogAt || null,
-            record.lastSnapshotAt || null
-        ].filter(Boolean);
-        if (!candidates.length) {
-            return null;
-        }
-
-        return candidates.reduce((latest, current) => compareDateStrings(latest, current) >= 0 ? latest : current);
     }
 
     function matchesSearch(record) {
@@ -451,10 +388,6 @@
 
         refs.infobaseList.innerHTML = visibleInfobases.map(record => {
             const isSelected = record.infobasePath === state.selectedInfobasePath;
-            const lastActivity = getLastActivity(record);
-            const launcherState = record.launcherRegistered
-                ? (loc.launcherRegistered || 'Registered in 1C launcher')
-                : (loc.launcherNotRegistered || 'Not registered in 1C launcher');
             return `
                 <button class="infobase-item${isSelected ? ' is-selected' : ''}${manualDragEnabled ? ' is-draggable' : ''}${record.hidden ? ' is-hidden-infobase' : ''}" type="button" data-path="${escapeHtml(record.infobasePath)}" draggable="${manualDragEnabled ? 'true' : 'false'}">
                     <div class="infobase-item-head">
@@ -463,21 +396,16 @@
                             <span class="infobase-item-title">${escapeHtml(record.displayName)}</span>
                         </div>
                         <span class="state-pill compact is-${escapeHtml(record.state)}">${escapeHtml(getStateLabel(record.state))}</span>
+                        ${record.operation || record.running ? `<span class="state-pill compact is-running" title="${escapeHtml(record.operation || loc.runningFromKot || 'Running from KOT')}"><span class="codicon codicon-${record.operation ? 'loading codicon-modifier-spin' : 'circle-filled'}" aria-hidden="true"></span></span>` : ''}
                     </div>
                     <div class="infobase-item-path">${escapeHtml(record.locationLabel || record.infobasePath)}</div>
-                    <div class="infobase-item-meta">
-                        <span>${escapeHtml(launcherState)}</span>
-                        ${record.hidden ? `<span class="hidden-chip">${escapeHtml(loc.hidden || 'Hidden')}</span>` : ''}
-                    </div>
-                    <div class="infobase-item-activity">
-                        <span>${escapeHtml(loc.lastActivity || 'Last activity')}: ${escapeHtml(lastActivity ? formatDate(lastActivity) : (loc.none || 'None'))}</span>
-                    </div>
+                    ${record.hidden ? `<div class="infobase-item-meta"><span class="hidden-chip">${escapeHtml(loc.hidden || 'Hidden')}</span></div>` : ''}
                 </button>
             `;
         }).join('');
         syncAutoScrollText(
             refs.infobaseList,
-            '.infobase-item-title, .infobase-item-path, .infobase-item-activity'
+            '.infobase-item-title, .infobase-item-path'
         );
     }
 
@@ -564,6 +492,16 @@
         }
     }
 
+    function fitActionMenu(menu) {
+        menu.style.transform = '';
+        const bounds = menu.getBoundingClientRect();
+        const panel = menu.closest('.content-panel')?.getBoundingClientRect();
+        const left = Math.max(8, (panel?.left || 0) + 8);
+        const right = Math.min(window.innerWidth - 8, (panel?.right || window.innerWidth) - 8);
+        const shift = Math.max(left - bounds.left, Math.min(0, right - bounds.right));
+        menu.style.transform = `translateX(${shift}px)`;
+    }
+
     function toggleMoreActions(open) {
         uiState.moreActionsOpen = open;
         if (open) {
@@ -575,6 +513,7 @@
         }
         if (refs.moreActionsMenu instanceof HTMLElement) {
             refs.moreActionsMenu.classList.toggle('is-open', open);
+            if (open) { fitActionMenu(refs.moreActionsMenu); }
         }
     }
 
@@ -673,11 +612,22 @@
         }
         if (refs.infobasePath instanceof HTMLElement) {
             refs.infobasePath.textContent = selected.locationLabel || selected.infobasePath || '';
+            refs.infobasePath.title = selected.locationLabel || selected.infobasePath || '';
+            syncAutoScrollText(refs.detailsContent, '#infobasePath');
         }
         if (refs.stateBadge instanceof HTMLElement) {
             refs.stateBadge.textContent = getStateLabel(selected.state);
             refs.stateBadge.className = `state-pill compact is-${selected.state || 'ready'}`;
             refs.stateBadge.title = getStateHint(selected.state);
+        }
+        if (refs.activityBadge instanceof HTMLElement) {
+            const activity = selected.operation || (selected.running ? loc.runningFromKot || 'Running from KOT' : '');
+            refs.activityBadge.hidden = !activity; refs.activityBadge.textContent = activity; refs.activityBadge.title = activity;
+        }
+        if (refs.launcherStatus instanceof HTMLElement) {
+            refs.launcherStatus.textContent = selected.launcherRegistered
+                ? (loc.launcherRegistered || 'Registered in 1C launcher')
+                : (loc.launcherNotRegistered || 'Not registered in 1C launcher');
         }
         if (refs.lastLaunchValue instanceof HTMLElement) {
             refs.lastLaunchValue.textContent = formatLastLaunch(selected);
@@ -763,10 +713,11 @@
         if (exportDtAction instanceof HTMLButtonElement) {
             exportDtAction.disabled = !supportsDesignerOperations(selected) || Boolean(state.pendingAction);
         }
-        const updateConfigAction = document.querySelector('[data-command="updateConfig"]');
-        if (updateConfigAction instanceof HTMLButtonElement) {
-            updateConfigAction.disabled = !supportsDesignerOperations(selected) || Boolean(state.pendingAction);
-        }
+        document.querySelectorAll('[data-command="updateConfig"], [data-command="updateFromTemplate"]').forEach(action => {
+            if (action instanceof HTMLButtonElement) {
+                action.disabled = !supportsDesignerOperations(selected) || Boolean(state.pendingAction);
+            }
+        });
         const effectivePlatform = resolveEffectiveLaunchPlatform(selected);
         const launchPlatformLabel = formatPlatformButtonLabel(effectivePlatform);
         if (refs.launchPlatformBtn instanceof HTMLButtonElement) {
@@ -1068,9 +1019,10 @@
     });
 
     window.addEventListener('resize', () => {
+        if (uiState.moreActionsOpen && refs.moreActionsMenu instanceof HTMLElement) { fitActionMenu(refs.moreActionsMenu); }
         syncAutoScrollText(
             refs.infobaseList instanceof HTMLElement ? refs.infobaseList : document.body,
-            '.infobase-item-title, .infobase-item-path, .infobase-item-activity'
+            '.infobase-item-title, .infobase-item-path'
         );
     });
 

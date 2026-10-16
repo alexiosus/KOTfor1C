@@ -1,9 +1,28 @@
 ﻿import * as vscode from 'vscode';
 
+export interface ProcessStepReference {
+    uid?: string;
+    name?: string;
+    type: 'scenario' | 'process';
+    scenarioName?: string;
+    scenarioUid?: string;
+    scenarioCode?: string;
+    processName?: string;
+    processUid?: string;
+}
+
 /**
  * Информация о найденном тесте/сценарии.
  */
 export interface TestInfo {
+    /** Отсутствующее значение сохраняет совместимость с обычными сценариями. */
+    kind?: 'scenario' | 'process';
+    /** A compiler settings file in this project references this descriptor UID. */
+    hasTestSettings?: boolean;
+    /** ПолныйКод процесса, используемый компилятором в ProcessFilter. */
+    processCode?: string;
+    /** Упорядоченные ссылки на сценарии и вложенные процессы. */
+    processSteps?: ProcessStepReference[];
     /** Имя теста (из поля Имя:) */
     name: string;
     /** * Название вкладки (из `KOTМетаданные.PhaseSwitcher.Tab` или legacy `# PhaseSwitcher_Tab:`). 
@@ -22,6 +41,7 @@ export interface TestInfo {
     parameters?: string[];
     /** Значения по умолчанию параметров сценария (из блока ПараметрыСценария) */
     parameterDefaults?: Record<string, string>;
+    parameterTypes?: Record<string, 'scalar' | 'table'>;
     /** Имена вызываемых вложенных сценариев (из блока ВложенныеСценарии) */
     nestedScenarioNames?: string[];
     /** UID сценария (из блока ДанныеСценария) */
@@ -32,6 +52,8 @@ export interface TestInfo {
     scenarioDescription?: string;
     /** Категория вызываемого вложенного сценария (из блока KOTМетаданные.Категория) */
     scenarioCategory?: string;
+    /** Saved header values reused by shared catalog discovery without rereading scenario files. */
+    catalogValues?: { project?: string; reportLevel1?: string; reportLevel2?: string; responsible?: string; systemFunction?: { name: string; uid: string } };
     /** Номер строки поля Код в YAML (0-based) */
     scenarioCodeLine?: number;
     /** Начальная позиция (character) строки поля Код в YAML (0-based) */

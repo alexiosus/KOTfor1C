@@ -187,8 +187,8 @@ function parseEtalonBaseUserProfiles(lines: string[], sectionStart: number, sect
     return userProfiles;
 }
 
-export function getDefaultModelDbSettingsValue(): string {
-    return DEFAULT_MODEL_DB_SETTINGS_RELATIVE_PATH;
+export function getDefaultModelDbSettingsValue(runtimeDirectory?: string): string {
+    return runtimeDirectory?.trim() ? path.join(runtimeDirectory.trim(), 'bases.yaml') : DEFAULT_MODEL_DB_SETTINGS_RELATIVE_PATH;
 }
 
 export function normalizeBuildParameterKey(key: string): string {

@@ -127,3 +127,66 @@ test('exposes the name-based caller projection for stale-artifact compatibility'
 
     assert.deepEqual([...(callers.get('Nested') ?? [])], ['Main A', 'Main Z']);
 });
+
+test('process dependencies follow typed UIDs through nested processes in both directions', () => {
+    const parent = { ...scenario('Parent', 'file:///parent.yaml', { phase: 'Processes' }), kind: 'process' as const, uid: 'parent',
+        nestedScenarioNames: ['Shared'], processSteps: [{ uid: 'p1', type: 'process' as const, processUid: 'CHILD', processName: 'Old child name' }] };
+    const child = { ...scenario('Child', 'file:///child.yaml'), kind: 'process' as const, uid: 'child',
+        processSteps: [{ uid: 'c1', type: 'scenario' as const, scenarioUid: 'target', scenarioName: 'Shared' }] };
+    const target = { ...scenario('Shared', 'file:///target.yaml'), uid: 'target' };
+    const unrelated = { ...scenario('Shared', 'file:///unrelated.yaml'), uid: 'other' };
+    const index = ScenarioRelationshipIndex.fromCatalog(buildScenarioCatalog([parent, child, target, unrelated]));
+    assert.deepEqual(index.project(['file:///parent.yaml']).relationships, [
+        { scenarioKey: 'file:///child.yaml', outgoingDistance: 1 },
+        { scenarioKey: 'file:///target.yaml', outgoingDistance: 2 }
+    ]);
+    const incoming = index.project(['file:///target.yaml']);
+    assert.deepEqual(incoming.relationships, [
+        { scenarioKey: 'file:///child.yaml', incomingDistance: 1 },
+        { scenarioKey: 'file:///parent.yaml', incomingDistance: 2 }
+    ]);
+    assert.deepEqual(incoming.affectedPhaseNames, ['Processes']);
+});
+
+test('process references never fall back from a missing or ambiguous UID to an unrelated same-name record', () => {
+    const parent = { ...scenario('Parent', 'file:///parent.yaml'), kind: 'process' as const, uid: 'parent', processSteps: [
+        { type: 'scenario' as const, scenarioUid: 'missing', scenarioName: 'Only' },
+        { type: 'scenario' as const, scenarioUid: 'duplicate', scenarioName: 'One' },
+        { type: 'scenario' as const, scenarioName: 'Shared' },
+        { type: 'process' as const, processName: 'Only' },
+        { type: 'scenario' as const, scenarioName: 'Unique' }
+    ] };
+    const index = ScenarioRelationshipIndex.fromCatalog(buildScenarioCatalog([
+        parent, scenario('Only', 'file:///only.yaml'),
+        { ...scenario('One', 'file:///one.yaml'), uid: 'duplicate' },
+        { ...scenario('Two', 'file:///two.yaml'), uid: 'DUPLICATE' },
+        scenario('Shared', 'file:///shared-a.yaml'), scenario('Shared', 'file:///shared-b.yaml'),
+        scenario('Unique', 'file:///unique.yaml')
+    ]));
+    assert.deepEqual(index.project(['file:///parent.yaml']).relationships, [
+        { scenarioKey: 'file:///unique.yaml', outgoingDistance: 1 }
+    ]);
+});
+
+test('ordinary nested scenario calls exclude same-name process records', () => {
+    const index = ScenarioRelationshipIndex.fromCatalog(buildScenarioCatalog([
+        scenario('Caller', 'file:///caller.yaml', { calls: ['Shared'] }),
+        scenario('Shared', 'file:///scenario.yaml'),
+        { ...scenario('Shared', 'file:///process.yaml'), kind: 'process', uid: 'process' }
+    ]));
+    assert.deepEqual(index.project(['file:///caller.yaml']).relationships, [
+        { scenarioKey: 'file:///scenario.yaml', outgoingDistance: 1 }
+    ]);
+});
+
+test('imported processes without a tab remain affected runnable owners in the Processes group', () => {
+    const index = ScenarioRelationshipIndex.fromCatalog(buildScenarioCatalog([
+        { ...scenario('Imported process', 'file:///process.yaml'), kind: 'process', uid: 'parent',
+            processSteps: [{ type: 'scenario', scenarioUid: 'target' }] },
+        { ...scenario('Target', 'file:///target.yaml'), uid: 'target' }
+    ]));
+    const projection = index.project(['file:///target.yaml']);
+    assert.deepEqual(projection.affectedMainScenarioKeys, ['file:///process.yaml']);
+    assert.deepEqual(projection.affectedPhaseNames, ['Processes']);
+    assert.deepEqual(index.project(['file:///process.yaml']).affectedMainScenarioKeys, ['file:///process.yaml']);
+});

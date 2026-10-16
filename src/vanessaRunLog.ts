@@ -15,6 +15,59 @@ export interface VanessaStepLocation {
     iteration?: number;
 }
 
+export interface VanessaFailedStep {
+    readonly details: VanessaFailureDetails;
+    readonly location: VanessaStepLocation | null;
+}
+
+export function extractFailedStep(content: string, options: VanessaRunLogParseOptions = {}): VanessaFailedStep | null {
+    const lines = content.split(/\r\n|\r|\n/u);
+    const featureLines = options.featureContent?.split(/\r\n|\r|\n/u);
+    let featurePath: string | undefined;
+    let scenarioName: string | undefined;
+    let hasScenarioMarkers = false;
+    let location: VanessaStepLocation | null = null;
+    let failure: VanessaFailedStep | null = null;
+    const visits = new Map<number, number>();
+    for (const [index, line] of lines.entries()) {
+        const nextFeature = extractFeaturePathFromRunLogLine(line);
+        const nextScenario = extractScenarioNameFromRunLogLine(line);
+        if (nextFeature || nextScenario) {
+            featurePath = nextFeature || featurePath;
+            if (nextFeature) { scenarioName = undefined; }
+            if (nextScenario) { scenarioName = nextScenario; hasScenarioMarkers = true; }
+            location = null;
+            visits.clear();
+        }
+        if (!isRunLogLineForScenario(options.scenarioName?.trim(), scenarioName, hasScenarioMarkers)) { continue; }
+        const lineNumber = extractFeatureLineNumberFromRunLogLine(line);
+        if (lineNumber && (!featureLines || (featureLines[lineNumber - 1] !== undefined
+            && isRunLogStepCompatibleWithFeatureLine(line, featureLines[lineNumber - 1])))) {
+            const iteration = (visits.get(lineNumber) ?? 0) + 1;
+            visits.set(lineNumber, iteration);
+            location = { featurePath, featureLineNumber: lineNumber, ...(iteration > 1 ? { iteration } : {}) };
+        }
+        if (isFailedStepLogLine(line) && !/^\s*Failed\s*:/iu.test(line)) {
+            const block = collectFailedStepLogBlock(lines, index);
+            failure = {
+                details: {
+                    failureSummary: formatFailedStepSummaryFromLogBlock(block),
+                    failureDetails: formatFailedStepDetailsFromLogBlock(block),
+                    failureStepDescription: formatFailedStepDescriptionFromLogBlock(block)
+                },
+                location
+            };
+        }
+    }
+    if (failure) { return failure; }
+    const details = extractFailedStepDetails(content, options);
+    return details ? { details, location: null } : null;
+}
+
+export function extractFailedStepLocation(content: string, options: VanessaRunLogParseOptions = {}): VanessaStepLocation | null {
+    return extractFailedStep(content, options)?.location ?? null;
+}
+
 interface VanessaRunLogStep {
     lineNumber: number;
     stepText?: string;
@@ -176,7 +229,7 @@ function collectFailedStepLogBlock(lines: string[], startIndex: number): string[
         const trimmed = line.trim();
 
         if (index > startIndex) {
-            const isNewStepEntry = /^\s*\d{1,2}\/\d{1,2}\/\d{4}.*\(\d+\)\s*\.?\s*(?:Шаг|Step)\s*:/i.test(trimmed);
+            const isNewStepEntry = extractRunLogStep(trimmed) !== undefined;
             const isFeatureHeader = /^\s*(?:Фича|Feature)\s*:/i.test(trimmed);
             const isScenarioHeader = /^\s*(?:Сценарий|Scenario)\s*:/i.test(trimmed);
             if (isNewStepEntry || isFeatureHeader || isScenarioHeader) {

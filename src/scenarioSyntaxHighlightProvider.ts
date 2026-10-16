@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { parseBlockKeyword } from './blockKeywordParser';
 import { isScenarioYamlFile } from './yamlValidator';
+import { getCompilerScenarioBody, scanCompilerLines } from './scenarioCompilerSyntax';
 
 const semanticTokenTypes = [
     'gherkinComment',
@@ -27,7 +28,7 @@ const topLevelYamlKeyRegex = /^\s*[А-Яа-яЁёA-Za-z][А-Яа-яЁёA-Za-z0-9
 const commentLineRegex = /^(\s*)#.*$/;
 const featureKeywordRegex = /^(\s*)(Feature|Функционал|Функция|Функциональность|Свойство)\s*:(.*)$/i;
 const scenarioElementRegex = /^(\s*)(Rule|Правило|Background|Контекст|Scenario Outline|Scenario Template|Scenario|Сценарий|Examples|Примеры|Example|Пример|Scenarios|Сценарии)\s*:(.*)$/i;
-const stepKeywordRegex = /^(\s*)(\*\s*)?(And|Then|When|Given|But|If|ElseIf|Else|EndIf|Do|EndDo|Try|Except|EndTry|Но|Тогда|Когда|Если|ИначеЕсли|Иначе|КонецЕсли|Цикл|КонецЦикла|Попытка|Исключение|КонецПопытки|И|К тому же|Допустим|Дано)(?=\s|$)/i;
+const stepKeywordRegex = /^(\s*)(\*\s*)?(#Если|#ИначеЕсли|#Иначе|#КонецЕсли|Return|Возврат|And|Then|When|Given|But|If|ElseIf|Else|EndIf|Do|EndDo|Try|Except|EndTry|Но|Тогда|Когда|Если|ИначеЕсли|Иначе|КонецЕсли|Цикл|КонецЦикла|Попытка|Исключение|КонецПопытки|И|К тому же|Допустим|Дано)(?=\s|$)/i;
 const nestedParamAssignmentRegex = /^(\s*)([A-Za-zА-Яа-яЁё0-9_-]+)(\s*)=(?=\s|$)/;
 const tagRegex = /@[^\s@|#]+/g;
 const placeholderRegex = /<[^<>\s]+>/g;
@@ -123,6 +124,10 @@ function mergeLineSpans(spans: LineSpan[]): LineSpan[] {
 }
 
 function findBlockKeywordRange(lineText: string, blockKeyword: NonNullable<ReturnType<typeof parseBlockKeyword>>): { start: number; length: number } | null {
+    const firstWord = /^(\s*)(#?[\wА-Яа-яЁё]+)/u.exec(lineText);
+    if (firstWord && parseBlockKeyword(firstWord[2]) === blockKeyword) {
+        return { start: firstWord[1].length, length: firstWord[2].length };
+    }
     const keywordPatterns: Record<NonNullable<ReturnType<typeof parseBlockKeyword>>, RegExp> = {
         If: /\b(?:If|Если)\b/i,
         ElseIf: /\b(?:ElseIf|ИначеЕсли)\b/i,
@@ -171,6 +176,8 @@ export class ScenarioSyntaxHighlightProvider implements vscode.DocumentSemanticT
         }
 
         const builder = new vscode.SemanticTokensBuilder(ScenarioSyntaxHighlightProvider.legend);
+        const body = getCompilerScenarioBody(document.getText());
+        const scanned = scanCompilerLines(body?.lines ?? []);
         let insideScenarioText = false;
         let scenarioHeaderIndent = 0;
         let docStringDelimiter: string | null = null;
@@ -188,6 +195,12 @@ export class ScenarioSyntaxHighlightProvider implements vscode.DocumentSemanticT
             }
 
             const trimmed = lineText.trim();
+            const info = body ? scanned[lineIndex - body.startLine] : undefined;
+            if (info?.kind === 'comment') {
+                const indent = lineText.match(/^[ \t]*/u)![0].length;
+                pushToken(builder, lineIndex, indent, lineText.length - indent, 'gherkinComment');
+                continue;
+            }
             const currentIndent = (lineText.match(/^[ \t]*/)?.[0].length) ?? 0;
             if (!docStringDelimiter && currentIndent <= scenarioHeaderIndent && topLevelYamlKeyRegex.test(lineText)) {
                 insideScenarioText = false;
@@ -219,7 +232,7 @@ export class ScenarioSyntaxHighlightProvider implements vscode.DocumentSemanticT
             }
 
             const commentMatch = lineText.match(commentLineRegex);
-            if (commentMatch) {
+            if (commentMatch && info?.block?.dialect !== 'preprocessor') {
                 pushToken(builder, lineIndex, commentMatch[1].length, lineText.length - commentMatch[1].length, 'gherkinComment');
                 continue;
             }
@@ -309,6 +322,8 @@ export function collectScenarioPlainTextRanges(document: vscode.TextDocument): v
     }
 
     const ranges: vscode.Range[] = [];
+    const body = getCompilerScenarioBody(document.getText());
+    const scanned = scanCompilerLines(body?.lines ?? []);
     let insideScenarioText = false;
     let scenarioHeaderIndent = 0;
     let docStringDelimiter: string | null = null;
@@ -326,6 +341,8 @@ export function collectScenarioPlainTextRanges(document: vscode.TextDocument): v
         }
 
         const trimmed = lineText.trim();
+        const info = body ? scanned[lineIndex - body.startLine] : undefined;
+        if (info && info.kind !== 'code') { continue; }
         const currentIndent = (lineText.match(/^[ \t]*/)?.[0].length) ?? 0;
         if (!docStringDelimiter && currentIndent <= scenarioHeaderIndent && topLevelYamlKeyRegex.test(lineText)) {
             insideScenarioText = false;
@@ -355,7 +372,7 @@ export function collectScenarioPlainTextRanges(document: vscode.TextDocument): v
         }
 
         if (
-            commentLineRegex.test(lineText)
+            (commentLineRegex.test(lineText) && info?.block?.dialect !== 'preprocessor')
             || featureKeywordRegex.test(lineText)
             || scenarioElementRegex.test(lineText)
             || trimmed.startsWith('|')
@@ -443,6 +460,8 @@ export function collectScenarioBracketParameterRanges(document: vscode.TextDocum
     }
 
     const ranges: vscode.Range[] = [];
+    const body = getCompilerScenarioBody(document.getText());
+    const scanned = scanCompilerLines(body?.lines ?? []);
     let insideScenarioText = false;
     let scenarioHeaderIndent = 0;
     let docStringDelimiter: string | null = null;
@@ -460,6 +479,7 @@ export function collectScenarioBracketParameterRanges(document: vscode.TextDocum
         }
 
         const trimmed = lineText.trim();
+        if (body && scanned[lineIndex - body.startLine]?.kind === 'comment') { continue; }
         const currentIndent = (lineText.match(/^[ \t]*/)?.[0].length) ?? 0;
         if (!docStringDelimiter && currentIndent <= scenarioHeaderIndent && topLevelYamlKeyRegex.test(lineText)) {
             insideScenarioText = false;

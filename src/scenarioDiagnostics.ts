@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
+import { projectedProjectScenario } from './projectLibraryIntegration';
+import { collectCompilerParameterReferences, getCompilerScenarioBody, scanCompilerLines, validateCompilerBlocks, parseCompilerParameterBinding, type CompilerParameterBinding } from './scenarioCompilerSyntax';
 import * as path from 'path';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { TestInfo } from './types';
-import { isScenarioYamlFile } from './yamlValidator';
-import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
+import { collectCompilerFormatDiagnostics, collectYamlIndentationTabs, isCompilerYamlFile, isScenarioYamlFile } from './yamlValidator';
+import { isMultilineScalarDefault, parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
 import { parseBlockKeyword } from './blockKeywordParser';
 import { getScenarioScanRootPath } from './scenarioScanRoot';
@@ -37,6 +39,7 @@ const CODE_INCOMPLETE_BLOCK = 'kotTestToolkit.incompleteBlock';
 const CODE_DEFAULT_DESCRIPTION = 'kotTestToolkit.defaultDescription';
 const CODE_DUPLICATE_SCENARIO_CODE = 'kotTestToolkit.duplicateScenarioCode';
 const CODE_GHERKIN_SYNTAX = 'kotTestToolkit.gherkinSyntax';
+const CODE_YAML_INDENTATION_TAB = 'kotTestToolkit.yamlIndentationTab';
 const LOCAL_DEPENDENCY_SCAN_MAX_FILES = 120;
 
 interface WorkspaceDiagnosticsScanOptions {
@@ -61,6 +64,7 @@ interface ScenarioCallParameter {
     line: number;
     name: string;
     value: string;
+    kind?: CompilerParameterBinding['kind'];
 }
 
 interface ScenarioCallBlock {
@@ -146,30 +150,10 @@ function createDiagnostic(
 }
 
 function getScenarioBodyRange(document: vscode.TextDocument): ScenarioBodyRange | null {
-    let startLine = -1;
-    for (let i = 0; i < document.lineCount; i++) {
-        if (/^\s*ТекстСценария:\s*\|?\s*$/.test(document.lineAt(i).text)) {
-            startLine = i + 1;
-            break;
-        }
-    }
-    if (startLine === -1) {
-        return null;
-    }
-
-    let endLine = document.lineCount - 1;
-    for (let i = startLine; i < document.lineCount; i++) {
-        const text = document.lineAt(i).text;
-        if (/^(?!\s|#)[А-Яа-яЁёA-Za-z0-9_]+:\s*/.test(text)) {
-            endLine = i - 1;
-            break;
-        }
-    }
-
-    if (endLine < startLine) {
-        endLine = startLine;
-    }
-    return { startLine, endLine };
+    const compilerBody = getCompilerScenarioBody(document.getText());
+    return compilerBody?.lines.length
+        ? { startLine: compilerBody.startLine, endLine: compilerBody.startLine + compilerBody.lines.length - 1 }
+        : null;
 }
 
 export function isGherkinFeatureDocument(document: Pick<vscode.TextDocument, 'fileName'>): boolean {
@@ -178,11 +162,12 @@ export function isGherkinFeatureDocument(document: Pick<vscode.TextDocument, 'fi
 
 function parseScenarioCallBlocks(document: vscode.TextDocument, bodyRange: ScenarioBodyRange): ScenarioCallBlock[] {
     const blocks: ScenarioCallBlock[] = [];
-    const callRegex = /^(\s*)(And|И|Допустим)\s+(.+)$/i;
-    const assignmentRegex = /^(\s*)([A-Za-zА-Яа-яЁё0-9_-]+)\s*=\s*(.*)$/;
+    const callRegex = /^(\s*)(Given|When|Then|And|But|If|ElseIf|Else|И|Когда|Тогда|Затем|Дано|Допустим|Если|ИначеЕсли|Иначе|Пусть|То|К тому же|Также|Но|А)\s+(.+)$/i;
+    const scanned = scanCompilerLines(Array.from({ length: bodyRange.endLine - bodyRange.startLine + 1 }, (_, line) => document.lineAt(line + bodyRange.startLine).text));
 
     for (let i = bodyRange.startLine; i <= bodyRange.endLine; i++) {
         const text = document.lineAt(i).text;
+        if (scanned[i - bodyRange.startLine].kind !== 'code' || scanned[i - bodyRange.startLine].block) { continue; }
         const callMatch = text.match(callRegex);
         if (!callMatch) {
             continue;
@@ -204,20 +189,11 @@ function parseScenarioCallBlocks(document: vscode.TextDocument, bodyRange: Scena
         while (j <= bodyRange.endLine) {
             const nextLine = document.lineAt(j).text;
             const trimmed = nextLine.trim();
-            if (!trimmed || trimmed.startsWith('#')) {
-                break;
-            }
-
-            const assignmentMatch = nextLine.match(assignmentRegex);
-            if (!assignmentMatch) {
-                break;
-            }
-
-            block.parameters.push({
-                line: j,
-                name: assignmentMatch[2],
-                value: assignmentMatch[3]
-            });
+            if (!trimmed || scanned[j - bodyRange.startLine].kind === 'comment') { j++; continue; }
+            if (scanned[j - bodyRange.startLine].kind === 'table' && block.parameters.at(-1)?.kind === 'table') { j++; continue; }
+            const binding = parseCompilerParameterBinding(nextLine);
+            if (!binding) { break; }
+            block.parameters.push({ line: j, ...binding });
             j++;
         }
 
@@ -398,20 +374,9 @@ function parseUsedParametersFromScenarioText(
     document: vscode.TextDocument,
     bodyRange: ScenarioBodyRange
 ): Set<string> {
-    const used = new Set<string>();
-
-    const regex = /(?<!\\)\[([A-Za-zА-Яа-яЁё0-9_-]+)(?<!\\)\]/g;
-    for (let i = bodyRange.startLine; i <= bodyRange.endLine; i++) {
-        const text = document.lineAt(i).text;
-        let match: RegExpExecArray | null;
-        while ((match = regex.exec(text)) !== null) {
-            const name = match[1].trim();
-            if (name) {
-                used.add(name);
-            }
-        }
-    }
-    return used;
+    return new Set(collectCompilerParameterReferences(Array.from(
+        { length: bodyRange.endLine - bodyRange.startLine + 1 }, (_, line) => document.lineAt(line + bodyRange.startLine).text
+    )));
 }
 
 function getScenarioCallNames(blocks: ScenarioCallBlock[]): Set<string> {
@@ -425,8 +390,10 @@ function buildMissingParameterInsertion(
     callBlock: ScenarioCallBlock,
     missingParameters: string[],
     calledScenarioDefaults: Record<string, string> | undefined,
-    localScenarioParameterDefaults: Map<string, string>
+    localScenarioParameterDefaults: Map<string, string>,
+    parameterTypes?: Record<string, 'scalar' | 'table'>
 ): MissingParameterInsertion | null {
+    missingParameters = missingParameters.filter(name => !isMultilineScalarDefault(calledScenarioDefaults?.[name], parameterTypes?.[name]));
     if (!missingParameters.length) {
         return null;
     }
@@ -448,14 +415,20 @@ function buildMissingParameterInsertion(
     const lines = missingParameters.map(paramName => {
         const defaultValue =
             calledScenarioDefaults?.[paramName] ??
+            (isMultilineScalarDefault(localScenarioParameterDefaults.get(paramName)) ? `[${paramName}]` : undefined) ??
             localScenarioParameterDefaults.get(paramName) ??
             `"${paramName}"`;
-        return `${existingParamIndent}${paramName.padEnd(maxNameLength, ' ')} = ${defaultValue}`;
+        return parameterTypes?.[paramName] === 'table'
+            ? `${existingParamIndent}${paramName.padEnd(maxNameLength, ' ')} =\n${defaultValue.trimEnd().split(/\r\n|\r|\n/u).map(row => `${existingParamIndent}    ${row}`).join('\n')}`
+            : `${existingParamIndent}${paramName.padEnd(maxNameLength, ' ')} = ${defaultValue}`;
     });
 
-    const insertionLine = callBlock.parameters.length > 0
+    let insertionLine = callBlock.parameters.length > 0
         ? callBlock.parameters[callBlock.parameters.length - 1].line
         : callBlock.line;
+    if (callBlock.parameters.at(-1)?.kind === 'table') {
+        while (insertionLine + 1 < document.lineCount && /^\s*\|/u.test(document.lineAt(insertionLine + 1).text)) { insertionLine++; }
+    }
 
     const insertionPosition = document.lineAt(insertionLine).range.end;
 
@@ -466,7 +439,7 @@ function buildMissingParameterInsertion(
 }
 
 const SUGGESTION_YIELD_EVERY = 64;
-const GHERKIN_SUGGESTION_PREFIX = /^(?:\s*)(?:\*\s*)?(?:К\s+тому\s+же|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Но|И|If|Дано)\s+/iu;
+const GHERKIN_SUGGESTION_PREFIX = /^(?:\s*)(?:\*\s*)?(?:К\s+тому\s+же|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Но|И|If|Дано|Do|Цикл)\s+/iu;
 
 function normalizeSuggestionText(value: string): string {
     return value
@@ -675,7 +648,7 @@ function applyStepSuggestionWithOriginalValues(originalLine: string, suggestion:
     let literalIndex = 0;
     let numericIndex = 0;
 
-    return suggestion.replace(/"%\d+\s+[^"]*"|'%\d+\s+[^']*'/g, (placeholder) => {
+    const replacement = suggestion.replace(/"%\d+\s+[^"]*"|'%\d+\s+[^']*'/g, (placeholder) => {
         if (literalIndex < literals.length) {
             return literals[literalIndex++];
         }
@@ -686,6 +659,10 @@ function applyStepSuggestionWithOriginalValues(originalLine: string, suggestion:
         }
         return placeholder;
     });
+    const loopOpening = /^\s*(Do|Цикл)\s+/iu.exec(originalLine)?.[1];
+    return loopOpening
+        ? `${loopOpening} ${replacement.replace(GHERKIN_SUGGESTION_PREFIX, '')}`
+        : replacement;
 }
 
 function formatSuggestionListSuffix(messages: DiagnosticMessages, suggestions: string[]): string {
@@ -760,7 +737,9 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     private readonly rawDiagnosticsByUri = new Map<string, {
         uri: vscode.Uri;
         diagnostics: readonly vscode.Diagnostic[];
+        resourceUri?: vscode.Uri;
     }>();
+    private disposed = false;
     private dependencyGraphSource: ScenarioCatalog | null = null;
     private readonly scenarioNameByUri = new Map<string, string>();
     private readonly scenarioUrisByName = new Map<string, vscode.Uri[]>();
@@ -780,7 +759,9 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 }
                 this.scheduleValidation(document, 120, SAVE_VALIDATION_OPTIONS);
             }),
-            vscode.workspace.onDidChangeTextDocument(event => this.scheduleValidation(event.document, 450, CHANGE_VALIDATION_OPTIONS)),
+            vscode.workspace.onDidChangeTextDocument(event => {
+                this.scheduleValidation(event.document, 450, CHANGE_VALIDATION_OPTIONS);
+            }),
             vscode.workspace.onDidSaveTextDocument(document => {
                 this.scheduleValidation(document, 50, SAVE_VALIDATION_OPTIONS);
                 this.scheduleRelatedValidation(document);
@@ -853,6 +834,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     }
 
     public dispose(): void {
+        this.disposed = true;
         for (const timer of this.validationTimers.values()) {
             clearTimeout(timer);
         }
@@ -877,13 +859,40 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         token: vscode.CancellationToken
     ): Promise<vscode.CodeAction[]> {
         const featureDocument = isGherkinFeatureDocument(document);
-        if (!isScenarioYamlFile(document) && !featureDocument) {
+        const scenarioDocument = isScenarioYamlFile(document);
+        if (!scenarioDocument && !isCompilerYamlFile(document) && !featureDocument) {
             return [];
         }
 
         const shouldCancel = createDocumentValidationCancellation(document, token);
 
         const actions: vscode.CodeAction[] = [];
+        const tabDiagnostics = context.diagnostics.filter(diagnostic =>
+            diagnostic.source === DIAGNOSTIC_SOURCE && diagnostic.code === CODE_YAML_INDENTATION_TAB);
+        if (!featureDocument && tabDiagnostics.length > 0) {
+            const issues = collectYamlIndentationTabs(document.getText());
+            const addTabFix = (title: string, selected: typeof issues, preferred: boolean): void => {
+                if (selected.length === 0) { return; }
+                const action = new vscode.CodeAction(title, vscode.CodeActionKind.QuickFix);
+                action.edit = new vscode.WorkspaceEdit();
+                for (const issue of selected) {
+                    action.edit.replace(document.uri, new vscode.Range(issue.line, 0, issue.line, issue.indentationLength), issue.replacement);
+                }
+                action.diagnostics = tabDiagnostics.filter(diagnostic => selected.some(issue => issue.line === diagnostic.range.start.line));
+                action.isPreferred = preferred;
+                actions.push(action);
+            };
+            const diagnosticLines = new Set(tabDiagnostics.map(diagnostic => diagnostic.range.start.line));
+            for (const issue of issues.filter(issue => diagnosticLines.has(issue.line))) {
+                addTabFix(vscode.l10n.t('Replace YAML indentation tabs with spaces'), [issue], true);
+            }
+            if (issues.length > 1) {
+                addTabFix(vscode.l10n.t('Replace all YAML indentation tabs with spaces'), issues, false);
+            }
+        }
+        if (!scenarioDocument && !featureDocument) {
+            return shouldCancel() ? [] : actions;
+        }
         const localScenarioParameterDefaults = featureDocument
             ? new Map<string, string>()
             : parseScenarioParameterDefaults(document.getText());
@@ -1064,7 +1073,8 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     callBlock,
                     missingParams,
                     scenarioInfo.parameterDefaults,
-                    localScenarioParameterDefaults
+                    localScenarioParameterDefaults,
+                    scenarioInfo.parameterTypes
                 );
                 if (!insertion) {
                     continue;
@@ -1085,7 +1095,8 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                         callBlock,
                         [missingParam],
                         scenarioInfo.parameterDefaults,
-                        localScenarioParameterDefaults
+                        localScenarioParameterDefaults,
+                        scenarioInfo.parameterTypes
                     );
                     if (!singleInsertion) {
                         continue;
@@ -1189,9 +1200,9 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         );
     }
 
-    private publishDiagnostics(uri: vscode.Uri, diagnostics: readonly vscode.Diagnostic[]): void {
-        this.rawDiagnosticsByUri.set(uri.toString(), { uri, diagnostics: [...diagnostics] });
-        this.diagnostics.set(uri, this.filterIgnoredDiagnostics(uri, diagnostics));
+    private publishDiagnostics(uri: vscode.Uri, diagnostics: readonly vscode.Diagnostic[], resourceUri = uri): void {
+        this.rawDiagnosticsByUri.set(uri.toString(), { uri, diagnostics: [...diagnostics], resourceUri });
+        this.diagnostics.set(uri, this.filterIgnoredDiagnostics(resourceUri, diagnostics));
     }
 
     private deleteDiagnostics(uri: vscode.Uri): void {
@@ -1200,8 +1211,8 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     }
 
     private republishDiagnostics(): void {
-        for (const { uri, diagnostics } of this.rawDiagnosticsByUri.values()) {
-            this.diagnostics.set(uri, this.filterIgnoredDiagnostics(uri, diagnostics));
+        for (const { uri, diagnostics, resourceUri } of this.rawDiagnosticsByUri.values()) {
+            this.diagnostics.set(uri, this.filterIgnoredDiagnostics(resourceUri ?? uri, diagnostics));
         }
     }
 
@@ -1489,7 +1500,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         for (const uri of candidateUris) {
             try {
                 const document = await vscode.workspace.openTextDocument(uri);
-                if (isScenarioYamlFile(document)) {
+                if (isCompilerYamlFile(document)) {
                     scenarioUris.push(uri);
                 }
             } catch (error) {
@@ -1509,7 +1520,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             if (document.isUntitled || document.uri.scheme !== 'file') {
                 continue;
             }
-            if (isScenarioYamlFile(document)) {
+            if (isCompilerYamlFile(document)) {
                 uniqueUris.set(document.uri.toString(), document.uri);
             }
         }
@@ -1531,18 +1542,31 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             await this.validateFeatureDocument(document, options, shouldCancel);
             return;
         }
-        if (!isScenarioYamlFile(document)) {
+        const scenarioDocument = isScenarioYamlFile(document);
+        const compilerDocument = isCompilerYamlFile(document);
+        if (!scenarioDocument && !compilerDocument) {
             this.deleteDiagnostics(document.uri);
             return;
         }
 
-        const bodyRange = getScenarioBodyRange(document);
+        const diagnostics = (compilerDocument ? collectYamlIndentationTabs(document.getText()) : []).map(issue => {
+            const diagnostic = new vscode.Diagnostic(
+                new vscode.Range(issue.line, issue.startCharacter, issue.line, issue.endCharacter),
+                vscode.l10n.t('Tabs cannot be used for YAML indentation. Use spaces.'),
+                vscode.DiagnosticSeverity.Error
+            );
+            diagnostic.source = DIAGNOSTIC_SOURCE;
+            diagnostic.code = CODE_YAML_INDENTATION_TAB;
+            return diagnostic;
+        });
+        if (compilerDocument) { diagnostics.push(...collectCompilerFormatDiagnostics(document)); }
+        const bodyRange = scenarioDocument ? getScenarioBodyRange(document) : null;
         if (!bodyRange) {
-            this.deleteDiagnostics(document.uri);
+            this.publishDiagnostics(document.uri, diagnostics);
             return;
         }
+        if (diagnostics.length > 0) { this.publishDiagnostics(document.uri, diagnostics); }
 
-        const diagnostics: vscode.Diagnostic[] = [];
         const documentText = document.getText();
         const configuredLanguage = getScenarioLanguageForDocument(document);
         let scenarioCatalog: ScenarioCatalog | null = null;
@@ -1570,65 +1594,34 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         const scenarioCallLineSet = new Set<number>();
         const scenarioParamLineSet = new Set<number>();
 
-        // If/EndIf, Do/EndDo, Try/EndTry + quotes checks
-        const ifStack: number[] = [];
-        const doStack: number[] = [];
-        const tryStack: number[] = [];
+        const bodyLines = Array.from({ length: bodyRange.endLine - bodyRange.startLine + 1 },
+            (_, index) => document.lineAt(bodyRange.startLine + index).text);
+        const compilerLines = scanCompilerLines(bodyLines);
+        for (const issue of validateCompilerBlocks(bodyLines, compilerLines)) {
+            const code = issue.kind === 'unclosed'
+                ? issue.family === 'loop' ? CODE_UNCLOSED_DO : issue.family === 'try' ? CODE_UNCLOSED_TRY : CODE_UNCLOSED_IF
+                : 'kotTestToolkit.compilerSyntax';
+            const message = issue.kind === 'unclosed'
+                ? issue.family === 'loop' ? this.messages.unmatchedDo : issue.family === 'try' ? this.messages.unmatchedTry : this.messages.unmatchedIf
+                : issue.kind === 'comment' ? vscode.l10n.t('Unclosed block comment.')
+                    : issue.kind === 'docString' ? vscode.l10n.t('Unclosed multiline string.')
+                        : issue.kind === 'binding' ? vscode.l10n.t('Invalid return declaration: use Return Name as Alias or Возврат Имя как Псевдоним.')
+                    : issue.kind === 'expression' ? vscode.l10n.t('Invalid preprocessor condition: check Then, quotes and parentheses.')
+                        : vscode.l10n.t('Unexpected block delimiter: check nesting, branch order and delimiter language.');
+            diagnostics.push(createDiagnostic(document, bodyRange.startLine + issue.line, message, vscode.DiagnosticSeverity.Error, code));
+        }
         for (let line = bodyRange.startLine; line <= bodyRange.endLine; line++) {
             if (shouldCancel()) {
                 return;
             }
             const text = document.lineAt(line).text;
-            const blockKeyword = parseBlockKeyword(text);
-
-            if (blockKeyword === 'EndIf') {
-                if (ifStack.length === 0) {
-                    diagnostics.push(createDiagnostic(document, line, this.messages.extraEndIf, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_IF));
-                } else {
-                    ifStack.pop();
-                }
-            }
-            if (blockKeyword === 'If') {
-                ifStack.push(line);
-            }
-
-            if (blockKeyword === 'EndDo') {
-                if (doStack.length === 0) {
-                    diagnostics.push(createDiagnostic(document, line, this.messages.extraEndDo, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_DO));
-                } else {
-                    doStack.pop();
-                }
-            }
-            if (blockKeyword === 'Do') {
-                doStack.push(line);
-            }
-
-            if (blockKeyword === 'EndTry') {
-                if (tryStack.length === 0) {
-                    diagnostics.push(createDiagnostic(document, line, this.messages.extraEndTry, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_TRY));
-                } else {
-                    tryStack.pop();
-                }
-            }
-            if (blockKeyword === 'Try') {
-                tryStack.push(line);
-            }
+            if (compilerLines[line - bodyRange.startLine].kind !== 'code') { continue; }
 
             const quotes = text.match(/(?<!\\)"/g);
             if (quotes && quotes.length % 2 !== 0) {
                 diagnostics.push(createDiagnostic(document, line, this.messages.unmatchedQuote, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_QUOTE));
             }
         }
-
-        ifStack.forEach(line => {
-            diagnostics.push(createDiagnostic(document, line, this.messages.unmatchedIf, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_IF));
-        });
-        doStack.forEach(line => {
-            diagnostics.push(createDiagnostic(document, line, this.messages.unmatchedDo, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_DO));
-        });
-        tryStack.forEach(line => {
-            diagnostics.push(createDiagnostic(document, line, this.messages.unmatchedTry, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_TRY));
-        });
 
         // Scenario calls checks
         for (const block of scenarioCallBlocks) {
@@ -1743,23 +1736,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             scenarioCallLineSet.add(block.line);
             block.parameters.forEach(param => scenarioParamLineSet.add(param.line));
 
-            if (!scenarioInfo) {
-                if (definitionResolution.kind === 'unique') {
-                    for (const param of block.parameters) {
-                        const trimmedValue = param.value.trim();
-                        if (trimmedValue.length > 0 && !isValidScenarioParameterValue(trimmedValue)) {
-                            diagnostics.push(createDiagnostic(
-                                document,
-                                param.line,
-                                this.messages.paramValueShouldBeQuoted,
-                                vscode.DiagnosticSeverity.Warning,
-                                CODE_MISSING_QUOTES
-                            ));
-                        }
-                    }
-                    continue;
-                }
-
+            if (!scenarioInfo && definitionResolution.kind !== 'unique') {
                 const suffix = formatSuggestionListSuffix(this.messages, scenarioSuggestions);
                 diagnostics.push(createDiagnostic(
                     document,
@@ -1771,7 +1748,9 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 continue;
             }
 
-            const expectedParams = new Set((scenarioInfo.parameters || []).map(item => item.trim()).filter(Boolean));
+            const expectedParams = new Set((scenarioInfo?.parameters
+                ?? (definitionResolution.kind === 'unique' ? definitionResolution.match.definition.parameters.map(item => item.name) : []))
+                .map(item => item.trim()).filter(Boolean));
             const actualParams = new Set(block.parameters.map(param => param.name));
 
             for (const param of block.parameters) {
@@ -1786,7 +1765,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 }
 
                 const trimmedValue = param.value.trim();
-                if (trimmedValue.length > 0 && !isValidScenarioParameterValue(trimmedValue)) {
+                if (param.kind === 'input' && trimmedValue.length > 0 && !isValidScenarioParameterValue(trimmedValue)) {
                     diagnostics.push(createDiagnostic(
                         document,
                         param.line,
@@ -1798,7 +1777,13 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             }
 
             if (expectedParams.size > 0) {
-                const missing = Array.from(expectedParams).filter(paramName => !actualParams.has(paramName));
+                const missing = Array.from(expectedParams).filter(paramName => {
+                    if (actualParams.has(paramName)) { return false; }
+                    const definitionParameter = definitionResolution.kind === 'unique'
+                        ? definitionResolution.match.definition.parameters.find(parameter => parameter.name === paramName) : undefined;
+                    return !isMultilineScalarDefault(scenarioInfo?.parameterDefaults?.[paramName] ?? definitionParameter?.defaultValue,
+                        scenarioInfo?.parameterTypes?.[paramName] ?? definitionParameter?.type);
+                });
                 if (missing.length > 0) {
                     diagnostics.push(createDiagnostic(
                         document,
@@ -1812,8 +1797,17 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         }
 
         // Unknown steps checks
+        for (let index = 0; index < bodyLines.length; index++) {
+            const line = bodyRange.startLine + index;
+            if (compilerLines[index].kind === 'code' && parseCompilerParameterBinding(bodyLines[index])
+                && !scenarioParamLineSet.has(line)) {
+                diagnostics.push(createDiagnostic(document, line,
+                    vscode.l10n.t('Parameter assignment or return must follow a nested scenario invocation.'),
+                    vscode.DiagnosticSeverity.Error, 'kotTestToolkit.compilerSyntax'));
+            }
+        }
         if (options.includeStepChecks) {
-            const gherkinStepRegex = /^\s*(And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\b/i;
+            const gherkinStepRegex = /^\s*(And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим|Do|Цикл)(?=\s|$)/i;
             for (let line = bodyRange.startLine; line <= bodyRange.endLine; line++) {
                 if (shouldCancel()) {
                     return;
@@ -1823,6 +1817,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 }
 
                 const rawText = document.lineAt(line).text;
+                if (compilerLines[line - bodyRange.startLine].kind !== 'code') { continue; }
                 const trimmed = rawText.trim();
                 if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('|') || trimmed.startsWith('"""')) {
                     continue;
@@ -1913,7 +1908,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         }
 
         const kotDescriptionState = getKotDescriptionState(document);
-        if (kotDescriptionState && kotDescriptionState.isDefault) {
+        if (kotDescriptionState && kotDescriptionState.isDefault && !projectedProjectScenario(document)?.scenarioDescription?.trim()) {
             diagnostics.push(createDiagnostic(
                 document,
                 kotDescriptionState.line,

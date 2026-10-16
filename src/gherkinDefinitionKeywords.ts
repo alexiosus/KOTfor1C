@@ -11,7 +11,7 @@ export interface GherkinDefinitionKeywords {
 
 const DEFINITION_KEYWORDS: Record<ScenarioLanguage, GherkinDefinitionKeywords> = {
     en: {
-        feature: ['Feature'],
+        feature: ['Feature', 'Functionality', 'Business Need', 'Ability'],
         scenario: ['Scenario'],
         outline: ['Scenario Outline', 'Scenario Template'],
         background: ['Background'],

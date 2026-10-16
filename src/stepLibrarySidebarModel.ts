@@ -4,6 +4,8 @@ import type {
     StepLibrarySourceGroup
 } from './stepLibraryModel';
 import { buildCallableDefinitionText } from './projectDefinitionSnippet';
+import type { StandaloneFeatureGroup } from './standaloneFeatureModel';
+import type { ProjectGroup } from './projectLibraryStore';
 
 export interface StepLibrarySidebarNode {
     readonly id: string;
@@ -15,16 +17,26 @@ export interface StepLibrarySidebarNode {
     readonly hasScenarioFiles?: true;
     readonly compiledFeatureUri?: string;
     readonly scenarioFilesRootUri?: string;
+    readonly sourceScenarioFilesRootUri?: string;
     readonly itemId?: string;
     readonly definitionId?: string;
     readonly insertable?: boolean;
     readonly navigable?: boolean;
+    readonly scenarioPropertiesUri?: string;
     readonly dragText?: string;
     readonly alternateLabel?: string;
     readonly description?: string;
+    readonly definitionType?: StepLibraryItem['kind'] | 'process';
     readonly scenarioKey?: string;
     readonly sourceGroup?: StepLibrarySourceGroup;
     readonly favorite?: boolean;
+    readonly featureId?: string;
+    readonly groupId?: string;
+    readonly order?: number;
+    readonly jsonPath?: string;
+    readonly renameGroupItemId?: string;
+    readonly scenarioGroupId?: string;
+    readonly groupOrder?: number;
 }
 
 export interface StepLibrarySidebarPage {
@@ -41,6 +53,9 @@ interface CategoryBranch {
     readonly childIds: string[];
     readonly directItems: StepLibraryItem[];
     count: number;
+    readonly groupId?: string;
+    readonly scenarioGroupId?: string;
+    readonly groupOrder?: number;
 }
 
 interface SearchEntry {
@@ -57,7 +72,9 @@ const SOURCE_GROUPS: readonly StepLibrarySourceGroup[] = Object.freeze([
     'user',
     'export',
     'nested',
-    'main'
+    'main',
+    'process',
+    'standalone'
 ]);
 
 const SOURCE_LABELS: Readonly<Record<StepLibrarySourceGroup, string>> = Object.freeze({
@@ -65,7 +82,9 @@ const SOURCE_LABELS: Readonly<Record<StepLibrarySourceGroup, string>> = Object.f
     user: 'User steps',
     export: 'Export scenarios',
     nested: 'Nested scenarios',
-    main: 'Main scenarios'
+    main: 'Main scenarios',
+    process: 'Processes',
+    standalone: 'Standalone features'
 });
 
 const DEFAULT_PAGE_SIZE = 100;
@@ -131,12 +150,15 @@ function definitionNode(
         id: `definition:${encodeURIComponent(item.id)}`,
         kind: 'definition' as const,
         label: item.displayText,
+        definitionType: item.processUri ? 'process' as const : item.kind,
         depth,
         expandable: item.hasScenarioFiles === true,
         itemId: item.id,
         definitionId: item.definitionId,
         insertable: item.insertable,
         navigable: item.navigable,
+        ...(item.navigable && item.capturedLocation && ['mainScenario', 'process', 'nestedScenario', 'exportScenario'].includes(item.kind)
+            && /^file:.*\.ya?ml$/iu.test(item.capturedLocation.uri) ? { scenarioPropertiesUri: item.capturedLocation.uri } : {}),
         ...(item.insertable ? { dragText: buildDragText(item, preferredLanguage) } : {}),
         ...(item.alternateDisplayText ? { alternateLabel: item.alternateDisplayText } : {}),
         ...(item.description ? { description: item.description } : {}),
@@ -145,11 +167,20 @@ function definitionNode(
         ...(item.hasScenarioFiles ? { hasScenarioFiles: true as const } : {}),
         ...(item.compiledFeatureUri ? { compiledFeatureUri: item.compiledFeatureUri } : {}),
         ...(item.scenarioFilesRootUri ? { scenarioFilesRootUri: item.scenarioFilesRootUri } : {}),
-        favorite: favoriteItemIds.has(item.id)
+        ...(item.sourceScenarioFilesRootUri ? { sourceScenarioFilesRootUri: item.sourceScenarioFilesRootUri } : {}),
+        favorite: favoriteItemIds.has(item.id),
+        ...(item.featureId ? { featureId: item.featureId, groupId: item.groupId ?? '', order: item.order, jsonPath: item.jsonPath } : {})
     });
 }
 
 function stableItemOrder(left: StepLibraryItem, right: StepLibraryItem): number {
+    if (left.sourceGroup === 'standalone' && right.sourceGroup === 'standalone') {
+        return (left.order ?? 0) - (right.order ?? 0) || compareText(left.id, right.id);
+    }
+    if ((left.sourceGroup === 'main' || left.sourceGroup === 'process') && left.sourceGroup === right.sourceGroup) {
+        const order = (left.order ?? Infinity) - (right.order ?? Infinity);
+        if (order) { return order; }
+    }
     return compareText(normalizeText(left.displayText), normalizeText(right.displayText))
         || compareText(left.id, right.id);
 }
@@ -214,7 +245,9 @@ export class StepLibrarySidebarIndex {
     private constructor(
         items: readonly StepLibraryItem[],
         private readonly preferredLanguage: 'ru' | 'en',
-        private readonly favoriteItemIds: ReadonlySet<string>
+        private readonly favoriteItemIds: ReadonlySet<string>,
+        standaloneGroups?: readonly StandaloneFeatureGroup[],
+        scenarioGroups?: readonly ProjectGroup[]
     ) {
         const branches = new Map<string, CategoryBranch>();
         const itemsById = new Map<string, StepLibraryItem>();
@@ -233,6 +266,33 @@ export class StepLibrarySidebarIndex {
             });
         }
 
+        for (const group of scenarioGroups ?? []) {
+            for (const section of group.sections) {
+                if (section !== 'main' && section !== 'process') { continue; }
+                const key = (group as import('./projectGroupDisplayOrder').ProjectDisplayGroup).key;
+                const id = key ? `category:${section}:group:${encodeURIComponent(key)}` : categoryId(section, [group.name]);
+                branches.set(id, {
+                    id, label: group.name, depth: 1, sourceGroup: section,
+                    scenarioGroupId: group.id, groupOrder: (group as import('./projectGroupDisplayOrder').ProjectDisplayGroup).displayOrders?.[section] ?? group.order,
+                    childIds: [], directItems: [], count: 0
+                });
+                branches.get(sourceId(section))!.childIds.push(id);
+            }
+        }
+
+        const standaloneCategoryId = (groupId: string, displayKey?: string) => `category:standalone:${encodeURIComponent(displayKey ?? groupId) || '#ungrouped'}`;
+        if (standaloneGroups) {
+            const source = branches.get(sourceId('standalone'))!;
+            for (const group of [{ id: '', name: 'Ungrouped' }, ...standaloneGroups]) {
+                const id = standaloneCategoryId(group.id, 'projectRoot' in group && group.projectRoot ? JSON.stringify([group.projectRoot, group.id]) : undefined);
+                branches.set(id, {
+                    id, label: group.name, depth: 1, sourceGroup: 'standalone', groupId: group.id,
+                    childIds: [], directItems: [], count: 0
+                });
+                source.childIds.push(id);
+            }
+        }
+
         for (const item of items) {
             itemsById.set(item.id, item);
             sourceCounts.set(item.sourceGroup, (sourceCounts.get(item.sourceGroup) ?? 0) + 1);
@@ -241,6 +301,20 @@ export class StepLibrarySidebarIndex {
             const effectivePath = categoryPath.length > 0 ? categoryPath : [];
             let parent = source;
             const ancestorIds = [source.id];
+
+            if (item.sourceGroup === 'standalone') {
+                const id = standaloneCategoryId(item.groupId ?? '', item.standaloneGroupKey);
+                let group = branches.get(id);
+                if (!group) {
+                    group = { id, label: categoryPath[0] || 'Ungrouped', depth: 1,
+                        sourceGroup: 'standalone', groupId: item.groupId ?? '', childIds: [], directItems: [], count: 0 };
+                    branches.set(id, group);
+                    source.childIds.push(id);
+                }
+                group.directItems.push(item);
+                ancestorIdsByItemId.set(item.id, Object.freeze([...ancestorIds, id]));
+                continue;
+            }
 
             if (effectivePath.length === 0) {
                 const uncategorizedId = categoryId(item.sourceGroup, []);
@@ -263,7 +337,8 @@ export class StepLibrarySidebarIndex {
             } else {
                 for (let index = 0; index < effectivePath.length; index += 1) {
                     const path = effectivePath.slice(0, index + 1);
-                    const id = categoryId(item.sourceGroup, path);
+                    const id = index === 0 && item.scenarioGroupKey
+                        ? `category:${item.sourceGroup}:group:${encodeURIComponent(item.scenarioGroupKey)}` : categoryId(item.sourceGroup, path);
                     let branch = branches.get(id);
                     if (!branch) {
                         branch = {
@@ -292,8 +367,15 @@ export class StepLibrarySidebarIndex {
             branch.count = total;
             branch.directItems.sort(stableItemOrder);
             branch.childIds.sort((leftId, rightId) => {
+                if (branch.sourceGroup === 'standalone') {
+                    return 0;
+                }
                 const left = branches.get(leftId)!;
                 const right = branches.get(rightId)!;
+                if (branch.sourceGroup === 'main' || branch.sourceGroup === 'process') {
+                    const groupOrder = (left.groupOrder ?? Infinity) - (right.groupOrder ?? Infinity);
+                    if (groupOrder) { return groupOrder; }
+                }
                 if (left.label === UNCATEGORIZED_LABEL) {
                     return right.label === UNCATEGORIZED_LABEL ? 0 : 1;
                 }
@@ -326,13 +408,13 @@ export class StepLibrarySidebarIndex {
                 depth: 0,
                 expandable: this.favoriteItems.length > 0
             }),
-            ...SOURCE_GROUPS.map(group => Object.freeze({
+            ...SOURCE_GROUPS.filter(group => group !== 'standalone' || standaloneGroups !== undefined || (sourceCounts.get(group) ?? 0) > 0).map(group => Object.freeze({
             id: sourceId(group),
             kind: 'source' as const,
             label: SOURCE_LABELS[group],
             count: sourceCounts.get(group) ?? 0,
             depth: 0,
-            expandable: (sourceCounts.get(group) ?? 0) > 0,
+            expandable: branches.get(sourceId(group))!.childIds.length > 0,
             sourceGroup: group
             }))
         ]);
@@ -357,7 +439,9 @@ export class StepLibrarySidebarIndex {
         return new StepLibrarySidebarIndex(
             selectBuiltInFamilies(snapshot.items, preferredLanguage),
             preferredLanguage,
-            favoriteItemIds
+            favoriteItemIds,
+            snapshot.standaloneGroups,
+            snapshot.scenarioGroups
         );
     }
 
@@ -432,7 +516,11 @@ export class StepLibrarySidebarIndex {
                     count: child.count,
                     depth: child.depth,
                     expandable: child.count > 0,
-                    sourceGroup: child.sourceGroup
+                    sourceGroup: child.sourceGroup,
+                    ...((child.sourceGroup === 'main' || child.sourceGroup === 'process') && child.depth === 1 && child.directItems[0]
+                        ? { renameGroupItemId: child.directItems[0].id } : {}),
+                    ...(child.groupId !== undefined ? { groupId: child.groupId } : {}),
+                    ...(child.scenarioGroupId !== undefined ? { scenarioGroupId: child.scenarioGroupId, groupOrder: child.groupOrder } : {})
                 });
             })
             : [];

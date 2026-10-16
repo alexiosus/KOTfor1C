@@ -7,6 +7,7 @@
     <link href="${codiconsUri}" rel="stylesheet">
     <link href="${stylesUri}" rel="stylesheet">
     <link href="${sidebarStylesUri}" rel="stylesheet">
+    <link href="${standaloneStylesUri}" rel="stylesheet">
 </head>
 <body>
     <div class="app-shell phase-switcher-app">
@@ -40,8 +41,11 @@
                 <button id="clearSelectionBtn" class="selection-clear-btn" type="button">${loc.clearSelection}</button>
             </div>
 
-            <div id="phaseTreeContainer" class="phase-tree-container manager-view-panel kot-tree" role="tree">
-                <p class="kot-loading">${loc.loadingPhasesAndTests}</p>
+            <div class="manager-trees-scroll">
+                <div id="phaseTreeContainer" class="phase-tree-container manager-view-panel kot-tree" role="tree">
+                    <p class="kot-loading">${loc.loadingPhasesAndTests}</p>
+                </div>
+                <div id="standaloneFeatureTree" class="kot-tree" role="tree"></div>
             </div>
 
             <div class="phase-switcher-controls-fixed-bottom surface-card">
@@ -69,6 +73,7 @@
                                         </button>
                                     </div>
                                 </div>
+                                <button id="openCompilerBuildReportBtn" class="run-mode-menu-item" type="button"><span class="codicon codicon-checklist"></span><span>${loc.openBuildReport}</span></button>
                                 <div id="driveAccountingModeRow" class="dropdown-control-row assemble-option-group" title="${loc.recordGLSelectTitle}">
                                     <label for="recordGLSelect" class="drive-accounting-label section-label">${loc.accountingMode}</label>
                                     <select id="recordGLSelect" class="surface-select assemble-profile-select" aria-label="${loc.accountingMode}" title="${loc.recordGLSelectTitle}">
@@ -92,8 +97,10 @@
         </section>
     </div>
     <script type="application/javascript" nonce="${nonce}">window.__loc = ${webviewLoc};</script>
+    <script type="application/javascript" nonce="${nonce}">window.__standaloneFeatureLabels = ${standaloneFeatureLabels};</script>
     <script type="application/javascript" nonce="${nonce}" src="${protocolScriptUri}"></script>
     <script type="application/javascript" nonce="${nonce}" src="${scenarioFilesProtocolScriptUri}"></script>
+    <script type="application/javascript" nonce="${nonce}" src="${standaloneScriptUri}"></script>
     <script type="application/javascript" nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>

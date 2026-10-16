@@ -7,6 +7,19 @@
     const root = document.querySelector('.step-sidebar');
     const loc = root.dataset;
     const tree = document.getElementById('tree');
+    const treeScroll = document.getElementById('treeScroll') || tree;
+    let standaloneItems = [];
+    const featureActions = globalThis.StepLibraryFeatureProtocol.createController({
+        postMessage: message => vscode.postMessage(message),
+        getFeatures: () => standaloneItems,
+        getItemActions: node => node.kind === 'definition' && node.itemId ? [
+            { id: 'toggleFavorite', label: node.favorite ? loc.removeFavorite : loc.addFavorite },
+            ...(node.insertable === true ? [{ id: 'insert', label: loc.insertStep, disabled: !insertionAvailable }] : []),
+            { id: 'copy', label: loc.copyStep },
+            ...(node.navigable === true ? [{ id: 'openDefinition', label: loc.openDefinition }] : [])
+        ] : [],
+        labels: window.__standaloneFeatureLabels || {}
+    });
     const searchInput = document.getElementById('searchInput');
     const searchClearBtn = document.getElementById('searchClearBtn');
     const status = document.getElementById('status');
@@ -31,6 +44,8 @@
     const collapsingNodeIds = new Set();
     const nodesById = new Map();
     const childrenByParent = new Map();
+    const retainedChildCounts = new Map();
+    let pendingFeatureFocus = null;
     const requestedParents = new Set();
     const pendingParents = new Set();
     const resourceParentIdsByItem = new Map();
@@ -51,14 +66,16 @@
             vscode.postMessage({
                 command: 'revealScenarioFile',
                 itemId: node.itemId,
+                ...(node.resource ? { resource: node.resource } : {}),
                 relativePath: node.relativePath || ''
             });
             return;
         }
-        if (actionId === 'delete' && node.kind === 'file') {
+        if ((actionId === 'delete' || actionId === 'rename') && node.kind === 'file') {
             vscode.postMessage({
-                command: 'deleteScenarioFile',
+                command: actionId === 'rename' ? 'renameScenarioFile' : 'deleteScenarioFile',
                 itemId: node.itemId,
+                ...(node.resource ? { resource: node.resource } : {}),
                 relativePath: node.relativePath
             });
         }
@@ -125,9 +142,10 @@
 
     function persistState() {
         vscode.setState({
+            ...(vscode.getState() || {}),
             expandedIds: [...uiState.expandedIds],
             selectedId: uiState.selectedId,
-            scrollTop: tree.scrollTop
+            scrollTop: treeScroll.scrollTop
         });
     }
 
@@ -224,6 +242,7 @@
             vscode.postMessage({
                 command,
                 itemId: node.itemId,
+                ...(node.resource ? { resource: node.resource } : {}),
                 relativePath: node.relativePath || ''
             });
         });
@@ -231,6 +250,11 @@
     }
 
     function nodeIconName(node) {
+        if (node.definitionType) {
+            return { process: 'list-ordered', mainScenario: 'file', standaloneFeature: 'file-code', builtInStep: 'extensions',
+                userStep: 'symbol-method', exportScenario: 'package', nestedScenario: 'references' }[node.definitionType] || 'symbol-method';
+        }
+        if (node.featureId) { return 'file'; }
         if (node.id === 'favorites') {
             return 'star-full';
         }
@@ -251,7 +275,9 @@
             user: 'symbol-method',
             export: 'package',
             nested: 'references',
-            main: 'files'
+            main: 'files',
+            process: 'list-ordered',
+            standalone: 'file-code'
         }[node.sourceGroup] || 'library';
     }
 
@@ -266,6 +292,8 @@
         row.setAttribute('role', 'treeitem');
         row.title = protocol.nodeTooltip(node);
         row.tabIndex = node.id === uiState.selectedId ? 0 : -1;
+        row.setAttribute('aria-level', String(node.depth + 1));
+        featureActions.install(row, node);
         if (['feature', 'attachments', 'directory', 'file'].includes(node.kind)) {
             row.addEventListener('contextmenu', event => {
                 showScenarioResourceContextMenu(event, node);
@@ -287,6 +315,7 @@
                 }
                 event.dataTransfer.effectAllowed = 'copy';
                 event.dataTransfer.setData('text/plain', node.dragText);
+                event.dataTransfer.setData('application/x-kot-step-definition-id', node.definitionId);
                 row.classList.add('is-dragging');
             });
             row.addEventListener('dragend', () => row.classList.remove('is-dragging'));
@@ -314,6 +343,7 @@
                 event.stopPropagation();
                 void transferController.beginDrop(event.dataTransfer, {
                     itemId: node.itemId,
+                    ...(node.resource ? { resource: node.resource } : node.sourceScenarioFilesRootUri ? { resource: 'source' } : {}),
                     relativePath: node.kind === 'definition' ? '' : (node.relativePath || '')
                 });
             });
@@ -330,20 +360,22 @@
         }
         row.appendChild(toggle);
 
-        if (node.kind !== 'definition') {
+        {
             const nodeIcon = document.createElement('span');
             nodeIcon.className = 'step-node-icon';
             nodeIcon.appendChild(createIcon(nodeIconName(node)));
             row.appendChild(nodeIcon);
         }
 
-        const label = document.createElement(node.kind === 'definition' ? 'pre' : 'span');
-        label.className = node.kind === 'definition'
+        const isStep = node.kind === 'definition' && !node.featureId
+            && !['mainScenario', 'process', 'standaloneFeature'].includes(node.definitionType) && node.sourceGroup !== 'main';
+        const label = document.createElement(isStep ? 'pre' : 'span');
+        label.className = isStep
             ? 'kot-tree-label step-code'
             : 'kot-tree-label';
         const labelContent = document.createElement('span');
         labelContent.className = 'kot-scroll-content';
-        if (node.kind === 'definition') {
+        if (isStep) {
             appendSyntax(labelContent, node.label);
         } else {
             labelContent.textContent = node.label;
@@ -356,11 +388,13 @@
             relationshipFilterEnabled,
             relationshipVisibleCounts
         );
+        const groupActionBeforeCount = node.sourceGroup === 'standalone' && !node.featureId || featureActions.canRenameGroup(node);
+        let count = null;
         if (typeof displayedCount === 'number') {
-            const count = document.createElement('span');
+            count = document.createElement('span');
             count.className = 'step-count kot-tree-count';
             count.textContent = String(displayedCount);
-            row.appendChild(count);
+            if (!groupActionBeforeCount) { row.appendChild(count); }
         }
 
         const decoration = relationshipDecoration(node);
@@ -411,6 +445,7 @@
             || node.kind === 'file'
         )) {
             if (node.kind === 'file') {
+                actions.appendChild(createResourceActionButton('renameScenarioFile', 'edit', loc.renameAttachment || 'Rename attachment', node));
                 actions.appendChild(createResourceActionButton(
                     'openScenarioFile',
                     'link-external',
@@ -425,7 +460,13 @@
                 node
             ));
         }
+        if (node.sourceGroup === 'standalone' && node.kind !== 'more' && !node.featureId) {
+            featureActions.appendTreeActionButton(actions, node, 'kot-icon-button step-action');
+        } else if (featureActions.canRenameGroup(node)) {
+            featureActions.appendMenuButton(actions, node, 'kot-icon-button step-action');
+        }
         row.appendChild(actions);
+        if (groupActionBeforeCount && count) { row.appendChild(count); }
         return row;
     }
 
@@ -557,7 +598,20 @@
     }
 
     function render() {
-        const scrollTop = tree.scrollTop;
+        let scrollTop = treeScroll.scrollTop;
+        const active = document.activeElement;
+        if (active instanceof HTMLElement && tree.contains(active)
+            && active.classList.contains('step-row') && active.dataset.featureId) {
+            const siblings = [...tree.querySelectorAll('.step-row')]
+                .filter(row => row.dataset.parentId === active.dataset.parentId && row.dataset.featureId);
+            pendingFeatureFocus = { nodeId: active.dataset.nodeId, parentId: active.dataset.parentId,
+                index: siblings.indexOf(active), scrollTop };
+        } else if (pendingFeatureFocus && active && active !== document.body && !tree.contains(active)) {
+            pendingFeatureFocus = null;
+        }
+        if (pendingFeatureFocus) {
+            scrollTop = pendingFeatureFocus.scrollTop;
+        }
         nodesById.clear();
         const fragment = document.createDocumentFragment();
         const visibleRoots = (searchResults === null ? roots : searchResults)
@@ -566,16 +620,41 @@
             appendNode(fragment, node, '', false);
         }
         tree.replaceChildren(fragment);
-        tree.scrollTop = persisted.scrollTop !== undefined && roots.length > 0
+        treeScroll.scrollTop = persisted.scrollTop !== undefined && roots.length > 0
             ? persisted.scrollTop
             : scrollTop;
         persisted.scrollTop = undefined;
+        if (!pendingFeatureFocus) {
+            scrollTop = treeScroll.scrollTop;
+        }
         const enteringBranches = [...tree.querySelectorAll('.step-children.is-entering')];
         for (const enteringBranch of enteringBranches) {
             animateExpandedBranch(enteringBranch);
             pendingExpansionAnimations.consume(enteringBranch.dataset.expansionId || '');
         }
         bulkEnteringNodeIds.clear();
+        if (pendingFeatureFocus) {
+            const pending = pendingFeatureFocus;
+            const rows = [...tree.querySelectorAll('.step-row')];
+            let target = rows.find(row => row.dataset.nodeId === pending.nodeId && row.dataset.parentId === pending.parentId);
+            if (!target && childrenByParent.has(pending.parentId) && !retainedChildCounts.has(pending.parentId)) {
+                const siblings = rows.filter(row => row.dataset.parentId === pending.parentId && row.dataset.featureId);
+                target = siblings[Math.min(Math.max(0, pending.index), siblings.length - 1)]
+                    || rows.find(row => row.dataset.nodeId === pending.parentId);
+            }
+            if (!target && pending.parentId && pending.parentId !== 'favorites' && childrenByParent.has('source:standalone')
+                && !childrenByParent.get('source:standalone').some(node => node.id === pending.parentId)) {
+                target = rows.find(row => row.dataset.nodeId === 'source:standalone');
+            }
+            if (target) {
+                uiState = protocol.selectNode(uiState, target.dataset.nodeId);
+                target.tabIndex = 0;
+                target.focus({ preventScroll: true });
+                pendingFeatureFocus = null;
+                persistState();
+            }
+        }
+        treeScroll.scrollTop = scrollTop;
         requestAnimationFrame(() => updateLabelOverflow());
     }
 
@@ -632,6 +711,7 @@
             vscode.postMessage({
                 command: 'listScenarioFiles',
                 itemId: parent.itemId,
+                ...(parent.resource ? { resource: parent.resource } : {}),
                 relativePath: '',
                 requestId: parent.id
             });
@@ -641,6 +721,7 @@
             vscode.postMessage({
                 command: 'listScenarioFiles',
                 itemId: parent.itemId,
+                ...(parent.resource ? { resource: parent.resource } : {}),
                 relativePath: parent.relativePath || '',
                 requestId: parent.id
             });
@@ -674,6 +755,7 @@
             vscode.postMessage({
                 command: 'setScenarioFilesExpanded',
                 itemId: node.itemId,
+                ...(node.resource ? { resource: node.resource } : {}),
                 expanded: !wasExpanded
             });
         }
@@ -802,6 +884,10 @@
     }
 
     function activateNode(node, openDefinition) {
+        if (node?.featureId) {
+            featureActions.send('openFeature', node);
+            return;
+        }
         if (node?.kind === 'feature') {
             vscode.postMessage({
                 command: 'openCompiledScenarioFeature',
@@ -813,6 +899,7 @@
             vscode.postMessage({
                 command: 'openScenarioFile',
                 itemId: node.itemId,
+                ...(node.resource ? { resource: node.resource } : {}),
                 relativePath: node.relativePath
             });
             return;
@@ -906,6 +993,7 @@
     window.addEventListener('message', event => {
         const message = event.data || {};
         closeScenarioResourceContextMenu();
+        featureActions.closeMenu();
         if (transferController.handleMessage(message)) {
             return;
         }
@@ -916,6 +1004,12 @@
             case 'roots':
                 bulkExpansion.cancel();
                 if (libraryIdentity !== null && libraryIdentity !== message.identity) {
+                    retainedChildCounts.clear();
+                    for (const [parentId, children] of childrenByParent) {
+                        if (children.some(node => node.featureId)) {
+                            retainedChildCounts.set(parentId, children.filter(node => node.kind === 'definition').length);
+                        }
+                    }
                     childrenByParent.clear();
                     requestedParents.clear();
                     pendingParents.clear();
@@ -942,6 +1036,7 @@
                     }
                 }
                 roots = Array.isArray(message.nodes) ? message.nodes : [];
+                standaloneItems = Array.isArray(message.standaloneItems) ? message.standaloneItems : [];
                 searchResults = null;
                 insertionAvailable = message.insertionTarget?.available === true;
                 relationshipState = message.relationshipState || relationshipState;
@@ -952,6 +1047,9 @@
                 uiState = protocol.withRelationshipState(uiState, relationshipState);
                 status.textContent = '';
                 render();
+                if (searchInput.value.trim()) {
+                    vscode.postMessage({ command: 'search', query: searchInput.value });
+                }
                 break;
             case 'children': {
                 pendingParents.delete(`${message.parentId}\0${message.offset}`);
@@ -959,6 +1057,15 @@
                     ? childrenByParent.get(message.parentId).filter(node => node.kind !== 'more')
                     : [];
                 childrenByParent.set(message.parentId, [...current, ...(message.nodes || [])]);
+                const retainedCount = retainedChildCounts.get(message.parentId);
+                if (retainedCount !== undefined) {
+                    const loadedCount = childrenByParent.get(message.parentId).filter(node => node.kind === 'definition').length;
+                    if (loadedCount < retainedCount && message.nextOffset !== null && message.nextOffset !== undefined) {
+                        requestChildren(message.parentId, message.nextOffset);
+                    } else {
+                        retainedChildCounts.delete(message.parentId);
+                    }
+                }
                 if (!bulkExpansion.childrenLoaded(message.parentId)) {
                     render();
                 }
@@ -1013,7 +1120,7 @@
                 status.textContent = message.message || loc.resourceActionFailed;
                 break;
             case 'scenarioFileActionResult':
-                if (message.action === 'delete' && message.succeeded) {
+                if ((message.action === 'delete' || message.action === 'rename') && message.succeeded) {
                     for (const parentId of resourceParentIdsByItem.get(message.itemId) || []) {
                         childrenByParent.delete(parentId);
                         for (const key of [...requestedParents]) {
@@ -1060,13 +1167,19 @@
                 break;
             case 'actionResult':
                 break;
+            case 'standaloneFeatureActionResult':
+                if (message.succeeded === false) { status.textContent = message.message || loc.error; }
+                break;
             case 'error':
                 status.textContent = message.message || loc.error;
                 break;
         }
     });
 
-    window.addEventListener('unload', () => transferController.dispose());
+    window.addEventListener('unload', () => {
+        transferController.dispose();
+        featureActions.closeMenu();
+    });
 
     vscode.postMessage({ command: 'ready' });
 }());

@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
 import * as projectDefinitionSnippet from '../src/projectDefinitionSnippet';
+import * as compilerSyntax from '../src/scenarioCompilerSyntax';
 
 interface Definition {
     id: string;
@@ -102,6 +103,7 @@ function loadProvider(fileName: string): Record<string, unknown> {
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './scenarioCompilerSyntax') { return compilerSyntax; }
             if (specifier === 'vscode') {
                 return vscode;
             }
@@ -150,6 +152,24 @@ function definition(overrides: Partial<Definition> & Pick<Definition, 'id' | 'ki
         ...overrides
     };
 }
+
+test('scenario hover uses shared descriptions immediately after Git changes instead of legacy source text', async () => {
+    const exports = loadProvider('hoverProvider.ts');
+    const Provider = exports.DriveHoverProvider as { prototype: object };
+    const provider = Object.create(Provider.prototype);
+    provider.scenarioHoverCache = new Map();
+    provider.scenarioHoverCacheTtlMs = 8000;
+    let reads = 0;
+    provider.countFilesInScenarioFilesFolder = async () => { reads++; return 2; };
+    provider.getScenarioDescriptionInfo = async () => { throw new Error('Legacy description must not override project metadata'); };
+    const info = { yamlFileUri: { toString: () => 'file:///repo/scen.yaml' }, scenarioDescription: 'Shared description' };
+    assert.equal((await provider.getScenarioHoverCachedData(info)).descriptionInfo.description, 'Shared description');
+    assert.equal((await provider.getScenarioHoverCachedData(info)).descriptionInfo.description, 'Shared description');
+    assert.equal(reads, 1);
+    assert.equal((await provider.getScenarioHoverCachedData({ ...info, scenarioDescription: 'Git updated description' })).descriptionInfo.description, 'Git updated description');
+    assert.equal(reads, 2);
+    assert.equal((await provider.getScenarioHoverCachedData({ ...info, scenarioDescription: '' })).descriptionInfo.description, '');
+});
 
 test('completion includes project definitions, preserves duplicate sources, and ranks them before built-ins', async () => {
     const exports = loadProvider('completionProvider.ts');

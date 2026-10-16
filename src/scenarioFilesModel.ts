@@ -3,6 +3,19 @@ import { pathToFileURL } from 'node:url';
 import type { StepLibraryItem } from './stepLibraryModel';
 
 export type ScenarioFileNodeKind = 'directory' | 'file';
+export type ScenarioFileResource = 'source' | 'compiled';
+
+/** Resource selectors never accept a path from the webview; roots come from the trusted snapshot. */
+export function scenarioFilesItemForResource(item: StepLibraryItem | undefined, resource?: ScenarioFileResource): StepLibraryItem | undefined {
+    if (!item || resource !== 'source') { return item; }
+    return item.sourceScenarioFilesRootUri
+        ? { ...item, scenarioFilesRootUri: item.sourceScenarioFilesRootUri }
+        : item.kind === 'nestedScenario' ? item : undefined;
+}
+
+export function scopeScenarioFileNodes(nodes: readonly ScenarioFileNode[], resource?: ScenarioFileResource): readonly ScenarioFileNode[] {
+    return resource ? nodes.map(node => ({ ...node, id: `${node.id}:${resource}`, resource })) : nodes;
+}
 
 export interface ScenarioFileNode {
     readonly id: string;
@@ -12,6 +25,7 @@ export interface ScenarioFileNode {
     readonly relativePath: string;
     readonly depth: number;
     readonly expandable: boolean;
+    readonly resource?: ScenarioFileResource;
 }
 
 export interface ScenarioFileManifestEntry {
@@ -90,8 +104,8 @@ export function scenarioFilesAvailable(
 ): boolean {
     if (
         item.id.length > 0
-        && item.kind === 'mainScenario'
-        && item.sourceGroup === 'main'
+        && (item.kind === 'mainScenario' || item.kind === 'process')
+        && (item.sourceGroup === 'main' || item.sourceGroup === 'process')
         && /^file:/iu.test(item.scenarioFilesRootUri ?? '')
     ) {
         return true;

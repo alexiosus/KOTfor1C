@@ -184,6 +184,49 @@ test('matches an empty quoted value for a Vanessa placeholder', () => {
     }
 });
 
+test('resolves compiler loop openings to Vanessa definitions with original source ranges', () => {
+    for (const [template, invocation, body] of [
+        ['And I repeat "%1 Count" times', '    Do I repeat "10" times  ', 'I repeat "10" times'],
+        ['И я делаю "%1 Count" раз', '    Цикл я делаю "10" раз  ', 'я делаю "10" раз'],
+        ['And I repeat "%1 Count" times', '    Do And I repeat "10" times', 'I repeat "10" times']
+    ]) {
+        const loop = makeDefinition({ kind: 'builtInStep', template,
+            parameters: [{ name: 'Count', index: 0, source: 'quoted' }] });
+        const result = resolveProjectInvocation(createProjectDefinitionView('loop', [loop]), invocation);
+        assert.equal(result.kind, 'unique', invocation);
+        if (result.kind !== 'unique') { continue; }
+        assert.equal(result.match.arguments[0].value, '10');
+        assert.equal(invocation.slice(result.match.arguments[0].start, result.match.arguments[0].end), '10');
+        assert.equal(invocation.slice(result.match.invocationRange.start, result.match.invocationRange.end), body);
+    }
+});
+
+test('preserves Do and Цикл as part of scenario and user-step definition names', () => {
+    for (const kind of ['nestedScenario', 'exportScenario', 'userStep'] as const) {
+        for (const [template, invocation] of [['Do cleanup', 'And Do cleanup'], ['Цикл продаж', 'И Цикл продаж']]) {
+            const item = makeDefinition({ kind, template });
+            const view = createProjectDefinitionView('name', [item]);
+            assert.equal(resolveProjectInvocation(view, invocation).kind, 'unique', `${kind}: ${invocation}`);
+            assert.ok(compileProjectDefinitionMatcher(item).match(invocation), `${kind}: ${invocation}`);
+        }
+    }
+});
+
+test('matches built-in templates that already contain a compiler loop opener', () => {
+    for (const [template, invocation] of [
+        ['Do I repeat "%1 Count" times', 'Do I repeat "10" times'],
+        ['Цикл я делаю "%1 Count" раз', 'Цикл я делаю "10" раз']
+    ]) {
+        const loop = makeDefinition({ kind: 'builtInStep', template,
+            parameters: [{ name: 'Count', index: 0, source: 'quoted' }] });
+        const result = resolveProjectInvocation(createProjectDefinitionView('explicit-loop', [loop]), invocation);
+        assert.equal(result.kind, 'unique', invocation);
+        if (result.kind === 'unique') {
+            assert.equal(result.match.arguments[0].value, '10');
+        }
+    }
+});
+
 test('accepts an unquoted numeric literal for a quoted Vanessa placeholder', () => {
     const definition = makeDefinition({
         kind: 'builtInStep',

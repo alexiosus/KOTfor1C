@@ -3,6 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import * as realBlockParser from '../src/blockKeywordParser';
+import * as compilerSyntax from '../src/scenarioCompilerSyntax';
+import * as scenarioParameterUtils from '../src/scenarioParameterUtils';
 
 type DefinitionKind = 'builtInStep' | 'userStep' | 'exportScenario' | 'nestedScenario';
 
@@ -157,10 +160,10 @@ function loadDiagnosticsModule(ignoredDiagnosticCodes: readonly string[] = []): 
                 return path;
             }
             if (specifier === './yamlValidator') {
-                return { isScenarioYamlFile: () => true };
+                return { isScenarioYamlFile: () => true, isCompilerYamlFile: () => true, collectYamlIndentationTabs: () => [], collectCompilerFormatDiagnostics: () => [] };
             }
             if (specifier === './scenarioParameterUtils') {
-                return { parseScenarioParameterDefaults: () => new Map<string, string>() };
+                return scenarioParameterUtils;
             }
             if (specifier === './gherkinLanguage') {
                 return {
@@ -169,8 +172,9 @@ function loadDiagnosticsModule(ignoredDiagnosticCodes: readonly string[] = []): 
                 };
             }
             if (specifier === './blockKeywordParser') {
-                return { parseBlockKeyword: () => null };
+                return realBlockParser;
             }
+            if (specifier === './scenarioCompilerSyntax') { return compilerSyntax; }
             if (specifier === './scenarioScanRoot') {
                 return { getScenarioScanRootPath: () => undefined };
             }
@@ -223,7 +227,7 @@ function match(item: Definition) {
 }
 
 function documentWithLine(invocation: string) {
-    const lines = ['ТекстСценария: |', `    ${invocation}`];
+    const lines = ['ТекстСценария: |', ...invocation.split('\n').map(line => `    ${line}`)];
     const uri = { scheme: 'file', fsPath: '/repo/scenario.yaml', toString: () => 'file:///repo/scenario.yaml' };
     return {
         fileName: '/repo/scenario.yaml',
@@ -334,6 +338,86 @@ const fullValidation = {
     includeScenarioSuggestions: true
 };
 
+test('compiler diagnostics reject crossed blocks, mixed delimiters and orphan branches', async () => {
+    for (const body of [
+        'If known Then\nDo known\nEndIf\nEndDo',
+        'Do known\nКонецЦикла',
+        '#Если Истина Тогда\nEndIf',
+        'Else', 'Except', 'If known Then\nElse\nElse\nEndIf'
+    ]) {
+        const known = definition('builtInStep');
+        const { provider, published } = createProvider({
+            resolve: async () => ({ kind: 'unique', match: match(known) }),
+            getView: async () => ({ identity: 'known', all: [known], byId: new Map(), byNormalizedTemplate: new Map() })
+        });
+        const document = documentWithLine(body);
+        await provider.validateDocument(document, fullValidation);
+        assert.ok((published.get(document.uri.toString()) ?? []).some(item => item.severity === 0), body);
+    }
+});
+
+test('compiler diagnostics ignore controls, quotes and missing steps in block comments and docstrings', async () => {
+    const { provider, published } = createProvider({
+        resolve: async () => ({ kind: 'missing' }),
+        getView: async () => ({ identity: 'empty', all: [], byId: new Map(), byNormalizedTemplate: new Map() })
+    });
+    const document = documentWithLine('/*\nEndDo\nAnd missing "\n*/\n"""\nEndIf\nAnd missing "\n"""');
+    await provider.validateDocument(document, fullValidation);
+    assert.equal((published.get(document.uri.toString()) ?? []).length, 0);
+});
+
+test('return mappings and parameters after a table are validated without requiring quoted results', async () => {
+    const nested = { ...definition('nestedScenario'), template: 'Child', parameters: [{ name: 'Rows' }, { name: 'Output' }] };
+    const { provider, published } = createProvider({
+        resolve: async () => ({ kind: 'unique', match: match(nested) }),
+        getView: async () => ({ identity: 'child', all: [nested], byId: new Map(), byNormalizedTemplate: new Map() })
+    });
+    const document = documentWithLine('And Child\n    Rows =\n        | Name |\n        | A |\n    Output = CallerOutput\n    Return Output as Result');
+    await provider.validateDocument(document, fullValidation);
+    assert.equal((published.get(document.uri.toString()) ?? []).some(item => item.code === 'kotTestToolkit.missingQuotes'), false);
+    const invalid = documentWithLine('And Child\n    Rows =\n        | Name |\n        | A |\n    Unknown = CallerOutput\n    Return Missing as Result');
+    await provider.validateDocument(invalid, fullValidation);
+    assert.equal((published.get(invalid.uri.toString()) ?? []).filter(item => item.code === 'kotTestToolkit.extraScenarioParameter').length, 2);
+});
+
+test('bindings need a nested scenario owner and cannot belong to a built-in step', async () => {
+    const known = definition('builtInStep');
+    const { provider, published } = createProvider({
+        resolve: async () => ({ kind: 'unique', match: match(known) }),
+        getView: async () => ({ identity: 'known', all: [known], byId: new Map(), byNormalizedTemplate: new Map() })
+    });
+    for (const body of ['Return Result', 'Rows =', 'Result = Saved', 'And known\n    Return Result']) {
+        const document = documentWithLine(body);
+        await provider.validateDocument(document, fullValidation);
+        assert.ok((published.get(document.uri.toString()) ?? []).some(item => item.code === 'kotTestToolkit.compilerSyntax'), body);
+    }
+});
+
+test('all compiler Gherkin prefixes can own nested scenario arguments', async () => {
+    const nested = { ...definition('nestedScenario'), template: 'Child', parameters: [{ name: 'Value' }] };
+    const { provider, published } = createProvider({
+        resolve: async () => ({ kind: 'unique', match: match(nested) }),
+        getView: async () => ({ identity: 'child', all: [nested], byId: new Map(), byNormalizedTemplate: new Map() })
+    });
+    for (const prefix of ['Given', 'When', 'Then', 'And', 'But', 'И', 'Когда', 'Тогда', 'Затем', 'Дано', 'Допустим', 'Пусть', 'То', 'К тому же', 'Также', 'Но', 'А']) {
+        const document = documentWithLine(`${prefix} Child\n    Value = 'Completed'`);
+        await provider.validateDocument(document, fullValidation);
+        assert.equal((published.get(document.uri.toString()) ?? []).some(item => item.code === 'kotTestToolkit.compilerSyntax'), false, prefix);
+    }
+});
+
+test('multiline scalar child defaults remain implicit and are not diagnosed as missing assignments', async () => {
+    const nested = { ...definition('nestedScenario'), template: 'Child',
+        parameters: [{ name: 'Text', defaultValue: '"hello\nworld"' }, { name: 'Amount', defaultValue: '"100"' }] };
+    const { provider, published } = createProvider({
+        resolve: async () => ({ kind: 'unique', match: match(nested) }),
+        getView: async () => ({ identity: 'child', all: [nested], byId: new Map(), byNormalizedTemplate: new Map() })
+    });
+    const document = documentWithLine('And Child\n    Amount = "100"');
+    await provider.validateDocument(document, fullValidation);
+    assert.equal((published.get(document.uri.toString()) ?? []).some(item => item.code === 'kotTestToolkit.missingScenarioParameter'), false);
+});
+
 test('Gherkin diagnostics use the .feature extension instead of a stale language mode', () => {
     const exports = loadDiagnosticsModule();
     const isGherkinFeatureDocument = exports.isGherkinFeatureDocument as (
@@ -424,6 +508,28 @@ test('missing project definition produces the existing unknown-step diagnostic',
 
     const diagnostics = published.get(document.uri.toString()) ?? [];
     assert.ok(diagnostics.some(item => item.code === 'kotTestToolkit.unknownStep'));
+});
+
+test('unknown compiler loop steps receive diagnostics and fixes retain delimiters and arguments', async () => {
+    for (const [invocation, template, expected] of [
+        ['Do I repeet "10" times', 'And I repeat "%1 Count" times', 'Do I repeat "10" times'],
+        ['Цикл я делаю "10" раа', 'И я делаю "%1 Count" раз', 'Цикл я делаю "10" раз']
+    ]) {
+        const candidate = { ...definition('builtInStep'), template, normalizedTemplate: template };
+        const { provider, published } = createProvider({
+            resolve: async () => ({ kind: 'missing', invocation }),
+            getView: async () => ({ identity: 'loop', all: [candidate], byId: new Map(), byNormalizedTemplate: new Map() })
+        });
+        const document = documentWithLine(invocation);
+        await provider.validateDocument(document, fullValidation);
+        const diagnostic = (published.get(document.uri.toString()) ?? [])
+            .find(item => item.code === 'kotTestToolkit.unknownStep');
+        assert.ok(diagnostic, invocation);
+        assert.ok(diagnostic.message.includes(expected), diagnostic.message);
+        const actions = await provider.provideCodeActions(document, diagnostic.range, { diagnostics: [diagnostic] }, { isCancellationRequested: false });
+        assert.ok(actions.some(action => action.edit?.replacements.some(replacement =>
+            (replacement as { value: string }).value === `    ${expected}`)), expected);
+    }
 });
 
 test('Feature diagnostics reuse project definitions for unknown steps', async () => {

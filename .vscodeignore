@@ -33,3 +33,9 @@ docs/**/*.jpeg
 docs/**/*.gif
 docs/**/*.webp
 docs/**/*.svg
+
+.kot/**
+tools/checkTestNumbering.cjs
+tools/updateVanessaParameterCatalog.cjs
+out/**
+!out/extension.js

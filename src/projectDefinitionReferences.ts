@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { getCompilerScenarioBody, scanCompilerLines } from './scenarioCompilerSyntax';
 import {
     collectTreeWithConcurrencyLimit,
     ConcurrencyCancelledError,
@@ -13,7 +14,7 @@ import type {
 } from './projectDefinition';
 import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 
-const CALLABLE_LINE = /^\s*(?:\*\s*)?(?:К\s+тому\s+же|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Но|И|If|Дано)\s+.+/iu;
+const CALLABLE_LINE = /^\s*(?:\*\s*)?(?:К\s+тому\s+же|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Но|И|If|Дано|Do|Цикл)\s+.+/iu;
 const IGNORED_DIRECTORIES = new Set(['.git', '.svn', 'node_modules']);
 
 export interface ProjectDefinitionReferenceSearchRoot {
@@ -39,6 +40,7 @@ interface OpenDocumentLike {
     readonly fileName: string;
     readonly version: number;
     readonly isUntitled: boolean;
+    readonly isDirty?: boolean;
     getText(): string;
 }
 
@@ -58,6 +60,8 @@ export interface ProjectDefinitionReferenceServiceOptions {
 
 export interface ProjectDefinitionReferenceOptions {
     readonly includeDeclaration: boolean;
+    /** Mutating refactors require a complete scan of saved sources. */
+    readonly failOnScanError?: boolean;
 }
 
 interface ResolvedSearchRoot {
@@ -182,13 +186,13 @@ export class ProjectDefinitionReferenceService {
         try {
             const [view, roots] = await Promise.all([
                 this.#options.resolver.getView(resource),
-                this.#resolveSearchRoots(resource, token)
+                this.#resolveSearchRoots(resource, token, options.failOnScanError)
             ]);
             if (token.isCancellationRequested) {
                 return emptyResult();
             }
             const availableIds = requestedIds.filter(id => view.byId.has(id));
-            const sources = await this.#enumerateSources(roots, token);
+            const sources = await this.#enumerateSources(roots, token, options.failOnScanError);
             if (token.isCancellationRequested) {
                 return emptyResult();
             }
@@ -198,7 +202,7 @@ export class ProjectDefinitionReferenceService {
             const records = await runWithConcurrencyLimit(
                 sourceList,
                 this.#options.readConcurrency ?? 4,
-                source => this.#readReferenceFile(source, view, token),
+                source => this.#readReferenceFile(source, view, token, options.failOnScanError),
                 {
                     shouldCancel: () => token.isCancellationRequested,
                     yieldEvery: this.#options.yieldEvery ?? 24,
@@ -254,6 +258,7 @@ export class ProjectDefinitionReferenceService {
             }
             return result;
         } catch (error) {
+            if (options.failOnScanError) { throw error; }
             if (error instanceof ConcurrencyCancelledError || token.isCancellationRequested) {
                 return emptyResult();
             }
@@ -264,7 +269,8 @@ export class ProjectDefinitionReferenceService {
 
     async #resolveSearchRoots(
         resource: vscode.Uri | undefined,
-        token: Pick<vscode.CancellationToken, 'isCancellationRequested'>
+        token: Pick<vscode.CancellationToken, 'isCancellationRequested'>,
+        failOnScanError = false
     ): Promise<ResolvedSearchRoot[]> {
         const configured = await this.#options.loadSearchRoots(resource);
         const merged = new Map<string, {
@@ -287,6 +293,7 @@ export class ProjectDefinitionReferenceService {
                 item.extensions.forEach(extension => current.extensions.add(normalizeExtension(extension)));
                 merged.set(key, current);
             } catch (error) {
+                if (failOnScanError) { throw error; }
                 this.#options.log?.(`Cannot resolve reference search root ${item.path}: ${String(error)}`);
             }
         }
@@ -299,7 +306,8 @@ export class ProjectDefinitionReferenceService {
 
     async #enumerateSources(
         roots: readonly ResolvedSearchRoot[],
-        token: Pick<vscode.CancellationToken, 'isCancellationRequested'>
+        token: Pick<vscode.CancellationToken, 'isCancellationRequested'>,
+        failOnScanError = false
     ): Promise<Map<string, ReferenceSource>> {
         const sources = new Map<string, ReferenceSource>();
         for (const root of roots) {
@@ -326,6 +334,7 @@ export class ProjectDefinitionReferenceService {
                         }
                         return { children, values };
                     } catch (error) {
+                        if (failOnScanError) { throw error; }
                         this.#options.log?.(`Cannot enumerate reference directory ${directoryPath}: ${String(error)}`);
                         return { children: [], values: [] };
                     }
@@ -375,7 +384,8 @@ export class ProjectDefinitionReferenceService {
     async #readReferenceFile(
         source: ReferenceSource,
         view: ProjectDefinitionView,
-        token: Pick<vscode.CancellationToken, 'isCancellationRequested'>
+        token: Pick<vscode.CancellationToken, 'isCancellationRequested'>,
+        failOnScanError = false
     ): Promise<CachedReferenceFile | null> {
         if (token.isCancellationRequested) {
             throw new ConcurrencyCancelledError();
@@ -383,7 +393,7 @@ export class ProjectDefinitionReferenceService {
 
         let fingerprint: string;
         let text: string;
-        if (source.openDocument) {
+        if (source.openDocument && !(failOnScanError && source.openDocument.isDirty)) {
             fingerprint = `${view.identity}\0open:${source.openDocument.version}`;
             const cached = this.#cache.get(source.uri);
             if (cached?.fingerprint === fingerprint) {
@@ -400,6 +410,7 @@ export class ProjectDefinitionReferenceService {
                 }
                 text = await this.#options.fileSystem.readFile(source.filePath);
             } catch (error) {
+                if (failOnScanError) { throw error; }
                 this.#options.log?.(`Cannot read reference source ${source.filePath}: ${String(error)}`);
                 this.#cache.delete(source.uri);
                 return null;
@@ -411,11 +422,15 @@ export class ProjectDefinitionReferenceService {
         }
         const byDefinitionId = new Map<string, SerializedRange[]>();
         const lines = text.split(/\r?\n/u);
+        const body = source.filePath.toLowerCase().endsWith('.feature') ? null : getCompilerScenarioBody(text);
+        const scanned = scanCompilerLines(body?.lines ?? lines);
         for (let line = 0; line < lines.length; line++) {
             if (token.isCancellationRequested) {
                 throw new ConcurrencyCancelledError();
             }
             const invocation = lines[line];
+            const info = scanned[body ? line - body.startLine : line];
+            if (!info || info.kind !== 'code') { continue; }
             if (!CALLABLE_LINE.test(invocation)) {
                 continue;
             }

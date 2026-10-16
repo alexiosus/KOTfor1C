@@ -1,3 +1,5 @@
+import type { AdditionalParameterValueKind } from './vanessaLaunchJson';
+
 export interface YamlParameterLike {
     key: string;
     value: string;
@@ -5,6 +7,7 @@ export interface YamlParameterLike {
 
 export interface OverridableYamlParameterLike extends YamlParameterLike {
     overrideExisting: boolean;
+    valueKind?: AdditionalParameterValueKind;
 }
 
 export interface YamlParametersProfileLike {

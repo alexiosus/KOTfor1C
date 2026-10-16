@@ -8,6 +8,7 @@ import {
 } from '../src/scenarioRelationshipService';
 import type { TestInfo } from '../src/types';
 import type { ProjectDefinition, ProjectDefinitionView } from '../src/projectDefinition';
+import type { StandaloneFeatureSnapshot } from '../src/standaloneFeatureModel';
 
 interface FakeUri {
     readonly scheme: string;
@@ -61,7 +62,8 @@ function createHarness(
         readonly view: ProjectDefinitionView;
         readonly references: ReadonlyMap<string, readonly { uri: FakeUri }[]>;
     },
-    resolveAdditionalScenarioKeysForUri?: (uri: FakeUri) => readonly string[]
+    resolveAdditionalScenarioKeysForUri?: (uri: FakeUri) => readonly string[],
+    initialStandalone?: StandaloneFeatureSnapshot
 ): {
     service: ScenarioRelationshipService;
     replaceCatalog(catalog: ScenarioCatalog): void;
@@ -69,12 +71,17 @@ function createHarness(
     setConfigurationEnabled(enabled: boolean): void;
     ensureCalls(): number;
     updates: Array<{ key: string; value: unknown; target: unknown }>;
+    replaceStandalone(snapshot: StandaloneFeatureSnapshot): void;
+    refreshStandalone(): void;
 } {
     let catalog = initialCatalog;
     let ensureCallCount = 0;
     let enabled = true;
     const catalogEvent = createEvent<ScenarioCatalog | null>();
     const configurationEvent = createEvent<unknown>();
+    const standaloneEvent = createEvent<StandaloneFeatureSnapshot>();
+    const standaloneRefreshEvent = createEvent<StandaloneFeatureSnapshot>();
+    let standalone = initialStandalone;
     const updates: Array<{ key: string; value: unknown; target: unknown }> = [];
     const getConfiguration = () => {
         const snapshot = enabled;
@@ -103,6 +110,9 @@ function createHarness(
             scanRootPath: '/repo',
             canonicalScanRootPath: '/repo'
         }),
+        ...(initialStandalone ? { standaloneFeatures: {
+            getSnapshot: () => standalone!, onDidChange: standaloneEvent.event, onDidRefresh: standaloneRefreshEvent.event
+        } } : {}),
         ...(resolveAdditionalScenarioKeysForUri ? {
             resolveAdditionalScenarioKeysForUri: value => resolveAdditionalScenarioKeysForUri(value as FakeUri)
         } : {}),
@@ -123,6 +133,10 @@ function createHarness(
             catalog = nextCatalog;
             catalogEvent.fire(nextCatalog);
         },
+        replaceStandalone(next: StandaloneFeatureSnapshot): void {
+            standalone = next; standaloneEvent.fire(next); standaloneRefreshEvent.fire(next);
+        },
+        refreshStandalone(): void { standaloneRefreshEvent.fire(standalone!); },
         fireConfigurationChanged(): void {
             configurationEvent.fire(undefined);
         },
@@ -157,6 +171,56 @@ test('projects the cached catalog for the active editor without forcing a scan',
         scenarioKey: 'file:///repo/Main/scen.yaml',
         incomingDistance: 1
     }]);
+});
+
+test('connects standalone features to exports in both directions without YAML ownership or basename collisions', async () => {
+    const exported: ProjectDefinition = {
+        id: 'export:login', kind: 'exportScenario', template: 'And shared login', normalizedTemplate: 'And shared login',
+        parameters: [], sourceLabel: 'Exports', definitionLocation: { uri: 'file:///library/export.feature',
+            range: { start: { line: 2, character: 0 }, end: { line: 2, character: 16 } } }
+    };
+    const view = { identity: 'exports', all: [exported], byId: new Map([[exported.id, exported]]), byNormalizedTemplate: new Map() };
+    const features: StandaloneFeatureSnapshot = { revision: 1, groups: [], features: [
+        { id: 'file:///external/Features/same.feature', uri: 'file:///external/Features/same.feature', name: 'same', title: 'Authored login', relativePath: 'Features/same.feature', language: 'en', groupId: '', order: 0 },
+        { id: 'file:///external/Other/same.feature', uri: 'file:///external/Other/same.feature', name: 'same', title: 'Unrelated', relativePath: 'Other/same.feature', language: 'en', groupId: '', order: 1 }
+    ] };
+    const references = new Map([[exported.id, [{ uri: uri('/external/Features/same.feature') }]]]);
+    const h = createHarness(buildScenarioCatalog([]), { view, references }, undefined, features);
+    h.service.handleActiveEditorChanged(uri('/library/export.feature') as TestInfo['yamlFileUri']);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(h.service.getState().relationships, [{ scenarioKey: 'file:///external/Features/same.feature', incomingDistance: 1 }]);
+    assert.deepEqual(h.service.getState().affectedMainScenarioKeys, []);
+    references.set(exported.id, []);
+    h.refreshStandalone();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(h.service.getState().relationships, [], 'saving only step changes refreshes the callers of the open export');
+    references.set(exported.id, [{ uri: uri('/external/Features/same.feature') }]);
+    h.service.handleActiveEditorChanged(uri('/external/Features/same.feature') as TestInfo['yamlFileUri']);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(h.service.getState().currentScenarioKeys, ['file:///external/Features/same.feature']);
+    assert.equal(h.service.getState().currentLabel, 'Authored login');
+    assert.deepEqual(h.service.getState().definitionRelationships, [{ definitionId: exported.id, outgoingDistance: 1 }]);
+    h.replaceStandalone({ ...features, revision: 2, features: [features.features[1]] });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(h.service.getState().currentScenarioKeys, []);
+    assert.deepEqual(h.service.getState().definitionRelationships, []);
+    assert.equal(h.ensureCalls(), 0);
+    h.service.dispose();
+});
+
+test('normalizes editor URI encoding to the standalone catalog identity', () => {
+    const id = 'file:///external/Features/login:one.feature';
+    const h = createHarness(buildScenarioCatalog([]), undefined, undefined, {
+        revision: 1, groups: [], features: [{
+            id, uri: id, name: 'login:one', title: 'Login', relativePath: 'Features/login:one.feature',
+            language: 'en', groupId: '', order: 0
+        }]
+    });
+    const encoded = { ...uri('/external/Features/login:one.feature'), toString: () => id.replace(':one', '%3Aone') };
+    h.service.handleActiveEditorChanged(encoded as TestInfo['yamlFileUri']);
+    assert.deepEqual(h.service.getState().currentScenarioKeys, [id]);
+    assert.equal(h.service.getState().currentLabel, 'Login');
+    h.service.dispose();
 });
 
 test('uses the directory index only as a fallback for auxiliary scenario files', () => {

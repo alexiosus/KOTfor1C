@@ -4,6 +4,8 @@ import { StepLibrarySnapshotService } from '../src/stepLibrarySnapshotService';
 import type { ProjectDefinitionView } from '../src/projectDefinition';
 import type { ScenarioCatalog } from '../src/scenarioCatalog';
 import type { TestInfo } from '../src/types';
+import type { ProjectGroup } from '../src/projectLibraryStore';
+import { StepLibrarySidebarIndex } from '../src/stepLibrarySidebarModel';
 
 interface Disposable {
     dispose(): void;
@@ -67,6 +69,59 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
     });
     return { promise, resolve };
 }
+
+test('shared snapshots search authored attachments without a build and refresh after file invalidation', async () => {
+    const resolverChanges = new EventHub<unknown>();
+    const scenarioChanges = new EventHub<ScenarioCatalog | null>();
+    const attachmentChanges = new EventHub<unknown>();
+    let attachmentPaths: readonly string[] = ['Fixtures/Данные.MXL'];
+    const service = new StepLibrarySnapshotService({
+        resolver: { ensureReady: async () => view('stable'), onDidChangeView: resolverChanges.event },
+        scenarios: { getScenarioCatalog: () => mainScenarioCatalog(), onDidUpdateScenarioCatalog: scenarioChanges.event }
+    });
+    service.attachScenarioFilesService({
+        listAttachmentPaths: async () => attachmentPaths,
+        onDidInvalidate: attachmentChanges.event
+    });
+    const first = await service.ensureReady();
+    assert.deepEqual(first.items[0].attachmentPaths, ['Fixtures/Данные.MXL']);
+    assert.equal(StepLibrarySidebarIndex.fromSnapshot(first, 'en').search('данные.mxl')[0]?.itemId, first.items[0].id);
+    const protocol = require('../media/stepLibraryProtocol.js') as { searchItems(items: unknown[], query: string): Array<{ id: string }> };
+    assert.equal(protocol.searchItems([...first.items], 'данные.mxl')[0]?.id, first.items[0].id);
+    const oldId = first.items[0].id;
+    attachmentPaths = ['Replacement.csv'];
+    attachmentChanges.fire({});
+    const second = await service.ensureReady();
+    assert.notEqual(first.viewIdentity, second.viewIdentity);
+    assert.equal(second.items[0].id, oldId);
+    assert.equal(StepLibrarySidebarIndex.fromSnapshot(second, 'en').search('данные.mxl').length, 0);
+    assert.equal(StepLibrarySidebarIndex.fromSnapshot(second, 'en').search('replacement.csv')[0]?.itemId, oldId);
+    service.dispose();
+});
+
+test('project-group changes invalidate snapshots without requiring any scenario or definition identity change', async () => {
+    const resolverChanges = new EventHub<unknown>();
+    const scenarioChanges = new EventHub<ScenarioCatalog | null>();
+    const catalog = mainScenarioCatalog();
+    let groups: readonly ProjectGroup[] = [{ id: 'production', name: 'Production', sections: ['main'], order: 0 }];
+    const service = new StepLibrarySnapshotService({
+        resolver: { ensureReady: async () => view('stable-definitions'), onDidChangeView: resolverChanges.event },
+        scenarios: {
+            getScenarioCatalog: () => catalog, onDidUpdateScenarioCatalog: scenarioChanges.event,
+            getProjectScenarioGroups: async () => groups
+        }
+    });
+    const first = await service.ensureReady();
+    assert.deepEqual(first.scenarioGroups, groups);
+    groups = [...groups, { id: 'empty-processes', name: 'Future processes', sections: ['process'], order: 1 }];
+    scenarioChanges.fire(catalog);
+    const second = await service.ensureReady();
+    assert.notEqual(second.viewIdentity, first.viewIdentity);
+    assert.equal(second.items[0].id, first.items[0].id);
+    assert.equal(second.items[0].scenarioKey, first.items[0].scenarioKey);
+    assert.deepEqual(second.scenarioGroups, groups);
+    service.dispose();
+});
 
 test('coalesces concurrent snapshot loads and reuses the resource cache', async () => {
     const resolverChanges = new EventHub<unknown>();
@@ -181,7 +236,7 @@ test('compiled artifact changes enrich and invalidate main scenario snapshots', 
         }
     } as ConstructorParameters<typeof StepLibrarySnapshotService>[0]);
 
-    assert.equal((await service.ensureReady()).items[0]?.hasScenarioFiles, undefined);
+    assert.equal((await service.ensureReady()).items[0]?.hasScenarioFiles, true);
 
     compiled = new Map([[scenarioKey, {
         featureUri: 'file:///build/004_Production.feature',

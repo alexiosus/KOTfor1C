@@ -1,4 +1,5 @@
 import type * as vscode from 'vscode';
+import { getCompilerScenarioBody, scanCompilerLines } from './scenarioCompilerSyntax';
 
 export interface GherkinInsertionContext {
     readonly supported: boolean;
@@ -14,15 +15,25 @@ type InsertionDocument = Pick<
 >;
 
 const STEP_KEYWORD_REGEX = /^(?:\s*)(?:\*\s*)?(and|but|then|when|given|if|и|тогда|когда|если|допустим|дано|к тому же|но)(?=\s|$)/i;
-const FEATURE_SECTION_REGEX = /^(?:Feature|Business Need|Ability|Функциональность|Функционал|Функция|Rule|Правило|Examples|Примеры|Scenarios|Сценарии)\s*:?/i;
+const FEATURE_SECTION_REGEX = /^(?:Feature|Functionality|Business Need|Ability|Функциональность|Функционал|Функция|Rule|Правило|Examples|Примеры|Scenarios|Сценарии|Variables|Hyperlinks|Links|Переменные|Гиперссылки|Ссылки)\s*:?/i;
 const SCENARIO_SECTION_REGEX = /^(?:Scenario Outline|Scenario Template|Scenario|Структура сценария|Шаблон сценария|Сценарий|Background|Предыстория|Контекст)\s*:/i;
-const FEATURE_NON_STEP_REGEX = /^(?:Feature|Business Need|Ability|Функциональность|Функционал|Функция|Rule|Правило|Scenario Outline|Scenario Template|Scenario|Структура сценария|Шаблон сценария|Сценарий|Background|Предыстория|Контекст|Examples|Примеры|Scenarios|Сценарии)\s*:/i;
+const FEATURE_NON_STEP_REGEX = /^(?:Feature|Functionality|Business Need|Ability|Функциональность|Функционал|Функция|Rule|Правило|Scenario Outline|Scenario Template|Scenario|Структура сценария|Шаблон сценария|Сценарий|Background|Предыстория|Контекст|Examples|Примеры|Scenarios|Сценарии|Variables|Hyperlinks|Links|Переменные|Гиперссылки|Ссылки)\s*:/i;
 const YAML_SCENARIO_BLOCK_REGEX = /^(\s*)ТекстСценария\s*:\s*[|>][^\r\n]*$/i;
 const LANGUAGE_TAG_REGEX = /^#\s*language\s*:\s*(en|ru)\b/i;
 
 function documentPath(document: InsertionDocument): string {
     const uri = document.uri as vscode.Uri & { readonly path?: string; readonly fsPath?: string };
     return (uri.fsPath || uri.path || uri.toString()).split(/[?#]/u, 1)[0].toLowerCase();
+}
+
+export function getGherkinDocumentFormat(document: InsertionDocument): 'yaml' | 'feature' | null {
+    const path = documentPath(document);
+    if (path.endsWith('.feature')) {
+        return 'feature';
+    }
+    return document.languageId === 'yaml' || path.endsWith('.yaml') || path.endsWith('.yml')
+        ? 'yaml'
+        : null;
 }
 
 function leadingWhitespace(value: string): string {
@@ -60,7 +71,7 @@ function nearbyLanguage(lines: readonly string[], positionLine: number): 'ru' | 
         if (/^(?:Функциональность|Функционал|Функция|Правило|Сценарий|Структура сценария|Шаблон сценария|Предыстория|Контекст)\b/iu.test(lines[line].trim())) {
             return 'ru';
         }
-        if (/^(?:Feature|Rule|Scenario|Scenario Outline|Background)\b/iu.test(lines[line].trim())) {
+        if (/^(?:Feature|Functionality|Rule|Scenario|Scenario Outline|Background)\b/iu.test(lines[line].trim())) {
             return 'en';
         }
     }
@@ -71,6 +82,17 @@ function featureContext(
     lines: readonly string[],
     lineIndex: number
 ): { readonly supported: true; readonly indentation: string } | null {
+    let docStringDelimiter = '';
+    const docStringLines = new Set<number>();
+    for (let line = 0; line <= lineIndex; line += 1) {
+        const marker = /^\s*("""|```)/u.exec(lines[line])?.[1];
+        const inDocString = !!docStringDelimiter || !!marker;
+        if (inDocString) { docStringLines.add(line); }
+        if (marker && (!docStringDelimiter || marker === docStringDelimiter)) {
+            docStringDelimiter = docStringDelimiter ? '' : marker;
+        }
+        if (line === lineIndex && inDocString) { return null; }
+    }
     const currentLine = lines[lineIndex];
     const trimmed = currentLine.trim();
     if (
@@ -85,6 +107,7 @@ function featureContext(
 
     let scenarioLine = -1;
     for (let line = lineIndex; line >= 0; line -= 1) {
+        if (docStringLines.has(line)) { continue; }
         const candidate = lines[line].trim();
         if (!candidate || candidate.startsWith('#') || candidate.startsWith('@')) {
             continue;
@@ -118,17 +141,10 @@ function featureContext(
 
 function yamlScenarioBlockContext(
     lines: readonly string[],
-    lineIndex: number
+    lineIndex: number,
+    blockLine: number
 ): { readonly supported: true; readonly indentation: string } | null {
-    let blockLine = -1;
-    let headerIndent = '';
-    for (let line = 0; line <= lineIndex; line += 1) {
-        const match = lines[line].match(YAML_SCENARIO_BLOCK_REGEX);
-        if (match) {
-            blockLine = line;
-            headerIndent = match[1];
-        }
-    }
+    const headerIndent = lines[blockLine]?.match(YAML_SCENARIO_BLOCK_REGEX)?.[1] ?? '';
     if (blockLine < 0 || lineIndex <= blockLine) {
         return null;
     }
@@ -144,6 +160,12 @@ function yamlScenarioBlockContext(
     }
 
     const currentLine = lines[lineIndex];
+    const scanned = scanCompilerLines(lines.slice(blockLine + 1, lineIndex + 1));
+    const kind = scanned.at(-1)?.kind;
+    // Allow a partial preprocessor keyword while it is being typed.
+    const partialDirective = /^\s*#(?:Е|И|К|$)/iu.test(currentLine)
+        && scanCompilerLines([...lines.slice(blockLine + 1, lineIndex), '']).at(-1)?.kind === 'code';
+    if (kind !== 'code' && !partialDirective) { return null; }
     let indentation = leadingWhitespace(currentLine);
     if (!currentLine.trim() && indentation.length <= headerIndent.length) {
         indentation = '';
@@ -191,14 +213,15 @@ export function getGherkinInsertionContext(
         return null;
     }
 
-    const path = documentPath(document);
-    const isFeature = path.endsWith('.feature');
-    const isYaml = document.languageId === 'yaml' || path.endsWith('.yaml') || path.endsWith('.yml');
+    const format = getGherkinDocumentFormat(document);
     let support: { readonly supported: true; readonly indentation: string } | null = null;
-    if (isFeature) {
+    if (format === 'feature') {
         support = featureContext(lines, position.line);
-    } else if (isYaml && isScenarioYaml(text)) {
-        support = yamlScenarioBlockContext(lines, position.line);
+    } else if (format === 'yaml' && isScenarioYaml(text)) {
+        const body = getCompilerScenarioBody(text);
+        if (body && position.line >= body.startLine && position.line < body.startLine + body.lines.length) {
+            support = yamlScenarioBlockContext(lines, position.line, body.startLine - 1);
+        }
     }
     if (!support) {
         return null;
