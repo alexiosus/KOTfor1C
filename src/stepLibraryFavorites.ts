@@ -86,6 +86,14 @@ export class StepLibraryFavoritesService {
         return result;
     }
 
+    public isFavorite(item: StepLibraryItem): boolean {
+        if ((item.sourceGroup === 'main' || item.sourceGroup === 'process') && item.capturedLocation) {
+            return legacyEntries(this.workspaceState.get<unknown>(legacyFavoriteScenariosKey, []))
+                .some(entry => entry.uri === item.capturedLocation!.uri);
+        }
+        return normalizedStrings(this.workspaceState.get<unknown>(favoriteItemIdsKey, [])).includes(item.id);
+    }
+
     public async toggle(item: StepLibraryItem): Promise<boolean> {
         if ((item.sourceGroup === 'main' || item.sourceGroup === 'process') && item.capturedLocation) {
             const entries = legacyEntries(

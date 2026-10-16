@@ -18,6 +18,7 @@ export type InfobaseMaintenanceAction =
     | 'logs'
     | 'exportDt'
     | 'importDt'
+    | 'restoreFromTemplate'
     | 'exportCf'
     | 'importCf';
 
@@ -47,6 +48,7 @@ export interface InfobaseSidebarOperations {
     readonly logs: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
     readonly exportDt: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
     readonly importDt: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
+    readonly restoreFromTemplate: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
     readonly exportCf: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
     readonly importCf: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
 }
@@ -75,6 +77,7 @@ const MAINTENANCE_ACTIONS = new Set<InfobaseMaintenanceAction>([
     'logs',
     'exportDt',
     'importDt',
+    'restoreFromTemplate',
     'exportCf',
     'importCf'
 ]);
@@ -156,6 +159,7 @@ export function createDeferredInfobaseSidebarOperations(
             logs: (infobase: ManagedInfobaseRecord) => manager.showInfobaseLogsInteractive(infobase),
             exportDt: (infobase: ManagedInfobaseRecord) => manager.exportInfobaseToDtInteractive(context, infobase.infobasePath),
             importDt: (infobase: ManagedInfobaseRecord) => manager.restoreInfobaseFromDtInteractive(context, infobase),
+            restoreFromTemplate: (infobase: ManagedInfobaseRecord) => manager.restoreInfobaseFromDtInteractive(context, infobase, 'template'),
             exportCf: (infobase: ManagedInfobaseRecord) => manager.exportInfobaseConfigurationToCfInteractive(context, infobase.infobasePath),
             importCf: (infobase: ManagedInfobaseRecord) => manager.updateInfobaseConfigurationInteractive(context, infobase, 'cfFile')
         }));
@@ -457,7 +461,7 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
     <title>${t('Infobases')}</title>
 </head>
 <body>
-    <main class="infobase-sidebar" data-runtime-marker="${t('Running from KOT')}" data-pending-marker="${t('Infobase operation in progress')}" data-open-enterprise="${t('Open in 1C:Enterprise')}" data-open-designer="${t('Open in Designer')}" data-maintenance="${t('Maintenance actions')}" data-open-form-explorer="${t('Open KOT Form Explorer')}" data-copy="${t('Copy infobase')}" data-recreate="${t('Recreate infobase')}" data-update-configuration="${t('Update configuration')}" data-update-from-template="${t('Update from installed template')}" data-edit="${t('Edit infobase')}" data-add-to-launcher="${t('Add to 1C launcher')}" data-remove-from-launcher="${t('Remove from launcher')}" data-reveal="${t('Open infobase folder')}" data-logs="${t('Show infobase logs')}" data-export-dt="${t('Export DT')}" data-import-dt="${t('Import DT')}" data-export-cf="${t('Export .cf')}" data-general-heading="${t('Other actions')}" data-dt-heading="${t('Infobase data · DT')}" data-cf-heading="${t('Configuration · CF and files')}" data-kot-heading="${t('KOT tools')}" data-refreshing="${t('Refreshing infobases...')}" data-loading="${t('Loading infobases...')}" data-empty="${t('No managed infobases')}" data-running="${t('Running action...')}" data-error="${t('Unable to load infobases')}">
+    <main class="infobase-sidebar" data-runtime-marker="${t('Running from KOT')}" data-pending-marker="${t('Infobase operation in progress')}" data-open-enterprise="${t('Open in 1C:Enterprise')}" data-open-designer="${t('Open in Designer')}" data-maintenance="${t('Maintenance actions')}" data-open-form-explorer="${t('Open KOT Form Explorer')}" data-copy="${t('Copy infobase')}" data-recreate="${t('Recreate infobase')}" data-update-configuration="${t('Update configuration')}" data-update-from-template="${t('Update from installed template')}" data-edit="${t('Edit infobase')}" data-add-to-launcher="${t('Add to 1C launcher')}" data-remove-from-launcher="${t('Remove from launcher')}" data-reveal="${t('Open infobase folder')}" data-logs="${t('Show infobase logs')}" data-export-dt="${t('Export DT')}" data-import-dt="${t('Import DT')}" data-restore-from-template="${t('Restore from installed template')}" data-export-cf="${t('Export .cf')}" data-general-heading="${t('Other actions')}" data-dt-heading="${t('Infobase data · DT')}" data-cf-heading="${t('Configuration · CF and files')}" data-kot-heading="${t('KOT tools')}" data-refreshing="${t('Refreshing infobases...')}" data-loading="${t('Loading infobases...')}" data-empty="${t('No managed infobases')}" data-running="${t('Running action...')}" data-error="${t('Unable to load infobases')}">
         <div id="list" class="infobase-list" role="list" aria-label="${t('Infobases')}"></div>
         <div id="status" class="infobase-status" role="status" aria-live="polite"></div>
     </main>

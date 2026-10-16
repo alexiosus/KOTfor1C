@@ -25,7 +25,7 @@
         const label = key => labels[key] || key;
         container.classList.add('standalone-features');
         container.classList.add(`standalone-features-${mode}`);
-        const readOnlyActions = ['openFeature', 'openJson', 'openLog', 'watchLog', 'openRunStep'];
+        const readOnlyActions = ['openScenarioProperties', 'openFeature', 'openJson', 'openLog', 'watchLog', 'openRunStep'];
 
         function persist() {
             if (vscode.setState) {
@@ -112,6 +112,7 @@
             const state = artifacts[feature.id] || {};
             const items = [
                 { action: 'openFeature', fields },
+                { action: 'openScenarioProperties', fields },
                 ...(mode === 'manager' ? [
                     { separator: true },
                     { action: 'run', fields, disabled: runBlocked(feature) },
@@ -145,7 +146,7 @@
         }
 
         const actionIcons = {
-            openFeature: 'edit', run: 'play-circle', openJson: 'file-code', openLog: 'output', watchLog: 'list-flat',
+            openScenarioProperties: 'settings-gear', openFeature: 'edit', run: 'play-circle', openJson: 'file-code', openLog: 'output', watchLog: 'list-flat',
             generateJson: 'file-code', selectJson: 'folder-opened', moveFeature: 'move', moveUp: 'arrow-up', moveDown: 'arrow-down',
             createFeature: 'add', createGroup: 'new-folder', renameGroup: 'rename', deleteGroup: 'trash',
             renameFeature: 'rename', renameFeatureFile: 'rename'

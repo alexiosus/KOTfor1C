@@ -64,3 +64,12 @@ test('preserves legacy favorite main scenarios and toggles callable definitions 
     assert.equal(await service.toggle(main), false);
     assert.deepEqual([...service.favoriteItemIds(snapshot([main, nested]))], ['nested']);
 });
+
+test('Properties reads exactly the same favorite state as Library for main and standalone tests', async () => {
+    const service = new StepLibraryFavoritesService(new MemoryState());
+    for (const value of [item({ id: 'mainScenario#file:///test.yaml', sourceGroup: 'main', capturedLocation: { uri: 'file:///test.yaml', range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } } }), item({ id: 'standaloneFeature#file:///test.feature', sourceGroup: 'standalone' })]) {
+        assert.equal(service.isFavorite(value), false); await service.toggle(value);
+        assert.equal(service.isFavorite(value), true); assert.equal(service.favoriteItemIds(snapshot([value])).has(value.id), true);
+        await service.toggle(value); assert.equal(service.isFavorite(value), false);
+    }
+});

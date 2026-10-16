@@ -6,7 +6,7 @@ import type { StandaloneFeatureSnapshot } from './standaloneFeatureModel';
 
 export type StandaloneFeatureAction =
     | 'createFeature' | 'createGroup' | 'renameGroup' | 'deleteGroup' | 'reorderGroup'
-    | 'openFeature' | 'renameFeature' | 'renameFeatureFile' | 'generateJson' | 'selectJson' | 'openJson' | 'moveFeature'
+    | 'openScenarioProperties' | 'openFeature' | 'renameFeature' | 'renameFeatureFile' | 'generateJson' | 'selectJson' | 'openJson' | 'moveFeature'
     | 'run' | 'openLog' | 'watchLog' | 'openRunStep';
 
 export interface StandaloneFeatureMessage {
@@ -74,7 +74,7 @@ export function parseStandaloneFeatureMessage(value: unknown): StandaloneFeature
         return null;
     }
     const action = record.action;
-    const featureActions = ['openFeature', 'renameFeature', 'renameFeatureFile', 'generateJson', 'selectJson', 'openJson', 'moveFeature', 'run', 'openLog', 'watchLog', 'openRunStep'];
+    const featureActions = ['openScenarioProperties', 'openFeature', 'renameFeature', 'renameFeatureFile', 'generateJson', 'selectJson', 'openJson', 'moveFeature', 'run', 'openLog', 'watchLog', 'openRunStep'];
     if (action !== 'createFeature' && action !== 'createGroup' && action !== 'renameGroup' && action !== 'deleteGroup' && action !== 'reorderGroup' && !featureActions.includes(action as string)) {
         return null;
     }
@@ -247,6 +247,9 @@ export class StandaloneFeatureController implements vscode.Disposable {
                 if (await renameStandaloneFeatureFile(featureUri, async () => {
                     if (feature.jsonPath) { await this.catalog.setLaunchJson(feature.id, feature.jsonPath); }
                 })) { await this.refresh(); }
+                return;
+            case 'openScenarioProperties':
+                await vscode.commands.executeCommand('kotTestToolkit.openScenarioEditor', featureUri);
                 return;
             case 'openFeature':
                 await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(featureUri));

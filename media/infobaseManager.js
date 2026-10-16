@@ -705,10 +705,11 @@
         if (startFormExplorerAction instanceof HTMLButtonElement) {
             startFormExplorerAction.disabled = !supportsDesignerOperations(selected) || Boolean(state.pendingAction);
         }
-        const restoreDtAction = document.querySelector('[data-command="restoreDt"]');
-        if (restoreDtAction instanceof HTMLButtonElement) {
-            restoreDtAction.disabled = !supportsDesignerOperations(selected) || Boolean(state.pendingAction);
-        }
+        document.querySelectorAll('[data-command="restoreDt"], [data-command="restoreFromTemplate"]').forEach(action => {
+            if (action instanceof HTMLButtonElement) {
+                action.disabled = !supportsDesignerOperations(selected) || Boolean(state.pendingAction);
+            }
+        });
         const exportDtAction = document.querySelector('[data-command="exportDt"]');
         if (exportDtAction instanceof HTMLButtonElement) {
             exportDtAction.disabled = !supportsDesignerOperations(selected) || Boolean(state.pendingAction);

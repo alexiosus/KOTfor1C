@@ -35,7 +35,7 @@ test('selected-infobase actions are grouped by purpose without losing or duplica
     const grid = parse(source.slice(source.indexOf('<div class="action-grid">'), source.indexOf('<div class="chip-row">')));
     const expected = {
         launch: ['openEnterprise', 'openDesigner', 'startFormExplorer'],
-        data: ['restoreDt', 'exportDt', 'copyBase', 'recreate'],
+        data: ['restoreDt', 'restoreFromTemplate', 'exportDt', 'copyBase', 'recreate'],
         configuration: ['updateFromTemplate', 'updateConfig', 'saveCf'],
         management: ['editBase', 'revealFolder', 'showLogs', 'addToLauncher', 'removeFromLauncher', 'forgetManual', 'toggleHidden']
     };

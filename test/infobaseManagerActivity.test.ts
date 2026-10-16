@@ -7,7 +7,7 @@ import { InfobaseRuntimeTracker } from '../src/infobaseRuntimeTracker';
 import { normalizeInfobaseConnectionIdentity } from '../src/oneCInfobaseConnection';
 
 test('full infobase manager receives live process activity and shares the template operation', async () => {
-    const tracker = new InfobaseRuntimeTracker(); const messages: any[] = []; const updates: any[] = [];
+    const tracker = new InfobaseRuntimeTracker(); const messages: any[] = []; const updates: any[] = []; const restores: any[] = [];
     const record = { infobasePath: 'C:\\QA', displayName: 'QA', hidden: false };
     const service = { onDidInvalidate: () => ({ dispose() {} }), refresh: async () => ({ infobases: [record] }), ensureReady: async () => ({ infobases: [record] }) };
     const ts = require('typescript') as typeof import('typescript'); const module = { exports: {} as any };
@@ -16,7 +16,8 @@ test('full infobase manager receives live process activity and shares the templa
         './infobaseRuntimeTracker': { managedInfobaseRuntimeTracker: tracker }, './oneCInfobaseConnection': { normalizeInfobaseConnectionIdentity },
         './localization': { getTranslator: async () => (message: string) => message },
         './oneCPlatform': { ensureOneCPlatformsCatalogInitialized: async () => [] },
-        './infobaseManager': { updateInfobaseConfigurationInteractive: async (...args: unknown[]) => updates.push(args) }
+        './infobaseManager': { updateInfobaseConfigurationInteractive: async (...args: unknown[]) => updates.push(args),
+            restoreInfobaseFromDtInteractive: async (...args: unknown[]) => restores.push(args) }
     };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'src/infobaseManagerPanel.ts'), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
@@ -33,5 +34,8 @@ test('full infobase manager receives live process activity and shares the templa
     await panel.handleMessage({ command: 'updateFromTemplate', infobasePath: record.infobasePath });
     assert.equal(updates.length, 1); assert.equal(updates[0][2], 'template');
     assert.ok(messages.some(message => message.state.infobases[0]?.operation));
+    assert.equal(messages.at(-1).state.infobases[0].operation, null);
+    await panel.handleMessage({ command: 'restoreFromTemplate', infobasePath: record.infobasePath });
+    assert.equal(restores.length, 1); assert.equal(restores[0][1], record); assert.equal(restores[0][2], 'template');
     assert.equal(messages.at(-1).state.infobases[0].operation, null);
 });

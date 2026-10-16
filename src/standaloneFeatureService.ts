@@ -291,6 +291,17 @@ export class StandaloneFeatureService implements vscode.Disposable {
         });
     }
 
+    createGroupForFeature(id: string, name: string): Promise<StandaloneFeatureGroup> {
+        return this.mutate(async () => {
+            await this.ensureReady();
+            const feature = this.requireFeature(id);
+            const root = this.projectRoot(fileURLToPath(feature.id));
+            const group = await this.writableStore(root).ensureGroup(this.requireName(name), 'standalone');
+            await this.refreshProjectMetadata();
+            return Object.freeze({ id: group.id, name: group.name });
+        });
+    }
+
     renameGroup(id: string, name: string): Promise<void> {
         return this.mutate(async () => {
             await this.ensureReady();

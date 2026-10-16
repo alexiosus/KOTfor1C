@@ -6467,6 +6467,17 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         return resources;
     }
 
+    public async findSourceForCompiledFeature(feature: vscode.Uri): Promise<vscode.Uri | undefined> {
+        const root = vscode.workspace.getWorkspaceFolder(feature)?.uri;
+        if (root) { await this.restoreScenarioBuildArtifactsFromDiskIfNeeded(root); }
+        const normalized = this.normalizeFilePathForComparison(feature.fsPath);
+        const sources = new Set([...this._scenarioBuildArtifacts.values()]
+            .filter(artifact => artifact.featurePath && this.normalizeFilePathForComparison(artifact.featurePath) === normalized)
+            .map(artifact => artifact.sourceUri?.toString()).filter((uri): uri is string => !!uri));
+        if (sources.size > 1) { throw new Error(this.t('The generated feature has more than one source. Open the required YAML source.')); }
+        return sources.size === 1 ? vscode.Uri.parse([...sources][0], true) : undefined;
+    }
+
     public async openScenarioInVanessaManualFromCommandPalette(): Promise<void> {
         if (this._isBuildInProgress) {
             vscode.window.showWarningMessage(this.t('Please wait for the current build to finish.'));

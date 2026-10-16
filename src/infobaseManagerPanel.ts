@@ -499,6 +499,11 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                     await restoreInfobaseFromDtInteractive(this.context, selectedInfobase);
                 });
                 return;
+            case 'restoreFromTemplate':
+                await this.executePanelAction(t('Restoring infobase from installed template...'), async () => {
+                    await restoreInfobaseFromDtInteractive(this.context, selectedInfobase, 'template');
+                });
+                return;
             case 'exportDt':
                 await this.executePanelAction(t('Exporting infobase to DT...'), async () => {
                     await exportInfobaseToDtInteractive(this.context, selectedInfobase.infobasePath);
@@ -634,6 +639,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             openDesigner: t('Open in Designer'),
             openWithFormExplorer: t('Open with Form Explorer'),
             restoreDt: t('Restore from DT'),
+            restoreFromTemplate: t('Restore from installed template'),
             exportDt: t('Export DT'),
             saveCf: t('Save CF'),
             updateConfig: t('Update configuration'),
@@ -826,6 +832,10 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                                 <button class="toolbar-btn" type="button" data-command="restoreDt" data-requires-selection="true">
                                     <span class="codicon codicon-cloud-download" aria-hidden="true"></span>
                                     <span>${escapeHtml(loc.restoreDt)}</span>
+                                </button>
+                                <button class="toolbar-btn" type="button" data-command="restoreFromTemplate" data-requires-selection="true">
+                                    <span class="codicon codicon-package" aria-hidden="true"></span>
+                                    <span>${escapeHtml(loc.restoreFromTemplate)}</span>
                                 </button>
                                 <button class="toolbar-btn" type="button" data-command="exportDt" data-requires-selection="true">
                                     <span class="codicon codicon-cloud-upload" aria-hidden="true"></span>

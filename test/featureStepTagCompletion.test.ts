@@ -1,3 +1,4 @@
+import * as standaloneFeatureModel from '../src/standaloneFeatureModel';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -36,7 +37,7 @@ function harness(text: string, fileName = 'order.feature', projectTags: readonly
         return lines.slice(0, position.line).reduce((offset, line) => offset + line.length + eol, 0) + position.character;
     };
     const prompts: string[] = []; const errors: string[] = [];
-    let cancel = false; let changeDuringPrompt = false;
+    let cancel = false; let changeDuringPrompt = false; let outline = false; let name: string | undefined = 'New scenario';
     const editor = { document, async insertSnippet(snippet: { value: string }, range: Range) {
         document.text = document.text.slice(0, offsetAt(range.start)) + snippet.value + document.text.slice(offsetAt(range.end));
         document.version++; return true;
@@ -52,13 +53,13 @@ function harness(text: string, fileName = 'order.feature', projectTags: readonly
         l10n: { t: (message: string, ...args: string[]) => message.replace(/\{(\d+)\}/gu, (_match, index: string) => args[Number(index)] ?? '') },
         workspace: { getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback }), openTextDocument: async () => document },
         window: { showTextDocument: async () => editor, showErrorMessage: (message: string) => errors.push(message),
-            showQuickPick: async (items: { label: string }[], options: { title: string }) => {
+            showQuickPick: async (items: { label: string; scenarioKind?: string }[], options: { title: string }) => {
                 prompts.push(options.title);
                 if (changeDuringPrompt) { document.version++; }
-                return cancel ? undefined : items.find(item => item.label === '@screenshot') ?? items[0];
-            } }
+                return cancel ? undefined : (outline ? items.find(item => item.scenarioKind === 'outline') : undefined) ?? items.find(item => item.label === '@screenshot') ?? items[0];
+            }, showInputBox: async (options: { title: string }) => { prompts.push(options.title); return name; } }
     };
-    const dependencies: Record<string, unknown> = { vscode: host, './featureEditorActions': featureActions, './featureTags': featureTags, './gherkinDefinitionKeywords': keywords, './scenarioYamlDocument': scenarioYaml };
+    const dependencies: Record<string, unknown> = { vscode: host, './standaloneFeatureModel': standaloneFeatureModel, './featureEditorActions': featureActions, './featureTags': featureTags, './gherkinDefinitionKeywords': keywords, './scenarioYamlDocument': scenarioYaml };
     const load = (file: string) => {
         const moduleObject = { exports: {} as Record<string, any> };
         vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'src', file), 'utf8'), {
@@ -77,7 +78,7 @@ function harness(text: string, fileName = 'order.feature', projectTags: readonly
     const accept = (item: { range: Range; insertText: string }) => {
         document.text = document.text.slice(0, offsetAt(item.range.start)) + item.insertText + document.text.slice(offsetAt(item.range.end));
     };
-    return { api, document, uri, complete, accept, prompts, errors, setCancel() { cancel = true; }, setChangeDuringPrompt() { changeDuringPrompt = true; } };
+    return { api, document, uri, complete, accept, prompts, errors, setCancelName() { name = undefined; }, setOutline() { outline = true; }, setCancel() { cancel = true; }, setChangeDuringPrompt() { changeDuringPrompt = true; } };
 }
 
 test('typing @ before a nested step completes tags without doubling @ or indentation', async () => {
@@ -146,7 +147,7 @@ test('asynchronous project tag loading does not return ranges for a changed docu
 test('YAML step IntelliSense inserts annotations in the block without changing metadata, indentation or CRLF', async () => {
     const initial = '\uFEFF#language: ru\r\nТипФайла: Сценарий\r\nТекстСценария: |2-\r\n  * Группа\r\n    И готово "$Value}"\r\nПараметрыСценария:\r\n  Имя: Значение\r\n';
     const h = harness(initial, 'scen.yaml');
-    const items = await h.complete(4, 10);
+    const items = await h.complete(4, 6);
     assert.ok(items.some((item: any) => item.label === '@screenshot'));
     assert.ok(items.some((item: any) => item.label === '#[autodoc.mute]'));
     assert.equal(items.some((item: any) => item.label === '@ExportScenarios'), false);
@@ -211,12 +212,12 @@ test('annotation suggestions never enter YAML metadata, other block scalars, tab
     for (const [line, character] of [[3, 5], [4, 8], [8, 3], [9, 5], [11, 4], [13, 10]]) {
         assert.equal((await h.complete(line, character)).length, 0, `line ${line + 1} is a payload or YAML metadata`);
     }
-    assert.ok((await h.complete(6, 5)).some((item: any) => item.label === '@recordvideo'));
+    assert.ok((await h.complete(6, 4)).some((item: any) => item.label === '@recordvideo'));
 });
 
 test('manual IntelliSense on a step adds its tag while preserving the complete step, CRLF and tabs', async () => {
     const h = harness('#language: ru\r\nФункционал: Заказ\r\nСценарий: Готово\r\n\tИ готово "$Value}"\r\n');
-    for (const character of [0, 1, 5, 19]) {
+    for (const character of [0, 1, 2, 3]) {
         h.document.text = '#language: ru\r\nФункционал: Заказ\r\nСценарий: Готово\r\n\tИ готово "$Value}"\r\n';
         const items = await h.complete(3, character);
         assert.equal(items.length, 8);
@@ -268,4 +269,46 @@ test('IntelliSense at the end of a large feature edits only the chosen step and 
     const lenses = await new h.api.FeatureEditorCodeLensProvider(h.uri).provideCodeLenses(h.document, { isCancellationRequested: false });
     assert.ok(lenses.every((lens: any) => lens.command.arguments[0].kind !== 'stepTag'));
     assert.deepEqual(h.prompts, []);
+});
+
+test('scenario creation asks for the type and title, inserts the native snippet and cancels safely', async () => {
+    for (const mode of ['scenario', 'outline', 'cancel', 'cancelName', 'stale'] as const) {
+        const text = mode === 'outline' ? 'Функционал: Заказы\nСценарий: Первый\n    Дано готово\n' : 'Feature: Orders\nScenario: First\n    Given ready\n';
+        const h = harness(text); if (mode === 'outline') { h.setOutline(); } if (mode === 'cancel') { h.setCancel(); }
+        if (mode === 'cancelName') { h.setCancelName(); } if (mode === 'stale') { h.setChangeDuringPrompt(); }
+        const action = featureActions.buildFeatureEditorActions({ uri: h.uri.toString(), version: h.document.version, text, language: mode === 'outline' ? 'ru' : 'en' }).find(action => action.kind === 'scenario')!;
+        await h.api.editFeatureStructureCommand(action.target, (message: string) => message);
+        assert.equal(h.prompts[0], 'Add scenario');
+        if (mode === 'scenario' || mode === 'outline') {
+            assert.equal(h.prompts[1], 'New scenario'); assert.match(h.document.text, mode === 'outline' ? /Структура сценария: New scenario/u : /Scenario: New scenario/u);
+            assert.match(h.document.text, /\$\{1:/u); assert.deepEqual(h.errors, []);
+        } else { assert.equal(h.document.text, text); assert.equal(h.errors.length, mode === 'stale' ? 1 : 0); }
+    }
+});
+
+test('argument positions never offer annotations during manual or repeated IntelliSense in feature and YAML', async () => {
+    for (const format of ['feature', 'yaml'] as const) {
+        for (const text of [
+            'And I select "|" value from the drop-down list named "MethodOfDistribution"',
+            'And I select "Re|venue" value from the drop-down list named "Account"',
+            "And I select 'Re|venue' value", 'And I input "unterminated|',
+            'And I select "one" and "sec|ond"', 'And I input [Cur|rency]',
+            'And I input <amo|unt>', 'And Delay 1|0', 'И я выбираю "|" из списка',
+            '* And I select "|" value', '* Group with [para|meter]'
+        ]) {
+            const character = text.indexOf('|') + 4; const line = '    ' + text.replace('|', '');
+            const initial = format === 'feature' ? `Feature: Test\nScenario: Ready\n${line}\n`
+                : `ТипФайла: Сценарий\nТекстСценария: |\n${line}\n`;
+            const h = harness(initial, format === 'feature' ? 'test.feature' : 'scen.yaml', ['@Project']);
+            for (const trigger of [0, 1, 2]) { assert.equal((await h.complete(2, character, trigger)).length, 0, `${format}: ${text}, trigger ${trigger}`); }
+        }
+    }
+});
+
+test('annotations stay available at step prefixes and annotation lines, while lightbulb works inside arguments', async () => {
+    const h = harness('Feature: Test\nScenario: Ready\n    And I select "" value\n    @scr\n    And ready\n');
+    for (const character of [0, 4, 6, 8]) { assert.ok((await h.complete(2, character)).some((item: any) => item.label === '@screenshot')); }
+    assert.ok((await h.complete(3, 8, 1)).some((item: any) => item.label === '@screenshot'));
+    const actions = new h.api.FeatureStepTagCodeActionProvider().provideCodeActions(h.document, new Range(2, 18, 2, 18));
+    assert.equal(actions.length, 4);
 });

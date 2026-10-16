@@ -722,3 +722,59 @@ test('reopening the sidebar after source edits loads the current YAML values', a
     const current = h.panels.at(-1);
     assert.equal(current.state().source.model.header.find((field: any) => field.key === 'Проект').value, 'After sidebar close');
 });
+
+test('native Properties follows features, preserves native edits, redirects generated features and clears on webviews', async t => {
+    const { FeaturePropertiesController } = await import('../src/featurePropertiesController');
+    const h = await harness(t);
+    const featureUri = Uri.file(path.join(h.root, 'test.feature')); await fsp.writeFile(featureUri.fsPath, 'Feature: Test\nScenario: Ready\n');
+    const generatedUri = Uri.file(path.join(h.root, 'generated.feature')); await fsp.writeFile(generatedUri.fsPath, 'Feature: Generated\nScenario: Ready\n');
+    let favorite = false;
+    h.panel.attachLibrarySupport({
+        favorite: () => ({ canFavorite: true, favorite }), toggleFavorite: async () => { favorite = !favorite; },
+        sourceForGenerated: async (uri: Uri) => uri.toString() === generatedUri.toString() ? h.sourceUri : undefined,
+        onDidChange: () => ({ dispose() {} }),
+        createFeatureController: (documents: any) => new FeaturePropertiesController({ ...documents,
+            decorate: async () => ({ canFavorite: true, favorite }), action: async action => { if (action === 'favorite') { favorite = !favorite; } } })
+    });
+    const view = await h.open(featureUri); assert.equal(view.webview.messages.at(-1).command, 'featureState');
+    assert.equal(view.state().model.title, 'Test');
+    await view.receive.fire({ command: 'featureAction', uri: featureUri.toString(), version: view.state().version, action: 'edit', field: 'title', value: 'Changed', baseValue: 'Test' });
+    assert.match((await h.openDocument(featureUri)).getText(), /Feature: Changed/u); assert.equal(view.state().dirty, true);
+    await view.receive.fire({ command: 'featureAction', uri: featureUri.toString(), version: view.state().version, action: 'pin' });
+    await h.setActive(await h.openDocument(h.sourceUri)); assert.equal(view.state().uri, featureUri.toString());
+    await view.receive.fire({ command: 'featureAction', uri: featureUri.toString(), version: view.state().version, action: 'pin' });
+    assert.equal(view.state().source.uri, h.sourceUri.toString());
+    await h.setActive(await h.openDocument(generatedUri)); assert.equal(view.state().source.uri, h.sourceUri.toString());
+    assert.ok(!h.textOpens.includes(generatedUri.toString()), 'compiled source remains the active text editor');
+    await h.setActive(await h.openDocument(featureUri));
+    await view.receive.fire({ command: 'featureAction', uri: featureUri.toString(), version: view.state().version, action: 'pin' });
+    await fsp.unlink(featureUri.fsPath); await h.deleted.fire({ files: [featureUri] });
+    await h.setActive(await h.openDocument(h.sourceUri)); assert.equal(view.state().pinned, true);
+    await view.receive.fire({ command: 'featureAction', uri: featureUri.toString(), version: view.state().version, action: 'pin' });
+    assert.equal(view.state().source.uri, h.sourceUri.toString(), 'a missing pinned feature must allow unpin and resume following');
+    await h.setActiveWebview('kotTestToolkit.infobaseManager'); assert.equal(view.state().source, null);
+});
+
+test('YAML favorite actions use the shared service and publish external changes', async t => {
+    const h = await harness(t); let favorite = false; let changed: (() => void) | undefined;
+    h.panel.attachLibrarySupport({ favorite: () => ({ canFavorite: true, favorite }),
+        toggleFavorite: async () => { favorite = !favorite; }, sourceForGenerated: async () => undefined,
+        createFeatureController: () => undefined, onDidChange: (listener: () => void) => { changed = listener; return { dispose() {} }; } });
+    const view = await h.open(); assert.equal(view.state().favorite, false);
+    await view.receive.fire({ command: 'action', action: 'favorite', documentUri: h.sourceUri.toString(), documentVersion: view.state().source.version }); assert.equal(view.state().favorite, true);
+    favorite = false; changed?.(); await waitFor(() => view.state().favorite === false);
+    assert.equal(h.actions.length, 0);
+});
+
+test('following a feature resumes correctly after explicitly opening Properties for another feature', async t => {
+    const { FeaturePropertiesController } = await import('../src/featurePropertiesController');
+    const h = await harness(t); await h.open();
+    const a = Uri.file(path.join(h.root, 'a.feature')); const b = Uri.file(path.join(h.root, 'b.feature'));
+    await fsp.writeFile(a.fsPath, 'Feature: A\nScenario: Ready\n'); await fsp.writeFile(b.fsPath, 'Feature: B\nScenario: Ready\n');
+    h.panel.attachLibrarySupport({ favorite: () => ({ canFavorite: false, favorite: false }), toggleFavorite: async () => undefined,
+        sourceForGenerated: async () => undefined, onDidChange: () => ({ dispose() {} }),
+        createFeatureController: (documents: any) => new FeaturePropertiesController({ ...documents, decorate: async () => ({}), action: async () => undefined }) });
+    await h.setActive(await h.openDocument(a)); assert.equal(h.panels.at(-1)!.state().uri, a.toString());
+    await h.panel.open(b); assert.equal(h.panels.at(-1)!.state().uri, b.toString());
+    await h.setActive(await h.openDocument(a)); assert.equal(h.panels.at(-1)!.state().uri, a.toString());
+});

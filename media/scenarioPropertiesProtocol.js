@@ -16,9 +16,12 @@
         combinations: 'Build variants', combinationsHint: 'Preview of parameter combinations for the selected settings. Semicolon lists are combined; this is not a scenario result.',
         variantLimitWarning: 'The compiler supports at most {0} parameter combinations; the selected settings produce {1}.',
         title: 'Test properties', header: 'Header', testSettings: 'Test settings', metadata: 'KOT metadata',
-        copyPath: 'Copy path',
+        copyPath: 'Copy path', favorite: 'Add to favorites', unfavorite: 'Remove from favorites', feature: 'Feature',
+        openFeature: 'Open feature', addScenario: 'Add scenario', featureBlocks: 'Feature blocks', featureTitle: 'Title', featureTags: 'Tags', scenarios: 'Scenarios', launchJson: 'Launch JSON',
+        chooseJson: 'Choose JSON', generateJson: 'Generate JSON', openJson: 'Open JSON', run: 'Run test',
+        openScenario: 'Open scenario', renameScenario: 'Rename scenario', noLaunchJson: 'No launch JSON selected.',
         scenario: 'Scenario', process: 'Process', test: 'Test settings', processTest: 'Process settings',
-        empty: 'Open a scenario or process to edit its properties.', noRecords: 'No records', noSettings: 'No linked test settings.',
+        empty: 'Open a YAML scenario, process or feature to edit its properties.', noRecords: 'No records', noSettings: 'No linked test settings.',
         selectSettings: 'Test settings file', createSettings: 'Create test settings', save: 'Save test',
         saved: 'Saved', unsaved: 'Unsaved changes', applying: 'Applying changes…', pin: 'Pin test', unpin: 'Unpin test',
         openSource: 'Open YAML', openText: 'Fold service sections', openSettings: 'Open settings YAML', openMetadata: 'Open KOT metadata',
@@ -41,7 +44,7 @@
     });
     const actions = new Set(['save', 'pin', 'openSource', 'openText', 'openSettings', 'openMetadata', 'copyPath', 'rename', 'changeCode',
         'systemFunction', 'base', 'users', 'addSteps', 'aiDescription', 'changeGroup', 'newGroup', 'createSettings',
-        'selectSettings', 'addNested', 'openReference', 'fillParameters', 'fillNested', 'dismissError']);
+        'selectSettings', 'addNested', 'openReference', 'fillParameters', 'fillNested', 'dismissError', 'favorite']);
     const metadataFields = new Set(['groupId', 'order', 'description', 'category']);
     const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
     const nonempty = value => typeof value === 'string' && value.length > 0;
@@ -62,7 +65,7 @@
     function validateMessage(message) {
         if (!object(message)) { return false; }
         if (message.command === 'ready') { return true; }
-        if (message.command === 'action') { return actions.has(message.action) && (message.value === undefined || typeof message.value === 'string'); }
+        if (message.command === 'action') { return (message.action !== 'favorite' || nonempty(message.documentUri) && revision(message.documentVersion)) && actions.has(message.action) && (message.value === undefined || typeof message.value === 'string'); }
         if (!nonempty(message.documentUri) || !revision(message.documentVersion)) { return false; }
         if (message.command === 'fillProcessDefaults') {
             return revision(message.sourceVersion) && object(message.target) && message.target.section === 'ПараметрыТеста'

@@ -372,7 +372,7 @@ test('manager features use native source, run, retry, and context-menu affordanc
     row.fire('contextmenu', { clientX: 40, clientY: 60 });
     const menu = descendants(h.body).find(value => value.attributes.role === 'menu')!;
     assert.ok(menu.classList.contains('phase-context-menu'));
-    assert.deepEqual(descendants(menu).filter(value => value.attributes.role === 'menuitem').slice(0, 5).map(value => value.dataset.action), ['openFeature', 'run', 'openJson', 'openLog', 'watchLog']);
+    assert.deepEqual(descendants(menu).filter(value => value.attributes.role === 'menuitem').slice(0, 6).map(value => value.dataset.action), ['openFeature', 'openScenarioProperties', 'run', 'openJson', 'openLog', 'watchLog']);
     assert.equal(JSON.stringify(h.messages), JSON.stringify([{ command: 'standaloneFeatureAction', action: 'openFeature', featureId: 'file:///a/same.feature' }]));
     tree.dispose();
 });

@@ -1,5 +1,7 @@
+import { buildStepLibrarySnapshot } from './stepLibraryModel';
+import { createPropertiesLibrarySupport } from './scenarioPropertiesLibrarySupport';
 import * as vscode from 'vscode';
-import { controlledCodeLenses, controlledInlayHints } from './editorActionControls';
+import { controlledCodeLenses, controlledInlayHints, editorActionSetting, editorActionsAreEnabled } from './editorActionControls';
 import { registerScenarioPropertiesEditor } from './scenarioPropertiesEditorIntegration';
 import { scenarioDefaultFoldLines } from './scenarioYamlEditor';
 import { ProcessEditorCodeLensProvider } from './processEditorCodeLens';
@@ -1197,6 +1199,27 @@ export async function activate(context: vscode.ExtensionContext) {
         scenarios: phaseSwitcherProvider,
         standaloneFeatures: standaloneFeatureService
     });
+    scenarioPropertiesEditor.panel.attachLibrarySupport(createPropertiesLibrarySupport({
+        favoriteItems: async uri => {
+            const view = await projectDefinitionResolver.getView(uri);
+            const key = uri.toString(); const standalone = standaloneFeatureService.getSnapshot();
+            return buildStepLibrarySnapshot({ ...view, all: view.all.filter(item => item.definitionLocation?.uri === key) },
+                (phaseSwitcherProvider.getScenarioCatalog()?.all ?? []).filter(item => item.yamlFileUri.toString() === key), new Map(),
+                { ...standalone, features: standalone.features.filter(item => item.uri === key) }).items;
+        },
+        onDidChangeIndex: listener => {
+            const subscriptions = [projectDefinitionResolver.onDidChangeView(listener), phaseSwitcherProvider.onDidUpdateScenarioCatalog(listener), standaloneFeatureService.onDidChange(listener)];
+            return { dispose: () => subscriptions.forEach(value => value.dispose()) };
+        },
+        favorites: stepLibraryFavoritesService, standalone: standaloneFeatureService,
+        sourceForGenerated: uri => phaseSwitcherProvider.findSourceForCompiledFeature(uri),
+        renameExport: async (uri, line) => {
+            const view = await projectDefinitionResolver.ensureReady(uri);
+            const definition = view.all.find(item => item.definitionLocation?.uri === uri.toString() && item.definitionLocation.range.start.line === line);
+            if (!definition) { throw new Error(vscode.l10n.t('The exported scenario changed. Please retry.')); }
+            return renameExportScenario(definition.id, uri, projectDefinitionResolver, projectDefinitionReferenceService);
+        }
+    }));
     phaseSwitcherProvider.setDefinitionDeletionReferenceServices({
         resolver: projectDefinitionResolver, references: projectDefinitionReferenceService
     });
@@ -1497,18 +1520,27 @@ export async function activate(context: vscode.ExtensionContext) {
             definitionProvider
         )
     );
+    for (const entry of context.extension.packageJSON.contributes.commands as Array<{ command: string }>) {
+        if (entry.command.startsWith('kotTestToolkit.editorMenu.')) {
+            const original = entry.command.replace('kotTestToolkit.editorMenu.', 'kotTestToolkit.');
+            context.subscriptions.push(vscode.commands.registerCommand(entry.command, (...args: unknown[]) => vscode.commands.executeCommand(original, ...args)));
+        }
+    }
     const editorActionChanges = new vscode.EventEmitter<void>();
-    const editorActionsEnabled = (uri: vscode.Uri) => vscode.workspace.getConfiguration('kotTestToolkit', uri).get<boolean>('editor.showActionButtons', false);
+    const editorActionsEnabled = (uri: vscode.Uri) => editorActionsAreEnabled(uri.toString(), vscode.workspace.getConfiguration('kotTestToolkit', uri));
     const controlEditorLenses = (provider: vscode.CodeLensProvider) => controlledCodeLenses(provider, editorActionsEnabled, editorActionChanges.event);
     context.subscriptions.push(editorActionChanges, vscode.workspace.onDidChangeConfiguration(event => {
-        if (event.affectsConfiguration('kotTestToolkit.editor.showActionButtons')) { editorActionChanges.fire(); }
+        if (['editor.showActionButtons', 'editor.showYamlActionButtons', 'editor.showFeatureActionButtons'].some(key => event.affectsConfiguration('kotTestToolkit.' + key))) { editorActionChanges.fire(); }
     }), vscode.commands.registerCommand('kotTestToolkit.toggleEditorActionButtons', async () => {
         const uri = vscode.window.activeTextEditor?.document.uri;
         const config = vscode.workspace.getConfiguration('kotTestToolkit', uri);
-        const setting = config.inspect<boolean>('editor.showActionButtons');
+        const key = editorActionSetting(uri?.toString() ?? '');
+        const specific = config.inspect<boolean>(key);
+        const setting = specific && [specific.workspaceFolderValue, specific.workspaceValue, specific.globalValue].some(value => value !== undefined)
+            ? specific : config.inspect<boolean>('editor.showActionButtons');
         const target = setting?.workspaceFolderValue !== undefined ? vscode.ConfigurationTarget.WorkspaceFolder
             : setting?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
-        await config.update('editor.showActionButtons', !config.get<boolean>('editor.showActionButtons', false), target);
+        await config.update(key, !editorActionsAreEnabled(uri?.toString() ?? '', config), target);
     }));
     context.subscriptions.push(
         vscode.languages.registerCodeLensProvider(

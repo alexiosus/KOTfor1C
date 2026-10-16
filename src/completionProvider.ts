@@ -768,15 +768,9 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             if (formExplorerQuotedCompletionList) {
                 return formExplorerQuotedCompletionList;
             }
-            // When cursor is inside a quote in an already-completed step (text follows the closing
-            // quote), don't offer gherkin step suggestions — they would corrupt the existing step.
-            const closingQuoteIndex = quotedTextCompletionContext.endCharacter;
-            if (
-                closingQuoteIndex < lineText.length
-                && lineText.slice(closingQuoteIndex + 1).trim().length > 0
-            ) {
-                return new vscode.CompletionList([], false);
-            }
+            // Argument values are completed only by their dedicated providers.
+            // Falling through here would replace a finished or partially typed argument with a step.
+            return new vscode.CompletionList([], false);
         }
 
         const resolvedCatalog = await this.definitionResolver.getView(document.uri);
@@ -1066,38 +1060,22 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         return /\b(table|таблиц|grid|spreadsheet\s+document|табличн(?:ый|ого)?\s+документ)\b/i.test(lineText);
     }
 
-    private isFormExplorerFieldLikeLine(lineText: string): boolean {
-        return /(field|поле|attribute|атрибут|реквизит|checkbox|флаг|radio\s*button|переключател|drop-?down|dropdown|выпадающ|html\s+(?:document\s+)?field|form\s+item\s+addition|дополнени(?:е|я)\s+формы|spreadsheet\s+document|табличн(?:ый|ого)?\s+документ)/i.test(lineText);
-    }
-
-    private isFormExplorerButtonLikeLine(lineText: string): boolean {
-        return /\b(button|кнопк|hyperlink|link|гиперссыл|submenu|подменю)\b/i.test(lineText);
-    }
-
-    private isFormExplorerElementLikeLine(lineText: string): boolean {
-        return /(element|элемент|group|групп|field|поле|attribute|атрибут|реквизит|checkbox|флаг|radio\s*button|переключател|html\s+document|form\s+item\s+addition|дополнени(?:е|я)\s+формы|spreadsheet\s+document|табличн(?:ый|ого)?\s+документ)/i.test(lineText);
-    }
-
-    private isFormExplorerValueLikeLine(lineText: string): boolean {
-        return /(значени|value|equal|equals|became|имеет|стал|равен|равна|template|шаблон|contains|contain|header|tooltip|displayed|filled|exists?|available|unavailable|read.?only|appearance|появлен|ввожу|input|enter|text|текст|жду|wait|select|выбираю)/i.test(lineText);
-    }
-
     private isFormExplorerVariableNameSlot(linePrefixBeforeQuote: string): boolean {
         return /(как|as|переменн(?:ую|ой|ая|ые)?|variable)\s*$/i.test(linePrefixBeforeQuote);
     }
 
     private isWindowOrFormReferenceQuotedContext(beforeQuote: string, afterQuote: string): boolean {
         // Explicit "named"/"titled": "window named "X"", "форма с именем "X""
-        if (/(window|form|окно|форм(?:а|у|е|ой)?)\s+(?:with\s+(?:title|name)|named|titled|с\s+(?:именем|заголовком|наименованием))\s*$/i.test(beforeQuote)) {
+        if (/(window|form|окн(?:о|а|у|е|ом)|форм(?:а|у|е|ой)?)\s+(?:with\s+(?:title|name)|named|titled|с\s+(?:именем|заголовком|наименованием))\s*$/i.test(beforeQuote)) {
             return true;
         }
         // Keyword directly before the quote: "close the "X" window" → "окно """, "форма """
-        if (/(window|form|окно|форм(?:а|у|е|ой)?)\s*$/i.test(beforeQuote)) {
+        if (/(window|form|окн(?:о|а|у|е|ом)|форм(?:а|у|е|ой)?)\s*$/i.test(beforeQuote)) {
             return true;
         }
         // Keyword starts the afterQuote: "" window is opened", "" форма открылась"
         // Use negative lookahead instead of \b so Cyrillic boundaries work correctly.
-        if (/^\s*(window|form|окно|форм(?:а|у|е|ой)?)(?![а-яА-ЯёЁa-zA-Z0-9])/i.test(afterQuote)) {
+        if (/^\s*(window|form|окн(?:о|а|у|е|ом)|форм(?:а|у|е|ой)?)(?![а-яА-ЯёЁa-zA-Z0-9])/i.test(afterQuote)) {
             return true;
         }
         return false;
@@ -1193,23 +1171,21 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         const afterQuote = context.endCharacter < lineText.length && lineText[context.endCharacter] === context.quoteCharacter
             ? lineText.slice(context.endCharacter + 1)
             : lineText.slice(context.endCharacter);
-        const beforeQuote = context.linePrefixBeforeQuote;
-        return {
-            beforeQuote,
-            afterQuote,
-            combined: `${beforeQuote} ${afterQuote}`
-        };
+        const stripValues = (text: string) => text.replace(/"[^"\r\n]*"|'[^'\r\n]*'/gu, '""');
+        const beforeQuote = stripValues(context.linePrefixBeforeQuote);
+        const suffix = stripValues(afterQuote);
+        return { beforeQuote, afterQuote: suffix, combined: `${beforeQuote} ${suffix}` };
     }
 
     private isFormExplorerRelevantQuotedContext(
         beforeQuote: string,
         afterQuote: string
     ): boolean {
-        const combined = `${beforeQuote} ${afterQuote}`;
-        return this.isFormExplorerTableLikeLine(combined)
-            || this.isFormExplorerFieldLikeLine(combined)
-            || this.isFormExplorerButtonLikeLine(combined)
-            || this.isFormExplorerElementLikeLine(combined)
+        return this.isTableReferenceQuotedContext(beforeQuote, afterQuote)
+            || this.isFieldReferenceQuotedContext(beforeQuote, afterQuote)
+            || this.isButtonReferenceQuotedContext(beforeQuote, afterQuote)
+            || this.isElementReferenceQuotedContext(beforeQuote, afterQuote)
+            || this.isValueReferenceQuotedContext(beforeQuote, afterQuote)
             || this.isWindowOrFormReferenceQuotedContext(beforeQuote, afterQuote);
     }
 
@@ -1226,6 +1202,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         afterQuote: string
     ): boolean {
         return /(в\s+таблице|таблица(?:\s+формы)?(?:\s+с\s+именем)?|form\s+table(?:\s+named)?|table\s+named)\s*$/i.test(beforeQuote)
+            || /(?:^|\s)(?:in\s+(?:the\s+)?)?(?:form\s+)?table(?:\s+(?:named|with\s+name))?\s*$/iu.test(beforeQuote)
             || /^\s*table\b/i.test(afterQuote);
     }
 
@@ -1238,7 +1215,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         }
 
         return this.isNamedButtonReferenceQuotedContext(beforeQuote)
-            || /^\s*(button|кнопк|hyperlink|link|гиперссыл|submenu|подменю)\b/i.test(afterQuote);
+            || /^\s*(button|кнопк(?:а|у|и|е|ой)?|hyperlink|link|гиперссылк(?:а|у|и|е|ой)?|submenu|подменю)(?![\p{L}\p{N}_])/iu.test(afterQuote);
     }
 
     private isFieldReferenceQuotedContext(
@@ -1251,7 +1228,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
         return this.isNamedFieldReferenceQuotedContext(beforeQuote)
             || /(field|поле|attribute|атрибут|реквизит|element|элемент(?:\s+формы)?|checkbox|флаг|group|групп|drop-?down(?:\s+list)?|выпадающ(?:ий)?\s+список|html\s+(?:document\s+)?field|form\s+item\s+addition|дополнени(?:е|я)\s+формы)\s*$/i.test(beforeQuote)
-            || /^\s*(field|поле|attribute|атрибут|реквизит|form\s+attribute|form\s+element|элемент(?:\s+формы)?|checkbox|флаг|group|групп|html\s+(?:document\s+)?field|form\s+item\s+addition|дополнени(?:е|я)\s+формы)\b/i.test(afterQuote);
+            || /^\s*(field|поле|attribute|атрибут|реквизит|form\s+attribute|form\s+element|элемент(?:\s+формы)?|checkbox|флаг|group|групп|html\s+(?:document\s+)?field|form\s+item\s+addition|дополнени(?:е|я)\s+формы)(?![\p{L}\p{N}_])/iu.test(afterQuote);
     }
 
     private isElementReferenceQuotedContext(
@@ -1263,7 +1240,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         }
 
         return /(element|элемент|attribute|атрибут|form\s+attribute|form\s+element|элемент(?:\s+формы)?|group|групп)\s*$/i.test(beforeQuote)
-            || /^\s*(element|элемент|attribute|атрибут|form\s+attribute|form\s+element|элемент(?:\s+формы)?|group|групп)\b/i.test(afterQuote);
+            || /^\s*(element|элемент|attribute|атрибут|form\s+attribute|form\s+element|элемент(?:\s+формы)?|group|групп)(?![\p{L}\p{N}_])/iu.test(afterQuote);
     }
 
     private isValueReferenceQuotedContext(
@@ -1271,8 +1248,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         afterQuote: string
     ): boolean {
         const beforeTail = beforeQuote.slice(-120);
-        return /(equal(?:s| to)?|became(?:\s+equal(?:\s+to)?)?|имеет\s+значение|стал(?:а|о|и)?\s+рав(?:ен|на|но|ны)|рав(?:ен|на|но|ны)|жду\s+значени|wait(?:ing)?(?:\s+for)?\s+.*value|input(?:\s+text)?|ввожу(?:\s+текст)?|text|текст|template|шаблон|contains?|contain|tooltip|header|appearance|появлен|\bby\s*$)/i.test(beforeTail)
-            || /^\s*(value|значени|text|текст|template|шаблон)\b/i.test(afterQuote);
+        return /(?:equal(?:s| to)?|became(?:\s+equal(?:\s+to)?)?|имеет\s+значение|стал(?:а|о|и)?\s+рав(?:ен|на|но|ны)|рав(?:ен|на|но|ны)|жду\s+значени[ея]|wait(?:ing)?(?:\s+for)?\s+value|input(?:\s+text)?|ввожу(?:\s+текст)?|text|текст|template|шаблон|contains?|contain|tooltip|header|appearance|by)\s*$/iu.test(beforeTail)
+            || /^\s*(?:(?:exact|точное)\s+)?(?:value|значени[ея]|text|текст|template|шаблон)(?![\p{L}\p{N}_])/iu.test(afterQuote);
     }
 
     private isTableLikeFormExplorerCandidate(candidate: FormExplorerElementCompletionCandidate): boolean {
@@ -1400,32 +1377,6 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         });
 
         return filteredCandidates.length > 0 ? filteredCandidates : candidates;
-    }
-
-    private collectFormExplorerCurrentValueCandidates(
-        snapshot: FormExplorerSnapshot
-    ): string[] {
-        const values = new Set<string>();
-        const appendValue = (value: string | undefined): void => {
-            const normalizedValue = String(value || '').trim();
-            if (normalizedValue) {
-                values.add(normalizedValue);
-            }
-        };
-
-        const appendElementValues = (elements: FormExplorerElementInfo[]): void => {
-            for (const element of elements) {
-                appendValue(element.valuePreview);
-                appendElementValues(element.children || []);
-            }
-        };
-
-        appendElementValues(snapshot.elements || []);
-        for (const attribute of snapshot.attributes || []) {
-            appendValue(attribute.valuePreview);
-        }
-
-        return Array.from(values.values());
     }
 
     private filterFormExplorerTableColumnsByValueReferences(
@@ -1692,24 +1643,18 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         position: vscode.Position,
         context: QuotedTextCompletionContext
     ): Promise<vscode.CompletionList | null> {
-        const liveSnapshot = await loadLiveFormExplorerSnapshot();
-        if (!liveSnapshot) {
-            return null;
-        }
-
-        const snapshot = liveSnapshot.snapshot;
         const { beforeQuote, afterQuote, combined } = this.getFormExplorerQuotedArgumentSurroundings(lineText, context);
-        if (!this.isFormExplorerRelevantQuotedContext(beforeQuote, afterQuote)) {
+        if (!this.isFormExplorerRelevantQuotedContext(beforeQuote, afterQuote) || this.isFormExplorerVariableNameSlot(beforeQuote)) {
             return null;
         }
+        const liveSnapshot = await loadLiveFormExplorerSnapshot();
+        if (!liveSnapshot) { return null; }
+        const snapshot = liveSnapshot.snapshot;
 
         const preferTechnicalName = /(с именем|with name|named)\s*$/i.test(beforeQuote);
         const elementCandidates = this.collectFormExplorerElementCompletionCandidates(snapshot);
         const tableCandidates = this.collectFormExplorerTableCompletionCandidates(snapshot);
         const nonTableElementCandidates = elementCandidates.filter(candidate => !this.isTableLikeFormExplorerCandidate(candidate));
-        const allOtherQuotedValues = context.otherQuotedReferences
-            .map(reference => String(reference.value || '').trim())
-            .filter(Boolean);
         const otherTableReferenceValues = context.otherQuotedReferences
             .filter(reference => this.isTableReferenceQuotedContext(reference.beforeQuote, reference.afterQuote))
             .map(reference => String(reference.value || '').trim())
@@ -1735,15 +1680,11 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             .filter(Boolean);
         const referencedTableCandidate = this.findMatchingFormExplorerTableCandidateFromReferences(
             tableCandidates,
-            otherTableReferenceValues.length > 0
-                ? otherTableReferenceValues
-                : allOtherQuotedValues
+            otherTableReferenceValues
         );
         const referencedElementCandidate = this.findMatchingFormExplorerElementCandidateFromReferences(
             nonTableElementCandidates,
-            otherElementReferenceValues.length > 0
-                ? otherElementReferenceValues
-                : allOtherQuotedValues
+            otherElementReferenceValues
         );
 
         if (this.isTableReferenceQuotedContext(beforeQuote, afterQuote)) {
@@ -1773,9 +1714,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             if (referencedTableCandidate) {
                 const matchedColumn = this.findMatchingFormExplorerTableColumnFromReferences(
                     referencedTableCandidate,
-                    otherFieldReferenceValues.length > 0
-                        ? otherFieldReferenceValues
-                        : allOtherQuotedValues
+                    otherFieldReferenceValues
                 );
                 if (matchedColumn) {
                     const columnValues = this.buildFormExplorerTableColumnValueCandidates(
@@ -1808,13 +1747,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 }
             }
 
-            return this.buildFormExplorerSimpleValueCompletionList(
-                position,
-                context,
-                this.collectFormExplorerCurrentValueCandidates(snapshot),
-                vscode.l10n.t('Current form value'),
-                vscode.CompletionItemKind.Value
-            );
+            return null;
         }
 
         if (this.isWindowOrFormReferenceQuotedContext(beforeQuote, afterQuote)) {
@@ -1880,73 +1813,6 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 ),
                 preferTechnicalName,
                 vscode.l10n.t('Form element')
-            );
-        }
-
-        if (context.argumentIndex === 0) {
-            if (this.isFormExplorerTableLikeLine(combined)) {
-                return this.buildFormExplorerTableReferenceCompletionList(position, context, tableCandidates);
-            }
-
-            if (this.isFormExplorerButtonLikeLine(combined) && !this.isFormExplorerFieldLikeLine(combined)) {
-                return this.buildFormExplorerElementReferenceCompletionList(
-                    position,
-                    context,
-                    elementCandidates.filter(candidate => this.isButtonLikeFormExplorerCandidate(candidate)),
-                    preferTechnicalName,
-                    vscode.l10n.t('Form button')
-                );
-            }
-
-            if (this.isFormExplorerFieldLikeLine(combined)) {
-                return this.buildFormExplorerElementReferenceCompletionList(
-                    position,
-                    context,
-                    this.filterFormExplorerElementCandidatesByValueReferences(
-                        snapshot,
-                        nonTableElementCandidates.filter(candidate => this.isFieldLikeFormExplorerCandidate(candidate)),
-                        otherValueReferenceValues
-                    ),
-                    preferTechnicalName,
-                    vscode.l10n.t('Form field')
-                );
-            }
-
-            return this.buildFormExplorerElementReferenceCompletionList(
-                position,
-                context,
-                this.filterFormExplorerElementCandidatesByValueReferences(
-                    snapshot,
-                    nonTableElementCandidates,
-                    otherValueReferenceValues
-                ),
-                preferTechnicalName,
-                vscode.l10n.t('Form element')
-            );
-        }
-
-        // Fallback for non-first arguments: suggest values for the referenced element,
-        // or all current form values when the step context is field/element-like.
-        if (this.isFormExplorerFieldLikeLine(combined) || this.isFormExplorerElementLikeLine(combined)) {
-            if (referencedElementCandidate) {
-                const elementValueCompletionList = this.buildFormExplorerSimpleValueCompletionList(
-                    position,
-                    context,
-                    this.buildFormExplorerElementValueCandidates(snapshot, referencedElementCandidate),
-                    vscode.l10n.t('Current form value'),
-                    vscode.CompletionItemKind.Value
-                );
-                if (elementValueCompletionList) {
-                    return elementValueCompletionList;
-                }
-            }
-
-            return this.buildFormExplorerSimpleValueCompletionList(
-                position,
-                context,
-                this.collectFormExplorerCurrentValueCandidates(snapshot),
-                vscode.l10n.t('Current form value'),
-                vscode.CompletionItemKind.Value
             );
         }
 

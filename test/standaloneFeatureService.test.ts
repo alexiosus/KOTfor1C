@@ -900,3 +900,13 @@ test('dirty metadata prevents automatic central-record migration until shared ob
     await fs.stat(`${source}.kot.yml`);
     await assert.rejects(fs.stat(legacyPath), { code: 'ENOENT' });
 });
+
+test('creating a group from feature Properties writes it to that feature project', async t => {
+    const h = await harness(t); const firstRoot = h.root(); const secondRoot = path.join(h.temp, 'other-tests');
+    await fs.mkdir(secondRoot, { recursive: true }); const file = path.join(secondRoot, 'other.feature');
+    await fs.writeFile(file, 'Feature: Other\nScenario: Ready\n'); h.changeRoots([firstRoot, secondRoot]);
+    const service = h.createService(); await service.ensureReady();
+    const group = await service.createGroupForFeature(pathToFileURL(file).toString(), 'From Properties');
+    assert.deepEqual([...service.getSnapshot().ordering!.groupRoots[group.id]], [secondRoot]);
+    assert.match(await fs.readFile(path.join(secondRoot, '.kot/groups.yml'), 'utf8'), /From Properties/u);
+});

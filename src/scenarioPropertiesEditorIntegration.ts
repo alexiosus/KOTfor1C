@@ -1,3 +1,4 @@
+import { editorActionsAreEnabled } from './editorActionControls';
 import * as vscode from 'vscode';
 import { ScenarioYamlEditor, ScenarioYamlFoldingProvider } from './scenarioYamlEditor';
 import { ScenarioPropertiesPanel } from './scenarioPropertiesPanel';
@@ -27,7 +28,11 @@ export function registerScenarioPropertiesEditor(context: vscode.ExtensionContex
     context.subscriptions.push(vscode.languages.registerCodeLensProvider([
         { pattern: '**/*.yaml', scheme: 'file' }, { pattern: '**/*.yml', scheme: 'file' }
     ], {
+        onDidChangeCodeLenses: listener => vscode.workspace.onDidChangeConfiguration(event => {
+            if (['editor.showActionButtons', 'editor.showYamlActionButtons'].some(key => event.affectsConfiguration('kotTestToolkit.' + key))) { listener(); }
+        }),
         provideCodeLenses(document: vscode.TextDocument) {
+            if (!editorActionsAreEnabled(document.uri.toString(), vscode.workspace.getConfiguration('kotTestToolkit', document.uri))) { return []; }
             if (!isScenarioYamlFile(document) && !isProcessYamlFile(document)) { return []; }
             const lenses = [new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
                 title: vscode.l10n.t('Edit scenario and properties'),

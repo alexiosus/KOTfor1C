@@ -46,7 +46,7 @@ test('process commands are contributed and exposed from the creation and YAML ed
         assert.ok(russian[key]);
     }
     assert.ok(manifest.contributes.menus['kotTestToolkit.phaseSwitcher.create'].some((item: { command: string }) => item.command === 'kotTestToolkit.createProcess'));
-    assert.ok(manifest.contributes.menus['kotTestToolkit.editorContext.editing'].some((item: { command: string }) => item.command === 'kotTestToolkit.editProcessSteps'));
+    assert.ok(manifest.contributes.menus['kotTestToolkit.editorContext.editing'].some((item: { command: string }) => item.command === 'kotTestToolkit.editorMenu.editProcessSteps'));
 });
 
 test('feature source navigation uses the compiler map before the name-based fallback', async () => {

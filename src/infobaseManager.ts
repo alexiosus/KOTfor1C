@@ -2371,25 +2371,34 @@ export async function recreateInfobaseInteractive(
 
 export async function restoreInfobaseFromDtInteractive(
     context: vscode.ExtensionContext,
-    infobase: ManagedInfobaseRecord
+    infobase: ManagedInfobaseRecord,
+    source: 'dtFile' | 'template' = 'dtFile'
 ): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     assertNonWebInfobaseRecord(t, infobase, t('Restore from DT'));
-    const selectedFile = await vscode.window.showOpenDialog({
-        canSelectFiles: true,
-        canSelectFolders: false,
-        canSelectMany: false,
-        title: t('Choose DT file'),
-        openLabel: t('Restore DT'),
-        filters: {
-            [t('1C DT files (*.dt)')]: ['dt']
+    let dtPath: string;
+    if (source === 'template') {
+        const { pickInstalledInfobaseTemplate } = await import('./oneCInfobaseTemplatePicker.js');
+        const template = await pickInstalledInfobaseTemplate('demo', t);
+        if (!template) { return; }
+        dtPath = path.resolve(template.filePath);
+    } else {
+        const selectedFile = await vscode.window.showOpenDialog({
+            canSelectFiles: true,
+            canSelectFolders: false,
+            canSelectMany: false,
+            title: t('Choose DT file'),
+            openLabel: t('Restore DT'),
+            filters: {
+                [t('1C DT files (*.dt)')]: ['dt']
+            }
+        });
+        if (!selectedFile || selectedFile.length === 0) {
+            return;
         }
-    });
-    if (!selectedFile || selectedFile.length === 0) {
-        return;
+        dtPath = path.resolve(selectedFile[0].fsPath);
     }
 
-    const dtPath = path.resolve(selectedFile[0].fsPath);
     const confirmation = buildDestructiveInfobaseImportConfirmation(
         'dt',
         dtPath,

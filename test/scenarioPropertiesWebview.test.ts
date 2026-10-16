@@ -104,7 +104,7 @@ function harness(saved: any = {}, options: { animate?: boolean; reducedMotion?: 
         setState: (state: any) => persisted.push(JSON.parse(JSON.stringify(state)))
     };
     const context = { window, document, acquireVsCodeApi: () => vscode, console, setTimeout, clearTimeout, btoa, navigator: { clipboard: { writeText: () => Promise.resolve() } } };
-    for (const name of ['scenarioPropertiesProtocol.js', 'scenarioFilesProtocol.js', 'scenarioProperties.js']) {
+    for (const name of ['scenarioPropertiesProtocol.js', 'scenarioFilesProtocol.js', 'featureProperties.js', 'scenarioProperties.js']) {
         const file = path.join(process.cwd(), 'media', name);
         if (fs.existsSync(file)) { vm.runInNewContext(fs.readFileSync(file, 'utf8'), context); }
     }
@@ -793,4 +793,109 @@ test('a code rename acknowledgement rebases a queued settings selection before s
         { oldUri: state.metadata.uri, newUri: next.metadata.uri }];
     h.state(next);
     assert.deepEqual(h.messages.at(-1), { command: 'action', action: 'selectSettings', value: next.settings[0].uri });
+});
+
+test('Properties offers the shared favorite toggle and an inset readable empty state', () => {
+    const h = harness(); h.state({ ...snapshot(), canFavorite: true, favorite: false });
+    assert.equal(h.action('favorite')?.getAttribute('aria-pressed'), 'false');
+    h.action('favorite')!.fire('click'); assert.equal(h.messages.at(-1).action, 'favorite');
+    h.state({ ...snapshot(), canFavorite: true, favorite: true });
+    assert.equal(h.action('favorite')?.getAttribute('aria-pressed'), 'true');
+    const css = fs.readFileSync('media/scenarioProperties.css', 'utf8');
+    assert.match(css, /\.properties-empty\s*\{[^}]*padding:\s*20px 16px/u);
+    assert.match(css, /\.properties-empty\s*\{[^}]*font-size:\s*var\(--vscode-font-size/u);
+});
+
+test('feature Properties edits queue against acknowledged native versions and reset on YAML switch', () => {
+    const h = harness();
+    const feature = { uri: 'file:///test.feature', version: 1, dirty: false, pinned: false, canFavorite: true, favorite: false,
+        model: { title: 'Test', description: '', tags: ['@Smoke'], actions: [{ title: '+ Background', kind: 'background', line: 0 }],
+            scenarios: [{ title: 'Ready', line: 2, actions: [] }] }, standalone: { groupId: '', groups: [], jsonPath: '/test.json' } };
+    h.message({ command: 'featureState', state: feature, acknowledgement: false });
+    assert.equal(h.field('title')?.value, 'Test'); assert.ok(h.action('chooseJson')); assert.ok(h.action('structure'));
+    h.field('title')!.value = 'Changed'; h.field('title')!.fire('input'); h.field('title')!.fire('change');
+    h.field('tags')!.value = '@Other'; h.field('tags')!.fire('input'); h.field('tags')!.fire('change');
+    assert.equal(h.messages.at(-1).field, 'title'); assert.equal(h.messages.at(-1).version, 1);
+    h.field('tags')!.focus();
+    const count = h.messages.length;
+    h.message({ command: 'featureState', acknowledgement: false, state: { ...feature, version: 2, model: { ...feature.model, title: 'Changed' } } });
+    assert.equal(h.messages.length, count, 'external refresh is not an edit acknowledgement');
+    assert.equal(h.document.activeElement, h.field('tags'), 'refresh preserves the focused feature field');
+    h.message({ command: 'featureState', acknowledgement: true, state: { ...feature, version: 2, model: { ...feature.model, title: 'Changed' } } });
+    assert.equal(h.messages.at(-1).field, 'tags'); assert.equal(h.messages.at(-1).version, 2);
+    h.state(snapshot()); assert.ok(h.action('openSource')); assert.equal(h.field('title'), undefined);
+});
+
+test('queued positional feature actions retain the version of the clicked scenario', () => {
+    const h = harness(); const feature = { uri: 'file:///test.feature', version: 1, dirty: false, pinned: false,
+        model: { title: 'Test', description: 'Line one\nLine two', tags: [], actions: [], scenarios: [
+            { title: 'One', line: 3, actions: [] }, { title: 'Two', line: 5, actions: [] }] } };
+    h.message({ command: 'featureState', state: feature });
+    h.field('description')!.value = ''; h.field('description')!.fire('input'); h.field('description')!.fire('change');
+    h.action('renameScenario')!.fire('click'); assert.equal(h.messages.at(-1).action, 'edit');
+    h.message({ command: 'featureState', acknowledgement: true, state: { ...feature, version: 2, model: { ...feature.model, description: '', scenarios: [
+        { title: 'One', line: 1, actions: [] }, { title: 'Two', line: 3, actions: [] }] } } });
+    assert.equal(h.messages.at(-1).action, 'renameScenario'); assert.equal(h.messages.at(-1).line, 3);
+    assert.equal(h.messages.at(-1).version, 1, 'a new version must not bless a stale scenario line');
+});
+
+test('feature drafts keep their original field base after external edits', () => {
+    const h = harness(); const feature = { uri: 'file:///test.feature', version: 1, dirty: false, pinned: false,
+        model: { title: 'Original', description: '', tags: [], actions: [], scenarios: [] } };
+    h.message({ command: 'featureState', state: feature });
+    h.field('title')!.value = 'Local'; h.field('title')!.fire('input');
+    h.message({ command: 'featureState', acknowledgement: false, state: { ...feature, version: 2, model: { ...feature.model, title: 'External' } } });
+    h.field('title')!.fire('change'); assert.equal(h.messages.at(-1).value, 'Local'); assert.equal(h.messages.at(-1).baseValue, 'Original');
+});
+
+test('successful feature edits settle normalized drafts while preserving later typing', () => {
+    const h = harness(); const feature = { uri: 'file:///test.feature', version: 1, dirty: false, pinned: false,
+        model: { title: 'Original', description: '', tags: [], actions: [], scenarios: [] } };
+    h.message({ command: 'featureState', state: feature });
+    h.field('tags')!.value = 'Smoke'; h.field('tags')!.fire('input'); h.field('tags')!.fire('change');
+    h.message({ command: 'featureState', acknowledgement: true, state: { ...feature, version: 2, model: { ...feature.model, tags: ['@Smoke'] } } });
+    assert.equal(h.field('tags')!.value, '@Smoke'); h.action('save')!.fire('click'); assert.equal(h.messages.at(-1).action, 'save');
+    h.message({ command: 'featureState', acknowledgement: true, state: { ...feature, version: 2, model: { ...feature.model, tags: ['@Smoke'] } } });
+    assert.ok(textOf(h.root).includes('Saved')); assert.ok(!textOf(h.root).includes('Unsaved changes'));
+    h.field('title')!.value = ' First '; h.field('title')!.fire('input'); h.field('title')!.fire('change');
+    h.field('title')!.value = 'Second'; h.field('title')!.fire('input'); h.field('title')!.fire('change');
+    h.message({ command: 'featureState', acknowledgement: true, state: { ...feature, version: 3, model: { ...feature.model, title: 'First', tags: ['@Smoke'] } } });
+    assert.equal(h.field('title')!.value, 'Second'); assert.equal(h.messages.at(-1).baseValue, 'First');
+});
+
+test('favorite follows Save and Launch JSON is an independently collapsible section', () => {
+    const h = harness(); h.state({ ...snapshot(), canFavorite: true });
+    const yamlActions = h.action('save')!.parentElement!;
+    assert.ok(yamlActions.children.indexOf(h.action('favorite')!) > yamlActions.children.indexOf(h.action('save')!));
+    const feature = { uri: 'file:///test.feature', version: 1, dirty: false, pinned: false,
+        model: { title: 'Test', description: '', tags: [], actions: [{ title: '+ Background', kind: 'background', line: 0 }], scenarios: [] }, standalone: { groupId: '', groups: [] } };
+    h.message({ command: 'featureState', state: feature });
+    const actions = h.action('save')!.parentElement!; assert.deepEqual(actions.children.map(node => node.dataset.action), ['save', 'run', 'favorite', 'pin']);
+    assert.equal(h.action('run')!.parentElement, actions, 'Run belongs in the header toolbar');
+    assert.ok(h.find(node => node.tagName === 'DETAILS' && node.className.includes('properties-feature-blocks')));
+    const section = h.find(node => node.tagName === 'DETAILS' && node.className.includes('properties-feature-launch'));
+    assert.ok(section); assert.ok(section.open); section.children[0].fire('click'); assert.equal(section.open, false);
+    h.message({ command: 'featureState', state: { ...feature, dirty: true }, acknowledgement: false });
+    assert.equal(h.find(node => node.tagName === 'DETAILS' && node.className.includes('properties-feature-launch'))?.open, false);
+});
+
+test('feature unpin bypasses unsent drafts and survives a rejected pending edit', () => {
+    const h = harness(); const feature = { uri: 'file:///test.feature', version: 1, dirty: false, pinned: true,
+        model: { title: 'Original', description: '', tags: [], actions: [], scenarios: [] } };
+    h.message({ command: 'featureState', state: feature });
+    h.field('title')!.value = 'Draft'; h.field('title')!.fire('input'); h.action('pin')!.fire('click');
+    assert.equal(h.messages.at(-1).action, 'pin');
+    h.message({ command: 'featureState', acknowledgement: true, state: feature });
+    h.field('title')!.fire('change'); assert.equal(h.messages.at(-1).action, 'edit');
+    h.action('pin')!.fire('click');
+    h.message({ command: 'featureState', acknowledgement: true, state: { ...feature, error: 'The source was deleted.' } });
+    assert.equal(h.messages.at(-1).action, 'pin', 'source recovery must survive the failed edit');
+});
+
+test('feature Properties offers the scenario plus in the Scenarios heading without duplicating it in blocks', () => {
+    const h = harness(); h.message({ command: 'featureState', state: { uri: 'file:///test.feature', version: 3, pinned: false,
+        model: { title: 'Test', description: '', tags: [], actions: [{ title: '+ Scenario', kind: 'scenario', line: 0 }], scenarios: [] } } });
+    const plus = h.action('structure'); assert.ok(plus); assert.equal(plus.parentElement?.tagName, 'SUMMARY');
+    plus.fire('click'); assert.equal(h.messages.at(-1).value, 'scenario'); assert.equal(h.messages.at(-1).line, 0);
+    assert.ok(!h.find(node => node.className.includes('properties-feature-blocks')));
 });

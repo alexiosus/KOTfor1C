@@ -34,8 +34,8 @@
                 && ['main', 'process', 'nested', 'export', 'standalone'].includes(node.sourceGroup);
         }
         function canOpenProperties(node) {
-            const uri = node?.scenarioPropertiesUri || node?.capturedLocation?.uri;
-            return canRename(node) && typeof uri === 'string' && /^file:.*\.ya?ml$/iu.test(uri);
+            const uri = node?.scenarioPropertiesUri || node?.capturedLocation?.uri || node?.featureId;
+            return (canRename(node) || Boolean(node?.featureId)) && typeof uri === 'string' && /^file:.*\.(?:ya?ml|feature)$/iu.test(uri);
         }
         function send(action, node, extra) {
             if (['toggleFavorite', 'insert', 'copy', 'openDefinition', 'openScenarioProperties', 'deleteDefinition'].includes(action) && (node?.itemId || node?.id)) {
@@ -75,7 +75,7 @@
             const itemActions = [...(options.getItemActions?.(node) || []), ...(canDelete(node) ? ['deleteDefinition'] : [])];
             if (canRename(node)) { return [...itemActions, ...(canOpenProperties(node) ? ['openScenarioProperties'] : []), 'renameScenario']; }
             if (node.featureId) {
-                return [...itemActions, ...(itemActions.some(action => action.id === 'openDefinition') ? [] : ['openFeature']),
+                return [...itemActions, ...(canOpenProperties(node) ? ['openScenarioProperties'] : []), ...(itemActions.some(action => action.id === 'openDefinition') ? [] : ['openFeature']),
                     'renameFeature', 'renameFeatureFile', 'generateJson', 'selectJson', 'openJson', 'moveFeature', 'moveUp', 'moveDown'];
             }
             if (itemActions.length) { return itemActions; }

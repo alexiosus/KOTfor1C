@@ -160,7 +160,7 @@ test('Properties opens the selected YAML source and rejects feature, catalog, an
         }
     }
     const h = harness(undefined);
-    for (const kind of ['standaloneFeature', 'builtInStep', 'userStep'] as const) {
+    for (const kind of ['builtInStep', 'userStep'] as const) {
         assert.equal(await h.service.openScenarioProperties(item({ kind, capturedLocation })), false);
     }
     assert.deepEqual(h.propertiesCalls, []);
@@ -483,4 +483,11 @@ test('copies display text and opens only captured navigable definitions', async 
     assert.equal(await state.service.openDefinition(item({ kind: 'builtInStep', capturedLocation: location })), false);
     assert.equal(await state.service.openDefinition(item({ navigable: false })), false);
     state.service.dispose();
+});
+
+test('Properties opens standalone features and revalidates export feature definitions', async () => {
+    const location = { uri: 'file:///test.feature', range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } };
+    const h = harness(undefined);
+    assert.equal(await h.service.openScenarioProperties(item({ kind: 'standaloneFeature', capturedLocation: location })), true);
+    assert.deepEqual(h.propertiesCalls, [location.uri]);
 });

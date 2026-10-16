@@ -9,10 +9,10 @@ const apply = (text: string, edit: { start: number; end: number; snippet: string
 
 test('offers feature sections and scenario actions without duplicating existing sections', () => {
     const actions = buildFeatureEditorActions(source('Feature: Order\n\nScenario: Ready\n    Given ready\n'));
-    assert.deepEqual(actions.filter(a => a.line === 0).map(a => a.kind), ['description', 'background', 'variables', 'tags', 'tree']);
+    assert.deepEqual(actions.filter(a => a.line === 0).map(a => a.kind), ['description', 'background', 'variables', 'tags', 'tree', 'scenario']);
     assert.deepEqual(actions.filter(a => a.line === 2).map(a => a.kind), ['tags', 'outline']);
     const existing = buildFeatureEditorActions(source('@tree\nFeature: Order\nAs a buyer\n\nVariables:\n    Amount = "1"\n\nBackground:\n    Given ready\nScenario Outline: Ready\n    Then value <amount>\nExamples:\n    | amount |\n    | 1 |\n'));
-    assert.deepEqual(existing.filter(a => a.line === 1).map(a => a.kind), ['tags']);
+    assert.deepEqual(existing.filter(a => a.line === 1).map(a => a.kind), ['tags', 'scenario']);
     assert.ok(existing.some(a => a.kind === 'variable' && a.line === 4));
     assert.ok(existing.some(a => a.kind === 'examples' && a.line === 9));
 });
@@ -108,4 +108,33 @@ test('new sections retain a two-space indentation style', () => {
 
 test('validates an English Functionality declaration on the BOM line', () => {
     assert.deepEqual(collectGherkinSyntaxErrors('\uFEFFFunctionality: Order\nScenario: Ready\n    Given ready\n'), []);
+});
+
+test('adds scenarios and outlines in the feature language while preserving BOM, EOL and rule bodies', () => {
+    for (const language of ['en', 'ru'] as const) {
+        const text = language === 'en' ? '\uFEFFFeature: Orders\r\nScenario: Existing\r\n  Given ready\r\n\r\n@rule\r\nRule: Existing rule\r\n  Scenario: Rule case\r\n    Given untouched\r\n'
+            : '\uFEFFФункционал: Заказы\r\nСценарий: Первый\r\n  Дано готово\r\n';
+        const input = { ...source(text), language };
+        const action = buildFeatureEditorActions(input).find(item => item.kind === 'scenario'); assert.ok(action);
+        for (const scenarioKind of ['scenario', 'outline'] as const) {
+            const edit = planFeatureEditorEdit(input, action.target, { scenarioKind, scenarioTitle: 'New $value}' })!;
+            const result = apply(text, edit);
+            assert.ok(result.startsWith('\uFEFF')); assert.ok(!/(?<!\r)\n/u.test(result));
+            assert.ok(edit.snippet.includes('New \\$value\\}'), 'title is inserted as literal text');
+            assert.ok(edit.snippet.includes('${1:'), 'cursor starts at the first step');
+            assert.ok(edit.snippet.includes(language === 'ru' ? 'Дано' : 'Given'));
+            if (scenarioKind === 'outline') { assert.ok(edit.snippet.includes(language === 'ru' ? 'Структура сценария:' : 'Scenario Outline:')); assert.ok(edit.snippet.includes(language === 'ru' ? 'Примеры:' : 'Examples:')); }
+            else { assert.ok(edit.snippet.includes(language === 'ru' ? 'Сценарий:' : 'Scenario:')); }
+            if (language === 'en') { assert.ok(edit.start <= text.indexOf('@rule')); assert.ok(result.endsWith(text.slice(text.indexOf('@rule')))); }
+        }
+    }
+});
+
+test('scenario insertion rejects stale targets, multiline names and unclosed payloads', () => {
+    const input = source('Feature: Test'); const action = buildFeatureEditorActions(input).find(item => item.kind === 'scenario'); assert.ok(action);
+    assert.throws(() => planFeatureEditorEdit(input, action.target, { scenarioTitle: 'Bad\nScenario: injected' }), /single line/iu);
+    const open = source('Feature: Test\nScenario: One\n  Given payload\n  """\n  text\n');
+    const target = buildFeatureEditorActions(open).find(item => item.kind === 'scenario')!;
+    assert.throws(() => planFeatureEditorEdit(open, target.target, { scenarioTitle: 'New' }), /multiline/iu);
+    assert.throws(() => planFeatureEditorEdit(input, { ...action.target, version: 1 }, { scenarioTitle: 'New' }), /changed/iu);
 });

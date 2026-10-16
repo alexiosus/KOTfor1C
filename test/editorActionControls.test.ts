@@ -17,3 +17,19 @@ test('disabling editor buttons retains informational inlay hints', () => {
     assert.deepEqual(filterEditorActionHints([hint, action], false), [hint]);
     assert.deepEqual(filterEditorActionHints([hint, action], true), [hint, action]);
 });
+
+test('format-specific editor buttons override the legacy preference independently', async () => {
+    const { editorActionSetting, editorActionsAreEnabled } = await import('../src/editorActionControls');
+    const values: Record<string, any> = { 'editor.showActionButtons': { globalValue: true } };
+    const configuration = { inspect: (key: string) => values[key], get: (key: string, fallback: boolean) => {
+        const value = values[key]; return value?.workspaceFolderValue ?? value?.workspaceValue ?? value?.globalValue ?? fallback;
+    } };
+    assert.equal(editorActionSetting('file:///test.feature'), 'editor.showFeatureActionButtons');
+    assert.equal(editorActionSetting('file:///scen.yaml'), 'editor.showYamlActionButtons');
+    assert.equal(editorActionsAreEnabled('file:///test.feature', configuration), true);
+    values['editor.showYamlActionButtons'] = { workspaceValue: false };
+    assert.equal(editorActionsAreEnabled('file:///scen.yaml', configuration), false);
+    assert.equal(editorActionsAreEnabled('file:///test.feature', configuration), true);
+    values['editor.showFeatureActionButtons'] = { globalValue: false };
+    assert.equal(editorActionsAreEnabled('file:///test.feature', configuration), false);
+});

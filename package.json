@@ -93,6 +93,12 @@
           "ю": true,
           "я": true
         }
+      },
+      "[feature]": {
+        "editor.wordBasedSuggestions": "off"
+      },
+      "[yaml]": {
+        "editor.wordBasedSuggestions": "off"
       }
     },
     "languages": [
@@ -200,6 +206,20 @@
             "default": false,
             "description": "%config.editor.showActionButtons.description%",
             "order": 1.6
+          },
+          "kotTestToolkit.editor.showYamlActionButtons": {
+            "type": "boolean",
+            "default": false,
+            "scope": "resource",
+            "description": "%config.editor.showYamlActionButtons.description%",
+            "order": 1.61
+          },
+          "kotTestToolkit.editor.showFeatureActionButtons": {
+            "type": "boolean",
+            "default": false,
+            "scope": "resource",
+            "description": "%config.editor.showFeatureActionButtons.description%",
+            "order": 1.62
           }
         }
       },
@@ -1278,6 +1298,126 @@
       {
         "command": "kotTestToolkit.toggleEditorActionButtons",
         "title": "%command.toggleEditorActionButtons.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.openCurrentScenarioFilesFolder",
+        "title": "%menu.openCurrentScenarioFilesFolder.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.openMxlFile",
+        "title": "%menu.openMxlFile.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.revealFileInExplorer",
+        "title": "%menu.revealFileInExplorer.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.revealFileInOS",
+        "title": "%menu.revealFileInOS.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.createNestedScenario",
+        "title": "%menu.createNestedScenario.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.createMainScenario",
+        "title": "%menu.createMainScenario.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.createFeature",
+        "title": "%menu.createFeature.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.createProcess",
+        "title": "%menu.createProcess.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.editProcessSteps",
+        "title": "%menu.editProcessSteps.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.renameScenarioFromEditor",
+        "title": "%menu.renameScenarioFromEditor.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.changeNestedScenarioName",
+        "title": "%menu.changeNestedScenarioName.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.changeNestedScenarioCode",
+        "title": "%menu.changeNestedScenarioCode.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.checkAndFillNestedScenarios",
+        "title": "%menu.checkAndFillNestedScenarios.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.checkAndFillScriptParameters",
+        "title": "%menu.checkAndFillScriptParameters.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.generateScenarioDescriptionWithAi",
+        "title": "%menu.generateScenarioDescriptionWithAi.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.renameProcessFromEditor",
+        "title": "%menu.renameProcessFromEditor.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.changeProcessCodeFromEditor",
+        "title": "%menu.changeProcessCodeFromEditor.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.openProcessTestSettingsFromEditor",
+        "title": "%menu.openProcessTestSettingsFromEditor.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.changeProcessTestSettingsFromEditor",
+        "title": "%menu.changeProcessTestSettingsFromEditor.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.openScenarioEditor",
+        "title": "%menu.openScenarioEditor.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.openNestedScenarioFromFeature",
+        "title": "%menu.openNestedScenarioFromFeature.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.trackScenarioRunByFeatureLog",
+        "title": "%menu.trackScenarioRunByFeatureLog.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.switchTrackedScenarioRunForFeature",
+        "title": "%menu.switchTrackedScenarioRunForFeature.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.stopTrackedScenarioRunForFeature",
+        "title": "%menu.stopTrackedScenarioRunForFeature.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.trackScenarioRunFromOpenedLogFile",
+        "title": "%menu.trackScenarioRunFromOpenedLogFile.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.findCurrentFileReferences",
+        "title": "%menu.findCurrentFileReferences.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.addActiveScenarioToFavorites",
+        "title": "%menu.addActiveScenarioToFavorites.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.removeActiveScenarioFromFavorites",
+        "title": "%menu.removeActiveScenarioFromFavorites.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.generateFeatureJson",
+        "title": "%menu.generateFeatureJson.title%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.runFeature",
+        "title": "%menu.runFeature.title%"
       }
     ],
     "submenus": [
@@ -1324,6 +1464,10 @@
         "id": "kotTestToolkit.stepLibrary.relationshipsActive",
         "label": "%cmd.configureScenarioRelationships.title%",
         "icon": "$(filter-filled)"
+      },
+      {
+        "id": "kotTestToolkit.editorContext",
+        "label": "KOT"
       }
     ],
     "keybindings": [
@@ -1711,7 +1855,7 @@
       "editor/title": [
         {
           "command": "kotTestToolkit.openScenarioEditor",
-          "when": "resourceExtname == .yaml || resourceExtname == .yml",
+          "when": "resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature",
           "group": "navigation@9"
         },
         {
@@ -1722,174 +1866,109 @@
       ],
       "editor/context": [
         {
-          "command": "kotTestToolkit.openSubscenario",
-          "when": "editorTextFocus && resourceExtname == .yaml",
-          "group": "00_navigation@0"
-        },
-        {
-          "command": "kotTestToolkit.openNestedScenarioFromFeature",
-          "when": "editorTextFocus && resourceExtname == .feature",
-          "group": "00_navigation@0"
-        },
-        {
-          "command": "kotTestToolkit.trackScenarioRunByFeatureLog",
-          "when": "editorTextFocus && resourceExtname == .feature",
-          "group": "00_navigation@1"
-        },
-        {
-          "command": "kotTestToolkit.switchTrackedScenarioRunForFeature",
-          "when": "editorTextFocus && resourceExtname == .feature",
-          "group": "00_navigation@2"
-        },
-        {
-          "command": "kotTestToolkit.stopTrackedScenarioRunForFeature",
-          "when": "editorTextFocus && resourceExtname == .feature",
-          "group": "00_navigation@3"
-        },
-        {
-          "command": "kotTestToolkit.trackScenarioRunFromOpenedLogFile",
-          "when": "editorTextFocus && resourceExtname == .log",
-          "group": "00_navigation@0"
-        },
-        {
-          "command": "kotTestToolkit.findCurrentFileReferences",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
-          "group": "00_navigation@1"
-        },
-        {
-          "command": "kotTestToolkit.addActiveScenarioToFavorites",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && !kotTestToolkit.activeScenarioInFavorites",
-          "group": "00_navigation@2"
-        },
-        {
-          "command": "kotTestToolkit.removeActiveScenarioFromFavorites",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && kotTestToolkit.activeScenarioInFavorites",
-          "group": "00_navigation@2"
-        },
-        {
-          "submenu": "kotTestToolkit.editorContext.workWithFiles",
-          "when": "editorTextFocus && resourceExtname == .yaml",
-          "group": "01_submenu@0"
-        },
-        {
-          "submenu": "kotTestToolkit.editorContext.create",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
-          "group": "01_submenu@1"
-        },
-        {
-          "submenu": "kotTestToolkit.editorContext.editing",
-          "when": "editorTextFocus && resourceExtname == .yaml",
-          "group": "01_submenu@2"
-        },
-        {
-          "command": "kotTestToolkit.generateFeatureJson",
-          "when": "editorTextFocus && resourceExtname == .feature",
-          "group": "00_feature@0"
-        },
-        {
-          "command": "kotTestToolkit.runFeature",
-          "when": "editorTextFocus && resourceExtname == .feature",
-          "group": "00_feature@1"
+          "submenu": "kotTestToolkit.editorContext",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature || resourceExtname == .log)",
+          "group": "navigation@99"
         }
       ],
       "kotTestToolkit.editorContext.workWithFiles": [
         {
-          "command": "kotTestToolkit.openCurrentScenarioFilesFolder",
-          "when": "editorTextFocus && resourceExtname == .yaml",
+          "command": "kotTestToolkit.editorMenu.openCurrentScenarioFilesFolder",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml)",
           "group": "00_workWithFiles@0"
         },
         {
-          "command": "kotTestToolkit.openMxlFile",
-          "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
+          "command": "kotTestToolkit.editorMenu.openMxlFile",
+          "when": "editorTextFocus && editorHasSelection && (resourceExtname == .yaml || resourceExtname == .yml)",
           "group": "00_workWithFiles@1"
         },
         {
-          "command": "kotTestToolkit.revealFileInExplorer",
-          "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
+          "command": "kotTestToolkit.editorMenu.revealFileInExplorer",
+          "when": "editorTextFocus && editorHasSelection && (resourceExtname == .yaml || resourceExtname == .yml)",
           "group": "00_workWithFiles@2"
         },
         {
-          "command": "kotTestToolkit.revealFileInOS",
-          "when": "editorTextFocus && editorHasSelection && resourceExtname == .yaml",
+          "command": "kotTestToolkit.editorMenu.revealFileInOS",
+          "when": "editorTextFocus && editorHasSelection && (resourceExtname == .yaml || resourceExtname == .yml)",
           "group": "00_workWithFiles@3"
         }
       ],
       "kotTestToolkit.editorContext.create": [
         {
-          "command": "kotTestToolkit.createNestedScenario",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
+          "command": "kotTestToolkit.editorMenu.createNestedScenario",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml)",
           "group": "00_create@0"
         },
         {
-          "command": "kotTestToolkit.createMainScenario",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
+          "command": "kotTestToolkit.editorMenu.createMainScenario",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml)",
           "group": "00_create@1"
         },
         {
-          "command": "kotTestToolkit.createFeature",
+          "command": "kotTestToolkit.editorMenu.createFeature",
           "when": "editorTextFocus && !editorReadonly && resourceExtname == .feature",
           "group": "00_create@1.5"
         },
         {
-          "command": "kotTestToolkit.createProcess",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
+          "command": "kotTestToolkit.editorMenu.createProcess",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml)",
           "group": "00_create@2"
         }
       ],
       "kotTestToolkit.editorContext.editing": [
         {
-          "command": "kotTestToolkit.editProcessSteps",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && kotTestToolkit.activeScenarioIsProcess",
+          "command": "kotTestToolkit.editorMenu.editProcessSteps",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.activeScenarioIsProcess",
           "group": "00_editing@0"
         },
         {
-          "command": "kotTestToolkit.renameScenarioFromEditor",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && kotTestToolkit.activeScenarioIsMain",
+          "command": "kotTestToolkit.editorMenu.renameScenarioFromEditor",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.activeScenarioIsMain",
           "group": "00_editing@0"
         },
         {
-          "command": "kotTestToolkit.changeNestedScenarioName",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && !kotTestToolkit.activeScenarioIsMain && !kotTestToolkit.activeScenarioIsProcess && !kotTestToolkit.activeProcessSettings",
+          "command": "kotTestToolkit.editorMenu.changeNestedScenarioName",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml) && !kotTestToolkit.activeScenarioIsMain && !kotTestToolkit.activeScenarioIsProcess && !kotTestToolkit.activeProcessSettings",
           "group": "00_editing@1"
         },
         {
-          "command": "kotTestToolkit.changeNestedScenarioCode",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && !kotTestToolkit.activeScenarioIsMain && !kotTestToolkit.activeScenarioIsProcess && !kotTestToolkit.activeProcessSettings",
+          "command": "kotTestToolkit.editorMenu.changeNestedScenarioCode",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml) && !kotTestToolkit.activeScenarioIsMain && !kotTestToolkit.activeScenarioIsProcess && !kotTestToolkit.activeProcessSettings",
           "group": "00_editing@2"
         },
         {
-          "command": "kotTestToolkit.checkAndFillNestedScenarios",
-          "when": "editorTextFocus && resourceExtname == .yaml",
+          "command": "kotTestToolkit.editorMenu.checkAndFillNestedScenarios",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml)",
           "group": "01_fill@0"
         },
         {
-          "command": "kotTestToolkit.checkAndFillScriptParameters",
-          "when": "editorTextFocus && resourceExtname == .yaml",
+          "command": "kotTestToolkit.editorMenu.checkAndFillScriptParameters",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml)",
           "group": "01_fill@1"
         },
         {
-          "command": "kotTestToolkit.generateScenarioDescriptionWithAi",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml",
+          "command": "kotTestToolkit.editorMenu.generateScenarioDescriptionWithAi",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml)",
           "group": "01_fill@2"
         },
         {
-          "command": "kotTestToolkit.renameProcessFromEditor",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && kotTestToolkit.activeScenarioIsProcess",
+          "command": "kotTestToolkit.editorMenu.renameProcessFromEditor",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.activeScenarioIsProcess",
           "group": "00_editing@3"
         },
         {
-          "command": "kotTestToolkit.changeProcessCodeFromEditor",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && kotTestToolkit.activeScenarioIsProcess",
+          "command": "kotTestToolkit.editorMenu.changeProcessCodeFromEditor",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.activeScenarioIsProcess",
           "group": "00_editing@4"
         },
         {
-          "command": "kotTestToolkit.openProcessTestSettingsFromEditor",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && kotTestToolkit.activeScenarioIsProcess",
+          "command": "kotTestToolkit.editorMenu.openProcessTestSettingsFromEditor",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.activeScenarioIsProcess",
           "group": "00_editing@5"
         },
         {
-          "command": "kotTestToolkit.changeProcessTestSettingsFromEditor",
-          "when": "editorTextFocus && !editorReadonly && resourceExtname == .yaml && kotTestToolkit.activeProcessSettings",
+          "command": "kotTestToolkit.editorMenu.changeProcessTestSettingsFromEditor",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.activeProcessSettings",
           "group": "00_editing@6"
         }
       ],
@@ -2037,6 +2116,198 @@
         {
           "command": "kotTestToolkit.addCompilerYamlBlock",
           "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.openCurrentScenarioFilesFolder",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.openMxlFile",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.revealFileInExplorer",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.revealFileInOS",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.createNestedScenario",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.createMainScenario",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.createFeature",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.createProcess",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.editProcessSteps",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.renameScenarioFromEditor",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.changeNestedScenarioName",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.changeNestedScenarioCode",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.checkAndFillNestedScenarios",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.checkAndFillScriptParameters",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.generateScenarioDescriptionWithAi",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.renameProcessFromEditor",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.changeProcessCodeFromEditor",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.openProcessTestSettingsFromEditor",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.changeProcessTestSettingsFromEditor",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.openScenarioEditor",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.openNestedScenarioFromFeature",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.trackScenarioRunByFeatureLog",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.switchTrackedScenarioRunForFeature",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.stopTrackedScenarioRunForFeature",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.trackScenarioRunFromOpenedLogFile",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.findCurrentFileReferences",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.addActiveScenarioToFavorites",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.removeActiveScenarioFromFavorites",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.generateFeatureJson",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.runFeature",
+          "when": "false"
+        }
+      ],
+      "kotTestToolkit.editorContext": [
+        {
+          "command": "kotTestToolkit.editorMenu.openScenarioEditor",
+          "when": "editorTextFocus && ((resourceExtname == .yaml || resourceExtname == .yml) || resourceExtname == .yml || resourceExtname == .feature)",
+          "group": "00_navigation@0"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.openNestedScenarioFromFeature",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "00_navigation@0"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.trackScenarioRunByFeatureLog",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "00_navigation@1"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.switchTrackedScenarioRunForFeature",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "00_navigation@2"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.stopTrackedScenarioRunForFeature",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "00_navigation@3"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.trackScenarioRunFromOpenedLogFile",
+          "when": "editorTextFocus && resourceExtname == .log",
+          "group": "00_navigation@0"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.findCurrentFileReferences",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml)",
+          "group": "00_navigation@1"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.addActiveScenarioToFavorites",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml) && !kotTestToolkit.activeScenarioInFavorites",
+          "group": "00_navigation@2"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.removeActiveScenarioFromFavorites",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.activeScenarioInFavorites",
+          "group": "00_navigation@2"
+        },
+        {
+          "submenu": "kotTestToolkit.editorContext.workWithFiles",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml)",
+          "group": "01_submenu@0"
+        },
+        {
+          "submenu": "kotTestToolkit.editorContext.create",
+          "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature)",
+          "group": "01_submenu@1"
+        },
+        {
+          "submenu": "kotTestToolkit.editorContext.editing",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml)",
+          "group": "01_submenu@2"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.generateFeatureJson",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "00_feature@0"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.runFeature",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "00_feature@1"
         }
       ]
     },

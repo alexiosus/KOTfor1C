@@ -3,10 +3,11 @@ import { getScenarioLanguageForDocument } from './gherkinLanguage';
 import { getTranslator, type Translator } from './localization';
 import {
     buildFeatureEditorActions, FEATURE_EDITOR_COMMAND, getFeatureStepTagAction, isFeatureEditorTarget,
-    planFeatureEditorEdit,
+    planFeatureEditorEdit, featureScenarioTitle,
     type FeatureEditorEditOptions, type FeatureEditorSource, type FeatureStepTag, type FeatureVariableKind
 } from './featureEditorActions';
 import { normalizeFeatureTags } from './featureTags';
+import { parseStandaloneFeatureSource } from './standaloneFeatureModel';
 import { buildGherkinAnnotationCompletions, getGherkinStepAnnotationTarget, isGherkinHeaderAnnotationContext } from './gherkinAnnotations';
 
 export interface ProjectAnnotationTags {
@@ -14,7 +15,10 @@ export interface ProjectAnnotationTags {
 }
 
 function sourceFor(document: vscode.TextDocument): FeatureEditorSource {
-    return { text: document.getText(), uri: document.uri.toString(), version: document.version, language: getScenarioLanguageForDocument(document) };
+    const text = document.getText();
+    const uri = document.uri.toString();
+    return { text, uri, version: document.version, language: /\.feature(?:[?#]|$)/iu.test(uri)
+        ? parseStandaloneFeatureSource(text, '').language : getScenarioLanguageForDocument(document) };
 }
 
 function stepTags(translate: Translator): { label: string; tag: FeatureStepTag; description: string }[] {
@@ -59,10 +63,13 @@ export class FeatureEditorCodeLensProvider implements vscode.CodeLensProvider {
     async provideCodeLenses(document: vscode.TextDocument, token: vscode.CancellationToken): Promise<vscode.CodeLens[]> {
         const t = await this.translator;
         if (token.isCancellationRequested) { return []; }
-        return buildFeatureEditorActions(sourceFor(document), t).map(action => new vscode.CodeLens(
+        const actions = buildFeatureEditorActions(sourceFor(document), t);
+        const properties = actions.length ? [new vscode.CodeLens(new vscode.Range(actions[0].line, 0, actions[0].line, 0),
+            { title: t('Edit scenario and properties'), command: 'kotTestToolkit.openScenarioEditor', arguments: [document.uri] })] : [];
+        return [...properties, ...actions.map(action => new vscode.CodeLens(
             new vscode.Range(action.line, 0, action.line, 0),
             { title: action.title, command: FEATURE_EDITOR_COMMAND, arguments: [action.target] }
-        ));
+        ))];
     }
 }
 
@@ -94,7 +101,21 @@ export async function editFeatureStructureCommand(rawTarget: unknown, translate:
             if (!action || action.target.line !== rawTarget.line) { return; }
         } else if (!buildFeatureEditorActions(source).some(action => action.kind === rawTarget.kind && action.line === rawTarget.line)) { return; }
         let options: FeatureEditorEditOptions = {};
-        if (rawTarget.kind === 'tags') {
+        if (rawTarget.kind === 'scenario') {
+            const forms: { label: string; scenarioKind: 'scenario' | 'outline' }[] = [
+                { label: source.language === 'ru' ? 'Сценарий' : 'Scenario', scenarioKind: 'scenario' },
+                { label: source.language === 'ru' ? 'Структура сценария' : 'Scenario Outline', scenarioKind: 'outline' }
+            ];
+            const chosen = directOptions?.scenarioKind ? forms.find(form => form.scenarioKind === directOptions.scenarioKind)
+                : await vscode.window.showQuickPick(forms, { title: translate('Add scenario'), ignoreFocusOut: true });
+            if (!chosen) { return; }
+            const name = directOptions?.scenarioTitle ?? await vscode.window.showInputBox({ title: translate('New scenario'),
+                prompt: translate('Scenario title'), ignoreFocusOut: true, validateInput: value => {
+                    try { featureScenarioTitle(value); return undefined; } catch (error) { return translate((error as Error).message); }
+                } });
+            if (name === undefined) { return; }
+            options = { scenarioKind: chosen.scenarioKind, scenarioTitle: name };
+        } else if (rawTarget.kind === 'tags') {
             const tags = await vscode.window.showInputBox({
                 title: translate('Feature / scenario tags'), prompt: translate('Enter tags separated by spaces, for example @Smoke @team.sales.'),
                 ignoreFocusOut: true, validateInput: value => {

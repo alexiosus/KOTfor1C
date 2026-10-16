@@ -13,6 +13,7 @@
     function persistViewState() { vscode.setState({ ...saved, collapsed, activeTab }); }
     const DRAG_TYPE = 'application/vnd.kot.property-record';
     let state = null;
+    let showingFeature = false;
     let labels = protocol.DEFAULT_LABELS;
     let status = null;
     let nextId = 0;
@@ -32,6 +33,8 @@
         if (sourceUri) { vscode.postMessage({ ...message, sourceUri }); }
     });
     const client = protocol.createClient({ postMessage: message => vscode.postMessage(message), onState: render, onPending: updatePending, onRekey: rekey, onMove: moveDocuments });
+
+    const featureView = globalThis.FeaturePropertiesView?.create({ root, vscode, scrollText, measureTitles, overflowControl, installDisclosure, resetLayout: () => { for (const stop of disclosureAnimations) { stop(); } titleMeasurements.length = 0; }, defaults: protocol.DEFAULT_LABELS });
 
     function fileAction(command, relativePath) {
         if (state?.source) { vscode.postMessage({ command, sourceUri: state.source.uri, itemId: state.source.uri, relativePath }); }
@@ -220,7 +223,8 @@
     function actionButton(action, value, options) {
         return button(action, () => {
             if (action === 'save') { for (const commit of committers.values()) { commit(); } }
-            client.action(action, value);
+            if (action === 'favorite' && state?.source) { client.enqueue({ command: 'action', action, documentUri: state.source.uri, documentVersion: state.source.version }); }
+            else { client.action(action, value); }
         }, options);
     }
     function targetData(element, document, target) {
@@ -593,7 +597,9 @@
         pin.classList.toggle('is-active', Boolean(state.pinned)); pin.setAttribute('aria-pressed', String(state.pinned));
         titleRow.append(heading);
         const actions = node('div', 'properties-actions');
-        actions.append(actionButton('save', undefined, { primary: true, icon: 'save' }), actionButton('openText', undefined, { icon: 'fold', iconOnly: true }), pin);
+        const favorite = actionButton('favorite', undefined, { icon: state.favorite ? 'star-full' : 'star-empty', iconOnly: true, title: label(state.favorite ? 'unfavorite' : 'favorite') });
+        favorite.disabled = !state.canFavorite; favorite.setAttribute('aria-pressed', String(!!state.favorite));
+        actions.append(actionButton('save', undefined, { primary: true, icon: 'save' }), favorite, actionButton('openText', undefined, { icon: 'fold', iconOnly: true }), pin);
         toolbar.append(titleRow, actions);
         const children = [toolbar];
         if (state.error) { children.push(errorNode(state.error)); }
@@ -658,7 +664,12 @@
             }
             for (const file of message.files || []) { fileTransferSources.set(file.transferId, message.sourceUri); }
         }
-        if (message?.command === 'state') { client.setState(message.state, message.acknowledgement !== false); }
+        if (message?.command === 'featureState' && featureView) {
+            if (!showingFeature) { client.setState({ source: null, settings: [], pinned: false, dirty: false, metadata: null, groups: [] }); }
+            showingFeature = true;
+            featureView.accept(message.state, message.acknowledgement); return;
+        }
+        if (message?.command === 'state') { showingFeature = false; featureView?.clear(); client.setState(message.state, message.acknowledgement !== false); }
         else if (message?.command === 'scenarioPropertiesFiles' && message.sourceUri === state?.source?.uri) {
             filesState = { ...message, paths: Array.isArray(message.paths) ? message.paths.filter(path => typeof path === 'string') : [] }; updateFiles();
         } else if (fileTransfers?.handleMessage(message) && message.command === 'scenarioFileTransferFailed' && message.sourceUri === state?.source?.uri) {

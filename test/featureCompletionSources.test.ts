@@ -31,7 +31,7 @@ const host = {
     CompletionItem: class {
         public constructor(public label: string | { label: string }, public kind: number) {}
     },
-    CompletionItemKind: { Snippet: 1, Keyword: 14 },
+    CompletionItemKind: { Snippet: 1, Keyword: 14, Field: 5, Value: 12, Module: 8, Variable: 6 },
     CompletionList: class {
         public constructor(public items: unknown[] = [], public isIncomplete = false) {}
     },
@@ -68,7 +68,10 @@ function loadModule(fileName: string, dependencies: Record<string, unknown>): Re
 const languageModule = loadModule('gherkinLanguage.ts', {
     vscode: host, './gherkinDefinitionKeywords': gherkinDefinitionKeywords
 });
+let liveFormSnapshot: any = null;
+let snapshotReads = 0;
 const completionModule = loadModule('completionProvider.ts', {
+    './formExplorerLiveSnapshot': { loadLiveFormExplorerSnapshot: async () => { snapshotReads++; return liveFormSnapshot; } },
     vscode: host,
     './gherkinLanguage': languageModule,
     './blockKeywordParser': blockKeywordParser,
@@ -419,3 +422,60 @@ for (const semantic of [false, true]) {
         });
     }
 }
+
+function argumentTarget(text: string, kind: 'feature' | 'yaml' = 'feature') {
+    const character = text.indexOf('|'); const line = '    ' + text.replace('|', '');
+    const source = withScenarioText('en', kind, line);
+    return { source, position: { line: source.lineCount - 1, character: character + 4 } as vscode.Position };
+}
+const formSnapshot = { snapshot: { form: { title: 'Primary chart of accounts' }, elements: [
+    { path: 'Description', name: 'Description', title: 'Description', kind: 'InputField', valuePreview: 'Revenue', children: [] },
+    { path: 'Unrelated', name: 'Unrelated', title: 'Unrelated', kind: 'InputField', valuePreview: 'Irrelevant', children: [] },
+    { path: 'FormCreate', name: 'FormCreate', title: 'Create', kind: 'Button', children: [] }], tables: [{ name: 'Items', tableData: { columns: ['Quantity'], rows: [['10']] } }], attributes: [] } };
+
+test('quoted argument completion never falls through to step suggestions, including final or unclosed arguments', async () => {
+    for (const kind of ['feature', 'yaml'] as const) {
+        for (const text of ['And "sh|ared"', 'And "sh|ared', 'And I wait "10|" seconds']) {
+            const { source, position } = argumentTarget(text, kind);
+            const provider = createProvider('en'); let catalogReads = 0;
+            const resolver = (provider as any).definitionResolver; const getView = resolver.getView;
+            resolver.getView = async (...args: any[]) => { catalogReads++; return getView(...args); };
+            assert.equal((await complete(provider, source, position)).length, 0, text);
+            assert.equal(catalogReads, 0, 'argument completion must not query the step catalog');
+        }
+    }
+});
+
+test('Form Explorer suggests only values for an explicitly identified argument', async () => {
+    liveFormSnapshot = formSnapshot;
+    try {
+        for (const kind of ['feature', 'yaml'] as const) {
+            for (const text of [
+                'And I wait "Primary chart of accounts" window opening in "|" seconds',
+                'And Delay "|"', 'And I select "Revenue" value from the field named "Description" within "|" seconds',
+                'And custom step "|" and "Description" field', 'And custom field step "Description" and "|"',
+                'And I input "|" text in the field named "Missing"'
+            ]) {
+                const { source, position } = argumentTarget(text, kind);
+                assert.equal((await complete(createProvider('en'), source, position)).length, 0, `${kind}: ${text}`);
+            }
+            for (const [text, expected, excluded] of [
+                ['And I wait "|" window opening in "10" seconds', 'Primary chart of accounts', 'Revenue'],
+                ['And I input "|" text in the field named "Description"', 'Revenue', 'Irrelevant'],
+                ['And I click the button named "|"', 'FormCreate', 'Description'],
+                ['И я жду открытия окна "|"', 'Primary chart of accounts', 'Revenue'],
+                ['И я ввожу "|" текст в поле с именем "Description"', 'Revenue', 'Irrelevant'],
+                ['И я нажимаю на "|" кнопку', 'Create', 'Description'],
+                ['Then "|" реквизит формы', 'Description', 'FormCreate'],
+                ['And in the table "|" I go to first row', 'Items', 'Revenue'],
+                ['Then in table "Items" field named "Quantity" became equal to "|"', '10', 'Irrelevant']
+            ]) {
+                const { source, position } = argumentTarget(text, kind); const items = await complete(createProvider('en'), source, position);
+                const values = items.map((item: any) => typeof item.label === 'string' ? item.label : item.label.label);
+                assert.ok(values.includes(expected), text); assert.ok(!values.includes(excluded), text);
+            }
+        }
+        snapshotReads = 0; const timeout = argumentTarget('And I wait "Name" window opening in "|" seconds');
+        await complete(createProvider('en'), timeout.source, timeout.position); assert.equal(snapshotReads, 0, 'unrelated arguments do not read the form snapshot');
+    } finally { liveFormSnapshot = null; }
+});

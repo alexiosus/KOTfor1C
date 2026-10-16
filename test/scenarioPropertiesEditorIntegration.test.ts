@@ -1,3 +1,4 @@
+import * as editorActionControls from '../src/editorActionControls';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,8 +11,9 @@ function harness() {
     const registrations: Array<{ selector: unknown; provider: { provideCodeLenses(document: unknown): unknown[] } }> = [];
     const source = { scheme: 'file', fsPath: '/project/scen.yaml', toString: () => 'file:///project/scen.yaml' };
     const errors: string[] = [];
+    let showActions = true;
     const host = {
-        workspace: {},
+        workspace: { getConfiguration: () => ({ inspect: () => undefined, get: () => showActions }) },
         window: { activeTextEditor: { document: { uri: source } }, showErrorMessage: (message: string) => { errors.push(message); } },
         commands: { registerCommand: (id: string, handler: (target?: unknown) => Promise<void>) => { commands.set(id, handler); return { dispose() {} }; } },
         languages: { registerFoldingRangeProvider: () => ({ dispose() {} }), registerCodeLensProvider: (selector: unknown, provider: (typeof registrations)[number]['provider']) => { registrations.push({ selector, provider }); return { dispose() {} }; } },
@@ -21,7 +23,7 @@ function harness() {
         l10n: { t: (message: string, ...args: string[]) => message.replace('{0}', args[0] ?? '') }
     };
     const dependencies: Record<string, unknown> = {
-        vscode: host,
+        vscode: host, './editorActionControls': editorActionControls,
         './scenarioYamlEditor': { ScenarioYamlEditor: class {}, ScenarioYamlFoldingProvider: class {} },
         './scenarioPropertiesPanel': { ScenarioPropertiesPanel: class { async open(uri: unknown) { opened.push(uri); } dispose() {} } },
         './scenarioPropertiesActions': { createScenarioPropertiesActions: () => async () => undefined },
@@ -35,7 +37,7 @@ function harness() {
     }).outputText, { module, exports: module.exports, require: (name: string) => dependencies[name], console });
     const context = { subscriptions: [] as { dispose(): void }[] };
     module.exports.registerScenarioPropertiesEditor(context as any, { renameScenario: async () => undefined });
-    return { source, opened, commands, registrations, errors };
+    return { source, opened, commands, registrations, errors, setActions: (value: boolean) => { showActions = value; } };
 }
 
 test('editor command routes active and explicit Library source targets to the authored URI', async () => {
@@ -52,4 +54,9 @@ test('compiler descriptors expose the property editor without offering it on tes
     const process = provider.provideCodeLenses({ uri: h.source, getText: () => 'ТипФайла: Процесс' });
     assert.equal(raw.length, 1); assert.equal(process.length, 1);
     assert.equal(provider.provideCodeLenses({ uri: h.source, getText: () => 'ТипФайла: НастройкаТеста' }).length, 0);
+});
+
+test('Properties editor action follows the YAML visibility preference', () => {
+    const h = harness(); h.setActions(false);
+    assert.equal(h.registrations[0].provider.provideCodeLenses({ uri: h.source, getText: () => 'ТипФайла: Сценарий' }).length, 0);
 });

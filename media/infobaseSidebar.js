@@ -182,6 +182,7 @@
             menu.append(
                 maintenanceHeading(loc.dtHeading),
                 maintenanceItem(`${loc.importDt}…`, 'cloud-download', 'importDt', item),
+                maintenanceItem(`${loc.restoreFromTemplate}…`, 'package', 'restoreFromTemplate', item),
                 maintenanceItem(`${loc.exportDt}…`, 'cloud-upload', 'exportDt', item),
                 maintenanceHeading(loc.cfHeading),
                 maintenanceItem(loc.updateConfiguration, 'settings-gear', 'updateConfiguration', item),

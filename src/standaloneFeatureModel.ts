@@ -36,8 +36,8 @@ export function parseStandaloneFeatureSource(
     source: string,
     name: string
 ): StandaloneFeatureSourceMetadata {
-    const firstFeature = /(?:^|\n)\s*(Feature|Functionality|Функциональность|Функционал|Функция)\s*:/iu.exec(source.replace(/^\uFEFF/u, ''));
-    const defaultLanguage = /^f/iu.test(firstFeature?.[1] ?? '') ? 'en' : 'ru';
+    const firstFeature = /(?:^|\n)\s*(Feature|Functionality|Business Need|Ability|Функциональность|Функционал|Функция)\s*:/iu.exec(source.replace(/^\uFEFF/u, ''));
+    const defaultLanguage = /[A-Za-z]/u.test(firstFeature?.[1] ?? '') ? 'en' : 'ru';
     const normalizedSource = source.replace(/^(\s*)Functionality(?=\s*:)/gimu, '$1Feature');
     const parsed = parseExportScenarios(normalizedSource, {
         sourceUri: '', workspaceFolderUri: '', profileId: '', libraryRootUri: '', sourceLabel: '', defaultLanguage

@@ -44,7 +44,7 @@ const features = [
     { featureId: 'file:///a.feature', sourceGroup: 'standalone', groupId: 'smoke', order: 1 }
 ];
 
-test('both Library menus offer Properties for YAML definitions only and preserve the selected identity', () => {
+test('both Library menus offer Properties for YAML and feature definitions and preserve the selected identity', () => {
     const { controller, body, messages } = harness();
     for (const sourceGroup of ['main', 'process', 'nested', 'export']) {
         const row = new Element();
@@ -56,12 +56,12 @@ test('both Library menus offer Properties for YAML definitions only and preserve
         assert.deepEqual(messages.at(-1), { command: 'openScenarioProperties', itemId: `${sourceGroup}:selected` });
     }
     const row = new Element();
-    controller.install(row, features[0]); row.fire('contextmenu');
-    assert.equal(body.children[0].children.some(button => button.dataset.action === 'openScenarioProperties'), false);
+    controller.install(row, { ...features[0], featureId: 'file:///test.feature' }); row.fire('contextmenu');
+    assert.equal(body.children[0].children.some(button => button.dataset.action === 'openScenarioProperties'), true);
     const native = new Element();
     controller.install(native, { kind: 'definition', sourceGroup: 'export', navigable: true, capturedLocation: { uri: 'file:///export.feature' }, itemId: 'native:export' });
     native.fire('contextmenu');
-    assert.equal(body.children[0].children.some(button => button.dataset.action === 'openScenarioProperties'), false);
+    assert.equal(body.children[0].children.some(button => button.dataset.action === 'openScenarioProperties'), true);
 });
 
 test('main scenario group menus and F2 use a member identity; other category roots cannot rename', () => {

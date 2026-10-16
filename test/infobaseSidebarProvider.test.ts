@@ -155,6 +155,7 @@ function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('o
         logs: async (value: ManagedInfobaseRecord) => runOperation('logs', value),
         exportDt: async (value: ManagedInfobaseRecord) => runOperation('exportDt', value),
         importDt: async (value: ManagedInfobaseRecord) => runOperation('importDt', value),
+        restoreFromTemplate: async (value: ManagedInfobaseRecord) => runOperation('restoreFromTemplate', value),
         exportCf: async (value: ManagedInfobaseRecord) => runOperation('exportCf', value),
         importCf: async (value: ManagedInfobaseRecord) => runOperation('importCf', value)
     };
@@ -259,6 +260,7 @@ test('rejects unknown IDs and actions while routing every allowed action exactly
         { command: 'maintenance', infobaseId: 'one', action: 'logs' },
         { command: 'maintenance', infobaseId: 'one', action: 'exportDt' },
         { command: 'maintenance', infobaseId: 'one', action: 'importDt' },
+        { command: 'maintenance', infobaseId: 'one', action: 'restoreFromTemplate' },
         { command: 'maintenance', infobaseId: 'one', action: 'exportCf' },
         { command: 'maintenance', infobaseId: 'one', action: 'importCf' }
     ]) {
@@ -268,9 +270,9 @@ test('rejects unknown IDs and actions while routing every allowed action exactly
     assert.deepEqual(harness.calls.map(call => call.action), [
         'enterprise', 'designer', 'formExplorer', 'copy', 'recreate', 'updateConfiguration', 'edit',
         'addToLauncher', 'removeFromLauncher', 'reveal', 'logs',
-        'exportDt', 'importDt', 'exportCf', 'importCf'
+        'exportDt', 'importDt', 'restoreFromTemplate', 'exportCf', 'importCf'
     ]);
-    assert.equal(harness.refreshCalls, 15);
+    assert.equal(harness.refreshCalls, 16);
     const pending = harness.view.webview.messages.filter(value => (value as { command: string }).command === 'pending') as Array<{ infobaseId: string | null }>;
     assert.equal(pending.every(message => message.infobaseId === 'one' || message.infobaseId === null), true);
 });
@@ -341,6 +343,7 @@ test('blocks exclusive maintenance but keeps launch available for a running info
 
     await send(harness, { command: 'maintenance', infobaseId: 'one', action: 'updateConfiguration' });
     await send(harness, { command: 'maintenance', infobaseId: 'one', action: 'exportDt' });
+    await send(harness, { command: 'maintenance', infobaseId: 'one', action: 'restoreFromTemplate' });
     await send(harness, { command: 'openEnterprise', infobaseId: 'one' });
 
     assert.deepEqual(harness.calls, [{ action: 'enterprise', id: 'one' }]);

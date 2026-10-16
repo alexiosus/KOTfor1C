@@ -139,3 +139,20 @@ button.is-active { color: var(--vscode-button-foreground); background: var(--vsc
     .properties-record-actions button { padding-inline: 4px; }
 }
 @media (prefers-reduced-motion: no-preference) { .properties-chevron { transition: transform .1s ease; } }
+
+.properties-empty { margin: 0; padding: 20px 16px; font-size: var(--vscode-font-size, 13px); line-height: 1.6; overflow-wrap: anywhere; }
+.feature-properties-body { padding: 0 12px 12px; }
+.feature-properties-body > .properties-actions { margin: 12px 0; }
+.feature-properties-body .properties-section { margin: 4px -8px; }
+.feature-properties-body .properties-section-content { padding: 4px 8px 12px; }
+.feature-properties-body .properties-record { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.feature-properties-body .properties-record > .properties-record-caption { flex: 1; min-width: 0; }
+
+.feature-properties-body > .properties-field { margin-top: 10px; }
+
+.properties-overflow-control:has(> .properties-control-preview.is-overflowing):not(:focus-within) > input { color: transparent; }
+
+.feature-properties-body .properties-feature-launch { margin-top: 14px; }
+.feature-properties-body .properties-feature-launch .properties-record { padding-top: 0; border: 0; }
+
+.feature-properties-body .properties-feature-blocks { margin-top: 12px; }

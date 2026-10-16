@@ -223,9 +223,9 @@ export class StepLibraryActionService implements vscode.Disposable {
 
     public async openScenarioProperties(item: StepLibraryItem, resource?: vscode.Uri,
         open = this.dependencies.openScenarioProperties): Promise<boolean> {
-        if (!item.navigable || !item.capturedLocation || !['mainScenario', 'process', 'nestedScenario', 'exportScenario'].includes(item.kind)
-            || !/^file:.*\.ya?ml$/iu.test(item.capturedLocation.uri)) { return false; }
-        if (item.kind !== 'mainScenario' && item.kind !== 'process') {
+        if (!item.navigable || !item.capturedLocation || !['mainScenario', 'process', 'nestedScenario', 'exportScenario', 'standaloneFeature'].includes(item.kind)
+            || !/^file:.*\.(?:ya?ml|feature)$/iu.test(item.capturedLocation.uri)) { return false; }
+        if (item.kind !== 'mainScenario' && item.kind !== 'process' && item.kind !== 'standaloneFeature') {
             const current = (await this.dependencies.resolver.getView(resource)).byId.get(item.definitionId);
             if (current?.kind !== item.kind || current.definitionLocation?.uri !== item.capturedLocation.uri) { return false; }
         }

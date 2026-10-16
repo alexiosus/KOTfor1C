@@ -1,5 +1,17 @@
 import type * as vscode from 'vscode';
 
+export function editorActionSetting(uri: string): string {
+    return /\.feature(?:[?#]|$)/iu.test(uri) ? 'editor.showFeatureActionButtons' : 'editor.showYamlActionButtons';
+}
+
+export function editorActionsAreEnabled(uri: string, config: Pick<vscode.WorkspaceConfiguration, 'inspect' | 'get'>): boolean {
+    const key = editorActionSetting(uri);
+    const value = config.inspect<boolean>(key);
+    const explicit = value && [value.workspaceFolderLanguageValue, value.workspaceLanguageValue, value.globalLanguageValue,
+        value.workspaceFolderValue, value.workspaceValue, value.globalValue].some(entry => entry !== undefined);
+    return config.get<boolean>(explicit ? key : 'editor.showActionButtons', false);
+}
+
 function combinedChanges(first: vscode.Event<void>, second?: vscode.Event<void>): vscode.Event<void> {
     return (listener, thisArgs, disposables) => {
         const firstSubscription = first(listener, thisArgs);

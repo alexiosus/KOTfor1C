@@ -24,6 +24,8 @@ interface CompletionContext {
 }
 
 const STEP_TAGS = ['screenshot', 'recordvideo', 'StopRecordVideo', 'StartRecordVideo'] as const;
+const STEP_KEYWORDS = [...getGherkinDefinitionKeywords('en').steps, ...getGherkinDefinitionKeywords('ru').steps, 'Do']
+    .sort((left, right) => right.length - left.length);
 const ANNOTATIONS: readonly Annotation[] = [
     { label: '@tree', documentation: 'Show steps as a hierarchy.', kinds: ['feature'] },
     { label: '@ExportScenarios', documentation: 'Make these scenarios available as exported steps.', kinds: ['feature', 'scenario'] },
@@ -150,6 +152,17 @@ export function collectGherkinProjectTags(source: GherkinAnnotationSource): read
     return [...tags];
 }
 
+function atStepPrefix(line: Line, character: number): boolean {
+    const start = contentStart(line);
+    const body = line.text.slice(start);
+    const marker = /^\*[ \t]+/u.exec(body)?.[0] ?? '';
+    const remainder = body.slice(marker.length);
+    const keyword = STEP_KEYWORDS.find(word => remainder.slice(0, word.length).toLocaleLowerCase() === word.toLocaleLowerCase()
+        && (remainder.length === word.length || /^[ \t]/u.test(remainder.slice(word.length))));
+    const keywordWidth = keyword ? keyword.length + (/^[ \t]*/u.exec(remainder.slice(keyword.length))?.[0].length ?? 0) : 0;
+    return character <= start + marker.length + keywordWidth;
+}
+
 function completionContext(view: Scan, line: Line, character: number, invoked: boolean): CompletionContext | undefined {
     if (line.payload || character < 0 || character > line.text.length) { return undefined; }
     if (view.yaml && !line.kind) {
@@ -169,7 +182,9 @@ function completionContext(view: Scan, line: Line, character: number, invoked: b
     let tokenPrefix = '';
     const atSubject = Boolean(line.kind && ['feature', 'scenario', 'step', 'group'].includes(line.kind));
     if (atSubject) {
-        if (!invoked || (['step', 'group'].includes(line.kind!) && !isBodyTarget(view, line))) { return undefined; }
+        // Manual completion inside step text belongs to the step/argument providers.
+        // Annotations can be inserted at its prefix or on their own annotation line.
+        if (!invoked || (['step', 'group'].includes(line.kind!) && (!isBodyTarget(view, line) || !atStepPrefix(line, character)))) { return undefined; }
     } else {
         const prefix = line.text.slice(0, character).replace(/^\uFEFF/u, '');
         const match = /@[^\s@]*$/u.exec(prefix);

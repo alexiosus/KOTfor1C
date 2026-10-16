@@ -1,3 +1,5 @@
+import type { PropertiesLibrarySupport } from './scenarioPropertiesLibrarySupport';
+import type { FeaturePropertiesController } from './featurePropertiesController';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -267,6 +269,11 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
     private pendingMessages = 0;
     private unavailable?: string;
     private disposed = false;
+    private followedEditorUri?: string;
+    private library?: PropertiesLibrarySupport;
+    private feature?: FeaturePropertiesController;
+    private get currentSourceUri(): string | undefined { return this.feature?.currentSourceUri ?? this.session.currentSourceUri; }
+    private get pinned(): boolean { return this.feature?.currentSourceUri ? this.feature.pinned : this.session.pinned; }
 
     constructor(private readonly context: vscode.ExtensionContext, private readonly textEditor: ScenarioYamlEditor, options: ScenarioPropertiesPanelOptions) {
         this.host = createScenarioPropertiesHost({ ...options, context });
@@ -278,7 +285,7 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
             vscode.window.onDidChangeActiveTextEditor(editor => this.handleActiveEditor(editor)),
             vscode.window.onDidChangeVisibleTextEditors(() => this.handleActiveEditor(vscode.window.activeTextEditor)),
             vscode.workspace.onDidChangeTextDocument(event => {
-                if (event.document.uri.scheme === 'file' && /\.ya?ml$/iu.test(event.document.uri.fsPath)) { this.scheduleRefresh(); }
+                if (event.document.uri.scheme === 'file' && (/\.ya?ml$/iu.test(event.document.uri.fsPath) || event.document.uri.toString() === this.feature?.currentSourceUri)) { this.scheduleRefresh(); }
             }),
             vscode.workspace.onDidSaveTextDocument(document => {
                 this.host.invalidateSettings(document.uri, false); this.scheduleRefresh();
@@ -293,8 +300,18 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
             vscode.workspace.onDidRenameFiles(event => {
                 this.host.invalidateSettings();
                 return this.queue(async () => {
-                    const current = this.session.currentSourceUri;
+                    const current = this.currentSourceUri;
                     if (!current || !this.panel) { return; }
+                    if (this.feature?.currentSourceUri) {
+                        let next = current;
+                        for (const move of event.files) {
+                            const before = move.oldUri.toString().replace(/\/$/u, '');
+                            if (next === before || next.startsWith(before + '/')) { next = move.newUri.toString().replace(/\/$/u, '') + next.slice(before.length); }
+                        }
+                        try { await this.feature.remap(next); this.unavailable = undefined; await this.post(); }
+                        catch (reason) { this.unavailable = errorText(reason); await this.post(this.unavailable); }
+                        return;
+                    }
                     try {
                         await this.session.remapFiles(event.files.map(item => ({ oldUri: item.oldUri.toString(), newUri: item.newUri.toString() })));
                         this.unavailable = undefined;
@@ -325,7 +342,7 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
         return this.queue(async () => {
             try {
                 const active = vscode.window.activeTextEditor?.document.uri;
-                const target = source ?? active ?? (this.session.currentSourceUri ? vscode.Uri.parse(this.session.currentSourceUri, true) : undefined);
+                const target = source ?? active ?? (this.currentSourceUri ? vscode.Uri.parse(this.currentSourceUri, true) : undefined);
                 if (!target) { throw new Error('Choose a scenario or process source.'); }
                 if (!this.panel) { this.host.invalidateSettings(); }
                 await this.bind(target, true);
@@ -342,6 +359,21 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
                 void vscode.window.showErrorMessage(vscode.l10n.t(errorText(reason)));
             }
         });
+    }
+
+    attachLibrarySupport(support: PropertiesLibrarySupport): void {
+        this.library = support;
+        this.feature = support.createFeatureController(this.host);
+        this.disposables.push(support.onDidChange(() => this.scheduleRefresh()));
+        void this.handleActiveEditor(vscode.window.activeTextEditor);
+    }
+
+    private configureFeatureWatcher(source: vscode.Uri): void {
+        if (this.watchIdentity === source.toString()) { return; }
+        this.clearWatchers(); this.watchIdentity = source.toString();
+        const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(path.dirname(source.fsPath)), path.basename(source.fsPath)));
+        this.watchers.push(watcher, watcher.onDidChange(uri => this.fileEvent(uri, 'change')),
+            watcher.onDidDelete(uri => this.fileEvent(uri, 'delete')), watcher.onDidCreate(uri => this.fileEvent(uri, 'create')));
     }
 
     attachScenarioFilesService(service: ScenarioFilesService): void {
@@ -397,9 +429,9 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
     private handleActiveEditor(editor: vscode.TextEditor | undefined): Promise<void> {
         return this.queue(async () => {
             const input = vscode.window.tabGroups?.activeTabGroup.activeTab?.input;
-            if (this.panel && !this.session.pinned && typeof vscode.TabInputWebview === 'function' && input instanceof vscode.TabInputWebview) {
-                if (this.session.currentSourceUri || this.unavailable) {
-                    this.unavailable = undefined; this.clearWatchers(); await this.session.clear(); await this.post();
+            if (this.panel && !this.pinned && typeof vscode.TabInputWebview === 'function' && input instanceof vscode.TabInputWebview) {
+                if (this.currentSourceUri || this.unavailable) {
+                    this.unavailable = undefined; this.followedEditorUri = undefined; this.clearWatchers(); this.feature?.clear(); await this.session.clear(); await this.post();
                 }
                 return;
             }
@@ -408,8 +440,8 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
             if (!this.isActiveVisibleEditor(editor) || this.panel?.visible) { return; }
             const document = editor.document;
             if (document.uri.scheme !== 'file' || document.isUntitled
-                || !/\.ya?ml$/iu.test(document.uri.fsPath)
-                || (!isCompilerYamlFile(document) && !/\.ya?ml\.kot\.yml$/iu.test(document.uri.fsPath))
+                || !/\.(?:ya?ml|feature)$/iu.test(document.uri.fsPath)
+                || (!/\.feature$/iu.test(document.uri.fsPath) && !isCompilerYamlFile(document) && !/\.ya?ml\.kot\.yml$/iu.test(document.uri.fsPath))
                 || vscode.workspace.getConfiguration('kotTestToolkit', document.uri).get<boolean>('editor.autoOpenTestProperties', true) === false) { return; }
             try {
                 await this.ensurePanel();
@@ -422,6 +454,19 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
     }
 
     private async bind(source: vscode.Uri, openText: boolean, complete = false): Promise<void> {
+        this.followedEditorUri = undefined;
+        if (/\.feature$/iu.test(source.fsPath)) {
+            if (!this.library || !this.feature) { throw new Error('Feature properties are still initializing. Retry shortly.'); }
+            const original = await this.library.sourceForGenerated(source);
+            if (original) { await this.bind(original, false, complete); return; }
+            if (/(?:^|[\\/])kot-runtime[\\/]tests[\\/]/iu.test(source.fsPath)) { throw new Error('The generated feature source is unavailable. Open its YAML source.'); }
+            await this.session.clear(); this.clearWatchers(); this.unavailable = undefined;
+            await this.feature.open(source.toString());
+            this.configureFeatureWatcher(source);
+            if (openText) { await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(source), { preview: false }); }
+            return;
+        }
+        this.feature?.clear();
         const document = await this.host.readDocument(source.toString());
         const model = readScenarioProperties(document.text);
         if (model.kind !== 'scenario' && model.kind !== 'process') { throw new Error('Choose a scenario or process source.'); }
@@ -435,9 +480,16 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
     }
 
     private async follow(editor: vscode.TextEditor | undefined): Promise<void> {
-        if (!this.panel || this.session.pinned || !editor) { return; }
+        if (!this.panel || this.pinned || !editor) { return; }
         let source = editor.document.uri;
-        if (source.toString() === this.session.currentSourceUri) { return; }
+        if (source.toString() === this.currentSourceUri || source.toString() === this.followedEditorUri) { return; }
+        this.followedEditorUri = undefined;
+        if (source.scheme === 'file' && /\.feature$/iu.test(source.fsPath)) {
+            try { await this.bind(source, false); this.followedEditorUri = source.toString(); await this.post(); }
+            catch (reason) { this.feature?.clear(); await this.session.clear(); this.clearWatchers(); await this.post(errorText(reason)); }
+            return;
+        }
+        this.feature?.clear();
         if (source.scheme !== 'file' || !/\.ya?ml$/iu.test(source.fsPath)) {
             this.clearWatchers(); await this.session.clear(); await this.post(); return;
         }
@@ -520,7 +572,7 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
         const resource = (name: string) => escapeHtml(panel.webview.asWebviewUri(vscode.Uri.joinPath(media, name)).toString());
         const values: Record<string, string> = { nonce, cspSource: escapeHtml(panel.webview.cspSource),
             codiconsUri: resource('codicon.css'), styleUri: resource('scenarioProperties.css'),
-            protocolUri: resource('scenarioPropertiesProtocol.js'), filesProtocolUri: resource('scenarioFilesProtocol.js'), scriptUri: resource('scenarioProperties.js') };
+            featureScriptUri: resource('featureProperties.js'), protocolUri: resource('scenarioPropertiesProtocol.js'), filesProtocolUri: resource('scenarioFilesProtocol.js'), scriptUri: resource('scenarioProperties.js') };
         const html = Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(media, 'scenarioProperties.html'))).toString('utf8');
         if (this.disposed || this.panel !== panel) { return; }
         panel.webview.html = html.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => values[key] ?? '')
@@ -532,15 +584,27 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
 
     private async receive(value: unknown): Promise<void> {
         let error: string | undefined;
+        if (value && typeof value === 'object' && 'command' in value && value.command === 'featureAction') {
+            try {
+                if (!this.feature?.currentSourceUri || this.unavailable && !('action' in value && value.action === 'pin')) { throw new Error(this.unavailable ?? 'The feature changed. Refresh the form and retry.'); }
+                await this.feature.handle(value);
+                if ('action' in value && value.action === 'pin' && !this.pinned) { this.unavailable = undefined; await this.follow(vscode.window.activeTextEditor); }
+            } catch (reason) { error = errorText(reason); }
+            await this.post(error, true); return;
+        }
         try {
             if (!protocol.validateMessage(value)) { throw new Error('Invalid test properties message. Refresh the form and retry.'); }
-            const action = value as { command: string; action?: string };
+            const action = value as { command: string; action?: string; documentUri?: string };
             if (action.command === 'ready') { await this.post(); return; }
             if (this.unavailable && !(action.command === 'action' && ['pin', 'openSource'].includes(action.action ?? ''))) {
                 throw new Error(this.unavailable);
             }
-            await this.session.handle(value);
-            if (action.command === 'action' && action.action === 'pin' && !this.session.pinned) {
+            if (this.feature?.currentSourceUri) { throw new Error('The source changed. Refresh the form and retry.'); }
+            if (action.command === 'action' && action.action === 'favorite') {
+                if (!this.library || !this.session.currentSourceUri || action.documentUri !== this.session.currentSourceUri) { throw new Error('Select a test to change its favorite state.'); }
+                await this.library.toggleFavorite(this.session.currentSourceUri);
+            } else { await this.session.handle(value); }
+            if (action.command === 'action' && action.action === 'pin' && !this.pinned) {
                 await this.follow(vscode.window.activeTextEditor);
             }
         } catch (reason) { error = errorText(reason); }
@@ -552,6 +616,16 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
     private async post(error?: string, acknowledgement = false): Promise<void> {
         const panel = this.panel;
         if (!panel || this.disposed || !acknowledgement && this.pendingMessages > 0) { return; }
+        if (this.feature?.state) {
+            const state = this.feature.state;
+            const actions = (values: typeof state.model.actions) => values.map(action => ({ ...action, title: vscode.l10n.t(action.title) }));
+            const message = error ?? state.error;
+            await panel.webview.postMessage({ command: 'featureState', acknowledgement, state: { ...state,
+                model: { ...state.model, actions: actions(state.model.actions),
+                    scenarios: state.model.scenarios.map(scenario => ({ ...scenario, actions: actions(scenario.actions) })) },
+                ...(message ? { error: vscode.l10n.t(message) } : {}), labels: this.labels } });
+            this.attachments?.bindSource(undefined); return;
+        }
         let state = this.session.getState();
         const uri = this.session.currentSourceUri;
         if (uri && state.source?.uri !== uri) {
@@ -563,7 +637,7 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
         }
         const outgoing: ScenarioPropertiesState = { ...state, ...(error ? { error, ...(acknowledgement ? { mutationError: true } : {}) } : {}) };
         if (this.panel === panel && !this.disposed) {
-            await panel.webview.postMessage({ command: 'state', acknowledgement, state: { ...outgoing, labels: this.labels } });
+            await panel.webview.postMessage({ command: 'state', acknowledgement, state: { ...outgoing, ...(state.source && this.library ? this.library.favorite(state.source.uri) : {}), labels: this.labels } });
             this.attachments?.bindSource(state.source && !this.unavailable ? state.source.uri : undefined);
         }
     }
@@ -583,6 +657,7 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
                 if (this.pendingMessages > 0) { return; }
                 if (this.unavailable) { await this.post(this.unavailable); return; }
                 try {
+                    if (this.feature?.currentSourceUri) { await this.feature.refresh(); this.configureFeatureWatcher(vscode.Uri.parse(this.feature.currentSourceUri, true)); if (this.pendingMessages === 0) { await this.post(); } return; }
                     await this.session.refresh(true);
                     if (this.session.currentSourceUri) { this.configureWatchers(await this.host.readDocument(this.session.currentSourceUri)); }
                     // A refresh is not an edit acknowledgement. A message may
@@ -597,7 +672,7 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
     private fileEvent(uri: vscode.Uri, kind: 'change' | 'create' | 'delete'): void {
         if (uri.scheme !== 'file') { return; }
         this.host.invalidateSettings(uri, kind !== 'change');
-        const current = this.session.currentSourceUri;
+        const current = this.currentSourceUri;
         if (kind === 'delete' && current) {
             const source = vscode.Uri.parse(current, true);
             if (source.fsPath === uri.fsPath || contains(uri.fsPath, source.fsPath)) {

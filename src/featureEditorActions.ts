@@ -3,7 +3,7 @@ import { normalizeFeatureTags } from './featureTags';
 import { getGherkinStepAnnotationTarget } from './gherkinAnnotations';
 
 export const FEATURE_EDITOR_COMMAND = 'kotTestToolkit.editFeatureStructure';
-export type FeatureEditorActionKind = 'description' | 'background' | 'variables' | 'tags' | 'tree' | 'outline' | 'examples' | 'variable' | 'stepTag';
+export type FeatureEditorActionKind = 'description' | 'background' | 'variables' | 'tags' | 'tree' | 'outline' | 'examples' | 'variable' | 'stepTag' | 'scenario';
 export type FeatureVariableKind = 'simple' | 'computed' | 'server' | 'multiline' | 'table' | 'import';
 export type FeatureStepTag = 'screenshot' | 'recordvideo' | 'StopRecordVideo' | 'StartRecordVideo';
 export interface FeatureEditorSource {
@@ -30,6 +30,8 @@ export interface FeatureEditorEdit {
     readonly snippet: string;
 }
 export interface FeatureEditorEditOptions {
+    readonly scenarioKind?: 'scenario' | 'outline';
+    readonly scenarioTitle?: string;
     readonly tags?: string;
     readonly variableKind?: FeatureVariableKind;
     readonly stepLine?: number;
@@ -42,7 +44,7 @@ interface Section { kind: SectionKind; line: Line; keyword: string; indent: stri
 const STEP_TAGS: readonly FeatureStepTag[] = ['screenshot', 'recordvideo', 'StopRecordVideo', 'StartRecordVideo'];
 const TITLES: Record<FeatureEditorActionKind, string> = {
     description: '+ Description', background: '+ Background', variables: '+ Variables', tags: '+ Tags', tree: '+ @tree',
-    outline: 'Scenario Outline', examples: '+ Examples', variable: '+ Variable / import', stepTag: 'Step screenshot / video'
+    outline: 'Scenario Outline', examples: '+ Examples', variable: '+ Variable / import', stepTag: 'Step screenshot / video', scenario: '+ Scenario'
 };
 
 function escapeSnippet(text: string): string { return text.replace(/[\\$}]/gu, '\\$&'); }
@@ -58,7 +60,7 @@ function leadingTags(lines: readonly Line[], line: number): number {
     return result;
 }
 
-function scan(source: FeatureEditorSource): { lines: Line[]; sections: Section[]; eol: string; unit: string } {
+export function scanFeatureStructure(source: FeatureEditorSource): { lines: Line[]; sections: Section[]; eol: string; unit: string; unclosedDocString: boolean } {
     const keywords = getGherkinDefinitionKeywords(source.language);
     const kinds: [SectionKind, readonly string[]][] = [
         ['feature', keywords.feature], ['outline', keywords.outline], ['scenario', keywords.scenario],
@@ -92,8 +94,10 @@ function scan(source: FeatureEditorSource): { lines: Line[]; sections: Section[]
     const widths = lines.filter(line => line.text.trim() && !line.inDocString)
         .map(line => /^( +)\S/u.exec(line.text)?.[1].length ?? 0).filter(width => width > 0);
     const unit = lines.some(line => !line.inDocString && /^\t/u.test(line.text)) ? '\t' : ' '.repeat(widths.length ? Math.min(...widths) : 4);
-    return { lines, sections, eol: source.text.includes('\r\n') ? '\r\n' : '\n', unit };
+    return { lines, sections, eol: source.text.includes('\r\n') ? '\r\n' : '\n', unit, unclosedDocString: !!delimiter };
 }
+
+const scan = scanFeatureStructure;
 
 function tagsFor(source: FeatureEditorSource, section: Section): Set<string> {
     return new Set(source.text.slice(section.tagStart, section.line.start).split(/\r?\n/u)
@@ -119,6 +123,7 @@ export function buildFeatureEditorActions(source: FeatureEditorSource, translate
     if (!sections.some(section => section.kind === 'variables')) { add(feature, 'variables'); }
     add(feature, 'tags');
     if (!tagsFor(source, feature).has('@tree')) { add(feature, 'tree'); }
+    add(feature, 'scenario');
     for (const section of sections) {
         if (section.kind === 'variables') { add(section, 'variable'); }
         if (section.kind === 'scenario' || section.kind === 'outline') {
@@ -156,6 +161,11 @@ export function isFeatureEditorTarget(value: unknown): value is FeatureEditorTar
         && typeof target.kind === 'string' && Object.hasOwn(TITLES, target.kind);
 }
 
+export function featureScenarioTitle(value: string): string {
+    if (!value.trim() || /[\r\n\0]/u.test(value)) { throw new Error('The name must be a non-empty single line.'); }
+    return value.trim();
+}
+
 function variableSnippet(kind: FeatureVariableKind, language: ScenarioLanguage, indent: string, eol: string): string {
     const ru = language === 'ru';
     const name = field(1, ru ? 'Имя' : 'Name');
@@ -180,7 +190,7 @@ export function planFeatureEditorEdit(source: FeatureEditorSource, target: Featu
         return { start: step.start, end: step.start, snippet: `${step.indentation}@${options.stepTag}${step.eol}` };
     }
     if (!buildFeatureEditorActions(source).some(action => action.kind === target.kind && action.line === target.line)) { return undefined; }
-    const { sections, lines, eol, unit } = scan(source);
+    const { sections, lines, eol, unit, unclosedDocString } = scan(source);
     const section = sections.find(candidate => candidate.line.number === target.line);
     if (!section) { return undefined; }
     const ru = source.language === 'ru';
@@ -188,6 +198,21 @@ export function planFeatureEditorEdit(source: FeatureEditorSource, target: Featu
     const boundary = (kinds: readonly SectionKind[]) => sections.find(candidate => candidate.line.start > section.line.start && kinds.includes(candidate.kind))?.tagStart ?? source.text.length;
     const block = (offset: number, text: string) => insert(offset, `${offset > 0 && source.text[offset - 1] !== '\n' ? eol : ''}${text}${eol}`);
     switch (target.kind) {
+        case 'scenario': {
+            if (unclosedDocString) { throw new Error('Close the multiline string before adding a scenario.'); }
+            const name = featureScenarioTitle(options.scenarioTitle ?? '');
+            if (options.scenarioKind !== undefined && !['scenario', 'outline'].includes(options.scenarioKind)) { throw new Error('Choose a scenario type.'); }
+            const outline = options.scenarioKind === 'outline';
+            const offset = boundary(['rule']);
+            const before = source.text.slice(0, offset);
+            const prefix = before.endsWith(eol + eol) ? '' : before.endsWith('\n') ? eol : eol + eol;
+            const indent = section.indent + unit;
+            const parameter = ru ? 'Параметр' : 'Parameter';
+            const heading = outline ? (ru ? 'Структура сценария' : 'Scenario Outline') : (ru ? 'Сценарий' : 'Scenario');
+            const step = outline ? (ru ? `значение <${parameter}>` : `value <${parameter}>`) : (ru ? 'шаг' : 'step');
+            const examples = outline ? `${eol}${indent}${ru ? 'Примеры' : 'Examples'}:${eol}${indent}${unit}| ${parameter} |${eol}${indent}${unit}| ${field(2, ru ? 'Значение' : 'Value')} |${eol}` : '';
+            return insert(offset, `${prefix}${section.indent}${heading}: ${escapeSnippet(name)}${eol}${indent}${ru ? 'Дано' : 'Given'} ${field(1, step)}${eol}${examples}${eol}$0`);
+        }
         case 'description': return block(section.line.fullEnd, `${eol}${ru
             ? `Как ${field(1, 'Роль')} я хочу${eol}${field(2, 'описание функционала')}${eol}чтобы ${field(3, 'бизнес-эффект')}`
             : `As ${field(1, 'Role')}${eol}I want ${field(2, 'functional description')}${eol}To ${field(3, 'business effect')}`}${eol}`);
