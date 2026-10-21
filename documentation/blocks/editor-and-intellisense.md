@@ -78,7 +78,7 @@
 | `kotTestToolkit.editor.autoCollapseOnOpen` | Сворачивать служебные секции при открытии |
 | `kotTestToolkit.editor.autoReplaceTabsWithSpacesOnSave` | Замена табов при save |
 | `kotTestToolkit.editor.autoAlignNestedScenarioParametersOnSave` | Выравнивание параметров вызова |
-| `kotTestToolkit.editor.autoAlignGherkinTablesOnSave` | Выравнивание таблиц |
+| `kotTestToolkit.editor.autoAlignGherkinTablesOnSave` | Выравнивание таблиц в YAML и feature; для feature также доступен Format Document |
 | `kotTestToolkit.editor.autoFillNestedScenariosOnSave` | Автоподдержка `ВложенныеСценарии` |
 | `kotTestToolkit.editor.autoFillScenarioParametersOnSave` | Автоподдержка `ПараметрыСценария` |
 | `kotTestToolkit.editor.showRefillMessages` | Показывать уведомления о перезаполнении |

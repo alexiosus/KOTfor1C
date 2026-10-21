@@ -11,10 +11,6 @@
     УровеньОтчета1: "Drive"
     УровеньОтчета2: "Demo"
 
-KOTМетаданные:
-    Описание: |
-        - Small nested helper that fills one document line.
-        - Used from another nested scenario to demonstrate deeper reuse chains.
 
 ПараметрыСценария:
     - ПараметрыСценария1:

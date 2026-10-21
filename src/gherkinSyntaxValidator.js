@@ -27,6 +27,12 @@ function maskVanessaSections(source) {
             }
         }
         if (!inDocString) {
+            const group = /^([ \t]*)\*([^\s])([^\r\n]*)(\r?)$/u.exec(line);
+            if (group) {
+                // Vanessa accepts *Tree label without Cucumber's separating space.
+                // Mask the first label character only for parsing, keeping line/column offsets.
+                return `${group[1]}* ${group[3]}${group[4]}`;
+            }
             const control = /^([ \t]*)(Try|Except|Else|Попытка|Исключение|Иначе)(?=[ \t]*\r?$)/iu.exec(line)
                 || /^([ \t]*)(ElseIf(?=[ \t]+.+[ \t]+Then[ \t]*\r?$)|ИначеЕсли(?=[ \t]+.+[ \t]+Тогда[ \t]*\r?$))/iu.exec(line);
             if (control) {

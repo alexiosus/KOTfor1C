@@ -157,3 +157,20 @@ test('snapshot without a selected element keeps the selection prompt only in det
     render(null, null, {}, new Map());
     assert.equal(refs.selectedKeyFacts.innerHTML, '');
 });
+
+test('rapid Form Explorer search input keeps the final query and schedules one list rebuild', () => {
+    let input!: () => void; let renders = 0; let serial = 0;
+    const timers = new Map<number, () => void>();
+    class Input { value = ''; addEventListener(_name: string, callback: () => void) { input = callback; } }
+    const search = new Input(); const state: Record<string, unknown> = {};
+    const bind = runFunction(read('media/formExplorer.js'), 'bindStaticEvents', 'focusActiveElement', {
+        refs: new Proxy({}, { get: (_target, key) => key === 'searchInput' ? search : null }), HTMLInputElement: Input,
+        bindClick() {}, bindElementTypeToggle() {}, tabButtons: [], document: { addEventListener() {} },
+        uiState: state, searchRenderTimer: null, pendingScrollReset: false, persistUiState() {}, render: () => { renders++; },
+        setTimeout: (callback: () => void) => { timers.set(++serial, callback); return serial; }, clearTimeout: (id: number) => timers.delete(id)
+    });
+    bind();
+    for (const query of ['V', 'Va', 'Van', 'Vanessa']) { search.value = query; input(); }
+    assert.equal(state.searchQuery, 'Vanessa'); assert.equal(renders, 0); assert.equal(timers.size, 1);
+    for (const callback of timers.values()) { callback(); } assert.equal(renders, 1);
+});

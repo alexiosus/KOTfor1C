@@ -3,10 +3,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { decideSharedStartupInfobaseAction } from './startupInfobasePolicy';
+import { serializeStartupInfobasePreparation } from './startupInfobasePreparation';
 import { getTranslator } from './localization';
 import { buildFileInfobaseConnectionArgument } from './oneCInfobaseConnection';
 import { resolveOneCDesignerExePath } from './oneCPlatform';
 import { formatProcessCommandForDisplay } from './processCommandDisplay';
+import { McpComponentProvisioner, VANESSA_MCP_COMPONENT, buildMcpExtensionInstallArgs, recordBundledMcpComponents } from './vanessaControlProvisioning';
+import { parseMcpPermissionsReport } from './vanessaControlPermissions';
+import { acquireMcpComponent } from './vanessaControlComponentCache';
 
 const OUTPUT_CHANNEL_NAME = 'KOT Startup Infobase';
 const STARTUP_INFOBASE_ROOT_RELATIVE_PATH = path.join('.vscode', 'kot-runtime', 'startup-infobase');
@@ -51,6 +55,75 @@ export interface EnsureSharedStartupInfobaseResult {
 
 let outputChannel: vscode.OutputChannel | null = null;
 const activeEnsureOperations = new Map<string, Promise<EnsureSharedStartupInfobaseResult>>();
+const activeMcpEnsureOperations = new Map<string, Promise<void>>();
+
+/** Only called for a managed MCP launch, after normal service-IB preparation. */
+export async function ensureSharedStartupInfobaseMcpReady(context: vscode.ExtensionContext,
+    clientExePath: string, base: EnsureSharedStartupInfobaseResult): Promise<void> {
+    if (process.platform !== 'win32') { throw new Error('Managed Vanessa MCP launch currently requires Windows. Attach works on other systems.'); }
+    const startupPaths = getSharedStartupInfobasePaths();
+    if (!startupPaths || path.resolve(base.infobaseDirectory) !== path.resolve(startupPaths.infobaseDirectory)) {
+        throw new Error('Automatic MCP preparation is limited to the KOT service infobase.');
+    }
+    const key = startupPaths.infobaseDirectory;
+    const existing = activeMcpEnsureOperations.get(key);
+    if (existing) { return existing; }
+    const statePath = path.join(key, '.kot-mcp-components.json');
+    const t = await getTranslator(context.extensionUri);
+    const concurrent = activeMcpEnsureOperations.get(key);
+    if (concurrent) { return concurrent; }
+    const installer = new McpComponentProvisioner({
+        readInstalledHash: async () => {
+            const state = await readJsonFile<{ schemaVersion?: number; safeMode?: boolean; sha256?: string }>(statePath);
+            return state?.schemaVersion === 2 && state.safeMode === false ? state.sha256 : undefined;
+        },
+        isBusy: () => new Promise<boolean>((resolve, reject) => {
+            // Return only a boolean, never command lines (which can contain credentials).
+            const script = "$ErrorActionPreference='Stop'; $base=$env:KOT_MCP_SERVICE_IB.Replace('/','\\').TrimEnd('\\'); "
+                + "$pattern='(?i)(?:^|[=;\\s\"])'+[regex]::Escape($base)+'(?=$|[;\\s\"])'; "
+                + "$busy=@(Get-CimInstance Win32_Process -Filter \"Name LIKE '1cv8%'\" | Where-Object { $_.CommandLine -and $_.CommandLine.Replace('/','\\') -match $pattern }).Count -gt 0; "
+                + 'if($busy){Write-Output busy}else{Write-Output idle}';
+            cp.execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script],
+                { windowsHide: true, timeout: 15_000, env: { ...process.env, KOT_MCP_SERVICE_IB: key } }, (error, stdout) => {
+                    if (error || !['busy', 'idle'].includes(stdout.trim())) { reject(new Error('Could not check active service infobase sessions.')); }
+                    else { resolve(stdout.trim() === 'busy'); }
+                });
+        }),
+        acquireArtifact: () => acquireMcpComponent(context.globalStorageUri.fsPath, VANESSA_MCP_COMPONENT),
+        install: async (_base, artifact) => {
+            const designer = resolveOneCDesignerExePath(clientExePath);
+            if (!designer) { throw new Error('1C Designer is required to prepare Vanessa MCP.'); }
+            const logPath = path.join(startupPaths.logsDirectory, '03-install-mcp-extension.log');
+            await fs.promises.rm(logPath, { force: true });
+            await run1CCommand(designer, buildMcpExtensionInstallArgs(key, artifact, base.authentication),
+                startupPaths.rootDirectory, t('Install Vanessa MCP in the service infobase'), logPath,
+                getSharedStartupInfobaseOutputChannel(), t);
+            const helperDirectory = path.join(startupPaths.rootDirectory, 'mcp-preparation');
+            await ensureDirectory(helperDirectory);
+            const helperPath = path.join(helperDirectory, 'permissions.epf');
+            const reportPath = path.join(helperDirectory, 'permissions.json');
+            // The devkit parses every /C key. Put the helper payload in a valid key's value.
+            if (/[;|\r\n]/u.test(reportPath)) { throw new Error('The service infobase path contains unsupported MCP preparation delimiters.'); }
+            const source = vscode.Uri.joinPath(context.extensionUri, 'tools', 'startup-infobase', 'mcp-permissions', 'KOTMcpPermissions.xml').fsPath;
+            const auth = base.authentication ? ['/N', base.authentication.username, '/P', base.authentication.password] : [];
+            const common = ['/DisableStartupDialogs', '/DisableStartupMessages', '/IBConnectionString', buildFileInfobaseConnectionArgument(key), ...auth];
+            await fs.promises.rm(helperPath, { force: true });
+            await run1CCommand(designer, ['DESIGNER', ...common, '/LoadExternalDataProcessorOrReportFromFiles', source, helperPath],
+                startupPaths.rootDirectory, t('Prepare Vanessa MCP settings helper'), path.join(startupPaths.logsDirectory, '04-build-mcp-helper.log'),
+                getSharedStartupInfobaseOutputChannel(), t);
+            await fs.promises.rm(reportPath, { force: true });
+            await run1CCommand(clientExePath, ['ENTERPRISE', ...common, '/Execute', helperPath, '/C', `KOTMcpPreparation=KOTMcpConfigure|${reportPath}`],
+                startupPaths.rootDirectory, t('Configure Vanessa MCP in the service infobase'), path.join(startupPaths.logsDirectory, '05-configure-mcp.log'),
+                getSharedStartupInfobaseOutputChannel(), t);
+            parseMcpPermissionsReport(await readUtf8File(reportPath));
+        },
+        writeInstalledHash: async (_base, sha256) => writeJsonFile(statePath,
+            { schemaVersion: 2, safeMode: false, version: VANESSA_MCP_COMPONENT.version, sha256 })
+    });
+    const operation = serializeStartupInfobasePreparation(key, () => installer.ensure(key));
+    activeMcpEnsureOperations.set(key, operation);
+    try { await operation; } finally { if (activeMcpEnsureOperations.get(key) === operation) { activeMcpEnsureOperations.delete(key); } }
+}
 
 export function getSharedStartupInfobaseOutputChannel(): vscode.OutputChannel {
     if (!outputChannel) {
@@ -394,6 +467,7 @@ export async function ensureSharedStartupInfobaseReady(
                 output,
                 t
             );
+            await recordBundledMcpComponents(templateDtInfo!.templatePath, startupPaths.infobaseDirectory);
             await writeJsonFile(
                 startupPaths.authStateFilePath,
                 {
@@ -412,15 +486,16 @@ export async function ensureSharedStartupInfobaseReady(
         };
     };
 
+    const prepare = () => serializeStartupInfobasePreparation(ensureKey, performEnsure);
     const operation = Promise.resolve(options?.showProgressNotification === false
-        ? performEnsure()
+        ? prepare()
         : vscode.window.withProgress(
             {
                 location: vscode.ProgressLocation.Notification,
                 title: options?.progressTitle || t('Preparing shared startup infobase...'),
                 cancellable: false
             },
-            async () => performEnsure()
+            async () => prepare()
         ));
 
     activeEnsureOperations.set(ensureKey, operation);

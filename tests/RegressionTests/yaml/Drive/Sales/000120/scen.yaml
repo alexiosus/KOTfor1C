@@ -11,10 +11,6 @@
     УровеньОтчета1: "Drive"
     УровеньОтчета2: "Demo"
 
-KOTМетаданные:
-    Описание: |
-        - Builds a compact sales order using reusable line fillers.
-        - Demonstrates multi-level parameter propagation: parent call -> line orchestrator -> line filler.
 
 ПараметрыСценария:
     - ПараметрыСценария1:

@@ -1,0 +1,623 @@
+{
+  "tools": [
+    {
+      "name": "get_vanessa_automation_state",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "open_feature_file",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "filePath"
+        ]
+      }
+    },
+    {
+      "name": "get_editor_state",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "includeContent": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "select_step",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lineNumber": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lineNumber"
+        ]
+      }
+    },
+    {
+      "name": "execute_feature_step",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string"
+          },
+          "lineNumber": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lineNumber"
+        ]
+      }
+    },
+    {
+      "name": "run_scenario",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "filePath": {
+            "type": "string"
+          },
+          "lineNumber": {
+            "type": "integer"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "stop_scenario",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "get_test_results",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scenarioId": {
+            "type": "string"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "manage_breakpoints",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "line": {
+            "type": "number"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "load_features",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "manage_test_client",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие над клиентом тестирования. Возможные значения:\n'connect' — подключить клиент тестирования по имени профиля (требуется profileName).\n'disconnect' — отключить текущего клиента тестирования.",
+            "type": "string"
+          },
+          "profileName": {
+            "description": "Имя профиля клиента тестирования. Обязателен для action='connect'.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "close_test_client",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "profileName": {
+            "description": "Имя профиля клиента тестирования для закрытия. Если не указано — закроет текущий подключенный профиль.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "manage_test_client_profiles",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие: 'get_list' (получить список профилей), 'add' (добавить профиль), 'edit' (редактировать профиль). Обязательный параметр.",
+            "type": "string"
+          },
+          "additional_parameters": {
+            "description": "Дополнительные параметры подключения. Необязательный параметр для add и edit.",
+            "type": "string"
+          },
+          "client_type": {
+            "description": "Тип клиента (Тонкий (основной вариант), Толстый, Web, МобильныйКлиент, МобильноеПриложение, МобильныйКлиентАвтономный, ОбычноеПриложение). Необязательный параметр для add и edit. Значение по умолчанию 'Тонкий'.",
+            "type": "string"
+          },
+          "computer_name": {
+            "description": "Имя компьютера. Необязательный параметр для add и edit.",
+            "type": "string"
+          },
+          "infobase_path": {
+            "description": "Строка подключения к базе. Необязательный параметр для add и edit.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Имя профиля. Обязательный параметр для add и edit.",
+            "type": "string"
+          },
+          "synonym": {
+            "description": "Синоним профиля. Необязательный параметр для add и edit.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "manage_variables",
+      "description": "Чтение, установка и удаление переменных тестового контекста.\nДействия с переменными: get (по умолчанию), set, delete.\nПеременные позволяют хранить произвольные значения в памяти Vanessa Automation.\nПеременные бывают локальные и глобальные. Локальные существуют только во время выполнения сценария. Перед началом выполнения сценария все локальные переменные удаляются.\nГлобальные переменные существуют пока работает Vanessa Automation и не удаляются перед выполнением сценария.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие: 'get' (по умолчанию), 'set', 'delete'.",
+            "type": "string"
+          },
+          "is_global": {
+            "description": "Флаг, является ли переменная глобальной. Значение по умолчанию - false.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Имя переменной. Обязательно для action='set' и action='delete' (проверяется на стороне сервера).",
+            "type": "string"
+          },
+          "value": {
+            "description": "Значение переменной. Обязательно для action='set' (проверяется на стороне сервера).",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_form_analysis",
+      "description": "Возвращает информацию о текущей форме тестируемого приложения: дерево элементов или состояние формы как Gherkin-шаги. Требует подключённого клиента тестирования.\nВажно обращать на флаг Видимости у элемента формы и групп, в которые он входит. Если у элемента Видимость=Истина, а у группы Видимость=Ложь, то скорее всего элемент формы не виден пользователю и он не может с ним взаимодействовать.\nПараметр only_table ограничивает ответ одной таблицей формы: возвращаются только эта таблица и её содержимое (все колонки, включая вложенные в группы внутри таблицы, с именем, заголовком, видимостью и толькопросмотром; в формате 'buttons' - только кнопки командной панели этой таблицы). Полезно, когда полное дерево формы не влезает в лимит ответа. Параметр применим к форматам 'elements', 'full' и 'buttons': в 'full' ограничивается только раздел элементов формы (Gherkin-состояние строится по всей форме, если не отключено). Если таблица не найдена - возвращается ошибка со списком таблиц формы.\nЕсли ответ не влезает целиком, дерево можно ограничить и другими параметрами: only_group (только указанная группа/закладка; в 'buttons' - только кнопки этой группы), max_depth (глубина дерева), only_visible (только видимые элементы).\nПримеры: format='elements', only_group='Товары'; format='elements', max_depth=2; format='full', only_visible=true.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "compact": {
+            "description": "По умолчанию true - компактный вывод дерева: код типа и состояние элемента одной буквой, сокращение внутренних имён (у колонок таблиц печатается полное имя; при совпадении имени с заголовком - [=]), легенда в начале ответа. Форматы 'elements', 'full' и 'buttons'. Компактный вывод содержит все элементы, только короче. compact=false - прежний подробный вывод. В форматах без дерева ('gherkin', 'messages') параметр не применяется.",
+            "type": "boolean"
+          },
+          "format": {
+            "description": "Формат вывода: 'full' (дерево + Gherkin + Сообщения; Gherkin отключается параметром gherkin=false), 'gherkin' (только Gherkin-шаги), 'elements' (только дерево элементов, выводятся все элементы формы), 'buttons' (только кнопки; дерево заходит и в таблицы - до кнопок их командных панелей; если кнопок на форме нет, вернётся сообщение об этом), 'messages' (только текст окна сообщений пользвателю). По умолчанию 'full'.",
+            "type": "string"
+          },
+          "gherkin": {
+            "description": "Для формата 'full': по умолчанию true - в ответ включается Gherkin-состояние формы и блок шагов; false - без Gherkin-состояния и шагов (дерево элементов и сообщения пользователю остаются; если Gherkin нужен отдельно, используйте format='gherkin'). Необязательный параметр; в остальных форматах не применяется.",
+            "type": "boolean"
+          },
+          "max_depth": {
+            "description": "Ограничить глубину дерева элементов формы: 1 - только элементы верхнего уровня формы, 2 - верхний уровень и их непосредственные дети и так далее. Глубина отсчитывается от формы (служебные узлы окна и формы выводятся всегда как контекст), а при указании only_group - от выбранной группы. Только для форматов 'elements' и 'full' (в 'full' ограничивается только раздел элементов формы). Необязательный параметр.",
+            "type": "number"
+          },
+          "only_group": {
+            "description": "Имя или заголовок группы формы (закладки): вернуть только эту группу и её содержимое (в формате 'buttons' - только кнопки этой группы). Удобно, когда нужна одна закладка большой формы. Если группа не найдена, возвращается ошибка со списком доступных групп формы. Только для форматов 'elements', 'full' и 'buttons' (в 'full' ограничивается только раздел элементов формы). Необязательный параметр.",
+            "type": "string"
+          },
+          "only_table": {
+            "description": "Имя или заголовок таблицы формы: вернуть данные только по этой таблице (строка на колонку, включая колонки внутри групп, с именем, заголовком, видимостью и толькопросмотром; в формате 'buttons' - только кнопки командной панели этой таблицы). Только для форматов 'elements', 'full' и 'buttons' (в 'full' ограничивается только раздел элементов формы). Необязательный параметр; без него поведение прежнее.",
+            "type": "string"
+          },
+          "only_visible": {
+            "description": "true - вернуть только видимые элементы формы (видимость учитывается с учётом видимости групп-родителей). Только для форматов 'elements' и 'full' (в 'full' ограничивается только раздел элементов формы). Необязательный параметр.",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_form_element_data",
+      "description": "Получает данные указанного элемента формы клиента тестирования.\nВозвращает информацию об элементе в формате Markdown:\n- Имя элемента\n- Заголовок\n- Тип\n- Вид\n- Значение\n- Представление (если применимо)\n- Флаги: Видимость, Доступность, ТолькоПросмотр\n\nПараметр element_name обязателен и должен содержать имя элемента формы.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "element_name": {
+            "description": "Имя элемента формы для получения данных. Обязательный параметр.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_active_window_data",
+      "description": "В зависимости от параметра type возвращает важные свойства активного окна клиента тестирования:\n- если type=window_caption - возвращает самое важное значение активного окна: его заголовок. По заголовку окна можно найти окно и получить его данные, можно активизировать окно, можно закрыть окно.\n- если type=navigation_link - возвращает навигационную ссылку активного окна. Навигационная ссылка потом может быть использована для открытия окна по навигационной ссылке. Также навигационная ссылка помогает понять с каким объектом метаданных связано активное окно.\n- если type=form_name - возвращает имя формы, подчиненной активному окну. Имя формы позволяет понять с каким объектом метаданных связано активное окно, т.к. в имени формы чаще всего содержится имя объекта метаданных.\n- если type=form_caption - возвращает заголовок формы, подчиненной активному окну. Чаще всего такой заголовок формы совпадает с заголовком окна-владельца и он нужен редко.\n",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "description": "Параметр type. Может принимать значения: window_caption, navigation_link, form_name, form_caption",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "user_actions_recording",
+      "description": "Управляет записью действий пользователя в клиенте тестирования.\nПоддерживаемые действия (параметр action):\n- 'start' (по умолчанию) - начать запись действий пользователя\n- 'stop' - остановить запись и вернуть записанные шаги в формате Turbo Gherkin. Если после вызова 'stop' нужно опять начать запись действий - то нужно вызвать инструмент с параметром 'start'\n\nПри остановке записи возвращается текст шагов в формате Turbo Gherkin, которые были выполнены пользователем за время записи.\nТребует подключённого клиента тестирования.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Действие: 'start' (начать запись), 'stop' (остановить запись и получить шаги). Обязательный параметр.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_environment_data",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_event_log_test_client",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "application": {
+            "type": "string"
+          },
+          "columns": {
+            "type": "string"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "comment_match_type": {
+            "type": "string"
+          },
+          "computer": {
+            "type": "string"
+          },
+          "data": {
+            "type": "string"
+          },
+          "data_max_length": {
+            "type": "number"
+          },
+          "data_presentation": {
+            "type": "string"
+          },
+          "date_end": {
+            "type": "string"
+          },
+          "date_start": {
+            "type": "string"
+          },
+          "display_order": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string"
+          },
+          "event_match_type": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "metadata": {
+            "type": "string"
+          },
+          "output_file": {
+            "type": "string"
+          },
+          "output_format": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          },
+          "scan_limit": {
+            "type": "number"
+          },
+          "server": {
+            "type": "string"
+          },
+          "session": {
+            "type": "integer"
+          },
+          "sync_port": {
+            "type": "integer"
+          },
+          "transaction": {
+            "type": "string"
+          },
+          "transaction_status": {
+            "type": "string"
+          },
+          "user": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_for_steps_by_keywords",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "conditions_only": {
+            "type": "boolean"
+          },
+          "exclude_description": {
+            "type": "string"
+          },
+          "exclude_name": {
+            "type": "string"
+          },
+          "exclude_type": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "loops_only": {
+            "type": "boolean"
+          },
+          "search_description": {
+            "type": "string"
+          },
+          "search_name": {
+            "type": "string"
+          },
+          "search_type": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_event_log_manager",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "application": {
+            "type": "string"
+          },
+          "columns": {
+            "type": "string"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "comment_match_type": {
+            "type": "string"
+          },
+          "computer": {
+            "type": "string"
+          },
+          "data": {
+            "type": "string"
+          },
+          "data_max_length": {
+            "type": "number"
+          },
+          "data_presentation": {
+            "type": "string"
+          },
+          "date_end": {
+            "type": "string"
+          },
+          "date_start": {
+            "type": "string"
+          },
+          "display_order": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string"
+          },
+          "event_match_type": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "metadata": {
+            "type": "string"
+          },
+          "output_file": {
+            "type": "string"
+          },
+          "output_format": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          },
+          "scan_limit": {
+            "type": "number"
+          },
+          "server": {
+            "type": "string"
+          },
+          "session": {
+            "type": "integer"
+          },
+          "sync_port": {
+            "type": "integer"
+          },
+          "transaction": {
+            "type": "string"
+          },
+          "transaction_status": {
+            "type": "string"
+          },
+          "user": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "check_syntax",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "filePath"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_window_screenshot_os",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "color_mode": {
+            "type": "string"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "window_title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "window_title"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_window_list_os",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "window_management",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "navigation_link": {
+            "type": "string"
+          },
+          "window_title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_window_list_testclient",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

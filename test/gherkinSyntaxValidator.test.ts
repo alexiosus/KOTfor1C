@@ -87,3 +87,12 @@ test('validates control-like text inside both docstring formats and controls aft
         assert.deepEqual(collectGherkinSyntaxErrors(source), [], delimiter);
     }
 });
+
+test('SPPR process and scenario tree labels without a space after the asterisk are valid Vanessa groups', () => {
+    for (const [language, feature, scenario, step] of [['en', 'Feature', 'Scenario', 'And'], ['ru', 'Функциональность', 'Сценарий', 'И']]) {
+        const text = `# language: ${language}\n${feature}: Process\n${scenario}: Parent\n\t*KOT child process\n\t\t*Вложенный процесс\n\t\t\t${step} Delay 1\n`;
+        assert.deepEqual(collectGherkinSyntaxErrors(text), []);
+        const errors = collectGherkinSyntaxErrors(text + '\tUnsupported bare line\n');
+        assert.equal(errors.length, 1); assert.equal(errors[0].line, 7); assert.equal(errors[0].column, 2);
+    }
+});

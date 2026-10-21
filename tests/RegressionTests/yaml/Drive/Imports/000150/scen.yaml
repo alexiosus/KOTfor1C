@@ -11,10 +11,6 @@
     УровеньОтчета1: "Drive"
     УровеньОтчета2: "Demo"
 
-KOTМетаданные:
-    Описание: |
-        - Validates that an imported item can be found in the list.
-        - Keeps a default expected item value so the main scenario can stay parameterless.
 
 ПараметрыСценария:
     - ПараметрыСценария1:

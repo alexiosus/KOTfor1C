@@ -571,6 +571,20 @@
             "markdownDescription": "%config.runVanessa.commandTemplate.markdownDescription%",
             "order": 4
           },
+          "kotTestToolkit.runVanessa.executionMode": {
+            "type": "string",
+            "enum": [
+              "process",
+              "mcp"
+            ],
+            "default": "process",
+            "enumDescriptions": [
+              "%config.runVanessa.executionMode.process%",
+              "%config.runVanessa.executionMode.mcp%"
+            ],
+            "markdownDescription": "%config.runVanessa.executionMode.description%",
+            "order": 4.1
+          },
           "kotTestToolkit.runVanessa.liveLogRefreshSeconds": {
             "type": "number",
             "default": 2,
@@ -594,6 +608,12 @@
             "maximum": 3600,
             "description": "%config.runVanessa.autoDetectInactivityTimeoutSeconds.description%",
             "order": 7
+          },
+          "kotTestToolkit.vanessaControl.autoAttach": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "%config.vanessaControl.autoAttach.description%",
+            "order": 20
           }
         }
       },
@@ -646,6 +666,17 @@
             "maximum": 65535,
             "description": "%config.formExplorer.bridge.testClientPort.description%",
             "order": 7
+          },
+          "kotTestToolkit.formExplorer.source": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "mcp",
+              "snapshot"
+            ],
+            "default": "auto",
+            "description": "%config.formExplorer.source.description%",
+            "order": 0
           }
         }
       },
@@ -1418,6 +1449,235 @@
       {
         "command": "kotTestToolkit.editorMenu.runFeature",
         "title": "%menu.runFeature.title%"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl",
+        "title": "%cmd.vanessaControl.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.start",
+        "title": "%cmd.vanessaControl.start.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.attach",
+        "title": "%cmd.vanessaControl.attach.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.clients",
+        "title": "%cmd.vanessaControl.clients.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.stop",
+        "title": "%cmd.vanessaControl.stop.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.detach",
+        "title": "%cmd.vanessaControl.detach.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.oneStep",
+        "title": "%cmd.vanessaControl.oneStep.title%",
+        "category": "%cmd.category%",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.runFromLine",
+        "title": "%cmd.vanessaControl.runFromLine.title%",
+        "category": "%cmd.category%",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.vanessaControl.oneStep",
+        "title": "%cmd.vanessaControl.oneStep.title%",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.vanessaControl.runFromLine",
+        "title": "%cmd.vanessaControl.runFromLine.title%",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.toggleBreakpoint",
+        "title": "%cmd.vanessaControl.toggleBreakpoint.title%",
+        "category": "%cmd.category%",
+        "enablement": "kotTestToolkit.vanessaControlConnected && !inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.vanessaControl.toggleBreakpoint",
+        "title": "%cmd.vanessaControl.toggleBreakpoint.title%",
+        "enablement": "kotTestToolkit.vanessaControlConnected && !inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.listBreakpoints",
+        "title": "%cmd.vanessaControl.listBreakpoints.title%",
+        "category": "%cmd.category%",
+        "enablement": "kotTestToolkit.vanessaControlConnected && !inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.vanessaControl.listBreakpoints",
+        "title": "%cmd.vanessaControl.listBreakpoints.title%",
+        "enablement": "kotTestToolkit.vanessaControlConnected && !inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.tryYamlStep",
+        "title": "%cmd.vanessaControl.tryYamlStep.title%",
+        "category": "%cmd.category%",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.vanessaControl.tryYamlStep",
+        "title": "%cmd.vanessaControl.tryYamlStep.title%",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.variables",
+        "title": "%cmd.vanessaControl.variables.title%",
+        "category": "%cmd.category%",
+        "icon": "$(symbol-variable)"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.variables.refresh",
+        "title": "%cmd.vanessaControl.variables.refresh.title%",
+        "category": "%cmd.category%",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.variables.set",
+        "title": "%cmd.vanessaControl.variables.set.title%",
+        "category": "%cmd.category%",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.variables.delete",
+        "title": "%cmd.vanessaControl.variables.delete.title%",
+        "category": "%cmd.category%",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.runSelection",
+        "title": "%cmd.vanessaControl.runSelection.title%",
+        "category": "%cmd.category%",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.vanessaControl.runSelection",
+        "title": "%cmd.vanessaControl.runSelection.title%",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.resume",
+        "title": "%cmd.vanessaControl.resume.title%",
+        "category": "%cmd.category%",
+        "enablement": "kotTestToolkit.vanessaControlConnected && !inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.oneCompiledStep",
+        "title": "%cmd.vanessaControl.oneCompiledStep.title%",
+        "enablement": "!inDebugMode",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.vanessaControl.oneCompiledStep",
+        "title": "%cmd.vanessaControl.oneCompiledStep.title%",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.recording.start",
+        "title": "%cmd.vanessaControl.recording.start.title%",
+        "category": "%cmd.category%",
+        "icon": "$(record)",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.recording.stop",
+        "title": "%cmd.vanessaControl.recording.stop.title%",
+        "category": "%cmd.category%",
+        "icon": "$(debug-stop)",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.recording.insertHere",
+        "title": "%cmd.vanessaControl.recording.insertHere.title%",
+        "category": "%cmd.category%",
+        "icon": "$(insert)",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.recording.copy",
+        "title": "%cmd.vanessaControl.recording.copy.title%",
+        "category": "%cmd.category%",
+        "icon": "$(copy)",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.formChecks",
+        "title": "%cmd.vanessaControl.formChecks.title%",
+        "category": "%cmd.category%",
+        "icon": "$(check-all)",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.formSuggestions",
+        "title": "%cmd.vanessaControl.formSuggestions.title%",
+        "category": "%cmd.category%",
+        "icon": "$(lightbulb)",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.vanessaControl.recording.start",
+        "title": "%cmd.vanessaControl.recording.start.title%",
+        "category": "%cmd.category%",
+        "icon": "$(record)",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.vanessaControl.recording.stop",
+        "title": "%cmd.vanessaControl.recording.stop.title%",
+        "category": "%cmd.category%",
+        "icon": "$(debug-stop)",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.vanessaControl.formChecks",
+        "title": "%cmd.vanessaControl.formChecks.title%",
+        "category": "%cmd.category%",
+        "icon": "$(check-all)",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.vanessaControl.formSuggestions",
+        "title": "%cmd.vanessaControl.formSuggestions.title%",
+        "category": "%cmd.category%",
+        "icon": "$(lightbulb)",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.vanessaControl.recording.insertHere",
+        "title": "%cmd.vanessaControl.recording.insertHere.title%",
+        "category": "%cmd.category%",
+        "icon": "$(insert)",
+        "enablement": "!inDebugMode"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.diagnostics",
+        "title": "%cmd.vanessaControl.diagnostics.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.searchRuntimeSteps",
+        "title": "%cmd.vanessaControl.searchRuntimeSteps.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.checkRuntimeSyntax",
+        "title": "%cmd.vanessaControl.checkRuntimeSyntax.title%",
+        "category": "%cmd.category%"
       }
     ],
     "submenus": [
@@ -1510,6 +1770,11 @@
         "mac": "cmd+alt+U",
         "linux": "ctrl+alt+U",
         "when": "editorTextFocus && !editorReadonly"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.oneStep",
+        "key": "f11",
+        "when": "editorTextFocus && (resourceExtname == .feature || resourceExtname == .yaml) && kotTestToolkit.vanessaControlCanStep && !inDebugMode"
       }
     ],
     "menus": {
@@ -1618,6 +1883,16 @@
           "command": "kotTestToolkit.openInfobaseManager",
           "when": "view == kotTestToolkit.infobaseSidebarView",
           "group": "navigation@5"
+        },
+        {
+          "command": "kotTestToolkit.vanessaControl.variables.refresh",
+          "when": "view == kotTestToolkit.vanessaVariables",
+          "group": "navigation@1"
+        },
+        {
+          "command": "kotTestToolkit.vanessaControl.variables.set",
+          "when": "view == kotTestToolkit.vanessaVariables",
+          "group": "navigation@2"
         }
       ],
       "kotTestToolkit.testManager.relationships": [
@@ -1862,6 +2137,26 @@
           "command": "kotTestToolkit.openStepLibrary",
           "when": "resourceExtname == .yaml || resourceExtname == .feature",
           "group": "navigation@10"
+        },
+        {
+          "command": "kotTestToolkit.vanessaControl.recording.start",
+          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.vanessaRecordingSupported && !kotTestToolkit.vanessaRecording",
+          "group": "navigation@90"
+        },
+        {
+          "command": "kotTestToolkit.vanessaControl.recording.stop",
+          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.vanessaRecording",
+          "group": "navigation@90"
+        },
+        {
+          "command": "kotTestToolkit.vanessaControl.recording.copy",
+          "when": "resourceScheme == file && kotTestToolkit.vanessaDraftAvailable",
+          "group": "navigation@2"
+        },
+        {
+          "command": "kotTestToolkit.vanessaControl.recording.insertHere",
+          "when": "resourceScheme == file && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature) && kotTestToolkit.vanessaDraftAvailable",
+          "group": "navigation@89"
         }
       ],
       "editor/context": [
@@ -2236,6 +2531,66 @@
         {
           "command": "kotTestToolkit.editorMenu.runFeature",
           "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.oneStep",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.runFromLine",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.toggleBreakpoint",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.listBreakpoints",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.tryYamlStep",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.vanessaControl.variables.refresh",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.vanessaControl.variables.set",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.vanessaControl.variables.delete",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.runSelection",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.oneCompiledStep",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.recording.start",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.recording.stop",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.formChecks",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.formSuggestions",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.recording.insertHere",
+          "when": "false"
         }
       ],
       "kotTestToolkit.editorContext": [
@@ -2308,6 +2663,78 @@
           "command": "kotTestToolkit.editorMenu.runFeature",
           "when": "editorTextFocus && resourceExtname == .feature",
           "group": "00_feature@1"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.oneStep",
+          "when": "(resourceExtname == .feature || resourceExtname == .yaml)",
+          "group": "03_vanessa@0"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.runFromLine",
+          "when": "(resourceExtname == .feature || resourceExtname == .yaml)",
+          "group": "03_vanessa@1"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.toggleBreakpoint",
+          "when": "(resourceExtname == .feature || resourceExtname == .yaml) && kotTestToolkit.vanessaControlConnected",
+          "group": "03_vanessa@2"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.listBreakpoints",
+          "when": "resourceExtname == .feature && kotTestToolkit.vanessaControlConnected",
+          "group": "03_vanessa@3"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.tryYamlStep",
+          "when": "resourceExtname == .yaml",
+          "group": "03_vanessa@4"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.runSelection",
+          "when": "(resourceExtname == .feature || resourceExtname == .yaml) && editorHasSelection",
+          "group": "00_control@3"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.oneCompiledStep",
+          "when": "resourceExtname == .yaml",
+          "group": "03_vanessa@5"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.recording.start",
+          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && !kotTestToolkit.vanessaRecording",
+          "group": "vanessa_authoring"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.recording.stop",
+          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.vanessaRecording",
+          "group": "vanessa_authoring"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.formChecks",
+          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml)",
+          "group": "vanessa_authoring"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.formSuggestions",
+          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml)",
+          "group": "vanessa_authoring"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.recording.insertHere",
+          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.vanessaDraftAvailable",
+          "group": "vanessa_authoring"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "kotTestToolkit.vanessaControl.variables.set",
+          "when": "view == kotTestToolkit.vanessaVariables && (viewItem == vanessaLocalVariable || viewItem == vanessaGlobalVariable)",
+          "group": "inline@1"
+        },
+        {
+          "command": "kotTestToolkit.vanessaControl.variables.delete",
+          "when": "view == kotTestToolkit.vanessaVariables && viewItem == vanessaLocalVariable",
+          "group": "inline@2"
         }
       ]
     },
@@ -2464,9 +2891,23 @@
           "type": "webview",
           "id": "kotTestToolkit.scenarioProperties",
           "name": "%view.scenarioProperties.title%"
+        },
+        {
+          "id": "kotTestToolkit.vanessaVariables",
+          "name": "%view.vanessaVariables.title%",
+          "visibility": "collapsed",
+          "initialSize": 1
         }
       ]
-    }
+    },
+    "breakpoints": [
+      {
+        "language": "feature"
+      },
+      {
+        "language": "yaml"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run check && npm run copy-codicons && npm run esbuild-base -- --minify",
@@ -2500,6 +2941,7 @@
   "dependencies": {
     "@cucumber/gherkin": "^42.0.1",
     "@cucumber/messages": "^34.0.0",
+    "@modelcontextprotocol/client": "2.3.1",
     "jszip": "^3.10.1",
     "node-html-parser": "^7.0.1",
     "uuid": "^11.1.1",

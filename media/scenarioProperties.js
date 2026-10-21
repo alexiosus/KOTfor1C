@@ -599,7 +599,9 @@
         const actions = node('div', 'properties-actions');
         const favorite = actionButton('favorite', undefined, { icon: state.favorite ? 'star-full' : 'star-empty', iconOnly: true, title: label(state.favorite ? 'unfavorite' : 'favorite') });
         favorite.disabled = !state.canFavorite; favorite.setAttribute('aria-pressed', String(!!state.favorite));
-        actions.append(actionButton('save', undefined, { primary: true, icon: 'save' }), favorite, actionButton('openText', undefined, { icon: 'fold', iconOnly: true }), pin);
+        actions.append(actionButton('save', undefined, { primary: true, icon: 'save' }));
+        if (state.canCreateSettings) { actions.append(actionButton('run', undefined, { icon: 'play' })); }
+        actions.append(favorite, actionButton('openText', undefined, { icon: 'fold', iconOnly: true }), pin);
         toolbar.append(titleRow, actions);
         const children = [toolbar];
         if (state.error) { children.push(errorNode(state.error)); }

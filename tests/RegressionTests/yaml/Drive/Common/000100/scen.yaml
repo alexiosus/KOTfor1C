@@ -11,11 +11,6 @@
     УровеньОтчета1: "Drive"
     УровеньОтчета2: "Demo"
 
-KOTМетаданные:
-    Описание: |
-        
-        - Synthetic helper scenario used by demo main scenarios.
-        - Shows a minimal reusable nested scenario with no parameters.
 
 ПараметрыСценария:
 

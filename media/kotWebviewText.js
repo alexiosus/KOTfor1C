@@ -5,21 +5,43 @@
     const selector = '.kot-button-caption, .menu-item > span:not(.codicon), .meta-chip-value, .meta-chip-label, .platform-selector-label, .infobase-item-name, .infobase-item-path, .outline-title, .outline-subtitle, .outline-value, .current-form-copy .meta-line, .window-title-btn, .catalog-picker-option-key, .catalog-picker-option-description, #profilePickerBtnLabel, #sortMenuLabel';
     let frame;
     let scrollFrame;
+    let measureFrame;
+    const visibleClips = new Set();
+    const pendingMeasurements = new Set();
     const movingClips = new Set();
-    function updateScrollFade(element, track) {
-        const viewport = element.getBoundingClientRect();
-        const text = track.getBoundingClientRect();
+    function updateScrollFade(element, track, viewport = element.getBoundingClientRect(), text = track.getBoundingClientRect()) {
         element.classList.toggle('kot-text-scrolled', viewport.left - text.left > 1);
         element.classList.toggle('kot-text-more-right', text.right - viewport.right > 1);
     }
     function measure(element, track) {
-        if (!element.getClientRects().length) { return; }
-        const distance = Math.max(0, track.scrollWidth - element.clientWidth);
-        element.classList.toggle('kot-text-overflow', distance > 1);
-        element.style.setProperty('--kot-text-distance', `${distance}px`);
-        element.style.setProperty('--kot-text-duration', `${Math.max(1.2, distance / 45)}s`);
-        updateScrollFade(element, track);
+        if (clips.get(element) !== track || !visibleClips.has(element)) { return; }
+        pendingMeasurements.add(element);
+        if (measureFrame === undefined) { measureFrame = requestAnimationFrame(flushMeasurements); }
     }
+    function flushMeasurements() {
+        measureFrame = undefined;
+        const measurements = [];
+        for (const element of pendingMeasurements) {
+            const track = clips.get(element);
+            if (!track || !visibleClips.has(element) || !element.getClientRects().length) { continue; }
+            measurements.push({ element, track, distance: Math.max(0, track.scrollWidth - element.clientWidth),
+                viewport: element.getBoundingClientRect(), text: track.getBoundingClientRect() });
+        }
+        pendingMeasurements.clear();
+        // Read every visible caption before changing styles: alternating these forces a layout per row.
+        for (const { element, track, distance, viewport, text } of measurements) {
+            element.classList.toggle('kot-text-overflow', distance > 1);
+            element.style.setProperty('--kot-text-distance', `${distance}px`);
+            element.style.setProperty('--kot-text-duration', `${Math.max(1.2, distance / 45)}s`);
+            updateScrollFade(element, track, viewport, text);
+        }
+    }
+    const intersection = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+        for (const entry of entries) {
+            if (entry.isIntersecting) { visibleClips.add(entry.target); const track = clips.get(entry.target); if (track) { measure(entry.target, track); } }
+            else { visibleClips.delete(entry.target); pendingMeasurements.delete(entry.target); }
+        }
+    }) : null;
     const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(entries => {
         for (const entry of entries) { const track = clips.get(entry.target); if (track) { measure(entry.target, track); } }
     }) : null;
@@ -40,6 +62,7 @@
             track = document.createElement('span'); track.className = 'kot-text-track'; track.textContent = text;
             element.replaceChildren(track); element.classList.add('kot-text-clip');
             clips.set(element, track); resize?.observe(element);
+            if (intersection) { intersection.observe(element); } else { visibleClips.add(element); }
             track.addEventListener('transitionstart', event => {
                 if (event.propertyName !== 'transform') { return; }
                 movingClips.add(element);
@@ -82,7 +105,10 @@
         root.querySelectorAll(extraSelector || selector).forEach(attach);
         root.querySelectorAll('input.param-key, input.param-value').forEach(mirror);
         for (const [element, track] of clips) {
-            if (!document.body.contains(element)) { resize?.unobserve(element); clips.delete(element); movingClips.delete(element); }
+            if (!document.body.contains(element)) {
+                resize?.unobserve(element); intersection?.unobserve(element); clips.delete(element); movingClips.delete(element);
+                visibleClips.delete(element); pendingMeasurements.delete(element);
+            }
             else { measure(element, track); }
         }
     }

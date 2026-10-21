@@ -110,3 +110,23 @@ test('cancel while changing saved clients preserves the previous set and credent
     assert.equal(await f.edit(original), null);
     assert.deepEqual(await f.store.load(), original);
 });
+
+test('saved clients can be used as connection templates without sharing identities, synonyms or ports', async () => {
+    const initial: VanessaDebugClientSelection = { mode: 'clients', clients: [{ id: 'first', name: 'KOT', infobase: '/bases/template',
+        username: 'admin', password: 'original-secret', additionalParameters: '/NoSplash', synonym: 'original-alias', clientType: 'Thin', computerName: 'localhost', port: 1538 }] };
+    const f = fixture(['copy:first', 'keep', 'save'], ['KOT copy', 'other-user', 'copy-secret', '/NoSplash']);
+    const result = await f.edit(initial);
+    assert.equal(result?.clients.length, 2);
+    assert.deepEqual(result?.clients[0], initial.clients[0]);
+    const copy = result!.clients[1];
+    assert.notEqual(copy.id, initial.clients[0].id); assert.equal(copy.port, 1539); assert.equal(copy.synonym, '');
+    assert.equal(copy.infobase, '/bases/template'); assert.equal(copy.username, 'other-user'); assert.equal(copy.password, 'copy-secret');
+    assert.equal(initial.clients.length, 1); assert.equal(initial.clients[0].password, 'original-secret');
+});
+
+test('cancelling a connection template copy leaves the saved selection unchanged', async () => {
+    const f = fixture(['add', 'folder', 'save'], ['TestClient', '', 'secret', '']);
+    const initial = await resolveVanessaDebugClientSelection(f.store, f.edit); assert.ok(initial);
+    const cancel = fixture([`copy:${initial.clients[0].id}`], [undefined]);
+    assert.equal(await cancel.edit(initial), null); assert.deepEqual(await f.store.load(), initial);
+});

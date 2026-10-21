@@ -11,15 +11,6 @@
     УровеньОтчета1: "Drive"
     УровеньОтчета2: "Demo"
 
-KOTМетаданные:
-    Описание: |
-        - Main synthetic scenario focused on file-based flows.
-        - Shows how to keep demo artifacts lightweight while preserving realistic structure and defaulted file parameters.
-
-    PhaseSwitcher:
-        Tab: "Demo / Imports"
-        OrderOnTab: 1
-        Default: false
 
 ПараметрыСценария:
 

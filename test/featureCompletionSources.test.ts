@@ -479,3 +479,22 @@ test('Form Explorer suggests only values for an explicitly identified argument',
         await complete(createProvider('en'), timeout.source, timeout.position); assert.equal(snapshotReads, 0, 'unrelated arguments do not read the form snapshot');
     } finally { liveFormSnapshot = null; }
 });
+
+test('MCP form hierarchy supplies table and column references even without captured UI table rows', async () => {
+    liveFormSnapshot = { snapshot: { ...formSnapshot.snapshot, tables: [], elements: [{ path: 'Form.Group', name: 'Group', kind: 'group', children: [
+        { path: 'Form.Group.Lines', name: 'Lines', title: 'Order lines', kind: 'table', children: [
+            { path: 'Form.Group.Lines.Qty', name: 'Qty', title: 'Quantity', kind: 'field', children: [] }
+        ] }, { path: 'Form.Group.Accepted', name: 'Accepted', title: 'Accepted', kind: 'checkbox', children: [] }
+    ] }] } };
+    try {
+        for (const [text, expected] of [
+            ['And in the table "|" I go to first row', 'Order lines'],
+            ['And in table "Lines" field named "|" became equal to "10"', 'Qty'],
+            ['And I set checkbox named "|"', 'Accepted']
+        ]) {
+            const { source, position } = argumentTarget(text); const items = await complete(createProvider('en'), source, position);
+            const values = items.map((item: any) => typeof item.label === 'string' ? item.label : item.label.label);
+            assert.ok(values.includes(expected), text);
+        }
+    } finally { liveFormSnapshot = null; }
+});

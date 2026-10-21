@@ -346,7 +346,7 @@ test('activation registers and disposes the complete project-definition graph be
 });
 
 test('Form Explorer reuses the shared step catalog service without an HTML fetcher', () => {
-    assert.match(source, /new FormExplorerPanel\(context, stepCatalogService\)/);
+    assert.match(source, /new FormExplorerPanel\(context, stepCatalogService(?:,|\))/);
     assert.doesNotMatch(formExplorerStepSuggestionsSource, /stepsFetcher|getStepsHtml/);
     assert.match(formExplorerStepSuggestionsSource, /catalogProvider\.getCatalog\(\)/);
 });

@@ -1,3 +1,10 @@
+import { registerVanessaFormToolCommands } from './vanessaControlFormToolCommands';
+import { registerVanessaAuthoringCommands } from './vanessaControlAuthoringCommands';
+import { registerVanessaDiagnosticsCommands } from './vanessaControlDiagnosticsCommands';
+import { enrichFormExplorerSnapshot } from './formExplorerEnrichment';
+import { getFormExplorerSnapshotPath } from './formExplorerPaths';
+import { VanessaFormExplorerSource } from './vanessaControlFormSource';
+import { registerFormExplorerMcpSource } from './formExplorerLiveSnapshot';
 import { buildStepLibrarySnapshot } from './stepLibraryModel';
 import { createPropertiesLibrarySupport } from './scenarioPropertiesLibrarySupport';
 import * as vscode from 'vscode';
@@ -17,6 +24,14 @@ import { DriveHoverProvider } from './hoverProvider';
 import { StepCatalogService } from './stepCatalogService';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { StandaloneFeatureService } from './standaloneFeatureService';
+import { registerVanessaControl } from './vanessaControlConnection';
+import { registerVanessaClientCommands } from './vanessaControlClientCommands';
+import { registerVanessaVariableCommands } from './vanessaControlVariableCommands';
+import { registerVanessaControlCommands } from './vanessaControlCommands';
+import { registerVanessaBreakpointCommands } from './vanessaControlBreakpointCommands';
+import { VanessaBreakpointMarkers } from './vanessaControlBreakpointMarkers';
+import { createVanessaYamlControl } from './vanessaControlYamlCommands';
+import { registerVanessaYamlTrialCommand } from './vanessaControlYamlTrialCommands';
 import { ProjectFeatureTagCatalog } from './projectFeatureTags';
 import {
     openMxlFileFromTextHandler,
@@ -41,6 +56,7 @@ import {
     clearScenarioParameterSessionCache,
     alignNestedScenarioCallParameters,
     alignGherkinTables,
+    registerGherkinTableFormatting,
     parseCalledScenariosFromScriptBody,
     parseUsedParametersFromScriptBody,
     shouldRefillNestedScenariosSection,
@@ -850,6 +866,7 @@ async function notifyIfUpdated(context: vscode.ExtensionContext): Promise<void> 
  * @param context Контекст расширения, предоставляемый VS Code.
  */
 export async function activate(context: vscode.ExtensionContext) {
+    registerGherkinTableFormatting(context);
     console.log('Extension "kotTestToolkit" activated.');
     setExtensionUri(context.extensionUri);
     notifyIfUpdated(context).catch(e => console.error('[Extension] notifyIfUpdated error:', e));
@@ -893,7 +910,18 @@ export async function activate(context: vscode.ExtensionContext) {
     const loadFormExplorerPanel = createDeferredResourceLoader(
         async () => {
             const { FormExplorerPanel } = await import('./formExplorerPanel.js');
-            return new FormExplorerPanel(context, stepCatalogService);
+            const { VanessaFormStepCache } = await import('./vanessaControlFormSteps.js');
+            const { getConfiguredScenarioLanguage } = await import('./gherkinLanguage.js');
+            const { renderVanessaInsertion } = await import('./vanessaControlAuthoring.js');
+            const cache = new VanessaFormStepCache();
+            return new FormExplorerPanel(context, stepCatalogService, vanessaFormSource, async (snapshot, path, isCurrent) => {
+                const language = getConfiguredScenarioLanguage();
+                const result = await vanessaFormSource.steps(snapshot, path, cache, language, isCurrent);
+                return result ? { ...result, text: renderVanessaInsertion(result.text, '', language).trimEnd() } : undefined;
+            }, () => cache.clear(), (snapshot, path) => {
+                const language = getConfiguredScenarioLanguage(); const text = cache.preview(snapshot, path, language);
+                return text === undefined ? undefined : renderVanessaInsertion(text, '', language).trimEnd();
+            });
         },
         panel => context.subscriptions.push(panel)
     );
@@ -906,6 +934,36 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     // --- Регистрация Провайдера для Webview (Test Manager) ---
     const phaseSwitcherProvider = new PhaseSwitcherProvider(context.extensionUri, context);
+    const vanessaControl = registerVanessaControl(context, {
+        launch: port => phaseSwitcherProvider.openVanessaManagedControl(port)
+    });
+    const vanessaControlSession = vanessaControl.session;
+    phaseSwitcherProvider.attachVanessaManagedRunner(request => vanessaControl.runFeature(request));
+    registerVanessaClientCommands(context, vanessaControlSession, () => phaseSwitcherProvider.configureVanessaDebugClients());
+    registerVanessaVariableCommands(context, vanessaControlSession);
+    registerVanessaFormToolCommands(context, vanessaControlSession, vanessaControl.ensureConnected);
+    registerVanessaAuthoringCommands(context, vanessaControlSession, vanessaControl.ensureConnected, async text => {
+        const { translateVanessaFormSteps } = await import('./vanessaControlFormLanguage.js');
+        const { getConfiguredScenarioLanguage } = await import('./gherkinLanguage.js');
+        const catalog = await stepCatalogService.getCatalog(vscode.window.activeTextEditor?.document.uri);
+        const result = translateVanessaFormSteps(text, catalog.steps, getConfiguredScenarioLanguage());
+        if (result.untranslated) { void vscode.window.showWarningMessage(vscode.l10n.t('Some generated form checks have no unambiguous translation in the selected Vanessa step catalog. Their original text was preserved.')); }
+        return result.text;
+    });
+    registerVanessaDiagnosticsCommands(context, vanessaControlSession, vanessaControl.ensureConnected);
+    const vanessaFormSource = new VanessaFormExplorerSource({
+        snapshot: () => ({ generation: vanessaControlSession.snapshot.generation, ready: vanessaControlSession.snapshot.status === 'ready', busy: vanessaControlSession.busy,
+            windowsSupported: !!vanessaControlSession.snapshot.capabilities?.formWindows.supported && !!vanessaControlSession.snapshot.capabilities?.formActivateWindow.supported,
+            supported: !!vanessaControlSession.snapshot.capabilities?.formTree.supported && !!vanessaControlSession.snapshot.capabilities?.formWindow.supported && !!vanessaControlSession.snapshot.capabilities?.clientProfilesRead.supported }),
+        run: (work, isCurrent) => vanessaControlSession.withFormControl(work, isCurrent),
+        enrich: snapshot => enrichFormExplorerSnapshot(snapshot, getFormExplorerSnapshotPath())
+    });
+    context.subscriptions.push(vanessaFormSource, registerFormExplorerMcpSource(vanessaFormSource),
+        vanessaControlSession.onDidChange(() => vanessaFormSource.sessionChanged()));
+    const vanessaBreakpointMarkers = new VanessaBreakpointMarkers();
+    const vanessaYamlControl = createVanessaYamlControl(context, vanessaControlSession, () => phaseSwitcherProvider.loadVanessaYamlControlBuild(), vanessaBreakpointMarkers);
+    registerVanessaControlCommands(context, vanessaControlSession, vanessaYamlControl, vanessaControl.ensureConnected);
+    registerVanessaBreakpointCommands(context, vanessaControlSession, vanessaYamlControl, vanessaBreakpointMarkers);
     const standaloneFeatureService = StandaloneFeatureService.getInstance(context);
     watchProjectLibrary(context, () => {
         return phaseSwitcherProvider.refreshProjectLibraryMetadata().catch(error => {
@@ -1021,6 +1079,7 @@ export async function activate(context: vscode.ExtensionContext) {
         scenarios: phaseSwitcherProvider,
         steps: stepCatalogService
     });
+    registerVanessaYamlTrialCommand(context, vanessaControlSession, uri => projectDefinitionResolver.ensureReady(uri), vanessaControl.ensureConnected);
     const projectDefinitionReferenceService = createProjectDefinitionReferenceService(
         context,
         projectDefinitionResolver
@@ -2040,6 +2099,10 @@ export async function activate(context: vscode.ExtensionContext) {
             await phaseSwitcherProvider.runStandaloneFeature(uri.toString());
         }
     ));
+    context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.runTestFromSource', async (target?: vscode.Uri) => {
+        const uri = target instanceof vscode.Uri ? target : vscode.window.activeTextEditor?.document.uri;
+        if (uri) { await phaseSwitcherProvider.runTestFromSource(uri); }
+    }));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.createProcess', async (seed?: unknown) => {
             const { handleCreateProcess } = await import('./processCreator.js');

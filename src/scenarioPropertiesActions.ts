@@ -261,6 +261,7 @@ export function createScenarioPropertiesActions(
         await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcher', { refreshCache: true });
     }
     return async (action, source, settings, value, catalogs) => {
+        if (action === 'run') { await vscode.commands.executeCommand('kotTestToolkit.runTestFromSource', vscode.Uri.parse(source.uri)); return; }
         if (action === 'copyPath') {
             if (!value || ![source.uri, settings, source.uri + '.kot.yml'].includes(value)) { throw new Error('The property target is not bound to the selected test/settings.'); }
             const target = vscode.Uri.parse(value, true);

@@ -11,10 +11,6 @@
     УровеньОтчета1: "Drive"
     УровеньОтчета2: "Demo"
 
-KOTМетаданные:
-    Описание: |
-        - Finalizes the demo order and checks that the expected line is visible.
-        - Keeps the example short while still showing a verification step.
 
 ПараметрыСценария:
     - ПараметрыСценария1:

@@ -2,3 +2,9 @@ version: 1
 systemFunctions:
   - name: Drive automation testing
     uid: 98999f57-13dc-11e8-aed1-005056a5c4e8
+projects:
+  - Drive
+reportLevel1:
+  - Drive
+reportLevel2:
+  - Demo

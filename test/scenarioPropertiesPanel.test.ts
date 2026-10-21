@@ -49,7 +49,6 @@ class Uri {
 const sourceText = 'ТипФайла: Сценарий\nДанныеСценария:\n    Имя: Sales\n    UID: sales\n    Проект: Drive\nПараметрыСценария:\nВложенныеСценарии:\nТекстСценария: |\n    Given ready\n';
 const settingsText = (uid = 'sales') => `ТипФайла: НастройкаТеста\nДанныеТеста:\n    Имя: Sales test\n    UID: test-${uid}\n    UIDСценария: ${uid}\nПараметрыТеста:\nТегиТеста:\n`;
 const processText = 'ТипФайла: Процесс\nДанныеПроцесса:\n    Имя: Workflow\n    UID: workflow\nШагиПроцесса:\nТегиПроцесса:\n';
-const pause = () => new Promise(resolve => setTimeout(resolve, 160));
 async function waitFor(predicate: () => boolean): Promise<void> {
     const deadline = Date.now() + 5000;
     while (!predicate() && Date.now() < deadline) { await new Promise(resolve => setTimeout(resolve, 20)); }
@@ -525,7 +524,8 @@ test('an unrelated editor clears unpinned properties while sidebar focus retains
 
 test('dirty source refresh and action failures retain state and route exact source/settings identities', async t => {
     const h = await harness(t); const panel = await h.open();
-    await h.edit(h.sourceUri, sourceText.replace('Drive', 'Raw author')); await pause();
+    await h.edit(h.sourceUri, sourceText.replace('Drive', 'Raw author'));
+    await waitFor(() => panel.state().source.model.header.find((field: any) => field.key === 'Проект').value === 'Raw author');
     assert.equal(panel.state().source.model.header.find((field: any) => field.key === 'Проект').value, 'Raw author');
     await panel.receive.fire({ command: 'action', action: 'base', value: 'Selected base' });
     assert.equal(h.actions[0][0], 'base'); assert.equal(h.actions[0][1].uri, h.sourceUri.toString());
@@ -605,7 +605,8 @@ test('source deletion acknowledges an actionable error and does not save orphane
     const h = await harness(t); const panel = await h.open();
     const projection = await h.openDocument(h.sourceUri); projection.isDirty = true;
     projection.text = sourceText.replace('Given ready', 'Given unsaved'); await fsp.unlink(h.sourceUri.fsPath);
-    await h.deleted.fire({ files: [h.sourceUri] }); await pause();
+    await h.deleted.fire({ files: [h.sourceUri] });
+    await waitFor(() => /deleted|missing|source/i.test(panel.state().error ?? ''));
     assert.match(panel.state().error, /deleted|missing|source/i);
     await panel.receive.fire({ command: 'action', action: 'save' });
     assert.match(panel.state().error, /deleted|missing|source/i);
@@ -646,7 +647,8 @@ test('Git inventory changes reload candidate paths while dirty settings values o
     await h.edit(h.settingsUri, settingsText().replace('Sales test', 'Dirty after Git'));
     const second = Uri.file(path.join(h.yamlRoot, 'from-git.yaml')); await fsp.writeFile(second.fsPath, settingsText());
     const gitWatcher = h.watchers.find(watcher => watcher.pattern.pattern.startsWith('.git/'));
-    assert.ok(gitWatcher); await gitWatcher.changes.fire(Uri.file(path.join(h.root, '.git/HEAD'))); await pause();
+    assert.ok(gitWatcher); await gitWatcher.changes.fire(Uri.file(path.join(h.root, '.git/HEAD')));
+    await waitFor(() => panel.state().settings.length === 2);
     assert.equal(panel.state().settings.length, 2);
     assert.equal(panel.state().settings.find((value: any) => value.uri === h.settingsUri.toString()).model.title, 'Dirty after Git');
 });
@@ -660,7 +662,8 @@ test('invalid adjacent metadata keeps a source link and watchers so repairing it
     await fsp.writeFile(sidecar.fsPath, repaired);
     const native = await h.openDocument(sidecar); native.text = repaired; native.version++;
     await Promise.all(h.watchers.map(watcher => watcher.changes.fire(sidecar)));
-    await pause(); assert.equal(panel.state().error, undefined); assert.equal(panel.state().metadata.values.description, 'Repaired');
+    await waitFor(() => panel.state().metadata?.values.description === 'Repaired');
+    assert.equal(panel.state().error, undefined); assert.equal(panel.state().metadata.values.description, 'Repaired');
 });
 
 test('a missing literal body still exposes properties and the original YAML for repair', async t => {

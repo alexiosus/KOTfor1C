@@ -11,15 +11,6 @@
     УровеньОтчета1: "Drive"
     УровеньОтчета2: "Demo"
 
-KOTМетаданные:
-    Описание: |
-        - Main synthetic scenario for Test Manager demos.
-        - Shows grouping, nested calls, default parameter usage, and multi-level propagation without main-scenario parameters.
-
-    PhaseSwitcher:
-        Tab: "Demo / Smoke"
-        OrderOnTab: 1
-        Default: true
 
 ПараметрыСценария:
 

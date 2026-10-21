@@ -1,3 +1,5 @@
+import type { VanessaFormExplorerSource } from './vanessaControlFormSource';
+import { formStepContext, formStepTarget, type VanessaFormStepResult } from './vanessaControlFormSteps';
 import * as vscode from 'vscode';
 import * as cp from 'node:child_process';
 import * as fs from 'node:fs';
@@ -32,7 +34,7 @@ import {
     normalizeOneCClientExePath
 } from './oneCPlatform';
 
-type AdapterMode = 'auto' | 'manual' | 'unknown';
+type AdapterMode = 'auto' | 'manual' | 'unknown' | 'mcp';
 type PendingOperationKind = 'refresh' | 'table' | 'locator' | 'start';
 
 interface PendingOperationState {
@@ -42,6 +44,9 @@ interface PendingOperationState {
 }
 
 interface FormExplorerWebviewState {
+    liveSource: 'mcp' | 'snapshot';
+    windowControlsAvailable: boolean;
+    choosingClientWindow: boolean;
     snapshotPath: string | null;
     snapshotExists: boolean;
     snapshotMtime: string | null;
@@ -58,8 +63,12 @@ interface FormExplorerWebviewState {
     suggestedSteps: FormExplorerSuggestedStep[];
     suggestedStepsForPath: string | null;
     suggestedStepsError: string | null;
+    nativeStepsAvailable: boolean;
+    nativeSteps: NativeStepsState;
     pendingOperation: PendingOperationKind | null;
 }
+
+interface NativeStepsState { loading: boolean; forPath?: string; text?: string; error?: string }
 
 interface FormExplorerWebviewMessage {
     command?: string;
@@ -100,6 +109,8 @@ export class FormExplorerPanel implements vscode.Disposable {
     private readonly disposables: vscode.Disposable[] = [];
     private panelDisposables: vscode.Disposable[] = [];
     private refreshTimer: NodeJS.Timeout | null = null;
+    private snapshotRevision = 0;
+    private choosingClientWindow = false;
     private latestSnapshot: FormExplorerSnapshot | null = null;
     private lastError: string | null = null;
     private snapshotExists = false;
@@ -113,6 +124,11 @@ export class FormExplorerPanel implements vscode.Disposable {
     private suggestedStepsForPath: string | null = null;
     private suggestedStepsError: string | null = null;
     private lastSuggestedStepsFingerprint: string | null = null;
+    private nativeStepsReading = false;
+    private nativeStepsWanted = false;
+    private nativeStepsRevision = 0;
+    private nativeStepsTimer: NodeJS.Timeout | undefined;
+    private nativeSteps: NativeStepsState = { loading: false };
     private pendingOperation: PendingOperationState | null = null;
     private availablePlatforms: ConfiguredOneCPlatform[] = [];
     private preferredStartInfobasePath: string | null = null;
@@ -124,11 +140,15 @@ export class FormExplorerPanel implements vscode.Disposable {
 
     constructor(
         private readonly context: vscode.ExtensionContext,
-        private readonly stepCatalogProvider: StepCatalogProvider
+        private readonly stepCatalogProvider: StepCatalogProvider,
+        private readonly mcpSource?: VanessaFormExplorerSource,
+        private readonly readNativeSteps?: (snapshot: FormExplorerSnapshot, path: string, isCurrent: () => boolean) => Promise<VanessaFormStepResult | undefined>,
+        private readonly clearNativeStepsCache?: () => void,
+        private readonly getCachedNativeSteps?: (snapshot: FormExplorerSnapshot, path: string) => string | undefined
     ) {
         this.disposables.push(
             vscode.workspace.onDidChangeConfiguration(async event => {
-                const affectsSnapshotPath = event.affectsConfiguration('kotTestToolkit.formExplorer.snapshotPath');
+                const affectsSnapshotPath = event.affectsConfiguration('kotTestToolkit.formExplorer.snapshotPath') || event.affectsConfiguration('kotTestToolkit.formExplorer.source');
                 const affectsRefreshSeconds = event.affectsConfiguration('kotTestToolkit.formExplorer.autoRefreshSeconds');
                 const affectsScenarioLanguage = event.affectsConfiguration('kotTestToolkit.editor.newScenarioLanguage');
                 const affectsPlatformCatalog = event.affectsConfiguration('kotTestToolkit.platforms.catalog');
@@ -147,6 +167,15 @@ export class FormExplorerPanel implements vscode.Disposable {
                 }
             })
         );
+        if (this.mcpSource) {
+            this.disposables.push(this.mcpSource.onDidChange(() => {
+                if (!this.panel?.visible || !this.usesMcp()) { return; }
+                if (['idle', 'unavailable', 'error'].includes(this.mcpSource!.state.status)) {
+                    if (!this.mcpSource!.cached()) { this.resetLoadedSnapshotState(); }
+                    this.lastError = this.mcpSource!.state.message ?? null; void this.postState();
+                }
+            }));
+        }
         this.disposables.push(this.stepCatalogProvider.onDidChangeCatalog(() => {
             this.lastSuggestedStepsFingerprint = null;
             this.lastSnapshotFingerprint = null;
@@ -168,7 +197,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             return;
         }
 
-        await this.clearSnapshotsOnPanelOpen();
+        if (!this.usesMcp()) { await this.clearSnapshotsOnPanelOpen(); }
 
         this.panel = vscode.window.createWebviewPanel(
             FormExplorerPanel.panelType,
@@ -186,6 +215,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         this.panel.webview.html = await this.getWebviewHtml(this.panel.webview);
         this.panelDisposables = [
             this.panel.onDidDispose(() => {
+                this.invalidateNativeSteps(true);
                 this.stopRefreshTimer();
                 this.panelDisposables.forEach(disposable => disposable.dispose());
                 this.panelDisposables = [];
@@ -196,6 +226,7 @@ export class FormExplorerPanel implements vscode.Disposable {
                     this.startRefreshTimer();
                     void this.refreshSnapshot(true);
                 } else {
+                    this.invalidateNativeSteps();
                     this.stopRefreshTimer();
                 }
             }),
@@ -231,6 +262,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         this.suggestedSteps = [];
         this.suggestedStepsForPath = null;
         this.suggestedStepsError = null;
+        this.invalidateNativeSteps(true);
         this.lastSuggestedStepsFingerprint = null;
     }
 
@@ -290,6 +322,8 @@ export class FormExplorerPanel implements vscode.Disposable {
     }
 
     public dispose(): void {
+        this.snapshotRevision++;
+        this.invalidateNativeSteps(true);
         this.stopRefreshTimer();
         this.stopProcessMonitorTimer();
         this.panelDisposables.forEach(disposable => disposable.dispose());
@@ -305,6 +339,10 @@ export class FormExplorerPanel implements vscode.Disposable {
             case 'ready':
                 await this.postState();
                 break;
+            case 'chooseSource':
+                await this.chooseSource(); break;
+            case 'chooseClientWindow':
+                await this.chooseClientWindow(); break;
             case 'refreshSnapshot':
                 await this.refreshSnapshot(true);
                 break;
@@ -312,6 +350,7 @@ export class FormExplorerPanel implements vscode.Disposable {
                 await this.setPreferredStartPlatform(message.platformClientExePath || null);
                 break;
             case 'startInfobase':
+                if (this.usesMcp()) { await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.clients'); break; }
                 await this.startBridge({
                     oneCClientExePath: normalizeOneCClientExePath(
                         message.platformClientExePath
@@ -358,6 +397,14 @@ export class FormExplorerPanel implements vscode.Disposable {
             case 'selectElementPath':
                 await this.handleElementSelectionChanged(message.value);
                 break;
+            case 'formTools': {
+                const changed = await vscode.commands.executeCommand<boolean>('kotTestToolkit.vanessaControl.formTools',
+                    this.latestSnapshot && this.selectedElementPath ? this.findElementByPath(this.latestSnapshot.elements, this.selectedElementPath)?.name : undefined);
+                if (changed) { await this.refreshSnapshot(true); }
+                break;
+            }
+            case 'formChecks':
+                if (this.usesMcp()) { await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.formChecks'); } break;
             case 'openSourceLocation':
                 await this.openSourceLocation(message.source);
                 break;
@@ -510,9 +557,23 @@ export class FormExplorerPanel implements vscode.Disposable {
         }
 
         this.selectedElementPath = nextSelectedPath;
+        this.invalidateNativeSteps();
+        if (this.usesMcp() && this.readNativeSteps) {
+            this.scheduleNativeSteps();
+            await this.postState();
+            return;
+        }
+        await this.postState();
         this.lastSuggestedStepsFingerprint = null;
+        if (this.usesMcp() && nextSelectedPath) {
+            const snapshot = await this.mcpSource?.element(nextSelectedPath);
+            if (this.selectedElementPath !== nextSelectedPath || !this.usesMcp()) { return; }
+            if (snapshot) { this.latestSnapshot = snapshot; this.snapshotMtime = snapshot.generatedAt; }
+            else { this.lastError = this.mcpSource?.state.message ?? null; }
+        }
         await this.refreshSuggestedSteps(false);
         await this.postState();
+        this.scheduleNativeSteps();
     }
 
     private findElementByPath(elements: FormExplorerElementInfo[], targetPath: string): FormExplorerElementInfo | null {
@@ -545,7 +606,65 @@ export class FormExplorerPanel implements vscode.Disposable {
         return null;
     }
 
+    private invalidateNativeSteps(clearCache = false): void {
+        this.nativeStepsRevision++;
+        this.nativeStepsWanted = false;
+        clearTimeout(this.nativeStepsTimer);
+        this.nativeSteps = { loading: false };
+        if (clearCache) { this.clearNativeStepsCache?.(); }
+    }
+
+    private scheduleNativeSteps(): void {
+        this.invalidateNativeSteps();
+        if (!this.panel?.visible || !this.usesMcp() || !this.readNativeSteps || !this.latestSnapshot || !this.selectedElementPath) { return; }
+        if (!formStepTarget(this.latestSnapshot, this.selectedElementPath)) { return; }
+        this.nativeStepsWanted = true;
+        this.nativeSteps = { loading: true, forPath: this.selectedElementPath,
+            text: this.getCachedNativeSteps?.(this.latestSnapshot, this.selectedElementPath) };
+        this.nativeStepsTimer = setTimeout(() => { void this.refreshNativeSteps(); }, 350);
+    }
+
+    private async refreshNativeSteps(): Promise<void> {
+        clearTimeout(this.nativeStepsTimer);
+        const snapshot = this.latestSnapshot;
+        const selectedPath = this.selectedElementPath;
+        if (!this.nativeStepsWanted || !this.panel?.visible || !this.usesMcp() || !snapshot || !selectedPath || !this.readNativeSteps || this.nativeStepsReading) { return; }
+        if (!this.mcpSource?.inspectionReady) {
+            this.nativeStepsTimer = setTimeout(() => { void this.refreshNativeSteps(); }, 250);
+            return;
+        }
+        const revision = this.nativeStepsRevision;
+        const context = formStepContext(snapshot, getConfiguredScenarioLanguage());
+        const current = () => !!this.panel?.visible && this.usesMcp() && revision === this.nativeStepsRevision && selectedPath === this.selectedElementPath &&
+            !!this.latestSnapshot && formStepContext(this.latestSnapshot, getConfiguredScenarioLanguage()) === context;
+        this.nativeStepsWanted = false;
+        this.nativeStepsReading = true;
+        const operation = { loading: true, forPath: selectedPath, text: this.nativeSteps.forPath === selectedPath ? this.nativeSteps.text : undefined };
+        this.nativeSteps = operation; await this.postState();
+        try {
+            const result = await this.readNativeSteps(snapshot, selectedPath, current);
+            if (current()) {
+                if (result) {
+                    this.latestSnapshot = result.snapshot; this.snapshotMtime = result.snapshot.generatedAt;
+                    this.nativeSteps = { loading: false, forPath: selectedPath, text: result.text };
+                } else {
+                    this.nativeSteps = { loading: false, forPath: selectedPath, error: vscode.l10n.t(this.mcpSource?.state.message ?? 'Vanessa did not return suggested steps. Refresh the session or select a current element in the test client and retry.') };
+                }
+            }
+        } catch (error) {
+            if (current()) {
+                this.nativeSteps = { loading: false, forPath: selectedPath, error: vscode.l10n.t(error instanceof Error ? error.message : 'Vanessa did not return suggested steps. Refresh the session or select a current element in the test client and retry.') };
+            }
+        } finally {
+            this.nativeStepsReading = false;
+            if (this.nativeSteps === operation) { this.nativeSteps = { loading: false }; }
+            if (this.nativeStepsWanted) { this.nativeStepsTimer = setTimeout(() => { void this.refreshNativeSteps(); }, 0); }
+            await this.postState();
+        }
+    }
+
     private async refreshSuggestedSteps(force: boolean): Promise<void> {
+        if (this.usesMcp()) { this.suggestedSteps = []; this.suggestedStepsForPath = null; this.suggestedStepsError = null; return; }
         const snapshot = this.latestSnapshot;
         const selectedPath = this.selectedElementPath;
         const preferredLanguage = getConfiguredScenarioLanguage();
@@ -1085,6 +1204,7 @@ export class FormExplorerPanel implements vscode.Disposable {
     }
 
     private async requestAdapterRefresh(): Promise<void> {
+        if (this.usesMcp()) { await this.refreshSnapshot(true); return; }
         const applied = await this.writeAdapterModeRequest('refresh');
         if (!applied) {
             return;
@@ -1103,6 +1223,7 @@ export class FormExplorerPanel implements vscode.Disposable {
     }
 
     private async requestTableSnapshotRefresh(elementPath?: string): Promise<void> {
+        if (this.usesMcp()) { this.lastError = 'UI table row capture is not verified for this MCP version. Use the snapshot source.'; await this.postState(); return; }
         const normalizedElementPath = typeof elementPath === 'string' && elementPath.trim()
             ? elementPath.trim()
             : (this.selectedElementPath || '');
@@ -1124,6 +1245,7 @@ export class FormExplorerPanel implements vscode.Disposable {
     }
 
     private async requestAdapterLocator(): Promise<void> {
+        if (this.usesMcp()) { this.lastError = 'The interactive locator is not available through MCP. Use the snapshot source.'; await this.postState(); return; }
         const applied = await this.writeAdapterModeRequest('locator');
         if (!applied) {
             return;
@@ -1201,6 +1323,7 @@ export class FormExplorerPanel implements vscode.Disposable {
     }
 
     private getEffectiveSnapshotPath(): string | null {
+        if (this.usesMcp()) { return null; }
         return this.resolvedSnapshotPath || this.getConfiguredSnapshotPath();
     }
 
@@ -1234,13 +1357,85 @@ export class FormExplorerPanel implements vscode.Disposable {
         this.startRefreshTimer();
     }
 
+    private usesMcp(): boolean {
+        const mode = vscode.workspace.getConfiguration('kotTestToolkit.formExplorer').get<string>('source', 'auto');
+        return mode === 'mcp' || mode !== 'snapshot' && !!this.mcpSource?.available;
+    }
+
+    private async chooseSource(): Promise<void> {
+        const items = [
+            { label: vscode.l10n.t('Automatic: MCP when supported'), value: 'auto' },
+            { label: vscode.l10n.t('Vanessa MCP'), value: 'mcp' },
+            { label: vscode.l10n.t('Snapshot bridge'), value: 'snapshot' }
+        ];
+        const selected = await vscode.window.showQuickPick(items, { title: vscode.l10n.t('Form Explorer data source') });
+        if (selected) { await vscode.workspace.getConfiguration('kotTestToolkit.formExplorer').update('source', selected.value, vscode.ConfigurationTarget.Workspace); }
+    }
+
+    private async chooseClientWindow(): Promise<void> {
+        if (this.choosingClientWindow || !this.usesMcp() || !this.mcpSource?.windowControlsAvailable) { return; }
+        const source = this.mcpSource; const revision = ++this.snapshotRevision;
+        this.invalidateNativeSteps(true);
+        const current = () => !!this.panel && this.usesMcp() && source === this.mcpSource && revision === this.snapshotRevision;
+        this.choosingClientWindow = true;
+        try {
+            await this.postState();
+            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Vanessa: selecting client window…') }, async () => {
+                const windows = await source.windows();
+                if (!windows || !current()) { return; }
+                const title = await vscode.window.showQuickPick([...windows.titles], { title: vscode.l10n.t('Select an internal test-client window'), ignoreFocusOut: true });
+                if (!title || !current()) { return; }
+                const snapshot = await source.activateWindow(windows, title);
+                if (!current()) { return; }
+                if (!snapshot) { this.lastError = source.state.message ?? vscode.l10n.t('Could not read the selected client window.'); return; }
+                this.latestSnapshot = snapshot; this.snapshotExists = true; this.snapshotMtime = snapshot.generatedAt; this.lastError = null;
+                this.lastSnapshotFingerprint = snapshot.generatedAt; this.nativeSteps = { loading: false };
+                this.selectedElementPath = snapshot.elements[0]?.path ?? null; this.lastSuggestedStepsFingerprint = null;
+                await this.refreshSuggestedSteps(false);
+                this.scheduleNativeSteps();
+            });
+        } catch (error) {
+            if (current()) { this.lastError = error instanceof Error ? vscode.l10n.t(error.message) : vscode.l10n.t('Could not read the selected client window.'); }
+        } finally { this.choosingClientWindow = false; if (current()) { await this.postState(); } }
+    }
+
+    private async refreshMcpSnapshot(force: boolean, isCurrent: () => boolean): Promise<void> {
+        this.adapterMode = 'mcp'; this.adapterModeStatePath = null; this.resolvedSnapshotPath = null;
+        const refreshed = await this.mcpSource?.refresh(force);
+        const snapshot = refreshed ?? this.mcpSource?.cached();
+        if (!this.usesMcp() || !isCurrent()) { return; }
+        if (!force && snapshot && snapshot === this.latestSnapshot && this.lastError === null) { return; }
+        const changedForm = !this.latestSnapshot || !snapshot || formStepContext(this.latestSnapshot, '') !== formStepContext(snapshot, '');
+        if (changedForm) { this.invalidateNativeSteps(true); }
+        this.latestSnapshot = snapshot ?? null; this.snapshotExists = !!snapshot; this.snapshotMtime = snapshot?.generatedAt ?? null;
+        this.lastError = this.mcpSource?.state?.message ?? (snapshot ? null : 'Attach to a ready Vanessa session and connect one test client, then refresh the form.');
+        this.lastSnapshotFingerprint = snapshot?.generatedAt ?? null;
+        if (snapshot && (!this.selectedElementPath || !this.findElementByPath(snapshot.elements, this.selectedElementPath))) {
+            this.selectedElementPath = snapshot.elements[0]?.path ?? null;
+        }
+        if (!snapshot) { this.suggestedSteps = []; this.suggestedStepsForPath = null; this.lastSuggestedStepsFingerprint = null; }
+        else { await this.refreshSuggestedSteps(false); }
+        if (!this.usesMcp() || !isCurrent()) { return; }
+        if (changedForm || force) { this.scheduleNativeSteps(); }
+        await this.postState();
+    }
+
     private async refreshSnapshot(force: boolean): Promise<void> {
+        if (this.choosingClientWindow) { return; }
+        if (force) { this.invalidateNativeSteps(true); }
+        const revision = ++this.snapshotRevision;
+        if (this.usesMcp()) { await this.refreshMcpSnapshot(force, () => revision === this.snapshotRevision); return; }
+        const current = () => revision === this.snapshotRevision && !this.usesMcp();
         const t = await getTranslator(this.context.extensionUri);
+        if (!current()) { return; }
         const startProcessStateChanged = await this.refreshStartedInfobaseProcessState();
+        if (!current()) { return; }
         const modeState = await this.readAdapterModeState();
+        if (!current()) { return; }
         this.adapterMode = modeState.mode;
         this.adapterModeStatePath = modeState.statePath;
         const snapshotPath = await this.resolveActualSnapshotPath();
+        if (!current()) { return; }
         this.resolvedSnapshotPath = snapshotPath;
 
         if (!snapshotPath) {
@@ -1275,9 +1470,11 @@ export class FormExplorerPanel implements vscode.Disposable {
         let stat: fs.Stats;
         try {
             stat = await fs.promises.stat(snapshotPath);
+            if (!current()) { return; }
             this.snapshotExists = true;
             this.snapshotMtime = stat.mtime.toISOString();
         } catch {
+            if (!current()) { return; }
             this.snapshotExists = false;
             this.snapshotMtime = null;
             this.resetLoadedSnapshotState();
@@ -1318,8 +1515,11 @@ export class FormExplorerPanel implements vscode.Disposable {
 
         try {
             const rawText = await fs.promises.readFile(snapshotPath, 'utf8');
+            if (!current()) { return; }
             const parsedSnapshot = parseFormExplorerSnapshotText(rawText);
-            this.latestSnapshot = await enrichFormExplorerSnapshot(parsedSnapshot, snapshotPath);
+            const enrichedSnapshot = await enrichFormExplorerSnapshot(parsedSnapshot, snapshotPath);
+            if (!current()) { return; }
+            this.latestSnapshot = enrichedSnapshot;
             if (this.latestSnapshot) {
                 const activeElementPath = this.latestSnapshot.form?.activeElementPath
                     || this.findActiveElementPath(this.latestSnapshot.elements)
@@ -1337,6 +1537,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             this.resolvePendingOperation(fingerprint);
             await this.refreshSuggestedSteps(false);
         } catch (error) {
+            if (!current()) { return; }
             const message = error instanceof Error ? error.message : String(error);
             this.lastError = t('Failed to load Form Explorer snapshot from {0}: {1}', snapshotPath, message);
             this.latestSnapshot = null;
@@ -1346,6 +1547,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             this.lastSuggestedStepsFingerprint = null;
         }
 
+        if (!current()) { return; }
         this.lastSnapshotFingerprint = fingerprint;
         await this.postState();
     }
@@ -1363,6 +1565,9 @@ export class FormExplorerPanel implements vscode.Disposable {
 
     private buildState(): FormExplorerWebviewState {
         return {
+            liveSource: this.usesMcp() ? 'mcp' : 'snapshot',
+            windowControlsAvailable: this.usesMcp() && !!this.mcpSource?.windowControlsAvailable,
+            choosingClientWindow: this.choosingClientWindow,
             snapshotPath: this.getEffectiveSnapshotPath(),
             snapshotExists: this.snapshotExists,
             snapshotMtime: this.snapshotMtime,
@@ -1379,6 +1584,8 @@ export class FormExplorerPanel implements vscode.Disposable {
             suggestedSteps: this.suggestedSteps,
             suggestedStepsForPath: this.suggestedStepsForPath,
             suggestedStepsError: this.suggestedStepsError,
+            nativeStepsAvailable: this.usesMcp() && !!this.latestSnapshot && !!this.readNativeSteps,
+            nativeSteps: this.nativeSteps,
             pendingOperation: this.pendingOperation?.kind || null
         };
     }
@@ -1396,6 +1603,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             title: t('KOT Form Explorer'),
             refresh: t('Refresh'),
             getTables: t('Get tables'),
+            snapshotSource: t('Snapshot'), testClients: t('Test clients'),
             locator: t('Locator'),
             startInfobase: t('Start infobase'),
             infobaseClientRunning: t('Form Explorer session is still running'),
@@ -1497,6 +1705,14 @@ export class FormExplorerPanel implements vscode.Disposable {
             attributesDescription: t('Form attributes are underlying data items bound to UI controls.'),
             commandsDescription: t('Commands available in the current snapshot.'),
             suggestedSteps: t('Suggested steps'),
+            formTools: t('MCP form tools'),
+            nativeSteps: t('Vanessa steps'),
+            collapseGroup: t('Collapse group'),
+            expandGroup: t('Expand group'),
+            nativeStepsDescription: t('From Vanessa, for the current element in the test client.'),
+            readingNativeSteps: t('Reading Vanessa steps…'),
+            nativeStepsUnavailable: t('Select a visible field, button or table column to read Vanessa steps.'),
+            nativeFormChecks: t('Insert full form checks'),
             suggestedStepsDescription: t('Recommended steps for the selected element from the connected Gherkin steps library.'),
             noSuggestedSteps: t('No suitable steps found for the selected element.'),
             suggestedStepsLoading: t('Preparing step suggestions...'),
@@ -1541,6 +1757,8 @@ export class FormExplorerPanel implements vscode.Disposable {
                 <span class="beta-inline-symbol" aria-hidden="true">β</span>
             </div>
             <div class="toolbar">
+                <button id="sourceBtn" class="toolbar-btn" type="button">${escapeHtml(t('Source'))}</button>
+                <button id="clientWindowBtn" class="toolbar-btn" type="button">${escapeHtml(t('Windows'))}</button>
                 <button id="modeChip" class="meta-chip compact interactive-chip" type="button" aria-label="${escapeHtml(loc.toggleMode)}">
                     <span class="meta-chip-label meta-chip-label-with-icon">
                         <span class="codicon codicon-arrow-swap" aria-hidden="true"></span>
@@ -1573,6 +1791,7 @@ export class FormExplorerPanel implements vscode.Disposable {
                     </div>
                     <div id="launchPlatformMenu" class="menu-popover platform-menu" role="menu" aria-label="${escapeHtml(loc.launchPlatform)}"></div>
                 </div>
+                <button id="formToolsBtn" class="toolbar-btn" type="button"><span class="codicon codicon-tools"></span> ${escapeHtml(loc.formTools)}</button>
                 <div class="menu-shell">
                     <button id="moreActionsBtn" class="toolbar-btn icon-only" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeHtml(loc.moreActions)}">
                         <span class="codicon codicon-ellipsis"></span>
@@ -1628,6 +1847,9 @@ export class FormExplorerPanel implements vscode.Disposable {
                         <button id="formTitleValue" class="window-title-btn" type="button">${escapeHtml(loc.waitingForSnapshot)}</button>
                         <p id="formMetaLine" class="meta-line view-hidden"></p>
                     </div>
+                    <button id="fullFormChecksBtn" class="ghost-btn small current-form-checks view-hidden" type="button" data-action="native-form-checks">
+                        <span class="codicon codicon-checklist" aria-hidden="true"></span> ${escapeHtml(loc.nativeFormChecks)}
+                    </button>
                 </section>
                 <div class="sidebar-section-head">
                     <p class="section-label">${escapeHtml(loc.formElements)}</p>
@@ -1688,7 +1910,7 @@ export class FormExplorerPanel implements vscode.Disposable {
                         </div>
                     </div>
                 </div>
-                <div id="elementTree" class="scroll-region outline-scroll"></div>
+                <div id="elementTree" class="scroll-region outline-scroll" role="tree"></div>
             </aside>
 
             <div class="kot-pane-resizer" role="separator" aria-orientation="vertical" aria-label="${escapeHtml(loc.resizePanels)}" tabindex="0"></div>

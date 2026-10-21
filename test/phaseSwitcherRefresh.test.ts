@@ -6,6 +6,9 @@ import test from 'node:test';
 import vm from 'node:vm';
 import * as compilerArtifacts from '../src/compilerArtifacts';
 import * as runtimeIdentity from '../src/scenarioRuntimeIdentity';
+import * as compilerBuildParameters from '../src/compilerBuildParameters';
+import { managedVanessaCommandParts } from '../src/vanessaControlLaunch';
+import { applyVanessaManualDebugOverlay } from '../src/vanessaDebugClients';
 
 function loadPhaseSwitcherProvider(workspaceUri: object, dependencies: Record<string, unknown> = {}): { prototype: object } {
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
@@ -56,6 +59,110 @@ function loadPhaseSwitcherProvider(workspaceUri: object, dependencies: Record<st
 
     return moduleObject.exports.PhaseSwitcherProvider as { prototype: object };
 }
+
+test('generated feature Properties waits for source catalog before restoring artifact identities', async () => {
+    const root = { fsPath: '/workspace' };
+    const source = { toString: () => 'file:///workspace/process.yaml' };
+    const Provider = loadPhaseSwitcherProvider(root, { vscode: { EventEmitter: class {},
+        workspace: { getWorkspaceFolder: () => ({ uri: root }) }, Uri: { parse: (uri: string) => uri } } });
+    const provider = Object.create(Provider.prototype) as Record<string, any>;
+    let ready = false;
+    provider._scenarioBuildArtifacts = new Map();
+    provider.ensureFreshScenarioCatalog = async () => { ready = true; };
+    provider.restoreScenarioBuildArtifactsFromDiskIfNeeded = async () => {
+        if (ready) { provider._scenarioBuildArtifacts.set('process', { featurePath: '/workspace/own.feature', sourceUri: source }); }
+    };
+    provider.normalizeFilePathForComparison = (value: string) => value.toLowerCase();
+    assert.equal(await provider.findSourceForCompiledFeature({ fsPath: '/workspace/own.feature' }), source.toString());
+});
+
+test('managed Test Manager run keeps authored settings and reports the confirmed MCP outcome', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-managed-test-'));
+    try {
+        const feature = path.join(root, 'own.feature'); const json = path.join(root, 'own.json');
+        fs.writeFileSync(feature, 'Feature: own\nScenario: own\n    And Delay 1\n'); fs.writeFileSync(json, '{"ownSetting":true}');
+        const Provider = loadPhaseSwitcherProvider({ fsPath: root });
+        const provider = Object.create(Provider.prototype) as Record<string, any>;
+        const artifact = { scenarioKey: 'own', scenarioName: 'Own', featurePath: feature, jsonPath: json };
+        provider.getScenarioBuildArtifact = () => artifact;
+        let launched = 0;
+        provider.runScenarioInVanessaBuiltIn = async (...args: any[]) => { assert.deepEqual(JSON.parse(JSON.stringify(args[4])), { mcpPort: 9877 }); launched++; return 'started'; };
+        provider.attachVanessaManagedRunner(async (request: any) => {
+            assert.equal(request.filePath, feature); assert.equal(request.sourceText, fs.readFileSync(feature, 'utf8')); assert.ok(request.isCurrent());
+            assert.equal(await request.launch(9877), true);
+            fs.writeFileSync(json, '{"ownSetting":false}'); assert.equal(request.isCurrent(), false, 'changed launch settings invalidate the pending request');
+            return 'failed';
+        });
+        assert.equal(await provider.runScenarioInVanessaManaged('Own', 'feature', feature, artifact), 'failed');
+        assert.equal(launched, 1);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('managed full launch reuses normal infobase preparation and keeps the authored client JSON without auto-execution', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-managed-launch-'));
+    try {
+        const platform = path.join(root, '1c.exe'); const epf = path.join(root, 'va.epf'); const json = path.join(root, 'own.json');
+        for (const file of [platform, epf]) { fs.writeFileSync(file, ''); }
+        const authored = { ExecuteScenarios: true, CloseSystemOnComplete: true, Custom: 'keep', TestClient: { datatestclients: [{ Name: 'OwnClient' }] } };
+        fs.writeFileSync(json, JSON.stringify(authored));
+        let provisioned = 0; let prepared = 0; let command: string[] = []; let runtime: unknown;
+        const Provider = loadPhaseSwitcherProvider({ fsPath: root }, {
+            vscode: { EventEmitter: class {}, ProgressLocation: { Notification: 1 }, workspace: { workspaceFolders: [{ uri: { fsPath: root } }],
+                getConfiguration: () => ({ get: () => epf }) }, window: { withProgress: async (_options: unknown, work: () => Promise<unknown>) => work() } },
+            './oneCPlatform.js': { resolveOneCPlatformForLaunch: async () => ({ clientExePath: platform }), resolveOneCDesignerExePath: () => platform },
+            './startupInfobase.js': { ensureSharedStartupInfobaseMcpReady: async () => { provisioned++; } },
+            './infobaseManager.js': { updateManagedInfobaseMetadata: async () => undefined },
+            './vanessaControlLaunch': { managedVanessaCommandParts }
+        });
+        const provider = Object.create(Provider.prototype) as Record<string, any>;
+        provider.t = (value: string) => value; provider._context = {};
+        provider.resolvePathFromWorkspaceSetting = (value: string) => value;
+        provider.ensureSharedStartupInfobaseReady = async () => ({ infobaseDirectory: path.join(root, 'service') });
+        provider.prepareVanessaLaunchContext = async () => { prepared++; return { startupInfobasePath: path.join(root, 'service'), scenarioInfobasePath: path.join(root, 'client'), vaParamsJsonPath: json, jsonWasPatched: false }; };
+        provider.resolveVanessaDebugClientsForLaunch = () => { throw new Error('Saved Debug clients must not replace authored clients'); };
+        provider.writeVanessaManualDebugJson = async (value: any, selected: any) => { runtime = applyVanessaManualDebugOverlay(value, selected); return path.join(root, 'runtime.json'); };
+        provider.buildStartupParams = () => ['ENTERPRISE']; provider.getRunOutputChannel = () => ({});
+        provider.outputInfo = provider.outputAdvanced = () => undefined;
+        provider.resolveVanessaLogPathFromJson = () => undefined;
+        provider.execute1CProcess = () => { throw new Error('MCP must not wait for the manager to close'); };
+        provider.execute1CProcessDetached = async (_file: string, args: string[]) => { command = args; };
+        const result = await provider.runScenarioInVanessaBuiltIn('Own', 'feature', 'own.feature', { scenarioKey: 'own', jsonPath: json }, { mcpPort: 9877 });
+        assert.equal(result, 'started'); assert.equal(prepared, 1); assert.equal(provisioned, 1);
+        const params = command[command.indexOf('/C') + 1];
+        assert.match(params, /runMcp;mcpPort=9877;/u); assert.match(params, /UseEditor/u); assert.doesNotMatch(params, /StartFeaturePlayer|QuitSystemOnComplete=true/u);
+        assert.deepEqual(runtime, { ...authored, ExecuteScenarios: false, CloseSystemOnComplete: false });
+        assert.deepEqual(JSON.parse(fs.readFileSync(json, 'utf8')), authored);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('compiler control capture follows the current profile, complete source folders and Test Manager selection', async () => {
+    const workspace = { fsPath: '/workspace', toString: () => 'file:///workspace' };
+    let captured: any;
+    const profile = { id: 'default', name: 'Default', buildParameters: [
+        { key: 'ScenarioFolder', value: 'scenarios' }, { key: 'ProcessFolder', value: '/processes' },
+        { key: 'ModelDbSettings', value: 'model.yml' }],
+        additionalVanessaParameters: [{ key: 'custom', value: 'fixture-secret', valueKind: undefined }], globalVanessaVariables: [] };
+    let active = profile;
+    const Provider = loadPhaseSwitcherProvider(workspace, {
+        vscode: { EventEmitter: class {}, workspace: { getConfiguration: () => ({ get: () => false }) } },
+        './compilerBuildParameters': compilerBuildParameters,
+        './compilerBuildManifestStore': { captureCompilerBuildInputs: async (request: unknown) => { captured = request; return request; } },
+        './yamlParametersManager.js': { YamlParametersManager: { getInstance: () => ({ loadActiveProfileSnapshot: async () => active }) } }
+    });
+    const provider = Object.create(Provider.prototype) as Record<string, any>;
+    provider.getProjectPaths = () => ({ buildScenarioBddEpf: { fsPath: '/tools/compiler.epf' } });
+    provider.getMainScenarioSelectionSnapshotForBuild = async () => ({ enabledKeys: ['z', 'a'], disabledKeys: ['b'] });
+    await provider.captureCompilerControlInputs(workspace);
+    assert.deepEqual([...captured.sourceRoots], ['/workspace/scenarios', '/processes']);
+    assert.equal(captured.modelDbSettingsPath, '/workspace/model.yml'); assert.equal(captured.compilerPath, '/tools/compiler.epf');
+    assert.deepEqual([...captured.configuration.enabledKeys], ['a', 'z']);
+    assert.deepEqual([...captured.configuration.disabledKeys], ['b']);
+    assert.equal(captured.configuration.profile.additionalVanessaParameters[0].value, 'fixture-secret');
+    assert.equal(Object.hasOwn(captured.configuration.profile.additionalVanessaParameters[0], 'valueKind'), false);
+    active = { ...profile, id: 'other' };
+    await provider.captureCompilerControlInputs(workspace);
+    assert.equal(captured.configuration.profile.id, 'other', 'the final comparison reloads the active profile');
+});
 
 test('Test Manager attachment search indexes source files for unbuilt scenarios under their stable keys', async () => {
     const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' });

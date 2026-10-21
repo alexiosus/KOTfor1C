@@ -100,8 +100,14 @@ export function alignGherkinTablesInText(scriptText: string, eol: string): strin
     const lines = scriptText.split(/\r\n|\r|\n/);
     let changed = false;
 
-    let index = 0;
+    let index = 0; let docstring: string | undefined; let blockComment = false;
     while (index < lines.length) {
+        const trimmed = lines[index].trim();
+        if (docstring) { if (trimmed === docstring) { docstring = undefined; } index++; continue; }
+        if (blockComment) { if (trimmed.includes('*/')) { blockComment = false; } index++; continue; }
+        const delimiter = /^("""|'''|```)/u.exec(trimmed);
+        if (delimiter) { docstring = delimiter[1]; index++; continue; }
+        if (trimmed.startsWith('/*')) { blockComment = !trimmed.includes('*/'); index++; continue; }
         const firstMatch = lines[index].match(GHERKIN_TABLE_ROW_REGEX);
         if (!firstMatch) {
             index++;
@@ -118,7 +124,13 @@ export function alignGherkinTablesInText(scriptText: string, eol: string): strin
                 break;
             }
 
-            const cells = rowMatch[2].split('|').map(cell => cell.trim());
+            const cells: string[] = []; let cell = ''; let escaped = false;
+            for (const character of rowMatch[2]) {
+                if (character === '|' && !escaped) { cells.push(cell.trim()); cell = ''; }
+                else { cell += character; }
+                escaped = character === '\\' ? !escaped : false;
+            }
+            cells.push(cell.trim());
             tableRows.push({
                 lineIndex: rowIndex,
                 cells

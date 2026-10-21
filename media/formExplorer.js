@@ -4,6 +4,7 @@
     let viewState = window.__formExplorerInitialState || {};
     const persistedState = vscode.getState() || {};
     let copiedResetTimer = null;
+    let searchRenderTimer = null;
     let overflowMenuOpen = false;
     let filterMenuOpen = false;
     let launchPlatformMenuOpen = false;
@@ -19,7 +20,9 @@
         searchQuery: typeof persistedState.searchQuery === 'string' ? persistedState.searchQuery : '',
         paneSizes: persistedState.paneSizes,
         showTechnical: Boolean(persistedState.showTechnical),
-        showGroups: Boolean(persistedState.showGroups),
+        showGroups: persistedState.treeLayoutVersion === 1 ? persistedState.showGroups !== false : true,
+        treeLayoutVersion: 1,
+        collapsedPaths: Array.isArray(persistedState.collapsedPaths) ? persistedState.collapsedPaths.filter(path => typeof path === 'string') : [],
         showInvisible: Boolean(persistedState.showInvisible),
         elementTypeFilters: sanitizeElementTypeFilters(persistedState.elementTypeFilters),
         showTechnicalInfo: typeof persistedState.showTechnicalInfo === 'boolean'
@@ -39,7 +42,10 @@
     let pendingScrollReset = false;
 
     const refs = {
+        sourceBtn: document.getElementById('sourceBtn'),
+        clientWindowBtn: document.getElementById('clientWindowBtn'),
         currentFormPanel: document.getElementById('currentFormPanel'),
+        fullFormChecksBtn: document.getElementById('fullFormChecksBtn'),
         moreActionsBtn: document.getElementById('moreActionsBtn'),
         moreActionsMenu: document.getElementById('moreActionsMenu'),
         openSettingsBtn: document.getElementById('openSettingsBtn'),
@@ -69,6 +75,7 @@
         generatedAtChip: document.getElementById('generatedAtChip'),
         generatedAtLabel: document.getElementById('generatedAtLabel'),
         generatedAtValue: document.getElementById('generatedAtValue'),
+        formToolsBtn: document.getElementById('formToolsBtn'),
         startInfobaseBtn: document.getElementById('startInfobaseBtn'),
         startInfobaseLabel: document.getElementById('startInfobaseLabel'),
         launchPlatformBtn: document.getElementById('launchPlatformBtn'),
@@ -281,6 +288,13 @@
     }
 
     function bindStaticEvents() {
+        document.addEventListener('keydown', event => {
+            const row = event.target instanceof HTMLElement && event.target.matches('[data-action="select-element"]') ? event.target : null;
+            if (row && (event.key === 'Enter' || event.key === ' ')) {
+                event.preventDefault();
+                row.click();
+            }
+        });
         bindClick(refs.moreActionsBtn, event => {
             event.preventDefault();
             event.stopPropagation();
@@ -301,6 +315,9 @@
             renderOverflowMenu();
             renderLaunchPlatformMenu();
         });
+        bindClick(refs.formToolsBtn, () => post('formTools'));
+        bindClick(refs.sourceBtn, () => post('chooseSource'));
+        bindClick(refs.clientWindowBtn, () => post('chooseClientWindow'));
         bindClick(refs.modeChip, event => {
             event.preventDefault();
             event.stopPropagation();
@@ -413,7 +430,8 @@
                 uiState.searchQuery = refs.searchInput.value || '';
                 pendingScrollReset = true;
                 persistUiState();
-                render();
+                clearTimeout(searchRenderTimer);
+                searchRenderTimer = setTimeout(() => { searchRenderTimer = null; render(); }, 120);
             });
         }
         for (const button of tabButtons) {
@@ -439,9 +457,22 @@
                 overflowMenuOpen = false;
                 renderOverflowMenu();
                 uiState.selectedElementPath = String(target.dataset.path || '');
-                pendingScrollPath = uiState.selectedElementPath;
+                uiState.followActive = false;
                 persistUiState();
                 render();
+                return;
+            }
+
+            if (action === 'toggle-element') {
+                event.preventDefault();
+                const path = String(target.dataset.path || '');
+                const element = findElementByPath(viewState.snapshot?.elements || [], path);
+                if (!element?.children?.length) { return; }
+                uiState.collapsedPaths = uiState.collapsedPaths.includes(path)
+                    ? uiState.collapsedPaths.filter(value => value !== path) : [...uiState.collapsedPaths, path];
+                persistUiState();
+                render();
+                refs.elementTree?.querySelector(`[data-action="toggle-element"][data-path="${CSS.escape(path)}"]`)?.focus({ preventScroll: true });
                 return;
             }
 
@@ -467,13 +498,18 @@
                 if (!toggleSectionCard('suggested', uiState.suggestedStepsExpanded)) {
                     renderElementDetails(viewState.snapshot, getSelectedElementFromState(viewState.snapshot));
                 }
-                if (uiState.suggestedStepsExpanded) {
+                if (uiState.suggestedStepsExpanded && viewState.liveSource !== 'mcp') {
                     const selectedPath = uiState.selectedElementPath || '';
                     const suggestionsPath = String(viewState.suggestedStepsForPath || '');
                     if (selectedPath && suggestionsPath !== selectedPath) {
                         post('selectElementPath', { value: selectedPath });
                     }
                 }
+                return;
+            }
+
+            if (action === 'native-form-checks') {
+                post('formChecks');
                 return;
             }
 
@@ -620,7 +656,9 @@
             persistUiState();
         }
 
-        if (!visiblePaths.has(uiState.selectedElementPath)) {
+        const selectionHiddenByCollapse = !uiState.searchQuery && findElementPathChain(filteredElements, uiState.selectedElementPath)
+            .slice(0, -1).some(element => uiState.collapsedPaths.includes(element.path));
+        if (!visiblePaths.has(uiState.selectedElementPath) && !selectionHiddenByCollapse) {
             const fallbackPath = activePath && visiblePaths.has(activePath)
                 ? activePath
                 : flatElements[0]?.element.path || '';
@@ -661,6 +699,15 @@
         const snapshot = viewState.snapshot;
         const generatedAt = snapshot?.generatedAt || viewState.snapshotMtime || '';
         const adapterMode = String(viewState.adapterMode || 'unknown');
+        const mcp = viewState.liveSource === 'mcp';
+        if (refs.fullFormChecksBtn) {
+            refs.fullFormChecksBtn.classList.toggle('view-hidden', !mcp);
+            refs.fullFormChecksBtn.disabled = !viewState.nativeStepsAvailable || !!viewState.nativeSteps?.loading;
+        }
+        if (refs.clientWindowBtn) { refs.clientWindowBtn.classList.toggle('view-hidden', !mcp); refs.clientWindowBtn.disabled = !viewState.windowControlsAvailable || !!viewState.choosingClientWindow; }
+        setText(refs.sourceBtn, `${t('source', 'Source')}: ${mcp ? 'MCP' : t('snapshotSource', 'Snapshot')}`);
+        refs.modeChip?.classList.toggle('view-hidden', mcp);
+        refs.launchPlatformBtn?.classList.toggle('view-hidden', mcp);
         const pendingOperation = String(viewState.pendingOperation || '');
         const isPending = Boolean(pendingOperation);
         const isStartingInfobase = pendingOperation === 'start';
@@ -703,19 +750,20 @@
             refs.generatedAtValue.title = isPending ? '' : String(generatedAt || '');
         }
         if (refs.manualRefreshBtn instanceof HTMLButtonElement) {
-            refs.manualRefreshBtn.classList.toggle('view-hidden', adapterMode !== 'manual');
+            refs.manualRefreshBtn.classList.toggle('view-hidden', adapterMode !== 'manual' && !mcp);
             refs.manualRefreshBtn.title = pendingOperation === 'refresh'
                 ? t('updatingSnapshot', 'Refreshing form snapshot...')
                 : t('refresh', 'Refresh');
-            refs.manualRefreshBtn.disabled = adapterMode !== 'manual' || Boolean(pendingOperation);
+            refs.manualRefreshBtn.disabled = adapterMode !== 'manual' && !mcp || Boolean(pendingOperation);
         }
         if (refs.locatorBtn instanceof HTMLButtonElement) {
             refs.locatorBtn.classList.toggle('view-hidden', adapterMode !== 'manual');
             refs.locatorBtn.disabled = adapterMode !== 'manual' || Boolean(pendingOperation);
         }
+        refs.formToolsBtn?.classList.toggle('view-hidden', !mcp);
         if (refs.startInfobaseBtn instanceof HTMLButtonElement) {
-            refs.startInfobaseBtn.disabled = isStartLocked;
-            refs.startInfobaseBtn.title = isStartingInfobase
+            refs.startInfobaseBtn.disabled = !mcp && isStartLocked;
+            refs.startInfobaseBtn.title = mcp ? t('testClients', 'Test clients') : isStartingInfobase
                 ? t('launchingInfobase', 'Launching infobase')
                 : isStartedInfobaseClientRunning
                     ? t('infobaseClientRunning', 'Form Explorer session is still running')
@@ -725,7 +773,7 @@
             refs.startInfobaseLabel,
             isStartingInfobase
                 ? t('starting', 'Starting...')
-                : t('startInfobase', 'Start infobase')
+                : mcp ? t('testClients', 'Test clients') : t('startInfobase', 'Start infobase')
         );
         const currentLaunchPlatform = resolveCurrentLaunchPlatform();
         const launchPlatformLabel = currentLaunchPlatform
@@ -858,7 +906,7 @@
             delete refs.currentFormOpenSourceBtn.dataset.column;
         }
         if (refs.focusActiveBtn instanceof HTMLButtonElement) {
-            refs.focusActiveBtn.disabled = false;
+            refs.focusActiveBtn.disabled = true;
             refs.focusActiveBtn.classList.toggle('is-active', uiState.followActive);
         }
         if (refs.elementTree) {
@@ -871,6 +919,7 @@
             refs.selectedStateRow.innerHTML = '';
         }
         if (refs.detailsPanel) {
+            refs.detailsPanel._lastMarkup = null;
             refs.detailsPanel.innerHTML = renderEmptyState(
                 t('waitingForSnapshot', 'Waiting for snapshot'),
                 ''
@@ -903,7 +952,8 @@
         }
 
         if (refs.focusActiveBtn instanceof HTMLButtonElement) {
-            refs.focusActiveBtn.disabled = false;
+            refs.focusActiveBtn.disabled = !activeElement;
+            refs.focusActiveBtn.title = activeElement ? t('focusActive', 'Focus active') : t('activeElementNotDetected', 'Active element is not reported in snapshot.');
             refs.focusActiveBtn.classList.toggle('is-active', uiState.followActive);
         }
         if (refs.currentFormOpenSourceBtn instanceof HTMLButtonElement) {
@@ -951,12 +1001,22 @@
         }
 
         refs.elementTree.innerHTML = flatElements.map(item => renderOutlineRow(item.element, item.depth, activePath, attributesByPath)).join('');
+        applyOutlineDepths(refs.elementTree);
         if (shouldResetScroll) {
             refs.elementTree.scrollTop = 0;
         } else if (shouldPreserveScroll) {
             restoreOutlineScrollAnchor(refs.elementTree, preservedScrollAnchor, preservedScrollTop);
         }
         pendingScrollReset = false;
+    }
+
+    // CSP blocks style attributes in markup. CSSOM property writes preserve the
+    // external stylesheet policy and the same indent at each visible tree level.
+    function applyOutlineDepths(container) {
+        for (const row of container.querySelectorAll('[role="treeitem"]')) {
+            const level = Number(row.getAttribute('aria-level'));
+            row.style.setProperty('--depth', String(Number.isInteger(level) && level > 0 ? level - 1 : 0));
+        }
     }
 
     function captureOutlineScrollAnchor(container) {
@@ -1046,6 +1106,7 @@
         const suggestedScrollState = captureSuggestedScrollState();
 
         if (!selectedElement) {
+            refs.detailsPanel._lastMarkup = null;
             refs.detailsPanel.innerHTML = renderEmptyState(
                 t('noSelection', 'Select an element in the tree to inspect its details.'),
                 ''
@@ -1084,7 +1145,12 @@
                 : ''
         ].filter(Boolean);
 
-        refs.detailsPanel.innerHTML = sections.join('');
+        const markup = sections.join('');
+        // Keep the textarea DOM and the user's selection during identical status updates.
+        if (refs.detailsPanel._lastMarkup !== markup) {
+            refs.detailsPanel.innerHTML = markup;
+            refs.detailsPanel._lastMarkup = markup;
+        }
         restoreSuggestedScrollState(suggestedScrollState);
     }
 
@@ -1157,29 +1223,27 @@
 
     function renderOutlineRow(element, depth, activePath, attributesByPath) {
         const uiLabel = getElementLabel(element, attributesByPath);
-        const technicalName = firstDefined(
-            element.name,
-            lastSegment(element.path),
-            element.path
-        );
-        const preview = trimText(firstDefined(element.valuePreview, ''), 90);
+        const kind = String(element.kind || element.type || '').toLowerCase();
+        const icon = /group|групп/.test(kind) ? 'folder' : /table|таблиц/.test(kind) ? 'table' : /button|кнопк/.test(kind) ? 'symbol-event' : 'symbol-field';
         const stateChips = renderStateChips(collectOutlineChips(element, activePath));
+        const expandable = Boolean(element.children?.length);
+        const expanded = Boolean(uiState.searchQuery) || !uiState.collapsedPaths.includes(element.path);
 
         return `
-            <button
+            <div
                 class="outline-row${element.path === uiState.selectedElementPath ? ' is-selected' : ''}${element.path === activePath ? ' is-active' : ''}"
-                type="button"
+                tabindex="0"
                 data-action="select-element"
                 data-path="${escapeHtml(element.path)}"
-                style="--depth:${depth};"
+                role="treeitem" aria-selected="${element.path === uiState.selectedElementPath}" aria-level="${depth + 1}" ${expandable ? `aria-expanded="${expanded}"` : ''}
             >
+                ${expandable ? `<button class="outline-expander" type="button" data-action="toggle-element" data-path="${escapeHtml(element.path)}" aria-expanded="${expanded}" aria-label="${escapeHtml(t(expanded ? 'collapseGroup' : 'expandGroup', expanded ? 'Collapse group' : 'Expand group') + ': ' + uiLabel)}"><span class="codicon codicon-chevron-${expanded ? 'down' : 'right'}" aria-hidden="true"></span></button>` : '<span class="outline-expander" aria-hidden="true"></span>'}
+                <span class="outline-icon codicon codicon-${icon}" aria-hidden="true"></span>
                 <span class="outline-main">
                     <span class="outline-title">${escapeHtml(uiLabel)}</span>
-                    ${technicalName ? `<span class="outline-subtitle">${escapeHtml(technicalName)}</span>` : ''}
-                    ${preview ? `<span class="outline-value">${escapeHtml(preview)}</span>` : ''}
                 </span>
-                ${stateChips ? `<span class="outline-side">${stateChips}</span>` : ''}
-            </button>
+                <span class="outline-side">${stateChips}</span>
+            </div>
         `;
     }
 
@@ -1371,15 +1435,23 @@
     }
 
     function renderSuggestedStepsSection(selectedElement) {
+        const native = viewState.nativeSteps?.forPath === selectedElement?.path ? viewState.nativeSteps : {};
+        const nativeBody = native.text
+            ? `<textarea class="native-steps-text" readonly spellcheck="false" wrap="off" rows="${Math.min(22, Math.max(6, native.text.split('\n').length + 1))}" aria-label="${escapeHtml(t('nativeSteps', 'Vanessa steps'))}">${escapeHtml(native.text)}</textarea>`
+            : native.error ? renderEmptyState(String(native.error), '')
+                : native.loading ? `<p class="native-steps-loading" role="status"><span class="codicon codicon-loading codicon-modifier-spin" aria-hidden="true"></span> ${escapeHtml(t('readingNativeSteps', 'Reading Vanessa steps…'))}</p>`
+                    : renderEmptyState(t('nativeStepsUnavailable', 'Select a visible field, button or table column to read Vanessa steps.'), '');
         return renderSectionCard(
-            t('suggestedSteps', 'Suggested steps'),
-            renderSuggestedStepsBody(selectedElement),
+            viewState.liveSource === 'mcp' ? t('nativeSteps', 'Vanessa steps') : t('suggestedSteps', 'Suggested steps'),
+            viewState.liveSource === 'mcp'
+                ? nativeBody
+                : renderSuggestedStepsBody(selectedElement),
             {
                 collapsible: true,
                 expanded: uiState.suggestedStepsExpanded,
                 action: 'toggle-suggested-steps',
                 sectionKey: 'suggested',
-                className: 'suggested-steps-card'
+                className: 'suggested-steps-card',
             }
         );
     }
@@ -1860,6 +1932,7 @@
             return;
         }
 
+        if (viewState.liveSource === 'mcp') { return; }
         const selectedPath = uiState.selectedElementPath || selectedElement.path || '';
         const tablePath = tableContext.tableElement?.path || selectedPath;
         if (!tablePath) {
@@ -2528,6 +2601,7 @@
     }
 
     function filterElementNode(element, query) {
+        if (!uiState.showInvisible && element.visible === false) { return null; }
         const children = (element.children || [])
             .map(child => filterElementNode(child, query))
             .filter(Boolean);
@@ -2567,6 +2641,7 @@
             if (!hiddenTechnical && !hiddenGroup && !hiddenByType && !hiddenInvisible) {
                 result.push({ element, depth: baseDepth });
             }
+            if (!uiState.searchQuery && uiState.collapsedPaths.includes(element.path)) { continue; }
             result.push(...flattenElements(
                 element.children || [],
                 (hiddenTechnical || hiddenGroup || hiddenByType || hiddenInvisible) ? baseDepth : baseDepth + 1
@@ -2606,7 +2681,6 @@
             element.title,
             element.synonym,
             element.name,
-            element.path,
             element.boundAttributePath,
             element.valuePreview,
             element.toolTip,
@@ -2628,7 +2702,7 @@
                 continue;
             }
             if (row.dataset.path === pendingScrollPath) {
-                row.scrollIntoView({ block: 'center' });
+                row.scrollIntoView({ block: 'nearest' });
                 break;
             }
         }

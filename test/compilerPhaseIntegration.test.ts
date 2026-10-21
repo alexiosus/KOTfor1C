@@ -13,6 +13,10 @@ import * as runtimeIdentity from '../src/scenarioRuntimeIdentity';
 import * as processSelection from '../src/compilerProcessSelection';
 import * as compilerProcesses from '../src/compilerProcesses';
 import * as compilerReports from '../src/compilerBuildReport';
+import * as compilerManifestStore from '../src/compilerBuildManifestStore';
+import * as compilerRuntime from '../src/compilerBuildRuntime';
+import * as artifactPaths from '../src/workspaceArtifactPath';
+import * as controlSourceMapping from '../src/vanessaControlSourceMapping';
 
 function fixture(dependencies: Record<string, unknown> = {}) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-compiler-ui-'));
@@ -22,14 +26,17 @@ function fixture(dependencies: Record<string, unknown> = {}) {
     const previews: string[] = [];
     const vscode = {
         commands: { executeCommand: async (command: string, resource: ReturnType<typeof uri>) => { if (command === 'markdown.showPreview') { previews.push(resource.fsPath); } } },
-        EventEmitter: class {}, Uri: { file: uri, parse: (value: string) => uri(value.slice('file://'.length)) },
+        EventEmitter: class {}, Uri: { file: uri, parse: (value: string) => uri(value.slice('file://'.length)), joinPath: (base: ReturnType<typeof uri>, ...segments: string[]) => uri(path.join(base.fsPath, ...segments)) },
         RelativePattern: class { constructor(public baseUri: ReturnType<typeof uri>, public pattern: string) {} },
         ProgressLocation: { Notification: 1 },
         workspace: {
             textDocuments: [] as Array<{ uri: ReturnType<typeof uri>; isDirty: boolean }>,
             workspaceFolders: [{ uri: uri(root) }],
             getConfiguration: () => ({ get: () => '' }),
-            fs: { readFile: async (value: ReturnType<typeof uri>) => fs.promises.readFile(value.fsPath) },
+            fs: { readFile: async (value: ReturnType<typeof uri>) => fs.promises.readFile(value.fsPath),
+                writeFile: async (value: ReturnType<typeof uri>, bytes: Buffer) => fs.promises.writeFile(value.fsPath, bytes),
+                createDirectory: async (value: ReturnType<typeof uri>) => fs.promises.mkdir(value.fsPath, { recursive: true }),
+                stat: async (value: ReturnType<typeof uri>) => fs.promises.stat(value.fsPath) },
             findFiles: async () => fs.readdirSync(root).filter(file => file.endsWith('.yaml')).map(file => uri(path.join(root, file))),
             openTextDocument: async (value: ReturnType<typeof uri>) => {
                 const source = await fs.promises.readFile(value.fsPath, 'utf8');
@@ -58,6 +65,13 @@ function fixture(dependencies: Record<string, unknown> = {}) {
             : name === './compilerBuildPreflight' ? preflight : name === './compilerBuildSourceSelection' ? sourceSelection
             : name === './compilerProcessSelection' ? processSelection : name === './compilerProcesses' ? compilerProcesses
             : name === './compilerBuildReport' ? compilerReports
+            : name === './compilerBuildManifestStore' ? { ...compilerManifestStore,
+                // Bridge JSON objects from the VM test realm into the real filesystem adapter's realm.
+                captureCompilerBuildInputs: (request: Parameters<typeof compilerManifestStore.captureCompilerBuildInputs>[0]) =>
+                    compilerManifestStore.captureCompilerBuildInputs({ ...request, configuration: JSON.parse(JSON.stringify(request.configuration)) }) }
+                : name === './compilerBuildRuntime' ? compilerRuntime
+            : name === './workspaceArtifactPath' ? artifactPaths
+            : name === './vanessaControlSourceMapping' ? controlSourceMapping
             : name === './scenarioRuntimeIdentity' ? runtimeIdentity
             : name === './deferredLoader' ? { createDeferredLoader: (factory: any) => factory } : {}
     });
@@ -67,7 +81,8 @@ function fixture(dependencies: Record<string, unknown> = {}) {
 }
 
 test('SPPR preflight blocks the actual build entry point before startup 1C, isolation or artifact clearing', async () => {
-    const manager = { loadParameters: async () => [{ key: 'ScenarioFolder', value: '' }], validateCompilerBuildParameters: () => [] };
+    const manager = { loadParameters: async () => [{ key: 'ScenarioFolder', value: '' }], validateCompilerBuildParameters: () => [],
+        loadActiveProfileSnapshot: async (): Promise<unknown> => ({ id: 'default', name: 'Default', buildParameters: await manager.loadParameters(), additionalVanessaParameters: [], globalVanessaVariables: [] }) };
     const f = fixture({ './yamlParametersManager.js': { YamlParametersManager: { getInstance: () => manager } } });
     try {
         const info = { ...f.scenario('Process', 'flow'), kind: 'process' };
@@ -119,6 +134,81 @@ test('opening an existing Windows report makes its links relative before showing
         await f.provider.openCompilerBuildReport();
         assert.equal(fs.readFileSync(report, 'utf8'), updated);
     } finally { f.dispose(); }
+});
+
+test('successful compiler entry point certifies final feature bytes only after settings restoration and rejects changed inputs', async () => {
+    for (const changed of [false, true]) {
+        let buildParameters: Array<{ key: string; value: string }> = [];
+        let executable = '';
+        const manager = { loadActiveProfileSnapshot: async () => ({ id: 'default', name: 'Default', buildParameters,
+            additionalVanessaParameters: [], globalVanessaVariables: [] }), validateCompilerBuildParameters: () => [],
+            createYamlParametersFile: async (file: string, rows: Array<{ key: string; value: string }>) => {
+                await fs.promises.mkdir(path.dirname(file), { recursive: true }); await fs.promises.writeFile(file, JSON.stringify(Object.fromEntries(rows.map(row => [row.key, row.value]))));
+            } };
+        const f = fixture({ './yamlParametersManager.js': { YamlParametersManager: { getInstance: () => manager } },
+            './oneCPlatform.js': { resolveOneCPlatformForLaunch: async () => ({ clientExePath: executable }) } });
+        try {
+            const sources = path.join(f.root, 'sources'); const output = path.join(f.root, 'features');
+            fs.mkdirSync(sources); executable = path.join(f.root, 'compiler.epf'); fs.writeFileSync(executable, 'fixture compiler');
+            buildParameters = [{ key: 'ScenarioFolder', value: sources }, { key: 'ProcessFolder', value: sources }, { key: 'FeatureFolder', value: output }];
+            const info = { ...f.scenario('Main', 'main'), yamlFileUri: f.uri(path.join(sources, 'scen.yaml')) };
+            const source = 'ТипФайла: "Сценарий"\nДанныеСценария:\n    UID: "main"\n    Имя: "Main"\n    Код: "Main"\nТекстСценария: |\n    And Delay 1\n';
+            fs.writeFileSync(info.yamlFileUri.fsPath, source);
+            const disabled = path.join(sources, 'disabled.yaml'); fs.writeFileSync(disabled, '# temporarily isolated settings\n');
+            const temporary = path.join(f.root, 'disabled-temporary');
+            const key = info.yamlFileUri.toString(); const catalog = { all: [info], byUri: new Map([[key, info]]), byName: new Map([['Main', [info]]]) };
+            const outputLines: string[] = []; const events: string[] = [];
+            Object.assign(f.provider, {
+                _context: {}, _activeBuildProcesses: new Set(), _view: { webview: { postMessage() {} } },
+                t: (text: string, ...args: string[]) => text.replace(/\{(\d+)\}/gu, (_, index) => args[Number(index)] ?? ''),
+                hasAnyScenarioRunsInProgress: () => false, isMainScenario: () => true,
+                getOutputChannel: () => ({ clear() {}, appendLine: (text: string) => outputLines.push(text) }),
+                outputInfo: (_channel: unknown, text: string) => outputLines.push(text), outputError: (_channel: unknown, text: string) => outputLines.push(text), outputAdvanced() {},
+                ensureFreshScenarioCatalog: async () => catalog,
+                getMainScenarioSelectionSnapshotForBuild: async () => ({ enabledKeys: [key], disabledKeys: [], isolatedDisabledKeys: [], enabledNames: ['Main'], disabledNames: [], total: 1 }),
+                buildScenarioFilterDecision: () => ({}), applyScenarioFilterToBuildParameters: (value: unknown) => value,
+                getProjectPaths: () => ({ buildScenarioBddEpf: f.uri(executable) }),
+                resolveBuildRuntimeRootUri: () => f.uri(path.join(f.root, 'runtime')),
+                ensureSharedStartupInfobaseReady: async () => ({ infobaseDirectory: '/fixture-base', authentication: {} }),
+                buildStartupParams: () => [], buildBuildScenarioBddArgs: (settings: string) => [settings],
+                clearScenarioRunArtifactsAndNotify() {}, rearmScenarioArtifactBuildRootWatcher() {},
+                updateScenarioBuildArtifacts: async () => {}, ensureUniqueVanessaRuntimePathsForArtifacts: async () => {}, ensureCombinedScenarioJsonArtifacts: async () => {}, sendRunArtifactsStateToWebview() {},
+                prepareBuildErrorsFolder: async (directory: { fsPath: string }) => fs.promises.mkdir(path.join(directory.fsPath, 'BuildErrors'), { recursive: true }),
+                temporarilyMoveDisabledScenarioTestFilesForBuild: async () => {
+                    await fs.promises.rename(disabled, temporary); events.push('isolated');
+                    return { temporaryRootUri: null, movedFiles: [{ sourceUri: f.uri(disabled), temporaryUri: f.uri(temporary) }], mode: 'legacy' };
+                },
+                restoreTemporarilyMovedDisabledScenarioFiles: async () => {
+                    assert.equal(await compilerManifestStore.readCompilerBuildManifest(output), undefined, 'no manifest before restoration');
+                    await fs.promises.rename(temporary, disabled); events.push('restored'); return 0;
+                },
+                execute1CProcess: async (_exe: string, args: string[]) => {
+                    assert.equal(fs.existsSync(disabled), false);
+                    const settings = JSON.parse(await fs.promises.readFile(args.at(-1)!, 'utf8'));
+                    await fs.promises.writeFile(settings.ResultFile, '0');
+                    await fs.promises.writeFile(settings.JUnitFile, '<testsuites><testsuite name="Compile" tests="1" failures="0" errors="0"><testcase name="Main"/></testsuite></testsuites>');
+                    await fs.promises.writeFile(path.join(settings.FeatureFolder, 'Main.feature'), '# language: en\nFeature: Main\nScenario: Safe\n    And Delay RecordGLAccountsParameterFromPipeline\n');
+                    await fs.promises.writeFile(path.join(settings.FeatureFolder, 'Main.str'), '{}');
+                    if (changed) { await fs.promises.writeFile(info.yamlFileUri.fsPath, source + '# changed during build\n'); }
+                }
+            });
+            await f.provider._handleRunAssembleScriptTypeScript('1');
+            assert.deepEqual(events, ['isolated', 'restored'], outputLines.join('\n'));
+            assert.ok(outputLines.some(line => line.includes('completed successfully')), outputLines.join('\n'));
+            const manifest = await compilerManifestStore.readCompilerBuildManifest(output);
+            assert.equal(!!manifest, !changed, outputLines.join('\n'));
+            if (manifest) {
+                const files = await compilerManifestStore.readCompilerBuildManifestArtifacts(output, manifest);
+                assert.ok(files.contents[0].featureContent.includes('And Delay 1'), 'fingerprint uses postprocessed output');
+                assert.ok(manifest.inputs.files.some(file => file.uri === f.uri(disabled).toString()), 'restored settings are included');
+                const captured = await f.provider.loadVanessaYamlControlBuild();
+                assert.equal(captured.manifest.inputs.digest, manifest.inputs.digest);
+                assert.equal(captured.outputRoot, output); assert.ok(Object.isFrozen(captured));
+                f.vscode.workspace.textDocuments.push({ uri: f.uri(disabled), isDirty: true });
+                await assert.rejects(f.provider.loadVanessaYamlControlBuild(), /Save YAML sources and dependencies/u);
+            }
+        } finally { f.dispose(); }
+    }
 });
 
 test('direct process edits mark the process and callers stale before refreshing the catalog', () => {

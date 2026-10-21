@@ -11,11 +11,6 @@
     УровеньОтчета1: "Drive"
     УровеньОтчета2: "Demo"
 
-KOTМетаданные:
-    Описание: |
-
-        - Creates a compact set of demo master data.
-        - Demonstrates defaulted nested-scenario parameters without requiring values from the main scenario.
 
 ПараметрыСценария:
     - ПараметрыСценария1:

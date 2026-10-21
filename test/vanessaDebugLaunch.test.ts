@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import * as vanessaDebugClients from '../src/vanessaDebugClients';
 import * as vanessaDebugClientConfiguration from '../src/vanessaDebugClientConfiguration';
 import * as vanessaLaunchJson from '../src/vanessaLaunchJson';
+import * as vanessaControlLaunch from '../src/vanessaControlLaunch';
 import * as oneCInfobaseConnection from '../src/oneCInfobaseConnection';
 
 test('debug launch copies the built JSON safely without opening the auto-run infobase preparation flow', async () => {
@@ -77,6 +78,7 @@ test('debug launch copies the built JSON safely without opening the auto-run inf
             if (specifier === './vanessaDebugClients') { return vanessaDebugClients; }
             if (specifier === './vanessaDebugClientConfiguration.js') { return vanessaDebugClientConfiguration; }
             if (specifier === './vanessaLaunchJson') { return vanessaLaunchJson; }
+            if (specifier === './vanessaControlLaunch') { return vanessaControlLaunch; }
             if (specifier === './oneCInfobaseConnection') { return oneCInfobaseConnection; }
             return {};
         },

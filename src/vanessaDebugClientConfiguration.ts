@@ -74,7 +74,7 @@ async function editClient(
     if (password === undefined) { return null; }
     const additionalParameters = await ui.input({
         title: t('Additional client launch keys (optional)'), value: previous?.additionalParameters ?? '', password: true,
-        prompt: t('Optional 1C client keys, for example /NoSplash /Lru. Saved securely with this client.')
+        prompt: t('Optional 1C client keys, for example /Lru /DisableStartupMessages. Saved securely with this client.')
     });
     if (additionalParameters === undefined) { return null; }
     const occupiedPorts = new Set(clients.filter(client => client.computerName === 'localhost').map(client => client.port));
@@ -144,6 +144,7 @@ export async function configureVanessaDebugClientSelection(
             ...clients.flatMap(client => [
                 { action: `edit:${client.id}`, label: t('Edit client: {0}', client.name), description: describeInfobaseConnection(client.infobase) },
                 { action: `advanced:${client.id}`, label: t('Advanced settings: {0}', client.name), description: `${client.clientType} • ${client.computerName}:${client.port}` },
+                { action: `copy:${client.id}`, label: t('Use as connection template: {0}', client.name) },
                 { action: `remove:${client.id}`, label: t('Remove client: {0}', client.name) }
             ]),
             { action: 'scenario', label: t('Use scenario parameters'), description: t('Disable the saved client override for debug launches.') }
@@ -159,6 +160,16 @@ export async function configureVanessaDebugClientSelection(
         const [action, id] = picked.action.split(':');
         if (action === 'remove') { clients = clients.filter(client => client.id !== id); continue; }
         const previous = clients.find(client => client.id === id);
+        if (action === 'copy' && previous) {
+            let port = 1538;
+            while (clients.some(client => client.computerName.toLowerCase() === previous.computerName.toLowerCase() && client.port === port)) { port++; }
+            let number = 2;
+            while (clients.some(client => client.name.toLowerCase() === `${previous.name} ${number}`.toLowerCase())) { number++; }
+            const template = { ...previous, id: randomUUID(), name: `${previous.name} ${number}`, port, synonym: '' };
+            const copy = await editClient(template, clients, ui, t, template.name);
+            if (!copy) { return null; }
+            clients = [...clients, copy]; continue;
+        }
         const edited = action === 'advanced' && previous
             ? await advancedClient(previous, clients, ui, t)
             : await editClient(previous, clients, ui, t, clients.length === 0 ? suggestedName : `TestClient${clients.length + 1}`);

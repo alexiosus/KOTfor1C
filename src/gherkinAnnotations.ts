@@ -136,6 +136,12 @@ export function getGherkinStepAnnotationTarget(source: GherkinAnnotationSource, 
         tags: STEP_TAGS.filter(tag => !existing.has(`@${tag}`.toLocaleLowerCase())) };
 }
 
+/** One scan for runtime result matching; docstrings, tables and headers are not executable lines. */
+export function collectGherkinExecutableLines(source: GherkinAnnotationSource): readonly { lineNumber: number; text: string }[] {
+    const view = scan(source);
+    return view ? view.lines.filter(line => !line.payload && isBodyTarget(view, line)).map(line => ({ lineNumber: line.number + 1, text: line.text.trim() })) : [];
+}
+
 /** Only standalone tag tokens are indexed; comments, step annotations and metadata values are excluded. */
 export function collectGherkinProjectTags(source: GherkinAnnotationSource): readonly string[] {
     const view = scan(source);

@@ -1043,7 +1043,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     private collectFormExplorerTableCompletionCandidates(
         snapshot: FormExplorerSnapshot
     ): FormExplorerTableCompletionCandidate[] {
-        return (snapshot.tables || []).map(table => ({
+        const result: FormExplorerTableCompletionCandidate[] = (snapshot.tables || []).map(table => ({
             path: (table.path || table.elementPath || '').trim(),
             name: (table.name || '').trim(),
             title: (table.title || '').trim(),
@@ -1054,6 +1054,26 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 ? table.tableData.rows.map(row => Array.isArray(row) ? row.map(cell => String(cell || '').trim()) : [])
                 : []
         })).filter(candidate => Boolean(candidate.path || candidate.name || candidate.title));
+        const append = (elements: FormExplorerElementInfo[]): void => {
+            for (const element of elements) {
+                if (/(table|таблиц|dynamiclist|динамическийспис)/iu.test(element.kind || element.type || '') &&
+                    !result.some(table => table.path === element.path || !!element.name && table.name === element.name)) {
+                    const columns: string[] = [];
+                    const collect = (children: FormExplorerElementInfo[]): void => {
+                        for (const child of children) {
+                            const kind = child.kind || child.type || '';
+                            if (/(field|поле|column|колонк)/iu.test(kind)) { columns.push(...[child.name, child.title].filter((value): value is string => !!value)); }
+                            else if (/(group|групп)/iu.test(kind)) { collect(child.children || []); }
+                        }
+                    };
+                    collect(element.children || []);
+                    result.push({ path: element.path, name: element.name || '', title: element.title || '', columns: [...new Set(columns)], rows: [] });
+                }
+                append(element.children || []);
+            }
+        };
+        append(snapshot.elements || []);
+        return result;
     }
 
     private isFormExplorerTableLikeLine(lineText: string): boolean {
@@ -1257,7 +1277,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     }
 
     private isFieldLikeFormExplorerCandidate(candidate: FormExplorerElementCompletionCandidate): boolean {
-        return /(field|поле)/i.test(candidate.kind)
+        return /(field|поле|checkbox|флаж|radio|переключат|combobox)/i.test(candidate.kind)
             || Boolean(candidate.boundAttributePath);
     }
 

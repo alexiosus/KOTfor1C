@@ -11,10 +11,6 @@
     УровеньОтчета1: "Drive"
     УровеньОтчета2: "Demo"
 
-KOTМетаданные:
-    Описание: |
-        - Intermediate helper for line orchestration inside the sales order flow.
-        - Demonstrates forwarding parameters to another nested scenario and mixing defaults with overrides.
 
 ПараметрыСценария:
     - ПараметрыСценария1:

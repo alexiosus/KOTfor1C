@@ -8,6 +8,7 @@ import { EventEmitter } from 'node:events';
 import * as debugClients from '../src/vanessaDebugClients';
 import * as debugConfiguration from '../src/vanessaDebugClientConfiguration';
 import * as vanessaLaunchJson from '../src/vanessaLaunchJson';
+import * as vanessaControlLaunch from '../src/vanessaControlLaunch';
 import * as infobaseConnection from '../src/oneCInfobaseConnection';
 import * as standaloneFeatureLaunch from '../src/standaloneFeatureLaunch';
 import * as directProcessLaunch from '../src/directProcessLaunch';
@@ -54,6 +55,7 @@ function fixture(t: TestContext) {
             if (name === './vanessaDebugClients') { return debugClients; }
             if (name === './vanessaDebugClientConfiguration.js') { return debugConfiguration; }
             if (name === './vanessaLaunchJson') { return vanessaLaunchJson; }
+            if (name === './vanessaControlLaunch') { return vanessaControlLaunch; }
             if (name === './oneCInfobaseConnection') { return infobaseConnection; }
             if (name === './standaloneFeatureLaunch') { return standaloneFeatureLaunch; }
             if (name === './directProcessLaunch') { return directProcessLaunch; }
@@ -194,4 +196,59 @@ test('detached launcher waits for spawn and its real exit listener removes the r
     child.emit('exit', 0);
     for (let attempt = 0; fs.existsSync(runtimePath) && attempt < 10; attempt++) { await new Promise<void>(resolve => setTimeout(resolve, 5)); }
     assert.equal(fs.existsSync(runtimePath), false);
+});
+
+test('manual/control launch carries the active Additional Vanessa generator language into its private VAParams', async t => {
+    const f = fixture(t); await f.store.save(f.saved);
+    f.provider.loadVanessaLaunchOverlayParameters = async () => ({ additionalParameters: [{ key: 'gherkinlanguage', value: 'en', valueKind: 'string', overrideExisting: true }], globalVariables: [] });
+    await f.provider.openVanessaStandaloneDebug();
+    const json = JSON.parse(fs.readFileSync(f.runtimePath(), 'utf8'));
+    assert.equal(json.gherkinlanguage, 'en'); assert.equal(json.Lang, 'en');
+    assert.ok(f.launched[0].args.some((arg: string) => arg.includes('VAParams=')));
+});
+
+test('built feature control JSON applies the active profile language and defaults without changing authored JSON', async t => {
+    const f = fixture(t); await f.store.save(f.saved);
+    const jsonPath = path.join(f.root, 'params.json');
+    const original = JSON.stringify({ Lang: 'ru', gherkinlanguage: 'ru', GlobalVars: { existing: 'kept' } });
+    fs.writeFileSync(jsonPath, original);
+    f.provider.loadVanessaLaunchOverlayParameters = async () => ({
+        additionalParameters: [{ key: 'gherkinlanguage', value: 'en', valueKind: 'string', overrideExisting: true }],
+        globalVariables: []
+    });
+    const launch = await f.provider.createVanessaDebugLaunchContext(jsonPath, '/bases/manager', f.root, f.saved);
+    const json = JSON.parse(fs.readFileSync(launch.vaParamsJsonPath, 'utf8'));
+    assert.equal(json.gherkinlanguage, 'en'); assert.equal(json.Lang, 'en');
+    assert.deepEqual(json.GlobalVars, { existing: 'kept' });
+    assert.equal(fs.readFileSync(jsonPath, 'utf8'), original);
+    const fallback = await f.provider.writeVanessaManualDebugJson({}, { mode: 'scenario', clients: [] }, 'managed-play', f.root);
+    const defaults = JSON.parse(fs.readFileSync(fallback, 'utf8'));
+    assert.equal(defaults.Lang, 'en'); assert.equal(defaults.gherkinlanguage, 'en');
+});
+
+test('managed runtime language overlay preserves the already prepared test infobase and feature target', async t => {
+    const f = fixture(t);
+    f.provider.loadVanessaLaunchOverlayParameters = async () => ({ additionalParameters: [
+        { key: '/TestClient/datatestclients/0/PathToInfobase', value: 'File="/profile-original-base";', valueKind: 'string', overrideExisting: true },
+        { key: 'featurepath', value: '/profile-original.feature', valueKind: 'string', overrideExisting: true },
+        { key: '/gherkinlanguage', value: 'en', valueKind: 'string', overrideExisting: true }
+    ], globalVariables: [{ key: 'Prepared', value: 'false', overrideExisting: true }] });
+    const prepared = { TestClient: { datatestclients: [{ PathToInfobase: 'File="/chosen-prepared-base";' }] },
+        featurepath: '/chosen.feature', GlobalVars: { Prepared: true } };
+    const runtime = await f.provider.writeVanessaManualDebugJson(prepared, { mode: 'scenario', clients: [] }, 'managed', f.root);
+    const json = JSON.parse(fs.readFileSync(runtime, 'utf8'));
+    assert.equal(json.TestClient.datatestclients[0].PathToInfobase, 'File="/chosen-prepared-base";');
+    assert.equal(json.featurepath, '/chosen.feature'); assert.deepEqual(json.GlobalVars, { Prepared: true });
+    assert.equal(json.gherkinlanguage, 'en'); assert.equal(json.Lang, 'en');
+});
+
+test('MCP runtime uses native library file search before VanessaExt is connected without changing the source or ordinary Debug', async t => {
+    const f = fixture(t);
+    const original = { useaddin: true, SearchingForFilesUsingTheVanessaExtComponent: true };
+    const managed = await f.provider.writeVanessaManualDebugJson(original, { mode: 'scenario', clients: [] }, 'mcp', f.root, true);
+    const json = JSON.parse(fs.readFileSync(managed, 'utf8'));
+    assert.equal(json.SearchingForFilesUsingTheVanessaExtComponent, false); assert.equal(json.useaddin, true);
+    assert.equal(original.SearchingForFilesUsingTheVanessaExtComponent, true);
+    const debug = await f.provider.writeVanessaManualDebugJson(original, { mode: 'scenario', clients: [] }, 'debug', f.root);
+    assert.equal(JSON.parse(fs.readFileSync(debug, 'utf8')).SearchingForFilesUsingTheVanessaExtComponent, true);
 });

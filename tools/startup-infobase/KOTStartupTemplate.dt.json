@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "templateSha256": "ad218f684a905fad9d99301be3e32db3627f3855bb5d362407d1d01969ef6967",
+  "component": {
+    "name": "client_mcp",
+    "version": "0.6.6",
+    "sha256": "eaf065440a32a60eaa07c78fe7ed39c6b2c331db915e91328391af07364422fe",
+    "url": "https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.6/client_mcp.cfe"
+  },
+  "settings": {
+    "name": "client_mcp",
+    "version": "0.6.6",
+    "safeMode": false,
+    "unsafeActionProtection": true,
+    "active": true
+  }
+}

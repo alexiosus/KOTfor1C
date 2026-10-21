@@ -604,6 +604,38 @@ input {
     gap: 2px;
 }
 
+.current-form-checks {
+    align-self: flex-start;
+    margin-top: 6px;
+}
+
+.native-steps-text {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 140px;
+    padding: 8px;
+    border: 1px solid var(--vscode-input-border, var(--fe-border));
+    border-radius: 3px;
+    background: var(--vscode-editor-background);
+    color: var(--vscode-editor-foreground);
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: var(--vscode-editor-font-size, 13px);
+    line-height: 1.5;
+    white-space: pre;
+    overflow: auto;
+    resize: vertical;
+    user-select: text;
+    cursor: text;
+}
+
+.native-steps-loading {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--fe-muted);
+}
+
 .panel-head {
     display: flex;
     justify-content: space-between;
@@ -793,12 +825,12 @@ input {
     flex: 0 0 auto;
     width: 100%;
     box-sizing: border-box;
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 6px;
-    padding: 5px 10px 5px calc(10px + (var(--depth, 0) * 14px));
-    min-height: 28px;
+    display: grid;
+    grid-template-columns: 16px 16px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px 3px calc(8px + (var(--depth, 0) * 14px));
+    min-height: 26px;
     border-radius: 0;
     border: 1px solid transparent;
     background: transparent;
@@ -828,8 +860,33 @@ input {
 
 .outline-main {
     min-width: 0;
-    display: grid;
-    gap: 3px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+}
+
+.outline-row .outline-title { min-width: 0; font-weight: 400; white-space: nowrap; }
+.outline-icon { color: var(--vscode-symbolIcon-fieldForeground, var(--fe-muted)); }
+
+.outline-expander {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 2px;
+    color: inherit;
+    background: transparent;
+}
+
+button.outline-expander {
+    cursor: pointer;
+}
+
+button.outline-expander:hover {
+    background: var(--vscode-toolbar-hoverBackground, var(--fe-surface-2));
 }
 
 .outline-title,
@@ -1703,3 +1760,5 @@ input {
     .workspace > .kot-pane-resizer { grid-column: 1; grid-row: 2; }
     .content { grid-row: 3; }
 }
+
+.outline-expander { flex: 0 0 14px; width: 14px; align-self: flex-start; padding-top: 1px; color: var(--fe-muted); }

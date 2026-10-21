@@ -1572,19 +1572,43 @@ export async function alignNestedScenarioCallParameters(document: vscode.TextDoc
 }
 
 /**
- * Aligns Gherkin table columns in ТекстСценария block.
+ * Aligns Gherkin table columns in a feature or the YAML ТекстСценария block.
  * @param document The text document to modify
  * @returns Promise<boolean> true if changes were made
  */
 export async function alignGherkinTables(document: vscode.TextDocument): Promise<boolean> {
     const fullText = document.getText();
-    const scenarioTextRange = getScenarioTextRange(fullText);
+    const scenarioTextRange = isFeatureTableDocument(document)
+        ? { content: fullText, startOffset: 0, endOffset: fullText.length, eol: fullText.includes('\r\n') ? '\r\n' : '\n' }
+        : getScenarioTextRange(fullText);
     if (!scenarioTextRange) {
         return false;
     }
 
     const aligned = alignGherkinTablesInText(scenarioTextRange.content, scenarioTextRange.eol);
     return await replaceDocumentRange(document, scenarioTextRange.startOffset, scenarioTextRange.endOffset, aligned);
+}
+
+function isFeatureTableDocument(document: vscode.TextDocument): boolean {
+    return document.languageId === 'feature' || /\.feature$/iu.test(document.fileName);
+}
+
+/** Native Format Document and pre-save edits; no save/edit/save loop for features. */
+export function registerGherkinTableFormatting(context: vscode.ExtensionContext): void {
+    const edits = (document: vscode.TextDocument): vscode.TextEdit[] => {
+        if (!isFeatureTableDocument(document)) { return []; }
+        const original = document.getText();
+        const aligned = alignGherkinTablesInText(original, original.includes('\r\n') ? '\r\n' : '\n');
+        return aligned === original ? [] : [vscode.TextEdit.replace(new vscode.Range(document.positionAt(0), document.positionAt(original.length)), aligned)];
+    };
+    context.subscriptions.push(
+        vscode.languages.registerDocumentFormattingEditProvider({ scheme: 'file', language: 'feature' }, { provideDocumentFormattingEdits: edits }),
+        vscode.workspace.onWillSaveTextDocument(event => {
+            if (isFeatureTableDocument(event.document) && vscode.workspace.getConfiguration('kotTestToolkit').get<boolean>('editor.autoAlignGherkinTablesOnSave', true)) {
+                event.waitUntil(Promise.resolve(edits(event.document)));
+            }
+        })
+    );
 }
 
 /**

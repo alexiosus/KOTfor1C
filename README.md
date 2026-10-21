@@ -63,8 +63,10 @@
 - Запуск теста или окружения Vanessa Automation прямо из Test Manager с выбором и подготовкой тестовой базы.
 - Live-подсветка шагов в `feature` во время прогона; просмотр лога в реальном времени.
 - Отслеживание внешних прогонов по run-логу.
+- Управление совместимой Vanessa по MCP: F11, выбранные шаги и запуск со строки, Stop, точки остановки, клиенты и runtime-переменные. Для YAML до сборки доступны пробы обычных шагов; после сборки — точная карта вхождений.
+- Запись действий и проверки формы вставляются у каретки; диагностика, поиск шагов и проверка синтаксиса используют текущий runtime. Проверенная версия и ограничения описаны в инструкции.
 
-→ [Подробнее](./documentation/blocks/build-and-vanessa-run.md)
+→ [Подробнее](./documentation/blocks/build-and-vanessa-run.md) · [Управление Vanessa по MCP](./documentation/blocks/vanessa-control.md)
 
 ### 5) KOT Infobase Manager
 
@@ -79,7 +81,7 @@
 ### 6) KOT Form Explorer (beta)
 
 - Панель VS Code, показывающая элементы текущей управляемой формы 1С, значения и предлагаемые шаги Vanessa Automation.
-- Работает через bridge-сессию на базе `TestManager` + `TestClient`: KOT запускает рабочий клиент, снимает snapshot активной формы и отдает его в панель без установки runtime-расширения в тестируемую базу.
+- Источники — MCP текущего клиента или bridge-сессия на базе `TestManager` + `TestClient`. MCP поддерживает дерево, поля, выбор окна и нативные шаги Vanessa; snapshot сохраняется для полного захвата строк UI-таблиц и интерактивного locator.
 - Режимы `auto` (снятие состояния по интервалу) и `manual` (по клавише или кнопке).
 - Тот же snapshot используется редактором для IntelliSense аргументов шагов и подстановки ссылок на атрибуты формы.
 
@@ -202,6 +204,8 @@ KOTМетаданные:
 - Команде тестирования 1C:Drive — за практические идеи, сценарии использования и регулярную обратную связь.
 - Команде DevOps 1C:Drive — за поддержку инфраструктуры, CI/CD-практики и помощь с запуском в рабочих контурах.
 - Разработчикам [Vanessa Automation](https://github.com/Pr-Mex/vanessa-automation) — за мощный инструмент автоматизации тестирования и открытую документацию.
+- Разработчикам [1c-neurofish / onec-client-mcp-devkit](https://github.com/1c-neurofish/onec-client-mcp-devkit) — за MCP-сервер для клиента 1С, используемый для управления Vanessa. Devkit v0.6.6 распространяется по [LGPL-3.0](./third-party/onec-client-mcp-devkit/COPYING.LESSER); исходники и сведения о включённых компонентах — в [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md#1c-neurofish-onec-client-mcp-devkit).
+- [alkoleft](https://github.com/alkoleft/web-transport-addin) — автору WebTransport, входящего в официальный devkit.
 - Всем участникам сообщества тестирования 1С.
 
 ## Куда дальше
