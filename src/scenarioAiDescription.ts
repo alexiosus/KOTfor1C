@@ -12,6 +12,7 @@ import { migrateLegacyPhaseSwitcherMetadata, parsePhaseSwitcherMetadata } from '
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { isScenarioYamlFile } from './yamlValidator';
 import { persistProjectMetadata, projectedProjectScenario } from './projectLibraryIntegration';
+import { readScenarioSource } from './spprScenarioFiles';
 
 interface ScenarioAiSettings extends AiConnectionSettings {
     maxLineLength: number;
@@ -4427,11 +4428,11 @@ async function requestScenarioDescriptionFromAi(
     return buildFallbackScenarioDescription(rawResponseText, settings.outputLanguage);
 }
 
-async function generateScenarioDescription(document: vscode.TextDocument): Promise<string> {
+async function generateScenarioDescription(document: vscode.TextDocument, sourceText?: string): Promise<string> {
     const settings = getScenarioAiSettings(document.uri);
     ensureAiConnectionSettingsComplete(settings);
     const endpoint = buildAiEndpoint(settings.baseUrl, settings.apiFormat, settings.apiVersion || undefined);
-    const documentText = document.getText();
+    const documentText = sourceText ?? document.getText();
     const analysisContext = buildScenarioAnalysisContext(documentText, document.uri);
 
     try {
@@ -4514,17 +4515,18 @@ export async function handleGenerateScenarioDescriptionWithAi(editor: vscode.Tex
     const openSettings = vscode.l10n.t('Open settings');
 
     try {
+        const nativeSource = /(?:^|[\\/])meta\.yaml$/iu.test(document.uri.fsPath) ? await readScenarioSource(document.uri) : undefined;
         const generatedDescription = await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: vscode.l10n.t('Generating scenario description with AI...'),
             cancellable: false
-        }, () => generateScenarioDescription(document));
+        }, () => generateScenarioDescription(document, nativeSource));
 
         const currentDocument = vscode.workspace.textDocuments.find(
             textDocument => textDocument.uri.toString() === document.uri.toString()
         ) ?? await vscode.workspace.openTextDocument(document.uri);
 
-        if (currentDocument.version !== initialVersion) {
+        if (currentDocument.version !== initialVersion || nativeSource !== undefined && await readScenarioSource(document.uri) !== nativeSource) {
             vscode.window.showWarningMessage(vscode.l10n.t(
                 'The scenario file changed while AI description was being generated. Nothing was applied.'
             ));

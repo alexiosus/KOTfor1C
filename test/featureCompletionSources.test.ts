@@ -80,6 +80,7 @@ const completionModule = loadModule('completionProvider.ts', {
     './preparedStepStateCache': preparedStepStateCache,
     './projectDefinitionSnippet': projectDefinitionSnippet,
     './scenarioParameterUtils': scenarioParameterUtils,
+    './spprScenarioFiles.js': { readNativeScenarioMetadata: async () => ({ uri: { toString: () => 'file:///repo/meta.yaml' }, text: 'ТипФайла: Сценарий\nПараметрыСценария:\n    - ПараметрыСценария1:\n        Имя: Amount\n        Значение: 42\n' }) },
     './scenarioCompilerSyntax': scenarioCompilerSyntax
 });
 const Provider = completionModule.DriveCompletionProvider as new (
@@ -497,4 +498,23 @@ test('MCP form hierarchy supplies table and column references even without captu
             assert.ok(values.includes(expected), text);
         }
     } finally { liveFormSnapshot = null; }
+});
+
+
+test('native SPPR fragments offer compiler scenarios, exports and Vanessa steps without a Feature header', async () => {
+    const base = document('en', 'feature'); const lines = ['And shared'];
+    const target = { ...base, fileName: '/repo/scen.feature', uri: { fsPath: '/repo/scen.feature', toString: () => 'file:///repo/scen.feature' },
+        getText: () => lines.join('\n'), lineCount: lines.length, lineAt: (index: number) => ({ text: lines[index] }) } as vscode.TextDocument;
+    const items = await complete(createProvider('en'), target);
+    assert.ok(items.some(item => String(typeof item.label === 'string' ? item.label : item.label.label).includes('YAML scenario')));
+    assert.ok(items.some(item => item.detail?.includes('built'))); assert.ok(items.some(item => item.detail?.includes('export')));
+});
+
+
+test('native SPPR bracket completions read parameter defaults from meta.yaml', async () => {
+    const base = document('en', 'feature'); const line = 'And I use "[A';
+    const target = { ...base, fileName: '/repo/scen.feature', uri: { fsPath: '/repo/scen.feature', toString: () => 'file:///repo/scen.feature' },
+        getText: () => line, lineCount: 1, lineAt: () => ({ text: line }) } as vscode.TextDocument;
+    const items = await complete(createProvider('en'), target);
+    assert.ok(items.some(item => (typeof item.label === 'string' ? item.label : item.label.label).includes('Amount')));
 });

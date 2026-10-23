@@ -76,6 +76,7 @@ export function createPropertiesLibrarySupport(options: Options): PropertiesLibr
                     await vscode.window.showTextDocument(source, { preview: false, ...(line === undefined ? {} : { selection: new vscode.Range(line, 0, line, 0) }) }); return;
                 }
                 if (action === 'renameScenario') { await renameScenario(document, line!, documents, options); return; }
+                if (action === 'convertExport') { await vscode.commands.executeCommand('kotTestToolkit.convertCallableScenario', uri, line); return; }
                 const feature = options.standalone.find(document.uri);
                 if (!feature) { throw new Error('This action requires a standalone feature test.'); }
                 if (action === 'group') {

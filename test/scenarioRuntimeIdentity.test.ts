@@ -8,6 +8,7 @@ import {
     migrateLegacySelectionStates,
     planDisabledScenarioTestFileMoves,
     projectScenarioBuildSelection,
+    projectCompilerScenarioSelection,
     applyScenarioRuntimeRenamePlanToRecord,
     removeRuntimeKey,
     remapRuntimeKey,
@@ -156,6 +157,15 @@ test('build projection isolates a disabled duplicate without filtering out the e
             enabledKeyByName: { Duplicate: 'file:///a/scen.yaml' }
         }
     );
+});
+
+test('compiler selection isolates codes that SPPR splits on spaces or semicolons', () => {
+    const infos = ['KEEP', 'new main scen', 'part;other'].map((code, index) => ({
+        ...scenario(code, String(index), `file:///source/${index}/meta.yaml`), scenarioCode: code
+    }));
+    const selection = projectCompilerScenarioSelection(infos, [infos[0].yamlFileUri.toString()]);
+    assert.deepEqual(selection.disabledCodes, []);
+    assert.deepEqual(selection.isolatedDisabledKeys, ['file:///source/1/meta.yaml', 'file:///source/2/meta.yaml']);
 });
 
 test('disabled test-file moves distinguish duplicate-name isolation from legacy mode', () => {

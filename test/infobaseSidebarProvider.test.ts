@@ -89,7 +89,7 @@ async function flush(): Promise<void> {
     await new Promise<void>(resolve => setImmediate(resolve));
 }
 
-function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('one'), record('two')], 'two')) {
+function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('one'), record('two')], 'two'), clients?: unknown) {
     const providerPath = path.join(process.cwd(), 'src', 'infobaseSidebarProvider.ts');
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
     const compiled = ts.transpileModule(fs.readFileSync(providerPath, 'utf8'), {
@@ -111,7 +111,7 @@ function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('o
             if (specifier === './infobaseSidebarModel') { return sidebarModel; }
             return require(specifier);
         },
-        console
+        console, setInterval, clearInterval
     });
 
     const invalidations = new EventHub<void>();
@@ -141,6 +141,7 @@ function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('o
         }
     };
     const operations = {
+        vanessaClients: async (value: ManagedInfobaseRecord) => runOperation('vanessaClients', value),
         createInfobase: async () => runOperation('create'),
         openEnterprise: async (value: ManagedInfobaseRecord) => runOperation('enterprise', value),
         openDesigner: async (value: ManagedInfobaseRecord) => runOperation('designer', value),
@@ -166,6 +167,7 @@ function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('o
     const provider = new Provider({
         extensionUri: uri('file:///extension'),
         managedInfobaseService: service,
+        clients,
         runtimeTracker: {
             onDidChange: runtimeChanges.event,
             runningIdentities: () => runningIdentities
@@ -194,6 +196,25 @@ async function send(harness: ReturnType<typeof createHarness>, message: unknown)
     harness.view.webview.inbound.fire(message);
     await flush();
 }
+
+test('client rows use confirmed base runtime status and host-owned identities without rescanning', async () => {
+    const calls: unknown[] = [];
+    const clients = { onDidChange: () => ({ dispose() {} }), refresh: async () => {},
+        stateFor: (base: string) => ({ connection: { ready: true }, rows: base.endsWith('/one') ? [{ id: 'client-one', name: 'One' }] : [],
+            runtimeClients: base.endsWith('/one') ? [{ name: 'One', clientType: 'Thin' }] : [], loading: false }),
+        operate: async (...args: unknown[]) => { calls.push(args); } };
+    const h = createHarness(snapshot(1, [record('one'), record('two')]), clients);
+    try {
+        await send(h, { command: 'ready' });
+        const state = h.view.webview.messages.filter((packet: any) => packet.command === 'state').pop() as any;
+        assert.equal(state.items[0].running, true); assert.deepEqual(Array.from(state.items[0].runtimeModes), ['vanessa']);
+        assert.deepEqual(Array.from(state.items[0].runtimeClients), ['One']); assert.equal(state.items[1].running, false);
+        await send(h, { command: 'clientAction', infobaseId: 'one', clientId: 'client-one', action: 'connect', infobasePath: '/foreign/base' });
+        assert.deepEqual(calls.map(value => JSON.parse(JSON.stringify(value))), [['/workspace/one', ['client-one'], 'connect']]);
+        await send(h, { command: 'clientAction', infobaseId: 'missing', clientId: 'client-one', action: 'connect' });
+        assert.equal(calls.length, 1); assert.equal(h.refreshCalls, 0);
+    } finally { h.provider.dispose(); }
+});
 
 test('ready publishes loading and an alphabetically sorted model', async () => {
     const harness = createHarness();
@@ -307,6 +328,14 @@ test('routes create, refresh, and full-manager commands without accepting caller
     assert.deepEqual(harness.calls, [{ action: 'create' }]);
     assert.equal(harness.refreshCalls, 2);
     assert.deepEqual(harness.commands, ['kotTestToolkit.openInfobaseManager']);
+});
+
+test('opens the client editor for the host-known base without rescanning infobases', async () => {
+    const harness = createHarness();
+    await send(harness, { command: 'ready' });
+    await send(harness, { command: 'maintenance', action: 'vanessaClients', infobaseId: 'one', infobasePath: '/injected' });
+    assert.deepEqual(harness.calls, [{ action: 'vanessaClients', id: 'one' }]);
+    assert.equal(harness.refreshCalls, 0);
 });
 
 test('allows operations on different infobases while one infobase is busy', async () => {

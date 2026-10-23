@@ -1,3 +1,4 @@
+import * as parameterUtils from '../src/scenarioParameterUtils';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -103,6 +104,8 @@ function loadProvider(fileName: string): Record<string, unknown> {
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './spprScenarioFiles.js') { return { readNativeScenarioMetadata: async () => ({ uri: { toString: () => 'file:///repo/meta.yaml' }, text: 'ТипФайла: Сценарий\nПараметрыСценария:\n    - ПараметрыСценария1:\n        Имя: Amount\n        Значение: 42\n' }) }; }
+            if (specifier === './scenarioParameterUtils') { return parameterUtils; }
             if (specifier === './scenarioCompilerSyntax') { return compilerSyntax; }
             if (specifier === 'vscode') {
                 return vscode;
@@ -198,7 +201,7 @@ test('completion includes project definitions, preserves duplicate sources, and 
         })
     };
     provider.preparedGherkinStates = { getOrCreate: (_identity: string, factory: () => unknown) => factory() };
-    provider.scenarioDefaultsByDocument = new Map();
+
     provider.isInScenarioTextBlock = () => true;
     provider.fuzzyMatch = () => ({ matched: true, score: 1 });
     provider.getScenarioParameterDefaults = () => new Map();
@@ -517,4 +520,18 @@ test('hover open command captures the nested scenario location', async () => {
     assert.equal(argument.definitionId, targetLocation.uri);
     assert.equal(argument.resourceUri, 'file:///repo/tests/caller.feature');
     assert.deepEqual(argument.location, targetLocation);
+});
+
+
+test('native fragment hover reads defaults and edits the paired meta.yaml rather than script coordinates', async () => {
+    const exports = loadProvider('hoverProvider.ts'); const Provider = exports.DriveHoverProvider as { prototype: object };
+    const provider = Object.create(Provider.prototype); provider.provideYamlFieldHover = async () => null;
+    provider.provideVariableHover = async () => null; provider.getHoverTranslator = async () => (text: string) => text;
+    for (const line of ['And I use "[Amount]"', '| [Amount] |']) {
+        const hover = await provider.provideHover({ fileName: '/repo/scen.feature', languageId: 'feature',
+            uri: { fsPath: '/repo/scen.feature', toString: () => 'file:///repo/scen.feature' },
+            getText: () => line, lineCount: 1, lineAt: () => ({ text: line }) }, { line: 0, character: line.indexOf('Amount') + 2 }, { isCancellationRequested: false });
+        assert.ok(hover); assert.match(hover.contents.value, /42/u);
+        assert.match(decodeURIComponent(hover.contents.value), /file:\/\/\/repo\/meta\.yaml/u);
+    }
 });

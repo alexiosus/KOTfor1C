@@ -18,6 +18,15 @@ test('build value errors are composed even when no compiler sources were selecte
     assert.ok(issues([], [{ key: 'CreateJson', value: 'perhaps' }]).some(issue => issue.parameter === 'CreateJson' && issue.severity === 'error'));
 });
 
+test('an explicitly selected process without launch settings warns instead of silently promising its own artifact', () => {
+    const child = descriptor('Процесс', 'child'); const parent = descriptor('Процесс', 'parent');
+    const sources = [child, parent, settings('НастройкаПроцесса', 'parent')];
+    const result = collectCompilerBuildPreflightIssues([], sources, [child.uri, parent.uri]);
+    assert.deepEqual(result.filter(issue => issue.code === 'missingRootProcessSettings').map(issue => ({ uri: issue.uri, severity: issue.severity })),
+        [{ uri: child.uri, severity: 'warning' }]);
+    assert.equal(collectCompilerBuildPreflightIssues([], sources, [parent.uri]).some(issue => issue.code === 'missingRootProcessSettings'), false);
+});
+
 test('preflight ignores unrelated YAML, native features and project metadata', () => {
     assert.deepEqual(issues([
         { uri: 'file:///repo/bases.yaml', text: 'ЭталонныеБД:\n    broken: [\n' },

@@ -9,6 +9,10 @@ import * as runtimeIdentity from '../src/scenarioRuntimeIdentity';
 import * as compilerBuildParameters from '../src/compilerBuildParameters';
 import { managedVanessaCommandParts } from '../src/vanessaControlLaunch';
 import { applyVanessaManualDebugOverlay } from '../src/vanessaDebugClients';
+import { ScenarioDirectoryIndex } from '../src/scenarioCatalog';
+import { ScenarioRelationshipIndex } from '../src/scenarioRelationshipIndex';
+import { findExportScenarioBuildCallers } from '../src/scenarioBuildDependencies';
+import { createProjectDefinitionView } from '../src/projectDefinition';
 
 function loadPhaseSwitcherProvider(workspaceUri: object, dependencies: Record<string, unknown> = {}): { prototype: object } {
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
@@ -19,7 +23,7 @@ function loadPhaseSwitcherProvider(workspaceUri: object, dependencies: Record<st
     const moduleObject = { exports: {} as Record<string, unknown> };
     const vscode = {
         EventEmitter: class {},
-        workspace: { workspaceFolders: [{ uri: workspaceUri }] },
+        workspace: { workspaceFolders: [{ uri: workspaceUri }], getWorkspaceFolder: () => ({ uri: workspaceUri }) },
         window: { activeTextEditor: undefined }
     };
 
@@ -40,6 +44,7 @@ function loadPhaseSwitcherProvider(workspaceUri: object, dependencies: Record<st
             if (specifier === 'os') {
                 return os;
             }
+            if (specifier === 'node:crypto') { return require(specifier); }
             if (specifier === './compilerArtifacts') { return compilerArtifacts; }
             if (specifier === './scenarioRuntimeIdentity') { return runtimeIdentity; }
             if (specifier === './deferredLoader') {
@@ -59,6 +64,48 @@ function loadPhaseSwitcherProvider(workspaceUri: object, dependencies: Record<st
 
     return moduleObject.exports.PhaseSwitcherProvider as { prototype: object };
 }
+
+test('Test Manager requires linked launch settings independently of old groups and process kind', () => {
+    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' });
+    const provider = Object.create(Provider.prototype) as Record<string, any>;
+    assert.equal(provider.isMainScenario({ name: 'Old group only', tabName: 'Smoke', hasTestSettings: false }), false);
+    assert.equal(provider.isMainScenario({ name: 'Nested process', kind: 'process', tabName: 'Smoke', hasTestSettings: false }), false);
+    assert.equal(provider.isMainScenario({ name: 'Ungrouped main', hasTestSettings: true }), true);
+});
+
+test('saving a native nested script marks its compiled callers stale while leaving unrelated tests current', async () => {
+    const root = { scheme: 'file', fsPath: '/workspace', toString: () => 'file:///workspace' };
+    const Provider = loadPhaseSwitcherProvider(root, { './scenarioCatalog': { ScenarioDirectoryIndex },
+        './scenarioRelationshipIndex': { ScenarioRelationshipIndex }, './workspaceScanner': { resolveScanDirFsPath: () => '/workspace/tests' },
+        './scenarioBuildDependencies': { findExportScenarioBuildCallers } });
+    const provider = Object.create(Provider.prototype) as Record<string, any>;
+    const uri = (file: string) => ({ scheme: 'file', fsPath: file, toString: () => `file://${file}` });
+    const nested = { name: 'Nested', yamlFileUri: uri('/workspace/tests/nested/meta.yaml') };
+    const main = { name: 'Main', yamlFileUri: uri('/workspace/tests/main/scen.yaml'), nestedScenarioNames: ['Nested'] };
+    const unrelated = { name: 'Other', yamlFileUri: uri('/workspace/tests/other/scen.yaml') };
+    const catalog = { all: [nested, main, unrelated], byUri: new Map([nested, main, unrelated].map(info => [info.yamlFileUri.toString(), info])),
+        byName: new Map([nested, main, unrelated].map(info => [info.name, [info]])) };
+    Object.assign(provider, { getScanDirAbsolutePath: () => '/workspace/tests', isInCompilerScanRoots: (file: string) => file.startsWith('/workspace/tests/'),
+        getScenarioCatalog: () => catalog, normalizeFsPathForComparison: (file: string) => file,
+        _scenarioBuildArtifacts: new Map([main, unrelated].map(info => [info.yamlFileUri.toString(), {
+            scenarioKey: info.yamlFileUri.toString(), scenarioName: info.name, sourceUri: info.yamlFileUri }])),
+        _staleBuiltScenarioNames: new Set(), _scenarioExecutionStates: new Map(),
+        getSharedArtifactKeys: (key: string) => [key], sendRunArtifactsStateToWebview() {} });
+    const script = uri('/workspace/tests/nested/scen.feature');
+    assert.equal(provider.shouldTrackUriForScenarioChange(script), true);
+    await provider.handleScenarioSourceSaved({ uri: script });
+    assert.deepEqual([...provider._staleBuiltScenarioNames], [main.yamlFileUri.toString()]);
+    assert.equal(provider.shouldTrackUriForScenarioChange(uri('/outside/scen.feature')), false);
+    // Libraries may be outside compiler roots and remain referenced at runtime.
+    provider._staleBuiltScenarioNames.clear();
+    const exported = uri('/workspace/libraries/export.feature');
+    provider.setDefinitionReferenceServices({ resolver: { getView: async () => createProjectDefinitionView('export', [{
+        id: 'export', kind: 'exportScenario', template: 'Export', normalizedTemplate: 'export', parameters: [], sourceLabel: 'export',
+        definitionLocation: { uri: exported.toString(), range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } } }
+    }]) }, references: { findReferencesForDefinitions: async () => new Map([['export', [{ uri: script }]]]) } });
+    await provider.handleScenarioSourceSaved({ uri: exported });
+    assert.deepEqual([...provider._staleBuiltScenarioNames], [main.yamlFileUri.toString()]);
+});
 
 test('generated feature Properties waits for source catalog before restoring artifact identities', async () => {
     const root = { fsPath: '/workspace' };
@@ -89,12 +136,119 @@ test('managed Test Manager run keeps authored settings and reports the confirmed
         provider.runScenarioInVanessaBuiltIn = async (...args: any[]) => { assert.deepEqual(JSON.parse(JSON.stringify(args[4])), { mcpPort: 9877 }); launched++; return 'started'; };
         provider.attachVanessaManagedRunner(async (request: any) => {
             assert.equal(request.filePath, feature); assert.equal(request.sourceText, fs.readFileSync(feature, 'utf8')); assert.ok(request.isCurrent());
+            assert.match(request.configurationKey, /^[a-f0-9]{64}$/u);
             assert.equal(await request.launch(9877), true);
             fs.writeFileSync(json, '{"ownSetting":false}'); assert.equal(request.isCurrent(), false, 'changed launch settings invalidate the pending request');
             return 'failed';
         });
         assert.equal(await provider.runScenarioInVanessaManaged('Own', 'feature', feature, artifact), 'failed');
         assert.equal(launched, 1);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('Test Manager uses MCP by default while an explicit process setting keeps the compatibility launch', async () => {
+    for (const configured of [undefined, 'process']) {
+        let managed = 0; let processLaunch = 0;
+        const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' }, { vscode: { EventEmitter: class {},
+            workspace: { workspaceFolders: [{ uri: { fsPath: '/workspace' } }], getConfiguration: () => ({ get: (key: string, fallback?: unknown) => key === 'runVanessa.executionMode' ? configured ?? fallback : fallback }) },
+            window: { showInformationMessage() {}, showErrorMessage() {} } } });
+        const provider = Object.create(Provider.prototype) as Record<string, any>;
+        const artifact = { scenarioKey: 'own', scenarioName: 'Own', featurePath: '/workspace/own.feature' };
+        Object.assign(provider, { _staleBuiltScenarioNames: new Set(), _scenarioLastLaunchContexts: new Map(), t: (key: string) => key,
+            isScenarioRunInProgress: () => false, pruneScenarioBuildArtifactsByCache() {}, getScenarioBuildArtifact: () => artifact,
+            resolveScenarioLaunchTarget: () => ({ targetPath: artifact.featurePath, targetKind: 'feature' }), getRunOutputChannel: () => ({ clear() {}, show() {} }),
+            setScenarioExecutionState() {}, outputInfo() {}, outputError() {},
+            runScenarioInVanessaManaged: async () => { managed++; return 'passed'; },
+            runScenarioInVanessaBuiltIn: async () => { processLaunch++; return 'started'; } });
+        await provider.runScenarioInVanessa('Own', 'own');
+        assert.equal(managed, configured ? 0 : 1); assert.equal(processLaunch, configured ? 1 : 0);
+    }
+    const manifest = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+    assert.equal(manifest.contributes.configuration.find((section: any) => section.properties?.['kotTestToolkit.runVanessa.executionMode']).properties['kotTestToolkit.runVanessa.executionMode'].default, 'mcp');
+});
+
+test('Run from a compiled feature resolves its YAML source before launching', async () => {
+    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' });
+    const provider = Object.create(Provider.prototype) as Record<string, any>;
+    const source = { toString: () => 'file:///workspace/scen.yaml' };
+    const generated = { fsPath: '/workspace/generated.feature', toString: () => 'file:///workspace/generated.feature' };
+    const scenario = { name: 'Own', yamlFileUri: source };
+    const calls: unknown[] = [];
+    provider.findSourceForCompiledFeature = async (uri: unknown) => { assert.equal(uri, generated); return source; };
+    provider.restoreScenarioBuildArtifactsFromDiskIfNeeded = async () => undefined;
+    provider.resolveScenarioRuntimeOperationTarget = async (target: unknown) => { calls.push(target); return scenario; };
+    provider.runScenarioInVanessa = async (...args: unknown[]) => { calls.push(args); };
+    await provider.runTestFromSource(generated);
+    assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ uri: 'file:///workspace/scen.yaml' }, ['Own', 'file:///workspace/scen.yaml']]);
+});
+
+test('feature Run routes a source with no compiled owner to the standalone launch path', async () => {
+    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' }); const provider = Object.create(Provider.prototype) as Record<string, any>;
+    const uri = { fsPath: '/workspace/own.feature', toString: () => 'file:///workspace/own.feature' }; let called = false;
+    provider.findSourceForCompiledFeature = async () => undefined;
+    provider.resolveScenarioRuntimeOperationTarget = async () => undefined;
+    provider.runStandaloneFeature = async (id: string) => { assert.equal(id, uri.toString()); called = true; };
+    await provider.runTestFromSource(uri); assert.equal(called, true);
+});
+
+test('MCP full/from-line tracking tails the bound session log and finalizes after the last read', async () => {
+    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' }); const p = Object.create(Provider.prototype) as Record<string, any>;
+    const calls: unknown[] = []; const artifact = { scenarioKey: 'own', scenarioName: 'Own', featurePath: '/workspace/own.feature', jsonPath: '/workspace/own.json' };
+    Object.assign(p, { _scenarioBuildArtifacts: new Map([['own', artifact]]), _mcpFeatureRuns: new Set(),
+        _externalTrackedRunsByScenario: new Map(), _activeTrackedRunKeyByScenario: new Map([['own', 'previous']]), stopLiveRunLogWatcher() {},
+        normalizeFilePathForComparison: (value: string) => value, resolveVanessaLogPathFromJson: () => '/workspace/run.log',
+        startFeatureStepTracker: (...args: unknown[]) => calls.push(args), pollFeatureStepTracker: async () => { calls.push('tail'); },
+        finalizeRunningFeatureStepHighlight: () => calls.push('complete'), stopFeatureStepTracker: () => calls.push('stop'), clearRunningFeatureStepHighlight() {} });
+    await p.trackVanessaFeatureRun('/workspace/other.feature')(true); assert.deepEqual(calls, []);
+    const finish = p.trackVanessaFeatureRun(artifact.featurePath, '/workspace/run.log'); assert.equal(p._mcpFeatureRuns.has('own'), true);
+    assert.equal(p._activeTrackedRunKeyByScenario.has('own'), false, 'an external watcher must not replace MCP progress');
+    await finish(true); assert.deepEqual(calls, [['own', 'Own', '/workspace/run.log', artifact.featurePath], 'tail', 'complete', 'stop']);
+});
+
+test('Run from YAML Properties restores disk artifacts before launching after a restart', async () => {
+    const root = { fsPath: '/workspace' };
+    const Provider = loadPhaseSwitcherProvider(root);
+    const provider = Object.create(Provider.prototype) as Record<string, any>;
+    const source = { scheme: 'file', fsPath: '/workspace/scen.yaml', toString: () => 'file:///workspace/scen.yaml' };
+    let restored = false;
+    provider.resolveScenarioRuntimeOperationTarget = async () => ({ name: 'Own', yamlFileUri: source });
+    provider.restoreScenarioBuildArtifactsFromDiskIfNeeded = async (uri: unknown) => { assert.equal(uri, root); restored = true; };
+    provider.runScenarioInVanessa = async () => { assert.equal(restored, true, 'the run must see artifacts already on disk'); };
+    await provider.runTestFromSource(source);
+});
+
+test('MCP tracks an uncatalogued feature in the same session and retains whole-feature mode for the final log read', async () => {
+    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' }, { vscode: { EventEmitter: class {},
+        Uri: { file: (file: string) => ({ toString: () => `file://${file}` }) } } });
+    const provider = Object.create(Provider.prototype) as Record<string, any>; const seen: unknown[][] = [];
+    Object.assign(provider, { _scenarioBuildArtifacts: new Map(), _standaloneFeatureArtifacts: new Map(), _mcpFeatureRuns: new Set(),
+        _externalTrackedRunsByScenario: new Map(), _activeTrackedRunKeyByScenario: new Map(), stopLiveRunLogWatcher() {},
+        normalizeFilePathForComparison: (file: string) => file, startFeatureStepTracker: (...args: unknown[]) => { seen.push(args); },
+        pollFeatureStepTracker: async (key: string) => { assert.equal(provider._mcpFeatureRuns.has(key), true); },
+        finalizeRunningFeatureStepHighlight() {}, clearRunningFeatureStepHighlight() {}, stopFeatureStepTracker() {} });
+    const finish = provider.trackVanessaFeatureRun('/workspace/new.feature', '/session.log');
+    assert.equal(seen[0][2], '/session.log'); assert.equal(seen[0][3], '/workspace/new.feature');
+    await finish(true); assert.equal(provider._mcpFeatureRuns.size, 0);
+});
+
+test('an equivalent artifact refresh does not invalidate an approved stale managed run', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-managed-refresh-'));
+    try {
+        const feature = path.join(root, 'own.feature'); const json = path.join(root, 'own.json');
+        fs.writeFileSync(feature, 'Feature: Own\nScenario: Own\n    And Delay 1\n'); fs.writeFileSync(json, '{"Own":true}');
+        const Provider = loadPhaseSwitcherProvider({ fsPath: root });
+        const provider = Object.create(Provider.prototype) as Record<string, any>;
+        const artifact = { scenarioKey: 'own', scenarioName: 'Own', featurePath: feature, jsonPath: json };
+        let current = artifact;
+        provider.getScenarioBuildArtifact = () => current;
+        provider.attachVanessaManagedRunner(async (request: any) => {
+            current = { ...artifact };
+            assert.ok(request.isCurrent(), 'artifact discovery can recreate identical records without changing the approved files');
+            current = { ...artifact, featurePath: path.join(root, 'other.feature') };
+            assert.equal(request.isCurrent(), false, 'a retargeted artifact must not execute');
+            return 'cancelled';
+        });
+        assert.equal(await provider.runScenarioInVanessaManaged('Own', 'feature', feature, artifact), 'cancelled');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -344,6 +498,35 @@ test('manual Test Manager refresh rescans catalog and compiled artifacts by defa
     ]);
 });
 
+test('conversion refresh marks transitive callers stale using the old graph and current artifact keys', async () => {
+    const workspaceUri = { fsPath: '/workspace', toString: () => 'file:///workspace' };
+    const Provider = loadPhaseSwitcherProvider(workspaceUri);
+    const provider = Object.create(Provider.prototype) as Record<string, any>;
+    const source = { scheme: 'file', fsPath: '/workspace/nested/scen.yaml' };
+    const oldKey = 'file:///workspace/main/scen.yaml'; const newKey = 'file:///workspace/main/meta.yaml';
+    const main = { scenarioKey: oldKey, scenarioName: 'Main', featurePath: '/build/main.feature' };
+    const unrelated = { scenarioKey: 'other', scenarioName: 'Other', featurePath: '/build/other.feature' };
+    provider._scenarioBuildArtifacts = new Map([[oldKey, main], ['other', unrelated]]);
+    provider._staleBuiltScenarioNames = new Set();
+    provider._scenarioExecutionStates = new Map([[newKey, { status: 'passed' }], ['other', { status: 'passed' }]]);
+    let reloaded = false; let published: string[] = [];
+    provider.getScenarioNamesRelatedToUri = (uri: unknown) => uri === source && !reloaded ? ['Nested'] : [];
+    provider.getScenarioNamesByArtifactSourceUri = () => [];
+    provider.buildCallersByCalleeFromCache = () => reloaded ? new Map() : new Map([['Nested', new Set(['Middle'])], ['Middle', new Set(['Main'])]]);
+    provider.invalidateScenarioCatalog = () => {};
+    provider.ensureFreshScenarioCatalog = async () => { reloaded = true; };
+    provider.refreshScenarioBuildArtifactsFromDisk = async () => {
+        provider._scenarioBuildArtifacts = new Map([[newKey, { ...main, scenarioKey: newKey }], ['other', unrelated]]);
+    };
+    provider.sendRunArtifactsStateToWebview = () => { published = [...provider._staleBuiltScenarioNames]; };
+    provider.handleActiveEditorChanged = () => {};
+    await provider.refreshFromExternalStateChange({ refreshCache: true, changedSourceUris: [source] });
+    assert.deepEqual([...provider._staleBuiltScenarioNames], [newKey]);
+    assert.deepEqual(published, [newKey]);
+    assert.equal(provider._scenarioExecutionStates.has(newKey), false);
+    assert.equal(provider._scenarioExecutionStates.get('other').status, 'passed');
+});
+
 test('artifact refresh avoids hash evaluation and build-root watcher is debounced', () => {
     const source = fs.readFileSync(path.join(process.cwd(), 'src', 'phaseSwitcher.ts'), 'utf8');
     const refreshSource = source.slice(
@@ -462,4 +645,20 @@ test('artifacts restored after extension restart are stale until rebuilt', async
     assert.deepEqual([...provider._staleBuiltScenarioNames], [scenarioKey]);
     assert.equal(provider._scenarioExecutionStates.size, 0);
     assert.equal(provider._scenarioLastLaunchContexts.size, 0);
+});
+
+test('MCP tracking follows the connected manager log instead of a different artifact launch log', async () => {
+    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' });
+    const provider = Object.create(Provider.prototype) as Record<string, any>;
+    const seen: unknown[][] = [];
+    Object.assign(provider, { _scenarioBuildArtifacts: new Map([['own', { scenarioKey: 'own', scenarioName: 'Own', featurePath: '/workspace/own.feature', jsonPath: '/artifact.json' }]]),
+        _standaloneFeatureArtifacts: new Map(), _mcpFeatureRuns: new Set(),
+        _externalTrackedRunsByScenario: new Map(), _activeTrackedRunKeyByScenario: new Map(), stopLiveRunLogWatcher() {},
+        normalizeFilePathForComparison: (file: string) => file, resolveVanessaLogPathFromJson: () => '/wrong-artifact.log',
+        startFeatureStepTracker: (...args: unknown[]) => { seen.push(args); }, pollFeatureStepTracker: async () => {},
+        finalizeRunningFeatureStepHighlight() {}, clearRunningFeatureStepHighlight() {}, stopFeatureStepTracker() {} });
+    const finish = provider.trackVanessaFeatureRun('/workspace/own.feature', '/connected-manager.log');
+    assert.equal(seen[0][2], '/connected-manager.log'); await finish(true);
+    seen.length = 0; await provider.trackVanessaFeatureRun('/workspace/own.feature')(true);
+    assert.equal(seen.length, 0, 'an unverified artifact JSON must not substitute for the current manager log');
 });

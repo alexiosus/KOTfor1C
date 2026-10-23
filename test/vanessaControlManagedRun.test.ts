@@ -24,3 +24,42 @@ test('cancel, changed source and repeated requests cannot launch a queued or dif
     current = true; const second = runner.run(request); release(false);
     assert.equal(await second, 'cancelled'); assert.equal(runs, 0);
 });
+
+test('a second run with the same settings reuses its managed session while a new attachment requires an explicit policy choice', async () => {
+    let generation: number | undefined; let starts = 0; let choices = 0; let runs = 0;
+    const runner = new VanessaManagedRun({ currentGeneration: () => generation,
+        chooseSession: async () => { choices++; return 'current'; },
+        start: async launch => { starts++; if (!await launch(9877)) { return false; } generation = 4; return true; },
+        run: async () => { runs++; return 'passed'; } });
+    const request = { filePath: 'own.feature', sourceText: 'own source', configurationKey: 'settings-a', isCurrent: () => true, launch: async () => true };
+    assert.equal(await runner.run(request), 'passed');
+    assert.equal(await runner.run({ ...request, sourceText: 'new build, same settings' }), 'passed');
+    assert.equal(starts, 1); assert.equal(choices, 0);
+    generation = 8;
+    await runner.run(request); assert.equal(choices, 1); assert.equal(starts, 1);
+    await runner.run(request); assert.equal(choices, 1, 'explicit current-settings consent belongs to this generation and settings identity');
+    await runner.run({ ...request, configurationKey: 'settings-b' }); assert.equal(choices, 2);
+    assert.equal(runs, 5);
+});
+
+test('unrelated active settings require configured launch or cancellation and a cancelled picker never executes', async () => {
+    for (const choice of ['configured', 'cancelled'] as const) {
+        let starts = 0; let runs = 0;
+        const runner = new VanessaManagedRun({ currentGeneration: () => 3, chooseSession: async () => choice,
+            start: async launch => { starts++; return launch(9877); }, run: async () => { runs++; return 'passed'; } });
+        const result = await runner.run({ filePath: 'own.feature', sourceText: 'own source', configurationKey: 'settings-a', isCurrent: () => true, launch: async () => true });
+        assert.equal(result, choice === 'configured' ? 'passed' : 'cancelled');
+        assert.equal(starts, choice === 'configured' ? 1 : 0); assert.equal(runs, choice === 'configured' ? 1 : 0);
+    }
+});
+
+test('a reconnect or source edit while choosing current settings invalidates the pending run', async () => {
+    for (const change of ['connection', 'source'] as const) {
+        let generation = 3; let current = true; let runs = 0;
+        const runner = new VanessaManagedRun({ currentGeneration: () => generation,
+            chooseSession: async () => { if (change === 'connection') { generation++; } else { current = false; } return 'current'; },
+            start: async () => { throw new Error('Must not launch'); }, run: async () => { runs++; return 'passed'; } });
+        await assert.rejects(runner.run({ filePath: 'own.feature', sourceText: 'own source', configurationKey: 'settings-a', isCurrent: () => current, launch: async () => true }), /changed/u);
+        assert.equal(runs, 0);
+    }
+});

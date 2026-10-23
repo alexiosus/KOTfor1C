@@ -16,6 +16,32 @@ export async function localOneCListeningPorts(): Promise<readonly number[]> {
     });
 }
 
+export interface LocalOneCLaunchParameters { readonly parametersPath: string; readonly startedAt: number }
+
+export function parseLocalOneCLaunchParameters(output: string): LocalOneCLaunchParameters | undefined {
+    try {
+        const value = JSON.parse(output.trim()) as Partial<LocalOneCLaunchParameters>;
+        if (typeof value.parametersPath === 'string' && value.parametersPath.length < 32768 && /\.json$/iu.test(value.parametersPath)
+            && typeof value.startedAt === 'number' && Number.isFinite(value.startedAt) && value.startedAt > 0) {
+            return { parametersPath: value.parametersPath, startedAt: value.startedAt };
+        }
+    } catch { /* Missing or unavailable process information is not a verified association. */ }
+    return undefined;
+}
+
+/** Return only the VAParams filename and process creation time, never command lines/authentication. */
+export async function localOneCLaunchParameters(endpoint: string): Promise<LocalOneCLaunchParameters | undefined> {
+    let address: URL;
+    try { address = new URL(normalizeVanessaControlEndpoint(endpoint, true)); } catch { return undefined; }
+    if (process.platform !== 'win32' || !['localhost', '127.0.0.1', '[::1]'].includes(address.hostname)) { return undefined; }
+    const port = Number(address.port || (address.protocol === 'https:' ? 443 : 80));
+    const script = `$kotOwners = @(Get-NetTCPConnection -State Listen -LocalPort ${port} -ErrorAction SilentlyContinue | Where-Object { $_.LocalAddress -in @('127.0.0.1','::1') } | Select-Object -ExpandProperty OwningProcess -Unique); if ($kotOwners.Count -ne 1) { return }; $kotManager = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $kotOwners[0]) -ErrorAction SilentlyContinue; if ($kotManager.Name -notin @('1cv8.exe','1cv8c.exe')) { return }; if ($kotManager.CommandLine -match '(?i)(?:^|[;\"])VAParams=([^;]+);') { @{ parametersPath = $Matches[1].Trim('\"'); startedAt = ([DateTimeOffset]$kotManager.CreationDate).ToUnixTimeMilliseconds() } | ConvertTo-Json -Compress }`;
+    return new Promise(resolve => {
+        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 5_000, maxBuffer: 64 * 1024 },
+            (error, stdout) => resolve(error ? undefined : parseLocalOneCLaunchParameters(stdout)));
+    });
+}
+
 /** Discovery performs handshake/tools-list inspection only, never an execution tool. */
 export async function discoverVanessaControlEndpoints(ports: {
     saved: readonly string[];

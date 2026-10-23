@@ -14,7 +14,7 @@ export interface FeaturePropertiesHost {
     action(action: string, document: FeaturePropertiesDocument, value?: string, line?: number): Promise<void>;
 }
 const actions = new Set(['edit', 'save', 'pin', 'favorite', 'openSource', 'copyPath', 'structure', 'openScenario', 'renameScenario',
-    'group', 'chooseJson', 'generateJson', 'openJson', 'run', 'dismissError']);
+    'group', 'chooseJson', 'generateJson', 'openJson', 'run', 'dismissError', 'convertExport']);
 const fields = new Set(['title', 'description', 'tags']);
 /** Owns no files: every operation reads and changes the native source document. The panel serializes requests. */
 export class FeaturePropertiesController {
@@ -73,6 +73,9 @@ export class FeaturePropertiesController {
                     .some(item => item.line === message.line && item.kind === message.value)) { throw new Error('The feature action is no longer available.'); }
                 if (['openScenario', 'renameScenario'].includes(action) && !model.scenarios.some(item => item.line === message.line)) {
                     throw new Error('The scenario is no longer available.');
+                }
+                if (action === 'convertExport' && !model.scenarios.some(item => item.line === message.line && 'exported' in item && item.exported)) {
+                    throw new Error('Choose an exported scenario declaration.');
                 }
                 await this.host.action(action, document, message.value as string | undefined, message.line as number | undefined);
             }

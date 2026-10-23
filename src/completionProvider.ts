@@ -567,7 +567,7 @@ interface GherkinCompletionState {
 
 export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     private readonly preparedGherkinStates = new PreparedStepStateCache<GherkinCompletionState>();
-    private scenarioDefaultsByDocument = new Map<string, { version: number; defaults: Map<string, string> }>();
+    private scenarioDefaultsByDocument = new Map<string, { version: number; defaults: Map<string, string>; native?: boolean }>();
     private context: vscode.ExtensionContext;
 
     constructor(
@@ -723,7 +723,14 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
         console.log("[DriveCompletionProvider:provideCompletionItems] Triggered.");
 
-        const body = !this.isFeatureDocument(document) ? getCompilerScenarioBody(document.getText()) : null;
+        const nativeCandidate = /(?:^|[\\/])scen\.feature$/u.test(document.fileName);
+        const nativeMetadata = nativeCandidate
+            ? await (await import('./spprScenarioFiles.js')).readNativeScenarioMetadata(document.uri) : undefined;
+        const isFeatureDocument = this.isFeatureDocument(document) && !nativeMetadata;
+        if (nativeMetadata) { this.scenarioDefaultsByDocument.set(document.uri.toString(), { version: document.version, defaults: parseScenarioParameterDefaults(nativeMetadata.text), native: true }); }
+        else if (nativeCandidate && this.scenarioDefaultsByDocument.get(document.uri.toString())?.native) { this.scenarioDefaultsByDocument.delete(document.uri.toString()); }
+        const body = nativeMetadata ? { lines: document.getText().split(/\r\n|\r|\n/u), startLine: 0 }
+            : !isFeatureDocument ? getCompilerScenarioBody(document.getText()) : null;
         const bodyIndex = body ? position.line - body.startLine : -1;
         if (body && bodyIndex >= 0 && bodyIndex < body.lines.length
             && scanCompilerLines(body.lines)[bodyIndex].kind !== 'comment') {
@@ -731,17 +738,15 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             if (bracket) { return this.buildScenarioParameterCompletionList(document, position, bracket); }
         }
 
-        const insertionContext = getGherkinInsertionContext(document, position);
+        const insertionContext = getGherkinInsertionContext(document, position, !!nativeMetadata);
         if (!insertionContext) {
-            const structureCompletions = this.buildFeatureStructureCompletions(document, position);
+            const structureCompletions = nativeMetadata ? null : this.buildFeatureStructureCompletions(document, position);
             if (structureCompletions) {
                 return structureCompletions;
             }
             console.log("[DriveCompletionProvider:provideCompletionItems] Not in scenario text block. Returning empty.");
             return [];
         }
-        const isFeatureDocument = this.isFeatureDocument(document);
-
         // Получаем текст текущей строки до позиции курсора
         const lineText = document.lineAt(position.line).text;
         const linePrefix = lineText.substring(0, position.character); // Текст строки до курсора
@@ -1911,7 +1916,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     ): SavedVariableDefinition[] {
         const variables: SavedVariableDefinition[] = [];
         const seen = new Set<string>();
-        const body = getCompilerScenarioBody(document.getText());
+        const body = /(?:^|[\\/])scen\.feature$/u.test(document.fileName) && this.scenarioDefaultsByDocument.get(document.uri.toString())?.native
+            ? { lines: document.getText().split(/\r\n|\r|\n/u), startLine: 0 } : getCompilerScenarioBody(document.getText());
         const scanned = body ? scanCompilerLines(body.lines) : null;
 
         for (let line = lineExclusive - 1; line >= 0; line--) {

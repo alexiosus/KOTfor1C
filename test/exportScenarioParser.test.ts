@@ -205,3 +205,19 @@ test('parses Russian Vanessa metadata before the scenario declaration', () => {
         character: 0
     });
 });
+
+test('SPPR script fragments accept steps without a Feature header and preserve error line positions', () => {
+    const validate = validateGherkinSyntax as (source: string, uri: string, fragment?: boolean) => ReturnType<typeof validateGherkinSyntax>;
+    assert.deepEqual(validate('# language: en\nAnd own step\n', 'file:///own/scen.feature', true), []);
+    assert.deepEqual(validate('# language: ru\nИ свой шаг\n', 'file:///own/scen.feature', true), []);
+    const broken = '# language: en\nAnd own step:\n  """\n  unclosed';
+    const errors = validate(broken, 'file:///own/scen.feature', true);
+    assert.ok(errors.length > 0);
+    assert.ok(errors.every(error => (error.range?.start.line ?? 99) < broken.split('\n').length));
+    assert.ok(validate('And own step\n', 'file:///standalone.feature').length > 0);
+});
+
+test('native SPPR bindings and compiler control lines are validated as compiler syntax rather than standalone Gherkin', () => {
+    const source = '# language: en\nAnd nested\n  Value = [Input]\n  Return Result as Alias\nIf [Input] = 1 Then\n  And own step\nEndIf\n';
+    assert.deepEqual(validateGherkinSyntax(source, 'file:///own/scen.feature', true), []);
+});

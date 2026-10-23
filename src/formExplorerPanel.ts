@@ -103,6 +103,9 @@ const DEFAULT_ADAPTER_MODE_REQUEST_FILE_NAME = 'adapter-mode-request.txt';
 const DEFAULT_ADAPTER_REQUEST_CONTEXT_FILE_NAME = 'adapter-request-context.json';
 
 export class FormExplorerPanel implements vscode.Disposable {
+    private connectedClientSource = false;
+
+    public async openConnectedClient(): Promise<void> { this.connectedClientSource = true; await this.open(); }
     public static readonly panelType = 'kotTestToolkit.formExplorerPanel';
 
     private panel: vscode.WebviewPanel | null = null;
@@ -112,6 +115,7 @@ export class FormExplorerPanel implements vscode.Disposable {
     private snapshotRevision = 0;
     private choosingClientWindow = false;
     private latestSnapshot: FormExplorerSnapshot | null = null;
+    private publishedMcpSnapshot: FormExplorerSnapshot | undefined;
     private lastError: string | null = null;
     private snapshotExists = false;
     private snapshotMtime: string | null = null;
@@ -253,6 +257,7 @@ export class FormExplorerPanel implements vscode.Disposable {
 
     private resetLoadedSnapshotState(): void {
         this.latestSnapshot = null;
+        this.publishedMcpSnapshot = undefined;
         this.lastError = null;
         this.snapshotExists = false;
         this.snapshotMtime = null;
@@ -1358,6 +1363,7 @@ export class FormExplorerPanel implements vscode.Disposable {
     }
 
     private usesMcp(): boolean {
+        if (this.connectedClientSource) { return true; }
         const mode = vscode.workspace.getConfiguration('kotTestToolkit.formExplorer').get<string>('source', 'auto');
         return mode === 'mcp' || mode !== 'snapshot' && !!this.mcpSource?.available;
     }
@@ -1404,7 +1410,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         const refreshed = await this.mcpSource?.refresh(force);
         const snapshot = refreshed ?? this.mcpSource?.cached();
         if (!this.usesMcp() || !isCurrent()) { return; }
-        if (!force && snapshot && snapshot === this.latestSnapshot && this.lastError === null) { return; }
+        if (!force && snapshot && snapshot === this.latestSnapshot && snapshot === this.publishedMcpSnapshot && this.lastError === null) { return; }
         const changedForm = !this.latestSnapshot || !snapshot || formStepContext(this.latestSnapshot, '') !== formStepContext(snapshot, '');
         if (changedForm) { this.invalidateNativeSteps(true); }
         this.latestSnapshot = snapshot ?? null; this.snapshotExists = !!snapshot; this.snapshotMtime = snapshot?.generatedAt ?? null;
@@ -1418,6 +1424,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         if (!this.usesMcp() || !isCurrent()) { return; }
         if (changedForm || force) { this.scheduleNativeSteps(); }
         await this.postState();
+        if (isCurrent()) { this.publishedMcpSnapshot = snapshot; }
     }
 
     private async refreshSnapshot(force: boolean): Promise<void> {

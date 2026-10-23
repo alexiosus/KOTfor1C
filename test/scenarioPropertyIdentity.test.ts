@@ -1,8 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { updateNestedScenarioNameReferencesInScript } from '../src/scenarioYamlMutations';
 import { applyScenarioPropertyIdentity } from '../src/scenarioPropertyIdentity';
 
 const change = { uid: 'scenario', oldName: 'Old', oldCode: '001', field: 'name' as const, value: 'New' };
+
+test('native script rename changes invocations while preserving raw Gherkin, comments and tables', () => {
+    const script = 'Feature: Own\r\nScenario: Own\r\n\t*And Old # call\r\n\t// And Old\r\n\t"""\r\n\tAnd Old\r\n\t"""\r\n\t| And Old | value |\r\n';
+    assert.equal(updateNestedScenarioNameReferencesInScript(script, 'Old', 'New'), script.replace('*And Old # call', '*And New # call'));
+    assert.equal(updateNestedScenarioNameReferencesInScript('And Old', 'Old', 'New'), 'And New');
+});
 test('inline rename updates caller text and declarations while leaving unrelated settings untouched', () => {
     const caller = 'ТипФайла: Сценарий\nДанныеСценария:\n    UID: caller\n    Имя: Caller\nВложенныеСценарии:\n    - ВложенныеСценарии1:\n        UIDВложенныйСценарий: scenario\n        ИмяСценария: Old\nТекстСценария: |\n    And Old\n    * And Old # call\n    // And Old\n    /*\n    And Old\n    */\n    """\n    And Old\n    """\n';
     const result = applyScenarioPropertyIdentity(caller, change);

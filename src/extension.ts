@@ -26,6 +26,10 @@ import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { StandaloneFeatureService } from './standaloneFeatureService';
 import { registerVanessaControl } from './vanessaControlConnection';
 import { registerVanessaClientCommands } from './vanessaControlClientCommands';
+import { VanessaDebugClientStore } from './vanessaDebugClients';
+import { VanessaInfobaseClients, getVanessaInfobaseConnection } from './vanessaInfobaseClients';
+import { handleVanessaInfobaseClientMessage } from './vanessaInfobaseClientCommands';
+import { connectInfobaseClient } from './vanessaInfobaseLaunch';
 import { registerVanessaVariableCommands } from './vanessaControlVariableCommands';
 import { registerVanessaControlCommands } from './vanessaControlCommands';
 import { registerVanessaBreakpointCommands } from './vanessaControlBreakpointCommands';
@@ -773,12 +777,11 @@ async function collectAllYamlSourceDirectoryScenarioUris(): Promise<vscode.Uri[]
     return Array.from(uriByKey.values());
 }
 
-function isMainScenarioDocument(document: vscode.TextDocument | undefined): boolean {
+function isMainScenarioDocument(document: vscode.TextDocument | undefined, scenario?: TestInfo): boolean {
     if (!document || !isScenarioYamlFile(document)) {
         return false;
     }
-    const projected = projectedProjectScenario(document);
-    return projected ? !!projected.tabName?.trim() : parsePhaseSwitcherMetadata(document.getText()).hasTab;
+    return scenario?.hasTestSettings === true;
 }
 
 function parseScenarioNameFromDocumentText(documentText: string): string | null {
@@ -928,18 +931,49 @@ export async function activate(context: vscode.ExtensionContext) {
     const loadInfobaseManagerPanel = createDeferredResourceLoader(
         async () => {
             const { InfobaseManagerPanel } = await import('./infobaseManagerPanel.js');
-            return new InfobaseManagerPanel(context, managedInfobaseService);
+            return new InfobaseManagerPanel(context, managedInfobaseService, {
+                service: vanessaInfobaseClients,
+                handle: (infobase, message) => handleVanessaInfobaseClientMessage(vanessaInfobaseClients, infobase, message, {
+                    input: options => Promise.resolve(vscode.window.showInputBox({ ...options, title: vscode.l10n.t(options.title),
+                        prompt: vscode.l10n.t('Leave empty to clear the saved value.'), ignoreFocusOut: true })),
+                    confirmReplace: async (local, remote) => {
+                        const replace = vscode.l10n.t('Replace Vanessa profile');
+                        return await vscode.window.showWarningMessage(vscode.l10n.t('Replace Vanessa profile "{0}" with saved client "{1}"?', remote, local),
+                            { modal: true }, replace) === replace;
+                    },
+                    connectManager: async () => { await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.connect'); }
+                })
+            });
         },
         panel => context.subscriptions.push(panel)
     );
     // --- Регистрация Провайдера для Webview (Test Manager) ---
     const phaseSwitcherProvider = new PhaseSwitcherProvider(context.extensionUri, context);
     const vanessaControl = registerVanessaControl(context, {
-        launch: port => phaseSwitcherProvider.openVanessaManagedControl(port)
+        launch: port => phaseSwitcherProvider.openVanessaManagedControl(port),
+        autoLaunch: port => phaseSwitcherProvider.openVanessaManagedControl(port, true),
+        managedRunLog: port => phaseSwitcherProvider.managedVanessaRunLog(port),
+        attachedRunLog: endpoint => phaseSwitcherProvider.attachedVanessaRunLog(endpoint),
+        trackRun: (file, log) => phaseSwitcherProvider.trackVanessaFeatureRun(file, log),
+        canAutoStart: () => phaseSwitcherProvider.canAutoStartVanessaManagedControl()
     });
     const vanessaControlSession = vanessaControl.session;
+    const publishVanessaConnection = () => phaseSwitcherProvider.updateVanessaControlState({
+        connected: !!vanessaControlSession.snapshot.capabilities && vanessaControlSession.snapshot.status !== 'unknown',
+        busy: vanessaControlSession.snapshot.status === 'connecting'
+    });
+    context.subscriptions.push(vanessaControlSession.onDidChange(publishVanessaConnection));
+    publishVanessaConnection();
+    const vanessaInfobaseClients = new VanessaInfobaseClients({
+        store: new VanessaDebugClientStore(context.workspaceState, context.secrets),
+        autoAdd: () => vscode.workspace.getConfiguration('kotTestToolkit.vanessaControl').get<boolean>('autoAddSavedClients', true),
+        connection: () => getVanessaInfobaseConnection(vanessaControlSession.snapshot, vanessaControlSession.busy),
+        run: (work, generation) => vanessaControlSession.withTestClientControl(work, () => vanessaControlSession.snapshot.generation === generation)
+    });
+    context.subscriptions.push(vanessaInfobaseClients, vanessaControlSession.onDidChange(() => vanessaInfobaseClients.connectionChanged()));
     phaseSwitcherProvider.attachVanessaManagedRunner(request => vanessaControl.runFeature(request));
-    registerVanessaClientCommands(context, vanessaControlSession, () => phaseSwitcherProvider.configureVanessaDebugClients());
+    registerVanessaClientCommands(context, vanessaControlSession, () => phaseSwitcherProvider.configureVanessaDebugClients(),
+        async path => { await (await loadInfobaseManagerPanel()).open(path, true); });
     registerVanessaVariableCommands(context, vanessaControlSession);
     registerVanessaFormToolCommands(context, vanessaControlSession, vanessaControl.ensureConnected);
     registerVanessaAuthoringCommands(context, vanessaControlSession, vanessaControl.ensureConnected, async text => {
@@ -952,6 +986,7 @@ export async function activate(context: vscode.ExtensionContext) {
     });
     registerVanessaDiagnosticsCommands(context, vanessaControlSession, vanessaControl.ensureConnected);
     const vanessaFormSource = new VanessaFormExplorerSource({
+        completionEnabled: () => vscode.workspace.isTrusted !== false && vscode.workspace.getConfiguration('kotTestToolkit.vanessaControl').get<boolean>('formCompletions', true),
         snapshot: () => ({ generation: vanessaControlSession.snapshot.generation, ready: vanessaControlSession.snapshot.status === 'ready', busy: vanessaControlSession.busy,
             windowsSupported: !!vanessaControlSession.snapshot.capabilities?.formWindows.supported && !!vanessaControlSession.snapshot.capabilities?.formActivateWindow.supported,
             supported: !!vanessaControlSession.snapshot.capabilities?.formTree.supported && !!vanessaControlSession.snapshot.capabilities?.formWindow.supported && !!vanessaControlSession.snapshot.capabilities?.clientProfilesRead.supported }),
@@ -962,7 +997,7 @@ export async function activate(context: vscode.ExtensionContext) {
         vanessaControlSession.onDidChange(() => vanessaFormSource.sessionChanged()));
     const vanessaBreakpointMarkers = new VanessaBreakpointMarkers();
     const vanessaYamlControl = createVanessaYamlControl(context, vanessaControlSession, () => phaseSwitcherProvider.loadVanessaYamlControlBuild(), vanessaBreakpointMarkers);
-    registerVanessaControlCommands(context, vanessaControlSession, vanessaYamlControl, vanessaControl.ensureConnected);
+    registerVanessaControlCommands(context, vanessaControlSession, vanessaYamlControl, vanessaControl.ensureConnected, file => phaseSwitcherProvider.trackVanessaFeatureRun(file, vanessaControl.runLogPath()));
     registerVanessaBreakpointCommands(context, vanessaControlSession, vanessaYamlControl, vanessaBreakpointMarkers);
     const standaloneFeatureService = StandaloneFeatureService.getInstance(context);
     watchProjectLibrary(context, () => {
@@ -1003,7 +1038,8 @@ export async function activate(context: vscode.ExtensionContext) {
             document &&
             phaseSwitcherProvider.isScenarioUriInFavorites(document.uri)
         );
-        const isMainScenario = !!(isScenario && document && isMainScenarioDocument(document));
+        const isMainScenario = !!(isScenario && document && isMainScenarioDocument(document,
+            phaseSwitcherProvider.getScenarioCatalog()?.byUri.get(document.uri.toString())));
 
         await Promise.all([
             vscode.commands.executeCommand('setContext', 'kotTestToolkit.activeScenarioInFavorites', isInFavorites),
@@ -1044,7 +1080,8 @@ export async function activate(context: vscode.ExtensionContext) {
                 const picked = await vscode.window.showQuickPick([
                     { label: t('Main scenario'), command: 'kotTestToolkit.createMainScenario' },
                     { label: t('Feature file'), command: 'kotTestToolkit.createFeature' },
-                    { label: t('Process'), command: 'kotTestToolkit.createProcess' },
+                    { label: t('Main process'), command: 'kotTestToolkit.createProcess' },
+                    { label: t('Nested process'), command: 'kotTestToolkit.createNestedProcess' },
                     { label: t('Nested scenario'), command: 'kotTestToolkit.createNestedScenario' },
                     { label: t('Export scenario'), command: 'kotTestToolkit.createExportScenario' },
                     { label: t('User step'), command: 'kotTestToolkit.createUserStep' }
@@ -1279,7 +1316,7 @@ export async function activate(context: vscode.ExtensionContext) {
             return renameExportScenario(definition.id, uri, projectDefinitionResolver, projectDefinitionReferenceService);
         }
     }));
-    phaseSwitcherProvider.setDefinitionDeletionReferenceServices({
+    phaseSwitcherProvider.setDefinitionReferenceServices({
         resolver: projectDefinitionResolver, references: projectDefinitionReferenceService
     });
     const actionService = new StepLibraryActionService({
@@ -1447,6 +1484,8 @@ export async function activate(context: vscode.ExtensionContext) {
         refreshDefinitions: refreshStepDefinitions
     });
     const infobaseSidebarProvider = new InfobaseSidebarProvider({
+        clients: vanessaInfobaseClients,
+        connectVanessa: async () => { await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.connect'); },
         extensionUri: context.extensionUri,
         managedInfobaseService,
         runtimeTracker: managedInfobaseRuntimeTracker,
@@ -1747,7 +1786,7 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(scenarioSyntaxHighlightProvider);
     context.subscriptions.push(
         vscode.languages.registerDocumentSemanticTokensProvider(
-            { pattern: '**/*.yaml', scheme: 'file' },
+            [{ pattern: '**/*.yaml', scheme: 'file' }, { pattern: '**/scen.feature', scheme: 'file' }],
             scenarioSyntaxHighlightProvider,
             ScenarioSyntaxHighlightProvider.legend
         )
@@ -2096,9 +2135,46 @@ export async function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.runFeature', async (target?: vscode.Uri) => {
             const uri = target instanceof vscode.Uri ? target : vscode.window.activeTextEditor?.document.uri;
             if (!uri) { return; }
-            await phaseSwitcherProvider.runStandaloneFeature(uri.toString());
+            await phaseSwitcherProvider.runTestFromSource(uri);
         }
     ));
+    context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.convertScenarioFormat', async (target?: vscode.Uri) => {
+        const { handleConvertScenarioFormat } = await import('./spprScenarioFiles.js');
+        return handleConvertScenarioFormat(target instanceof vscode.Uri ? target : undefined);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.convertScenarioRole', async (target?: vscode.Uri, main?: boolean) => {
+        const { handleConvertScenarioRole } = await import('./scenarioTestRoleCommands.js');
+        return handleConvertScenarioRole(context, target instanceof vscode.Uri ? target : undefined, main);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.convertCallableScenario', async (target?: vscode.Uri, line?: number) => {
+        const { handleConvertCallableScenario } = await import('./scenarioCallableCommands.js');
+        const { YamlParametersManager } = await import('./yamlParametersManager.js');
+        const manager = YamlParametersManager.getInstance(context);
+        const profile = await manager.loadActiveProfileSnapshot();
+        return handleConvertCallableScenario({ resolver: projectDefinitionResolver, references: projectDefinitionReferenceService,
+            catalog: () => phaseSwitcherProvider.getScenarioCatalog(), loadLibraryRoots: resource => loadExportScenarioLibraryRoots(context, resource),
+            listLibraryFeatureUris: async resource => [...(await projectDefinitionIndex.ensureReady(resource)).files.keys()],
+            withLibraryFolder: async (resource, folder, operation) => {
+                const workspace = vscode.workspace.getWorkspaceFolder(vscode.Uri.parse(resource));
+                if (!workspace) { throw new Error(vscode.l10n.t('Open the scenario in a project before converting it to an export library.')); }
+                await manager.withProjectLibraryFolder(profile.id, workspace.uri.fsPath, folder, operation);
+            },
+            scenarioRoots: () => (vscode.workspace.workspaceFolders ?? []).map(folder => resolveScenarioScanRootFsPath(folder.uri)),
+            sourceForGenerated: uri => phaseSwitcherProvider.findSourceForCompiledFeature(uri),
+            refresh: async changedSourceUris => {
+                await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcher', {
+                    refreshCache: true, changedSourceUris: changedSourceUris?.map(uri => uri.toString())
+                });
+            } }, target instanceof vscode.Uri ? target : undefined, typeof line === 'number' ? line : undefined);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.convertScenario', async (target?: vscode.Uri, line?: number) => {
+        const { showScenarioConversions } = await import('./scenarioTestRoleCommands.js');
+        return showScenarioConversions(context, target instanceof vscode.Uri ? target : undefined, line);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.createNestedProcess', async (seed?: unknown) => {
+        const { handleCreateProcess } = await import('./processCreator.js');
+        return handleCreateProcess(context, seed, 'nested');
+    }));
     context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.runTestFromSource', async (target?: vscode.Uri) => {
         const uri = target instanceof vscode.Uri ? target : vscode.window.activeTextEditor?.document.uri;
         if (uri) { await phaseSwitcherProvider.runTestFromSource(uri); }
@@ -2248,14 +2324,15 @@ export async function activate(context: vscode.ExtensionContext) {
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.refreshPhaseSwitcher',
-        async (options?: { refreshCache?: boolean }) => {
+        async (options?: { refreshCache?: boolean; changedSourceUris?: readonly string[] }) => {
             const refreshCache = options?.refreshCache !== false;
             if (refreshCache) {
                 await projectDefinitionIndex.reloadConfigurations();
                 await projectDefinitionIndex.waitForIdle();
             }
             await phaseSwitcherProvider.refreshFromExternalStateChange({
-                refreshCache
+                refreshCache,
+                changedSourceUris: options?.changedSourceUris?.map(value => vscode.Uri.parse(value)).filter(uri => uri.scheme === 'file')
             });
         }
     ));
@@ -2526,9 +2603,29 @@ export async function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.openFormExplorerForInfobase',
         async (options?: string | StartFormExplorerBridgeCommandOptions) => {
             const panel = await loadFormExplorerPanel();
-            await panel.openAndStart(options);
+            const base = typeof options === 'string' ? options : options?.preferredInfobasePath;
+            if (base && vscode.workspace.getConfiguration('kotTestToolkit.formExplorer').get<string>('source', 'auto') !== 'snapshot') {
+                if (await launchInfobaseClient(base)) { await panel.openConnectedClient(); }
+            } else { await panel.openAndStart(options); }
         }
     ));
+
+    const launchInfobaseClient = async (base: string): Promise<boolean> => {
+        try {
+            return await connectInfobaseClient(base, {
+                clients: vanessaInfobaseClients,
+                connectManager: async () => { await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.connect'); },
+                configure: async path => { await (await loadInfobaseManagerPanel()).open(path, true); },
+                pick: async rows => (await vscode.window.showQuickPick([
+                    ...rows.map(row => ({ label: row.name, description: row.username || vscode.l10n.t('Default user'), id: row.id })),
+                    { label: vscode.l10n.t('Configure test clients…'), id: 'configure' }
+                ], { title: vscode.l10n.t('Select a test client for this infobase'), ignoreFocusOut: true }))?.id
+            });
+        } catch { void vscode.window.showErrorMessage(vscode.l10n.t('Could not connect the selected test client. Check its settings in Infobase Manager.')); return false; }
+    };
+    context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.openVanessaForInfobase', async (base?: unknown) => {
+        if (typeof base === 'string' && base.trim()) { await launchInfobaseClient(base); }
+    }));
 
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.generateFormExplorerExtension',
@@ -3264,9 +3361,41 @@ export async function activate(context: vscode.ExtensionContext) {
         void vscode.window.showErrorMessage(vscode.l10n.t('Could not initialize project catalog settings: {0}', String(error)));
     });
 
+    const { NativeSpprScenarioSynchronizer } = await import('./spprScenarioSync.js');
+    const nativeSpprSync = new NativeSpprScenarioSynchronizer<vscode.TextDocument>({
+        resolve: async document => {
+            if (!/(?:^|[\\/])(?:meta\.yaml|scen\.feature)$/u.test(document.fileName)) { return; }
+            const source = await (await import('./spprScenarioFiles.js')).resolveScenarioSourceUris(document.uri);
+            return source?.format === 'native' ? vscode.workspace.openTextDocument(source.metadataUri) : undefined;
+        },
+        read: async document => (await import('./spprScenarioFiles.js')).readScenarioSource(document.uri),
+        enabled: () => { const config = vscode.workspace.getConfiguration('kotTestToolkit'); return {
+            nested: config.get<boolean>('editor.autoFillNestedScenariosOnSave', true),
+            parameters: config.get<boolean>('editor.autoFillScenarioParametersOnSave', true) }; },
+        needsNested: shouldRefillNestedScenariosSection, needsParameters: shouldRefillScenarioParametersSection,
+        fillNested: async document => clearAndFillNestedScenarios(document, true, phaseSwitcherProvider.getScenarioCatalog() || await phaseSwitcherProvider.ensureFreshScenarioCatalog()),
+        fillParameters: document => clearAndFillScenarioParameters(document, true),
+        changed: document => { phaseSwitcherProvider.upsertScenarioCacheEntryFromDocument(document); }
+    });
+
     // Добавляем автоматические операции после сохранения YAML файлов
     context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument(async (document) => {
+            if (/(?:^|[\\/])scen\.yaml$/u.test(document.fileName) && !document.isDirty
+                && vscode.workspace.getConfiguration('kotTestToolkit', document.uri).get<boolean>('editor.autoMigrateScenarioYamlOnSave', false)) {
+                const { shouldAutoMigrateScenario } = await import('./spprScenarioFormat.js');
+                if (shouldAutoMigrateScenario(document.fileName, document.getText(), true)) {
+                    const result = await (await import('./spprScenarioFiles.js')).handleConvertScenarioFormat(document.uri, 'native', true);
+                    if (result) {
+                        await nativeSpprSync.onSave(await vscode.workspace.openTextDocument(vscode.Uri.parse(result.sourceUri)));
+                        return;
+                    }
+                }
+            }
+            if (/(?:^|[\\/])(?:meta\.yaml|scen\.feature)$/u.test(document.fileName)) {
+                try { if (await nativeSpprSync.onSave(document)) { return; } }
+                catch (error) { console.error('[SPPR] Native metadata synchronization failed:', error); void vscode.window.showErrorMessage(vscode.l10n.t('Could not synchronize SPPR metadata: {0}', error instanceof Error ? error.message : String(error))); return; }
+            }
             // Проверяем, что это YAML файл сценария
             if (document.languageId === 'yaml' || document.fileName.toLowerCase().endsWith('.yaml')) {
                 if (!isScenarioYamlFile(document)) {
@@ -3700,6 +3829,16 @@ function updateScenarioBracketParameterDecorationForEditor(
     decorationType: vscode.TextEditorDecorationType
 ): void {
     const document = editor.document;
+    if (/(?:^|[\\/])scen\.feature$/u.test(document.fileName)) {
+        const version = document.version;
+        void import('./spprScenarioFiles.js').then(async source => {
+            const metadata = await source.readNativeScenarioMetadata(document.uri);
+            if (editor.document === document && !document.isClosed && document.version === version) {
+                editor.setDecorations(decorationType, metadata ? collectScenarioBracketParameterRanges(document, true) : []);
+            }
+        }).catch(() => { /* A closing/removed pair will be refreshed by the next editor event. */ });
+        return;
+    }
     if (!isScenarioYamlFile(document)) {
         editor.setDecorations(decorationType, []);
         return;
@@ -3735,7 +3874,7 @@ async function foldSectionsInEditor(editor: vscode.TextEditor | undefined) {
     if (!/\.ya?ml$/iu.test(document.fileName) || (!isScenarioYamlFile(document) && !isProcessYamlFile(document))) { return; }
     await new Promise(resolve => setTimeout(resolve, 100));
     if (document.isClosed || vscode.window.activeTextEditor?.document !== document) { return; }
-    const selectionLines = scenarioDefaultFoldLines(document.getText());
+    const selectionLines = scenarioDefaultFoldLines(document.getText(), document.fileName);
     if (selectionLines.length) {
         await vscode.commands.executeCommand('editor.fold', { levels: 1, direction: 'down', selectionLines });
     }

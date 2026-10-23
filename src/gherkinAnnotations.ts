@@ -101,8 +101,9 @@ function scan(source: GherkinAnnotationSource): Scan | undefined {
         }
         if (/^(?:Variables|Hyperlinks|Links|Переменные|Гиперссылки|Ссылки|Rule|Правило)\s*:/iu.test(text)) { line.kind = 'other'; }
         if (!line.kind && keywords.some(vocabulary => vocabulary.steps.some(word => text.replace(/^\*\s*/u, '').toLocaleLowerCase().startsWith(`${word.toLocaleLowerCase()} `)))) { line.kind = 'step'; }
+        if (!line.kind && /^(?:(?:Try|Except|Else|Попытка|Исключение|Иначе)\s*$|ElseIf\s+.+\s+Then\s*$|ИначеЕсли\s+.+\s+Тогда\s*$)/iu.test(text)) { line.kind = 'step'; }
         if (!line.kind && yaml && /^Do While\s/iu.test(text)) { line.kind = 'step'; }
-        if (!line.kind && /^\*\s+\S/u.test(text)) { line.kind = 'group'; }
+        if (!line.kind && /^\*\s*\S/u.test(text)) { line.kind = 'group'; }
     }
     if (!yaml && !allowed.some(line => line.kind === 'feature')) { return undefined; }
     return { lines: allowed, yaml, blockLine, minimumIndent, language, eol: source.text.includes('\r\n') ? '\r\n' : '\n' };

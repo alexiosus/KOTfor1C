@@ -79,6 +79,8 @@ test('locks only conflicting actions for the affected infobase', () => {
 
     assert.equal(protocol.actionEnabled({ id: 'one', running: true }, 'openEnterprise'), true);
     assert.equal(protocol.actionEnabled({ id: 'one', running: true }, 'openFormExplorer'), true);
+    assert.equal(protocol.actionEnabled({ id: 'one', running: true }, 'vanessaClients'), true);
+    assert.equal(protocol.actionEnabled({ id: 'one', running: true }, 'vanessaClients', 'importDt'), true);
     assert.equal(protocol.actionEnabled({ id: 'one', running: true }, 'updateConfiguration'), false);
     assert.equal(protocol.actionEnabled({ id: 'one', running: true }, 'exportDt'), false);
     assert.equal(protocol.actionEnabled({ id: 'one', running: true }, 'logs'), true);

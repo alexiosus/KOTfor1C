@@ -1,0 +1,48 @@
+.v-clients { padding: 12px 0; scroll-margin-top: 12px; }
+.v-client-group { border: 1px solid var(--ib-border); border-radius: 4px; background: var(--ib-surface-1); }
+.v-client-heading { display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; list-style: none; }
+.v-client-heading::-webkit-details-marker { display: none; }
+.v-client-title { font-weight: 600; flex: 1; }
+.v-client-disclosure { color: var(--ib-muted); }
+.v-client-group[open] > summary .v-client-disclosure { transform: rotate(90deg); }
+.v-client-heading .v-client-toolbar { display: flex; gap: 3px; margin-left: auto; }
+.v-client-body { padding: 0 10px 10px; border-top: 1px solid var(--ib-border); }
+.v-client-hint { color: var(--ib-muted); margin: 10px 0; line-height: 1.5; }
+.v-client-row { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(110px, .8fr) auto; align-items: center; gap: 12px; min-width: 0; padding: 10px 4px; border-bottom: 1px solid var(--ib-border); }
+.v-client-row:last-child { border-bottom: 0; }
+.v-client-row:hover { background: var(--vscode-list-hoverBackground); }
+.v-client-copy, .v-client-runtime { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow: hidden; }
+.v-client-copy .infobase-item-name, .v-client-copy .infobase-item-path { display: block; max-width: 100%; min-width: 0; }
+.v-client-meta { color: var(--ib-muted); font-size: .9em; overflow-wrap: anywhere; }
+.v-client-state { font-size: .9em; }
+.v-client-state.is-connected { color: var(--ib-good); }
+.v-client-state.is-conflict { color: var(--ib-warning); }
+.v-client-actions, .v-client-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.v-client-icon { padding: 5px; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.v-client-row .v-client-icon { opacity: 0; }
+.v-client-row:hover .v-client-icon, .v-client-row:focus-within .v-client-icon { opacity: 1; }
+.v-client-icon:hover { background: var(--vscode-toolbar-hoverBackground); }
+.v-client-icon:disabled { opacity: .3; cursor: default; }
+.v-client-editor { margin-top: 10px; padding: 12px; border-top: 1px solid var(--ib-border); background: var(--ib-surface-0); }
+.v-client-form { display: flex; flex-direction: column; gap: 14px; }
+.v-client-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.v-client-fields label { display: flex; flex-direction: column; gap: 6px; min-width: 0; color: var(--ib-muted); }
+.v-client-fields input, .v-client-fields select { box-sizing: border-box; width: 100%; min-width: 0; padding: 6px 8px; font: inherit; border: 1px solid var(--vscode-input-border, var(--ib-border)); border-radius: 3px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
+.v-client-fields input:focus, .v-client-fields select:focus { outline: 1px solid var(--vscode-focusBorder); }
+.v-client-form summary { cursor: pointer; color: var(--ib-muted); margin-bottom: 8px; }
+.v-client-error { color: var(--ib-danger); line-height: 1.5; }
+@media (max-width: 800px) {
+ .v-client-row { grid-template-columns: minmax(110px, 1fr) minmax(110px, .8fr); }
+ .v-client-actions { grid-column: 1 / -1; }
+ .v-client-row .v-client-icon { opacity: 1; }
+}
+
+.v-client-identity { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.v-client-identity > label:first-child { grid-column: 1 / -1; }
+
+.v-client-actions { display: grid; grid-template-columns: auto 156px 80px; justify-content: end; flex-wrap: nowrap; }
+.v-client-connect-slot > button { box-sizing: border-box; width: 100%; white-space: nowrap; justify-content: center; }
+.v-client-tools-slot { display: flex; width: 80px; justify-content: flex-end; visibility: hidden; }
+.v-client-row:hover .v-client-tools-slot, .v-client-row:focus-within .v-client-tools-slot { visibility: visible; }
+.v-client-add-slot:empty { display: block; }
+@media (max-width: 800px) { .v-client-actions { justify-self: end; } }

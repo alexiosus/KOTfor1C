@@ -30,19 +30,25 @@ test('manager pane dividers are accessible siblings between their two panes', ()
     }
 });
 
-test('selected-infobase actions are grouped by purpose without losing or duplicating commands', () => {
+test('selected-infobase actions are grouped by purpose without losing or duplicating commands', async () => {
     const source = read('src/infobaseManagerPanel.ts');
-    const grid = parse(source.slice(source.indexOf('<div class="action-grid">'), source.indexOf('<div class="chip-row">')));
+    const ts = require('typescript') as typeof import('typescript'); const module = { exports: {} as any };
+    vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
+        { module, exports: module.exports, require: (name: string) => name === 'vscode' ? { Uri: { joinPath: (_base: unknown, ...parts: string[]) => parts.join('/') } } : name === './localization' ? { getTranslator: async () => (text: string) => text } : {} });
+    const panel = Object.create(module.exports.InfobaseManagerPanel.prototype); panel.context = { extensionUri: {} }; panel.buildState = () => ({});
+    const markup = await panel.getWebviewHtml({ asWebviewUri: (value: string) => value, cspSource: 'self' });
+    const grid = parse(markup).querySelector('.action-grid')!;
     const expected = {
-        launch: ['openEnterprise', 'openDesigner', 'startFormExplorer'],
-        data: ['restoreDt', 'restoreFromTemplate', 'exportDt', 'copyBase', 'recreate'],
-        configuration: ['updateFromTemplate', 'updateConfig', 'saveCf'],
+        launch: ['openEnterprise', 'startVanessa', 'openDesigner', 'startFormExplorer'],
+        data: ['restoreDt', 'exportDt', 'restoreFromTemplate', 'copyBase', 'recreate'],
+        configuration: ['updateConfig', 'saveCf', 'updateFromTemplate'],
         management: ['editBase', 'revealFolder', 'showLogs', 'addToLauncher', 'removeFromLauncher', 'forgetManual', 'toggleHidden']
     };
     for (const [category, commands] of Object.entries(expected)) {
         const group = grid.querySelector(`.action-category[data-category="${category}"]`);
         assert.ok(group, category);
         assert.ok(group.querySelector('.action-category-title'));
+        if (category !== 'management') { assert.equal(group.querySelectorAll('.action-category-buttons > button').length, 2); assert.ok(group.querySelector('.action-category-menu')); }
         assert.deepEqual(group.querySelectorAll('[data-command]').map(button => button.getAttribute('data-command')), commands);
     }
     const commands = grid.querySelectorAll('[data-command]');
@@ -92,7 +98,7 @@ test('infobase list rows omit activity and registration status while keeping pat
     class Element { static [Symbol.hasInstance](value: unknown) { return Boolean(value); } }
     const render = runFunction(read('media/infobaseManager.js'), 'renderList', 'measureSectionBodyHeight', {
         HTMLElement: Element, refs, getVisibleInfobases: () => [{ displayName: 'Demo', infobasePath: '/demo', state: 'ready', hidden: true }],
-        matchesSearch: () => true, isManualDragEnabled: () => false, state: {}, loc: {}, escapeHtml: String,
+        matchesSearch: () => true, isManualDragEnabled: () => false, state: {}, uiState: {}, lastListSignature: undefined, loc: {}, escapeHtml: String,
         getStateLabel: () => 'Ready', getLastActivity: () => '', syncAutoScrollText() {}
     });
     render();

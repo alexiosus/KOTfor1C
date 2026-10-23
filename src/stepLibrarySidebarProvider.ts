@@ -51,7 +51,7 @@ export type StepLibrarySidebarMessage =
     | { readonly command: 'search'; readonly query: string }
     | { readonly command: 'insert'; readonly itemId: string }
     | { readonly command: 'copy'; readonly itemId: string }
-    | { readonly command: 'openDefinition' | 'openScenarioProperties'; readonly itemId: string }
+    | { readonly command: 'openDefinition' | 'openScenarioProperties' | 'convertFormat'; readonly itemId: string }
     | { readonly command: 'rename'; readonly itemId: string }
     | { readonly command: 'renameMainGroup'; readonly itemId: string }
     | { readonly command: 'deleteDefinition'; readonly itemId: string }
@@ -138,6 +138,7 @@ export function parseStepLibrarySidebarMessage(value: unknown): StepLibrarySideb
         || record.command === 'copy'
         || record.command === 'openDefinition'
         || record.command === 'openScenarioProperties'
+        || record.command === 'convertFormat'
         || record.command === 'rename'
         || record.command === 'renameMainGroup'
         || record.command === 'deleteDefinition'
@@ -341,6 +342,9 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
             case 'copy':
                 await this.runItemAction(message.itemId, 'copy');
                 return;
+            case 'convertFormat':
+                await this.runItemAction(message.itemId, 'convertFormat');
+                break;
             case 'openScenarioProperties':
                 await this.runItemAction(message.itemId, 'openScenarioProperties');
                 return;
@@ -441,7 +445,7 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
         }
     }
 
-    private async runItemAction(itemId: string, action: 'insert' | 'copy' | 'openDefinition' | 'openScenarioProperties' | 'rename' | 'renameMainGroup' | 'deleteDefinition'): Promise<void> {
+    private async runItemAction(itemId: string, action: 'insert' | 'copy' | 'openDefinition' | 'openScenarioProperties' | 'convertFormat' | 'rename' | 'renameMainGroup' | 'deleteDefinition'): Promise<void> {
         const item = this.index?.getItem(itemId);
         const actionKey = `${action}\0${itemId}`;
         if (!item || this.pendingActions.has(actionKey)) {
@@ -453,6 +457,8 @@ export class StepLibrarySidebarProvider implements vscode.WebviewViewProvider, v
                 ? await this.services.actionService.insert(item, this.resource)
                 : action === 'copy'
                     ? await this.services.actionService.copy(item)
+                    : action === 'convertFormat'
+                        ? await this.services.actionService.convertFormat(item, this.resource, async (uri, line) => { await vscode.commands.executeCommand('kotTestToolkit.convertScenario', vscode.Uri.parse(uri), line); })
                     : action === 'openScenarioProperties'
                         ? await this.services.actionService.openScenarioProperties(item, this.resource,
                             async uri => { await vscode.commands.executeCommand('kotTestToolkit.openScenarioEditor', vscode.Uri.parse(uri)); })

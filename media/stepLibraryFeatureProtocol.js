@@ -15,7 +15,7 @@
         selectJson: 'Select launch JSON', openJson: 'Open launch JSON',
         moveFeature: 'Move feature', moveUp: 'Move up', moveDown: 'Move down', actions: 'Feature actions',
         renameScenario: 'Rename scenario', renameMainGroup: 'Rename group', scenarioActions: 'Scenario actions', deleteDefinition: 'Delete',
-        renameProcess: 'Rename process', processActions: 'Process actions', openScenarioProperties: 'Open test properties'
+        renameProcess: 'Rename process', processActions: 'Process actions', openScenarioProperties: 'Open test properties', convertFormat: 'Conversions…'
     };
 
     function createController(options) {
@@ -38,7 +38,7 @@
             return (canRename(node) || Boolean(node?.featureId)) && typeof uri === 'string' && /^file:.*\.(?:ya?ml|feature)$/iu.test(uri);
         }
         function send(action, node, extra) {
-            if (['toggleFavorite', 'insert', 'copy', 'openDefinition', 'openScenarioProperties', 'deleteDefinition'].includes(action) && (node?.itemId || node?.id)) {
+            if (['toggleFavorite', 'insert', 'copy', 'openDefinition', 'openScenarioProperties', 'convertFormat', 'deleteDefinition'].includes(action) && (node?.itemId || node?.id)) {
                 if (action === 'deleteDefinition' && !canDelete(node)) { return; }
                 if (options.runItemAction) { options.runItemAction(action, node); }
                 else { options.postMessage({ command: action, itemId: node.itemId || node.id }); }
@@ -73,7 +73,7 @@
         function actions(node) {
             if (canRenameGroup(node)) { return ['renameMainGroup']; }
             const itemActions = [...(options.getItemActions?.(node) || []), ...(canDelete(node) ? ['deleteDefinition'] : [])];
-            if (canRename(node)) { return [...itemActions, ...(canOpenProperties(node) ? ['openScenarioProperties'] : []), 'renameScenario']; }
+            if (canRename(node)) { return [...itemActions, ...(canOpenProperties(node) ? ['openScenarioProperties'] : []), ...(/\.(?:ya?ml|feature)$/iu.test(node.scenarioPropertiesUri || node.sourceUri || node.uri || node.capturedLocation?.uri || '') ? ['convertFormat'] : []), 'renameScenario']; }
             if (node.featureId) {
                 return [...itemActions, ...(canOpenProperties(node) ? ['openScenarioProperties'] : []), ...(itemActions.some(action => action.id === 'openDefinition') ? [] : ['openFeature']),
                     'renameFeature', 'renameFeatureFile', 'generateJson', 'selectJson', 'openJson', 'moveFeature', 'moveUp', 'moveDown'];

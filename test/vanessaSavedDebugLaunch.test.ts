@@ -29,16 +29,19 @@ function fixture(t: TestContext) {
     const processHost = { spawn: (..._args: unknown[]): unknown => assert.fail('Do not run 1C in tests') };
     let platformSelections = 0; let startupPreparations = 0;
     const vscode = {
+        ProgressLocation: { Notification: 15 },
         EventEmitter: class {}, Uri: { file: (value: string) => ({ fsPath: value, scheme: 'file', toString: () => `file://${value}` }) },
         workspace: {
             workspaceFolders: [{ uri: { fsPath: root } }],
             getConfiguration: () => ({ get: (key: string) => key === 'runVanessa.vanessaEpfPath' ? epf : undefined })
         },
         window: {
+            withProgress: async (_options: unknown, work: () => Promise<unknown>) => work(),
             showQuickPick: async () => undefined,
             showInputBox: async () => assert.fail('A saved debug set must not prompt for credentials'),
             showErrorMessage: async (message: string) => { notices.push(message); },
-            showInformationMessage: async (message: string) => { notices.push(message); }
+            showInformationMessage: async (message: string) => { notices.push(message); },
+            showWarningMessage: async (_message: string, ..._options: unknown[]): Promise<string | undefined> => undefined
         }
     };
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
@@ -62,6 +65,7 @@ function fixture(t: TestContext) {
             if (name === './processCommandDisplay') { return processCommandDisplay; }
             if (name === './deferredLoader') { return { createDeferredLoader: (factory: unknown) => factory }; }
             if (name === './oneCPlatform.js') { return { resolveOneCPlatformForLaunch: async () => { platformSelections++; return { clientExePath: executable }; } }; }
+            if (name === './startupInfobase.js') { return { ensureSharedStartupInfobaseMcpReady: async () => undefined }; }
             if (name === './infobaseManager.js') { return { updateManagedInfobaseMetadata: async () => undefined }; }
             return {};
         }
@@ -95,7 +99,7 @@ function fixture(t: TestContext) {
         assert.ok(value); return value;
     };
     return { root, provider, store, saved, launched, notices, output, state, secrets, runtimePath,
-        processHost, realDetached: module.exports.PhaseSwitcherProvider.prototype.execute1CProcessDetached.bind(provider),
+        processHost, window: vscode.window, realDetached: module.exports.PhaseSwitcherProvider.prototype.execute1CProcessDetached.bind(provider),
         preparations: () => ({ platformSelections, startupPreparations }) };
 }
 
@@ -122,6 +126,28 @@ test('general Debug applies a saved multi-client set and removes its private par
     await new Promise<void>(resolve => setImmediate(resolve));
     for (let attempt = 0; fs.existsSync(runtimePath) && attempt < 10; attempt++) { await new Promise<void>(resolve => setTimeout(resolve, 5)); }
     assert.equal(fs.existsSync(runtimePath), false);
+});
+
+test('Connect managed Vanessa does not ask for or apply the legacy saved Debug clients', async t => {
+    const f = fixture(t); await f.store.save(f.saved);
+    f.provider.resolveVanessaDebugClientsForLaunch = () => assert.fail('Connect must not configure or apply saved Debug clients');
+    assert.equal(await f.provider.openVanessaManagedControl(9876), true);
+    const json = JSON.parse(fs.readFileSync(f.runtimePath(), 'utf8'));
+    assert.equal(json.ExecuteScenarios, false); assert.equal(json.TestClient, undefined);
+});
+
+test('re-entered clients recover missing secrets only after explicit whole-catalog replacement confirmation', async t => {
+    const f = fixture(t); await f.store.save(f.saved); f.secrets.clear();
+    const original = JSON.stringify([...f.state]);
+    const entered = { mode: 'clients', clients: [f.saved.clients[0]] };
+    f.provider.editVanessaDebugClients = async () => entered;
+    await f.provider.configureVanessaDebugClients();
+    assert.equal(JSON.stringify([...f.state]), original, 'cancel must preserve unavailable local identities');
+    f.window.showWarningMessage = async (_message, ...options) => options.includes('Replace unavailable saved catalog') ? 'Replace unavailable saved catalog' : undefined;
+    await f.provider.configureVanessaDebugClients();
+    assert.deepEqual(await f.store.load(), entered);
+    assert.equal((await f.store.loadCatalog()).length, 1);
+    assert.deepEqual(f.launched, []);
 });
 
 test('standalone feature Debug targets the authored feature in a runtime copy and retains the original custom JSON', async t => {
@@ -244,11 +270,34 @@ test('managed runtime language overlay preserves the already prepared test infob
 
 test('MCP runtime uses native library file search before VanessaExt is connected without changing the source or ordinary Debug', async t => {
     const f = fixture(t);
-    const original = { useaddin: true, SearchingForFilesUsingTheVanessaExtComponent: true };
-    const managed = await f.provider.writeVanessaManualDebugJson(original, { mode: 'scenario', clients: [] }, 'mcp', f.root, true);
+    const original = { useaddin: true, SearchingForFilesUsingTheVanessaExtComponent: true, logtotext: false, logstepstotext: false };
+    const managed = await f.provider.writeVanessaManualDebugJson(original, { mode: 'scenario', clients: [] }, 'mcp', f.root, 9876);
     const json = JSON.parse(fs.readFileSync(managed, 'utf8'));
     assert.equal(json.SearchingForFilesUsingTheVanessaExtComponent, false); assert.equal(json.useaddin, true);
+    assert.equal(typeof json.ИмяФайлаЛогВыполненияСценариев, 'string');
+    assert.ok(path.isAbsolute(json.ИмяФайлаЛогВыполненияСценариев));
+    assert.ok(json.ИмяФайлаЛогВыполненияСценариев.startsWith(f.root));
+    assert.equal(json.ИмяФайлаЛогВыполненияСценариев, path.join(f.root, 'runtime', 'logs', 'vanessa-mcp-9876.log').replace(/\\/gu, '/'));
+    const second = await f.provider.writeVanessaManualDebugJson({}, { mode: 'scenario', clients: [] }, 'other-feature', f.root, 9876);
+    assert.equal(JSON.parse(fs.readFileSync(second, 'utf8')).ИмяФайлаЛогВыполненияСценариев, json.ИмяФайлаЛогВыполненияСценариев);
+    assert.equal(json.logtotext, true);
+    assert.equal(original.logtotext, false);
+    assert.equal(json.logstepstotext, true);
+    assert.equal(original.logstepstotext, false);
+    assert.equal(original.ИмяФайлаЛогВыполненияСценариев, undefined);
     assert.equal(original.SearchingForFilesUsingTheVanessaExtComponent, true);
     const debug = await f.provider.writeVanessaManualDebugJson(original, { mode: 'scenario', clients: [] }, 'debug', f.root);
-    assert.equal(JSON.parse(fs.readFileSync(debug, 'utf8')).SearchingForFilesUsingTheVanessaExtComponent, true);
+    const debugJson = JSON.parse(fs.readFileSync(debug, 'utf8'));
+    assert.equal(debugJson.SearchingForFilesUsingTheVanessaExtComponent, true);
+    assert.equal(debugJson.logtotext, false);
+    assert.equal(debugJson.logstepstotext, false);
+});
+
+test('Reload Window preserves a detached MCP manager startup JSON for log recovery and cleans ordinary debug copies', async t => {
+    const f = fixture(t);
+    const managed = await f.provider.writeVanessaManualDebugJson({}, { mode: 'scenario', clients: [] }, 'managed', f.root, 9876);
+    const debug = await f.provider.writeVanessaManualDebugJson({}, { mode: 'scenario', clients: [] }, 'debug', f.root);
+    f.provider._managedVanessaLogsByPort = new Map([[9876, { jsonPath: managed, logPath: '/session.log' }]]);
+    await f.provider.disposeVanessaDebugRuntimeFiles();
+    assert.equal(fs.existsSync(managed), true); assert.equal(fs.existsSync(debug), false);
 });

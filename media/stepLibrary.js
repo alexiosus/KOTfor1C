@@ -24,6 +24,7 @@
     const detailsContent = document.getElementById('detailsContent');
     const insertButton = document.getElementById('insertButton');
     const copyButton = document.getElementById('copyButton');
+    const convertFormatButton = document.getElementById('convertFormatButton');
     const openDefinitionButton = document.getElementById('openDefinitionButton');
     const favoriteButton = document.getElementById('favoriteButton');
     const paneResizers = [...document.querySelectorAll('.pane-resizer')];
@@ -1786,6 +1787,7 @@
         copyButton.disabled = !item || copyPending;
         openDefinitionButton.disabled = !item || !item.navigable || openPending;
         favoriteButton.disabled = !item;
+        if (convertFormatButton) { convertFormatButton.hidden = !item || !['mainScenario', 'process', 'nestedScenario', 'exportScenario'].includes(item.kind) || !/\.(?:ya?ml|feature)$/iu.test(item.capturedLocation?.uri || ''); convertFormatButton.disabled = !item; }
         if (!item) {
             const empty = document.createElement('p');
             empty.className = 'empty-details';
@@ -2091,6 +2093,7 @@
             sendAction('copy', state.selectedItemId);
         }
     });
+    convertFormatButton?.addEventListener('click', () => { if (state.selectedItemId) { sendAction('convertFormat', state.selectedItemId); } });
     openDefinitionButton.addEventListener('click', () => {
         if (state.selectedItemId) {
             sendAction('openDefinition', state.selectedItemId);

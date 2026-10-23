@@ -183,7 +183,6 @@ test('compact sidebar geometry keeps search and tree controls inside the viewpor
     assert.match(stepCss, /\.step-tree\s*\{[^}]*padding-block:\s*2px\s+6px[^}]*border-radius:\s*0/isu);
     assert.match(infobaseCss, /\.infobase-list\s*\{[^}]*padding-block:\s*6px\s+2px[^}]*border-radius:\s*0/isu);
     assert.match(phaseCss, /\.phase-title,\s*\.checkbox-label-text\s*\{[^}]*font-size:\s*var\(--vscode-font-size\)/isu);
-    assert.match(infobaseCss, /\.infobase-runtime-marker\s*\{[^}]*align-self:\s*center[^}]*margin:\s*0/isu);
     assert.match(infobaseCss, /\.infobase-runtime-marker\.is-pending\s*\{[^}]*charts-yellow/isu);
 });
 
@@ -389,8 +388,12 @@ test('compact Infobases reveals row actions only on hover or keyboard focus', ()
     assert.match(compactCss, /\.infobase-actions\s*\{[^}]*max-width:\s*0[^}]*opacity:\s*0[^}]*pointer-events:\s*none/isu);
     assert.match(
         compactCss,
-        /\.infobase-row:hover\s+\.infobase-actions,\s*\.infobase-row:has\(\.infobase-action:focus-visible\)\s+\.infobase-actions\s*\{[^}]*max-width:\s*84px[^}]*opacity:\s*1[^}]*pointer-events:\s*auto/isu
+        /\.infobase-row:hover\s+\.infobase-actions,\s*\.infobase-row:has\(\.infobase-action:focus-visible\)\s+\.infobase-actions\s*\{[^}]*max-width:\s*56px[^}]*opacity:\s*1[^}]*pointer-events:\s*auto/isu
     );
+    assert.doesNotMatch(compactCss, /\.infobase-row:focus-within/u, 'mouse focus must not retain action padding after hover leaves');
+    const clientRows = compactScript.slice(compactScript.indexOf('function clientRows('), compactScript.indexOf('function updateRowLabelOverflow('));
+    assert.doesNotMatch(clientRows, /action:\s*'vanessaClients'/u, 'client management stays in the base menu');
+    assert.match(compactCss, /\.infobase-action\s*\{[^}]*box-sizing:\s*border-box[^}]*width:\s*28px[^}]*padding:\s*0/isu);
     assert.match(compactScript, /function updateRowLabelOverflow\(/u);
     assert.match(compactScript, /addEventListener\('mouseover', refreshHoveredRowOverflow\)/u);
 });
@@ -622,7 +625,8 @@ test('Test Manager overflow menu starts with create and groups settings with bui
         'kotTestToolkit.openYamlParametersManager',
         'kotTestToolkit.managePlatforms',
         'kotTestToolkit.phaseSwitcher.maintenance',
-        'kotTestToolkit.phaseSwitcher.ai'
+        'kotTestToolkit.phaseSwitcher.ai',
+        'kotTestToolkit.vanessaControl.connectionSettings'
     ]);
     assert.deepEqual(
         manifest.contributes.menus['kotTestToolkit.phaseSwitcher.create'].map(item => item.command),

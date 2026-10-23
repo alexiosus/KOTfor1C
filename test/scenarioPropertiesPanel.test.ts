@@ -14,6 +14,7 @@ import * as model from '../src/scenarioPropertiesModel';
 import * as bindings from '../src/scenarioPropertiesBindings';
 import * as compilerFormat from '../src/compilerFormatDiagnostics';
 import * as attachments from '../src/scenarioPropertiesAttachments';
+import * as spprFormat from '../src/spprScenarioFormat';
 
 const ts = require(path.join(process.cwd(), 'node_modules/typescript')) as typeof import('typescript');
 const protocol = require(path.join(process.cwd(), 'media/scenarioPropertiesProtocol.js'));
@@ -195,7 +196,8 @@ async function harness(t: test.TestContext, initialSource = false) {
         const document = await openDocument(uri);
         return host.window.showTextDocument(document);
     } };
-    const api = load('scenarioPropertiesPanel.ts', { vscode: host, './scenarioPropertiesSession': session,
+    const spprFiles = load('spprScenarioFiles.ts', { vscode: host, './spprScenarioFormat': spprFormat, './projectLibraryStore': store });
+    const api = load('scenarioPropertiesPanel.ts', { vscode: host, './spprScenarioFiles.js': spprFiles, './scenarioPropertiesSession': session,
         './scenarioPropertiesBindings': bindings, './scenarioPropertiesModel': model, './scenarioDescriptor': descriptor,
         './scenarioPropertiesAttachments': attachments,
         './projectLibraryMetadata': metadata, './projectLibraryStore': store, './projectLibraryIntegration': integration,
@@ -780,4 +782,39 @@ test('following a feature resumes correctly after explicitly opening Properties 
     await h.setActive(await h.openDocument(a)); assert.equal(h.panels.at(-1)!.state().uri, a.toString());
     await h.panel.open(b); assert.equal(h.panels.at(-1)!.state().uri, b.toString());
     await h.setActive(await h.openDocument(a)); assert.equal(h.panels.at(-1)!.state().uri, a.toString());
+});
+
+
+test('SPPR native script opens properties bound to meta.yaml and keeps script and metadata edits separate', async t => {
+    const h = await harness(t);
+    const folder = path.join(h.yamlRoot, 'native'); await fsp.mkdir(folder);
+    const meta = Uri.file(path.join(folder, 'meta.yaml'));
+    const script = Uri.file(path.join(folder, 'scen.feature'));
+    await fsp.writeFile(meta.fsPath, sourceText.slice(0, sourceText.indexOf('ТекстСценария:')));
+    await fsp.writeFile(script.fsPath, 'Given native script\n');
+    const view = await h.open(script);
+    assert.equal(view.state().source.uri, meta.toString());
+    assert.equal(view.state().source.model.kind, 'scenario');
+    await h.edit(script, 'Given unsaved script\n');
+    await view.receive.fire({ command: 'edit', documentUri: meta.toString(), documentVersion: view.state().source.version, edit: { section: 'ДанныеСценария', field: 'Проект', value: 'Native project' } });
+    const metadataDocument = await h.openDocument(meta);
+    assert.match(metadataDocument.getText(), /Проект: "Native project"/u);
+    assert.equal((await h.openDocument(script)).getText(), 'Given unsaved script\n');
+    assert.equal(metadataDocument.getText().includes('ТекстСценария:'), false);
+});
+
+test('a successful source URI move clears deletion events raised during the format transaction', async t => {
+    const h = await harness(t); const panel = await h.open();
+    const next = Uri.file(path.join(h.yamlRoot, 'converted.yaml'));
+    h.panel.host.runAction = async () => {
+        await fsp.rename(h.sourceUri.fsPath, next.fsPath);
+        h.panel.fileEvent(h.sourceUri, 'delete');
+        return { sourceUri: next.toString(), uriMoves: [{ oldUri: h.sourceUri.toString(), newUri: next.toString() }] };
+    };
+    await panel.receive.fire({ command: 'action', action: 'convertFormat' });
+    assert.equal(panel.state().source.uri, next.toString());
+    assert.equal(panel.state().error, undefined);
+    await panel.receive.fire({ command: 'action', action: 'save' });
+    assert.equal(panel.state().error, undefined);
+    assert.ok(h.saved.includes(next.toString()));
 });

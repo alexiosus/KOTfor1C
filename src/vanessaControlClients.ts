@@ -22,6 +22,11 @@ export interface VanessaRuntimeClientPorts {
     isCurrent?(): boolean;
 }
 
+export function sameVanessaClientProfile(left: VanessaClientProfile, right: VanessaClientProfile): boolean {
+    const fields = (value: VanessaClientProfile) => [value.name, value.synonym, value.connection, value.additionalParameters, value.clientType, value.computerName];
+    return JSON.stringify(fields(left)) === JSON.stringify(fields(right));
+}
+
 function record(value: unknown): Record<string, unknown> | undefined {
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
@@ -97,11 +102,13 @@ export class VanessaRuntimeClients {
 
     async list(): Promise<readonly VanessaClientProfile[]> { return parseVanessaClientProfiles(await this.request('list')); }
 
-    async apply(client: VanessaDebugClient, acknowledgeUnsupportedPort: boolean): Promise<{ applied: true; unsupportedFields: readonly ['port'] }> {
+    async apply(client: VanessaDebugClient, acknowledgeUnsupportedPort: boolean, expected?: VanessaClientProfile | null): Promise<{ applied: true; unsupportedFields: readonly ['port'] }> {
         const prepared = prepareVanessaClientProfile(client);
         if (!acknowledgeUnsupportedPort) { throw new VanessaClientControlError('Vanessa MCP cannot set or verify the saved client port. Acknowledge applying only supported fields, or use a managed launch.'); }
         const profiles = await this.list();
         const existing = profiles.find(profile => profile.name.toLocaleLowerCase() === client.name.toLocaleLowerCase());
+        if (expected === null && existing) { throw new VanessaClientControlError('A Vanessa profile with this name appeared. Refresh the client list.'); }
+        if (expected && (!existing || !sameVanessaClientProfile(existing, expected))) { throw new VanessaClientControlError('The Vanessa client profile changed. Refresh the client list.'); }
         if (existing?.connected) { throw new VanessaClientControlError('Disconnect this client before changing its connection.'); }
         if (profiles.some(profile => profile !== existing && [profile.name, profile.synonym].filter(Boolean).some(name =>
             [client.name, client.synonym].filter(Boolean).some(value => value.toLocaleLowerCase() === name.toLocaleLowerCase())))) {
@@ -115,13 +122,14 @@ export class VanessaRuntimeClients {
         return { applied: true, unsupportedFields: prepared.unsupportedFields };
     }
 
-    async connect(name: string): Promise<void> { await this.change('connect', name); }
-    async disconnect(name: string): Promise<void> { await this.change('disconnect', name); }
+    async connect(name: string, expected?: VanessaClientProfile): Promise<void> { await this.change('connect', name, expected); }
+    async disconnect(name: string, expected?: VanessaClientProfile): Promise<void> { await this.change('disconnect', name, expected); }
     async close(name: string): Promise<void> { await this.change('close', name); }
 
-    private async change(operation: 'connect' | 'disconnect' | 'close', name: string): Promise<void> {
+    private async change(operation: 'connect' | 'disconnect' | 'close', name: string, expected?: VanessaClientProfile): Promise<void> {
         const profiles = await this.list(); const selected = profiles.find(profile => profile.name === name);
         if (!selected) { throw new VanessaClientControlError('This Vanessa client profile no longer exists. Refresh the list.'); }
+        if (expected && !sameVanessaClientProfile(selected, expected)) { throw new VanessaClientControlError('The Vanessa client profile changed. Refresh the client list.'); }
         // .45 disconnect ignores profileName and disconnects the CURRENT client only.
         if (operation === 'disconnect' && (!selected.connected || profiles.filter(profile => profile.connected).length !== 1)) {
             throw new VanessaClientControlError('The current Vanessa client is ambiguous. Select or disconnect it in Vanessa.');

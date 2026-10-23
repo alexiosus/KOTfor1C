@@ -32,6 +32,7 @@ import { projectLibraryEnvironment, registerCreatedProjectScenario } from './pro
 import { loadProjectLibraryGroups, resolveProjectLibraryRoot } from './projectLibraryMetadata';
 import { promptForNewTestCode } from './testNumbering';
 import { promptForCreationProperty, applyCreationResponsible } from './scenarioCreationProperties';
+import { splitLegacySpprScenario, type SpprScenarioFormat } from './spprScenarioFormat';
 
 type ScenarioIndex = {
     names: Set<string>;
@@ -78,6 +79,7 @@ type PromptForSystemFunctionOptions = {
 
 export interface CreateNestedScenarioOptions {
     readonly existingCategories?: readonly string[];
+    readonly format?: SpprScenarioFormat;
 }
 
 type ScenarioCategoryQuickPickItem = vscode.QuickPickItem & (
@@ -116,6 +118,26 @@ type EtalonBaseQuickPickItem = vscode.QuickPickItem & (
     | { entryKind: 'export' }
     | { entryKind: 'openCurrent' }
 );
+
+async function promptForScenarioFormat(config: vscode.WorkspaceConfiguration, seed?: unknown): Promise<SpprScenarioFormat | undefined> {
+    const explicit = seed && typeof seed === 'object' ? (seed as { format?: unknown }).format : undefined;
+    if (explicit === 'legacy' || explicit === 'native') { return explicit; }
+    const preferred = config.get<string>('newScenarioDefaults.format', 'legacy');
+    const items = [
+        { label: 'scen.yaml', description: vscode.l10n.t('SPPR metadata and script in one YAML file'), value: 'legacy' as const },
+        { label: 'meta.yaml + scen.feature', description: vscode.l10n.t('SPPR metadata and original script in separate files'), value: 'native' as const }
+    ];
+    if (preferred === 'native') { items.reverse(); }
+    return (await vscode.window.showQuickPick(items, { title: vscode.l10n.t('SPPR scenario file format'), ignoreFocusOut: true }))?.value;
+}
+
+async function writeCreatedScenario(uri: vscode.Uri, legacySource: string, format: SpprScenarioFormat): Promise<string> {
+    const native = format === 'native' ? splitLegacySpprScenario(legacySource) : undefined;
+    const metadata = native?.metadata ?? legacySource;
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(metadata, 'utf8'));
+    if (native) { await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(uri, '..', 'scen.feature'), Buffer.from(native.script, 'utf8')); }
+    return metadata;
+}
 
 const SCENARIO_INDEX_CACHE_TTL_MS = 60_000;
 let scenarioIndexCache: ScenarioIndexCacheEntry | null = null;
@@ -2363,12 +2385,15 @@ export async function handleCreateNestedScenario(
         return;
     }
 
+    const scenarioFormat = await promptForScenarioFormat(config, options);
+    if (!scenarioFormat) { return; }
+
     // 5. Создание папок и файла
     const newUid = uuidv4();
     const scenarioFolderUri = vscode.Uri.joinPath(baseFolderUri, trimmedCode); // Итоговая папка: parent/code
     const filesFolderUri = vscode.Uri.joinPath(scenarioFolderUri, 'files'); // Папка для файлов
     const templateUri = vscode.Uri.joinPath(context.extensionUri, 'res', 'scen.yaml'); // Шаблон
-    const targetFileUri = vscode.Uri.joinPath(scenarioFolderUri, 'scen.yaml'); // Итоговый файл: parent/code/scen.yaml
+    const targetFileUri = vscode.Uri.joinPath(scenarioFolderUri, scenarioFormat === 'native' ? 'meta.yaml' : 'scen.yaml'); // Итоговый файл: parent/code/scen.yaml
 
     console.log(`[Cmd:createNestedScenario] Target folder: ${scenarioFolderUri.fsPath}`);
     // console.log(`[Cmd:createNestedScenario] Template path: ${templateUri.fsPath}`);
@@ -2398,8 +2423,8 @@ export async function handleCreateNestedScenario(
             ), scenarioHeaderValues.responsible ?? '');
 
             // Записываем новый файл
-            await vscode.workspace.fs.writeFile(targetFileUri, Buffer.from(finalContent, 'utf-8'));
-            await registerCreatedProjectScenario(targetFileUri, finalContent, { category: scenarioCategory });
+            const storedContent = await writeCreatedScenario(targetFileUri, finalContent, scenarioFormat);
+            await registerCreatedProjectScenario(targetFileUri, storedContent, { category: scenarioCategory });
             rememberScenarioInIndex(trimmedName, trimmedCode);
         });
 
@@ -2407,7 +2432,8 @@ export async function handleCreateNestedScenario(
         vscode.window.showInformationMessage(t('Nested scenario "{0}" ({1}) has been created successfully!', trimmedName, trimmedCode));
 
         // Открываем созданный файл в редакторе
-        const doc = await vscode.workspace.openTextDocument(targetFileUri);
+        const editorUri = scenarioFormat === 'native' ? vscode.Uri.joinPath(scenarioFolderUri, 'scen.feature') : targetFileUri;
+        const doc = await vscode.workspace.openTextDocument(editorUri);
         await vscode.window.showTextDocument(doc);
 
         // Обновляем Test Manager
@@ -2546,6 +2572,9 @@ export async function handleCreateMainScenario(
         userProfile: selectedEtalonBaseValues.userProfile
     };
 
+    const scenarioFormat = await promptForScenarioFormat(config, seed);
+    if (!scenarioFormat) { return; }
+
     // 4. Подготовка путей и UID
     const mainUid = uuidv4();
     const testRandomUid = uuidv4();
@@ -2555,7 +2584,7 @@ export async function handleCreateMainScenario(
     const testTemplateUri = vscode.Uri.joinPath(context.extensionUri, 'res', 'test.yaml'); // Шаблон теста
     const mainTemplateUri = vscode.Uri.joinPath(context.extensionUri, 'res', 'main.yaml'); // Шаблон основного файла
     const testTargetFileUri = vscode.Uri.joinPath(testFolderUri, `${trimmedCode}.yaml`);
-    const mainTargetFileUri = vscode.Uri.joinPath(scenarioFolderUri, 'scen.yaml');
+    const mainTargetFileUri = vscode.Uri.joinPath(scenarioFolderUri, scenarioFormat === 'native' ? 'meta.yaml' : 'scen.yaml');
 
     console.log(`[Cmd:createMainScenario] Target folder: ${scenarioFolderUri.fsPath}`);
     // console.log(`[Cmd:createMainScenario] Test template: ${testTemplateUri.fsPath}`);
@@ -2606,8 +2635,8 @@ export async function handleCreateMainScenario(
                 newScenarioLanguage,
                 scenarioHeaderValues.userProfile
             ), scenarioHeaderValues.responsible ?? '');
-            await vscode.workspace.fs.writeFile(mainTargetFileUri, Buffer.from(mainFinalContent, 'utf-8'));
-            await registerCreatedProjectScenario(mainTargetFileUri, mainFinalContent, {
+            const storedContent = await writeCreatedScenario(mainTargetFileUri, mainFinalContent, scenarioFormat);
+            await registerCreatedProjectScenario(mainTargetFileUri, storedContent, {
                 main: true, groupName: trimmedTabName,
                 ...(orderForTemplate ? { order: Number(orderForTemplate) } : {})
             });
@@ -2617,7 +2646,8 @@ export async function handleCreateMainScenario(
 
         vscode.window.showInformationMessage(t('Main scenario "{0}" has been created successfully!', trimmedName));
         // Открываем основной созданный файл
-        const doc = await vscode.workspace.openTextDocument(mainTargetFileUri);
+        const editorUri = scenarioFormat === 'native' ? vscode.Uri.joinPath(scenarioFolderUri, 'scen.feature') : mainTargetFileUri;
+        const doc = await vscode.workspace.openTextDocument(editorUri);
         await vscode.window.showTextDocument(doc);
 
         // Обновляем Test Manager

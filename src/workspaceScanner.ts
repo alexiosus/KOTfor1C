@@ -291,8 +291,11 @@ export async function scanWorkspaceForScenarioCatalog(
     const enumerationMs = Date.now() - startedAt;
     const legacySourceTexts = new Map<string, string>();
     const settingsTargets = new Map<string, ParsedTestSettingsTarget>();
+    const scenarioDirectories = new Set(potentialFiles.filter(uri => ['meta.yaml', 'scen.yaml'].includes(path.basename(uri.fsPath).toLowerCase())).map(uri => path.dirname(uri.fsPath)));
+    // SPPR's orig.yaml is a metadata backup, not another scenario with the same UID.
+    const descriptors = potentialFiles.filter(uri => path.basename(uri.fsPath).toLowerCase() !== 'orig.yaml' || !scenarioDirectories.has(path.dirname(uri.fsPath)));
     const parsedDefinitions = await mapWithConcurrencyLimit(
-        potentialFiles,
+        descriptors,
         SCENARIO_READ_CONCURRENCY,
         // These paths came from readdir beneath scanDirUri; symlink entries are not traversed.
         async fileUri => (await readScenarioDefinitions([fileUri], scanDirUri, token, metrics, true, legacySourceTexts, settingsTargets))[0] || null
@@ -307,9 +310,8 @@ export async function scanWorkspaceForScenarioCatalog(
         resolveProjectLibraryRoot(file, workspaceRoots, scanRoots), kind, uid.toLowerCase()
     ]);
     const referenced = new Set([...settingsTargets].map(([file, target]) => settingsKey(file, target.kind, target.uid)));
-    const infos = parsedDefinitions.filter((item): item is TestInfo => item !== null).map(info =>
-        referenced.size && info.uid && referenced.has(settingsKey(info.yamlFileUri.fsPath, info.kind === 'process' ? 'process' : 'scenario', info.uid))
-            ? { ...info, hasTestSettings: true } : info);
+    const infos = parsedDefinitions.filter((item): item is TestInfo => item !== null).map(info => ({ ...info,
+        hasTestSettings: !!(info.uid && referenced.has(settingsKey(info.yamlFileUri.fsPath, info.kind === 'process' ? 'process' : 'scenario', info.uid))) }));
     const definitions = await loadProjectScenarioMetadata(infos, workspaceRoots, scanRoots, true, assertProjectMetadataSaved, legacySourceTexts);
     const metadataMs = Date.now() - startedAt - enumerationMs - readAndParseMs;
     const catalog = buildScenarioCatalog(definitions);

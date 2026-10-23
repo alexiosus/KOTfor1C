@@ -281,3 +281,11 @@ test('native parameter type choices preserve existing legacy types without offer
         assert.throws(() => applyScenarioPropertyEdit(scenario, { section: 'ПараметрыСценария', recordKey: 'Currency', field: 'ТипПараметра', value: legacy }), /choice/iu);
     }
 });
+
+
+test('native metadata usage counts come from the paired script without a synthetic editable body', () => {
+    const meta = scenario.slice(0, scenario.indexOf('ТекстСценария:'));
+    const model = readScenarioProperties(meta, 'And Create order\nAnd I use "[Currency]"\nAnd I use "[Currency]"\n');
+    assert.equal(model.sections.find(section => section.key === 'ПараметрыСценария')!.records!.find(record => record.key === 'Currency')!.usages, 2);
+    assert.equal(model.sections.find(section => section.key === 'ВложенныеСценарии')!.records![0].usages, 1);
+});

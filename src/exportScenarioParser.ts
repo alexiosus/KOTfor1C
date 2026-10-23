@@ -1,3 +1,4 @@
+import { parseCompilerParameterBinding, scanCompilerLines, validateCompilerBlocks } from './scenarioCompilerSyntax';
 import {
     createLocalDefinitionId,
     normalizeProjectDefinitionTemplate,
@@ -141,15 +142,24 @@ function readLines(source: string): SourceLine[] {
 
 export function validateGherkinSyntax(
     source: string,
-    sourceUri: string
+    sourceUri: string,
+    scriptFragment = false
 ): ProjectDefinitionWarning[] {
-    const errors = collectGherkinSyntaxErrors(source);
+    const wrapped = scriptFragment && !/^\s*(?:Feature|Functionality|Функциональность|Функционал|Функция)\s*:/imu.test(source);
+    const russian = /^\s*#\s*language\s*:\s*ru\b/imu.test(source) || !/^\s*#\s*language\s*:/imu.test(source) && /^\s*(?:И|Когда|Тогда|Дано|Допустим|Если|Но)\s+/mu.test(source);
+    const prefix = russian ? '# language: ru\nФункциональность: СППР\n  Сценарий: СППР\n' : '# language: en\nFeature: SPPR\n  Scenario: SPPR\n';
+    const physicalLines = source.split(/\r\n|\r|\n/u);
+    const compilerLines = wrapped ? scanCompilerLines(physicalLines) : [];
+    const compilerSource = physicalLines.map((line, index) => compilerLines[index]?.kind === 'comment'
+        || compilerLines[index]?.kind === 'code' && (compilerLines[index].block || parseCompilerParameterBinding(line))
+        ? line.replace(/./gu, ' ') : line).join('\n');
+    const errors = collectGherkinSyntaxErrors(wrapped ? prefix + compilerSource.replace(/^/gmu, '    ') : source);
     const sourceLines = readLines(source);
-    return errors.map(item => {
-        const requestedLine = Math.max(0, item.line - 1);
+    const warnings = errors.map(item => {
+        const requestedLine = Math.max(0, item.line - 1 - (wrapped ? 3 : 0));
         const line = Math.min(requestedLine, Math.max(0, sourceLines.length - 1));
         const sourceLine = sourceLines[line] ?? { number: 0, text: '', start: 0, end: 0, fullEnd: 0 };
-        const requestedCharacter = Math.max(0, item.column - 1);
+        const requestedCharacter = Math.max(0, item.column - 1 - (wrapped ? 4 : 0));
         const character = Math.min(requestedCharacter, sourceLine.text.length);
         return {
             uri: sourceUri,
@@ -161,6 +171,14 @@ export function validateGherkinSyntax(
             )
         };
     });
+    if (wrapped) {
+        for (const issue of validateCompilerBlocks(physicalLines)) {
+            const line = sourceLines[Math.min(issue.line, sourceLines.length - 1)];
+            warnings.push({ uri: sourceUri, message: `SPPR syntax error: ${issue.kind}${issue.family ? ' (' + issue.family + ')' : ''}`,
+                range: rangeForLine(line, 0, line.text.length) });
+        }
+    }
+    return warnings;
 }
 
 function positionAtOffset(source: string, offset: number): { line: number; character: number } {

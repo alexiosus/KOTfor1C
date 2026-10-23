@@ -156,7 +156,11 @@ export function createScenarioPropertiesHost(options: ScenarioPropertiesPanelOpt
         .find(value => value.uri.toString() === uri && !value.isClosed) ?? await vscode.workspace.openTextDocument(vscode.Uri.parse(uri, true));
     const readDocument = async (uri: string): Promise<ScenarioPropertiesDocument> => {
         const value = await document(uri);
-        return { uri: value.uri.toString(), text: value.getText(), version: value.version, dirty: value.isDirty };
+        const paired = /(?:^|[\\/])meta\.yaml$/u.test(value.fileName)
+            ? await (await import('./spprScenarioFiles.js')).resolveScenarioSourceUris(value.uri) : undefined;
+        const script = paired?.format === 'native' ? await document(paired.scriptUri.toString()) : undefined;
+        return { uri: value.uri.toString(), text: value.getText(), version: value.version, dirty: value.isDirty || !!script?.isDirty,
+            ...(script ? { scriptText: script.getText(), scriptUri: script.uri.toString() } : {}) };
     };
     const readMetadata = async (source: ScenarioPropertiesDocument): Promise<ScenarioPropertiesDocument | undefined> => {
         const sourceUri = vscode.Uri.parse(source.uri, true);
@@ -241,7 +245,11 @@ export function createScenarioPropertiesHost(options: ScenarioPropertiesPanelOpt
             if (!created) { throw new Error('Project metadata was not created.'); }
             return created;
         },
-        runAction: options.runAction,
+        runAction: async (...args) => {
+            const result = await options.runAction(...args);
+            if (args[0] === 'convertRole' || args[0] === 'createSettings') { inventory.invalidate(); }
+            return result;
+        },
         invalidateSettings: (uri, topology) => inventory.invalidate(uri, topology),
         settingsScopes
     };
@@ -285,7 +293,7 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
             vscode.window.onDidChangeActiveTextEditor(editor => this.handleActiveEditor(editor)),
             vscode.window.onDidChangeVisibleTextEditors(() => this.handleActiveEditor(vscode.window.activeTextEditor)),
             vscode.workspace.onDidChangeTextDocument(event => {
-                if (event.document.uri.scheme === 'file' && (/\.ya?ml$/iu.test(event.document.uri.fsPath) || event.document.uri.toString() === this.feature?.currentSourceUri)) { this.scheduleRefresh(); }
+                if (event.document.uri.scheme === 'file' && (/\.(?:ya?ml|feature)$/iu.test(event.document.uri.fsPath) || event.document.uri.toString() === this.feature?.currentSourceUri)) { this.scheduleRefresh(); }
             }),
             vscode.workspace.onDidSaveTextDocument(document => {
                 this.host.invalidateSettings(document.uri, false); this.scheduleRefresh();
@@ -455,6 +463,8 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
 
     private async bind(source: vscode.Uri, openText: boolean, complete = false): Promise<void> {
         this.followedEditorUri = undefined;
+        const paired = /(?:^|[\\/])(?:meta\.yaml|scen\.feature)$/u.test(source.fsPath) ? await (await import('./spprScenarioFiles.js')).resolveScenarioSourceUris(source) : undefined;
+        if (paired?.format === 'native') { source = paired.metadataUri; }
         if (/\.feature$/iu.test(source.fsPath)) {
             if (!this.library || !this.feature) { throw new Error('Feature properties are still initializing. Retry shortly.'); }
             const original = await this.library.sourceForGenerated(source);
@@ -475,7 +485,7 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
         let loadError: unknown;
         try { await this.session.open(source.toString(), !complete); } catch (reason) { loadError = reason; }
         if (this.disposed) { return; }
-        if (openText) { await this.textEditor.open(source); }
+        if (openText) { await this.textEditor.open(paired?.format === 'native' ? paired.scriptUri : source); }
         if (loadError) { throw loadError; }
     }
 
@@ -600,10 +610,26 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
                 throw new Error(this.unavailable);
             }
             if (this.feature?.currentSourceUri) { throw new Error('The source changed. Refresh the form and retry.'); }
-            if (action.command === 'action' && action.action === 'favorite') {
+            if (action.command === 'action' && action.action === 'convertCallable') {
+                const message = value as { documentUri: string; documentVersion: number };
+                if (message.documentUri !== this.session.currentSourceUri || (await this.host.readDocument(message.documentUri)).version !== message.documentVersion) {
+                    throw new Error('The source changed. Refresh the properties and retry the action.');
+                }
+                const result = await vscode.commands.executeCommand<{ sourceUri: string }>('kotTestToolkit.convertCallableScenario', vscode.Uri.parse(message.documentUri));
+                if (result) { this.unavailable = undefined; await this.bind(vscode.Uri.parse(result.sourceUri), false); }
+            } else if (action.command === 'action' && action.action === 'favorite') {
                 if (!this.library || !this.session.currentSourceUri || action.documentUri !== this.session.currentSourceUri) { throw new Error('Select a test to change its favorite state.'); }
                 await this.library.toggleFavorite(this.session.currentSourceUri);
-            } else { await this.session.handle(value); }
+            } else {
+                const previousSource = this.session.currentSourceUri;
+                const state = await this.session.handle(value);
+                if (!state.mutationError && state.source && state.source.uri !== previousSource && state.uriMoves?.length) {
+                    // The converter/rename deleted the old source intentionally. Its watcher can
+                    // arrive before the successful action returns the replacement identity.
+                    this.unavailable = undefined;
+                    this.configureWatchers(await this.host.readDocument(state.source.uri));
+                }
+            }
             if (action.command === 'action' && action.action === 'pin' && !this.pinned) {
                 await this.follow(vscode.window.activeTextEditor);
             }

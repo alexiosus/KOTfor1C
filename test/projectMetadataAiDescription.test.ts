@@ -7,10 +7,13 @@ import * as descriptions from '../src/kotMetadataDescription';
 import * as phaseMetadata from '../src/phaseSwitcherMetadata';
 import * as parameters from '../src/scenarioParameterUtils';
 
-function harness() {
+function harness(native = false) {
     const source = 'ТипФайла: Сценарий\nДанныеСценария:\n    Имя: Sales\n    Код: Sales\n    UID: sales\nТекстСценария: |\n    And I open form named "Sales"\n';
-    const document = { uri: { scheme: 'file', fsPath: '/repo/scen.yaml', toString: () => 'file:///repo/scen.yaml' },
-        version: 1, getText: () => source };
+    const nativeMetadata = source.slice(0, source.indexOf('ТекстСценария:'));
+    let nativeScript = 'And I open form named "SPPR_SCRIPT_SENTINEL"\n';
+    let mutateScript = false;
+    const document = { uri: { scheme: 'file', fsPath: native ? '/repo/meta.yaml' : '/repo/scen.yaml', toString: () => native ? 'file:///repo/meta.yaml' : 'file:///repo/scen.yaml' },
+        version: 1, getText: () => native ? nativeMetadata : source };
     const patches: Array<{ description: string }> = [];
     const commands: string[] = [];
     const edits: unknown[] = [];
@@ -38,6 +41,7 @@ function harness() {
         './kotMetadataDescription': descriptions,
         './phaseSwitcherMetadata': phaseMetadata,
         './scenarioParameterUtils': parameters,
+        './spprScenarioFiles': { readScenarioSource: async () => nativeMetadata + 'ТекстСценария: |\n    ' + nativeScript },
         './yamlValidator': { isScenarioYamlFile: () => true },
         './projectLibraryIntegration': {
             projectedProjectScenario: () => ({ tabName: 'Shared main group', scenarioDescription: '' }),
@@ -50,6 +54,7 @@ function harness() {
             requestTextFromAi: async (_endpoint: string, _settings: unknown, _system: string, prompt: string) => {
                 prompts.push(prompt);
                 if (mutate) { document.version++; mutate = false; }
+                if (mutateScript) { nativeScript += 'And concurrent script edit\n'; mutateScript = false; }
                 return 'What is checked:\n- The Sales form opens and shows its fields.\nProcess:\n- The user opens the Sales form.\nParameters and branches:\n- No parameters or branches are used.';
             }
         }
@@ -60,7 +65,7 @@ function harness() {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
     }).outputText, { module, exports: module.exports, require: (name: string) => dependencies[name], console });
     return { document, patches, commands, edits, warnings, errors, prompts, api: module.exports,
-        mutateDuringGeneration() { mutate = true; } };
+        mutateDuringGeneration() { mutate = true; }, mutateScriptDuringGeneration() { mutateScript = true; } };
 }
 
 test('AI description stores shared metadata without restoring a KOT YAML block', async () => {
@@ -80,5 +85,23 @@ test('AI description refuses a shared metadata write when source changed during 
     await h.api.handleGenerateScenarioDescriptionWithAi({ document: h.document });
     assert.deepEqual(h.patches, []);
     assert.deepEqual(h.edits, []);
+    assert.equal(h.warnings.length, 1);
+});
+
+
+test('native SPPR AI description analyses its separate script without adding it to metadata', async () => {
+    const h = harness(true);
+    await h.api.handleGenerateScenarioDescriptionWithAi({ document: h.document });
+    assert.deepEqual(h.errors, []);
+    assert.equal(h.patches.length, 1);
+    assert.ok(h.prompts.some(prompt => prompt.includes('SPPR_SCRIPT_SENTINEL')));
+    assert.equal(h.document.getText().includes('ТекстСценария:'), false);
+    assert.deepEqual(h.edits, []);
+});
+
+test('native SPPR AI description refuses to persist after its script changes during generation', async () => {
+    const h = harness(true); h.mutateScriptDuringGeneration();
+    await h.api.handleGenerateScenarioDescriptionWithAi({ document: h.document });
+    assert.deepEqual(h.patches, []);
     assert.equal(h.warnings.length, 1);
 });

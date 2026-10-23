@@ -6,7 +6,8 @@ import type { VanessaControlSession } from './vanessaControlSession';
 
 /** Reuses Debug clients and SecretStorage; attaching never applies or connects a client. */
 export function registerVanessaClientCommands(
-    context: vscode.ExtensionContext, session: VanessaControlSession, configureSaved: () => Promise<void>
+    context: vscode.ExtensionContext, session: VanessaControlSession, configureSaved: () => Promise<void>,
+    openCatalog?: (preferredPath?: string) => Promise<void>
 ): void {
     const store = new VanessaDebugClientStore(context.workspaceState, context.secrets);
     let open = false;
@@ -38,7 +39,13 @@ export function registerVanessaClientCommands(
             info: async message => { void vscode.window.showInformationMessage(vscode.l10n.t(message)); }
         }
     };
-    context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.vanessaControl.clients', async () => {
+    if (openCatalog) {
+        context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.vanessaControl.clients', async (path?: unknown) => {
+            try { await openCatalog(typeof path === 'string' && path.length <= 8192 ? path : undefined); }
+            catch { void vscode.window.showErrorMessage(vscode.l10n.t('Could not open Vanessa test clients.')); }
+        }));
+    }
+    context.subscriptions.push(vscode.commands.registerCommand(openCatalog ? 'kotTestToolkit.vanessaControl.legacyClients' : 'kotTestToolkit.vanessaControl.clients', async () => {
         if (open) { return; }
         open = true;
         try { await manageVanessaClients(ports); }

@@ -10,6 +10,7 @@ import {
 } from '../src/projectDefinition';
 import { resolveProjectInvocation } from '../src/projectDefinitionMatcher';
 import * as compilerSyntax from '../src/scenarioCompilerSyntax';
+import { findExportScenarioBuildCallers } from '../src/scenarioBuildDependencies';
 
 class Position {
     public constructor(public line: number, public character: number) {}
@@ -401,6 +402,29 @@ test('collects references for several definitions in one source scan', async () 
     assert.equal(references.get(second.id)?.length, 1);
     assert.equal(fileSystem.directoryReads, 1);
     assert.equal(fileSystem.reads, 1);
+});
+
+test('build invalidation finds export callers in native scripts and legacy YAML through runtime library calls', async () => {
+    const leaf = definition('export:leaf', 'exportScenario', 'And leaf step', 'file:///library/leaf.feature');
+    const middle = definition('export:middle', 'exportScenario', 'And middle step', 'file:///library/middle.feature');
+    const fileSystem = new VirtualFileSystem({
+        '/library/middle.feature': { text: 'Feature: library\nScenario: middle step\n    And leaf step\n' },
+        '/tests/native/scen.feature': { text: 'And middle step\n' },
+        '/tests/legacy/scen.yaml': { text: 'ТекстСценария: |\n    And middle step\n' },
+        '/tests/unrelated/scen.feature': { text: 'And Delay 1\n' }
+    });
+    const definitions = [leaf, middle];
+    const references = createService(definitions, fileSystem, [
+        { path: '/library', extensions: ['.feature'] }, { path: '/tests', extensions: ['.yaml', '.feature'] }
+    ]);
+    const services = { resolver: resolverFor(definitions), references } as any;
+    const callers = await findExportScenarioBuildCallers(uri('file:///library/leaf.feature') as any, services);
+    assert.deepEqual(new Set(callers.map(item => item.toString())), new Set([
+        'file:///library/middle.feature', 'file:///tests/native/scen.feature', 'file:///tests/legacy/scen.yaml'
+    ]));
+    assert.equal(fileSystem.reads, 4);
+    await findExportScenarioBuildCallers(uri('file:///library/leaf.feature') as any, services);
+    assert.equal(fileSystem.reads, 4, 'unchanged caller contents should be reused');
 });
 
 test('honors declaration inclusion independently of usages', async () => {

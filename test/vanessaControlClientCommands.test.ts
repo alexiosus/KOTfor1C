@@ -7,9 +7,10 @@ import * as workflow from '../src/vanessaControlClientWorkflow';
 import * as savedClients from '../src/vanessaDebugClients';
 import { configureVanessaDebugClientSelection } from '../src/vanessaDebugClientConfiguration';
 
-function harness(choices: Array<string | undefined>) {
+function harness(choices: Array<string | undefined>, openCatalog?: (path?: string) => Promise<void>) {
     const picks: string[] = []; const operations: string[] = []; const information: string[] = []; const errors: string[] = [];
     let command!: () => Promise<void>;
+    const commands = new Map<string, (...args: unknown[]) => Promise<void>>();
     const runtime = {
         list: async () => { operations.push('list'); return [{ name: 'TestClient', connected: false, clientType: 'Thin', computerName: 'localhost' }]; },
         connect: async () => { operations.push('connect'); },
@@ -42,14 +43,14 @@ function harness(choices: Array<string | undefined>) {
             input: async () => window.showInputBox(), folder: async () => undefined, managedInfobase: async () => undefined
         }, message => message);
     };
-    const module = { exports: {} as { registerVanessaClientCommands: (context: unknown, session: unknown, configure: () => Promise<void>) => void } };
+    const module = { exports: {} as { registerVanessaClientCommands: (context: unknown, session: unknown, configure: () => Promise<void>, openCatalog?: (path?: string) => Promise<void>) => void } };
     const ts = require('typescript') as typeof import('typescript');
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlClientCommands.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
     }).outputText, { module, exports: module.exports, require: (name: string) => {
         if (name === 'vscode') {
             return { window, l10n: { t: (message: string) => message }, ProgressLocation: { Notification: 15 }, commands: {
-                registerCommand: (_name: string, registered: () => Promise<void>) => { command = registered; return { dispose() {} }; }
+                registerCommand: (name: string, registered: () => Promise<void>) => { commands.set(name, registered); command = registered; return { dispose() {} }; }
             } };
         }
         if (name.endsWith('DebugClients')) { return savedClients; }
@@ -57,9 +58,19 @@ function harness(choices: Array<string | undefined>) {
         if (name.endsWith('ControlClients')) { return clients; }
         throw new Error(`Unexpected dependency ${name}`);
     } });
-    module.exports.registerVanessaClientCommands({ subscriptions: [], workspaceState: { get: () => undefined }, secrets: {} }, session, configure);
-    return { run: () => command(), choices, picks, operations, information, errors, runtime, window };
+    module.exports.registerVanessaClientCommands({ subscriptions: [], workspaceState: { get: () => undefined }, secrets: {} }, session, configure, openCatalog);
+    return { run: () => command(), commands, choices, picks, operations, information, errors, runtime, window };
 }
+
+test('modern Test clients opens the per-base editor and remains reusable after an opening failure', async () => {
+    const bases: Array<string | undefined> = []; let fail = true;
+    const h = harness([], async base => { if (fail) { fail = false; throw new Error('private failure'); } bases.push(base); });
+    const open = h.commands.get('kotTestToolkit.vanessaControl.clients')!;
+    await open('/bases/own'); await open('/bases/own');
+    assert.deepEqual(bases, ['/bases/own']); assert.deepEqual(h.picks, []); assert.deepEqual(h.operations, []);
+    assert.deepEqual(h.errors, ['Could not open Vanessa test clients.']);
+    assert.ok(h.commands.has('kotTestToolkit.vanessaControl.legacyClients'));
+});
 
 test('cancelling saved client setup before choosing an infobase closes the workflow and allows reopening', async () => {
     const h = harness(['configure', 'add', undefined]);

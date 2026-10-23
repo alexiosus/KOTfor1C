@@ -883,7 +883,7 @@
     function renderBanner() {
         const hasSnapshotFile = Boolean(viewState.snapshotExists);
         const hasError = Boolean(viewState.lastError);
-        const shouldShowBanner = hasError && hasSnapshotFile;
+        const shouldShowBanner = hasError && (viewState.liveSource === 'mcp' || hasSnapshotFile);
         refs.alertBanner?.classList.toggle('hidden', !shouldShowBanner);
         setText(refs.alertText, shouldShowBanner ? (viewState.lastError || '') : '');
     }

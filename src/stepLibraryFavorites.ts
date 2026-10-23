@@ -76,9 +76,9 @@ export class StepLibraryFavoritesService {
         ).map(entry => entry.uri));
         for (const item of snapshot.items) {
             if (
-                (item.sourceGroup === 'main' || item.sourceGroup === 'process')
+                (item.sourceGroup === 'main' || item.sourceGroup === 'process' || item.sourceGroup === 'nested')
                 && item.capturedLocation
-                && legacyUris.has(item.capturedLocation.uri)
+                && (legacyUris.has(item.capturedLocation.uri) || result.has(`${item.capturedLocation.uri}#authored`))
             ) {
                 result.add(item.id);
             }
@@ -87,29 +87,33 @@ export class StepLibraryFavoritesService {
     }
 
     public isFavorite(item: StepLibraryItem): boolean {
-        if ((item.sourceGroup === 'main' || item.sourceGroup === 'process') && item.capturedLocation) {
+        if ((item.sourceGroup === 'main' || item.sourceGroup === 'process' || item.sourceGroup === 'nested') && item.capturedLocation) {
             return legacyEntries(this.workspaceState.get<unknown>(legacyFavoriteScenariosKey, []))
-                .some(entry => entry.uri === item.capturedLocation!.uri);
+                .some(entry => entry.uri === item.capturedLocation!.uri)
+                || normalizedStrings(this.workspaceState.get<unknown>(favoriteItemIdsKey, [])).some(id => id === item.id || id === `${item.capturedLocation!.uri}#authored`);
         }
         return normalizedStrings(this.workspaceState.get<unknown>(favoriteItemIdsKey, [])).includes(item.id);
     }
 
     public async toggle(item: StepLibraryItem): Promise<boolean> {
-        if ((item.sourceGroup === 'main' || item.sourceGroup === 'process') && item.capturedLocation) {
+        if ((item.sourceGroup === 'main' || item.sourceGroup === 'process' || item.sourceGroup === 'nested') && item.capturedLocation) {
             const entries = legacyEntries(
                 this.workspaceState.get<unknown>(legacyFavoriteScenariosKey, [])
             );
             const index = entries.findIndex(entry => entry.uri === item.capturedLocation!.uri);
-            const nextFavorite = index < 0;
+            const nextFavorite = !this.isFavorite(item);
             if (nextFavorite) {
                 entries.push(Object.freeze({
                     uri: item.capturedLocation.uri,
                     name: item.displayText,
                     ...(item.scenarioCode ? { scenarioCode: item.scenarioCode } : {})
                 }));
-            } else {
+            } else if (index >= 0) {
                 entries.splice(index, 1);
             }
+            const ids = normalizedStrings(this.workspaceState.get<unknown>(favoriteItemIdsKey, []));
+            const remaining = ids.filter(id => id !== item.id && id !== `${item.capturedLocation!.uri}#authored`);
+            if (remaining.length !== ids.length) { await this.workspaceState.update(favoriteItemIdsKey, remaining); }
             await this.workspaceState.update(legacyFavoriteScenariosKey, entries);
             this.fire({ itemId: item.id });
             return nextFavorite;

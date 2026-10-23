@@ -80,7 +80,8 @@ function isWithinRoot(candidate: string, root: string): boolean {
 /** Creates process.yaml and its linked compiler settings without replacing existing files. */
 export async function handleCreateProcess(
     context: vscode.ExtensionContext,
-    seed?: unknown
+    seed?: unknown,
+    role: 'main' | 'nested' = 'main'
 ): Promise<vscode.Uri | undefined> {
     const t = await getTranslator(context.extensionUri);
     try {
@@ -120,7 +121,7 @@ export async function handleCreateProcess(
         const selected = await pickProcessSteps(workspace.uri, t);
         if (!selected) { return undefined; }
         const config = vscode.workspace.getConfiguration('kotTestToolkit');
-        const etalonBase = await promptForSelectedEtalonBaseValues(
+        const etalonBase = role === 'nested' ? { baseId: '', baseName: '', userProfile: config.get<string>('newScenarioDefaults.userProfile', 'Administrator') } : await promptForSelectedEtalonBaseValues(
             t, context, config.get<string>('newScenarioDefaults.userProfile', 'Administrator')
         );
         if (!etalonBase) { return undefined; }
@@ -135,6 +136,7 @@ export async function handleCreateProcess(
         const processUid = uuidv4();
         const steps = selected.map(scenario => ({ scenario: compilerStepTarget(scenario), uid: uuidv4() }));
         const files = buildCompilerProcessFiles({
+            createSettings: role === 'main',
             name, code: trimmedCode, uid: processUid, settingsUid: uuidv4(), databaseId, databaseName, userProfile,
             project: header.project, reportLevel1: header.reportLevel1, reportLevel2: header.reportLevel2,
             steps
@@ -144,12 +146,12 @@ export async function handleCreateProcess(
         await code.claim(parent, async () => {
             // Exclusive directory creation prevents replacing an authored process or settings file.
             await fs.mkdir(folder);
-            await fs.mkdir(path.join(folder, 'test'));
+            if (role === 'main') { await fs.mkdir(path.join(folder, 'test')); }
             await fs.mkdir(path.join(folder, 'files'));
-            await fs.writeFile(path.join(folder, 'test', `${trimmedCode}.yaml`), files.settingsSource, { encoding: 'utf8', flag: 'wx' });
+            if (role === 'main') { await fs.writeFile(path.join(folder, 'test', `${trimmedCode}.yaml`), files.settingsSource, { encoding: 'utf8', flag: 'wx' }); }
             const processSource = applyCreationResponsible(files.processSource, header.responsible);
             await fs.writeFile(processUri.fsPath, processSource, { encoding: 'utf8', flag: 'wx' });
-            await registerCreatedProjectScenario(processUri, processSource, { groupName: resolveMainScenarioGroupSeed(seed) ?? '' });
+            await registerCreatedProjectScenario(processUri, processSource, role === 'main' ? { groupName: resolveMainScenarioGroupSeed(seed) ?? '' } : { main: false });
         });
         await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(processUri));
         await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcherFromCreate');

@@ -40,6 +40,7 @@ interface StoredDebugClientSelection {
     version: 1;
     mode: VanessaDebugClientSelection['mode'];
     clients: StoredDebugClient[];
+    catalog?: StoredDebugClient[];
     secretsKey: string;
 }
 interface DebugClientSecrets {
@@ -49,38 +50,101 @@ interface DebugClientSecrets {
 }
 
 const STATE_KEY = 'kotTestToolkit.vanessaDebugClients.v1';
+const storeWrites = new WeakMap<DebugClientWorkspaceState, Promise<unknown>>();
 
 /** The workspace keeps connection identities; full strings and launch keys stay in SecretStorage. */
 export class VanessaDebugClientStore {
     constructor(private readonly state: DebugClientWorkspaceState, private readonly secrets: DebugClientSecretStorage) {}
 
     public async load(): Promise<VanessaDebugClientSelection | undefined> {
+        return (await this.serialize(() => this.read())).selection;
+    }
+
+    public async loadCatalog(): Promise<readonly VanessaDebugClient[]> { return (await this.serialize(() => this.read())).catalog; }
+
+    private async read(): Promise<{ selection?: VanessaDebugClientSelection; catalog: VanessaDebugClient[] }> {
         const stored = this.state.get<StoredDebugClientSelection>(STATE_KEY);
-        if (!stored) { return undefined; }
-        if (stored.version !== 1 || !['clients', 'scenario'].includes(stored.mode) || !Array.isArray(stored.clients)) {
+        if (!stored) { return { catalog: [] }; }
+        if (stored.version !== 1 || !['clients', 'scenario'].includes(stored.mode) || !Array.isArray(stored.clients) ||
+            stored.catalog !== undefined && !Array.isArray(stored.catalog)) {
             throw new Error('Saved debug clients are invalid.');
         }
         const payload = await this.secrets.get(stored.secretsKey);
         if (payload === undefined) { throw new Error('Saved debug client credentials are unavailable in secure storage.'); }
-        const secretClients = JSON.parse(payload) as Record<string, DebugClientSecrets>;
-        const clients = stored.clients.map(saved => {
-            const secure = secretClients[saved.id];
+        let secretClients: Record<string, DebugClientSecrets>;
+        try { secretClients = JSON.parse(payload) as Record<string, DebugClientSecrets>; }
+        catch { throw new Error('Saved debug client credentials are invalid.'); }
+        if (!secretClients || typeof secretClients !== 'object' || Array.isArray(secretClients)) { throw new Error('Saved debug client credentials are invalid.'); }
+        const catalog = (stored.catalog ?? stored.clients).map(saved => {
+            const secure = saved && Object.hasOwn(secretClients, saved.id) ? secretClients[saved.id] : undefined;
             if (!secure || typeof secure.infobase !== 'string' || typeof secure.password !== 'string' || typeof secure.additionalParameters !== 'string') {
                 throw new Error('Saved debug client credentials are invalid.');
             }
             return { ...saved, ...secure };
         });
+        validateVanessaDebugClientSelection({ mode: 'scenario', clients: catalog });
+        const clients = stored.clients.map(saved => {
+            const actual = catalog.find(client => client.id === saved?.id);
+            if (!actual) { throw new Error('Saved debug clients are invalid.'); }
+            return actual;
+        });
         const selection = { mode: stored.mode, clients };
         validateVanessaDebugClientSelection(selection);
-        return selection;
+        return { selection, catalog };
     }
 
     public async save(selection: VanessaDebugClientSelection): Promise<void> {
         validateVanessaDebugClientSelection(selection);
+        const chosen = structuredClone(selection);
+        await this.serialize(async () => {
+            const before = await this.read(); const catalog = new Map(before.catalog.map(client => [client.id, client]));
+            for (const client of chosen.clients) { catalog.set(client.id, client); }
+            await this.persist(chosen, [...catalog.values()]);
+        });
+    }
+
+    public async saveCatalog(clients: readonly VanessaDebugClient[]): Promise<void> {
+        const catalog = structuredClone(clients);
+        await this.updateCatalog(() => catalog);
+    }
+
+    /** Explicit recovery only, after the host confirms replacing ALL unavailable local catalog entries. */
+    public async replaceUnavailableCatalog(selection: VanessaDebugClientSelection): Promise<void> {
+        validateVanessaDebugClientSelection(selection); const selected = structuredClone(selection);
+        await this.serialize(async () => {
+            try { await this.read(); }
+            catch { await this.persist(selected, selected.clients); return; }
+            throw new Error('The saved client catalog is available again. Reload it before editing.');
+        });
+    }
+
+    /** The mutation reads the latest catalog inside the shared write lock, including other store instances. */
+    public async updateCatalog(update: (clients: readonly VanessaDebugClient[]) => readonly VanessaDebugClient[]): Promise<void> {
+        await this.serialize(async () => {
+            const before = await this.read(); const catalog = update(before.catalog);
+            validateVanessaDebugClientSelection({ mode: 'scenario', clients: catalog });
+            const byId = new Map(catalog.map(client => [client.id, client]));
+            const clients = (before.selection?.clients ?? []).flatMap(client => {
+                const updated = byId.get(client.id); return updated ? [updated] : [];
+            });
+            const mode = before.selection?.mode === 'clients' && clients.length ? 'clients' : 'scenario';
+            await this.persist({ mode, clients }, catalog);
+        });
+    }
+
+    private serialize<T>(work: () => Promise<T>): Promise<T> {
+        const operation = (storeWrites.get(this.state) ?? Promise.resolve()).catch(() => undefined).then(work);
+        storeWrites.set(this.state, operation);
+        const clear = () => { if (storeWrites.get(this.state) === operation) { storeWrites.delete(this.state); } };
+        void operation.then(clear, clear); return operation;
+    }
+
+    private async persist(selection: VanessaDebugClientSelection, catalog: readonly VanessaDebugClient[]): Promise<void> {
+        validateVanessaDebugClientSelection({ mode: 'scenario', clients: catalog });
         const previous = this.state.get<StoredDebugClientSelection>(STATE_KEY);
         const secretsKey = `${STATE_KEY}.${randomUUID()}`;
         const secretClients: Record<string, DebugClientSecrets> = Object.create(null) as Record<string, DebugClientSecrets>;
-        const clients = selection.clients.map(client => {
+        const storedCatalog = catalog.map(client => {
             const { password, additionalParameters, infobase } = client;
             secretClients[client.id] = { password, additionalParameters, infobase };
             return {
@@ -91,7 +155,9 @@ export class VanessaDebugClientStore {
         });
         await this.secrets.store(secretsKey, JSON.stringify(secretClients));
         try {
-            await this.state.update(STATE_KEY, { version: 1, mode: selection.mode, clients, secretsKey });
+            const ids = selection.clients.map(client => client.id);
+            const clients = ids.map(id => storedCatalog.find(client => client.id === id)!);
+            await this.state.update(STATE_KEY, { version: 1, mode: selection.mode, clients, catalog: storedCatalog, secretsKey });
         } catch (error) {
             await Promise.resolve(this.secrets.delete(secretsKey)).catch(() => undefined);
             throw error;
@@ -163,7 +229,7 @@ function clientConnection(client: VanessaDebugClient): string {
     });
 }
 
-function clientLaunchParameters(client: VanessaDebugClient): string {
+export function getVanessaDebugClientAuthentication(client: Pick<VanessaDebugClient, 'infobase' | 'username' | 'password'>): { username?: string; password?: string } {
     let username: string | undefined; let password: string | undefined;
     if (client.username || client.password) { username = client.username; password = client.password; }
     else if (parseInfobaseConnectionString(client.infobase)) {
@@ -176,6 +242,11 @@ function clientLaunchParameters(client: VanessaDebugClient): string {
             if (['pwd', 'password'].includes(key)) { password = value; }
         }
     }
+    return { username, password };
+}
+
+function clientLaunchParameters(client: VanessaDebugClient): string {
+    const { username, password } = getVanessaDebugClientAuthentication(client);
     const authentication = username !== undefined || password !== undefined
         ? `/N${quoteConnectionValue(username ?? '')} /P${quoteConnectionValue(password ?? '')}` : '';
     return [authentication, client.additionalParameters].filter(value => !!value.trim()).join(' ');

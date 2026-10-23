@@ -1,7 +1,45 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
-import { resolveProjectLibraryConfiguration } from '../src/projectLibraryRoots';
+import { addProjectLibraryFolder, resolveProjectLibraryConfiguration } from '../src/projectLibraryRoots';
+
+test('registers an export folder in compiler Libraries without changing other profile settings', () => {
+    const input = { workspaceFolderPath: '/repo', profileId: 'active',
+        buildParameters: [{ key: 'Libraries', value: '' }, { key: 'ScenarioFolder', value: 'tests' }], additionalVanessaParameters: [] };
+    const updated = addProjectLibraryFolder(input, '/repo/tests/nested');
+    assert.equal(updated.buildParameters[0].value, 'tests/nested');
+    assert.deepEqual(updated.buildParameters[1], input.buildParameters[1]);
+    assert.deepEqual(resolveProjectLibraryConfiguration({ ...input, ...updated }).libraryRootPaths, ['/repo/tests/nested']);
+    assert.equal(input.buildParameters[0].value, '');
+    assert.deepEqual(addProjectLibraryFolder({ ...input, ...updated }, '/repo/tests/nested/child'), updated);
+});
+
+test('library registration preserves aliases and effective Additional priority on both platforms', () => {
+    for (const pathApi of [path.posix, path.win32]) {
+        const root = pathApi === path.win32 ? 'C:\\repo' : '/repo'; const target = pathApi.join(root, 'exports');
+        for (const key of ['librarycatalogs', 'КаталогиБиблиотек', '/librarycatalogs']) {
+            const input = { workspaceFolderPath: root, profileId: 'active', pathApi,
+                buildParameters: [{ key: 'VanessaLibraries', value: 'shared' }],
+                additionalVanessaParameters: [{ key, value: '["additional"]', overrideExisting: true }, { key: 'Custom', value: 'keep', overrideExisting: true }] };
+            const updated = addProjectLibraryFolder(input, target);
+            assert.deepEqual(resolveProjectLibraryConfiguration({ ...input, ...updated }).libraryRootPaths, [pathApi.join(root, 'additional'), target]);
+            assert.equal(updated.buildParameters[0].key, 'VanessaLibraries');
+            assert.equal(updated.buildParameters[0].value, `shared|exports`);
+            assert.equal(updated.additionalVanessaParameters[0].key, key);
+            assert.deepEqual(updated.additionalVanessaParameters[1], input.additionalVanessaParameters[1]);
+        }
+    }
+});
+
+test('empty priority library override gains the export folder; inactive overrides stay unchanged', () => {
+    for (const overrideExisting of [false, true]) {
+        const input = { workspaceFolderPath: '/repo', profileId: 'active', buildParameters: [],
+            additionalVanessaParameters: [{ key: 'librarycatalogs', value: '[]', overrideExisting }] };
+        const updated = addProjectLibraryFolder(input, '/repo/exports');
+        assert.deepEqual(resolveProjectLibraryConfiguration({ ...input, ...updated }).libraryRootPaths, ['/repo/exports']);
+        if (!overrideExisting) { assert.deepEqual(updated.additionalVanessaParameters, input.additionalVanessaParameters); }
+    }
+});
 
 test('prefers effective Vanessa librarycatalogs over build fallbacks', () => {
     const result = resolveProjectLibraryConfiguration({

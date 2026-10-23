@@ -2,7 +2,7 @@ import { getVanessaFormTools, validateVanessaFormToolArguments, type VanessaForm
 import { VanessaAuthoringError, VanessaRuntimeAuthoring } from './vanessaControlAuthoring';
 import { assessVanessaControlCapabilities, normalizeVanessaControlEndpoint, parseVanessaControlReply, sameVanessaFeaturePath, VanessaEditorSourceMismatchError,
     type VanessaControlCapabilities, type VanessaControlReply } from './vanessaControlProtocol';
-import type { VanessaControlProgress, VanessaControlTransport } from './vanessaControlTransport';
+import { VanessaControlTransportError, type VanessaControlProgress, type VanessaControlTransport } from './vanessaControlTransport';
 import { createHash } from 'node:crypto';
 import { VanessaBreakpointReconciler, VanessaBreakpointUnavailableError, type VanessaBreakpointPorts } from './vanessaControlBreakpoints';
 import { nativeDocumentTextMatchesFileText } from './scenarioNativeDocumentSnapshot';
@@ -50,7 +50,8 @@ interface RunRequest {
 }
 export interface VanessaControlFailure { readonly generation: number; readonly filePath: string; readonly lineNumber: number; readonly message: string }
 /** An ancillary MCP error must still reject the command without erasing its confirmed failure. */
-class VanessaConfirmedRunFailureError extends Error {}
+class VanessaCommandRejectedError extends Error {}
+class VanessaConfirmedRunFailureError extends VanessaCommandRejectedError {}
 function safeFailureText(value: string): string {
     return value.slice(0, 8_000).replace(/\b(Pwd|Password|Пароль)\s*=\s*(?:"[^"]*"|'[^']*'|[^;\s]+)/giu, '$1=***')
         .replace(/\/P(?:"[^"]*"|[^\s]+)/giu, '/P***').replace(/Bearer\s+[^\s]+/giu, 'Bearer ***').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/gu, '');
@@ -77,6 +78,7 @@ export class VanessaControlSession {
     private failureValue?: VanessaControlFailure;
     private resumeSource?: { generation: number; filePath: string; lineNumber: number; hash: string };
     private executionSource?: { generation: number; filePath: string; text: string };
+    private observedScenarioName?: string;
     private breakpointSource?: { generation: number; filePath: string; text: string };
     /** Details are local to explicit editor control, excluded from public Test Manager state/logs. */
     get failure(): VanessaControlFailure | undefined { return this.failureValue; }
@@ -284,6 +286,10 @@ export class VanessaControlSession {
                 const result = await this.invoke('get_vanessa_automation_state', {}, generation);
                 const observed = parseVanessaControlReply('get_vanessa_automation_state', result);
                 if (observed.kind === 'state') {
+                    const text = result.content?.filter(item => item.type === 'text').map(item => 'text' in item ? item.text : '').join('\n').replace(/\r\n/gu, '\n') ?? '';
+                    const scenario = /\n## Текущий сценарий\n([\s\S]*?)(?=\n## |$)/u.exec(text)?.[1] ?? '';
+                    const names = [...scenario.matchAll(/^- name: (.+)$/gmu)];
+                    this.observedScenarioName = names.length === 1 ? names[0][1].trim() : undefined;
                     const execution = this.value.execution;
                     let confirmed = execution;
                     if (execution && observed.featurePath && sameVanessaFeaturePath(execution.filePath, observed.featurePath) && observed.lineNumber) {
@@ -422,7 +428,7 @@ export class VanessaControlSession {
                 if (request.stopRequested) { throw new Error('Execution was cancelled before launch.'); }
                 const args = mode === 'resume' ? { mode: 'fromCurrentStep' }
                     : withBreakpoints ? { mode: mode === 'runFeature' ? 'all' : 'fromCurrentStep' }
-                        : source && (mode === 'runFeature' || mode === 'runFromLine') ? { mode: mode === 'runFeature' ? 'all' : 'fromCurrentStep' }
+                        : source && (mode === 'runFeature' || mode === 'runFromLine') ? { filePath, ...(mode === 'runFromLine' ? { lineNumber } : {}), mode: mode === 'runFeature' ? 'reloadAndRun' : 'reloadAndRunFromLine' }
                         : mode === 'runFeature' ? { filePath, mode: 'reloadAndRun' }
                             : { filePath, lineNumber, ...(mode === 'runFromLine' ? { mode: 'reloadAndRunFromLine' } : {}) };
                 request.executing = true;
@@ -492,8 +498,8 @@ export class VanessaControlSession {
                     this.resumeSource = { generation, filePath, lineNumber: stopLine, hash: createHash('sha256').update(sourceText).digest('hex') };
                 }
                 if (stateError || result.isError) {
-                    if (status === 'failed') { throw new VanessaConfirmedRunFailureError('The failed execution was confirmed, but a Vanessa MCP request failed.'); }
-                    throw new Error('Vanessa reported a tool error.');
+                    if (status === 'failed') { throw new VanessaConfirmedRunFailureError(this.failureValue?.message ?? 'The failed execution was confirmed, but a Vanessa MCP request failed.'); }
+                    throw new VanessaCommandRejectedError(safeFailureText(commandFailureText(result) ?? 'Vanessa reported a tool error.'));
                 }
             } catch (error) {
                 if (!request.confirmedStop || this.value.generation !== generation) { throw error; }
@@ -615,7 +621,7 @@ export class VanessaControlSession {
                 this.set({ ...this.value, status: 'unknown', error: 'request',
                     execution: this.value.execution ? Object.freeze({ ...this.value.execution, status: 'unknown' }) : undefined });
             }
-            if (error instanceof VanessaBreakpointUnavailableError || error instanceof VanessaEditorSourceMismatchError || error instanceof VanessaClientControlError || error instanceof VanessaVariableControlError || error instanceof VanessaFormControlError || error instanceof VanessaAuthoringError || error instanceof VanessaDiagnosticError) { throw error; }
+            if (error instanceof VanessaCommandRejectedError || error instanceof VanessaBreakpointUnavailableError || error instanceof VanessaEditorSourceMismatchError || error instanceof VanessaClientControlError || error instanceof VanessaVariableControlError || error instanceof VanessaFormControlError || error instanceof VanessaAuthoringError || error instanceof VanessaDiagnosticError) { throw error; }
             throw new Error('Vanessa command was not confirmed. Refresh state before retrying.');
         } finally {
             if (generation === this.value.generation) {
@@ -646,6 +652,9 @@ export class VanessaControlSession {
                 }
             } : undefined);
         this.checkGeneration(generation); return result;
+        } catch (error) {
+            if (error instanceof VanessaControlTransportError) { throw new VanessaCommandRejectedError(`${error.message} Tool: ${name}.`); }
+            throw error;
         } finally { this.requests.delete(request); if (this.value.generation === generation) { this.publishRequests(); } }
     }
     private publishRequests(): void {
@@ -654,7 +663,8 @@ export class VanessaControlSession {
         this.set({ ...this.value, request: tool ? Object.freeze({ tool, count: tools.length }) : undefined });
     }
     private async invokeChecked(name: string, args: Record<string, unknown>, generation: number): Promise<void> {
-        if ((await this.invoke(name, args, generation)).isError) { throw new Error('Vanessa reported a tool error.'); }
+        const result = await this.invoke(name, args, generation);
+        if (result.isError) { throw new VanessaCommandRejectedError(safeFailureText(commandFailureText(result) ?? 'Vanessa reported a tool error.')); }
     }
     private async readResults(generation: number) {
         try {
@@ -664,7 +674,7 @@ export class VanessaControlSession {
                 ? /^- Ошибка: ([^\r\n]+)$/mu.exec(result.content?.filter(item => item.type === 'text').map(item => 'text' in item ? item.text : '').join('\n') ?? '')?.[1] : undefined;
             const source = this.executionSource;
             const execution = this.value.execution;
-            const steps = source && execution ? mapVanessaStepResults(result, source.text, execution.mode === 'runFeature' ? 1 : execution.lineNumber)
+            const steps = source && execution ? mapVanessaStepResults(result, source.text, execution.mode === 'runFeature' ? 1 : execution.lineNumber, this.observedScenarioName)
                 .filter(step => execution.mode !== 'oneStep' || step.lineNumber === execution.lineNumber) : [];
             return { hash: createHash('sha256').update(JSON.stringify(result)).digest('hex'), parsed, message, steps };
         } catch {

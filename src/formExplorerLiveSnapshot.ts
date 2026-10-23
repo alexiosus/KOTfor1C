@@ -19,8 +19,9 @@ export interface LoadedFormExplorerLiveSnapshot {
     snapshot: FormExplorerSnapshot;
 }
 
-let mcpSource: Pick<VanessaFormExplorerSource, 'available' | 'cached'> | undefined;
-export function registerFormExplorerMcpSource(source: Pick<VanessaFormExplorerSource, 'available' | 'cached'>) {
+type EditorFormSource = Pick<VanessaFormExplorerSource, 'available' | 'cached'> & Partial<Pick<VanessaFormExplorerSource, 'completionSnapshot'>>;
+let mcpSource: EditorFormSource | undefined;
+export function registerFormExplorerMcpSource(source: EditorFormSource) {
     mcpSource = source;
     return { dispose: () => { if (mcpSource === source) { mcpSource = undefined; } } };
 }
@@ -118,7 +119,9 @@ async function resolveActualLiveSnapshotPath(): Promise<string | null> {
 export async function loadLiveFormExplorerSnapshot(): Promise<LoadedFormExplorerLiveSnapshot | null> {
     const mode = vscode.workspace.getConfiguration('kotTestToolkit.formExplorer').get<string>('source', 'auto');
     if (mode === 'mcp' || mode !== 'snapshot' && mcpSource?.available) {
-        const snapshot = mcpSource?.cached();
+        const source = mcpSource;
+        const snapshot = source?.completionSnapshot ? await source.completionSnapshot() : source?.cached();
+        if (source !== mcpSource) { return null; }
         return snapshot ? { snapshotPath: 'mcp:active-form', snapshot } : null;
     }
     const snapshotPath = await resolveActualLiveSnapshotPath();

@@ -45,6 +45,7 @@ export function getStandaloneFeatureLabels(translate: (message: string) => strin
         openFeature: t('Open feature'), generateJson: t('Generate launch JSON'),
         renameFeature: t('Change feature title'), renameFeatureFile: t('Rename feature file'),
         renameScenario: t('Rename scenario'), renameMainGroup: t('Rename group'), scenarioActions: t('Scenario actions'),
+        convertFormat: translate('Convert source format…'),
         openScenarioProperties: t('Open test properties'),
         deleteDefinition: t('Delete'), renameProcess: t('Rename process'), processActions: t('Process actions'),
         selectJson: t('Select launch JSON'), openJson: t('Open launch JSON'),

@@ -4,6 +4,32 @@ import test from 'node:test';
 import vm from 'node:vm';
 const manifest = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const nls = JSON.parse(fs.readFileSync('package.nls.json', 'utf8'));
+test('KOT keeps frequent execution actions visible and groups recording, inspection and run tracking by task', () => {
+    const menus = manifest.contributes.menus; const root = menus['kotTestToolkit.editorContext'];
+    const command = (suffix: string) => `kotTestToolkit.editorMenu.${suffix}`;
+    for (const suffix of ['vanessaControl.oneStep', 'vanessaControl.runFromLine', 'vanessaControl.runSelection']) {
+        assert.ok(root.some((row: any) => row.command === command(suffix)), suffix);
+    }
+    for (const category of ['execution', 'authoring', 'tracking']) {
+        const id = `kotTestToolkit.editorContext.${category}`;
+        assert.ok(root.some((row: any) => row.submenu === id));
+        assert.ok(manifest.contributes.submenus.some((row: any) => row.id === id));
+        assert.ok(menus[id].length > 1);
+    }
+    assert.ok(!root.some((row: any) => row.command === command('vanessaControl.formChecks')));
+    assert.ok(!root.some((row: any) => row.command === command('switchTrackedScenarioRunForFeature')));
+    const all = Object.entries(menus).filter(([name]) => name.startsWith('kotTestToolkit.editorContext')).flatMap(([, rows]) => rows as any[]);
+    const ids = all.filter(row => row.command).map(row => row.command);
+    assert.equal(new Set(ids).size, ids.length, 'each editor action has one location');
+});
+
+test('connection preferences live in the Test Manager menu and automatic startup remains disabled by default', () => {
+    assert.ok(manifest.contributes.menus['view/title'].some((row: any) =>
+        row.command === 'kotTestToolkit.vanessaControl.connectionSettings' && row.when === 'view == kotTestToolkit.phaseSwitcherView' && !row.group.startsWith('navigation')));
+    const properties = Object.assign({}, ...manifest.contributes.configuration.map((section: any) => section.properties));
+    assert.equal(properties['kotTestToolkit.vanessaControl.autoStart'].default, false);
+    assert.equal(properties['kotTestToolkit.vanessaControl.formCompletions'].default, true);
+});
 test('editor context has a single KOT submenu with concise command aliases', () => {
     const menus = manifest.contributes.menus;
     assert.deepEqual(menus['editor/context'].map((entry: any) => entry.submenu), ['kotTestToolkit.editorContext']);

@@ -275,6 +275,18 @@ export function updateScenarioDisplayNameInTestConfigContent(
     ]);
 }
 
+/** Rename native SPPR invocations without wrapping or saving the script as YAML. */
+export function updateNestedScenarioNameReferencesInScript(source: string, oldName: string, newName: string): string {
+    const previous = oldName.trim(); const next = newName.trim();
+    if (!previous || !next || previous === next) { return source; }
+    const scanned = scanCompilerLines(source.split(/\r\n|\r|\n/u)); let index = 0;
+    return source.replace(/([^\r\n]*)(\r\n|\r|\n|$)/gu, (whole, line: string, ending: string) => {
+        const kind = scanned[index++]?.kind;
+        const call = kind === 'code' ? findScenarioReference(line.replace(/\s+#.*$/u, ''), previous) : null;
+        return call ? line.slice(0, call.start) + next + line.slice(call.start + call.length) + ending : whole;
+    });
+}
+
 export function updateNestedScenarioNameReferencesInScenarioContent(
     source: string,
     oldScenarioName: string,

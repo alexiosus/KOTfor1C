@@ -24,7 +24,8 @@
         empty: 'Open a YAML scenario, process or feature to edit its properties.', noRecords: 'No records', noSettings: 'No linked test settings.',
         selectSettings: 'Test settings file', createSettings: 'Create test settings', save: 'Save test',
         saved: 'Saved', unsaved: 'Unsaved changes', applying: 'Applying changes…', pin: 'Pin test', unpin: 'Unpin test',
-        openSource: 'Open YAML', openText: 'Fold service sections', openSettings: 'Open settings YAML', openMetadata: 'Open KOT metadata',
+        convertCallable: 'Convert to exported scenario…', convertExport: 'Convert to nested scenario…',
+        convertRole: 'Change test role…', conversions: 'Conversions', makeMain: 'Convert to main test…', makeNested: 'Convert to nested test', convertFormat: 'Convert source format…', openSource: 'Open YAML', openText: 'Fold service sections', openSettings: 'Open settings YAML', openMetadata: 'Open KOT metadata',
         rename: 'Rename', changeCode: 'Change code', systemFunction: 'System function', copy: 'Copy UID', copied: 'Copied',
         base: 'Select infobase', users: 'Select users', addRecord: 'Add record', removeRecord: 'Remove record',
         addSteps: 'Add process step', addNested: 'Add nested scenario', openReference: 'Open referenced definition',
@@ -42,9 +43,9 @@
         'ПараметрыШага': 'Step parameters', 'ПараметрыТеста': 'Test parameters', 'ТегиСценария': 'Scenario tags',
         'ТегиПроцесса': 'Process tags', 'ТегиТеста': 'Test tags'
     });
-    const actions = new Set(['save', 'pin', 'openSource', 'openText', 'openSettings', 'openMetadata', 'copyPath', 'rename', 'changeCode',
+    const actions = new Set(['save', 'pin', 'openSource', 'openFeature', 'openText', 'openSettings', 'openMetadata', 'copyPath', 'rename', 'changeCode',
         'systemFunction', 'base', 'users', 'addSteps', 'aiDescription', 'changeGroup', 'newGroup', 'createSettings',
-        'selectSettings', 'addNested', 'openReference', 'fillParameters', 'fillNested', 'dismissError', 'favorite']);
+        'selectSettings', 'addNested', 'openReference', 'fillParameters', 'fillNested', 'dismissError', 'favorite', 'convertFormat', 'convertRole', 'convertCallable', 'run']);
     const metadataFields = new Set(['groupId', 'order', 'description', 'category']);
     const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
     const nonempty = value => typeof value === 'string' && value.length > 0;
@@ -65,7 +66,7 @@
     function validateMessage(message) {
         if (!object(message)) { return false; }
         if (message.command === 'ready') { return true; }
-        if (message.command === 'action') { return (message.action !== 'favorite' || nonempty(message.documentUri) && revision(message.documentVersion)) && actions.has(message.action) && (message.value === undefined || typeof message.value === 'string'); }
+        if (message.command === 'action') { return (!['favorite', 'convertCallable'].includes(message.action) || nonempty(message.documentUri) && revision(message.documentVersion)) && actions.has(message.action) && (message.value === undefined || typeof message.value === 'string'); }
         if (!nonempty(message.documentUri) || !revision(message.documentVersion)) { return false; }
         if (message.command === 'fillProcessDefaults') {
             return revision(message.sourceVersion) && object(message.target) && message.target.section === 'ПараметрыТеста'
@@ -106,7 +107,7 @@
         let active = false;
         let activeMessage = null;
         const queue = [];
-        const navigation = new Set(['openSource', 'openText', 'openSettings', 'openMetadata', 'openReference', 'copyPath', 'pin', 'dismissError']);
+        const navigation = new Set(['openSource', 'openFeature', 'openText', 'openSettings', 'openMetadata', 'openReference', 'copyPath', 'pin', 'dismissError']);
         const changes = message => message && (message.command !== 'action' || !navigation.has(message.action));
         function isPending() { return Boolean(active && changes(activeMessage) || queue.some(request => changes(request.message))); }
         function notify() { options.onPending?.(isPending()); }

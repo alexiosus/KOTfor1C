@@ -75,6 +75,11 @@
         toggleHiddenActionLabel: document.getElementById('toggleHiddenActionLabel')
     };
 
+    const clientPanel = window.KotInfobaseClients?.create(document.getElementById('vanessaClients'), {
+        post: message => vscode.postMessage(message), loc: loc.vanessaClients
+    });
+    let lastClientFocusRequest = 0;
+
     function persistUiState() {
         vscode.setState({
             searchQuery: uiState.searchQuery,
@@ -365,7 +370,13 @@
             : 'before';
     }
 
+    function runtimeLabel(record) {
+        return (record.runtimeModes || []).map(mode => mode === 'enterprise' ? loc.enterpriseMode || 'Enterprise' : mode === 'designer' ? loc.designerMode || 'Designer' : mode === 'vanessa' ? (loc.vanessaMode || 'Vanessa') : mode).join(' · ');
+    }
+    let lastListSignature;
     function renderList() {
+        const signature = JSON.stringify([state.infobases, state.selectedInfobasePath, state.sortMode, state.showHidden, state.pendingAction, uiState.searchQuery]);
+        if (lastListSignature === signature) { return; } lastListSignature = signature;
         if (!(refs.infobaseList instanceof HTMLElement)) {
             return;
         }
@@ -391,13 +402,15 @@
             return `
                 <button class="infobase-item${isSelected ? ' is-selected' : ''}${manualDragEnabled ? ' is-draggable' : ''}${record.hidden ? ' is-hidden-infobase' : ''}" type="button" data-path="${escapeHtml(record.infobasePath)}" draggable="${manualDragEnabled ? 'true' : 'false'}">
                     <div class="infobase-item-head">
+                        <span class="infobase-item-runtime${record.operation || record.running || record.runtimeModes?.length ? ' is-active' : ''}" title="${escapeHtml(record.operation || (record.running || record.runtimeModes?.length ? runtimeLabel(record) : '') || '')}"><span class="codicon codicon-${record.operation ? 'loading codicon-modifier-spin' : 'circle-filled'}" aria-hidden="true"></span></span>
                         <div class="infobase-item-title-row">
                             ${manualDragEnabled ? '<span class="codicon codicon-gripper item-grip" aria-hidden="true"></span>' : ''}
                             <span class="infobase-item-title">${escapeHtml(record.displayName)}</span>
+
                         </div>
-                        <span class="state-pill compact is-${escapeHtml(record.state)}">${escapeHtml(getStateLabel(record.state))}</span>
-                        ${record.operation || record.running ? `<span class="state-pill compact is-running" title="${escapeHtml(record.operation || loc.runningFromKot || 'Running from KOT')}"><span class="codicon codicon-${record.operation ? 'loading codicon-modifier-spin' : 'circle-filled'}" aria-hidden="true"></span></span>` : ''}
+
                     </div>
+                        <span class="state-pill compact is-${escapeHtml(record.state)}">${escapeHtml(getStateLabel(record.state))}</span>
                     <div class="infobase-item-path">${escapeHtml(record.locationLabel || record.infobasePath)}</div>
                     ${record.hidden ? `<div class="infobase-item-meta"><span class="hidden-chip">${escapeHtml(loc.hidden || 'Hidden')}</span></div>` : ''}
                 </button>
@@ -580,9 +593,18 @@
         }).join('');
     }
 
+    let lastDetailsSignature;
     function renderDetails() {
         const selected = getSelectedInfobase();
         const hasSelection = Boolean(selected);
+        clientPanel?.render(hasSelection ? state.vanessaClients : null, selected?.infobasePath || '');
+        const signature = JSON.stringify([selected, state.platforms, state.pendingAction]);
+        if (lastDetailsSignature === signature && state.clientFocusRequest <= lastClientFocusRequest) { return; }
+        lastDetailsSignature = signature;
+        if (hasSelection && state.vanessaClients && state.clientFocusRequest > lastClientFocusRequest) {
+            lastClientFocusRequest = state.clientFocusRequest;
+            document.getElementById('vanessaClients')?.scrollIntoView({ block: 'start' });
+        }
 
         if (refs.emptyState instanceof HTMLElement) {
             refs.emptyState.classList.toggle('hidden', hasSelection);
@@ -621,7 +643,7 @@
             refs.stateBadge.title = getStateHint(selected.state);
         }
         if (refs.activityBadge instanceof HTMLElement) {
-            const activity = selected.operation || (selected.running ? loc.runningFromKot || 'Running from KOT' : '');
+            const activity = selected.operation || runtimeLabel(selected) || (selected.running ? loc.runningFromKot || 'Running from KOT' : '');
             refs.activityBadge.hidden = !activity; refs.activityBadge.textContent = activity; refs.activityBadge.title = activity;
         }
         if (refs.launcherStatus instanceof HTMLElement) {
@@ -755,6 +777,10 @@
             refs.errorValue.textContent = hasError ? state.lastError : '';
         }
     }
+
+    document.addEventListener('click', event => {
+        for (const menu of document.querySelectorAll('.action-category-menu[open]')) { if (!menu.contains(event.target) || event.target.closest('[data-command]')) { menu.open = false; } }
+    });
 
     function render() {
         if (refs.searchInput instanceof HTMLInputElement && refs.searchInput.value !== uiState.searchQuery) {

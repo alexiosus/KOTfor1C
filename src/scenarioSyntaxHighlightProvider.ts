@@ -167,6 +167,10 @@ export class ScenarioSyntaxHighlightProvider implements vscode.DocumentSemanticT
     }
 
     provideDocumentSemanticTokens(document: vscode.TextDocument): vscode.ProviderResult<vscode.SemanticTokens> {
+        if (/(?:^|[\\/])scen\.feature$/u.test(document.fileName)) {
+            return import('./spprScenarioFiles.js').then(async source => (await source.readNativeScenarioMetadata(document.uri))
+                ? this.buildTokens(document, true) : new vscode.SemanticTokens(new Uint32Array()));
+        }
         if (
             document.languageId !== 'yaml'
             || !isScenarioYamlFile(document)
@@ -175,10 +179,14 @@ export class ScenarioSyntaxHighlightProvider implements vscode.DocumentSemanticT
             return new vscode.SemanticTokens(new Uint32Array());
         }
 
+        return this.buildTokens(document, false);
+    }
+
+    private buildTokens(document: vscode.TextDocument, native: boolean): vscode.SemanticTokens {
         const builder = new vscode.SemanticTokensBuilder(ScenarioSyntaxHighlightProvider.legend);
-        const body = getCompilerScenarioBody(document.getText());
+        const body = native ? { lines: document.getText().split(/\r\n|\r|\n/u), startLine: 0 } : getCompilerScenarioBody(document.getText());
         const scanned = scanCompilerLines(body?.lines ?? []);
-        let insideScenarioText = false;
+        let insideScenarioText = native;
         let scenarioHeaderIndent = 0;
         let docStringDelimiter: string | null = null;
 
@@ -202,7 +210,7 @@ export class ScenarioSyntaxHighlightProvider implements vscode.DocumentSemanticT
                 continue;
             }
             const currentIndent = (lineText.match(/^[ \t]*/)?.[0].length) ?? 0;
-            if (!docStringDelimiter && currentIndent <= scenarioHeaderIndent && topLevelYamlKeyRegex.test(lineText)) {
+            if (!native && !docStringDelimiter && currentIndent <= scenarioHeaderIndent && topLevelYamlKeyRegex.test(lineText)) {
                 insideScenarioText = false;
                 const headerMatch = lineText.match(scenarioTextHeaderRegex);
                 if (headerMatch) {
@@ -450,19 +458,19 @@ export function collectScenarioPlainTextRanges(document: vscode.TextDocument): v
     return ranges;
 }
 
-export function collectScenarioBracketParameterRanges(document: vscode.TextDocument): vscode.Range[] {
-    if (
+export function collectScenarioBracketParameterRanges(document: vscode.TextDocument, native = false): vscode.Range[] {
+    if (!native && (
         document.languageId !== 'yaml'
         || !isScenarioYamlFile(document)
         || !isScenarioHighlightingEnabled(document)
-    ) {
+    )) {
         return [];
     }
 
     const ranges: vscode.Range[] = [];
-    const body = getCompilerScenarioBody(document.getText());
+    const body = native ? { lines: document.getText().split(/\r\n|\r|\n/u), startLine: 0 } : getCompilerScenarioBody(document.getText());
     const scanned = scanCompilerLines(body?.lines ?? []);
-    let insideScenarioText = false;
+    let insideScenarioText = native;
     let scenarioHeaderIndent = 0;
     let docStringDelimiter: string | null = null;
 
@@ -481,7 +489,7 @@ export function collectScenarioBracketParameterRanges(document: vscode.TextDocum
         const trimmed = lineText.trim();
         if (body && scanned[lineIndex - body.startLine]?.kind === 'comment') { continue; }
         const currentIndent = (lineText.match(/^[ \t]*/)?.[0].length) ?? 0;
-        if (!docStringDelimiter && currentIndent <= scenarioHeaderIndent && topLevelYamlKeyRegex.test(lineText)) {
+        if (!native && !docStringDelimiter && currentIndent <= scenarioHeaderIndent && topLevelYamlKeyRegex.test(lineText)) {
             insideScenarioText = false;
             const headerMatch = lineText.match(scenarioTextHeaderRegex);
             if (headerMatch) {

@@ -369,3 +369,17 @@ test('export deletion considers unsaved feature callers as well as the complete 
     await assert.rejects(() => h.api.deleteExportScenario(h.definition.id, h.target, h.resolver, referenceService), /referenced/iu);
     assert.equal(await fs.readFile(h.target.fsPath, 'utf8'), h.source);
 });
+
+test('native SPPR deletion keeps a main pair together and removes only paired nested sources', async t => {
+    const h = await harness(t);
+    const main = await h.write('Main/meta.yaml', scenarioSource('Main', 'KOTМетаданные:\n    PhaseSwitcher:\n        Tab: Smoke\n').split('ТекстСценария:')[0]);
+    await h.write('Main/scen.feature', 'And main\n');
+    const nested = await h.write('Nested/meta.yaml', scenarioSource('Nested').split('ТекстСценария:')[0]);
+    const script = await h.write('Nested/scen.feature', 'And nested\n');
+    await h.write('Nested/keep.txt', 'keep');
+    await h.api.deleteScenarioDefinition(h.context, { name: 'Main', uri: main.toString() });
+    await h.api.deleteScenarioDefinition(h.context, { name: 'Nested', uri: nested.toString() });
+    assert.equal(h.deleted[0].uri, h.uri(path.dirname(main.fsPath)).toString());
+    assert.deepEqual(h.deleted.slice(1).map(item => item.uri), [nested.toString(), script.toString()]);
+    assert.equal(await fs.readFile(path.join(h.root, 'Nested/keep.txt'), 'utf8'), 'keep');
+});

@@ -39,6 +39,56 @@ async function sourceWorkspace(uri: vscode.Uri, t: Translator): Promise<vscode.U
     return owners[0].uri;
 }
 
+export async function createScenarioLaunchSettings(context: vscode.ExtensionContext, document: vscode.TextDocument, source: ScenarioPropertiesDocument, t: Translator): Promise<vscode.Uri | undefined> {
+    const [{ readScenarioProperties }, { projectLibraryEnvironment }, { resolveProjectLibraryRoot },
+        { promptForSelectedEtalonBaseValues }, { buildScenarioTestSettings }] = await Promise.all([
+        import('./scenarioPropertiesModel.js'), import('./projectLibraryIntegration.js'), import('./projectLibraryMetadata.js'),
+        import('./scenarioCreator.js'), import('./scenarioTestSettingsModel.js')
+    ]);
+    assertCurrent(document, source, t);
+    if (document.uri.scheme !== 'file') { throw new Error(t('Choose a scenario in the configured project or test roots.')); }
+    const model = readScenarioProperties(source.text);
+    const environment = projectLibraryEnvironment();
+    const owner = resolveProjectLibraryRoot(document.uri.fsPath, environment.workspaceRoots, environment.scanRoots);
+    const code = model.header.find(field => field.key === 'Код')?.value.trim() ?? '';
+    if (!code || /[\\/:*?"<>|\u0000-\u001f]/u.test(code) || /[. ]$/u.test(code)
+        || /^(?:\.{1,2}|con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(code)) {
+        throw new Error(t('Set a valid scenario or process code before creating launch settings. The code is used as the settings filename.'));
+    }
+    const user = model.header.find(field => field.key === 'ПрофильПользователя')?.value || '';
+    const workspace = await sourceWorkspace(document.uri, t);
+    const selectedBase = await promptForSelectedEtalonBaseValues(t, context, user, workspace.fsPath);
+    if (!selectedBase) { return; }
+    assertCurrent(document, source, t);
+    const target = vscode.Uri.file(path.join(path.dirname(document.uri.fsPath), 'test', `${code}.yaml`));
+    assertCurrent(document, source, t);
+    if (target.scheme !== 'file' || target.query || target.fragment || !/\.ya?ml$/iu.test(target.fsPath)
+        || resolveProjectLibraryRoot(target.fsPath, environment.workspaceRoots, environment.scanRoots) !== owner) {
+        throw new Error(t('Choose a YAML path inside the source project or its configured test roots.'));
+    }
+    const assertTargetSaved = () => {
+        if (vscode.workspace.textDocuments.some(candidate => candidate.uri.toString() === target.toString() && !candidate.isClosed && candidate.isDirty)) {
+            throw new Error(t('The launch settings target has modified text. Save it before creating settings.'));
+        }
+    };
+    assertTargetSaved();
+    if (await fileExists(target)) { throw new Error(t('The launch settings path already exists: {0}', target.fsPath)); }
+    assertTargetSaved();
+    const text = buildScenarioTestSettings(source.text, {
+        uid: randomUUID(), databaseName: selectedBase.baseName, databaseId: selectedBase.baseId, userProfile: selectedBase.userProfile
+    });
+    assertCurrent(document, source, t);
+    await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(target.fsPath)));
+    assertCurrent(document, source, t); assertTargetSaved();
+    const edit = new vscode.WorkspaceEdit();
+    edit.createFile(target, { overwrite: false, ignoreIfExists: false });
+    edit.insert(target, new vscode.Position(0, 0), text);
+    if (!await vscode.workspace.applyEdit(edit)) { throw new Error(t('Could not create settings. The target may have changed; refresh and retry.')); }
+    // Keep the inserted native document dirty for the panel's Save test action.
+    await vscode.workspace.openTextDocument(target);
+    return target;
+}
+
 /** Reuse the established identity, catalog and project workflows with the panel's bound URI. */
 export function createScenarioPropertiesActions(
     context: vscode.ExtensionContext,
@@ -140,47 +190,7 @@ export function createScenarioPropertiesActions(
         }
     }
     async function createSettings(document: vscode.TextDocument, source: ScenarioPropertiesDocument, t: Translator): Promise<void> {
-        const [{ readScenarioProperties }, { projectLibraryEnvironment }, { resolveProjectLibraryRoot },
-            { promptForSelectedEtalonBaseValues }, { buildScenarioTestSettings }] = await Promise.all([
-            import('./scenarioPropertiesModel.js'), import('./projectLibraryIntegration.js'), import('./projectLibraryMetadata.js'),
-            import('./scenarioCreator.js'), import('./scenarioTestSettingsModel.js')
-        ]);
-        assertCurrent(document, source, t);
-        if (document.uri.scheme !== 'file') { throw new Error(t('Choose a scenario in the configured project or test roots.')); }
-        const model = readScenarioProperties(source.text);
-        const environment = projectLibraryEnvironment();
-        const owner = resolveProjectLibraryRoot(document.uri.fsPath, environment.workspaceRoots, environment.scanRoots);
-        const user = model.header.find(field => field.key === 'ПрофильПользователя')?.value || '';
-        const workspace = await sourceWorkspace(document.uri, t);
-        const selectedBase = await promptForSelectedEtalonBaseValues(t, context, user, workspace.fsPath);
-        if (!selectedBase) { return; }
-        assertCurrent(document, source, t);
-        const defaultUri = vscode.Uri.file(path.join(path.dirname(document.uri.fsPath), ...(model.kind === 'process' ? ['test.yaml'] : ['test', 'test.yaml'])));
-        const target = await vscode.window.showSaveDialog({ defaultUri, saveLabel: t('Create test settings'), filters: { YAML: ['yaml', 'yml'] } });
-        if (!target) { return; }
-        assertCurrent(document, source, t);
-        if (target.scheme !== 'file' || target.query || target.fragment || !/\.ya?ml$/iu.test(target.fsPath)
-            || resolveProjectLibraryRoot(target.fsPath, environment.workspaceRoots, environment.scanRoots) !== owner) {
-            throw new Error(t('Choose a YAML path inside the source project or its configured test roots.'));
-        }
-        const assertTargetSaved = () => {
-            if (vscode.workspace.textDocuments.some(candidate => candidate.uri.toString() === target.toString() && !candidate.isClosed && candidate.isDirty)) {
-                throw new Error(t('The selected settings target has modified text. Save it or choose another file.'));
-            }
-        };
-        assertTargetSaved();
-        if (await fileExists(target)) { throw new Error(t('The selected settings file already exists. Choose a new file.')); }
-        assertTargetSaved();
-        const text = buildScenarioTestSettings(source.text, {
-            uid: randomUUID(), databaseName: selectedBase.baseName, databaseId: selectedBase.baseId, userProfile: selectedBase.userProfile
-        });
-        assertCurrent(document, source, t);
-        const edit = new vscode.WorkspaceEdit();
-        edit.createFile(target, { overwrite: false, ignoreIfExists: false });
-        edit.insert(target, new vscode.Position(0, 0), text);
-        if (!await vscode.workspace.applyEdit(edit)) { throw new Error(t('Could not create settings. The target may have changed; choose a new file and retry.')); }
-        // Keep the inserted native document dirty for the panel's Save test action.
-        await vscode.workspace.openTextDocument(target);
+        await createScenarioLaunchSettings(context, document, source, t);
     }
     async function addNested(document: vscode.TextDocument, source: ScenarioPropertiesDocument, t: Translator): Promise<void> {
         const [{ readScenarioProperties, addScenarioPropertyRecord }, { scanWorkspaceForScenarioCatalog }] = await Promise.all([
@@ -261,6 +271,13 @@ export function createScenarioPropertiesActions(
         await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcher', { refreshCache: true });
     }
     return async (action, source, settings, value, catalogs) => {
+        if (action === 'convertRole') { return vscode.commands.executeCommand('kotTestToolkit.convertScenarioRole', vscode.Uri.parse(source.uri), value === 'main'); }
+        if (action === 'convertFormat') { return vscode.commands.executeCommand('kotTestToolkit.convertScenarioFormat', vscode.Uri.parse(source.uri)); }
+        if (action === 'openFeature') {
+            const sourceFiles = await (await import('./spprScenarioFiles.js')).resolveScenarioSourceUris(vscode.Uri.parse(source.uri));
+            if (sourceFiles?.format === 'native') { await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(sourceFiles.scriptUri), { preview: false }); }
+            return;
+        }
         if (action === 'run') { await vscode.commands.executeCommand('kotTestToolkit.runTestFromSource', vscode.Uri.parse(source.uri)); return; }
         if (action === 'copyPath') {
             if (!value || ![source.uri, settings, source.uri + '.kot.yml'].includes(value)) { throw new Error('The property target is not bound to the selected test/settings.'); }
@@ -295,6 +312,13 @@ export function createScenarioPropertiesActions(
         if (action === 'addNested') { await addNested(document, source, t); return; }
         if (action === 'openReference') { await openReference(document, source, value, t); return; }
         if (action === 'fillParameters' || action === 'fillNested') {
+            if (/(?:^|[\\/])meta\.yaml$/u.test(document.fileName)) {
+                const { clearAndFillNestedScenarios, clearAndFillScenarioParameters } = await import('./commandHandlers.js');
+                if (action === 'fillParameters') { await clearAndFillScenarioParameters(document, true); }
+                else { await clearAndFillNestedScenarios(document, true); }
+                if (!await document.save()) { throw new Error(t('Could not save synchronized SPPR metadata. Unsaved changes were retained.')); }
+                return;
+            }
             await inRawEditor(document, source, t, async () => {
                 await vscode.commands.executeCommand(action === 'fillParameters' ? 'kotTestToolkit.checkAndFillScriptParameters' : 'kotTestToolkit.checkAndFillNestedScenarios');
             }, true); return;

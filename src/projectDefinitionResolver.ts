@@ -169,9 +169,9 @@ function nestedDefinition(scenario: TestInfo): ProjectDefinition {
 }
 
 export function isCallableNestedScenario(
-    scenario: Pick<TestInfo, 'tabName'>
+    scenario: Pick<TestInfo, 'tabName' | 'hasTestSettings' | 'kind'>
 ): boolean {
-    return typeof scenario.tabName !== 'string' || scenario.tabName.trim().length === 0;
+    return scenario.kind !== 'process' && !(scenario.hasTestSettings ?? !!scenario.tabName?.trim());
 }
 
 function callableNestedScenarios(catalog: ScenarioCatalog): readonly TestInfo[] {

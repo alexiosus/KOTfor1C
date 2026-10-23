@@ -23,6 +23,7 @@ export interface CompilerProcessScenario {
 }
 
 export interface CompilerProcessCreationOptions {
+    createSettings?: boolean;
     name: string;
     code: string;
     fullCode?: string;
@@ -122,7 +123,7 @@ export function buildCompilerProcessFiles(options: CompilerProcessCreationOption
     const code = requireIdentity(options.code, 'process code');
     const name = requireIdentity(options.name, 'process name');
     requireIdentity(options.settingsUid, 'settings UID');
-    requireIdentity(options.databaseId, 'database identifier');
+    if (options.createSettings !== false) { requireIdentity(options.databaseId, 'database identifier'); }
     const fullCode = options.fullCode?.trim() || code;
     const names = new Set<string>();
     const uids = new Set<string>();
@@ -150,7 +151,7 @@ export function buildCompilerProcessFiles(options: CompilerProcessCreationOption
             field('Ответственный', ''), field('УровеньОтчета1', options.reportLevel1), field('УровеньОтчета2', options.reportLevel2),
             '', 'ПараметрыСценария:', '', 'ШагиПроцесса:', ...steps, '', 'ТегиПроцесса:', ''
         ].join('\n'),
-        settingsSource: [
+        settingsSource: options.createSettings === false ? '' : [
             'ТипФайла: "НастройкаПроцесса"', 'ДанныеТеста:',
             field('UID', options.settingsUid), field('Код', code), field('Имя', name), field('UIDПроцесса', uid),
             field('ПроцессНаименование', name),

@@ -105,7 +105,7 @@ function settingSelected(parameters: readonly CompilerBuildParameter[], settings
 
 /** Sources are the caller's enabled roots/settings and dependencies; this function never reads files or rewrites values. */
 export function collectCompilerBuildPreflightIssues(parameters: readonly CompilerBuildParameter[],
-    sources: readonly CompilerBuildPreflightSource[]): readonly CompilerBuildPreflightIssue[] {
+    sources: readonly CompilerBuildPreflightSource[], enabledRootUris: readonly string[] = []): readonly CompilerBuildPreflightIssue[] {
     const result: CompilerBuildPreflightIssue[] = collectCompilerBuildValueIssues(parameters).map(issue => ({
         ...issue, severity: 'error', messageArgs: [issue.parameter]
     }));
@@ -199,6 +199,17 @@ export function collectCompilerBuildPreflightIssues(parameters: readonly Compile
         for (const [name, parameter] of actual) {
             if (scalarVariants(parameter) > 1) { result.push({ code: 'processMultipleValues', severity: 'warning', uri: selected.uri, parameter: name,
                 message: 'The supplied compiler counts multiple values of process parameter {0} for the limit but does not generate separate process variants.', messageArgs: [name] }); }
+        }
+    }
+    const rootUris = new Set(enabledRootUris);
+    const configuredProcesses = new Set(parsed.filter(source => source.kind === 'настройкапроцесса')
+        .map(source => identity(source, 'ДанныеТеста', 'UIDПроцесса')).filter(Boolean));
+    for (const source of definitions) {
+        if (source.kind !== 'процесс' || !rootUris.has(source.uri)) { continue; }
+        const uid = identity(source, 'ДанныеПроцесса', 'UID');
+        if (uid && !configuredProcesses.has(uid)) {
+            result.push({ code: 'missingRootProcessSettings', severity: 'warning', uri: source.uri,
+                message: 'The selected process has no launch settings. It can be compiled inside another process, but not as a separate test.' });
         }
     }
     return result;

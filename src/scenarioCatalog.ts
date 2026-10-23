@@ -184,6 +184,7 @@ export function areScenarioCatalogEntriesEqual(left: TestInfo, right: TestInfo):
         && areDefaultsEqual(left.parameterDefaults, right.parameterDefaults)
         && areStringArraysEqual(left.nestedScenarioNames, right.nestedScenarioNames)
         && left.tabName === right.tabName
+        && left.hasTestSettings === right.hasTestSettings
         && left.order === right.order
     );
 }

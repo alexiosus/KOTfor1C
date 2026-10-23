@@ -4,12 +4,12 @@ import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
 
-function harness(text: string) {
-    const calls: any[] = [];
-    const document = { uri: { toString: () => 'file:///repo/scen.yaml' }, getText: () => text, isClosed: false };
+function harness(text: string, nativePair?: { metadataUri: unknown; scriptUri: unknown }) {
+    const calls: any[] = []; const opened: unknown[] = [];
+    const document = { uri: { fsPath: nativePair ? '/repo/meta.yaml' : '/repo/scen.yaml', toString: () => nativePair ? 'file:///repo/scen.feature' : 'file:///repo/scen.yaml' }, getText: () => text, isClosed: false };
     const editor = { document };
     const host = {
-        workspace: { openTextDocument: async () => document },
+        workspace: { openTextDocument: async (uri: unknown) => { opened.push(uri); return document; } },
         window: { activeTextEditor: editor as any, showTextDocument: async () => editor },
         commands: { executeCommand: async (...args: any[]) => { calls.push(args); } }
     };
@@ -19,9 +19,9 @@ function harness(text: string) {
         const ts = require('typescript') as typeof import('typescript');
         vm.runInNewContext(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
             compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-        }).outputText, { module, exports: module.exports, require: () => host });
+        }).outputText, { module, exports: module.exports, require: (name: string) => name === './spprScenarioFiles' ? { resolveScenarioSourceUris: async () => nativePair ? { format: 'native', ...nativePair } : undefined } : host });
     }
-    return { api: module.exports, document, editor, host, calls };
+    return { api: module.exports, document, editor, host, calls, opened };
 }
 
 test('property mode folds populated service sections and keeps the literal scenario body expanded', async () => {
@@ -70,4 +70,23 @@ test('fold command cannot affect an editor selected while the source was opening
     h.host.window.showTextDocument = async () => { h.host.window.activeTextEditor = undefined; return h.editor; };
     await new h.api.ScenarioYamlEditor().open(h.document.uri as any);
     assert.equal(h.calls.length, 0);
+});
+
+
+test('native metadata opens its original SPPR script without folding script lines as YAML', async () => {
+    const scriptUri = { fsPath: '/repo/scen.feature', toString: () => 'file:///repo/scen.feature' };
+    const metadataUri = { fsPath: '/repo/meta.yaml', toString: () => 'file:///repo/meta.yaml' };
+    const h = harness('#language: en\nAnd original script\n', { metadataUri, scriptUri });
+    await new h.api.ScenarioYamlEditor().open(metadataUri as never);
+    assert.equal(h.opened[0], scriptUri);
+    assert.deepEqual(h.calls, []);
+});
+
+
+test('metadata files retain manual folding but are never collapsed by default', () => {
+    const text = 'ТипФайла: Сценарий\nДанныеСценария:\n    Имя: Own\nПараметрыСценария:\n    - ПараметрыСценария1:\n        Имя: Value\n';
+    const h = harness(text);
+    assert.deepEqual(Array.from(h.api.scenarioDefaultFoldLines(text, '/repo/meta.yaml')), []);
+    assert.ok(h.api.scenarioYamlFoldRanges(text).length > 0);
+    assert.ok(h.api.scenarioDefaultFoldLines(text, '/repo/scen.yaml').length > 0);
 });

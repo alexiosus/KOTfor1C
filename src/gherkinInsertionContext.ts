@@ -189,7 +189,8 @@ function isScenarioYaml(text: string): boolean {
 
 export function getGherkinInsertionContext(
     document: InsertionDocument,
-    position: vscode.Position
+    position: vscode.Position,
+    nativeSppr = false
 ): GherkinInsertionContext | null {
     if (
         !Number.isInteger(position.line)
@@ -216,7 +217,10 @@ export function getGherkinInsertionContext(
     const format = getGherkinDocumentFormat(document);
     let support: { readonly supported: true; readonly indentation: string } | null = null;
     if (format === 'feature') {
-        support = featureContext(lines, position.line);
+        if (nativeSppr) {
+            const embedded = yamlScenarioBlockContext(['ТекстСценария: |', ...lines.map(line => '    ' + line)], position.line + 1, 0);
+            support = embedded ? { supported: true, indentation: embedded.indentation.slice(4) } : null;
+        } else { support = featureContext(lines, position.line); }
     } else if (format === 'yaml' && isScenarioYaml(text)) {
         const body = getCompilerScenarioBody(text);
         if (body && position.line >= body.startLine && position.line < body.startLine + body.lines.length) {

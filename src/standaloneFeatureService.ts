@@ -499,6 +499,10 @@ export class StandaloneFeatureService implements vscode.Disposable {
             }
             if (!entry.isFile() || path.extname(entry.name).toLocaleLowerCase() !== '.feature') { continue; }
             try {
+                if (entry.name === 'scen.feature') {
+                    const adjacentMetadata = await fs.readFile(path.join(directory, 'meta.yaml'), 'utf8').catch(() => '');
+                    if (/^\uFEFF?ТипФайла:[ \t]*["']?Сценарий["']?[ \t]*\r?$/mu.test(adjacentMetadata)) { continue; }
+                }
                 if (exclusions.has(normalizedPath(sourcePath))
                     || exclusions.has(normalizedPath(await fs.realpath(sourcePath)))) { continue; }
                 const id = canonicalFileUri(sourcePath);

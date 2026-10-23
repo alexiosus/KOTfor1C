@@ -415,6 +415,28 @@
             "scope": "resource",
             "description": "%config.editor.newFeatureTemplatePath.description%",
             "order": 9
+          },
+          "kotTestToolkit.newScenarioDefaults.format": {
+            "type": "string",
+            "enum": [
+              "legacy",
+              "native"
+            ],
+            "default": "legacy",
+            "scope": "window",
+            "markdownDescription": "%config.newScenarioDefaults.format.description%",
+            "enumItemLabels": [
+              "%config.newScenarioDefaults.format.legacy%",
+              "%config.newScenarioDefaults.format.native%"
+            ],
+            "order": 0
+          },
+          "kotTestToolkit.editor.autoMigrateScenarioYamlOnSave": {
+            "type": "boolean",
+            "default": false,
+            "scope": "resource",
+            "markdownDescription": "%config.editor.autoMigrateScenarioYamlOnSave.description%",
+            "order": 1
           }
         }
       },
@@ -577,7 +599,7 @@
               "process",
               "mcp"
             ],
-            "default": "process",
+            "default": "mcp",
             "enumDescriptions": [
               "%config.runVanessa.executionMode.process%",
               "%config.runVanessa.executionMode.mcp%"
@@ -614,6 +636,24 @@
             "default": true,
             "markdownDescription": "%config.vanessaControl.autoAttach.description%",
             "order": 20
+          },
+          "kotTestToolkit.vanessaControl.autoStart": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "%config.vanessaControl.autoStart.description%",
+            "order": 21
+          },
+          "kotTestToolkit.vanessaControl.formCompletions": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "%config.vanessaControl.formCompletions.description%",
+            "order": 22
+          },
+          "kotTestToolkit.vanessaControl.autoAddSavedClients": {
+            "type": "boolean",
+            "default": true,
+            "scope": "window",
+            "description": "%config.vanessaControl.autoAddSavedClients.description%"
           }
         }
       },
@@ -1466,6 +1506,15 @@
         "category": "%cmd.category%"
       },
       {
+        "command": "kotTestToolkit.vanessaControl.connect",
+        "title": "%cmd.vanessaControl.connect.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.connectionSettings",
+        "title": "%cmd.vanessaControl.connectionSettings.title%"
+      },
+      {
         "command": "kotTestToolkit.vanessaControl.clients",
         "title": "%cmd.vanessaControl.clients.title%",
         "category": "%cmd.category%"
@@ -1678,6 +1727,39 @@
         "command": "kotTestToolkit.vanessaControl.checkRuntimeSyntax",
         "title": "%cmd.vanessaControl.checkRuntimeSyntax.title%",
         "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.convertScenarioFormat",
+        "title": "%command.convertScenarioFormat.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.convertScenarioFormat",
+        "title": "%command.convertScenarioFormat.title%"
+      },
+      {
+        "command": "kotTestToolkit.createNestedProcess",
+        "title": "%cmd.createNestedProcess.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.convertScenario",
+        "title": "%command.convertScenario.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.convertScenarioRole",
+        "title": "%command.convertScenarioRole.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.convertCallableScenario",
+        "title": "%command.convertCallableScenario.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.editorMenu.convertScenario",
+        "title": "%command.convertScenario.title%"
       }
     ],
     "submenus": [
@@ -1728,6 +1810,18 @@
       {
         "id": "kotTestToolkit.editorContext",
         "label": "KOT"
+      },
+      {
+        "id": "kotTestToolkit.editorContext.execution",
+        "label": "%submenu.editorContext.execution%"
+      },
+      {
+        "id": "kotTestToolkit.editorContext.authoring",
+        "label": "%submenu.editorContext.authoring%"
+      },
+      {
+        "id": "kotTestToolkit.editorContext.tracking",
+        "label": "%submenu.editorContext.tracking%"
       }
     ],
     "keybindings": [
@@ -1893,6 +1987,11 @@
           "command": "kotTestToolkit.vanessaControl.variables.set",
           "when": "view == kotTestToolkit.vanessaVariables",
           "group": "navigation@2"
+        },
+        {
+          "command": "kotTestToolkit.vanessaControl.connectionSettings",
+          "when": "view == kotTestToolkit.phaseSwitcherView",
+          "group": "2_tools@4"
         }
       ],
       "kotTestToolkit.testManager.relationships": [
@@ -2591,6 +2690,14 @@
         {
           "command": "kotTestToolkit.editorMenu.vanessaControl.recording.insertHere",
           "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.convertScenario",
+          "when": "false"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.convertScenarioFormat",
+          "when": "false"
         }
       ],
       "kotTestToolkit.editorContext": [
@@ -2602,26 +2709,6 @@
         {
           "command": "kotTestToolkit.editorMenu.openNestedScenarioFromFeature",
           "when": "editorTextFocus && resourceExtname == .feature",
-          "group": "00_navigation@0"
-        },
-        {
-          "command": "kotTestToolkit.editorMenu.trackScenarioRunByFeatureLog",
-          "when": "editorTextFocus && resourceExtname == .feature",
-          "group": "00_navigation@1"
-        },
-        {
-          "command": "kotTestToolkit.editorMenu.switchTrackedScenarioRunForFeature",
-          "when": "editorTextFocus && resourceExtname == .feature",
-          "group": "00_navigation@2"
-        },
-        {
-          "command": "kotTestToolkit.editorMenu.stopTrackedScenarioRunForFeature",
-          "when": "editorTextFocus && resourceExtname == .feature",
-          "group": "00_navigation@3"
-        },
-        {
-          "command": "kotTestToolkit.editorMenu.trackScenarioRunFromOpenedLogFile",
-          "when": "editorTextFocus && resourceExtname == .log",
           "group": "00_navigation@0"
         },
         {
@@ -2642,87 +2729,52 @@
         {
           "submenu": "kotTestToolkit.editorContext.workWithFiles",
           "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml)",
-          "group": "01_submenu@0"
+          "group": "03_files@0"
         },
         {
           "submenu": "kotTestToolkit.editorContext.create",
           "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature)",
-          "group": "01_submenu@1"
+          "group": "03_files@1"
         },
         {
           "submenu": "kotTestToolkit.editorContext.editing",
           "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml)",
-          "group": "01_submenu@2"
-        },
-        {
-          "command": "kotTestToolkit.editorMenu.generateFeatureJson",
-          "when": "editorTextFocus && resourceExtname == .feature",
-          "group": "00_feature@0"
+          "group": "03_files@2"
         },
         {
           "command": "kotTestToolkit.editorMenu.runFeature",
           "when": "editorTextFocus && resourceExtname == .feature",
-          "group": "00_feature@1"
+          "group": "01_execution@0"
         },
         {
           "command": "kotTestToolkit.editorMenu.vanessaControl.oneStep",
           "when": "(resourceExtname == .feature || resourceExtname == .yaml)",
-          "group": "03_vanessa@0"
+          "group": "01_execution@2"
         },
         {
           "command": "kotTestToolkit.editorMenu.vanessaControl.runFromLine",
           "when": "(resourceExtname == .feature || resourceExtname == .yaml)",
-          "group": "03_vanessa@1"
-        },
-        {
-          "command": "kotTestToolkit.editorMenu.vanessaControl.toggleBreakpoint",
-          "when": "(resourceExtname == .feature || resourceExtname == .yaml) && kotTestToolkit.vanessaControlConnected",
-          "group": "03_vanessa@2"
-        },
-        {
-          "command": "kotTestToolkit.editorMenu.vanessaControl.listBreakpoints",
-          "when": "resourceExtname == .feature && kotTestToolkit.vanessaControlConnected",
-          "group": "03_vanessa@3"
-        },
-        {
-          "command": "kotTestToolkit.editorMenu.vanessaControl.tryYamlStep",
-          "when": "resourceExtname == .yaml",
-          "group": "03_vanessa@4"
+          "group": "01_execution@3"
         },
         {
           "command": "kotTestToolkit.editorMenu.vanessaControl.runSelection",
           "when": "(resourceExtname == .feature || resourceExtname == .yaml) && editorHasSelection",
-          "group": "00_control@3"
+          "group": "01_execution@1"
         },
         {
-          "command": "kotTestToolkit.editorMenu.vanessaControl.oneCompiledStep",
-          "when": "resourceExtname == .yaml",
-          "group": "03_vanessa@5"
+          "submenu": "kotTestToolkit.editorContext.execution",
+          "when": "editorTextFocus && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml)",
+          "group": "02_tools@0"
         },
         {
-          "command": "kotTestToolkit.editorMenu.vanessaControl.recording.start",
-          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && !kotTestToolkit.vanessaRecording",
-          "group": "vanessa_authoring"
+          "submenu": "kotTestToolkit.editorContext.authoring",
+          "when": "editorTextFocus && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml)",
+          "group": "02_tools@1"
         },
         {
-          "command": "kotTestToolkit.editorMenu.vanessaControl.recording.stop",
-          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.vanessaRecording",
-          "group": "vanessa_authoring"
-        },
-        {
-          "command": "kotTestToolkit.editorMenu.vanessaControl.formChecks",
-          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml)",
-          "group": "vanessa_authoring"
-        },
-        {
-          "command": "kotTestToolkit.editorMenu.vanessaControl.formSuggestions",
-          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml)",
-          "group": "vanessa_authoring"
-        },
-        {
-          "command": "kotTestToolkit.editorMenu.vanessaControl.recording.insertHere",
-          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.vanessaDraftAvailable",
-          "group": "vanessa_authoring"
+          "submenu": "kotTestToolkit.editorContext.tracking",
+          "when": "editorTextFocus && (resourceExtname == .log || resourceExtname == .feature)",
+          "group": "02_tools@2"
         }
       ],
       "view/item/context": [
@@ -2735,6 +2787,87 @@
           "command": "kotTestToolkit.vanessaControl.variables.delete",
           "when": "view == kotTestToolkit.vanessaVariables && viewItem == vanessaLocalVariable",
           "group": "inline@2"
+        }
+      ],
+      "kotTestToolkit.editorContext.execution": [
+        {
+          "command": "kotTestToolkit.editorMenu.generateFeatureJson",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "01_execution@0"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.toggleBreakpoint",
+          "when": "(resourceExtname == .feature || resourceExtname == .yaml) && kotTestToolkit.vanessaControlConnected",
+          "group": "01_execution@1"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.listBreakpoints",
+          "when": "resourceExtname == .feature && kotTestToolkit.vanessaControlConnected",
+          "group": "01_execution@2"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.tryYamlStep",
+          "when": "resourceExtname == .yaml",
+          "group": "01_execution@3"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.oneCompiledStep",
+          "when": "resourceExtname == .yaml",
+          "group": "01_execution@4"
+        }
+      ],
+      "kotTestToolkit.editorContext.authoring": [
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.recording.start",
+          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && !kotTestToolkit.vanessaRecording",
+          "group": "01_recording@0"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.recording.stop",
+          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.vanessaRecording",
+          "group": "01_recording@0"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.formChecks",
+          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml)",
+          "group": "02_form@0"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.formSuggestions",
+          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml)",
+          "group": "02_form@1"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.vanessaControl.recording.insertHere",
+          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.vanessaDraftAvailable",
+          "group": "01_recording@1"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.convertScenario",
+          "group": "3_format@1",
+          "when": "resourceScheme == file && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature)"
+        }
+      ],
+      "kotTestToolkit.editorContext.tracking": [
+        {
+          "command": "kotTestToolkit.editorMenu.trackScenarioRunByFeatureLog",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "01_tracking@0"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.switchTrackedScenarioRunForFeature",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "01_tracking@1"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.stopTrackedScenarioRunForFeature",
+          "when": "editorTextFocus && resourceExtname == .feature",
+          "group": "01_tracking@2"
+        },
+        {
+          "command": "kotTestToolkit.editorMenu.trackScenarioRunFromOpenedLogFile",
+          "when": "editorTextFocus && resourceExtname == .log",
+          "group": "01_tracking@3"
         }
       ]
     },
@@ -2819,6 +2952,46 @@
     "semanticTokenScopes": [
       {
         "language": "yaml",
+        "scopes": {
+          "gherkinComment": [
+            "comment.line.number-sign"
+          ],
+          "gherkinFeatureKeyword": [
+            "keyword.language.gherkin.feature"
+          ],
+          "gherkinFeatureTitle": [
+            "string.language.gherkin.feature.title"
+          ],
+          "gherkinScenarioKeyword": [
+            "keyword.language.gherkin.feature.scenario"
+          ],
+          "gherkinScenarioTitle": [
+            "string.language.gherkin.scenario.title.title"
+          ],
+          "gherkinStepKeyword": [
+            "keyword.language.gherkin.feature.step"
+          ],
+          "gherkinString": [
+            "string.quoted.double",
+            "string.quoted.single"
+          ],
+          "gherkinTag": [
+            "entity.name.type.class.tsx"
+          ],
+          "gherkinPlaceholder": [
+            "variable.other"
+          ],
+          "gherkinBracketParameter": [
+            "variable.parameter",
+            "variable.other"
+          ],
+          "gherkinTable": [
+            "keyword.control.cucumber.table"
+          ]
+        }
+      },
+      {
+        "language": "feature",
         "scopes": {
           "gherkinComment": [
             "comment.line.number-sign"

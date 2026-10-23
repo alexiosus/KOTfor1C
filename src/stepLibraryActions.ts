@@ -234,6 +234,11 @@ export class StepLibraryActionService implements vscode.Disposable {
         return true;
     }
 
+    public async convertFormat(item: StepLibraryItem, resource: vscode.Uri | undefined, convert: (sourceUri: string, line?: number) => Promise<void>): Promise<boolean> {
+        if (!['mainScenario', 'process', 'nestedScenario', 'exportScenario'].includes(item.kind) || !/\.(?:ya?ml|feature)$/iu.test(item.capturedLocation?.uri ?? '')) { return false; }
+        return this.openScenarioProperties(item, resource, uri => convert(uri, item.capturedLocation?.range.start.line));
+    }
+
     public async rename(item: StepLibraryItem, resource?: vscode.Uri): Promise<boolean> {
         if (!this.dependencies.renameDefinition || !item.navigable || !item.capturedLocation
             || !['mainScenario', 'process', 'nestedScenario', 'exportScenario'].includes(item.kind)) {

@@ -122,3 +122,14 @@ test('collapsing and reopening native steps is local and sends no selection or M
         assert.deepEqual(posts, mode === 'mcp' ? [] : ['selectElementPath']);
     }
 });
+
+test('an MCP first-read failure is visible without a snapshot file while legacy waiting remains quiet', () => {
+    const start = script.indexOf('    function renderBanner()'); const end = script.indexOf('    function renderEmptyView()', start);
+    let hidden = true; let text = '';
+    const context = vm.createContext({ viewState: { liveSource: 'mcp', snapshotExists: false, lastError: 'Own read failed' },
+        refs: { alertBanner: { classList: { toggle: (_name: string, value: boolean) => { hidden = value; } } }, alertText: {} },
+        setText: (_element: unknown, value: string) => { text = value; } });
+    vm.runInContext(script.slice(start, end), context); context.renderBanner();
+    assert.equal(hidden, false); assert.equal(text, 'Own read failed');
+    context.viewState.liveSource = 'snapshot'; context.renderBanner(); assert.equal(hidden, true);
+});

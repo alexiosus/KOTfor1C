@@ -270,3 +270,14 @@ test('semantic tokens distinguish preprocessor, return keywords and block commen
     assert.ok(tokens.some(token => token[0] === 6 && token[3] === 5));
     assert.ok(tokens.some(token => token[0] === 7 && token[3] === 5));
 });
+
+test('native SPPR scripts retain parameter decoration offsets in steps and tables without a YAML wrapper', async () => {
+    const api = load('scenarioSyntaxHighlightProvider.ts', { './spprScenarioFiles.js': { readNativeScenarioMetadata: async () => ({ text: 'ТипФайла: Сценарий' }) } });
+    const source = 'And I use "[Amount]"\n| [Amount] |\n// [Ignored]\n';
+    const native = { ...document(source), languageId: 'feature', fileName: '/repo/scen.feature' };
+    const tokens = await new api.ScenarioSyntaxHighlightProvider().provideDocumentSemanticTokens(native);
+    assert.ok(tokens.some((token: number[]) => token[0] === 0 && token[3] === 5));
+    const ranges = api.collectScenarioBracketParameterRanges(native, true);
+    assert.deepEqual(Array.from(ranges, (range: Range) => [range.start.line, range.start.character, range.end.character]), [[0, 11, 19], [1, 2, 10]]);
+    assert.equal(api.collectScenarioBracketParameterRanges(native).length, 0);
+});

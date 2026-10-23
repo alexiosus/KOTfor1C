@@ -46,10 +46,13 @@ function toRange(location: ProjectDefinitionLocation): vscode.Range {
     );
 }
 
-function toLocationLink(match: ProjectDefinitionMatch, line: number): vscode.LocationLink | null {
-    const location = navigableLocation(match.definition);
+async function toLocationLink(match: ProjectDefinitionMatch, line: number): Promise<vscode.LocationLink | null> {
+    let location = navigableLocation(match.definition);
     if (!location) {
         return null;
+    }
+    if (/(?:^|\/)meta\.yaml$/u.test(location.uri)) {
+        location = await (await import('./spprScenarioFiles.js')).resolveScenarioScriptLocation(location);
     }
     const targetRange = toRange(location);
     return {
@@ -67,6 +70,9 @@ function toLocationLink(match: ProjectDefinitionMatch, line: number): vscode.Loc
 
 async function openLocation(location: ProjectDefinitionLocation): Promise<boolean> {
     try {
+        if (/(?:^|\/)meta\.yaml$/u.test(location.uri)) {
+            location = await (await import('./spprScenarioFiles.js')).resolveScenarioScriptLocation(location);
+        }
         const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(location.uri));
         const editor = await vscode.window.showTextDocument(document, {
             preview: false,
@@ -101,9 +107,8 @@ export class ProjectDefinitionProvider implements vscode.DefinitionProvider {
         }
 
         const matches = resolution.kind === 'unique' ? [resolution.match] : resolution.matches;
-        return matches
-            .map(match => toLocationLink(match, position.line))
-            .filter((link): link is vscode.LocationLink => link !== null);
+        const links = await Promise.all(matches.map(match => toLocationLink(match, position.line)));
+        return token.isCancellationRequested ? [] : links.filter((link): link is vscode.LocationLink => link !== null);
     }
 }
 

@@ -169,7 +169,7 @@ function mainScenarioLocation(scenario: TestInfo): ProjectDefinitionLocation {
 }
 
 function isMainScenario(scenario: TestInfo): boolean {
-    return scenario.kind === 'process' || (typeof scenario.tabName === 'string' && scenario.tabName.trim().length > 0);
+    return scenario.kind === 'process' || (scenario.hasTestSettings ?? !!scenario.tabName?.trim());
 }
 
 export function getProcessStepsSignature(uid: string | undefined, steps: readonly ProcessStepReference[]): string {
@@ -287,6 +287,7 @@ function mainScenarioIdentity(
         code: scenario.scenarioCode ?? '',
         description: scenario.scenarioDescription ?? '',
         tabName: scenario.tabName?.trim() ?? '',
+        hasTestSettings: scenario.hasTestSettings,
         order: Number.isFinite(scenario.order) ? scenario.order : null,
         relativePath: scenario.relativePath,
         ...(scenario.kind === 'process' ? { kind: scenario.kind, uid: scenario.uid, processCode: scenario.processCode, processSteps: scenario.processSteps } : {}),

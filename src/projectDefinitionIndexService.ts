@@ -111,6 +111,7 @@ interface CancellationFlag {
 interface DiscoveredSource {
     readonly filePath: string;
     readonly rootPath: string;
+    readonly uriPath: string;
 }
 
 interface WatchedSource extends DiscoveredSource {
@@ -709,7 +710,8 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
                 const key = normalizedPath(physicalPath);
                 if (isSourcePath(physicalPath) && !seenSources.has(key)) {
                     seenSources.add(key);
-                    sources.push({ filePath: physicalPath, rootPath: root });
+                    sources.push({ filePath: physicalPath, rootPath: path.resolve(configuredRoot),
+                        uriPath: path.join(path.resolve(configuredRoot), path.relative(root, discoveredPath)) });
                 } else if (isEpfPath(physicalPath) && !seenEpfs.has(key)) {
                     seenEpfs.add(key);
                     epfPaths.push(physicalPath);
@@ -727,7 +729,7 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
         source: DiscoveredSource,
         cachedByUri: ReadonlyMap<string, ProjectDefinitionFileRecord>
     ): Promise<ProjectDefinitionFileRecord> {
-        const uri = fileUri(source.filePath);
+        const uri = fileUri(source.uriPath);
         let stat: ProjectDefinitionFileStat;
         try {
             stat = await this.#options.fileSystem.stat(source.filePath);
@@ -932,7 +934,8 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
                 : derivedPhysicalPath;
             return {
                 filePath: resolvedFilePath,
-                rootPath: physicalRootPath,
+                rootPath: configuredRootPath,
+                uriPath: path.resolve(configuredRootPath, relativePath),
                 aliasPaths: Object.freeze(Array.from(new Set([
                     eventPath,
                     physicalFilePath,

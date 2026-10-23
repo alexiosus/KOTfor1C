@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { resolveScenarioSourceUris } from './spprScenarioFiles';
 
 const SERVICE_SECTIONS = new Set([
     'ДанныеСценария', 'ДанныеПроцесса', 'ПараметрыСценария',
@@ -23,7 +24,8 @@ export function scenarioYamlFoldRanges(text: string): ScenarioYamlFoldRange[] {
     return result;
 }
 
-export function scenarioDefaultFoldLines(text: string): number[] {
+export function scenarioDefaultFoldLines(text: string, fileName?: string): number[] {
+    if (/(?:^|[\\/])meta\.yaml$/u.test(fileName ?? '')) { return []; }
     const ranges = scenarioYamlFoldRanges(text);
     const header = ranges.find(range => range.header);
     return header ? [header.start, ...scenarioServiceSectionLines(text).filter(line => line > header.end)] : scenarioServiceSectionLines(text);
@@ -53,10 +55,11 @@ export function scenarioServiceSectionLines(text: string): number[] {
 /** Property mode uses the original document and its ordinary save/Undo lifecycle. */
 export class ScenarioYamlEditor {
     async open(source: vscode.Uri): Promise<vscode.TextEditor> {
-        const document = await vscode.workspace.openTextDocument(source);
+        const paired = /(?:^|[\\/])(?:meta\.yaml|scen\.feature)$/u.test(source.fsPath ?? '') ? await resolveScenarioSourceUris(source) : undefined;
+        const document = await vscode.workspace.openTextDocument(paired?.format === 'native' ? paired.scriptUri : source);
         const editor = await vscode.window.showTextDocument(document, { preview: false });
-        if (document.isClosed || vscode.window.activeTextEditor?.document !== document) { return editor; }
-        const selectionLines = scenarioDefaultFoldLines(document.getText());
+        if (paired?.format === 'native' || document.isClosed || vscode.window.activeTextEditor?.document !== document) { return editor; }
+        const selectionLines = scenarioDefaultFoldLines(document.getText(), document.fileName);
         if (selectionLines.length) {
             await vscode.commands.executeCommand('editor.fold', { levels: 1, direction: 'down', selectionLines });
         }

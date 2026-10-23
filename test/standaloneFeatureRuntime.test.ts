@@ -249,6 +249,36 @@ test('standalone progress follows scenarios whose titles differ from the feature
     assert.equal(line, 17);
 });
 
+test('MCP log progress covers all compiled scenarios and rejects a different feature in the shared session log', () => {
+    const provider = providerWithFeatures(); const id = 'compiled-main';
+    provider._standaloneFeatureArtifacts.clear(); provider._mcpFeatureRuns = new Set([id]);
+    const tracker = { scenarioKey: id, scenarioName: 'Main', currentScenarioNameFromLog: 'Main Parameters=1',
+        featurePathFromLog: '/tests/own.feature', currentFeaturePathFromLog: '/tests/own.feature', featureLineVisitCounts: new Map() };
+    provider.resolveReadableFeaturePathForTracking = () => '/tests/own.feature';
+    provider.isRunLogStepCompatibleWithFeature = () => true;
+    provider.areFeaturePathsEquivalentForTracking = (left: string, right: string) => left === right;
+    provider.isTrackedRunSelectedForScenario = () => false;
+    const lines: number[] = [];
+    provider.setRunningFeatureStepHighlight = (_id: string, _name: string, _path: string, line: number) => lines.push(line);
+    provider.applyFeatureStepSyncLogLine(tracker, 'FeatureLineNumber: 17');
+    tracker.currentScenarioNameFromLog = 'Main Parameters=2';
+    provider.applyFeatureStepSyncLogLine(tracker, 'FeatureLineNumber: 42');
+    tracker.currentFeaturePathFromLog = '/tests/unrelated.feature';
+    provider.applyFeatureStepSyncLogLine(tracker, 'FeatureLineNumber: 99');
+    assert.deepEqual(lines, [17, 42]);
+});
+
+test('MCP session log tracking owns progress instead of activating the external log watcher', () => {
+    const provider = providerWithFeatures();
+    provider._mcpFeatureRuns = new Set(['main']);
+    provider._liveFeatureStepTrackers = new Map([['main', { runLogPath: '/runtime/session.log' }]]);
+    provider.getRunLogTrackingKey = (file: string) => file;
+    assert.equal(provider.isInternalRunningStateUsingRunLog('/runtime/session.log'), true);
+    assert.equal(provider.isInternalRunningStateUsingRunLog('/runtime/other.log'), false);
+    provider._mcpFeatureRuns.clear();
+    assert.equal(provider.isInternalRunningStateUsingRunLog('/runtime/session.log'), false);
+});
+
 test('standalone failure highlights the failed scenario even when a later scenario passes', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-feature-failure-'));
     try {

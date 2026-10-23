@@ -13,6 +13,47 @@ function setup() {
     const source = new VanessaFormExplorerSource(ports);
     return { source, ports, calls: () => calls, state: (value: typeof state) => { state = value; source.sessionChanged(); } };
 }
+test('editor completion reads an unseen form without the panel, coalesces typing and only checks identity after expiry', async context => {
+    context.mock.timers.enable({ apis: ['Date'], now: 10_000 });
+    const own = setup(); let trees = 0; let identities = 0;
+    own.ports.run = async work => work({ read: async () => { trees++; return snapshot(); },
+        refresh: async previous => { identities++; return previous; } } as VanessaRuntimeForms);
+    const first = await own.source.completionSnapshot(); assert.ok(first);
+    await Promise.all(Array.from({ length: 30 }, () => own.source.completionSnapshot()));
+    assert.equal(trees, 1); assert.equal(identities, 0);
+    context.mock.timers.tick(6_000);
+    assert.equal(await own.source.completionSnapshot(), first); assert.equal(trees, 1); assert.equal(identities, 1);
+});
+
+test('disabled editor form reads retain existing panel hints and never issue a request', async () => {
+    let enabled = false; let reads = 0;
+    const source = new VanessaFormExplorerSource({ completionEnabled: () => enabled,
+        snapshot: () => ({ generation: 1, ready: true, supported: true }),
+        run: async work => { reads++; return work({ read: async () => snapshot() } as VanessaRuntimeForms); } });
+    assert.equal(await source.completionSnapshot(), undefined); assert.equal(reads, 0);
+    await source.refresh(); const panelForm = source.cached();
+    assert.equal(await source.completionSnapshot(), panelForm); assert.equal(reads, 1);
+    enabled = true; assert.equal(await source.completionSnapshot(), panelForm); assert.equal(reads, 1);
+    source.dispose(); assert.equal(await source.completionSnapshot(), undefined); assert.equal(reads, 1);
+});
+
+test('completion failures back off while typing and can recover after a client connects in the same manager session', async context => {
+    context.mock.timers.enable({ apis: ['Date'], now: 10_000 });
+    const own = setup(); let attempts = 0; let connected = false;
+    own.ports.run = async work => { attempts++; if (!connected) { throw new Error('No test client'); }
+        return work({ read: async () => snapshot() } as VanessaRuntimeForms); };
+    assert.equal(await own.source.completionSnapshot(), undefined);
+    await Promise.all(Array.from({ length: 30 }, () => own.source.completionSnapshot())); assert.equal(attempts, 1);
+    connected = true; context.mock.timers.tick(31_000);
+    assert.ok(await own.source.completionSnapshot()); assert.equal(attempts, 2);
+});
+
+test('panel form reads recover from a transient collision without reload or changing the MCP generation', async context => {
+    context.mock.timers.enable({ apis: ['Date'], now: 10_000 }); const own = setup();
+    own.ports.run = async () => { throw new Error('busy'); }; assert.equal(await own.source.refresh(), undefined);
+    own.ports.run = async work => work({ read: async () => snapshot() } as VanessaRuntimeForms);
+    context.mock.timers.tick(5_001); assert.ok(await own.source.refresh());
+});
 test('a busy runtime defers form polling without poisoning the cache or issuing a competing command', async () => {
     let busy = true; let calls = 0;
     const source = new VanessaFormExplorerSource({ snapshot: () => ({ generation: 1, ready: true, supported: true, busy }),

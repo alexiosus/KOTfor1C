@@ -41,3 +41,35 @@ test('ignores processes without a pid and removes failed launches', () => {
 
     assert.deepEqual([...tracker.runningIdentities()], []);
 });
+
+test('tracks simultaneous launch modes until the last process in each mode exits', () => {
+    const tracker = new InfobaseRuntimeTracker();
+    const designer = new FakeProcess(301);
+    const enterprise = new FakeProcess(302);
+    const secondEnterprise = new FakeProcess(303);
+    const unknownMode = new FakeProcess(304);
+    const identity = normalizeInfobaseConnectionIdentity('/workspace/demo');
+    const changes: string[][] = [];
+    tracker.onDidChange(() => changes.push([...tracker.runningModes('/workspace/demo')]));
+
+    tracker.track('/workspace/demo', designer, 'designer');
+    tracker.track('/workspace/demo', enterprise, 'enterprise');
+    tracker.track('/workspace/demo', secondEnterprise, 'enterprise');
+    tracker.track('/workspace/demo', unknownMode);
+    const bothModes = tracker.runningModes('File="/workspace/demo";');
+    assert.deepEqual(bothModes, ['enterprise', 'designer']);
+    assert.deepEqual(tracker.runningModes('/workspace/other'), []);
+
+    enterprise.emit('exit', 0);
+    assert.deepEqual(tracker.runningModes('/workspace/demo'), ['enterprise', 'designer']);
+    designer.emit('close', 0);
+    assert.deepEqual(tracker.runningModes('/workspace/demo'), ['enterprise']);
+    secondEnterprise.emit('error', new Error('client stopped'));
+    assert.deepEqual(tracker.runningModes('/workspace/demo'), []);
+    assert.deepEqual([...tracker.runningIdentities()], [identity]);
+    assert.deepEqual(bothModes, ['enterprise', 'designer']);
+    unknownMode.emit('exit', 0);
+    assert.deepEqual([...tracker.runningIdentities()], []);
+    assert.deepEqual(changes, [['designer'], ['enterprise', 'designer'], ['enterprise', 'designer'],
+        ['enterprise', 'designer'], ['enterprise', 'designer'], ['enterprise'], [], []]);
+});

@@ -151,3 +151,20 @@ for (const sourceGroup of ['main', 'nested', 'export']) {
         ]);
     });
 }
+
+
+test('Library conversion menus support scenario and process descriptors and exclude standalone features', () => {
+    const { controller, body, messages } = harness();
+    for (const name of ['scen.yaml', 'meta.yaml', 'process.yaml']) {
+        const row = new Element();
+        controller.install(row, { sourceGroup: 'nested', navigable: true, scenarioPropertiesUri: 'file:///own/' + name, itemId: name });
+        row.fire('contextmenu');
+        const action = body.children[0].children.find(button => button.dataset.action === 'convertFormat');
+        assert.ok(action); action.fire('click');
+        assert.deepEqual(messages.at(-1), { command: 'convertFormat', itemId: name });
+    }
+    for (const node of [{ sourceGroup: 'export', scenarioPropertiesUri: 'file:///own.feature' }]) {
+        const row = new Element(); controller.install(row, { ...node, navigable: true, itemId: 'other' }); row.fire('contextmenu');
+        assert.equal(body.children[0].children.some(button => button.dataset.action === 'convertFormat'), true);
+    }
+});

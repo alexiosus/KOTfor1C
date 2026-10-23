@@ -57,7 +57,8 @@ export async function prepareScenarioIdentityFileChanges(options: IdentityFileCh
     let directoryMove: ResourceMove | undefined;
     let dedicatedSnapshot: Snapshot | undefined;
     const protectedDirectory = options.protectedDirectories.some(root => path.resolve(root) === path.resolve(directory));
-    const canonicalSource = /^(?:scen|scenario|process)\.ya?ml$/iu.test(path.basename(sourceUri.fsPath));
+    const nativeSource = path.basename(sourceUri.fsPath).toLowerCase() === 'meta.yaml';
+    const canonicalSource = /^(?:scen|scenario|process|meta)\.ya?ml$/iu.test(path.basename(sourceUri.fsPath));
     const hasCompanionDirectory = moveFiles && canonicalSource && (await Promise.all(['test', 'files'].map(async name => {
         const stat = await fs.lstat(path.join(directory, name)).catch(error => {
             if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return undefined; } throw error;
@@ -69,10 +70,12 @@ export async function prepareScenarioIdentityFileChanges(options: IdentityFileCh
         && options.definitionUris.filter(uri => within(uri.fsPath, directory)).length === 1) {
         const tree = await snapshot([directory]);
         const independent = tree.directories.some(file => ['.git', '.kot'].includes(path.basename(file).toLowerCase())) || [...tree.files].some(([file, bytes]) => {
-            if (/\.feature$/iu.test(file)) { return true; }
+            if (/\.feature$/iu.test(file)) { return !(nativeSource && file === path.join(directory, 'scen.feature')); }
             if (file === sourceUri.fsPath || !/\.ya?ml$/iu.test(file) || file.endsWith('.kot.yml')) { return false; }
             const yaml = ScenarioYamlDocument.parse(bytes.toString('utf8'));
             const type = String(yaml.findFieldAtPath(['ТипФайла'])?.value ?? '').trim().toLowerCase();
+            if (nativeSource && file === path.join(directory, 'orig.yaml') && type === 'сценарий'
+                && yaml.readScalar('ДанныеСценария', 'UID')?.trim().toLowerCase() === options.uid.toLowerCase()) { return false; }
             return type === 'сценарий' || type === 'процесс'
                 || ['настройкатеста', 'настройкапроцесса'].includes(type)
                 && String(yaml.readScalar('ДанныеТеста', type === 'настройкапроцесса' ? 'UIDПроцесса' : 'UIDСценария') ?? '').trim().toLowerCase() !== options.uid.toLowerCase();

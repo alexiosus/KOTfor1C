@@ -130,7 +130,7 @@ function similarity(left: string, right: string): number {
     return 1 - rows[left.length][right.length] / Math.max(left.length, right.length, 1);
 }
 
-function loadDiagnosticsModule(ignoredDiagnosticCodes: readonly string[] = []): Record<string, unknown> {
+function loadDiagnosticsModule(ignoredDiagnosticCodes: readonly string[] = [], nativeMetadata?: string): Record<string, unknown> {
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
     const source = fs.readFileSync(path.join(process.cwd(), 'src', 'scenarioDiagnostics.ts'), 'utf8');
     const compiled = ts.transpileModule(source, {
@@ -201,6 +201,10 @@ function loadDiagnosticsModule(ignoredDiagnosticCodes: readonly string[] = []): 
             if (specifier === './exportScenarioParser') {
                 return { validateGherkinSyntax: () => [] };
             }
+            if (specifier === './spprScenarioFiles.js') {
+                return { readNativeScenarioMetadata: async () => nativeMetadata === undefined ? undefined : { text: nativeMetadata },
+                    resolveScenarioSourceUris: async () => nativeMetadata === undefined ? undefined : { format: 'native' } };
+            }
             return {};
         },
         console: { error: () => undefined, log: () => undefined },
@@ -253,7 +257,7 @@ function featureDocumentWithLine(invocation: string) {
         '# language: en',
         'Feature: Project feature',
         'Scenario: Project scenario',
-        `    ${invocation}`
+        ...invocation.split('\n').map(line => `    ${line}`)
     ];
     const uri = { scheme: 'file', fsPath: '/repo/project.feature', toString: () => 'file:///repo/project.feature' };
     return {
@@ -297,8 +301,8 @@ const messages = {
     duplicateScenarioCode: 'Duplicate code.'
 };
 
-function createProvider(resolver: object, ignoredDiagnosticCodes: readonly string[] = []) {
-    const exports = loadDiagnosticsModule(ignoredDiagnosticCodes);
+function createProvider(resolver: object, ignoredDiagnosticCodes: readonly string[] = [], nativeMetadata?: string) {
+    const exports = loadDiagnosticsModule(ignoredDiagnosticCodes, nativeMetadata);
     const Provider = exports.ScenarioDiagnosticsProvider as { prototype: object };
     const published = new Map<string, Diagnostic[]>();
     const provider = Object.create(Provider.prototype) as {
@@ -337,6 +341,31 @@ const fullValidation = {
     includeStepSuggestions: true,
     includeScenarioSuggestions: true
 };
+
+test('native SPPR scripts validate missing call parameters, extra bindings and compiler blocks at feature lines', async () => {
+    const nested = { ...definition('nestedScenario'), template: 'Child', parameters: [{ name: 'Required' }] };
+    const { provider, published } = createProvider({ getView: async () => ({ all: [nested] }),
+        resolve: async (_uri: unknown, line: string) => line.trim() === 'And Child' ? { kind: 'unique', match: match(nested) } : { kind: 'none' }
+    }, [], 'ТипФайла: Сценарий\nДанныеСценария:\n    Имя: Parent\n');
+    const doc = featureDocumentWithLine('And Child\n        Extra = "value"\n    If known Then');
+    doc.fileName = '/repo/scen.feature';
+    await provider.validateDocument(doc as ReturnType<typeof documentWithLine>, fullValidation);
+    const items = published.get(doc.uri.toString()) ?? [];
+    const line = doc.getText().split('\n').findIndex(text => text.trim() === 'And Child');
+    assert.equal(items.find(item => item.code === 'kotTestToolkit.missingScenarioParameter')?.range.start.line, line);
+    assert.equal(items.find(item => item.code === 'kotTestToolkit.extraScenarioParameter')?.range.start.line, line + 1);
+    assert.ok(items.some(item => item.code === 'kotTestToolkit.unclosedIf'));
+});
+
+test('native diagnostics read parameter declarations from adjacent metadata and ignore references in comments', async () => {
+    const metadata = 'ТипФайла: Сценарий\nДанныеСценария:\n    Имя: "Parent"\nПараметрыСценария:\n    - ПараметрыСценария1:\n        Имя: "Existing"\n        Значение: "value"\n';
+    const { provider, published } = createProvider({ getView: async () => ({ all: [] }), resolve: async () => ({ kind: 'unique', match: match(definition('builtInStep')) }) }, [], metadata);
+    const doc = featureDocumentWithLine('And use "[Existing]" and "[Missing]"\n    # [NotAParameter]'); doc.fileName = '/repo/scen.feature';
+    await provider.validateDocument(doc as ReturnType<typeof documentWithLine>, fullValidation);
+    const incomplete = (published.get(doc.uri.toString()) ?? []).find(item => item.code === 'kotTestToolkit.incompleteBlock');
+    assert.match(incomplete?.message ?? '', /Missing ScenarioParameters entries: Missing/u);
+    assert.doesNotMatch(incomplete?.message ?? '', /Existing|NotAParameter/u);
+});
 
 test('compiler diagnostics reject crossed blocks, mixed delimiters and orphan branches', async () => {
     for (const body of [

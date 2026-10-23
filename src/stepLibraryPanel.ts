@@ -48,7 +48,7 @@ export type StepLibraryInboundMessage =
     | { readonly command: 'create' }
     | { readonly command: 'insert'; readonly itemId: string }
     | { readonly command: 'copy'; readonly itemId: string }
-    | { readonly command: 'openDefinition' | 'openScenarioProperties'; readonly itemId: string }
+    | { readonly command: 'openDefinition' | 'openScenarioProperties' | 'convertFormat'; readonly itemId: string }
     | { readonly command: 'rename'; readonly itemId: string }
     | { readonly command: 'renameMainGroup'; readonly itemId: string }
     | { readonly command: 'deleteDefinition'; readonly itemId: string }
@@ -130,6 +130,7 @@ export function parseStepLibraryInboundMessage(value: unknown): StepLibraryInbou
         || record.command === 'copy'
         || record.command === 'openDefinition'
         || record.command === 'openScenarioProperties'
+        || record.command === 'convertFormat'
         || record.command === 'rename'
         || record.command === 'renameMainGroup'
         || record.command === 'deleteDefinition'
@@ -363,7 +364,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     }
 
     private async postActionResult(
-        action: 'insert' | 'copy' | 'openDefinition' | 'openScenarioProperties' | 'rename' | 'renameMainGroup' | 'deleteDefinition' | 'moveProcessStep' | 'reorderProcessStep' | 'removeProcessStep' | 'addProcessSteps',
+        action: 'insert' | 'copy' | 'openDefinition' | 'openScenarioProperties' | 'convertFormat' | 'rename' | 'renameMainGroup' | 'deleteDefinition' | 'moveProcessStep' | 'reorderProcessStep' | 'removeProcessStep' | 'addProcessSteps',
         itemId: string,
         success: boolean,
         message?: string
@@ -378,7 +379,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     }
 
     private async runItemAction(
-        action: 'insert' | 'copy' | 'openDefinition' | 'openScenarioProperties' | 'rename' | 'renameMainGroup' | 'deleteDefinition' | 'moveProcessStep' | 'reorderProcessStep' | 'removeProcessStep' | 'addProcessSteps',
+        action: 'insert' | 'copy' | 'openDefinition' | 'openScenarioProperties' | 'convertFormat' | 'rename' | 'renameMainGroup' | 'deleteDefinition' | 'moveProcessStep' | 'reorderProcessStep' | 'removeProcessStep' | 'addProcessSteps',
         itemId: string,
         operation: (item: StepLibraryItem) => Promise<boolean>
     ): Promise<void> {
@@ -450,6 +451,10 @@ export class StepLibraryPanel implements vscode.Disposable {
                     message.itemId,
                     item => this.services.actionService.copy(item)
                 );
+                return;
+            case 'convertFormat':
+                await this.runItemAction('convertFormat', message.itemId, item => this.services.actionService.convertFormat(item, this.resource,
+                    async (uri, line) => { await vscode.commands.executeCommand('kotTestToolkit.convertScenario', vscode.Uri.parse(uri), line); }));
                 return;
             case 'openScenarioProperties':
                 await this.runItemAction('openScenarioProperties', message.itemId, item => this.services.actionService.openScenarioProperties(item, this.resource,
@@ -1003,6 +1008,7 @@ export class StepLibraryPanel implements vscode.Disposable {
                     <button id="favoriteButton" type="button" disabled aria-label="${escapeHtml(labels.addFavorite)}"><span class="codicon codicon-star-empty"></span></button>
                     <button id="insertButton" class="primary-button" type="button" disabled>${escapeHtml(labels.insert)}</button>
                     <button id="copyButton" type="button" disabled>${escapeHtml(labels.copy)}</button>
+                    <button id="convertFormatButton" type="button" hidden>${escapeHtml(t('Conversions…'))}</button>
                     <button id="openDefinitionButton" type="button" disabled>${escapeHtml(labels.openDefinition)}</button>
                 </div>
             </section>

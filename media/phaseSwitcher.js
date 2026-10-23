@@ -94,6 +94,7 @@
     const assembleMenuBtn = document.getElementById('assembleMenuBtn');
     const assembleDropdownContent = document.getElementById('assembleDropdownContent');
     const openVanessaBtn = document.getElementById('openVanessaBtn');
+    let vanessaControlState = { connected: false, busy: false };
     const openCompilerBuildReportBtn = document.getElementById('openCompilerBuildReportBtn');
     const openYamlParametersQuickBtn = document.getElementById('openYamlParametersQuickBtn');
 
@@ -299,12 +300,18 @@
     }
 
     function updateTopRunButtonState() {
-        const canRun = settings.switcherEnabled && !isBuildInProgress;
+        const canRun = settings.switcherEnabled && !isBuildInProgress && !vanessaControlState.busy;
         if (openVanessaBtn instanceof HTMLButtonElement) {
+            const label = vanessaControlState.connected
+                ? (window.__loc?.vanessaControlsTitle || 'Control Vanessa')
+                : (window.__loc?.runVanessaTopTitle || 'Connect Vanessa');
             openVanessaBtn.disabled = !canRun;
             openVanessaBtn.title = canRun
-                ? (window.__loc?.runVanessaTopTitle || 'Open Vanessa')
-                : (window.__loc?.statusBuildingInProgress || 'Building tests in progress...');
+                ? label
+                : vanessaControlState.busy ? (window.__loc?.vanessaConnecting || 'Connecting…')
+                    : (window.__loc?.statusBuildingInProgress || 'Building tests in progress...');
+            const labelElement = openVanessaBtn.querySelector('span');
+            if (labelElement) { labelElement.textContent = label; }
         }
     }
 
@@ -1465,7 +1472,7 @@
             },
             {
                 icon: 'codicon-list-ordered',
-                label: window.__loc?.createProcess || 'Process',
+                label: window.__loc?.createProcess || 'Main process',
                 command: 'createProcess'
             }
         ];
@@ -1584,7 +1591,7 @@
         createButton.type = 'button';
         createButton.className = 'scenario-section-create-btn scenario-section-action toolbar-btn ghost-btn icon-only kot-icon-button';
         createButton.title = isProcess
-            ? window.__loc?.createProcess || 'Create process'
+            ? window.__loc?.createProcess || 'Main process'
             : window.__loc?.createMainScenario || 'Create main scenario';
         createButton.setAttribute('aria-label', createButton.title);
         createButton.disabled = settings.switcherEnabled === false || isBuildInProgress || isScenarioRepairInProgress;
@@ -3256,6 +3263,7 @@
                 standaloneFeatures?.setSnapshot(message.snapshot);
                 break;
             case 'loadInitialState':
+                vanessaControlState = { connected: message.vanessaControlState?.connected === true, busy: message.vanessaControlState?.busy === true };
                 if (message.error) {
                      closeAssembleOptionsMenu();
                      closeContextMenu();
@@ -3476,6 +3484,10 @@
                 break;
             }
 
+            case 'updateVanessaControlState':
+                vanessaControlState = { connected: message.connected === true, busy: message.busy === true };
+                updateTopRunButtonState();
+                break;
             case 'updateRelationshipState':
                 relationshipState = scenarioProtocol.parseRelationshipState(message);
                 settings.highlightAffectedMainScenarios = relationshipState.enabled;
@@ -3640,17 +3652,9 @@
     }
 
     if (openVanessaBtn instanceof HTMLButtonElement) {
-        openVanessaBtn.addEventListener('contextmenu', event => {
-            event.preventDefault(); event.stopPropagation();
-            showContextMenuAt(event.clientX, event.clientY, [{
-                icon: 'codicon-settings-gear',
-                label: window.__loc?.configureVanessaDebugClients || 'Configure debug clients',
-                onClick: () => vscode.postMessage({ command: 'configureVanessaDebugClients' })
-            }], 'vanessa-debug');
-        });
         openVanessaBtn.addEventListener('click', () => {
             if (!openVanessaBtn.disabled) {
-                vscode.postMessage({ command: 'openVanessa' });
+                vscode.postMessage({ command: vanessaControlState.connected ? 'vanessaControl' : 'openVanessa' });
             }
         });
     }

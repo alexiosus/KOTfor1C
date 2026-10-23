@@ -15,6 +15,17 @@ function load(file: string, dependencies: Record<string, unknown>) {
 }
 const form = { schemaVersion: 1, generatedAt: 'now', source: { adapter: 'MCP' }, form: { title: 'Own' }, elements: [], tables: [], attributes: [], commands: [], notes: [] } as FormExplorerSnapshot;
 
+test('editor loads its first form through the completion source while Form Explorer has never opened', async () => {
+    let requests = 0;
+    const live = load('src/formExplorerLiveSnapshot.ts', {
+        vscode: { workspace: { getConfiguration: () => ({ get: () => 'auto' }) } }, './formExplorerPaths': {},
+        './formExplorerEnrichment': {}, './formExplorerTypes': {} });
+    const registration = live.registerFormExplorerMcpSource({ available: true, cached: () => undefined,
+        completionSnapshot: async () => { requests++; return form; } });
+    assert.equal((await live.loadLiveFormExplorerSnapshot())?.snapshot, form); assert.equal(requests, 1);
+    registration.dispose();
+});
+
 test('editor uses the shared live MCP cache and never falls back to another client snapshot on an MCP error', async () => {
     let mode = 'auto'; let snapshot: FormExplorerSnapshot | undefined = form; let available = true; let reads = 0;
     const live = load('src/formExplorerLiveSnapshot.ts', {
@@ -78,6 +89,18 @@ test('cached MCP polling does not resend or rebuild the unchanged form on each t
     for (let i = 0; i < 10; i++) { await panel.refreshSnapshot(false); }
     assert.equal(posts, 1); assert.equal(suggestions, 1);
     await panel.refreshSnapshot(true); assert.equal(posts, 2, 'an explicit refresh must still respond');
+});
+
+test('an unchanged timer refresh cannot suppress a form that has not yet been published', async () => {
+    const panel = nativePanel(); let finish!: () => void; let started!: () => void; let posts = 0;
+    const beginning = new Promise<void>(resolve => { started = resolve; });
+    const delayed = new Promise<void>(resolve => { finish = resolve; });
+    Object.assign(panel, { snapshotRevision: 0, latestSnapshot: null, lastError: null,
+        mcpSource: { available: true, refresh: async () => form },
+        postState: async () => { posts++; }, refreshSuggestedSteps: async () => { started(); await delayed; } });
+    const first = panel.refreshSnapshot(true); await beginning;
+    const tick = panel.refreshSnapshot(false); finish(); await Promise.all([first, tick]);
+    assert.ok(posts > 0, 'a fetched form must reach the webview even when polling supersedes its first refresh');
 });
 
 function nativePanel() {

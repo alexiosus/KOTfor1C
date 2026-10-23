@@ -84,6 +84,18 @@ test('connect/disconnect/close confirm profile state instead of trusting success
     await assert.rejects(unchanged.connect(client.name), /not confirmed/u);
 });
 
+test('catalog operations reject profiles replaced between preview and mutation', async () => {
+    const expected = parseVanessaClientProfiles(list())[0]; let writes = 0;
+    const runtime = new VanessaRuntimeClients({ request: async operation => {
+        if (operation === 'list') { return list([{ connection: 'File="C:\\Different";' }]); }
+        writes++; return reply('unexpected mutation');
+    } });
+    await assert.rejects(runtime.apply(client, true, expected), /changed|Refresh/u);
+    await assert.rejects(runtime.apply(client, true, null), /appeared|Refresh/u);
+    await assert.rejects(runtime.connect(client.name, expected), /changed|Refresh/u);
+    assert.equal(writes, 0);
+});
+
 test('close confirms the exact upstream completion reply and disconnected state, because Vanessa retains the old PID', async () => {
     const closed = reply('# Клиент тестирования закрыт\n\n- Профиль: KOT fixture\n- Статус: закрыт успешно\n\n## Следующие шаги\n- Используйте `manage_test_client` с `action: connect` для повторного подключения');
     for (const valid of [true, false]) {

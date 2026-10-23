@@ -38,24 +38,34 @@ export function parseVanessaFormTree(reply: unknown, identity: VanessaFormIdenti
     const empty = '# Анализ текущей формы\n\n## Элементы формы\nНет данных.';
     const match = /^# Анализ текущей формы\n\n## Элементы формы\n```text\n([\s\S]*?)\n```$/u.exec(text);
     if (!match && text !== empty) { throw unconfirmed(); }
-    const roots: FormExplorerElementInfo[] = []; const stack: Array<{ path: string; children: FormExplorerElementInfo[]; wrapper: boolean }> = [];
+    const lines = match?.[1].split('\n').filter(Boolean) ?? [];
+    const formNames = lines.flatMap(line => {
+        const form = /^-- .* \[([^\[\]{}\n]*)\] \{Тестируемая форма\} \{Видимость:[^{}\n]+\}$/u.exec(line);
+        return form ? [form[1]] : [];
+    });
+    // Desktop windows can contain several embedded forms with the same control names.
+    // Only the branch confirmed by get_active_window_data belongs to the active form.
+    const scoped = formNames.length > 1;
+    if (scoped && formNames.filter(name => name === identity.formName).length !== 1) { throw unconfirmed(); }
+    const roots: FormExplorerElementInfo[] = []; const stack: Array<{ path: string; children: FormExplorerElementInfo[]; wrapper: boolean; included: boolean }> = [];
     const paths = new Set<string>(); let previous = -1; let count = 0;
-    for (const line of match?.[1].split('\n').filter(Boolean) ?? []) {
+    for (const line of lines) {
         const row = /^(-{1,30}) (.*) \[([^\[\]{}\n]*)\] \{([^{}\n]+)\} \{Видимость:([^{}\n]+)\}$/u.exec(line);
         if (!row || ++count > 5_000) { throw unconfirmed(); }
         const depth = row[1].length - 1; const visible = boolean(row[5]);
         // At depth 30 the upstream formatter clamps indentation; hierarchy is no longer provable.
         if (depth >= 29 || depth > previous + 1 || visible === undefined || !stack[depth - 1] && depth !== 0) { throw unconfirmed(); }
-        const parent = depth === 0 ? { path: 'Form', children: roots } : stack[depth - 1];
+        const parent = depth === 0 ? { path: 'Form', children: roots, included: true } : stack[depth - 1];
         const wrapper = ['Тестируемое окно клиентского приложения', 'Тестируемая форма'].includes(row[4]);
         if (wrapper && (depth > 1 || !parent || depth === 1 && !stack[0]?.wrapper)) { throw unconfirmed(); }
-        if (wrapper) { stack[depth] = { ...parent, wrapper }; }
+        if (wrapper) { stack[depth] = { ...parent, wrapper, included: parent.included && (!scoped || depth !== 1 || row[3] === identity.formName) }; }
         else {
             if (!row[3] || /[.\r\n]/u.test(row[3])) { throw unconfirmed(); }
             const path = `${parent.path}.${row[3]}`;
-            if (paths.has(path)) { throw unconfirmed(); } paths.add(path);
+            if (parent.included) { if (paths.has(path)) { throw unconfirmed(); } paths.add(path); }
             const element: FormExplorerElementInfo = { path, name: row[3], title: row[2], type: row[4], kind: kind(row[4]), visible, children: [] };
-            parent.children.push(element); stack[depth] = { path, children: element.children, wrapper: false };
+            if (parent.included) { parent.children.push(element); }
+            stack[depth] = { path, children: element.children, wrapper: false, included: parent.included };
         }
         stack.length = depth + 1; previous = depth;
     }

@@ -11,6 +11,17 @@ test('only saved feature step lines are executable; headers and payloads are nev
     assert.equal(isExecutableFeatureLine({ ...document(), uri: 'file:///scen.yaml' }, 4), false);
 });
 
+test('Vanessa control-flow lines and compact tree groups are executable native feature targets', async () => {
+    const sourceText = '# language: en\nFeature: Native\nScenario: Native\n    *Compact tree group\n        Try\n            And Delay 1\n        Except\n            And Delay 2\n    If condition Then\n        And Delay 3\n    ElseIf other condition Then\n        And Delay 4\n    Else\n        And Delay 5\n';
+    for (const line of [3, 4, 6, 10, 12]) {
+        const source = { ...document(), text: sourceText, line }; let sent = 0;
+        assert.equal(isExecutableFeatureLine(source, line), true, sourceText.split('\n')[line]);
+        const control = new VanessaFeatureControl({ current: () => source, exists: async () => true, save: async () => true,
+            execute: async (mode, _file, number) => { assert.equal(mode, 'oneStep'); assert.equal(number, line + 1); sent++; } });
+        await control.run('oneStep'); assert.equal(sent, 1);
+    }
+});
+
 test('manual execution saves the native dirty feature first and uses its one-based step line', async () => {
     let current = { ...document(), dirty: true };
     const events: unknown[] = [];
@@ -19,6 +30,22 @@ test('manual execution saves the native dirty feature first and uses its one-bas
         execute: async (...args) => { events.push(args); } });
     await control.run('oneStep');
     assert.deepEqual(events, ['save', ['oneStep', 'C:\\test.feature', 5]]);
+});
+
+test('run from a tree group starts at its first executable descendant, never at a sibling', async () => {
+    for (const nested of [false, true]) {
+        const source = { ...document(), text: '# language: en\nFeature: Safe\nScenario: Safe\n    *And nested\n' +
+            (nested ? '        *Inner\n' : '') + '            # comment\n            And Delay 1\n    And Delay 2\n', line: 3 };
+        const sent: number[] = [];
+        const control = new VanessaFeatureControl({ current: () => source, exists: async () => true, save: async () => true,
+            execute: async (_mode, _path, line) => { sent.push(line); } });
+        await control.run('runFromLine'); assert.deepEqual(sent, [nested ? 7 : 6]);
+    }
+    const source = { ...document(), text: '# language: en\nFeature: Safe\nScenario: Safe\n    *Empty\n        # comment\n    And Delay 2\n', line: 3 };
+    let sent = false;
+    const control = new VanessaFeatureControl({ current: () => source, exists: async () => true, save: async () => true,
+        execute: async () => { sent = true; } });
+    await assert.rejects(control.run('runFromLine'), /group has no executable steps/u); assert.equal(sent, false);
 });
 
 test('cancelled save, changed file/tab and missing path never send a command', async () => {

@@ -146,3 +146,22 @@ test('a flat source outside moved resources is checked again before writing its 
     assert.equal(await fs.readFile(f.source, 'utf8'), external);
     assert.deepEqual(f.moves, []);
 });
+
+test('native SPPR code rename moves its metadata, original script and backup together', async t => {
+    const f = await fixture(t);
+    const native = path.join(f.directory, 'meta.yaml');
+    const metadata = f.before.slice(0, f.before.indexOf('ТекстСценария:'));
+    await fs.rename(f.source, native); await fs.writeFile(native, metadata);
+    await fs.rename(`${f.source}.kot.yml`, `${native}.kot.yml`);
+    await fs.writeFile(path.join(f.directory, 'scen.feature'), '\uFEFFAnd original SPPR call\r\n\t| table |\r\n');
+    await fs.writeFile(path.join(f.directory, 'orig.yaml'), metadata);
+    f.document.uri = f.uri(native); f.document.text = metadata.slice(1);
+    const plan = await f.prepare({ sourceUri: f.uri(native), definitionUris: [f.uri(native)] });
+    await plan.apply([{ key: f.uri(native), before: metadata, after: metadata.replace('"001"', '"002"') }]);
+    const destination = path.join(f.root, '002');
+    assert.equal(plan.result.sourceUri, f.uri(path.join(destination, 'meta.yaml')).toString());
+    assert.equal(await fs.readFile(path.join(destination, 'scen.feature'), 'utf8'), '\uFEFFAnd original SPPR call\r\n\t| table |\r\n');
+    assert.equal(await fs.readFile(path.join(destination, 'orig.yaml'), 'utf8'), metadata);
+    assert.ok(await fs.stat(path.join(destination, 'meta.yaml.kot.yml')));
+    assert.ok(await fs.stat(path.join(destination, 'test', '002.yaml')));
+});

@@ -1,6 +1,6 @@
 import type * as vscode from 'vscode';
 import { pathToFileURL } from 'node:url';
-import type { ProjectDefinitionView } from './projectDefinition';
+import { sameProjectDefinitionSource, type ProjectDefinitionView } from './projectDefinition';
 import { ScenarioDirectoryIndex, type ScenarioCatalog, type ScenarioCatalogProvider } from './scenarioCatalog';
 import {
     ScenarioRelationshipIndex,
@@ -268,7 +268,7 @@ export class ScenarioRelationshipService implements vscode.Disposable {
         const activeUriKey = activeUri.toString();
         const currentDefinitionIds = exports
             .filter(definition => [definition.definitionLocation?.uri, definition.implementationLocation?.uri]
-                .includes(activeUriKey))
+                .some(uri => sameProjectDefinitionSource(uri, activeUriKey)))
             .map(definition => definition.id)
             .sort(compareText);
         const callersByDefinition = new Map<string, readonly string[]>();

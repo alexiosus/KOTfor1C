@@ -1,6 +1,7 @@
 @import url("./kotWebviewTheme.css");
 @import url("./kotWebviewText.css");
 @import url("./kotWebviewSplit.css");
+@import url("./infobaseVanessaClients.css");
 
 html,
 body {
@@ -194,14 +195,12 @@ input {
     word-break: break-word;
 }
 
-.toolbar-btn,
 .menu-item {
     border: 1px solid var(--ib-border);
     background: var(--ib-button-bg);
     color: inherit;
 }
 
-.toolbar-btn,
 .menu-item {
     display: inline-flex;
     align-items: center;
@@ -214,23 +213,11 @@ input {
     transition: background-color 80ms ease;
 }
 
-.toolbar-btn:hover,
 .menu-item:hover,
 .infobase-item:hover {
     border-color: var(--ib-border-strong);
 }
 
-.toolbar-btn.primary {
-    border-color: color-mix(in srgb, var(--vscode-button-background) 70%, transparent);
-    background: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
-}
-
-.toolbar-btn.primary:hover {
-    background: var(--vscode-button-hoverBackground);
-}
-
-.toolbar-btn:disabled,
 .menu-item:disabled {
     opacity: 0.58;
     cursor: default;
@@ -508,7 +495,8 @@ input {
 
 .details-layout {
     min-height: 0;
-    overflow: visible;
+    overflow: auto;
+    overscroll-behavior: contain;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -972,3 +960,31 @@ input {
 
 #activityBadge[hidden] { display: none; }
 .state-pill.is-running { color: var(--vscode-charts-blue, var(--vscode-focusBorder)); }
+
+.action-category-menu { position: relative; }
+.action-category-menu > summary { list-style: none; cursor: pointer; }
+.action-category-menu > summary::-webkit-details-marker { display: none; }
+.action-category-popover { position: absolute; top: 100%; right: 0; min-width: 220px; z-index: 50; padding: 5px; border: 1px solid var(--ib-border); background: var(--vscode-menu-background, var(--ib-surface-1)); box-shadow: var(--ib-shadow); }
+.action-category-popover .menu-item { display: flex; width: 100%; }
+
+.details-layout > * { flex: 0 0 auto; }
+.details-hero-platform-shell { width: min(230px, 100%); align-self: flex-end; }
+.infobase-item-title-row .infobase-item-name { flex: 0 1 auto; }
+.infobase-item-title-row .state-pill { flex: none; }
+.infobase-item-head > .state-pill.compact.is-running { padding: 0; min-width: 14px; min-height: 14px; align-self: center; }
+@media (max-width: 820px) {
+ .details-hero { grid-template-columns: minmax(0,1fr); }
+ .details-hero-controls { justify-self: start; align-items: flex-start; max-width: 100%; }
+ .details-hero-platform-shell { align-self: flex-start; }
+ .record-grid { grid-template-columns: minmax(0,1fr); }
+ .action-category-buttons { min-width: 0; flex-wrap: wrap; }
+}
+
+.infobase-item { display: grid; grid-template-columns: 12px minmax(0,1fr) auto; column-gap: 8px; }
+.infobase-item-head { display: contents; }
+.infobase-item-runtime { grid-column: 1; grid-row: 1; width: 12px; align-self: center; color: var(--vscode-charts-blue); visibility: hidden; }
+.infobase-item-runtime.is-active { visibility: visible; }
+.infobase-item-runtime .codicon { font-size: 10px; }
+.infobase-item-title-row { grid-column: 2; grid-row: 1; align-self: center; }
+.infobase-item > .state-pill { grid-column: 3; grid-row: 1; align-self: center; }
+.infobase-item > .infobase-item-path, .infobase-item > .infobase-item-meta { grid-column: 2 / -1; }

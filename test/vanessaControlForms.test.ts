@@ -118,3 +118,21 @@ test('a window change between activation confirmation and the full form read can
         } });
     const windows = await forms.windows(); await assert.rejects(forms.activateWindow(windows, 'Other window'), /changed/iu);
 });
+
+test('a desktop with multiple embedded forms is scoped to the confirmed active form before resolving duplicate control names', () => {
+    const desktop = '# Анализ текущей формы\n\n## Элементы формы\n```text\n' + [
+        '- Home page [] {Тестируемое окно клиентского приложения} {Видимость:Да}',
+        '-- Start [CommonForm.Start] {Тестируемая форма} {Видимость:Да}',
+        '--- Command bar [FormCommandBar] {Тестируемая группа формы} {Видимость:Да}',
+        '---- Other [OtherAction] {Тестируемая кнопка формы} {Видимость:Да}',
+        '-- Tasks [Task.Own.Form] {Тестируемая форма} {Видимость:Да}',
+        '--- Command bar [FormCommandBar] {Тестируемая группа формы} {Видимость:Да}',
+        '---- Own [OwnAction] {Тестируемая кнопка формы} {Видимость:Да}'
+    ].join('\n') + '\n```';
+    const form = parseVanessaFormTree(reply(desktop), { ...binding, formName: 'Task.Own.Form' }, 'now');
+    assert.equal(form.elements.length, 1);
+    assert.equal(form.elements[0].children[0].name, 'OwnAction');
+    assert.equal(form.elements[0].path, 'Form.FormCommandBar');
+    assert.throws(() => parseVanessaFormTree(reply(desktop), binding, 'now'), /confirmed/iu);
+    assert.throws(() => parseVanessaFormTree(reply(desktop.replace('CommonForm.Start', 'Task.Own.Form')), { ...binding, formName: 'Task.Own.Form' }, 'now'), /confirmed/iu);
+});

@@ -22,6 +22,17 @@ test('feature controller edits native source and refreshes dirty, saved, pin and
     await h.request({ action: 'favorite' }); assert.equal(h.controller.state?.favorite, true);
     await h.request({ action: 'pin' }); assert.equal(h.controller.pinned, true);
 });
+
+test('export conversion is bound to a current exported declaration', async () => {
+    const h = harness(); await h.controller.open(h.document().uri);
+    await assert.rejects(h.request({ action: 'convertExport', line: 1 }), /exported/iu);
+    h.document().text = '# language: en\n@ExportScenarios\nFeature: Shared\nScenario: One "Value"\n    And Delay 1\n';
+    await h.controller.refresh();
+    assert.equal(h.controller.state?.model.scenarios[0].exported, true);
+    await h.request({ action: 'convertExport', line: 3 });
+    assert.equal(h.actions.at(-1), 'convertExport');
+    await assert.rejects(h.request({ action: 'convertExport', line: 4 }), /exported/iu);
+});
 test('stale actions cannot edit another source, and errors survive automatic refresh', async () => {
     const h = harness(); await h.controller.open(h.document().uri);
     await assert.rejects(h.controller.handle({ command: 'featureAction', uri: 'file:///old.feature', version: 1, action: 'edit', field: 'title', value: 'Bad' }), /changed/iu);

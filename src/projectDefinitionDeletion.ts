@@ -167,11 +167,29 @@ export async function deleteScenarioDefinition(
             resources.push(...[...settings].sort().map(file => ({ uri: vscode.Uri.file(file), recursive: false })));
         } else if (scenario.tabName?.trim()) {
             const directory = path.dirname(uri.fsPath);
-            if (path.basename(uri.fsPath).toLowerCase() !== 'scen.yaml' || path.resolve(directory) === path.resolve(workspace.uri.fsPath)) {
+            if (!['scen.yaml', 'meta.yaml'].includes(path.basename(uri.fsPath).toLowerCase()) || path.resolve(directory) === path.resolve(workspace.uri.fsPath)) {
                 throw new Error(translate('Choose a main scenario descriptor in its own folder.'));
             }
             resources.push({ uri: vscode.Uri.file(directory), recursive: true });
-        } else { resources.push({ uri, recursive: false }); }
+        } else {
+            resources.push({ uri, recursive: false });
+            if (path.basename(uri.fsPath).toLowerCase() === 'meta.yaml') {
+                const directory = path.dirname(uri.fsPath);
+                const script = path.join(directory, 'scen.feature');
+                const exists = await fs.lstat(script).catch(error => {
+                    if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return undefined; } throw error;
+                });
+                if (exists) { resources.push({ uri: vscode.Uri.file(script), recursive: false }); }
+                // Do not leave SPPR's same-identity metadata backup discoverable after deleting its descriptor.
+                const original = path.join(directory, 'orig.yaml');
+                const originalText = await fs.readFile(original, 'utf8').catch(error => {
+                    if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return undefined; } throw error;
+                });
+                if (originalText && descriptor.uid && parseScenarioDescriptor(originalText).uid === descriptor.uid) {
+                    resources.push({ uri: vscode.Uri.file(original), recursive: false });
+                }
+            }
+        }
         const metadata = await readBoundMetadata(uri, scenario.kind === 'process' ? 'process' : 'scenario', scenario.uid);
         if (metadata && !resources.some(resource => resource.recursive && within(metadata.uri.fsPath, resource.uri.fsPath))) {
             resources.push({ uri: metadata.uri, recursive: false });

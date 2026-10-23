@@ -105,8 +105,9 @@
         });
     }
 
-    const AVAILABLE_WHILE_PENDING = new Set(['reveal', 'logs']);
+    const AVAILABLE_WHILE_PENDING = new Set(['reveal', 'logs', 'vanessaClients']);
     const AVAILABLE_WHILE_RUNNING = new Set([
+        'vanessaClients',
         'openEnterprise',
         'openDesigner',
         'openFormExplorer',

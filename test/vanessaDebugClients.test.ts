@@ -28,6 +28,27 @@ function storageFixture() {
     return { state, secrets, stateStorage, secretStorage, store: new VanessaDebugClientStore(stateStorage, secretStorage) };
 }
 
+test('catalog reads cannot lose their secure payload while another store rotates it', async () => {
+    const f = storageFixture(); await f.store.save({ mode: 'clients', clients: [client()] });
+    let release!: () => void; let entered!: () => void; let first = true;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    f.secretStorage.get = async key => { if (first) { first = false; entered(); await gate; } return f.secrets.get(key); };
+    const other = new VanessaDebugClientStore(f.stateStorage, f.secretStorage);
+    const reading = other.loadCatalog(); await started;
+    const writing = f.store.updateCatalog(rows => rows.map(row => ({ ...row, username: 'NewUser' })));
+    await new Promise<void>(resolve => setImmediate(resolve)); release();
+    assert.equal((await reading)[0].username, ''); await writing;
+    assert.equal((await f.store.loadCatalog())[0].username, 'NewUser');
+});
+
+test('an unrelated catalog edit preserves the explicitly selected Debug client order', async () => {
+    const f = storageFixture(); const a = client(); const b = client({ id: 'second', name: 'Second', port: 1539 });
+    await f.store.saveCatalog([a, b]); await f.store.save({ mode: 'clients', clients: [b, a] });
+    await f.store.updateCatalog(rows => [...rows, client({ id: 'third', name: 'Third', port: 1540 })]);
+    assert.deepEqual((await f.store.load())?.clients.map(row => row.id), ['second', 'first']);
+});
+
 test('saved multi-client set survives a new store without persisting passwords or extra launch keys in workspace state', async () => {
     const f = storageFixture();
     const selection: VanessaDebugClientSelection = { mode: 'clients', clients: [
@@ -63,6 +84,55 @@ test('missing secure payload fails closed instead of silently dropping authentic
     await f.store.save({ mode: 'clients', clients: [client({ password: 'required' })] });
     f.secrets.clear();
     await assert.rejects(f.store.load(), /secure|credentials/iu);
+});
+
+test('unavailable catalogs require explicit replacement and cannot reset a catalog that recovered meanwhile', async () => {
+    const f = storageFixture(); const original = { mode: 'clients', clients: [client()] } as const;
+    await f.store.save(original); f.secrets.clear();
+    const replacement = { mode: 'clients', clients: [client({ id: 'replacement', name: 'Replacement', password: 'entered' })] } as const;
+    await assert.rejects(f.store.save(replacement), /secure|credentials/iu);
+    await f.store.replaceUnavailableCatalog(replacement);
+    assert.deepEqual(await f.store.load(), replacement);
+    await assert.rejects(f.store.replaceUnavailableCatalog(original), /available/u);
+    assert.deepEqual(await f.store.load(), replacement);
+});
+
+test('the shared catalog extends legacy saved clients without changing the selected Debug set', async () => {
+    const f = storageFixture(); const first = client({ password: 'private' });
+    await f.store.save({ mode: 'clients', clients: [first] });
+    const key = [...f.state.keys()][0]; const legacy = f.state.get(key) as any;
+    delete legacy.catalog; f.state.set(key, legacy);
+    assert.deepEqual(await f.store.loadCatalog(), [first]);
+    const second = client({ id: 'second', name: 'Other', infobase: '/bases/other', port: 1539, password: 'second-private' });
+    await f.store.saveCatalog([first, second]);
+    assert.deepEqual(await f.store.load(), { mode: 'clients', clients: [first] });
+    assert.deepEqual(await f.store.loadCatalog(), [first, second]);
+    assert.equal(f.secrets.size, 1);
+    assert.ok(!JSON.stringify([...f.state.values()]).includes('private'));
+});
+
+test('editing Debug selection preserves other catalog users; deleting a selected user updates the set', async () => {
+    const f = storageFixture(); const first = client(); const second = client({ id: 'second', name: 'Other', port: 1539 });
+    await f.store.save({ mode: 'clients', clients: [first] });
+    await f.store.saveCatalog([first, second]);
+    await f.store.save({ mode: 'clients', clients: [{ ...first, username: 'Changed' }] });
+    assert.equal((await f.store.loadCatalog()).length, 2);
+    assert.equal((await f.store.load())?.clients[0].username, 'Changed');
+    await f.store.saveCatalog([second]);
+    assert.deepEqual(await f.store.load(), { mode: 'scenario', clients: [] });
+    assert.deepEqual(await f.store.loadCatalog(), [second]);
+});
+
+test('concurrent Debug and catalog updates reuse the latest shared store state', async () => {
+    const f = storageFixture(); const other = new VanessaDebugClientStore(f.stateStorage, f.secretStorage);
+    const first = client(); const second = client({ id: 'second', name: 'Other', port: 1539 });
+    await Promise.all([
+        f.store.save({ mode: 'clients', clients: [first] }),
+        other.updateCatalog((catalog: readonly VanessaDebugClient[]) => [...catalog, second])
+    ]);
+    assert.deepEqual(await other.loadCatalog(), [first, second]);
+    assert.deepEqual(await f.store.load(), { mode: 'clients', clients: [first] });
+    assert.equal(f.secrets.size, 1);
 });
 
 test('manual debug overlay merges same-name Russian profiles, preserves field case and extra fields, and replaces the selected set', () => {

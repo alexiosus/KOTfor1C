@@ -36,6 +36,7 @@ class Element {
     constructor(tagName = 'div') { this.tagName = tagName.toUpperCase(); }
     set innerHTML(_value: string) { throw new Error('Unsafe HTML interpolation'); }
     append(...children: Element[]) { for (const child of children) { child.parentElement = this; this.children.push(child); } }
+    prepend(...children: Element[]) { for (const child of children) { child.parentElement = this; } this.children.unshift(...children); }
     appendChild(child: Element) { this.append(child); return child; }
     replaceChildren(...children: Element[]) { for (const child of this.children) { child.parentElement = undefined; } this.children = []; this.append(...children); }
     setAttribute(name: string, value: string) { this.attributes[name] = String(value); }
@@ -795,6 +796,12 @@ test('a code rename acknowledgement rebases a queued settings selection before s
     assert.deepEqual(h.messages.at(-1), { command: 'action', action: 'selectSettings', value: next.settings[0].uri });
 });
 
+test('Properties Run button passes protocol validation and reaches the extension', () => {
+    const h = harness(); h.state({ ...snapshot(), canCreateSettings: true });
+    assert.ok(h.action('run')); h.action('run')!.fire('click');
+    assert.deepEqual(h.messages.at(-1), { command: 'action', action: 'run' });
+});
+
 test('Properties offers the shared favorite toggle and an inset readable empty state', () => {
     const h = harness(); h.state({ ...snapshot(), canFavorite: true, favorite: false });
     assert.equal(h.action('favorite')?.getAttribute('aria-pressed'), 'false');
@@ -898,4 +905,52 @@ test('feature Properties offers the scenario plus in the Scenarios heading witho
     const plus = h.action('structure'); assert.ok(plus); assert.equal(plus.parentElement?.tagName, 'SUMMARY');
     plus.fire('click'); assert.equal(h.messages.at(-1).value, 'scenario'); assert.equal(h.messages.at(-1).line, 0);
     assert.ok(!h.find(node => node.className.includes('properties-feature-blocks')));
+});
+
+
+test('pressing Save before blur queues the save even when the edit acknowledgement replaces its button', () => {
+    const h = harness(); h.state(snapshot());
+    const input = h.field('Значение', { recordKey: 'amount' }); input.focus(); input.value = 'First click'; input.fire('input');
+    const save = h.action('save'); save.fire('pointerdown');
+    const acknowledged = snapshot(); acknowledged.source.version++;
+    acknowledged.source.model.sections[0].records[0].fields.find((field: any) => field.key === 'Значение').value = 'First click';
+    h.state(acknowledged);
+    assert.equal(h.messages.filter(message => message.command === 'edit').length, 1); assert.deepEqual(h.messages.at(-1), { command: 'action', action: 'save' });
+});
+
+
+test('native Properties offers Open feature before Open YAML without changing metadata edit identity', () => {
+    const h = harness(); const state = snapshot(); state.source.uri = 'file:///repo/meta.yaml'; state.source.scriptUri = 'file:///repo/scen.feature'; h.state(state);
+    const actions = nodes(h.root).filter(node => node.tagName === 'BUTTON').map(node => node.dataset.action);
+    assert.ok(actions.indexOf('openFeature') < actions.indexOf('openSource'));
+    h.action('openFeature').fire('click'); assert.deepEqual(h.messages.at(-1), { command: 'action', action: 'openFeature' });
+});
+
+test('Properties exposes conversions through one dropdown button and sends the explicit target role', () => {
+    const h = harness(); const main = snapshot(); main.source.uri = 'file:///repo/scen.yaml'; h.state(main);
+    const trigger = h.action('conversions'); assert.ok(trigger);
+    assert.equal(trigger.getAttribute('aria-haspopup'), 'menu'); assert.equal(trigger.getAttribute('aria-expanded'), 'false');
+    const menu = h.find(node => node.getAttribute('role') === 'menu'); assert.ok(menu); assert.equal(menu.hidden, true);
+    assert.equal(h.find(node => node.tagName === 'DETAILS' && textOf(node).includes('Conversions')), undefined);
+    trigger.fire('click'); assert.equal(menu.hidden, false); assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+    const role = h.action('convertRole')!; const format = h.action('convertFormat')!;
+    assert.ok(role); assert.ok(format); assert.equal(role.parentElement, format.parentElement);
+    role.fire('click'); assert.equal(h.messages.at(-1).action, 'convertRole'); assert.equal(h.messages.at(-1).value, 'nested');
+    assert.equal(menu.hidden, true);
+    const nested = harness(); const state = snapshot(); state.settings = []; state.canCreateSettings = false; nested.state(state);
+    const exportButton = nested.action('convertCallable'); assert.ok(exportButton);
+    assert.equal(exportButton.parentElement, nested.action('convertRole')!.parentElement);
+    nested.action('conversions')!.fire('click');
+    nested.action('convertRole')!.fire('click'); assert.equal(nested.messages.at(-1).value, 'main');
+    assert.equal(h.action('convertCallable'), undefined);
+});
+
+test('Conversions dropdown supports arrow keys and Escape without submitting an action', () => {
+    const h = harness(); const state = snapshot(); state.settings = []; state.canCreateSettings = false; state.source.uri = 'file:///repo/scen.yaml'; h.state(state);
+    const trigger = h.action('conversions')!; const menu = h.find(node => node.getAttribute('role') === 'menu')!;
+    trigger.fire('keydown', { key: 'ArrowDown' });
+    assert.equal(h.document.activeElement, h.action('convertRole')); assert.equal(menu.hidden, false);
+    menu.fire('keydown', { key: 'End' }); assert.equal(h.document.activeElement, h.action('convertCallable'));
+    menu.fire('keydown', { key: 'Escape' }); assert.equal(menu.hidden, true); assert.equal(h.document.activeElement, trigger);
+    assert.equal(h.messages.filter(message => message.command === 'action').length, 0);
 });

@@ -51,10 +51,25 @@ export class VanessaFeatureControl {
             throw new Error('Select a scenario step. Background cannot be a starting point.');
         }
         if (collectGherkinSyntaxErrors(source.text).length) { throw new Error('Fix the feature syntax before executing a step.'); }
+        let executionLine = source.line;
+        const lines = source.text.split(/\r\n|\n|\r/u);
+        if (mode === 'runFromLine' && /^\s*\*/u.test(lines[source.line])) {
+            // Native run_scenario rejects tree headings even though they are
+            // valid editor annotation targets. Stay strictly inside this group.
+            const width = target.indentation.length;
+            executionLine = -1;
+            for (let index = source.line + 1; index < lines.length; index++) {
+                const text = lines[index];
+                if (!text.trim() || /^\s*(?:#|\/\/|@)/u.test(text)) { continue; }
+                if (/^[ \t]*/u.exec(text)![0].length <= width) { break; }
+                if (!/^\s*\*/u.test(text) && isExecutableFeatureLine(source, index)) { executionLine = index; break; }
+            }
+            if (executionLine < 0) { throw new Error('The selected group has no executable steps.'); }
+        }
         this.busy = true;
         try {
             await prepareSavedVanessaFeature(source, this.ports);
-            const next = await this.ports.execute(mode, source.filePath, source.line + 1);
+            const next = await this.ports.execute(mode, source.filePath, executionLine + 1);
             const active = this.ports.current();
             if (mode === 'oneStep' && typeof next === 'number' && next > source.line + 1 && active && active.uri === source.uri && active.text === source.text &&
                 !active.dirty && active.line === source.line && isExecutableFeatureLine(active, next - 1)) { this.ports.selectLine?.(next - 1); }

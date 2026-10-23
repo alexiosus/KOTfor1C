@@ -89,6 +89,11 @@ button.is-active { color: var(--vscode-button-foreground); background: var(--vsc
 .properties-settings > button { margin: 0 12px 10px; }
 .properties-source-path { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; padding: 6px 12px; }
 .properties-source-path .properties-path { margin: 4px 0 0; min-width: 0; }
+.properties-conversions { position: relative; display: inline-flex; min-width: 0; }
+.properties-conversion-menu { position: absolute; top: 100%; left: 0; z-index: 4; display: flex; flex-direction: column; padding: 4px; width: max-content; min-width: min(220px, calc(100vw - 24px)); max-width: calc(100vw - 24px); background: var(--vscode-menu-background, var(--vscode-editor-background)); color: var(--vscode-menu-foreground, var(--vscode-foreground)); border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, var(--vscode-panel-border))); border-radius: 3px; box-shadow: 0 2px 8px var(--vscode-widget-shadow); }
+.properties-conversion-menu { overflow: auto; }
+.properties-conversion-menu > button { justify-content: flex-start; width: 100%; color: inherit; flex-shrink: 0; }
+.properties-conversion-menu > button:hover, .properties-conversion-menu > button:focus-visible { background: var(--vscode-menu-selectionBackground, var(--vscode-toolbar-hoverBackground)); color: var(--vscode-menu-selectionForeground, var(--vscode-foreground)); }
 .properties-field-controls > button { flex-shrink: 0; align-self: start; }
 .properties-header-action { margin-left: auto; flex-shrink: 0; }
 .properties-section.is-animating, .properties-record-group.is-animating, .properties-combinations.is-animating { overflow: hidden; }

@@ -904,6 +904,41 @@ export class YamlParametersManager {
         return createActiveYamlParametersProfileSnapshot(await this.loadParametersState());
     }
 
+    /** Keep library registration and file conversion together; failed conversions restore the profile. */
+    public async withProjectLibraryFolder<T>(profileId: string, workspaceFolderPath: string, folder: string, operation: () => Promise<T>): Promise<T> {
+        const transaction = this.parametersSaveQueue.then(async () => {
+            const { addProjectLibraryFolder } = await import('./projectLibraryRoots.js');
+            const original = await this._context.secrets.get(YAML_PARAMETERS_KEY);
+            const state = await this.loadParametersState();
+            const profile = this.getActiveProfileFromState(state);
+            if (profile.id !== profileId) { throw new Error(vscode.l10n.t('The active build profile changed. Retry the conversion.')); }
+            const updated = { ...profile, ...addProjectLibraryFolder({ workspaceFolderPath, profileId,
+                buildParameters: profile.buildParameters, additionalVanessaParameters: profile.additionalVanessaParameters }, folder) };
+            if (JSON.stringify(updated) === JSON.stringify(profile)) { return operation(); }
+            const next = { activeProfileId: state.activeProfileId, profiles: state.profiles.map(item => item.id === profileId ? updated : item) };
+            const payload = JSON.stringify({ version: 5, ...next });
+            if (await this._context.secrets.get(YAML_PARAMETERS_KEY) !== original) { throw new Error(vscode.l10n.t('The active build profile changed. Retry the conversion.')); }
+            await this._context.secrets.store(YAML_PARAMETERS_KEY, payload);
+            let result: T;
+            try { result = await operation(); }
+            catch (error) {
+                try {
+                    if (await this._context.secrets.get(YAML_PARAMETERS_KEY) !== payload) {
+                        throw new Error(vscode.l10n.t('The build profile changed externally; its current settings were preserved.'));
+                    }
+                    if (original === undefined) { await this._context.secrets.delete(YAML_PARAMETERS_KEY); }
+                    else { await this._context.secrets.store(YAML_PARAMETERS_KEY, original); }
+                } catch (recoveryError) { throw new AggregateError([error, recoveryError], `${String(error)}; ${String(recoveryError)}`, { cause: error }); }
+                throw error;
+            }
+            const change = getActiveYamlParametersProfileChange(state, next);
+            if (change) { this.activeProfileChangeEmitter.fire(change); }
+            return result;
+        });
+        this.parametersSaveQueue = transaction.then(() => undefined, () => undefined);
+        return transaction;
+    }
+
     /** Reads a saved profile without changing the active profile or scan root. */
     public async loadProfileSnapshot(profileId: string): Promise<ActiveYamlParametersProfile | undefined> {
         const state = await this.loadParametersState();

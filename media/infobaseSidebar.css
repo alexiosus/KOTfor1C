@@ -47,13 +47,16 @@ body {
     border-radius: 0;
 }
 
-.infobase-row {
+.infobase-row,
+.infobase-client-row {
     position: relative;
     display: grid;
-    grid-template-columns: 12px minmax(0, 1fr) auto;
+    grid-template-columns: 28px 12px minmax(0, 1fr);
+    align-items: center;
     min-width: 0;
     padding: 3px 4px;
     border: 1px solid transparent;
+    line-height: 18px;
 }
 
 .infobase-row:hover {
@@ -70,7 +73,10 @@ body {
 }
 
 .infobase-runtime-marker {
+    grid-column: 2;
+    grid-row: 1;
     align-self: center;
+    justify-self: center;
     width: 6px;
     height: 6px;
     margin: 0;
@@ -106,7 +112,7 @@ body {
 
 .infobase-actions {
     display: grid;
-    grid-template-columns: repeat(3, 28px);
+    grid-template-columns: repeat(2, 28px);
     align-items: center;
     max-width: 0;
     opacity: 0;
@@ -117,7 +123,7 @@ body {
 
 .infobase-row:hover .infobase-actions,
 .infobase-row:has(.infobase-action:focus-visible) .infobase-actions {
-    max-width: 84px;
+    max-width: 56px;
     opacity: 1;
     pointer-events: auto;
 }
@@ -195,3 +201,45 @@ body {
     margin-inline-start: 12px;
     border-inline-start: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-widget-border));
 }
+
+.infobase-disclosure { align-self: center; min-width: 0; width: 28px; height: 18px; min-height: 18px; padding: 0; }
+.infobase-disclosure:hover { background: transparent; }
+.infobase-disclosure:active { transform: none; }
+.infobase-mode { font-size: 11px; color: var(--vscode-descriptionForeground); }
+.infobase-client-list { min-width: 0; }
+.infobase-client-row { grid-template-columns: 46px 12px minmax(0, 1fr); }
+.infobase-client-row > .infobase-labels { grid-column: 3; grid-row: 1; }
+.infobase-client-row:hover { background: var(--vscode-list-hoverBackground); }
+.infobase-client-actions { position: absolute; right: 4px; display: flex; align-items: center; gap: 0; background: transparent; pointer-events: none; }
+.infobase-client-actions .infobase-menu-item { padding: 3px; font-size: 0; }
+.infobase-client-actions .infobase-menu-item .codicon { font-size: 16px; }
+.infobase-client-row .kot-row-actions { opacity: 0; }
+.infobase-client-row:hover .kot-row-actions, .infobase-client-row:has(.infobase-action:focus-visible) .kot-row-actions { opacity: 1; pointer-events: auto; }
+.infobase-client-row:hover > .infobase-labels, .infobase-client-row:has(.infobase-action:focus-visible) > .infobase-labels { padding-right: 56px; }
+.infobase-client-empty { grid-column: 3; color: var(--vscode-descriptionForeground); font-size: 11px; }
+
+.infobase-row > .infobase-disclosure { grid-column: 1; }
+.infobase-row > .infobase-labels { grid-column: 3; }
+.infobase-mode { font-size: 10px; margin-left: 6px; color: var(--vscode-descriptionForeground); flex: none; }
+.infobase-name { display: flex; align-items: center; }
+.infobase-children { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .2s ease, opacity .16s ease; }
+.infobase-children.is-expanded { grid-template-rows: 1fr; opacity: 1; }
+.infobase-children-clip { min-height: 0; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { .infobase-children { transition: none; } }
+
+.infobase-row > .infobase-disclosure, .infobase-row > .infobase-runtime-marker, .infobase-row > .infobase-labels, .infobase-row > .infobase-actions { grid-row: 1; }
+
+/* Hover controls overlay the row; absent controls do not shorten its label. */
+.infobase-row > .infobase-actions { position: absolute; right: 4px; grid-column: 3; grid-template-columns: repeat(2,28px); max-width: 56px; background: transparent; }
+.infobase-row:hover > .infobase-labels, .infobase-row:has(.infobase-action:focus-visible) > .infobase-labels { padding-right: 56px; }
+
+/* Both row types use identical icon controls; keyboard focus follows hover layout. */
+.infobase-action {
+    box-sizing: border-box;
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
+    padding: 0;
+    cursor: pointer;
+}
+.infobase-action:disabled { opacity: .58; cursor: default; }

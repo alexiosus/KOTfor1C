@@ -19,6 +19,9 @@ function sectionTitle(text: string): string { return text.slice(text.indexOf(':'
 export function readFeatureProperties(document: FeaturePropertiesDocument) {
     const parsed = structure(document);
     const actions = buildFeatureEditorActions(parsed.source);
+    const hasExportTag = (section: { tagStart: number; line: { start: number } }): boolean => document.text.slice(section.tagStart, section.line.start).split(/\r?\n/u)
+        .some(line => /^\s*@/u.test(line) && line.trim().split(/\s+/u).some(tag => tag.toLowerCase() === '@exportscenarios'));
+    const exportsAll = hasExportTag(parsed.feature);
     return {
         title: sectionTitle(parsed.feature.line.text), language: parsed.source.language,
         description: parsed.description.length ? parsed.lines.filter(line => line.start >= parsed.description[0].start
@@ -29,6 +32,7 @@ export function readFeatureProperties(document: FeaturePropertiesDocument) {
         actions: actions.filter(action => !['scenario', 'outline'].includes(parsed.sections.find(section => section.line.number === action.line)?.kind ?? '')),
         scenarios: parsed.sections.filter(section => ['scenario', 'outline'].includes(section.kind)).map(section => ({
             title: sectionTitle(section.line.text), line: section.line.number, kind: section.kind,
+            ...(exportsAll || hasExportTag(section) ? { exported: true } : {}),
             actions: actions.filter(action => action.line === section.line.number)
         }))
     };

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import * as path from 'node:path';
-import { getEffectiveCompilerLibraries } from './compilerBuildParameters';
+import { findCompilerBuildParameter, getEffectiveCompilerLibraries } from './compilerBuildParameters';
 import type {
     AdditionalVanessaParameter,
     YamlParameter
@@ -8,10 +8,11 @@ import type {
 import {
     applyAdditionalVanessaParameters,
     findObjectKeyByAlias,
+    parseAdditionalParameterPointer,
     type JsonValue
 } from './vanessaLaunchJson';
 
-type PathApi = Pick<typeof path.posix, 'delimiter' | 'isAbsolute' | 'normalize' | 'resolve' | 'sep'>;
+type PathApi = Pick<typeof path.posix, 'delimiter' | 'isAbsolute' | 'normalize' | 'resolve' | 'relative' | 'sep'>;
 
 export interface ProjectLibraryConfigurationInput {
     readonly workspaceFolderPath: string;
@@ -154,6 +155,43 @@ function resolvePaths(
 
 function freezeStrings(values: readonly string[]): readonly string[] {
     return Object.freeze(Array.from(values));
+}
+
+/** Register an authored export for both the compiler and the effective Vanessa overlay. */
+export function addProjectLibraryFolder(input: ProjectLibraryConfigurationInput, folder: string): {
+    buildParameters: YamlParameter[]; additionalVanessaParameters: AdditionalVanessaParameter[];
+} {
+    const pathApi = input.pathApi ?? path;
+    const target = pathApi.resolve(folder);
+    const buildParameters = input.buildParameters.map(row => ({ ...row }));
+    const additionalVanessaParameters = input.additionalVanessaParameters.map(row => ({ ...row }));
+    const configuration = resolveProjectLibraryConfiguration(input);
+    if (configuration.libraryRootPaths.some(root => {
+        const relative = pathApi.relative(root, target);
+        return !pathApi.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${pathApi.sep}`);
+    })) { return { buildParameters, additionalVanessaParameters }; }
+    if (target.includes('|')) { throw new Error('Export library folder paths cannot contain |.'); }
+    const relative = pathApi.relative(input.workspaceFolderPath, target);
+    const compilerPath = !pathApi.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${pathApi.sep}`) ? relative || '.' : target;
+    const existing = findCompilerBuildParameter(buildParameters, 'Libraries', 'VanessaLibraries');
+    const value = [...getEffectiveCompilerLibraries(buildParameters), compilerPath].join('|');
+    if (existing) { existing.value = value; } else { buildParameters.push({ key: 'Libraries', value }); }
+    // A priority catalog replaces Libraries entirely. Update its winning row as well,
+    // keeping the user's spelling, other catalogs and all unrelated parameters.
+    let overrideIndex = -1;
+    additionalVanessaParameters.forEach((row, index) => {
+        const leaf = (parseAdditionalParameterPointer(row.key) ?? [row.key]).at(-1);
+        if (row.overrideExisting && typeof leaf === 'string' && findObjectKeyByAlias({ КаталогиБиблиотек: [] }, leaf)) { overrideIndex = index; }
+    });
+    if (overrideIndex >= 0) {
+        const catalogs = parsePathValues(getEffectiveAdditionalValue(input.additionalVanessaParameters, 'librarycatalogs',
+            { КаталогиБиблиотек: getEffectiveCompilerLibraries(input.buildParameters) }), pathApi.delimiter);
+        additionalVanessaParameters[overrideIndex] = { ...additionalVanessaParameters[overrideIndex], value: JSON.stringify([...catalogs, target]), valueKind: 'array' };
+    }
+    if (!resolveProjectLibraryConfiguration({ ...input, buildParameters, additionalVanessaParameters }).libraryRootPaths.includes(target)) {
+        throw new Error('The library catalog override prevents registering the export folder. Review Additional Vanessa Automation parameters.');
+    }
+    return { buildParameters, additionalVanessaParameters };
 }
 
 export function resolveProjectLibraryConfiguration(

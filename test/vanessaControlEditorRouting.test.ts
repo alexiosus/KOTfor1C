@@ -3,8 +3,42 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import os from 'node:os';
 import * as feature from '../src/vanessaControlFeature';
 import * as yaml from '../src/vanessaControlYaml';
+
+test('feature control keeps the visible native source when Properties has focus and honors an explicit context-menu URI', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-feature-context-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const file = path.join(root, 'own.feature'); const text = 'Feature: Own\nScenario: Own\n    And Delay 1\n';
+    fs.writeFileSync(file, text);
+    const uri = { scheme: 'file', toString: () => new URL(`file://${file}`).toString(), fsPath: file };
+    const editor = { document: { uri, version: 1, isDirty: false, lineCount: 4, getText: () => text }, selection: { active: { line: 2 } } };
+    const other = { ...editor, document: { ...editor.document, uri: { scheme: 'file', toString: () => 'file:///other.yaml', fsPath: '/other.yaml' } } };
+    const handlers = new Map<string, (...args: unknown[]) => Promise<void>>(); const calls: unknown[][] = []; const errors: string[] = [];
+    const noop = () => ({ dispose() {} });
+    const vscode = { l10n: { t: (value: string) => value }, ProgressLocation: { Notification: 1 },
+        window: { activeTextEditor: editor as typeof editor | undefined, visibleTextEditors: [editor, other],
+            onDidChangeActiveTextEditor: noop, onDidChangeTextEditorSelection: noop, onDidChangeVisibleTextEditors: noop,
+            showErrorMessage: (value: string) => { errors.push(value); }, showInformationMessage: noop,
+            showTextDocument: async (document: unknown) => { assert.equal(document, editor.document); vscode.window.activeTextEditor = editor; return editor; },
+            withProgress: async (_options: unknown, work: (progress: unknown) => Promise<unknown>) => work({ report() {} }) },
+        workspace: { onDidChangeTextDocument: noop }, debug: { onDidStartDebugSession: noop, onDidTerminateDebugSession: noop },
+        commands: { registerCommand: (name: string, handler: (...args: unknown[]) => Promise<void>) => { handlers.set(name, handler); return noop(); }, executeCommand: noop } };
+    const module = { exports: {} as any }; const ts = require('typescript');
+    vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlCommands.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText,
+        { module, exports: module.exports, Error, require: (name: string) => name === 'vscode' ? vscode : name.endsWith('Highlighting')
+            ? { VanessaExecutionHighlighter: class { render() {} } } : name.endsWith('Feature') ? feature : name.endsWith('Yaml') ? yaml : require(name) });
+    const session = { snapshot: { status: 'ready', capabilities: { oneStep: { supported: true }, editorContent: { supported: true }, openFeature: { supported: true } } },
+        onDidChange: noop, run: async (...args: unknown[]) => { calls.push(args.slice(0, 3)); } };
+    module.exports.registerVanessaControlCommands({ subscriptions: [], workspaceState: { get: () => true } }, session);
+    vscode.window.activeTextEditor = undefined;
+    await handlers.get('kotTestToolkit.vanessaControl.oneStep')!();
+    assert.deepEqual(errors, []); assert.deepEqual(calls, [['oneStep', file, 3]]);
+    vscode.window.activeTextEditor = other;
+    await handlers.get('kotTestToolkit.vanessaControl.oneStep')!(uri);
+    assert.deepEqual(errors, []); assert.deepEqual(calls, [['oneStep', file, 3], ['oneStep', file, 3]]);
+});
 
 test('YAML F11 uses a direct step trial even when a compiled map exists; compiled execution is explicit', async () => {
     const handlers = new Map<string, () => Promise<void>>(); const invoked: string[] = []; const compiled: string[] = [];

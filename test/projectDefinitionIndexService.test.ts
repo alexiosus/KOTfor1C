@@ -352,7 +352,7 @@ test('watcher create, change, and delete update only the affected source file', 
     assert.equal(fileSystem.fileReads.filter(item => item === secondPath).length, 1);
 });
 
-test('watcher change replaces a scanned file reached through another filesystem alias', async () => {
+test('scan and watcher retain the configured navigable alias while deduplicating physical files', async () => {
     const fileSystem = new MemoryFileSystem();
     const watches = new WatchHarness();
     const aliasRoot = '/alias/libraries';
@@ -367,6 +367,7 @@ test('watcher change replaces a scanned file reached through another filesystem 
     await service.waitForIdle();
 
     assert.equal(service.getSnapshot()?.definitions.length, 1);
+    assert.equal(service.getSnapshot()?.definitions[0].definitionLocation?.uri, 'file:///alias/libraries/Drive/WaitWindowReadyForInput.feature');
     const callbacks = watches.callbacks.get(aliasRoot);
     assert.ok(callbacks);
 
@@ -380,7 +381,7 @@ test('watcher change replaces a scanned file reached through another filesystem 
     );
     assert.deepEqual(
         [...(service.getSnapshot()?.files.keys() ?? [])],
-        ['file:///physical/libraries/Drive/WaitWindowReadyForInput.feature']
+        ['file:///alias/libraries/Drive/WaitWindowReadyForInput.feature']
     );
 });
 

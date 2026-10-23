@@ -491,3 +491,15 @@ test('Properties opens standalone features and revalidates export feature defini
     assert.equal(await h.service.openScenarioProperties(item({ kind: 'standaloneFeature', capturedLocation: location })), true);
     assert.deepEqual(h.propertiesCalls, [location.uri]);
 });
+
+test('Library conversions accept scenario and process descriptors but exclude standalone features', async () => {
+    const h = harness(undefined);
+    const converted: string[] = [];
+    const convert = async (uri: string) => { converted.push(uri); };
+    const capturedLocation = { uri: 'file:///own/scen.yaml', range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } };
+    const service = h.service as StepLibraryActionService & { convertFormat: (item: StepLibraryItem, resource: undefined, convert: (uri: string) => Promise<void>) => Promise<boolean> };
+    assert.equal(await service.convertFormat(item({ kind: 'mainScenario', capturedLocation }), undefined, convert), true);
+    assert.equal(await service.convertFormat(item({ kind: 'process', capturedLocation }), undefined, convert), true);
+    assert.equal(await service.convertFormat(item({ kind: 'standaloneFeature', capturedLocation: { ...capturedLocation, uri: 'file:///own.feature' } }), undefined, convert), false);
+    assert.deepEqual(converted, ['file:///own/scen.yaml', 'file:///own/scen.yaml']);
+});

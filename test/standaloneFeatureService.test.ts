@@ -910,3 +910,13 @@ test('creating a group from feature Properties writes it to that feature project
     assert.deepEqual([...service.getSnapshot().ordering!.groupRoots[group.id]], [secondRoot]);
     assert.match(await fs.readFile(path.join(secondRoot, '.kot/groups.yml'), 'utf8'), /From Properties/u);
 });
+
+test('native SPPR scen.feature stays with its metadata instead of appearing as an independent Vanessa feature', async t => {
+    const h = await harness(t);
+    const native = await h.write('native/scen.feature');
+    await fs.writeFile(path.join(path.dirname(native), 'meta.yaml'), 'ТипФайла: "Сценарий"\nДанныеСценария:\n    Имя: "SPPR"\n    UID: "sppr-native"\n');
+    const standalone = await h.write('ordinary/scen.feature');
+    await fs.writeFile(path.join(path.dirname(standalone), 'meta.yaml'), 'Other: "configuration"\n');
+    const snapshot = await h.createService().ensureReady();
+    assert.deepEqual(snapshot.features.map(feature => feature.uri), [pathToFileURL(standalone).href]);
+});

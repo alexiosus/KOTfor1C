@@ -58,6 +58,18 @@ test('one property session resolves descriptor, selected linked settings and sha
     assert.equal(state.metadata, null);
 });
 
+test('role conversion refreshes launchability without rebinding or leaving Properties busy', async () => {
+    const h = harness(); await h.session.open(sourceUri);
+    h.host.runAction = async action => {
+        assert.equal(action, 'convertRole'); h.documents.delete(settingsUri);
+        h.host.listSettings = async () => [];
+        return { sourceUri, uriMoves: [] };
+    };
+    const state = await h.session.handle({ command: 'action', action: 'convertRole', value: 'nested' });
+    assert.equal(state.mutationError, false); assert.equal(state.canCreateSettings, false);
+    assert.equal(state.source?.uri, sourceUri); assert.deepEqual(state.settings, []);
+});
+
 test('process defaults fill only selected settings and refuse stale or foreign targets', async () => {
     const h = harness();
     h.documents.get(sourceUri)!.text = 'ТипФайла: "Процесс"\nДанныеПроцесса:\n    UID: "sales"\n    Имя: "Sales"\nПараметрыСценария:\n    - ПараметрыСценария1:\n        Имя: "Currency"\n        Значение: "EUR"\n        ТипПараметра: "Строка"\nШагиПроцесса:\n';
@@ -168,7 +180,7 @@ test('source is available without waiting for related inventory and stale enrich
     assert.equal(h.session.getState().loading, false);
 });
 
-test('initial main scenario properties include sidecar group and order before the full settings inventory finishes', async () => {
+test('initial properties preserve sidecar organization without mistaking it for launch settings', async () => {
     const h = harness();
     h.documents.set(metadataUri, { uri: metadataUri, version: 1, dirty: false,
         text: 'version: 2\nidentity:\n  kind: scenario\n  uid: sales\nmetadata:\n  groupId: sales-group\n  order: 7\n' });
@@ -178,7 +190,7 @@ test('initial main scenario properties include sidecar group and order before th
     try {
         const first = await h.session.open(sourceUri, true);
         assert.equal(first.loading, true);
-        assert.equal(first.canCreateSettings, true);
+        assert.equal(first.canCreateSettings, false);
         assert.equal(first.metadata?.values.groupId, 'sales-group');
         assert.equal(first.metadata?.values.order, 7);
         assert.deepEqual(first.groups, [{ id: 'sales-group', name: 'Sales group' }]);

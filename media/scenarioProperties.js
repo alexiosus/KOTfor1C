@@ -17,6 +17,7 @@
     let labels = protocol.DEFAULT_LABELS;
     let status = null;
     let nextId = 0;
+    let openConversions = null;
     const titleMeasurements = [];
     const scrollingTitles = new Map();
     let scrollingFrame;
@@ -34,7 +35,7 @@
     });
     const client = protocol.createClient({ postMessage: message => vscode.postMessage(message), onState: render, onPending: updatePending, onRekey: rekey, onMove: moveDocuments });
 
-    const featureView = globalThis.FeaturePropertiesView?.create({ root, vscode, scrollText, measureTitles, overflowControl, installDisclosure, resetLayout: () => { for (const stop of disclosureAnimations) { stop(); } titleMeasurements.length = 0; }, defaults: protocol.DEFAULT_LABELS });
+    const featureView = globalThis.FeaturePropertiesView?.create({ root, vscode, scrollText, measureTitles, overflowControl, installDisclosure, conversionMenu, resetLayout: () => { closeConversions(); for (const stop of disclosureAnimations) { stop(); } titleMeasurements.length = 0; }, defaults: protocol.DEFAULT_LABELS });
 
     function fileAction(command, relativePath) {
         if (state?.source) { vscode.postMessage({ command, sourceUri: state.source.uri, itemId: state.source.uri, relativePath }); }
@@ -215,18 +216,68 @@
         element.type = 'button'; element.dataset.action = action;
         element.title = options.title || label(action); element.setAttribute('aria-label', element.title);
         if (options.icon) { element.append(icon(options.icon)); }
-        if (!options.iconOnly) { element.append(scrollText(label(action), 'properties-button-caption')); }
+        if (!options.iconOnly) { element.append(scrollText(options.caption || label(action), 'properties-button-caption')); }
         element.disabled = options.disabled === true;
-        element.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); if (!element.disabled) { callback(); } });
+        let pressed = false;
+        if (action === 'save') { element.addEventListener('pointerdown', event => {
+            if (event.button !== undefined && event.button !== 0 || element.disabled) { return; }
+            event.preventDefault(); pressed = true; callback();
+        }); }
+        element.addEventListener('click', event => { event.preventDefault(); event.stopPropagation();
+            if (pressed) { pressed = false; return; }
+            if (!element.disabled) { callback(); }
+        });
         return element;
     }
     function actionButton(action, value, options) {
         return button(action, () => {
             if (action === 'save') { for (const commit of committers.values()) { commit(); } }
-            if (action === 'favorite' && state?.source) { client.enqueue({ command: 'action', action, documentUri: state.source.uri, documentVersion: state.source.version }); }
+            if (['favorite', 'convertCallable'].includes(action) && state?.source) { client.enqueue({ command: 'action', action, documentUri: state.source.uri, documentVersion: state.source.version }); }
             else { client.action(action, value); }
         }, options);
     }
+    function closeConversions(focus = false) {
+        if (!openConversions) { return; }
+        const current = openConversions; openConversions = null;
+        current.menu.hidden = true; current.trigger.setAttribute('aria-expanded', 'false');
+        if (focus) { current.trigger.focus(); }
+    }
+    function conversionMenu(items, caption = label('conversions')) {
+        const wrapper = node('div', 'properties-conversions');
+        const menu = node('div', 'properties-conversion-menu'); menu.hidden = true; menu.id = `properties-conversions-${++nextId}`; menu.setAttribute('role', 'menu');
+        const trigger = button('conversions', () => {
+            const active = openConversions?.menu === menu; closeConversions();
+            if (!active) { open(); }
+        }, { icon: 'arrow-swap', caption, title: caption });
+        const open = () => {
+            closeConversions(); menu.style.setProperty('left', '0px'); menu.hidden = false;
+            const bounds = menu.getBoundingClientRect?.();
+            if (bounds && window.innerWidth) {
+                const shift = Math.max(8 - bounds.left, Math.min(0, window.innerWidth - 8 - bounds.right));
+                menu.style.setProperty('left', `${shift}px`);
+                if (window.innerHeight) { menu.style.setProperty('max-height', `${Math.max(80, window.innerHeight - bounds.top - 8)}px`); }
+            }
+            trigger.setAttribute('aria-expanded', 'true'); openConversions = { wrapper, trigger, menu };
+        };
+        trigger.append(icon('chevron-down')); trigger.setAttribute('aria-haspopup', 'menu'); trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-controls', menu.id);
+        trigger.addEventListener('keydown', event => {
+            if (event.key === 'ArrowDown') { event.preventDefault(); open(); items[0]?.focus(); }
+            if (event.key === 'Escape') { closeConversions(true); }
+        });
+        for (const item of items) { item.setAttribute('role', 'menuitem'); item.addEventListener('click', () => closeConversions()); menu.append(item); }
+        menu.addEventListener('keydown', event => {
+            const index = items.indexOf(document.activeElement);
+            if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeConversions(true); }
+            else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+                event.preventDefault();
+                const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
+                items[next]?.focus();
+            }
+        });
+        wrapper.append(trigger, menu); return wrapper;
+    }
+    window.addEventListener('pointerdown', event => { if (openConversions && !openConversions.wrapper.contains(event.target)) { closeConversions(); } });
+    window.addEventListener('keydown', event => { if (event.key === 'Escape') { closeConversions(true); } });
     function targetData(element, document, target) {
         element.dataset.documentUri = document.uri;
         for (const key of ['section', 'recordKey', 'stepUid']) { if (target[key] !== undefined) { element.dataset[key] = target[key]; } }
@@ -571,6 +622,7 @@
         return shell.section;
     }
     function render(nextState, failed = false) {
+        closeConversions();
         const active = document.activeElement;
         const focus = root.contains(active) ? { key: active.dataset?.focusKey, start: active.selectionStart, end: active.selectionEnd } : null;
         for (const stop of disclosureAnimations) { stop(); }
@@ -607,7 +659,20 @@
         if (state.error) { children.push(errorNode(state.error)); }
         const tabs = node('div', 'properties-tabs'); tabs.setAttribute('role', 'tablist');
         const properties = node('div'); properties.setAttribute('role', 'tabpanel'); properties.id = 'properties-tab-content';
-        properties.append(filePathRow('openSource', state.source.uri), header(state.source), metadataSection());
+        const sourceRow = filePathRow('openSource', state.source.uri);
+        if (state.source.scriptUri) { sourceRow.prepend(actionButton('openFeature', undefined, { icon: 'file-code', title: label('openFeature') })); }
+        const main = state.settings.length > 0;
+        const conversionItems = [actionButton('convertRole', main ? 'nested' : 'main', {
+            icon: 'arrow-swap', caption: label(main ? 'makeNested' : 'makeMain'), title: label(main ? 'makeNested' : 'makeMain')
+        })];
+        if (state.source.model.kind === 'scenario' && /(?:^|\/)(?:scen|meta)\.yaml$/u.test(state.source.uri)) {
+            conversionItems.push(actionButton('convertFormat', undefined, { icon: 'arrow-swap' }));
+        }
+        if (!main && state.source.model.kind === 'scenario') {
+            conversionItems.push(actionButton('convertCallable', undefined, { icon: 'arrow-swap' }));
+        }
+        sourceRow.append(conversionMenu(conversionItems));
+        properties.append(sourceRow, header(state.source), metadataSection());
         const ordered = [...state.source.model.sections].sort((left, right) => {
             const order = ['ПараметрыСценария', 'ВложенныеСценарии', 'ТегиСценария', 'ТегиПроцесса', 'ШагиПроцесса'];
             return order.indexOf(left.key) - order.indexOf(right.key);

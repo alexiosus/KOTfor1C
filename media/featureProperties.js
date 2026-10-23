@@ -1,7 +1,7 @@
 /* Native feature document view, sharing the Properties toolbar and visual language. */
 (function (root) {
     'use strict';
-    root.FeaturePropertiesView = { create({ root: container, vscode, scrollText, measureTitles, overflowControl, installDisclosure, resetLayout, defaults }) {
+    root.FeaturePropertiesView = { create({ root: container, vscode, scrollText, measureTitles, overflowControl, installDisclosure, conversionMenu, resetLayout, defaults }) {
         let state; let statusElement; let labels = defaults; let busy = false; let current;
         let scenariosExpanded = true; let jsonExpanded = true; let blocksExpanded = true;
         const queue = []; const drafts = new Map(); const controls = new Map();
@@ -114,6 +114,7 @@
                 }
                 block.append(rowActions); list.append(block);
                 const edits = node('div', 'properties-actions');
+                if (scenario.exported) { edits.append(conversionMenu([button('convertExport', { icon: 'arrow-swap', extra: { line: scenario.line } })], label('conversions'))); }
                 for (const action of scenario.actions) { edits.append(button('structure', { title: action.title, extra: { value: action.kind, line: action.line } })); } list.append(edits);
             }
             scenarios.append(list); body.append(scenarios); container.replaceChildren(toolbar, body);

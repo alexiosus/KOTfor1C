@@ -65,6 +65,19 @@ test('preserves legacy favorite main scenarios and toggles callable definitions 
     assert.deepEqual([...service.favoriteItemIds(snapshot([main, nested]))], ['nested']);
 });
 
+test('scenario favorites survive both role conversions and can be cleared from either presentation', async () => {
+    const state = new MemoryState(); const service = new StepLibraryFavoritesService(state); const uri = 'file:///workspace/scen.yaml';
+    const capturedLocation = { uri, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } };
+    const main = item({ id: `mainScenario#${uri}`, sourceGroup: 'main', capturedLocation });
+    const nested = item({ id: `${uri}#authored`, sourceGroup: 'nested', capturedLocation });
+    await service.toggle(main); assert.equal(service.isFavorite(nested), true);
+    await service.toggle(nested); assert.equal(service.isFavorite(main), false);
+    state.values.set('stepLibrary.favoriteItemIds', [nested.id]);
+    assert.equal(service.isFavorite(main), true);
+    assert.equal(service.favoriteItemIds(snapshot([main])).has(main.id), true);
+    await service.toggle(main); assert.equal(service.isFavorite(nested), false);
+});
+
 test('Properties reads exactly the same favorite state as Library for main and standalone tests', async () => {
     const service = new StepLibraryFavoritesService(new MemoryState());
     for (const value of [item({ id: 'mainScenario#file:///test.yaml', sourceGroup: 'main', capturedLocation: { uri: 'file:///test.yaml', range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } } }), item({ id: 'standaloneFeature#file:///test.feature', sourceGroup: 'standalone' })]) {

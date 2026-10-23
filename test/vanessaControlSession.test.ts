@@ -20,6 +20,16 @@ test('in-flight requests expose a safe tool label until completion, without requ
 const state = (running = false) => ({ content: [{ type: 'text' as const, text: fs.readFileSync('test/fixtures/vanessa-control/1.2.043.45/state-running.ru.md', 'utf8').replace('Выполнение сценариев: да', `Выполнение сценариев: ${running ? 'да' : 'нет'}`) }] });
 const capturedReply = (name: string) => ({ content: [{ type: 'text' as const, text: fs.readFileSync(`test/fixtures/vanessa-control/1.2.043.45/${name}`, 'utf8') }] });
 
+test('a rejected preparation tool reports its sanitized native error', async () => {
+    const session = new VanessaControlSession();
+    const wire = fake(async name => name === 'open_feature_file'
+        ? { isError: true, content: [{ type: 'text', text: 'Cannot select exported group. Password="private"\nЗаголовок активного окна: private title' }] }
+        : state());
+    await session.attach(wire, 'http://localhost:9876');
+    await assert.rejects(session.select('C:\\Tests\\sales.feature', 12), { message: 'Cannot select exported group. Password=***' });
+    await session.detach();
+});
+
 test('a rejected authoring query does not invalidate the ready session or its confirmed execution', async () => {
     const session = new VanessaControlSession();
     const wire = fake(async name => name === 'execute_feature_step' ? { content: [{ type: 'text', text: 'Шаг в строке фича файла успешно выполнен' }] } : state());
@@ -102,7 +112,7 @@ test(`${mode} rejects feature bytes replaced during preparation and executes onl
         });
         await session.attach(wire, 'http://localhost:9876');
         if (changed) { await assert.rejects(session.run(mode, 'C:\\own.feature', 4, expected)); assert.equal(invoked, undefined); }
-        else { await session.run(mode, 'C:\\own.feature', 4, expected); assert.equal(invoked?.mode, mode === 'runFeature' ? 'all' : 'fromCurrentStep'); assert.equal(invoked?.filePath, undefined); }
+        else { await session.run(mode, 'C:\\own.feature', 4, expected); assert.equal(invoked?.mode, mode === 'runFeature' ? 'reloadAndRun' : 'reloadAndRunFromLine'); assert.equal(invoked?.filePath, 'C:\\own.feature'); }
         await session.detach();
     }
 });

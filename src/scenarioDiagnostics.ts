@@ -210,7 +210,7 @@ function getScenarioCallBlockByLine(
     document: vscode.TextDocument,
     line: number
 ): ScenarioCallBlock | null {
-    const bodyRange = getScenarioBodyRange(document);
+    const bodyRange = isGherkinFeatureDocument(document) ? { startLine: 0, endLine: document.lineCount - 1 } : getScenarioBodyRange(document);
     if (!bodyRange) {
         return null;
     }
@@ -893,9 +893,11 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         if (!scenarioDocument && !featureDocument) {
             return shouldCancel() ? [] : actions;
         }
-        const localScenarioParameterDefaults = featureDocument
-            ? new Map<string, string>()
-            : parseScenarioParameterDefaults(document.getText());
+        const nativeMetadata = featureDocument && /(?:^|[\\/])scen\.feature$/u.test(document.fileName)
+            ? await (await import('./spprScenarioFiles.js')).readNativeScenarioMetadata(document.uri) : undefined;
+        if (shouldCancel()) { return []; }
+        const localScenarioParameterDefaults = featureDocument && !nativeMetadata
+            ? new Map<string, string>() : parseScenarioParameterDefaults(nativeMetadata?.text ?? document.getText());
         const scenarioLanguage = getScenarioLanguageForDocument(document);
         const scenarioCallKeyword = getScenarioCallKeyword(scenarioLanguage);
         const hasFixableDiagnostic = context.diagnostics.some(diagnostic =>
@@ -1124,6 +1126,11 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     ): void {
         if (!document || document.isUntitled) {
             return;
+        }
+        if (/(?:^|[\\/])meta\.yaml$/u.test(document.fileName)) {
+            const scriptUri = vscode.Uri.joinPath(document.uri, '..', 'scen.feature').toString();
+            const script = (vscode.workspace.textDocuments ?? []).find(item => !item.isClosed && item.uri.toString() === scriptUri);
+            if (script) { this.scheduleValidation(script, delayMs, options); }
         }
         const key = document.uri.toString();
         const existing = this.validationTimers.get(key);
@@ -1533,17 +1540,18 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     private async validateDocument(
         document: vscode.TextDocument,
         options: ValidationOptions = FULL_VALIDATION_OPTIONS,
-        shouldCancel: () => boolean = () => false
+        shouldCancel: () => boolean = () => false,
+        native?: { metadata: string; syntaxDiagnostics: readonly vscode.Diagnostic[] }
     ): Promise<void> {
         if (shouldCancel()) {
             return;
         }
-        if (isGherkinFeatureDocument(document)) {
+        if (isGherkinFeatureDocument(document) && !native) {
             await this.validateFeatureDocument(document, options, shouldCancel);
             return;
         }
-        const scenarioDocument = isScenarioYamlFile(document);
-        const compilerDocument = isCompilerYamlFile(document);
+        const scenarioDocument = !!native || isScenarioYamlFile(document);
+        const compilerDocument = !native && isCompilerYamlFile(document);
         if (!scenarioDocument && !compilerDocument) {
             this.deleteDiagnostics(document.uri);
             return;
@@ -1559,15 +1567,16 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             diagnostic.code = CODE_YAML_INDENTATION_TAB;
             return diagnostic;
         });
+        if (native) { diagnostics.push(...native.syntaxDiagnostics); }
         if (compilerDocument) { diagnostics.push(...collectCompilerFormatDiagnostics(document)); }
-        const bodyRange = scenarioDocument ? getScenarioBodyRange(document) : null;
+        const bodyRange = native ? { startLine: 0, endLine: document.lineCount - 1 } : scenarioDocument ? getScenarioBodyRange(document) : null;
         if (!bodyRange) {
             this.publishDiagnostics(document.uri, diagnostics);
             return;
         }
         if (diagnostics.length > 0) { this.publishDiagnostics(document.uri, diagnostics); }
 
-        const documentText = document.getText();
+        const documentText = native?.metadata ?? document.getText();
         const configuredLanguage = getScenarioLanguageForDocument(document);
         let scenarioCatalog: ScenarioCatalog | null = null;
         try {
@@ -1907,7 +1916,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             ));
         }
 
-        const kotDescriptionState = getKotDescriptionState(document);
+        const kotDescriptionState = native ? null : getKotDescriptionState(document);
         if (kotDescriptionState && kotDescriptionState.isDefault && !projectedProjectScenario(document)?.scenarioDescription?.trim()) {
             diagnostics.push(createDiagnostic(
                 document,
@@ -1929,9 +1938,13 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         shouldCancel: () => boolean
     ): Promise<void> {
         const source = document.getText();
+        const nativeMetadata = /(?:^|[\\/])scen\.feature$/u.test(document.fileName)
+            ? await (await import('./spprScenarioFiles.js')).readNativeScenarioMetadata(document.uri) : undefined;
+        if (shouldCancel()) { return; }
         const diagnostics: vscode.Diagnostic[] = validateGherkinSyntax(
             source,
-            document.uri.toString()
+            document.uri.toString(),
+            !!nativeMetadata
         )
             .map(warning => {
                 const startLine = Math.min(
@@ -1956,6 +1969,11 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 diagnostic.code = CODE_GHERKIN_SYNTAX;
                 return diagnostic;
             });
+
+        if (nativeMetadata) {
+            await this.validateDocument(document, options, shouldCancel, { metadata: nativeMetadata.text, syntaxDiagnostics: diagnostics });
+            return;
+        }
 
         if (!options.includeStepChecks || shouldCancel()) {
             if (!shouldCancel()) {

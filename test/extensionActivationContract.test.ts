@@ -88,7 +88,7 @@ test('activation shares a lazy managed-infobase snapshot without eager 1C discov
     assert.equal(source.match(/new ManagedInfobaseService\(/gu)?.length, 1);
     assert.match(source, /import\('\.\/infobaseManager\.js'\)/u);
     assert.match(source, /collectManagedInfobases\(context,\s*activeProfileInfobasePath\)/u);
-    assert.match(source, /new InfobaseManagerPanel\(context,\s*managedInfobaseService\)/u);
+    assert.match(source, /new InfobaseManagerPanel\(context,\s*managedInfobaseService,/u);
     assert.doesNotMatch(source, /from '\.\/infobaseManager';/u);
     assert.doesNotMatch(infobaseManagerPanelSource, /collectManagedInfobases/u);
     assert.match(infobaseManagerPanelSource, /managedInfobaseService\.(?:ensureReady|refresh)\(/u);
@@ -342,7 +342,24 @@ test('activation registers and disposes the complete project-definition graph be
     assert.ok(referenceRegistration >= 0);
     assert.ok(backgroundStart > definitionRegistration);
     assert.ok(backgroundStart > referenceRegistration);
-    assert.doesNotMatch(source, /await\s+projectDefinitionIndex\.ensureReady\(/);
+    const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
+    const syntax = ts.createSourceFile('extension.ts', source, ts.ScriptTarget.ES2022, true);
+    const activation = syntax.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'activate');
+    assert.ok(activation);
+    const eagerIndexWaits: number[] = [];
+    const inspect = (node: import('typescript').Node): void => {
+        // Registered command callbacks may await the index when the user invokes them.
+        if (node !== activation && ts.isFunctionLike(node)) { return; }
+        if (ts.isAwaitExpression(node) && ts.isCallExpression(node.expression)
+            && ts.isPropertyAccessExpression(node.expression.expression)
+            && node.expression.expression.name.text === 'ensureReady'
+            && node.expression.expression.expression.getText(syntax) === 'projectDefinitionIndex') {
+            eagerIndexWaits.push(node.pos);
+        }
+        ts.forEachChild(node, inspect);
+    };
+    inspect(activation);
+    assert.deepEqual(eagerIndexWaits, []);
 });
 
 test('Form Explorer reuses the shared step catalog service without an HTML fetcher', () => {
@@ -448,7 +465,7 @@ test('current build binds duplicate-name artifacts through the exact enabled URI
     );
     assert.match(
         phaseSwitcherSource,
-        /temporarilyMoveDisabledScenarioTestFilesForBuild\([\s\S]*?selectionSnapshot\.isolatedDisabledKeys/
+        /temporarilyMoveDisabledScenarioTestFilesForBuild\([\s\S]*?scenarioSelection\.isolatedDisabledKeys/
     );
 });
 

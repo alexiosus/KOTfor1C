@@ -14,8 +14,16 @@ const tokenKey = (endpoint: string) => `kotTestToolkit.vanessaControl.token.${en
 /** Native connection UI, shared by the palette, status bar, and Test Manager. */
 export function registerVanessaControl(context: vscode.ExtensionContext, options: {
     launch(port: number): Promise<boolean>;
-}): { session: VanessaControlSession; ensureConnected(): Promise<boolean>; runFeature(request: VanessaManagedRunRequest): Promise<VanessaManagedRunResult> } {
+    canAutoStart?(): boolean | Promise<boolean>;
+    autoLaunch?(port: number): Promise<boolean>;
+    managedRunLog?(port: number): string | undefined;
+    attachedRunLog?(endpoint: string): Promise<string | undefined>;
+    trackRun?(filePath: string, sessionRunLogPath?: string): (passed: boolean) => Promise<void>;
+}): { session: VanessaControlSession; ensureConnected(): Promise<boolean>; runLogPath(): string | undefined; runFeature(request: VanessaManagedRunRequest): Promise<VanessaManagedRunResult> } {
     const session = new VanessaControlSession();
+    let managedLog: { generation: number; path: string } | undefined;
+    let unlinkedLogWarningGeneration: number | undefined;
+    const runLogPath = () => managedLog?.generation === session.snapshot.generation ? managedLog.path : undefined;
     const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 19);
     status.command = 'kotTestToolkit.vanessaControl';
     let launching = false;
@@ -25,6 +33,8 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
     let discoveryCancellation: AbortController | undefined;
     let discovery: Promise<readonly string[]> | undefined;
     let automaticAttachment: Promise<void> | undefined;
+    let activationAttempted = false;
+    const trusted = () => vscode.workspace.isTrusted !== false;
     const labels: Record<VanessaControlSnapshot['status'], string> = {
         detached: vscode.l10n.t('Disconnected'), connecting: vscode.l10n.t('Connecting…'), ready: vscode.l10n.t('Ready'),
         running: vscode.l10n.t('Running'), stopping: vscode.l10n.t('Stopping…'), unknown: vscode.l10n.t('State unavailable')
@@ -62,6 +72,11 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
             throw new Error(vscode.l10n.t('Use HTTPS for a remote authenticated Vanessa endpoint.'));
         }
         await session.attach(new VanessaControlHttpTransport({ allowRemote, bearerToken, initializeTimeoutMs: 3_000, timeoutMs: 900_000 }), endpoint, allowRemote);
+        const generation = session.snapshot.generation;
+        const address = new URL(endpoint);
+        const local = ['localhost', '127.0.0.1', '[::1]'].includes(address.hostname);
+        const log = local ? options.managedRunLog?.(Number(address.port)) ?? await options.attachedRunLog?.(endpoint).catch(() => undefined) : undefined;
+        if (session.snapshot.generation === generation) { managedLog = log ? { generation, path: log } : undefined; }
         await remember(endpoint);
     };
     const cancelDiscovery = () => { discoveryCancellation?.abort(); };
@@ -84,6 +99,7 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
         return discovery;
     };
     const autoAttachEnabled = () => vscode.workspace.getConfiguration('kotTestToolkit.vanessaControl').get<boolean>('autoAttach', true);
+    const autoStartEnabled = () => vscode.workspace.getConfiguration('kotTestToolkit.vanessaControl').get<boolean>('autoStart', false);
     const autoConnect = async (interactive: boolean): Promise<'attached' | 'none' | 'cancelled'> => {
         if (session.snapshot.capabilities) {
             if (session.snapshot.status !== 'unknown') { return 'attached'; }
@@ -96,7 +112,7 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
             await closing;
             if (disposed || session.snapshot.generation !== detachedGeneration) { return 'cancelled'; }
         }
-        if (!autoAttachEnabled() || launching || disposed) { return 'none'; }
+        if (!interactive && !autoAttachEnabled() && !autoStartEnabled() || launching || disposed) { return 'none'; }
         const generation = session.snapshot.generation;
         let live: readonly string[];
         try { live = await find(); } catch { return 'cancelled'; }
@@ -105,13 +121,13 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
         if (disposed || launching || session.snapshot.generation !== generation) { return 'cancelled'; }
         let endpoint = live[0];
         if (live.length > 1) {
-            if (!interactive) { return 'none'; }
+            if (!interactive) { return 'cancelled'; }
             const chosen = await vscode.window.showQuickPick(live, { title: vscode.l10n.t('Several Vanessa MCP sessions found. Choose the session.'), ignoreFocusOut: true });
             if (!chosen) { return 'cancelled'; }
             endpoint = chosen;
         }
         if (!endpoint) { return 'none'; }
-        if (disposed || launching || session.snapshot.generation !== generation) { return 'cancelled'; }
+        if (disposed || launching || session.snapshot.generation !== generation || !interactive && !trusted()) { return 'cancelled'; }
         automaticAttachment = attach(endpoint);
         try { await automaticAttachment; return 'attached'; } finally { automaticAttachment = undefined; }
     };
@@ -136,7 +152,8 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
         await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Connecting to Vanessa…') }, () => attach(endpoint));
     };
     const startConfigured = async (launch: (port: number) => Promise<boolean>): Promise<boolean> => {
-        if (launching || ['connecting', 'running', 'stopping'].includes(session.snapshot.status)) { throw new Error(vscode.l10n.t('Vanessa is busy. Wait for the current command.')); }
+        if (disposed || !trusted()) { return false; }
+        if (launching || session.busy || ['connecting', 'running', 'stopping'].includes(session.snapshot.status)) { throw new Error(vscode.l10n.t('Vanessa is busy. Wait for the current command.')); }
         cancelDiscovery(); launching = true; launchCancellation = new AbortController();
         const cancellation = launchCancellation;
         try {
@@ -148,6 +165,7 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
                     server.close(error => error ? reject(error) : resolve(number));
                 });
             });
+            if (disposed || cancellation.signal.aborted || !trusted()) { return false; }
             if (!await launch(port) || disposed || cancellation.signal.aborted) { return false; }
             const endpoint = `http://127.0.0.1:${port}/mcp`;
             await remember(endpoint);
@@ -159,6 +177,10 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
                     await awaitVanessaControlReady(() => attach(endpoint), cancellation.signal);
                 } finally { subscription.dispose(); }
             });
+            if (!cancellation.signal.aborted) {
+                const path = options.managedRunLog?.(port);
+                managedLog = path ? { generation: session.snapshot.generation, path } : undefined;
+            }
             return !cancellation.signal.aborted;
         } catch (error) {
             if (!cancellation.signal.aborted) { throw error; }
@@ -167,20 +189,37 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
         } finally { launching = false; if (launchCancellation === cancellation) { launchCancellation = undefined; } }
     };
     const start = () => startConfigured(options.launch);
-    const ensureConnected = async (): Promise<boolean> => {
+    const ensureConnected = async (startWhenAbsent = false): Promise<boolean> => {
         const outcome = await autoConnect(true);
         if (outcome === 'attached') { return true; }
         if (outcome === 'cancelled') { return false; }
+        if (startWhenAbsent) { return start(); }
         const startLabel = vscode.l10n.t('Start managed Vanessa'); const enter = vscode.l10n.t('Enter MCP endpoint…');
         const selected = await vscode.window.showInformationMessage(vscode.l10n.t('No running Vanessa MCP session found.'), startLabel, enter);
         if (selected === startLabel) { return start(); }
         if (selected === enter) { await attachPicker(); return !!session.snapshot.capabilities; }
         return false;
     };
-    const managed = new VanessaManagedRun({ start: startConfigured, run: async (filePath, sourceText, isCurrent, breakpointLines) => {
+    const managed = new VanessaManagedRun({ start: startConfigured,
+        currentGeneration: () => !disposed && !session.busy && session.snapshot.status === 'ready' && session.snapshot.capabilities ? session.snapshot.generation : undefined,
+        chooseSession: async () => {
+            const current = vscode.l10n.t('Run with current session settings');
+            const configured = vscode.l10n.t('Prepare configured session');
+            const selected = await vscode.window.showInformationMessage(vscode.l10n.t('The connected Vanessa session has different or unverified parameters. Choose which settings to use for these test parameters while this session stays connected.'),
+                { modal: true }, current, configured);
+            return selected === current ? 'current' : selected === configured ? 'configured' : 'cancelled';
+        }, run: async (filePath, sourceText, isCurrent, breakpointLines) => {
         if (breakpointLines?.length) { await session.synchronizeBreakpoints(filePath, breakpointLines, isCurrent, sourceText); }
-        await session.run('runFeature', filePath, 1, sourceText, isCurrent);
-        return session.snapshot.execution?.status === 'running' ? 'unknown' : session.snapshot.execution?.status ?? 'unknown';
+        const log = runLogPath();
+        if (!log && options.trackRun && unlinkedLogWarningGeneration !== session.snapshot.generation) {
+            unlinkedLogWarningGeneration = session.snapshot.generation;
+            void vscode.window.showWarningMessage(vscode.l10n.t('This Vanessa session has no linked execution log. For live step highlighting, select Execution log… in the Vanessa menu or start a managed session.'));
+        }
+        const finish = options.trackRun?.(filePath, log);
+        try {
+            await session.run('runFeature', filePath, 1, sourceText, isCurrent);
+            return session.snapshot.execution?.status === 'running' ? 'unknown' : session.snapshot.execution?.status ?? 'unknown';
+        } finally { await finish?.(session.snapshot.execution?.status === 'passed'); }
     } });
     const resume = async () => {
         const execution = session.snapshot.execution;
@@ -190,21 +229,41 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
         const source = await fs.readFile(execution.filePath, 'utf8'); const generation = session.snapshot.generation;
         await session.run('resume', execution.filePath, execution.currentLineNumber, source, () => generation === session.snapshot.generation);
     };
-    const menu = async () => {
+    const chooseRunLog = async () => {
+        if (session.busy || session.snapshot.status !== 'ready') { throw new Error(vscode.l10n.t('Vanessa is busy. Wait for the current command.')); }
+        const generation = session.snapshot.generation;
+        const files = await vscode.window.showOpenDialog({ title: vscode.l10n.t('Select the execution log used by the current Vanessa session'),
+            canSelectMany: false, canSelectFolders: false, filters: { Log: ['log', 'txt'] } });
+        const file = files?.[0]; if (!file) { return; }
+        if (file.scheme !== 'file' || !(await fs.stat(file.fsPath)).isFile()) { throw new Error(vscode.l10n.t('Select a local Vanessa execution log file.')); }
+        if (session.snapshot.generation !== generation || session.busy || session.snapshot.status !== 'ready') { throw new Error(vscode.l10n.t('The Vanessa connection changed. Run the test again.')); }
+        managedLog = { generation, path: file.fsPath };
+    };
+    const menu = async (connectionOnly = false) => {
         const snapshot = session.snapshot;
         const picked = await vscode.window.showQuickPick([
             { label: vscode.l10n.t('Start managed Vanessa'), detail: vscode.l10n.t('Prepares MCP in the KOT service infobase and opens manual debug.'), action: start },
             { label: vscode.l10n.t('Attach to running Vanessa…'), action: attachPicker },
+            ...(connectionOnly ? [
+                { label: vscode.l10n.t('Legacy process / Debug launch…'), action: () => vscode.commands.executeCommand('kotTestToolkit.openVanessa') },
+                { label: vscode.l10n.t('Saved Debug launch clients…'), action: () => vscode.commands.executeCommand('kotTestToolkit.configureVanessaDebugClients') },
+                { label: vscode.l10n.t('Advanced live client actions…'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.legacyClients') }
+            ] : []),
+            ...(!connectionOnly ? [
             { label: vscode.l10n.t('Test clients and saved connections…'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.clients') },
             { label: vscode.l10n.t('Runtime variables…'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.variables') },
             { label: vscode.l10n.t('Diagnostics…'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.diagnostics') },
             { label: vscode.l10n.t('Search runtime steps…'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.searchRuntimeSteps') },
             { label: vscode.l10n.t('Check feature syntax in Vanessa'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.checkRuntimeSyntax') },
+            ] : []),
             ...(snapshot.capabilities ? [
+                { label: vscode.l10n.t('Execution log…'), detail: runLogPath() ?? vscode.l10n.t('Select an existing execution log for live step highlighting. This does not change Vanessa settings.'), action: chooseRunLog },
+                ...(!connectionOnly ? [
                 { label: vscode.l10n.t('Refresh state'), action: () => session.refreshState() },
                 { label: vscode.l10n.t('Stop execution'), action: () => session.stop() },
                 ...(snapshot.execution?.status === 'stopped' && snapshot.execution.stopReason === 'breakpoint'
                     ? [{ label: vscode.l10n.t('Continue from breakpoint'), action: resume }] : []),
+                ] : []),
                 { label: vscode.l10n.t('Connection capabilities'), action: async () => {
                     await vscode.window.showQuickPick(Object.entries(snapshot.capabilities!).map(([name, value]) => ({
                         label: `${value.supported ? '$(check)' : '$(circle-slash)'} ${name}`, description: value.reason
@@ -224,10 +283,12 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
                 const endpoint = await vscode.window.showQuickPick(saved(), { title: vscode.l10n.t('Forget endpoint') });
                 if (endpoint) { await context.workspaceState.update(ENDPOINTS, saved().filter(value => value !== endpoint)); await context.secrets.delete(tokenKey(endpoint)); }
             } }
-        ], { title: vscode.l10n.t('Control Vanessa'), placeHolder: labels[snapshot.status], matchOnDetail: true });
+        ], { title: vscode.l10n.t(connectionOnly ? 'Vanessa connection settings' : 'Control Vanessa'), placeHolder: labels[snapshot.status], matchOnDetail: true });
         await picked?.action();
     };
     context.subscriptions.push(status, session.onDidChange(changed),
+        vscode.commands.registerCommand('kotTestToolkit.vanessaControl.connect', () => report(() => ensureConnected(true))),
+        vscode.commands.registerCommand('kotTestToolkit.vanessaControl.connectionSettings', () => report(() => menu(true))),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl', () => report(menu)),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.attach', () => report(attachPicker)),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.start', () => report(start)),
@@ -241,8 +302,18 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
         void session.refreshState().catch(() => undefined).finally(() => { refreshing = false; });
     }, 1_000);
     timer.unref(); changed(session.snapshot);
-    const initialDiscovery = setTimeout(() => { if (vscode.workspace.isTrusted !== false) { void autoConnect(false).catch(() => undefined); } }, 500);
+    const initialDiscovery = setTimeout(() => {
+        if (activationAttempted || disposed || !trusted()) { return; }
+        activationAttempted = true;
+        const generation = session.snapshot.generation;
+        void (async () => {
+            const result = await autoConnect(false);
+            const current = () => !disposed && !launching && trusted() &&
+                session.snapshot.generation === generation && !session.snapshot.capabilities && autoStartEnabled();
+            if (result === 'none' && current() && await options.canAutoStart?.() === true && current()) { await startConfigured(options.autoLaunch ?? options.launch); }
+        })().catch(() => undefined);
+    }, 500);
     initialDiscovery.unref();
-    return { session, ensureConnected, runFeature: request => managed.run({ ...request,
+    return { session, ensureConnected, runLogPath, runFeature: request => managed.run({ ...request,
         breakpointLines: Object.freeze([...session.ownedBreakpointsForSource(request.filePath, request.sourceText)]) }) };
 }

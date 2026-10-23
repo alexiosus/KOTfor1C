@@ -5,12 +5,15 @@ export interface VanessaFormSourcePorts {
     snapshot(): { generation: number; ready: boolean; supported: boolean; busy?: boolean; windowsSupported?: boolean };
     run<T>(work: (forms: VanessaRuntimeForms) => Promise<T>, isCurrent: () => boolean): Promise<T>;
     enrich?(snapshot: FormExplorerSnapshot): Promise<FormExplorerSnapshot>;
+    completionEnabled?(): boolean;
 }
 /** Shared in-memory form cache; optional enrichment reads existing project metadata. No live values are persisted. */
 export class VanessaFormExplorerSource {
     private value: { status: 'idle' | 'loading' | 'ready' | 'unavailable' | 'error'; snapshot?: FormExplorerSnapshot; message?: string } = { status: 'idle' };
     private generation: number | undefined; private revision = 0; private disposed = false; private readAt = 0;
     private failedGeneration: number | undefined;
+    private completionRetryAt = 0;
+    private formRetryAt = 0;
     private pending: Promise<FormExplorerSnapshot | undefined> | undefined;
     private pendingKind: 'tree' | 'identity' | 'element' | undefined;
     private readonly listeners = new Set<() => void>();
@@ -33,6 +36,20 @@ export class VanessaFormExplorerSource {
         const state = this.ports.snapshot();
         return !this.disposed && state.ready && state.supported && state.generation === this.generation ? this.value.snapshot : undefined;
     }
+    /** Editor demand loads the first tree, then shares bounded identity checks with the panel. */
+    completionSnapshot(): Promise<FormExplorerSnapshot | undefined> {
+        if (this.ports.completionEnabled?.() === false) { return Promise.resolve(this.cached()); }
+        const generation = this.ports.snapshot().generation;
+        if (this.failedGeneration === generation) {
+            if (Date.now() < this.completionRetryAt) { return Promise.resolve(this.cached()); }
+            this.failedGeneration = undefined;
+        }
+        const operation = this.refresh();
+        void operation.then(snapshot => {
+            if (!snapshot && this.failedGeneration === generation) { this.completionRetryAt = Date.now() + 30_000; }
+        });
+        return operation;
+    }
     refresh(force = false): Promise<FormExplorerSnapshot | undefined> {
         if (this.pending) {
             if (force && this.pendingKind !== 'tree') {
@@ -42,7 +59,10 @@ export class VanessaFormExplorerSource {
             return this.pending;
         }
         if (this.ports.snapshot().busy) { return Promise.resolve(this.cached()); }
-        if (!force && this.failedGeneration === this.ports.snapshot().generation) { return Promise.resolve(undefined); }
+        if (!force && this.failedGeneration === this.ports.snapshot().generation) {
+            if (Date.now() < this.formRetryAt) { return Promise.resolve(this.cached()); }
+            this.failedGeneration = undefined;
+        }
         if (force) { this.failedGeneration = undefined; }
         if (!force && Date.now() - this.readAt < 5_000 && this.cached()) { return Promise.resolve(this.cached()); }
         const previous = this.value.snapshot;
@@ -94,7 +114,7 @@ export class VanessaFormExplorerSource {
             } catch (error) {
                 if ((!isCurrent || isCurrent()) && (current() || !this.disposed && this.ports.snapshot().generation === state.generation && this.value.status === 'idle')) {
                     const retain = kind === 'element' && previous && error instanceof VanessaFormControlError && !(error instanceof VanessaFormContextChangedError);
-                    if (!retain) { this.failedGeneration = state.generation; }
+                    if (!retain) { this.failedGeneration = state.generation; this.formRetryAt = Date.now() + 5_000; }
                     this.publish({ status: 'error', ...(retain ? { snapshot: previous } : {}), message: error instanceof VanessaFormControlError ? error.message : 'Could not read the Vanessa form. Refresh the session and form.' }); }
             }
             if (sameSession() && isCurrent && !isCurrent()) {

@@ -205,6 +205,15 @@ test('process command creates an ordered compiler process and settings from sele
     assert.deepEqual(h.errors, []);
 });
 
+test('nested process creation omits launch settings and does not ask for a database', async t => {
+    const h = await harness(t); h.cancelBase();
+    const created = await h.api.handleCreateProcess(h.context, undefined, 'nested');
+    assert.ok(created, h.errors.join('\n'));
+    assert.equal(fs.existsSync(path.join(h.root, '001/test')), false);
+    assert.equal(parseScenarioDescriptor(fs.readFileSync(created.fsPath, 'utf8')).kind, 'process');
+    assert.equal(fs.existsSync(path.join(h.root, '001/files')), true);
+});
+
 test('cancelled scenario selection and an existing destination leave authored files intact', async t => {
     const cancelled = await harness(t);
     assert.equal(typeof cancelled.api.handleCreateProcess, 'function');

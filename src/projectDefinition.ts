@@ -126,6 +126,21 @@ function normalizeDefinitionUri(value: string): string {
     );
 }
 
+/** The local index uses WHATWG file URLs; VS Code also percent-encodes drive colons. */
+export function sameProjectDefinitionSource(left: string | undefined, right: string | undefined): boolean {
+    if (!left || !right) { return false; }
+    const key = (value: string): string => {
+        try {
+            const uri = new URL(value);
+            if (uri.protocol !== 'file:') { return uri.href; }
+            const pathname = decodeURIComponent(uri.pathname).replace(/\\/gu, '/');
+            const windows = process.platform === 'win32' || /^\/[a-z]:\//iu.test(pathname);
+            return `${uri.host.toLowerCase()}${windows ? pathname.toLowerCase() : pathname}`;
+        } catch { return value; }
+    };
+    return key(left) === key(right);
+}
+
 export function createLocalDefinitionId(input: LocalDefinitionIdentityInput): string {
     const normalizedSignature = normalizeProjectDefinitionTemplate(input.signature);
     const identity = [

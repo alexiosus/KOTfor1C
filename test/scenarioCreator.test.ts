@@ -19,6 +19,7 @@ import { TestNumberingStore, validateNewTestCode } from '../src/testNumberingSto
 import { ProjectPropertyCatalogStore } from '../src/projectPropertyCatalogStore';
 import * as propertyModel from '../src/scenarioPropertiesModel';
 import { ScenarioYamlDocument } from '../src/scenarioYamlDocument';
+import * as spprFormat from '../src/spprScenarioFormat';
 
 function uri(fsPath: string) {
     return { scheme: 'file', fsPath, toString: () => pathToFileURL(fsPath).toString() };
@@ -94,7 +95,7 @@ async function harness(t: test.TestContext, inputs: string[], customTemplate?: s
             './testNumberingStore': { TestNumberingStore, validateNewTestCode },
             './projectPropertyCatalogStore': { ProjectPropertyCatalogStore },
             './scenarioPropertiesModel': propertyModel,
-            './scenarioYamlDocument': { ScenarioYamlDocument },
+            './scenarioYamlDocument': { ScenarioYamlDocument }, './spprScenarioFormat': spprFormat,
             './projectSystemFunctions.js': { loadProjectSystemFunctions: async (_target: unknown, defaults: unknown) => defaults },
             './scenarioScanRoot': { getScenarioScanRootPath: () => destination, resolveScenarioScanRootFsPath: () => destination, resolveProcessScanRootFsPath: () => destination },
             './workspaceScanner': { scanWorkspaceForScenarioCatalog: async () => { await scanGate; return { all: [] }; } },
@@ -281,4 +282,36 @@ test('the first wizard prompt opens before slow scenario discovery completes', a
     const visible = h.prompts.length;
     h.resumeScanning(); await running;
     assert.ok(visible > 0, 'the name dialog must not await the full catalog scan');
+});
+
+
+test('main creation selects native SPPR files while keeping UID and settings linked', async t => {
+    const h = await harness(t, ['Native Main', 'NativeMain', '7']);
+    h.selectHeader('SPPR scenario file format', 'native');
+    await h.api.handleCreateMainScenario(h.context, { groupName: 'Smoke' });
+    assert.deepEqual(h.errors, []);
+    const file = path.join(h.root, 'NativeMain/meta.yaml');
+    const source = parseDocument(await fsp.readFile(file, 'utf8')).toJS();
+    const script = await fsp.readFile(path.join(h.root, 'NativeMain/scen.feature'), 'utf8');
+    const settings = parseDocument(await fsp.readFile(path.join(h.root, 'NativeMain/test/NativeMain.yaml'), 'utf8')).toJS();
+    assert.equal(Object.hasOwn(source, 'ТекстСценария'), false);
+    assert.equal(source.ДанныеСценария.Имя, 'Native Main');
+    assert.equal(settings.ДанныеТеста.UIDСценария, source.ДанныеСценария.UID);
+    assert.match(script, /#language: en/u);
+    await assert.rejects(fsp.stat(path.join(h.root, 'NativeMain/scen.yaml')));
+    assert.deepEqual(h.opened, [path.join(h.root, 'NativeMain/scen.feature')]);
+    assert.equal(parseDocument(await fsp.readFile(`${file}.kot.yml`, 'utf8')).toJS().identity.uid, source.ДанныеСценария.UID);
+});
+
+test('nested creation selects native SPPR files without flattening its script', async t => {
+    const h = await harness(t, ['Native Nested', '001']);
+    h.selectHeader('SPPR scenario file format', 'native');
+    await h.api.handleCreateNestedScenario(h.context, { existingCategories: ['Reporting'] });
+    assert.deepEqual(h.errors, []);
+    const meta = await fsp.readFile(path.join(h.root, '001/meta.yaml'), 'utf8');
+    const script = await fsp.readFile(path.join(h.root, '001/scen.feature'), 'utf8');
+    assert.equal(parseDocument(meta).toJS().ДанныеСценария.Имя, 'Native Nested');
+    assert.match(script, /#language: en/u);
+    await assert.rejects(fsp.stat(path.join(h.root, '001/scen.yaml')));
+    assert.deepEqual(h.opened, [path.join(h.root, '001/scen.feature')]);
 });

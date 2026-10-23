@@ -331,9 +331,105 @@ test('artifact discovery includes every worker namespace for a selected model da
 test('nested-process builds use exclusion filters even when few scenarios are enabled', () => {
     const f = fixture();
     try {
-        const snapshot = { total: 4, enabledNames: ['One'], disabledNames: ['Two', 'Three', 'Four'] };
-        assert.deepEqual(JSON.parse(JSON.stringify(f.provider.buildScenarioFilterDecision(snapshot, true))), { key: 'Exceptscenario', names: ['Two', 'Three', 'Four'] });
-        const result = f.provider.applyScenarioFilterToBuildParameters([{ key: 'Scenario_Filter', value: 'One' }], { key: 'Exceptscenario', names: ['Two'] });
+        const snapshot = { total: 4, enabledCodes: ['ONE'], disabledCodes: ['TWO', 'THREE', 'FOUR'] };
+        assert.deepEqual(JSON.parse(JSON.stringify(f.provider.buildScenarioFilterDecision(snapshot))), { key: 'Exceptscenario', codes: ['TWO', 'THREE', 'FOUR'] });
+        const result = f.provider.applyScenarioFilterToBuildParameters([{ key: 'Scenario_Filter', value: 'One' }], { key: 'Exceptscenario', codes: ['TWO'] });
         assert.equal(result.some((item: { key: string }) => item.key === 'Scenario_Filter'), false);
+    } finally { f.dispose(); }
+});
+
+test('unchecked Test Manager scenarios are filtered by compiler code, including native SPPR pairs', async () => {
+    for (const native of [false, true]) { for (const disabledCount of [1, 2]) {
+        const manager = { loadActiveProfileSnapshot: async () => ({ buildParameters: [], additionalVanessaParameters: [], globalVanessaVariables: [] }),
+            validateCompilerBuildParameters: () => [] };
+        const f = fixture({ './yamlParametersManager.js': { YamlParametersManager: { getInstance: () => manager } } });
+        try {
+            const enabled = { ...f.scenario('Enabled display title', 'enabled'), scenarioCode: 'KEEP' };
+            const disabled = { ...f.scenario('Unchecked display title', 'disabled'), scenarioCode: 'SKIP',
+                yamlFileUri: f.uri(path.join(f.root, native ? 'meta.yaml' : 'scen.yaml')) };
+            const all = [enabled, disabled, ...(disabledCount === 2 ? [{ ...f.scenario('Another unchecked title', 'another'), scenarioCode: 'OMIT' }] : [])];
+            const catalog = { all, byUri: new Map(all.map(info => [info.yamlFileUri.toString(), info])),
+                byName: new Map(all.map(info => [info.name, [info]])) };
+            let rows: parameters.CompilerBuildParameter[] | undefined;
+            Object.assign(f.provider, {
+                _context: {}, _activeBuildProcesses: new Set(), _view: { webview: { postMessage() {} } }, t: (key: string) => key,
+                hasAnyScenarioRunsInProgress: () => false, getOutputChannel: () => ({ clear() {} }), outputInfo() {}, outputError() {},
+                ensureFreshScenarioCatalog: async () => catalog, isMainScenario: () => true,
+                getMainScenarioSelectionSnapshotForBuild: async () => runtimeIdentity.projectScenarioBuildSelection(catalog.all, {
+                    [enabled.yamlFileUri.toString()]: true, [disabled.yamlFileUri.toString()]: false
+                }),
+                captureCompilerControlInputs: async () => undefined,
+                verifyCompilerBuildPreflight: async (value: parameters.CompilerBuildParameter[]) => { rows = value; throw new Error('stop before 1C'); }
+            });
+            await f.provider._handleRunAssembleScriptTypeScript('0');
+            assert.ok(rows, f.notifications.join('\n'));
+            assert.equal(parameters.getCompilerBuildParameterValue(rows, 'ExceptScenario'), disabledCount === 1 ? 'SKIP' : 'OMIT;SKIP');
+            assert.equal(parameters.getCompilerBuildParameterValue(rows, 'ScenarioFilter'), '');
+        } finally { f.dispose(); }
+    } }
+});
+
+test('build selection separates code collisions from identical display titles', () => {
+    const f = fixture();
+    try {
+        const enabled = { ...f.scenario('Shared title', 'enabled'), scenarioCode: 'KEEP' };
+        const sameTitle = { ...f.scenario('Shared title', 'same-title'), yamlFileUri: f.uri(path.join(f.root, 'same-title.yaml')), scenarioCode: 'SKIP' };
+        const sameCode = { ...f.scenario('Other title', 'same-code'), scenarioCode: 'KEEP' };
+        const noCode = f.scenario('Missing code', 'no-code');
+        const selected = runtimeIdentity.projectCompilerScenarioSelection([enabled, sameTitle, sameCode, noCode], [enabled.yamlFileUri.toString()]);
+        const decision = f.provider.buildScenarioFilterDecision(selected);
+        assert.deepEqual(JSON.parse(JSON.stringify(decision)), { key: 'Exceptscenario', codes: ['SKIP'] });
+        assert.deepEqual(selected.isolatedDisabledKeys, [sameCode.yamlFileUri.toString(), noCode.yamlFileUri.toString()]);
+        const none = runtimeIdentity.projectCompilerScenarioSelection([enabled, sameTitle], []);
+        assert.deepEqual(JSON.parse(JSON.stringify(f.provider.buildScenarioFilterDecision(none))), { key: 'Exceptscenario', codes: ['KEEP', 'SKIP'] });
+    } finally { f.dispose(); }
+});
+
+test('an explicit SPPR settings filter cannot re-enable an unchecked Test Manager scenario', () => {
+    const f = fixture();
+    try {
+        const infos = ['KEEP', 'SKIP', 'OMIT'].map(code => ({ ...f.scenario(code, code), scenarioCode: code }));
+        const selected = runtimeIdentity.projectCompilerScenarioSelection(infos, [infos[0].yamlFileUri.toString()]);
+        const rows = f.provider.applyScenarioFilterToBuildParameters(
+            [{ key: 'ScenarioSettingsFilter', value: 'UNCHECKED_SETTING' }], f.provider.buildScenarioFilterDecision(selected)
+        );
+        const sources = infos.map(info => ({ uri: info.yamlFileUri.toString(), text: `ТипФайла: "Сценарий"\nДанныеСценария:\n    UID: "${info.uid}"\n    Код: "${info.scenarioCode}"\n` }));
+        sources.push({ uri: f.uri(path.join(f.root, 'test.yaml')).toString(),
+            text: 'ТипФайла: "НастройкаТеста"\nДанныеТеста:\n    UIDСценария: "SKIP"\n    Код: "UNCHECKED_SETTING"\nПараметрыТеста:\n    - ПараметрыТеста1:\n        Имя: "Count"\n        ТипПараметра: "Строка"\n        Значение: "'
+                + Array.from({ length: 101 }, (_, index) => index).join(';') + '"\n' });
+        assert.equal(preflight.collectCompilerBuildPreflightIssues(rows, sources).some(issue => issue.code === 'variantLimit'), false);
+    } finally { f.dispose(); }
+});
+
+test('scenario build isolation finds every UID-linked setting and restores it without moving definitions', async () => {
+    const f = fixture();
+    try {
+        const sourceRoot = path.join(f.root, 'sources'); const directory = path.join(sourceRoot, 'spaced');
+        const ownTest = path.join(directory, 'test', 'default.yaml'); const sharedTest = path.join(sourceRoot, 'elsewhere', 'variant.yaml');
+        for (const file of [ownTest, sharedTest]) {
+            fs.mkdirSync(path.dirname(file), { recursive: true });
+            fs.writeFileSync(file, 'ТипФайла: "НастройкаТеста"\nДанныеТеста:\n    UIDСценария: "disabled"\n');
+        }
+        const metadata = path.join(directory, 'meta.yaml'); fs.writeFileSync(metadata, 'ТипФайла: "Сценарий"\n');
+        const feature = path.join(directory, 'scen.feature'); fs.writeFileSync(feature, 'And Delay 1\n');
+        const unrelated = path.join(sourceRoot, 'enabled-test.yaml');
+        fs.writeFileSync(unrelated, 'ТипФайла: "НастройкаТеста"\nДанныеТеста:\n    UIDСценария: "enabled"\n');
+        Object.assign(f.vscode, { FileType: { File: 1, Directory: 2 } });
+        Object.assign(f.vscode.workspace.fs, {
+            readDirectory: async (uri: { fsPath: string }) => fs.readdirSync(uri.fsPath, { withFileTypes: true }).map(entry => [entry.name, entry.isDirectory() ? 2 : 1]),
+            rename: async (from: { fsPath: string }, to: { fsPath: string }) => fs.promises.rename(from.fsPath, to.fsPath)
+        });
+        const info = { ...f.scenario('Unchecked title', 'disabled'), yamlFileUri: f.uri(metadata), relativePath: 'spaced', scenarioCode: 'new main scen' };
+        const key = info.yamlFileUri.toString();
+        Object.assign(f.provider, { t: (message: string) => message, getScenarioCatalog: () => ({ byUri: new Map([[key, info]]) }),
+            isLegacyDisabledTestsMoveOnBuildEnabled: () => false,
+            getLegacyDisabledTestsTempRootUri: () => f.uri(path.join(f.root, 'isolation')),
+            deleteLegacyDisabledTestsTempDirectory: async (uri: { fsPath: string }) => fs.promises.rm(uri.fsPath, { recursive: true, force: true }) });
+        const moved = await f.provider.temporarilyMoveDisabledScenarioTestFilesForBuild(f.uri(f.root), [key], {}, [key], sourceRoot);
+        assert.deepEqual(Array.from(moved.movedFiles, (file: { sourceUri: { fsPath: string } }) => file.sourceUri.fsPath).sort(), [ownTest, sharedTest].sort());
+        assert.equal(fs.existsSync(ownTest), false); assert.equal(fs.existsSync(sharedTest), false);
+        for (const file of [metadata, feature, unrelated]) { assert.equal(fs.existsSync(file), true); }
+        assert.equal(await f.provider.restoreTemporarilyMovedDisabledScenarioFiles(moved.temporaryRootUri, moved.movedFiles, {}), 0);
+        assert.match(fs.readFileSync(ownTest, 'utf8'), /disabled/u); assert.equal(fs.readFileSync(sharedTest, 'utf8'), fs.readFileSync(ownTest, 'utf8'));
     } finally { f.dispose(); }
 });

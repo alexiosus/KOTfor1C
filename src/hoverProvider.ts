@@ -18,6 +18,7 @@ import {
     parseScenarioParameterDefinitions
 } from './scenarioParameterUtils';
 import { StepSuggestionIndex } from './stepSuggestionIndex';
+import { scanCompilerLines } from './scenarioCompilerSyntax';
 import { PreparedStepStateCache } from './preparedStepStateCache';
 import type {
     ProjectDefinition,
@@ -799,7 +800,8 @@ export class DriveHoverProvider implements vscode.HoverProvider {
 
     private async provideScenarioParameterHover(
         document: vscode.TextDocument,
-        position: vscode.Position
+        position: vscode.Position,
+        metadata?: { uri: vscode.Uri; text: string }
     ): Promise<vscode.Hover | null> {
         const lineText = document.lineAt(position.line).text;
         const parameterReference = this.findScenarioBracketParameterAtPosition(lineText, position.character);
@@ -807,7 +809,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             return null;
         }
 
-        const definitions = parseScenarioParameterDefinitions(document.getText());
+        const definitions = parseScenarioParameterDefinitions(metadata?.text ?? document.getText());
         const definition = definitions.get(parameterReference.name);
         if (!definition) {
             return null;
@@ -829,7 +831,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
 
         if (definition.valueRange) {
             const editDefaultValueCommandUri = `command:kotTestToolkit.editScenarioParameterDefaultValue?${encodeURIComponent(JSON.stringify([
-                document.uri.toString(),
+                (metadata?.uri ?? document.uri).toString(),
                 definition.name
             ]))}`;
             content.appendMarkdown(`\n\n[$(edit) ${t('Edit default value')}](${editDefaultValueCommandUri})`);
@@ -1198,8 +1200,10 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             return yamlFieldHover;
         }
 
-        const isFeatureDocument = this.isFeatureDocument(document);
-        let isSupportedDocument = isFeatureDocument;
+        const nativeMetadata = /(?:^|[\\/])scen\.feature$/u.test(document.fileName)
+            ? await (await import('./spprScenarioFiles.js')).readNativeScenarioMetadata(document.uri) : undefined;
+        const isFeatureDocument = this.isFeatureDocument(document) && !nativeMetadata;
+        let isSupportedDocument = !!nativeMetadata || isFeatureDocument;
         if (!isSupportedDocument) {
             const { isScenarioYamlFile } = await import('./yamlValidator.js');
             isSupportedDocument = isScenarioYamlFile(document);
@@ -1209,7 +1213,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         }
 
         // Показываем подсказки только в блоках текста сценария
-        if (!this.isInScenarioTextBlock(document, position)) {
+        if (nativeMetadata ? scanCompilerLines(document.getText().split(/\r\n|\r|\n/u))[position.line]?.kind === 'comment' : !this.isInScenarioTextBlock(document, position)) {
             return null;
         }
         
@@ -1231,7 +1235,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
         }
 
         if (!isFeatureDocument) {
-            const scenarioParameterHover = await this.provideScenarioParameterHover(document, position);
+            const scenarioParameterHover = await this.provideScenarioParameterHover(document, position, nativeMetadata);
             if (scenarioParameterHover) {
                 return scenarioParameterHover;
             }

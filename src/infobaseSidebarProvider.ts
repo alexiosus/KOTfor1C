@@ -3,8 +3,11 @@ import { buildInfobaseSidebarModel, type InfobaseSidebarModel } from './infobase
 import type { ManagedInfobaseRecord } from './infobaseManager';
 import type { ManagedInfobaseService, ManagedInfobaseSnapshot } from './managedInfobaseService';
 import type { InfobaseRuntimeTrackerLike } from './infobaseRuntimeTracker';
+import type { VanessaInfobaseClients } from './vanessaInfobaseClients';
 
 export type InfobaseMaintenanceAction =
+    | 'vanessaClients'
+    | 'openVanessa'
     | 'openFormExplorer'
     | 'copy'
     | 'recreate'
@@ -23,6 +26,7 @@ export type InfobaseMaintenanceAction =
     | 'importCf';
 
 export type InfobaseSidebarMessage =
+    | { readonly command: 'clientAction'; readonly infobaseId: string; readonly clientId: string; readonly action: 'add' | 'connect' | 'disconnect' }
     | { readonly command: 'ready' }
     | { readonly command: 'refresh' }
     | { readonly command: 'openEnterprise'; readonly infobaseId: string }
@@ -32,6 +36,8 @@ export type InfobaseSidebarMessage =
     | { readonly command: 'openFullManager' };
 
 export interface InfobaseSidebarOperations {
+    readonly vanessaClients?: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
+    readonly openVanessa?: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
     readonly createInfobase: () => Promise<unknown>;
     readonly openEnterprise: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
     readonly openDesigner: (infobase: ManagedInfobaseRecord) => Promise<unknown>;
@@ -54,6 +60,8 @@ export interface InfobaseSidebarOperations {
 }
 
 export interface InfobaseSidebarServices {
+    readonly clients?: Pick<VanessaInfobaseClients, 'stateFor' | 'onDidChange' | 'refresh' | 'operate'>;
+    readonly connectVanessa?: () => Promise<void>;
     readonly extensionUri: vscode.Uri;
     readonly managedInfobaseService: Pick<
         ManagedInfobaseService,
@@ -64,6 +72,8 @@ export interface InfobaseSidebarServices {
 }
 
 const MAINTENANCE_ACTIONS = new Set<InfobaseMaintenanceAction>([
+    'vanessaClients',
+    'openVanessa',
     'openFormExplorer',
     'copy',
     'recreate',
@@ -83,6 +93,8 @@ const MAINTENANCE_ACTIONS = new Set<InfobaseMaintenanceAction>([
 ]);
 
 const ACTIONS_AVAILABLE_WHILE_RUNNING = new Set<keyof InfobaseSidebarOperations>([
+    'vanessaClients',
+    'openVanessa',
     'openEnterprise',
     'openDesigner',
     'openFormExplorer',
@@ -90,7 +102,7 @@ const ACTIONS_AVAILABLE_WHILE_RUNNING = new Set<keyof InfobaseSidebarOperations>
     'logs'
 ]);
 
-const PASSIVE_ACTIONS = new Set<keyof InfobaseSidebarOperations>(['reveal', 'logs']);
+const PASSIVE_ACTIONS = new Set<keyof InfobaseSidebarOperations>(['reveal', 'logs', 'vanessaClients']);
 
 function cleanId(value: unknown): string | null {
     if (typeof value !== 'string') {
@@ -105,6 +117,11 @@ export function parseInfobaseSidebarMessage(value: unknown): InfobaseSidebarMess
         return null;
     }
     const record = value as Record<string, unknown>;
+    if (record.command === 'clientAction') {
+        const infobaseId = cleanId(record.infobaseId); const clientId = cleanId(record.clientId);
+        return infobaseId && clientId && ['add', 'connect', 'disconnect'].includes(String(record.action))
+            ? { command: 'clientAction', infobaseId, clientId, action: record.action as 'add' | 'connect' | 'disconnect' } : null;
+    }
     if (
         record.command === 'ready'
         || record.command === 'refresh'
@@ -133,6 +150,8 @@ export function createDeferredInfobaseSidebarOperations(
     let cached: Promise<InfobaseSidebarOperations> | null = null;
     return () => {
         cached ??= import('./infobaseManager.js').then(manager => Object.freeze({
+            vanessaClients: (infobase: ManagedInfobaseRecord) => Promise.resolve(vscode.commands.executeCommand('kotTestToolkit.vanessaControl.clients', infobase.infobasePath)),
+            openVanessa: (infobase: ManagedInfobaseRecord) => Promise.resolve(vscode.commands.executeCommand('kotTestToolkit.openVanessaForInfobase', infobase.infobasePath)),
             createInfobase: () => manager.createInfobaseInteractive(context),
             openEnterprise: (infobase: ManagedInfobaseRecord) => manager.openInfobaseInEnterprise(context, infobase, {
                 forcePlatformPicker: true
@@ -213,6 +232,7 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
     private refreshAfterActions = false;
     private snapshot: ManagedInfobaseSnapshot | null = null;
     private model: InfobaseSidebarModel | null = null;
+    private clientPoll: ReturnType<typeof setInterval> | undefined;
 
     constructor(private readonly services: InfobaseSidebarServices) {
         this.disposables.push(
@@ -228,6 +248,7 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
                 void this.postModel(this.model);
             })
         );
+        if (services.clients) { this.disposables.push(services.clients.onDidChange(() => { if (this.model && this.view?.visible) { void this.postModel(this.model); } })); }
     }
 
     public resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -249,6 +270,7 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
                 }
             }),
             webviewView.onDidChangeVisibility(() => {
+                this.updateClientPoll();
                 if (webviewView.visible && this.ready && (this.pendingReload || !this.model)) {
                     this.pendingReload = false;
                     void this.load(false);
@@ -258,6 +280,7 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
     }
 
     public dispose(): void {
+        if (this.clientPoll) { clearInterval(this.clientPoll); }
         this.loadGeneration += 1;
         this.disposeViewSubscriptions();
         for (const disposable of this.disposables.splice(0)) {
@@ -298,8 +321,17 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
 
     private async handleMessage(message: InfobaseSidebarMessage): Promise<void> {
         switch (message.command) {
+            case 'clientAction': {
+                const base = this.findRecord(message.infobaseId); if (!base || !this.services.clients) { return; }
+                try {
+                    if (!this.services.clients.stateFor(base.infobasePath).connection.ready && message.action !== 'disconnect') { await this.services.connectVanessa?.(); }
+                    await this.services.clients.operate(base.infobasePath, [message.clientId], message.action);
+                } catch { await this.view?.webview.postMessage({ command: 'error', message: translate('The Vanessa client operation was not confirmed. Refresh the client list.'), retainItems: true }); }
+                return;
+            }
             case 'ready':
                 this.ready = true;
+                this.updateClientPoll();
                 if (!this.view?.visible) {
                     this.pendingReload = true;
                     return;
@@ -363,9 +395,10 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
             if (action === 'createInfobase') {
                 await operations.createInfobase();
             } else {
-                await operations[action](record!);
+                const operation = operations[action];
+                if (operation) { await operation(record!); }
             }
-            this.refreshAfterActions = true;
+            if (action !== 'vanessaClients') { this.refreshAfterActions = true; }
         } catch (error) {
             await this.postError(error);
         } finally {
@@ -431,7 +464,24 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
     }
 
     private async postModel(model: InfobaseSidebarModel): Promise<void> {
-        await this.view?.webview.postMessage({ command: 'state', ...model });
+        const items = model.items.map(item => {
+            const clientView = this.services.clients?.stateFor(item.infobasePath);
+            const modes = this.services.runtimeTracker.runningModes?.(item.infobasePath);
+            if (!clientView && !modes) { return item; }
+            return { ...item, running: item.running || !!clientView?.runtimeClients?.length,
+                runtimeModes: [...(modes ?? []), ...(clientView?.runtimeClients?.length ? ['vanessa'] : [])],
+                runtimeClients: clientView?.runtimeClients?.map(row => row.name) ?? [],
+                clients: clientView?.rows ?? [], clientBusy: !!clientView?.pendingAction || !!clientView?.connection.busy };
+        });
+        await this.view?.webview.postMessage({ command: 'state', ...model, items });
+    }
+
+    private updateClientPoll(): void {
+        if (this.clientPoll) { clearInterval(this.clientPoll); } this.clientPoll = undefined;
+        if (!this.services.clients || !this.ready || !this.view?.visible) { return; }
+        void this.services.clients.refresh();
+        this.clientPoll = setInterval(() => { void this.services.clients?.refresh(); }, 5000);
+        this.clientPoll.unref?.();
     }
 
     private async postError(error: unknown): Promise<void> {
@@ -461,7 +511,7 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
     <title>${t('Infobases')}</title>
 </head>
 <body>
-    <main class="infobase-sidebar" data-runtime-marker="${t('Running from KOT')}" data-pending-marker="${t('Infobase operation in progress')}" data-open-enterprise="${t('Open in 1C:Enterprise')}" data-open-designer="${t('Open in Designer')}" data-maintenance="${t('Maintenance actions')}" data-open-form-explorer="${t('Open KOT Form Explorer')}" data-copy="${t('Copy infobase')}" data-recreate="${t('Recreate infobase')}" data-update-configuration="${t('Update configuration')}" data-update-from-template="${t('Update from installed template')}" data-edit="${t('Edit infobase')}" data-add-to-launcher="${t('Add to 1C launcher')}" data-remove-from-launcher="${t('Remove from launcher')}" data-reveal="${t('Open infobase folder')}" data-logs="${t('Show infobase logs')}" data-export-dt="${t('Export DT')}" data-import-dt="${t('Import DT')}" data-restore-from-template="${t('Restore from installed template')}" data-export-cf="${t('Export .cf')}" data-general-heading="${t('Other actions')}" data-dt-heading="${t('Infobase data · DT')}" data-cf-heading="${t('Configuration · CF and files')}" data-kot-heading="${t('KOT tools')}" data-refreshing="${t('Refreshing infobases...')}" data-loading="${t('Loading infobases...')}" data-empty="${t('No managed infobases')}" data-running="${t('Running action...')}" data-error="${t('Unable to load infobases')}">
+    <main class="infobase-sidebar" data-runtime-marker="${t('Running from KOT')}" data-pending-marker="${t('Infobase operation in progress')}" data-open-enterprise="${t('Open in 1C:Enterprise')}" data-open-designer="${t('Open in Designer')}" data-maintenance="${t('Maintenance actions')}" data-open-form-explorer="${t('Open KOT Form Explorer')}" data-vanessa-clients="${t('Vanessa test clients')}" data-open-vanessa="${t('Open with Vanessa')}" data-test-clients="${t('Test clients')}" data-enterprise-mode="${t('Enterprise')}" data-designer-mode="${t('Designer')}" data-no-clients="${t('No saved test clients.')}" data-default-user="${t('Default user')}" data-connect="${t('Connect')}" data-disconnect="${t('Disconnect')}" data-add-to-vanessa="${t('Add to Vanessa')}" data-copy="${t('Copy infobase')}" data-recreate="${t('Recreate infobase')}" data-update-configuration="${t('Update configuration')}" data-update-from-template="${t('Update from installed template')}" data-edit="${t('Edit infobase')}" data-add-to-launcher="${t('Add to 1C launcher')}" data-remove-from-launcher="${t('Remove from launcher')}" data-reveal="${t('Open infobase folder')}" data-logs="${t('Show infobase logs')}" data-export-dt="${t('Export DT')}" data-import-dt="${t('Import DT')}" data-restore-from-template="${t('Restore from installed template')}" data-export-cf="${t('Export .cf')}" data-general-heading="${t('Other actions')}" data-dt-heading="${t('Infobase data · DT')}" data-cf-heading="${t('Configuration · CF and files')}" data-kot-heading="${t('KOT tools')}" data-refreshing="${t('Refreshing infobases...')}" data-loading="${t('Loading infobases...')}" data-empty="${t('No managed infobases')}" data-running="${t('Running action...')}" data-error="${t('Unable to load infobases')}">
         <div id="list" class="infobase-list" role="list" aria-label="${t('Infobases')}"></div>
         <div id="status" class="infobase-status" role="status" aria-live="polite"></div>
     </main>

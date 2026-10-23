@@ -1,11 +1,30 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
+import vm from 'node:vm';
 
 const phaseSwitcherWebviewSource = require('node:fs').readFileSync(
     path.join(process.cwd(), 'media', 'phaseSwitcher.js'),
     'utf8'
 );
+
+test('Connect Vanessa becomes Control Vanessa for an active session and hides the adjacent settings gear', () => {
+    assert.doesNotMatch(phaseSwitcherHtmlSource, /id="vanessaConnectionSettingsBtn"/u);
+    const start = phaseSwitcherWebviewSource.indexOf('    function updateTopRunButtonState()');
+    const end = phaseSwitcherWebviewSource.indexOf('\n    function ', start + 1);
+    class Button { disabled = false; title = ''; label = { textContent: '' }; querySelector() { return this.label; } }
+    const button = new Button(); const state = { connected: false, busy: false };
+    const sandbox = { HTMLButtonElement: Button, openVanessaBtn: button, settings: { switcherEnabled: true },
+        isBuildInProgress: false, vanessaControlState: state, window: { __loc: {} } };
+    vm.runInNewContext(`${phaseSwitcherWebviewSource.slice(start, end)}\nupdateTopRunButtonState();`, sandbox);
+    assert.equal(button.label.textContent, 'Connect Vanessa');
+    state.connected = true;
+    vm.runInNewContext('updateTopRunButtonState();', sandbox); assert.equal(button.label.textContent, 'Control Vanessa');
+    state.busy = true;
+    vm.runInNewContext('updateTopRunButtonState();', sandbox); assert.equal(button.disabled, true);
+    assert.match(phaseSwitcherWebviewSource, /command: vanessaControlState\.connected \? 'vanessaControl' : 'openVanessa'/u);
+    assert.match(phaseSwitcherProviderSource, /public updateVanessaControlState\(/u);
+});
 const phaseSwitcherHtmlSource = require('node:fs').readFileSync(
     path.join(process.cwd(), 'media', 'phaseSwitcher.html'),
     'utf8'
@@ -335,8 +354,8 @@ test('Compile and Vanessa share the bottom row until their labels require wrappi
     assert.doesNotMatch(css, /createFirstLaunchBtn|driveActionsRow/u);
     assert.match(css, /#openVanessaBtn\s*\{[^}]*justify-content:\s*center/isu);
     assert.match(phaseSwitcherWebviewSource, /openVanessaBtn\.addEventListener\('click'/u);
-    assert.match(phaseSwitcherWebviewSource, /vscode\.postMessage\(\{ command: 'openVanessa' \}\)/u);
-    assert.match(phaseSwitcherProviderSource, /case 'openVanessa':[\s\S]*?openVanessaFromSidebar\(\)/u);
+    assert.match(phaseSwitcherWebviewSource, /vscode\.postMessage\(\{ command: vanessaControlState\.connected \? 'vanessaControl' : 'openVanessa' \}\)/u);
+    assert.match(phaseSwitcherProviderSource, /case 'openVanessa':[\s\S]*?executeCommand\('kotTestToolkit\.vanessaControl\.connect'\)/u);
     assert.match(phaseSwitcherProviderSource, /replace\('\$\{vanessaLogoUri\}', vanessaLogoUri\.toString\(\)\)/u);
 });
 

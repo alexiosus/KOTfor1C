@@ -829,6 +829,14 @@ export function shouldRefillNestedScenariosSection(documentText: string): boolea
  * Обработчик команды проверки и заполнения вложенных сценариев.
  */
 export async function checkAndFillNestedScenariosHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit, phaseSwitcherProvider: PhaseSwitcherProvider) {
+    if (/(?:^|[\\/])scen\.feature$/u.test(textEditor.document.fileName)) {
+        const source = await (await import('./spprScenarioFiles.js')).resolveScenarioSourceUris(textEditor.document.uri);
+        if (source?.format === 'native') {
+            const metadata = await vscode.workspace.openTextDocument(source.metadataUri);
+            await clearAndFillNestedScenarios(metadata, false, phaseSwitcherProvider.getScenarioCatalog() || await phaseSwitcherProvider.ensureFreshScenarioCatalog());
+            return;
+        }
+    }
     const document = textEditor.document;
     
     // Проверяем, что это файл сценария YAML
@@ -893,6 +901,14 @@ function parseDefinedScenarioParameters(documentText: string): string[] {
  * Обработчик команды проверки и заполнения параметров сценария.
  */
 export async function checkAndFillScenarioParametersHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+    if (/(?:^|[\\/])scen\.feature$/u.test(textEditor.document.fileName)) {
+        const source = await (await import('./spprScenarioFiles.js')).resolveScenarioSourceUris(textEditor.document.uri);
+        if (source?.format === 'native') {
+            const metadata = await vscode.workspace.openTextDocument(source.metadataUri);
+            await clearAndFillScenarioParameters(metadata, false);
+            return;
+        }
+    }
     const document = textEditor.document;
     
     // Проверяем, что это файл сценария YAML
@@ -1099,7 +1115,9 @@ export async function clearAndFillNestedScenarios(
     
     const progressHandler = async (progress: any) => {
         console.log("[clearAndFillNestedScenarios] Starting...");
-        const fullText = document.getText();
+        const sourceVersion = document.version;
+        const native = /(?:^|[\\/])meta\.yaml$/u.test(document.fileName);
+        const fullText = native ? await (await import('./spprScenarioFiles.js')).readScenarioSource(document.uri) : document.getText();
 
         if (!silent) {
             progress.report({ increment: 20, message: t('Scanning for called scenarios...') });
@@ -1177,6 +1195,8 @@ export async function clearAndFillNestedScenarios(
             return false;
         }
 
+        // Native section ranges precede the virtual script wrapper and refer only to metadata.
+        if (document.version !== sourceVersion || native && await (await import('./spprScenarioFiles.js')).readScenarioSource(document.uri) !== fullText) { return false; }
         // Apply the edit
         const edit = new vscode.WorkspaceEdit();
         const rangeToReplace = new vscode.Range(
@@ -1332,7 +1352,9 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
     
     const progressHandler = async (progress: any) => {
         console.log("[clearAndFillScenarioParameters] Starting...");
-        const fullText = document.getText();
+        const sourceVersion = document.version;
+        const native = /(?:^|[\\/])meta\.yaml$/u.test(document.fileName);
+        const fullText = native ? await (await import('./spprScenarioFiles.js')).readScenarioSource(document.uri) : document.getText();
 
         if (!silent) {
             progress.report({ increment: 20, message: t('Scanning for used parameters...') });
@@ -1393,6 +1415,8 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
             return false;
         }
 
+        // Native section ranges precede the virtual script wrapper and refer only to metadata.
+        if (document.version !== sourceVersion || native && await (await import('./spprScenarioFiles.js')).readScenarioSource(document.uri) !== fullText) { return false; }
         // Apply the edit
         const edit = new vscode.WorkspaceEdit();
         const rangeToReplace = new vscode.Range(

@@ -105,7 +105,7 @@ function recordModel(record: ScenarioYamlRecord, section: string, source?: strin
     }) };
 }
 
-export function readScenarioProperties(source: string): ScenarioProperties {
+export function readScenarioProperties(source: string, scriptText?: string): ScenarioProperties {
     const document = ScenarioYamlDocument.parse(source); document.requireValidForEdit();
     const kind = kindOf(document); const headerName = KIND_HEADERS[kind];
     const keys = [...new Set([...HEADER_FIELDS[kind], ...requireMapping(document, [headerName])])];
@@ -113,7 +113,7 @@ export function readScenarioProperties(source: string): ScenarioProperties {
         const field = document.findField(headerName, key);
         return propertyField(key, displayValue(source, field, field?.value), headerName);
     });
-    const body = getCompilerScenarioBody(source)?.lines ?? [];
+    const body = scriptText !== undefined ? scriptText.split(/\r\n|\r|\n/u) : getCompilerScenarioBody(source)?.lines ?? [];
     const references = compilerParameterReferenceOccurrences(body);
     const scanned = scanCompilerLines(body);
     const sections = sectionNames(kind).map(key => {

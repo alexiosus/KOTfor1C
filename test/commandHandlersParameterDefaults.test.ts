@@ -13,7 +13,7 @@ import type * as vscode from 'vscode';
 
 const ts = require(path.join(process.cwd(), 'node_modules/typescript')) as typeof import('typescript');
 
-function harness(source: string) {
+function harness(source: string, nativeScript?: string) {
     const formatters: vscode.DocumentFormattingEditProvider[] = [];
     let beforeSave: ((event: vscode.TextDocumentWillSaveEvent) => unknown) | undefined; let alignment = true;
     const document = {
@@ -59,6 +59,7 @@ function harness(source: string) {
     const commands = load('commandHandlers.ts', {
         vscode: host, './scenarioParameterUtils': parameters, './scenarioCompilerSyntax': syntax, './gherkinTableUtils': tableUtils,
         './scenarioYamlDocument': yaml, './yamlValidator.js': validator,
+        './spprScenarioFiles.js': { readScenarioSource: async () => document.text + 'ТекстСценария: |\n' + (nativeScript ?? '').replace(/^(.+)$/gmu, '    $1') },
         './localization': { getTranslator: async () => (message: string) => message },
         './appContext': { getExtensionUri: () => null }
     }) as typeof import('../src/commandHandlers');
@@ -141,4 +142,16 @@ test('refilling preserves outgoing semantics and defaults while canonicalizing r
         assert.ok(emitted.includes('Значение: |\n            | Name | Value |\n            | A;B | 10 |\n'));
         assert.equal(parameters.parseScenarioParameterDefinitions(emitted).get('Rows')!.outgoing, outgoing);
     }
+});
+
+
+test('native SPPR parameter synchronization reads the paired script and edits only metadata while preserving defaults', async () => {
+    const h = harness('ТипФайла: "Сценарий"\nДанныеСценария:\n    Имя: "Own"\nПараметрыСценария:\n- ПараметрыСценария1:\n    Имя: "Value"\n    Значение: "kept"\n    ТипПараметра: "Строка"\n    ИсходящийПараметр: "Нет"\n', 'And I use [Value] and [New]\n');
+    Object.assign(h.document, { fileName: '/repo/meta.yaml' });
+    await h.commands.clearAndFillScenarioParameters(h.document, true);
+    const parsed = yaml.ScenarioYamlDocument.parse(h.document.getText()).readRecords('ПараметрыСценария');
+    assert.deepEqual(parsed.map(row => row.fields.get('Имя')), ['Value', 'New']);
+    assert.equal(parsed[0].fields.get('Значение'), 'kept');
+    assert.ok(!h.document.getText().includes('ТекстСценария:'));
+    assert.ok(!h.document.getText().includes('And I use'));
 });

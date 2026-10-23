@@ -8,6 +8,7 @@ import {
 } from '../src/scenarioRelationshipService';
 import type { TestInfo } from '../src/types';
 import type { ProjectDefinition, ProjectDefinitionView } from '../src/projectDefinition';
+import { sameProjectDefinitionSource } from '../src/projectDefinition';
 import type { StandaloneFeatureSnapshot } from '../src/standaloneFeatureModel';
 
 interface FakeUri {
@@ -15,6 +16,13 @@ interface FakeUri {
     readonly fsPath: string;
     toString(): string;
 }
+
+test('source identity accepts VS Code drive encoding without conflating different hosts or literal percent names', () => {
+    assert.equal(sameProjectDefinitionSource('file:///c%3A/Mac/Home/Exports.feature', 'file:///C:/Mac/Home/Exports.feature'), true);
+    assert.equal(sameProjectDefinitionSource('file:///library/shared%20steps.feature', 'file:///library/shared steps.feature'), true);
+    assert.equal(sameProjectDefinitionSource('file:///library/shared%2520steps.feature', 'file:///library/shared%20steps.feature'), false);
+    assert.equal(sameProjectDefinitionSource('file://one/share/exports.feature', 'file://two/share/exports.feature'), false);
+});
 
 function uri(fsPath: string): FakeUri {
     return {
@@ -308,7 +316,7 @@ test('disabling Test Manager highlighting retains the shared relationship projec
     }]);
 });
 
-test('connects export definitions to calling scenarios in both directions', async () => {
+test('connects export definitions to callers when editor and index URI encodings differ', async () => {
     const exportDefinition: ProjectDefinition = {
         id: 'export:shared-login',
         kind: 'exportScenario',
@@ -339,7 +347,7 @@ test('connects export definitions to calling scenarios in both directions', asyn
         references: new Map([[exportDefinition.id, [{ uri: uri('/repo/Nested/scen.yaml') }]]])
     });
 
-    harness.service.handleActiveEditorChanged(uri('/library/exports.feature') as TestInfo['yamlFileUri']);
+    harness.service.handleActiveEditorChanged({ ...uri('/library/exports.feature'), toString: () => 'file:///library/%65xports.feature' } as TestInfo['yamlFileUri']);
     await new Promise<void>(resolve => setImmediate(resolve));
     await new Promise<void>(resolve => setImmediate(resolve));
 

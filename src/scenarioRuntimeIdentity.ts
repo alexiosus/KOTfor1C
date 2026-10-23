@@ -27,6 +27,13 @@ export interface ScenarioBuildSelectionProjection {
     enabledKeyByName: Record<string, ScenarioRuntimeKey>;
 }
 
+export interface CompilerScenarioSelection {
+    total: number;
+    enabledCodes: string[];
+    disabledCodes: string[];
+    isolatedDisabledKeys: ScenarioRuntimeKey[];
+}
+
 export type DisabledScenarioTestFileMovePlan =
     | { mode: 'none'; scenarioKeys: [] }
     | { mode: 'legacy'; scenarioKeys: ScenarioRuntimeKey[] }
@@ -174,6 +181,31 @@ export function projectScenarioBuildSelection(
         isolatedDisabledKeys,
         enabledKeyByName
     };
+}
+
+/** SPPR filters compare scenario codes; display names remain reserved for UI/artifact association. */
+export function projectCompilerScenarioSelection(
+    scenarios: readonly TestInfo[], enabledKeys: readonly ScenarioRuntimeKey[]
+): CompilerScenarioSelection {
+    const enabled = new Set(enabledKeys);
+    const enabledCodes = new Set<string>();
+    for (const scenario of scenarios) {
+        if (!enabled.has(getScenarioRuntimeKey(scenario))) { continue; }
+        const code = scenario.scenarioCode?.trim();
+        if (code) { enabledCodes.add(code); }
+    }
+    const disabledCodes = new Set<string>();
+    const isolatedDisabledKeys: ScenarioRuntimeKey[] = [];
+    for (const scenario of scenarios) {
+        const key = getScenarioRuntimeKey(scenario);
+        if (enabled.has(key)) { continue; }
+        const code = scenario.scenarioCode?.trim();
+        // The compiler splits selector values on both semicolons and spaces.
+        if (!code || /[; ]/u.test(code) || enabledCodes.has(code)) { isolatedDisabledKeys.push(key); }
+        else { disabledCodes.add(code); }
+    }
+    return { total: scenarios.length, enabledCodes: [...enabledCodes].sort(), disabledCodes: [...disabledCodes].sort(),
+        isolatedDisabledKeys };
 }
 
 export function planDisabledScenarioTestFileMoves(

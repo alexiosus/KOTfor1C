@@ -1838,7 +1838,9 @@ async function launchOneCDetached(
                 detached: true,
                 stdio: 'ignore'
             });
-            managedInfobaseRuntimeTracker.track(infobasePath, child);
+            const mode = args[0]?.toUpperCase();
+            managedInfobaseRuntimeTracker.track(infobasePath, child,
+                mode === 'ENTERPRISE' ? 'enterprise' : mode === 'DESIGNER' ? 'designer' : undefined);
             child.on('error', error => reject(error));
             child.unref();
             resolve();

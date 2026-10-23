@@ -24,6 +24,11 @@ test('scanner discovers named compiler YAML descriptors and skips settings and u
         fs.writeFileSync(path.join(root, 'settings.yaml'), 'ТипФайла: "НастройкаПроцесса"\nДанныеТеста:\n    Имя: "Sales settings"\n');
         fs.writeFileSync(path.join(root, 'config.yaml'), 'Имя: "Configuration"\n');
         fs.writeFileSync(path.join(root, 'unsupported.yml'), 'ДанныеСценария:\n    Имя: "Ignored"\n');
+        fs.mkdirSync(path.join(root, 'native'));
+        const nativeMetadata = 'ТипФайла: "Сценарий"\nДанныеСценария:\n    Имя: "Native"\n    UID: "native"\n';
+        fs.writeFileSync(path.join(root, 'native', 'meta.yaml'), nativeMetadata);
+        fs.writeFileSync(path.join(root, 'native', 'orig.yaml'), nativeMetadata);
+        fs.writeFileSync(path.join(root, 'native', 'scen.feature'), 'And original SPPR script\n');
         const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
         const compiled = ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'src', 'workspaceScanner.ts'), 'utf8'), {
             compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
@@ -54,7 +59,9 @@ test('scanner discovers named compiler YAML descriptors and skips settings and u
         const scan = moduleObject.exports.scanWorkspaceForScenarioCatalog as
             (uri: ReturnType<typeof makeUri>) => Promise<ReturnType<typeof buildScenarioCatalog>>;
         const catalog = await scan(makeUri(root));
-        assert.deepEqual(catalog.all.map(item => item.name).sort(), ['Nested', 'Order', 'Sales', 'Separate process']);
+        assert.deepEqual(catalog.all.map(item => item.name).sort(), ['Native', 'Nested', 'Order', 'Sales', 'Separate process']);
+        assert.equal(catalog.byName.get('Native')?.[0].yamlFileUri.fsPath, path.join(root, 'native', 'meta.yaml'));
+        assert.equal(catalog.byName.get('Native')?.length, 1);
         assert.equal(catalog.byName.get('Order')?.[0].tabName, 'Ungrouped');
         assert.equal(catalog.byName.get('Nested')?.[0].tabName, undefined);
         assert.equal(catalog.byName.get('Sales')?.[0].tabName, 'Ungrouped');

@@ -4,7 +4,6 @@ import { applyPropertyCatalogPresentation } from './scenarioPropertiesCatalogPre
 import type { ScenarioPropertiesCatalogs } from './scenarioPropertiesCatalogs';
 import type { ScenarioIdentityChangeResult } from './scenarioPropertyIdentity';
 const { remapUri } = require('../media/scenarioPropertiesProtocol.js') as { remapUri(uri: string, moves: ScenarioIdentityChangeResult['uriMoves']): string };
-import { parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
 import { buildScenarioVariantPreview } from './scenarioParameterUtils';
 import { fillMissingCompilerProcessDefaults } from './compilerProcessDefaults';
 import { findLinkedScenarioSettings, selectScenarioSettings, type ScenarioPropertiesSource } from './scenarioPropertiesBindings';
@@ -13,9 +12,9 @@ import {
     moveScenarioPropertyRecord, applyYamlMapField
 } from './scenarioPropertiesModel';
 
-export interface ScenarioPropertiesDocument extends ScenarioPropertiesSource { readonly version: number; dirty: boolean }
+export interface ScenarioPropertiesDocument extends ScenarioPropertiesSource { readonly version: number; dirty: boolean; readonly scriptText?: string; readonly scriptUri?: string }
 type Model = ReturnType<typeof readScenarioProperties>;
-interface BoundDocument { uri: string; version: number; model: Model }
+interface BoundDocument { uri: string; version: number; model: Model; scriptUri?: string }
 export interface ScenarioVariantLimitWarning { readonly count: string; readonly limit: number }
 export interface ScenarioPropertiesState {
     source: BoundDocument | null;
@@ -93,7 +92,7 @@ export class ScenarioPropertiesSession {
     open(uri: string, immediate = false): Promise<ScenarioPropertiesState> {
         return this.serial(async () => {
             const document = await this.host.readDocument(uri);
-            const model = readScenarioProperties(document.text);
+            const model = readScenarioProperties(document.text, document.scriptText);
             if (model.kind !== 'scenario' && model.kind !== 'process') { throw new Error('Choose a scenario or process source.'); }
             if (this.sourceUri !== uri) { this.state.selectedSettingsUri = null; }
             this.sourceUri = uri;
@@ -129,7 +128,7 @@ export class ScenarioPropertiesSession {
         if (!this.sourceUri) { return this.state; }
         const generation = ++this.generation;
         const source = await this.host.readDocument(this.sourceUri);
-        const model = readScenarioProperties(source.text);
+        const model = readScenarioProperties(source.text, source.scriptText);
         let variantLimitWarning: ScenarioVariantLimitWarning | null = null;
         if (model.kind === 'scenario') {
             const preview = buildScenarioVariantPreview(source.text);
@@ -158,7 +157,7 @@ export class ScenarioPropertiesSession {
         const sameSource = this.state.source?.uri === source.uri;
         let initialGroups: ScenarioPropertiesState['groups'] | undefined;
         let initialMetadata: ScenarioPropertiesState['metadata'] = null;
-        let initiallyMain = model.kind === 'process' || parsePhaseSwitcherMetadata(source.text).hasTab;
+        let initiallyMain = sameSource && this.state.settings.length > 0;
         if (!sameSource) {
             initialGroups = await this.host.loadGroups(source).catch(() => undefined);
             // Group loading can migrate the sidecar. Read it afterwards, before the first paint.
@@ -169,7 +168,6 @@ export class ScenarioPropertiesSession {
                     if (!parsed.errors.length && !parsed.warnings.length) {
                         const values = object(parsed.toJS().metadata);
                         initialMetadata = { uri: metadata.uri, version: metadata.version, values };
-                        initiallyMain ||= Object.hasOwn(values, 'groupId');
                     }
                 }
             } catch { /* The full load retains the existing metadata error handling. */ }
@@ -188,7 +186,7 @@ export class ScenarioPropertiesSession {
             const settings = await Promise.allSettled(this.state.settings.map(async value => {
                 const document = await this.host.readDocument(value.uri);
                 if (findLinkedScenarioSettings(source, [document]).length !== 1) { throw new Error('The selected settings no longer belong to this test.'); }
-                const model = readScenarioProperties(document.text);
+                const model = readScenarioProperties(document.text, document.scriptText);
                 if (this.host.loadCatalogs) { applyPropertyCatalogPresentation(model, initialCatalogs); }
                 return { ...value, version: document.version, model };
             }));
@@ -204,7 +202,7 @@ export class ScenarioPropertiesSession {
                 } catch { this.state.metadata = null; }
             }
         }
-        this.state = { ...this.state, source: { uri: source.uri, version: source.version, model }, loading: true, variantLimitWarning,
+        this.state = { ...this.state, source: { uri: source.uri, version: source.version, model, scriptUri: source.scriptUri }, loading: true, variantLimitWarning,
             autoFill: presentation?.autoFill,
             ...(!sameSource ? { catalogs: undefined, settings: [], selectedSettingsUri: null, metadata: initialMetadata, groups: initialGroups ?? [], canCreateSettings: initiallyMain } : {}),
             dirty: source.dirty || sameSource && this.state.dirty };
@@ -217,7 +215,7 @@ export class ScenarioPropertiesSession {
                 const [settings, groups] = await Promise.all([
                     Promise.all(linked.map(async value => {
                         const document = await this.host.readDocument(value.uri);
-                        return { uri: document.uri, version: document.version, model: readScenarioProperties(document.text),
+                        return { uri: document.uri, version: document.version, model: readScenarioProperties(document.text, document.scriptText),
                             label: decodeURIComponent(new URL(document.uri).pathname.split('/').at(-1) ?? document.uri), dirty: document.dirty, text: document.text };
                     })), initialGroups ?? this.host.loadGroups(source)
                 ]);
@@ -252,7 +250,7 @@ export class ScenarioPropertiesSession {
                     applyPropertyCatalogPresentation(model, catalogs);
                     for (const setting of settings) { applyPropertyCatalogPresentation(setting.model, catalogs); }
                 }
-                const canCreateSettings = model.kind === 'process' || settings.length > 0 || parsePhaseSwitcherMetadata(source.text).hasTab || Object.hasOwn(values, 'groupId');
+                const canCreateSettings = settings.length > 0;
                 if (model.kind === 'scenario') {
                     const parameters = model.sections.find(section => section.key === 'ПараметрыСценария');
                     const preview = buildScenarioVariantPreview(source.text, 8, settings.find(setting => setting.uri === selectedSettingsUri)?.text);
@@ -291,7 +289,7 @@ export class ScenarioPropertiesSession {
             catch (reason) { error = reason instanceof Error ? reason.message : String(reason); }
             if (error) { this.actionError = { uri: this.sourceUri, key, message: error }; }
             else if (this.actionError?.key === key) { this.actionError = undefined; delete this.state.error; }
-            const navigation = message.command === 'action' && ['openSource', 'openText', 'openSettings', 'openMetadata', 'openReference', 'copyPath', 'pin', 'dismissError'].includes(String(message.action));
+            const navigation = message.command === 'action' && ['openSource', 'openFeature', 'openText', 'openSettings', 'openMetadata', 'openReference', 'copyPath', 'pin', 'dismissError'].includes(String(message.action));
             try {
                 if (!navigation && !(message.command === 'action' && message.action === 'selectSettings' && await this.selectKnownSettings())) {
                     await this.load(!!this.changed);
@@ -347,10 +345,10 @@ export class ScenarioPropertiesSession {
         edited.add(document.uri); this.edited.set(this.sourceUri!, edited);
     }
     private async runAction(action: string, source: ScenarioPropertiesDocument, value?: string): Promise<void> {
-        const before = readScenarioProperties(source.text);
+        const before = readScenarioProperties(source.text, source.scriptText);
         if (action === 'changeCode' && value !== undefined && value.trim() !== before.header.find(field => field.key === 'Код')?.value) {
             await this.perform({ command: 'action', action: 'save' });
-            const saved = await this.host.readDocument(source.uri); const after = readScenarioProperties(saved.text);
+            const saved = await this.host.readDocument(source.uri); const after = readScenarioProperties(saved.text, saved.scriptText);
             if (after.kind !== before.kind || ['UID', 'Имя', 'Код'].some(key => before.header.find(field => field.key === key)?.value !== after.header.find(field => field.key === key)?.value)) {
                 throw new Error('The source identity changed while saving. Refresh the properties and retry.');
             }
@@ -361,7 +359,7 @@ export class ScenarioPropertiesSession {
         await this.applyUriMoves(result, before);
     }
     private async applyUriMoves(result: ScenarioIdentityChangeResult, before: Model): Promise<void> {
-        const current = await this.host.readDocument(result.sourceUri); const after = readScenarioProperties(current.text);
+        const current = await this.host.readDocument(result.sourceUri); const after = readScenarioProperties(current.text, current.scriptText);
         const uid = (model: Model) => model.header.find(field => field.key === 'UID')?.value.trim().toLowerCase();
         if (!uid(before) || uid(before) !== uid(after) || before.kind !== after.kind || remapUri(this.sourceUri!, result.uriMoves) !== result.sourceUri) {
             throw new Error('The renamed source does not belong to the selected test.');
@@ -371,7 +369,7 @@ export class ScenarioPropertiesSession {
         const resources = this.edited.get(previous); this.edited.delete(previous);
         if (resources) { this.edited.set(result.sourceUri, new Set(Array.from(resources, map))); }
         if (this.actionError?.uri === previous) { this.actionError.uri = result.sourceUri; }
-        this.state = { ...this.state, source: { uri: current.uri, version: current.version, model: after },
+        this.state = { ...this.state, source: { uri: current.uri, version: current.version, model: after, scriptUri: current.scriptUri },
             settings: this.state.settings.map(document => ({ ...document, uri: map(document.uri) })),
             selectedSettingsUri: this.state.selectedSettingsUri ? map(this.state.selectedSettingsUri) : null,
             metadata: this.state.metadata ? { ...this.state.metadata, uri: map(this.state.metadata.uri) } : null,
@@ -396,8 +394,9 @@ export class ScenarioPropertiesSession {
                 if (this.state.selectedSettingsUri) { resources.add(this.state.selectedSettingsUri); }
                 if (this.state.metadata) { resources.add(this.state.metadata.uri); }
                 const currentSource = await this.host.readDocument(this.sourceUri);
+                if (currentSource.scriptUri) { resources.add(currentSource.scriptUri); }
                 for (const uri of resources) {
-                    if (uri === this.sourceUri) { continue; }
+                    if (uri === this.sourceUri || uri === currentSource.scriptUri) { continue; }
                     if (uri === this.sourceUri + '.kot.yml') {
                         const metadata = await this.host.readMetadata(currentSource);
                         if (!metadata || metadata.uri !== uri) { throw new Error('The selected metadata no longer belong to this test.'); }
@@ -411,7 +410,7 @@ export class ScenarioPropertiesSession {
                 }
                 return;
             }
-            const actions = ['openSource', 'openText', 'openSettings', 'openMetadata', 'copyPath', 'rename', 'changeCode', 'systemFunction', 'base', 'users', 'addSteps', 'aiDescription', 'changeGroup', 'newGroup', 'createSettings', 'addNested', 'openReference', 'fillParameters', 'fillNested', 'run'];
+            const actions = ['openSource', 'openFeature', 'openText', 'openSettings', 'openMetadata', 'copyPath', 'rename', 'changeCode', 'systemFunction', 'base', 'users', 'addSteps', 'aiDescription', 'changeGroup', 'newGroup', 'createSettings', 'addNested', 'openReference', 'fillParameters', 'fillNested', 'convertFormat', 'convertRole', 'run'];
             if (action === 'copyPath' && ![this.sourceUri, this.state.selectedSettingsUri, this.state.metadata?.uri].includes(message.value as string)) { throw new Error('The property target is not bound to the selected test/settings.'); }
             if (!actions.includes(action)) { throw new Error('Unknown test properties action.'); }
             if (action === 'createSettings' && !this.state.canCreateSettings) { throw new Error('Test settings are available for main scenarios and processes.'); }
@@ -426,7 +425,7 @@ export class ScenarioPropertiesSession {
             const metadata = section === 'metadata';
             const document = await this.target(message, metadata);
             const source = await this.host.readDocument(this.sourceUri!);
-            const model = metadata ? null : readScenarioProperties(document.text);
+            const model = metadata ? null : readScenarioProperties(document.text, document.scriptText);
             const header = model?.kind === 'scenario' ? 'ДанныеСценария' : model?.kind === 'process' ? 'ДанныеПроцесса' : 'ДанныеТеста';
             if (metadata ? field !== 'category' : section !== header || !['Проект', 'УровеньОтчета1', 'УровеньОтчета2', 'ПрофильПользователя', 'Ответственный', 'ФункцияСистемы', 'ЭталоннаяБазаИмя'].includes(field)) {
                 throw new Error('Unsupported property catalog target.');

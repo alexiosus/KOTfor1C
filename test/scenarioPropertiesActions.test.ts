@@ -25,6 +25,7 @@ function harness(initial = scenario) {
     const documents: any[] = [];
     const existing = new Set<string>();
     const commands: any[] = []; const shown: any[] = []; const editorOpens: string[] = [];
+    const createdFolders: string[] = [];
     const renameCalls: any[] = []; const edits: any[] = []; const dialogs: any[] = []; const aiCalls: any[] = []; const groupCalls: any[] = [];
     const catalogCalls: any[] = []; let catalogResult: any; let catalogMutation: ((request: any) => void) | undefined;
     let metadataDocument: any; let metadataSaveMutation: (() => void) | undefined;
@@ -63,7 +64,7 @@ function harness(initial = scenario) {
         },
         workspace: {
             textDocuments: documents, workspaceFolders: [folder], getWorkspaceFolder: (uri: Uri) => uri.fsPath.startsWith('/repo/') ? folder : undefined,
-            fs: { stat: async (uri: Uri) => { statMutation?.(uri); if (!existing.has(uri.toString())) { throw Object.assign(new Error('Missing'), { code: 'FileNotFound' }); } return { type: 1 }; } },
+            fs: { createDirectory: async (uri: Uri) => { createdFolders.push(uri.toString()); }, stat: async (uri: Uri) => { statMutation?.(uri); if (!existing.has(uri.toString())) { throw Object.assign(new Error('Missing'), { code: 'FileNotFound' }); } return { type: 1 }; } },
             openTextDocument: async (uri: Uri) => { const found = documents.find(doc => doc.uri.toString() === uri.toString()); if (!found) { throw Object.assign(new Error('Missing'), { code: 'FileNotFound' }); } return found; },
             applyEdit: async (edit: Edit) => {
                 edits.push(edit.operations); if (!applySuccess) { return false; }
@@ -123,7 +124,7 @@ function harness(initial = scenario) {
     const context = { extensionUri: Uri.file('/extension') };
     const action = api.createScenarioPropertiesActions(context, textEditor, { renameScenario: async (target: any, value?: string, field?: string) => { renameCalls.push({ ...target, ...(value === undefined ? {} : { value, field }) }); renameMutation?.(); return renameResult; } });
     const source = () => ({ uri: raw.uri.toString(), text: raw.text, version: raw.version, dirty: raw.isDirty });
-    return { action, source, raw, selectedSettings, editorOpens, commands, shown, renameCalls, edits, dialogs, aiCalls, groupCalls, existing, host, document, catalogCalls,
+    return { action, source, raw, selectedSettings, editorOpens, commands, shown, renameCalls, edits, dialogs, aiCalls, groupCalls, existing, host, document, catalogCalls, createdFolders,
         catalogResult(value: any) { catalogResult = value; }, onCatalog(callback: (request: any) => void) { catalogMutation = callback; },
         metadata(value: any) { metadataDocument = value; }, onMetadataSave(callback: () => void) { metadataSaveMutation = callback; },
         main(value: boolean) { sourceMain = value; }, target(value: Uri | undefined) { dialogUri = value; },
@@ -218,25 +219,35 @@ test('process actions route to their registered commands with an exact source UR
 
 test('settings creation inserts compiler-linked YAML into a new dirty native document without opening it visibly', async () => {
     const h = harness(); await h.action('createSettings', h.source(), null);
-    const created = h.host.workspace.textDocuments.find((doc: any) => doc.uri.toString() === 'file:///repo/scenarios/Checkout/test/test.yaml'); assert.ok(created);
+    const created = h.host.workspace.textDocuments.find((doc: any) => doc.uri.toString() === 'file:///repo/scenarios/Checkout/test/001.yaml'); assert.ok(created);
     const parsed = properties.readScenarioProperties(created.text);
     assert.equal(parsed.header.find(field => field.key === 'UIDСценария')?.value, 'source-uid');
     assert.equal(parsed.header.find(field => field.key === 'ИдентификаторБазы')?.value, 'base-id');
     assert.equal(created.isDirty, true); assert.equal(h.shown.length, 0);
     assert.equal(h.dialogs[0].user, 'Tester');
-    assert.equal(h.dialogs[1].defaultUri.toString(), 'file:///repo/scenarios/Checkout/test/test.yaml');
+    assert.equal(h.dialogs.length, 1, 'only infobase/user selection is needed; the settings path follows the source structure');
     assert.equal(h.edits[0][0].kind, 'create'); assert.equal(h.edits[0][0].options.overwrite, false);
+    assert.deepEqual(h.createdFolders, ['file:///repo/scenarios/Checkout/test']);
 });
 
 test('settings creation rejects overwrite, dirty targets, foreign project paths and source changes during prompts', async () => {
-    const existing = harness(); existing.target(existing.selectedSettings.uri);
+    const existing = harness(); existing.document(Uri.file('/repo/scenarios/Checkout/test/001.yaml'), 'Existing');
     await assert.rejects(existing.action('createSettings', existing.source(), null), /exist|overwrite/i); assert.equal(existing.edits.length, 0);
-    const dirty = harness(); const target = dirty.document(Uri.file('/repo/scenarios/Checkout/test/dirty.yaml'), 'Draft', true); dirty.existing.delete(target.uri.toString()); dirty.target(target.uri);
+    const dirty = harness(); const target = dirty.document(Uri.file('/repo/scenarios/Checkout/test/001.yaml'), 'Draft', true); dirty.existing.delete(target.uri.toString());
     await assert.rejects(dirty.action('createSettings', dirty.source(), null), /dirty|save|modified/i); assert.equal(dirty.edits.length, 0);
-    const foreign = harness(); foreign.target(Uri.file('/outside/new.yaml'));
-    await assert.rejects(foreign.action('createSettings', foreign.source(), null), /root|project|outside/i); assert.equal(foreign.edits.length, 0);
-    const stale = harness(); const before = stale.source(); stale.duringPrompt(kind => { if (kind === 'save') { stale.raw.version++; stale.raw.text += '# changed\n'; } });
+    const foreign = harness(scenario.replace('Код: "001"', 'Код: "../outside"'));
+    await assert.rejects(foreign.action('createSettings', foreign.source(), null), /code|filename/i); assert.equal(foreign.edits.length, 0);
+    const stale = harness(); const before = stale.source(); stale.duringPrompt(kind => { if (kind === 'base') { stale.raw.version++; stale.raw.text += '# changed\n'; } });
     await assert.rejects(stale.action('createSettings', before, null), /changed|stale/i); assert.equal(stale.edits.length, 0);
+});
+
+test('process and native scenario promotion use the same test/code.yaml structure as the creation wizard', async () => {
+    const process = harness(processSource); await process.action('createSettings', process.source(), null);
+    assert.equal(process.edits[0][0].uri.toString(), 'file:///repo/scenarios/Checkout/test/001.yaml');
+    const native = harness(); native.raw.uri = Uri.file('/repo/scenarios/Checkout/meta.yaml'); native.existing.add(native.raw.uri.toString());
+    await native.action('createSettings', native.source(), null);
+    assert.equal(native.edits[0][0].uri.toString(), 'file:///repo/scenarios/Checkout/test/001.yaml');
+    assert.equal(process.dialogs.length, 1); assert.equal(native.dialogs.length, 1);
 });
 
 test('nested picker uses unique catalog UIDs and its guarded edit preserves scenario body text', async () => {
@@ -298,19 +309,19 @@ test('nested picker filters duplicate UIDs, processes and the source and rejects
     assert.equal(h.edits.length, 0);
 });
 
-test('process settings creation uses dirname/test.yaml and the process UID linkage', async () => {
-    const h = harness(processSource); h.target(Uri.file('/repo/scenarios/Checkout/test.yaml'));
+test('process settings creation uses dirname/test/code.yaml and the process UID linkage', async () => {
+    const h = harness(processSource);
     await h.action('createSettings', h.source(), null);
-    const created = h.host.workspace.textDocuments.find((doc: any) => doc.uri.toString() === 'file:///repo/scenarios/Checkout/test.yaml'); assert.ok(created);
+    const created = h.host.workspace.textDocuments.find((doc: any) => doc.uri.toString() === 'file:///repo/scenarios/Checkout/test/001.yaml'); assert.ok(created);
     const model = properties.readScenarioProperties(created.text);
     assert.equal(model.kind, 'processTest'); assert.equal(model.header.find(field => field.key === 'UIDПроцесса')?.value, 'source-uid');
-    assert.equal(h.dialogs[1].defaultUri.toString(), 'file:///repo/scenarios/Checkout/test.yaml');
+    assert.equal(h.dialogs.length, 1);
 });
 
 test('settings creation rejects a target that acquires a dirty native draft during its existence check', async () => {
     const h = harness();
     h.onStat(uri => {
-        if (uri.toString() === 'file:///repo/scenarios/Checkout/test/test.yaml') {
+        if (uri.toString() === 'file:///repo/scenarios/Checkout/test/001.yaml') {
             const target = h.document(uri, 'Concurrent draft', true); h.existing.delete(target.uri.toString());
         }
     });
@@ -379,8 +390,7 @@ test('settings creation scopes the etalon picker to its own workspace instead of
     h.host.workspace.workspaceFolders.push(otherFolder);
     h.host.workspace.getWorkspaceFolder = (uri: Uri) => uri.fsPath.startsWith('/second/') ? otherFolder : h.host.workspace.workspaceFolders[0];
     h.raw.uri = Uri.file('/second/scenarios/Checkout/scenario.yaml');
-    h.target(Uri.file('/second/scenarios/Checkout/test/test.yaml'));
     await h.action('createSettings', h.source(), null);
     assert.equal(h.dialogs[0].workspaceRoot, '/second'); assert.equal(h.dialogs[0].user, 'Tester');
-    assert.ok(h.host.workspace.textDocuments.some((doc: any) => doc.uri.toString() === 'file:///second/scenarios/Checkout/test/test.yaml'));
+    assert.ok(h.host.workspace.textDocuments.some((doc: any) => doc.uri.toString() === 'file:///second/scenarios/Checkout/test/001.yaml'));
 });
