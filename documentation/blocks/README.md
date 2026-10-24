@@ -1,28 +1,30 @@
-# Функциональные блоки KOT for 1C
+# Руководства по возможностям KOT
 
-Этот раздел разбивает расширение на отдельные пользовательские блоки.
+Этот каталог содержит практические инструкции. Общая точка входа — [руководство](../README.md); полная карта — [возможности KOT](../capabilities.md).
 
-Для знакомства без предварительного опыта начните с [учебной мастерской](../../examples/kot-workshop/README.md). Для единых названий объектов используйте [словарь СППР, Vanessa и KOT](../terminology.md).
+| Раздел | Что изучить |
+|---|---|
+| [Начало работы](first-run-settings.md) | Мастер, настройки и области |
+| [Редактор и Библиотека](editor-and-intellisense.md) | Подсказки, поиск и вставка |
+| [Свойства](scenario-properties-editor.md) | Поля, параметры, настройки и файлы |
+| [Создание](scenario-creation.md) | Типы тестов и повторное использование |
+| [Форматы и преобразования](scenario-source-formats.md) | YAML, feature + meta и роли |
+| [Параметры](scenario-parameters.md) | Defaults, передача и переменные |
+| [Процессы](compiler-process-parameters.md) | Общие параметры и шаги |
+| [Самостоятельные feature](standalone-features.md) | Обычные тесты Vanessa |
+| [Менеджер тестов](test-manager.md) | Выбор набора и организация |
+| [Компиляция и запуск](build-and-vanessa-run.md) | Результаты и выполнение |
+| [Профили](parameters-manager.md) | Параметры компиляции/Vanessa/GlobalVars |
+| [Управление Vanessa](vanessa-control.md) | F11, запись, переменные и диагностика |
+| [Form Explorer](form-explorer.md) | Дерево формы и шаги |
+| [Информационные базы](infobase-manager.md) | Базы и живые/сохранённые клиенты |
+| [Платформы](platform-manager.md) | Версии установленной 1С |
+| [Эталоны](etalon-bases.md) | Исходное состояние базы |
+| [Диагностика](diagnostics-and-quick-fix.md) | Ошибки и Quick Fix |
+| [Состояния сборок](metadata-and-cache.md) | Актуальность и зависимости |
+| [Общие данные](shared-project-library.md) | Группы, каталоги и Git |
+| [Навигация и вложения](navigation-and-files.md) | Определения, файлы и MXL |
+| [AI-инструменты](ai-description.md) | Три задачи для тестировщика |
+| [Отдельный debug-набор клиентов](vanessa-debug-clients.md) | Совместимость прежнего маршрута |
 
-## Список блоков
-
-1. [`test-manager.md`](./test-manager.md) — группы тестов, избранное, статусы, массовые действия.
-2. [`editor-and-intellisense.md`](./editor-and-intellisense.md) — автодополнение, hover, автоформат, автоподдержка секций.
-   [`scenario-properties-editor.md`](./scenario-properties-editor.md) — редактор только текста сценария и единая панель шапки, параметров, вложенностей, настроек запуска и метаданных.
-3. [`diagnostics-and-quick-fix.md`](./diagnostics-and-quick-fix.md) — правила диагностики, подсветка, quick fix.
-4. [`build-and-vanessa-run.md`](./build-and-vanessa-run.md) — сборка сценариев и запуск Vanessa.
-5. [`parameters-manager.md`](./parameters-manager.md) — СППР/Доп. параметры/GlobalVars.
-6. [`scenario-parameters.md`](./scenario-parameters.md) — объявление/передача параметров, дефолты, `$...$`-переменные.
-   [`compiler-process-parameters.md`](./compiler-process-parameters.md) — параметры сценариев, процессов, шагов и настроек запуска, приоритеты значений и теги СППР.
-7. [`scenario-creation.md`](./scenario-creation.md) — создание главных и вложенных сценариев, `test.yaml`, defaults и служебные поля шапки.
-8. [`metadata-and-cache.md`](./metadata-and-cache.md) — `KOTМетаданные`, кеш сценариев, stale-логика.
-9. [`ai-description.md`](./ai-description.md) — AI-описание сценариев, AI-отчет по diff конфигурации, AI-ревью тестов и подключение LLM.
-10. [`navigation-and-files.md`](./navigation-and-files.md) — навигация по сценариям и работа с MXL/файлами.
-11. [`platform-manager.md`](./platform-manager.md) — каталог платформ 1С, платформа по умолчанию, автообнаружение и выбор платформы при запуске.
-12. [`form-explorer.md`](./form-explorer.md) — KOT Form Explorer (beta): bridge через `TestManager` / `TestClient`, snapshot текущей формы, auto/manual режим и static enrichment из `cf`.
-13. [`infobase-manager.md`](./infobase-manager.md) — единый менеджер ИБ: список установленных баз, подготовка баз, ключи запуска, платформа конкретной базы, редактирование баз и связь с Vanessa/Form Explorer.
-14. [`etalon-bases.md`](./etalon-bases.md) — каталог `bases.yaml`, эталонные базы, `DT`, профили пользователей и связь с `test.yaml` / `ModelDBSettings`.
-15. [`standalone-features.md`](./standalone-features.md) — самостоятельные feature, общие группы в Test Manager и Library, создание по шаблону и JSON запуска из профиля.
-16. [`shared-project-library.md`](./shared-project-library.md) — объекты KOT в `.kot`, общие группы и метаданные через Git, перенос legacy-данных и личное состояние.
-
-- [Начало работы и настройки KOT](first-run-settings.md) — маршруты подготовки проекта, области настроек и применение изменений.
+[Технические справочники](../technical/README.md) · [Решение проблем](../troubleshooting.md)

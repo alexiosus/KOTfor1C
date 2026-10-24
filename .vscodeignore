@@ -44,3 +44,7 @@ out/**
 docs/ux/**
 # The first-run wizard copies this complete, self-contained workshop.
 !examples/kot-workshop/**
+
+# Documentation references/checks run from the repository.
+tools/generateDocumentationReference.cjs
+tools/checkDocumentation.cjs

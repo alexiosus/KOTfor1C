@@ -1,249 +1,65 @@
-# Development (документация по коду)
+# Разработка KOT for 1C
 
-Документ для разработчиков расширения KOT for 1C.
+Здесь описана работа с кодом расширения. Пользовательская настройка проекта находится в [руководстве](README.md), ответственность модулей — в [архитектуре](technical/architecture.md).
 
-## 1) Архитектура на уровне модулей
+## Подготовить checkout
 
-| Файл | Роль |
-|---|---|
-| `src/extension.ts` | Точка входа: регистрация providers/команд, конвейер сохранения, интеграция между подсистемами |
-| `src/phaseSwitcher.ts` | Backend Test Manager: webview-мост, кеш сценариев, сборка, запуск Vanessa, статусы запуска |
-| `src/workspaceScanner.ts` | Полный скан текущего корня сценариев, построение `TestInfo` |
-| `src/completionProvider.ts` | IntelliSense шагов и вызовов вложенных сценариев |
-| `src/hoverProvider.ts` | Hover по шагам и вызовам |
-| `src/scenarioSyntaxHighlightProvider.ts` | Semantic tokens для Gherkin-подсветки внутри `ТекстСценария` YAML-сценариев |
-| `src/scenarioHeaderInlayHintsProvider.ts` | Inlay-иконки (карандаш) у полей `ДанныеСценария.Имя` / `ДанныеСценария.Код` для быстрых команд переименования/смены кода |
-| `src/scenarioDiagnostics.ts` | Диагностика и code actions |
-| `src/commandHandlers.ts` | Редактирование/навигация/авто-операции по YAML |
-| `src/scenarioCreator.ts` | Создание главных и вложенных сценариев по шаблонам |
-| `src/phaseSwitcherMetadata.ts` | Работа с `KOTМетаданные`, миграция legacy-тегов |
-| `src/kotMetadataDescription.ts` | Парсинг, нормализация и upsert блока `KOTМетаданные.Описание` в YAML |
-| `src/scenarioAiDescription.ts` | Генерация AI-описания сценария для `KOTМетаданные.Описание` |
-| `src/aiClient.ts` | Унифицированный AI-клиент для `chatCompletions` / `responses`, валидация настроек и HTTP transport |
-| `src/configurationDiffAiReport.ts` | Сбор diff конфигурации, эвристики влияния и генерация AI-отчета для тестировщика |
-| `src/testReviewAiReport.ts` | AI-ревью измененных тестов на основе diff тестов, diff конфигурации и опционального `UserStory` |
-| `src/yamlParametersManager.ts` | Webview менеджера параметров (СППР/VA/GlobalVars) |
-| `src/infobaseManager.ts` | Backend каталога ИБ: сбор общего списка баз, операции подготовки, launch keys и platform override |
-| `src/infobaseManagerPanel.ts` | Webview `KOT Infobase Manager` |
-| `src/formExplorerPanel.ts` | Webview-панель исследования открытой формы 1С через JSON snapshot |
-| `src/formExplorerPaths.ts` | Разрешение настроек путей Form Explorer: snapshot, исходники конфигурации, каталог генерации |
-| `src/formExplorerExtensionGenerator.ts` | Legacy-генератор расширения Form Explorer и связанные build-пути `.cfe` (оставлен для совместимости/внутренних сценариев) |
-| `src/formExplorerBuilder.ts` | Подготовка sidecar-файлов Form Explorer и служебных runtime-артефактов |
-| `src/formExplorerBridgeGenerator.ts` | Bridge-based запуск Form Explorer: подготовка startup-ИБ, config JSON и старт связки `TestManager` + `TestClient` |
-| `src/formExplorerLiveSnapshot.ts` | Разрешение актуального live snapshot-а Form Explorer и его кэширование для editor-side интеграций |
-| `src/startupInfobase.ts` | Легковесная startup-ИБ для Vanessa и `СборкаТекстовСценариев`: автосоздание, output и фоновый прогрев |
-| `src/oneCPlatform.ts` | Автоопределение установленной платформы 1С и разрешение путей `1cv8c.exe` / `1cv8.exe` |
-| `src/formExplorerEnrichment.ts` | Обогащение runtime snapshot-а данными из `Form.xml` и metadata выгрузки конфигурации |
-| `src/formExplorerTypes.ts` | Контракт и нормализация snapshot JSON для Form Explorer |
-| `src/stepCatalogService.ts` | Выбор и кеширование версионного каталога шагов Vanessa |
-| `src/scenarioParameterUtils.ts` | Нормализация и дефолты параметров |
-| `media/phaseSwitcher.*` | UI Test Manager |
-| `media/yamlParameters.*` | UI менеджера параметров |
-| `media/formExplorer.*` | UI панели Form Explorer |
-| `res/formExplorer/bridge/KOTFormExplorerBridge.bsl` | Клиентский модуль EPF-моста, который опрашивает `TestClient`, собирает snapshot и читает request-файлы |
-| `tools/form-explorer/build-cfe.*` | Legacy-скрипты для старой `.cfe`-сборки Form Explorer |
+Используйте Node.js с npm, совместимые с lockfile и зависимостями проекта. Установите зависимости воспроизводимо:
 
-## 2) Основной runtime-поток
-
-1. Extension активируется (`onStartupFinished`).
-2. Инициализируется кеш сценариев на основе текущего корня сценариев.
-3. Подключаются completion/hover/diagnostics.
-4. Регистрируются команды `kotTestToolkit.*`.
-5. На события редактора (`open/change/save/close`) срабатывают локальные обработчики.
-
-## 3) Конвейер сохранения (ключевая логика)
-
-На сохранение сценария может выполняться цепочка:
-
-1. Валидация, что файл — сценарий.
-2. Миграция/восстановление `KOTМетаданные` (если требуется).
-3. Анализ изменений (вызовы, параметры, имя).
-4. Условные авто-операции:
-   - tabs -> spaces;
-   - выравнивание таблиц;
-   - выравнивание параметров вызова;
-   - перезаполнение `ВложенныеСценарии`;
-   - перезаполнение `ПараметрыСценария`.
-5. Обновление кеша и статусов связанных сценариев.
-
-Важно: перезаполнение секций запускается только при релевантных изменениях или неполной структуре.
-
-Дополнительно:
-
-- тяжелая post-save обработка выполняется для активного сценария;
-- сохранения неактивных сценариев ставятся в очередь `pendingBackgroundScenarioFiles` и обрабатываются командой batch-repair (например, при использовании глобальной замены поиском);
-- для batch-repair файл считается `updated` только при фактическом изменении итогового текста;
-- в batch-repair есть защита критичных секций с rollback.
-
-## 4) Диагностика
-
-Режимы:
-
-- локальный (активный файл);
-- связанные родительские сценарии (по графу вызовов вверх);
-- глобальное сканирование (по команде).
-
-Особенности:
-
-- `Maybe you meant` рассчитывается для локального сценария;
-- глобальный проход сделан как тяжелая ручная операция;
-- дубликаты `ДанныеСценария.Код` проверяются через кеш сценариев.
-
-## 5) Test Manager: backend + frontend
-
-### Backend (`src/phaseSwitcher.ts`)
-
-- Хранит `_testCache`.
-- Собирает/отдает состояние групп, тестов, избранного, статусов запуска.
-- Управляет сборкой и запуском Vanessa.
-- Ведет run-state (`running/passed/failed/stale`) и runtime-логи.
-- Ведет состояние `scenarioRepairInProgress/scenarioRepairCancelling` для webview.
-
-### Frontend (`media/phaseSwitcher.js`)
-
-- Рендер групп/сценариев.
-- Отправка команд backend через `postMessage`.
-- Контекстные действия по сценарию/группе.
-- Вкладка `Избранное`, drag-and-drop в редактор.
-- Меню `More actions`.
-
-## 6) Сборка и запуск Vanessa
-
-### Сборка
-
-- Сборка выполняется через EPF `СборкаТекстовСценариев`.
-- Параметры берутся из менеджера параметров.
-- Формируются `.feature` и `.json` артефакты.
-- Ошибки сборки читаются из output-артефактов (`BuildErrors`/JUnit).
-
-### Запуск
-
-- Built-in launcher: расширение само формирует команду запуска 1С + Vanessa.
-- Template launcher: используется `runVanessa.commandTemplate`.
-- Runtime-файлы (`лог/статус`) пишутся в `runVanessa.runtimeDirectory`.
-- Live-log читается периодически по таймеру.
-
-### Bundled startup template
-
-Для built-in запуска Vanessa и `СборкаТекстовСценариев` Windows-версия расширения должна включать в bundle файл:
-
-- `tools/startup-infobase/KOTStartupTemplate.dt`
-
-Это не пользовательский артефакт проекта, а release-артефакт самого расширения. Template должен быть подготовлен один раз разработчиком расширения и входить в `vsix`.
-
-Требования к template-базе:
-
-- это отдельная техническая база, не рабочая проектная ИБ;
-- база не должна быть полностью пустой: нужна минимальная конфигурация хотя бы с одной административной ролью;
-- в базе должен существовать пользователь `KOTStartupService` без пароля;
-- пользователю должна быть назначена административная роль;
-- у пользователя должна быть включена стандартная аутентификация;
-- у пользователя должна быть выключена `Аутентификация ОС`;
-- у пользователя должна быть выключена `Защита от опасных действий`;
-- в конфигурации и у пользователя должен быть доступен язык `Русский`, иначе `СборкаТекстовСценариев.epf` может падать на `НСтр(...)`.
-
-Для управляемого запуска Vanessa template также содержит отдельное расширение `client_mcp` из официального MCP devkit v0.6.6. Оно запускает сервер только с параметром `runMcp`; обычная сборка не запускает MCP-сервер. Нативный WebTransport включён в CFE; 1С может выполнить его установку на компьютере пользователя при первом управляемом запуске. Установка внешней компоненты на компьютере и загрузка расширения в базу — разные операции: DT устраняет вторую, но не гарантирует отсутствие первого системного диалога.
-
-Сборка template в Windows из существующего чистого технического DT и официального `client_mcp.cfe`:
-
-```powershell
-node tools/buildStartupTemplate.cjs 'C:\Program Files\1cv8\8.3.24.1738\bin\1cv8.exe' 'C:\Build\source.dt' 'C:\Build\client_mcp.cfe' 'C:\Build\prepared.dt'
+```sh
+npm ci
+npm run check
+npm run compile
 ```
 
-Скрипт создаёт новую временную базу, восстанавливает DT, проверяет SHA-256 CFE, устанавливает расширение, проверяет его выгрузку отдельным сеансом и выгружает `prepared.dt` с manifest `prepared.dt.json`. Пользовательские базы скрипт не открывает; существующий выходной файл не перезаписывает. Используйте минимальную поддерживаемую версию платформы, чтобы не повысить требования к пользователям случайно.
+`check` выполняет TypeScript для расширения и инструментов, ESLint и автоматические тесты. `compile` собирает расширение и копирует Codicons. Успех esbuild отдельно не заменяет проверку типов.
 
-После проверки восстановления замените **оба** release-файла: `tools/startup-infobase/KOTStartupTemplate.dt` и `KOTStartupTemplate.dt.json`. Manifest связывает точный DT с версией и хешем расширения. KOT отмечает MCP-компоненты готовыми только после успешного нового восстановления и совпадения хеша DT. Для существующей служебной базы используется отдельное однократное обновление CFE; смена bundled DT сама по себе базу не пересоздаёт.
+Откройте проект в VS Code и запустите конфигурацию Extension Development Host. Для UI-проверки используйте отдельную копию [мастерской](../examples/kot-workshop), а не реальные тестовые базы. Исходники мастерской не следует менять ради снимка экрана.
 
-Атрибуция, тексты лицензий, соответствующие исходники и открытые вопросы перед распространением бинарных компонентов перечислены в [`THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md#1c-neurofish-onec-client-mcp-devkit). Для обновления devkit синхронно обновите pin в `src/vanessaControlProvisioning.ts`, сборщике template, исходный архив и notices. Для самостоятельной замены расширения можно использовать стандартный `/LoadCfg ... -Extension client_mcp /UpdateDBCfg` в Designer; KOT проверяет собственный поддерживаемый pin при управляемой подготовке.
+## Полезные команды
 
-## 7) Менеджер параметров (webview)
+| Команда | Назначение |
+|---|---|
+| `npm run check` | Полная автоматическая проверка |
+| `npm test` | Сборка и запуск тестов |
+| `npm run compile` | Отладочная сборка расширения |
+| `npm run watch` | Пересборка при изменениях |
+| `npm run vscode:prepublish` | Полный gate и минифицированная сборка |
+| `npm run verify:demo` | Связи, синтаксис, исходники, настройки запуска и ссылки мастерской |
+| `npm run docs:reference` | Обновление справочников из manifest |
+| `npm run docs:check` | Локальные ссылки, изображения и fragment anchors |
+| `npm run check:test-codes -- examples/kot-workshop/tests` | Пример read-only проверки кодов учебных исходников |
+| `npm run build:step-catalog-tool` | Сборка инструмента каталога шагов |
+| `vsce ls` | Файлы будущего VSIX |
 
-Функциональные части:
+Параметры проверяющих инструментов смотрите в [tools](../tools). Не запускайте внешний корпус как часть штатных тестов без явной договорённости: он может содержать конфигурации, требующие своего окружения.
 
-- СППР-параметры (для `yaml_parameters.json`);
-- дополнительные VA-параметры (runtime-переопределение);
-- `GlobalVars`.
+## Что проверять в изменении
 
-Хранение:
+Выберите проверку, которая способна обнаружить конкретную ошибку: неверный UID/URI, потерю несохранённой правки, устаревший ответ, неверную область настройки, частичный отказ записи или неоднозначное сопоставление строки.
 
-- используется SecretStorage для состояния менеджера.
+Для webview используйте реальный скрипт и контролируемую границу DOM/host. Не заменяйте поведенческую проверку поиском строки исходника. Вызовы к 1С и внешнему сервису изолируются, но локальная логика выбора, преобразования и состояния должна оставаться реальной.
 
-## 8) Form Explorer: bridge + static enrichment
+Для runtime отдельно фиксируйте платформу, версии Vanessa/1С/devkit, исходники, действия и фактический результат. Автотесты не являются живой приёмкой Windows/Parallels.
 
-Поток Form Explorer:
+## Документация и визуальные материалы
 
-1. `src/formExplorerBridgeGenerator.ts` готовит shared startup-ИБ, пишет `bridge-config.json` и стартует две 1С-сессии:
-   - целевую базу в `TestClient`;
-   - служебную startup-ИБ в `TestManager` с `KOTFormExplorerBridge.epf`.
-2. `res/formExplorer/bridge/KOTFormExplorerBridge.bsl` каждую секунду опрашивает `TestClient`, собирает snapshot активной формы и реагирует на request-файл (`auto` / `manual` / `refresh` / `table` / `locator`).
-3. Bridge пишет:
-   - `form-snapshot.json`
-   - `adapter-mode.txt`
-   - `adapter-mode-request.txt`
-   - `bridge/bridge-config.json`
-   - `bridge/bridge-status.txt`
-4. `src/formExplorerPanel.ts` читает snapshot и mode-state, а `src/formExplorerEnrichment.ts` обогащает данные из `Form.xml`.
-5. `src/formExplorerLiveSnapshot.ts` переиспользует тот же snapshot/enrichment слой для completion/hover вне webview.
-6. `media/formExplorer.*` показывает UI-инспектор и управляет bridge-режимом `manual/auto`.
+README — короткий обзор и маршруты входа. `documentation/blocks` — руководства по задачам, `documentation/technical` — точные контракты. Все прежние адреса страниц сохранены; новые разделы добавляются в общий индекс.
 
-Особенности:
+Справочники настроек и команд генерируются из `package.json` и локализации. После изменения manifest выполните генерацию и проверьте diff. Снимки должны показывать реальный интерфейс; схемы обозначаются как схемы. Происхождение визуальных материалов записано в [галерее](screenshots.md). Схемы хранятся в SVG, для README используются PNG: Marketplace ограничивает SVG-изображения в описании расширения.
 
-- bridge не внедряется в тестируемую базу и не требует установки runtime-расширения;
-- отдельный poller в панели отслеживает PID и при закрытии одной стороны завершает вторую;
-- `auto snapshot` в EPF-мосте оптимизирован: файл переписывается только если содержимое snapshot реально изменилось.
+## Подготовка поставки
 
-## 9) Где расширять функционал
+1. Выполните `npm run vscode:prepublish`, `npm run verify:demo` и `npm run docs:check`.
+2. Проверьте `git diff --check` и состав `vsce ls`.
+3. При упаковке проверьте, что README-изображения, runtime-ресурсы и полная мастерская присутствуют, а тесты, локальные базы и черновики разработки отсутствуют.
+4. Сверьте changelog и описание PR с реальным diff относительно `main`.
+5. Проверьте [лицензии компонентов](../THIRD_PARTY_LICENSES.md) и незакрытые ограничения публичной поставки.
 
-### Добавить новую команду
+[Технический индекс](technical/README.md) · [Совместимость](technical/compatibility.md)
 
-1. Добавить `contributes.commands` в `package.json`.
-2. Добавить пункт меню/палитры (если нужно).
-3. Зарегистрировать handler в `src/extension.ts`.
-4. Реализовать логику в `src/commandHandlers.ts` или отдельном модуле.
-5. Добавить l10n-строки (`package.nls*`, `l10n/bundle*`).
+<a id="bundled-startup-template"></a>
 
-Пример новых batch-команд:
+## Подготовка служебного DT
 
-- `kotTestToolkit.processQueuedScenarioFiles`
-- `kotTestToolkit.processAllScenarioFiles`
-- `kotTestToolkit.cancelScenarioRepair`
-
-### Добавить новую диагностику
-
-1. Реализовать правило в `src/scenarioDiagnostics.ts`.
-2. Добавить код/сообщение/severity.
-3. Добавить quick fix при необходимости.
-4. Добавить переводные строки.
-
-### Добавить пункт в Test Manager
-
-1. Добавить UI-элемент в `media/phaseSwitcher.html/js`.
-2. Проложить `postMessage` в backend.
-3. Обработать сообщение в `src/phaseSwitcher.ts`.
-4. Обновить модели состояния и l10n.
-
-## 10) Что проверять после изменений
-
-Минимум:
-
-1. `npm run compile`
-2. Проверить в VS Code:
-   - completion/hover;
-   - diagnostics + quick fix;
-   - конвейер сохранения;
-   - Test Manager (чекбоксы -> build filter, build/run/statuses);
-   - менеджер параметров (все вкладки, импорт/экспорт);
-   - Form Explorer webview.
-
-3. Если менялся bridge Form Explorer:
-   - пересобрать `KOTFormExplorerBridge.epf`, если правился BSL source;
-   - перезапустить `TestClient` и окно моста;
-   - проверить manual/auto режим, locator и snapshot-refresh.
-
-## 11) Что важно не ломать
-
-- Инкрементальность кеша: избегать полных пересканирований без необходимости.
-- Производительность diagnostics на больших проектах.
-- Корректность stale-статусов после изменения сценариев.
-- Совместимость с обоими языками UI (RU/EN).
-- Стабильность webview-состояний при скрытии/повторном открытии панели.
+Отдельная инструкция сохранена в [справочнике шаблона служебной базы](technical/startup-template.md): сборка, manifest, замена devkit и проверка восстановления.
