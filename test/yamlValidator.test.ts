@@ -17,7 +17,7 @@ function document(source: string, fileName = '/repo/compiler.yaml', languageId =
     return { fileName, languageId, getText: () => source } as vscode.TextDocument;
 }
 
-test('process validators distinguish process descriptors and process test settings from scenarios', () => {
+test('process validators distinguish process descriptors and process run settings from scenarios', () => {
     const validator = moduleUnderTest.exports;
     const process = document('ТипФайла: "Процесс"\nДанныеПроцесса:\n  Имя: "Продажи"\n');
     const settings = document('ТипФайла: "НастройкаПроцесса"\nДанныеТеста:\n  UIDПроцесса: process\n');

@@ -137,7 +137,7 @@ test('scenario header actions use shared main classification without legacy KOT 
     assert.ok(!commands.includes('kotTestToolkit.changeNestedScenarioName'));
 });
 
-test('process test settings hints link process fields and reuse base and user pickers', () => {
+test('process run settings hints link process fields and reuse base and user pickers', () => {
     const Provider = load('scenarioHeaderInlayHintsProvider.ts').ScenarioHeaderInlayHintsProvider;
     const source = [
         'ТипФайла: "НастройкаПроцесса"',
@@ -167,7 +167,7 @@ test('process test settings hints link process fields and reuse base and user pi
     }
 });
 
-test('scenario header hints preserve main scenario and test settings actions with the real validator', () => {
+test('scenario header hints preserve main scenario and run settings actions with the real validator', () => {
     const Provider = load('scenarioHeaderInlayHintsProvider.ts').ScenarioHeaderInlayHintsProvider;
     const main = [
         'ТипФайла: "Сценарий"',

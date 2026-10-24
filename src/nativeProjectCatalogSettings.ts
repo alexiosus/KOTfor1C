@@ -1,3 +1,4 @@
+import { isProjectSetupPending, onProjectSetupCompleted } from './projectSetupGate';
 import path from 'node:path';
 import * as vscode from 'vscode';
 import { ProjectCatalogSettings, PROJECT_CATALOG_SETTINGS, type CatalogSettingsBaseline } from './projectCatalogSettings';
@@ -179,7 +180,7 @@ export async function registerNativeProjectCatalogSettings(context: vscode.Exten
             if (!folders.some(folder => folder.uri.toString() === key)) { disposeEntry(entry); entries.delete(key); }
         }
         for (const folder of folders) {
-            const key = folder.uri.toString(); if (entries.has(key)) { continue; }
+            const key = folder.uri.toString(); if (entries.has(key) || isProjectSetupPending(folder.uri.fsPath)) { continue; }
             const baselineKey = `kot.projectCatalogSettings:${path.resolve(folder.uri.fsPath)}`;
             const projectionKey = `kot.projectCatalogProjection:${path.resolve(folder.uri.fsPath)}`;
             const projection = structuredClone(context.workspaceState.get<Record<string, NativeProjection>>(projectionKey) ?? {});
@@ -284,10 +285,11 @@ export async function registerNativeProjectCatalogSettings(context: vscode.Exten
         }
     });
     const catalogSubscription = catalogProvider?.onDidUpdateScenarioCatalog(() => { void discover().catch(() => undefined); });
+    const setupSubscription = onProjectSetupCompleted(() => { void enqueue(async () => { await rebuild(); }); });
     await rebuild();
     if (catalogProvider?.getScenarioCatalog()) { await discover(); }
     offerProjectSettings([...lastGlobal].filter(([, value]) => value !== undefined).map(([key]) => key));
     return { dispose: () => {
-        disposed = true; configuration.dispose(); folders.dispose(); catalogSubscription?.dispose(); entries.forEach(disposeEntry); entries.clear();
+        disposed = true; setupSubscription.dispose(); configuration.dispose(); folders.dispose(); catalogSubscription?.dispose(); entries.forEach(disposeEntry); entries.clear();
     } };
 }

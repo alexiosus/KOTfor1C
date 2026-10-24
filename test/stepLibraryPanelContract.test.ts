@@ -379,7 +379,7 @@ test('package and runtime locale bundles have matching keys for the visual libra
         'All definitions',
         'Vanessa built-in steps',
         'User steps',
-        'Export scenarios',
+        'Exported scenarios',
         'Nested scenarios',
         'Main scenarios',
         'Scenario code',

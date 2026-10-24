@@ -80,7 +80,7 @@ const SOURCE_GROUPS: readonly StepLibrarySourceGroup[] = Object.freeze([
 const SOURCE_LABELS: Readonly<Record<StepLibrarySourceGroup, string>> = Object.freeze({
     builtIn: 'Vanessa built-in steps',
     user: 'User steps',
-    export: 'Export scenarios',
+    export: 'Exported scenarios',
     nested: 'Nested scenarios',
     main: 'Main scenarios',
     process: 'Processes',

@@ -243,8 +243,8 @@ function describeTestPath(relativePath: string): string {
     }
     if (lowerFileName === 'test.yaml') {
         return scenarioFolderName
-            ? `test settings for "${scenarioFolderName}"`
-            : 'test settings';
+            ? `run settings for "${scenarioFolderName}"`
+            : 'run settings';
     }
     if (lowerFileName === 'main.yaml') {
         return scenarioFolderName

@@ -48,7 +48,7 @@ test('editor command routes active and explicit Library source targets to the au
     assert.deepEqual(h.errors, []);
 });
 
-test('compiler descriptors expose the property editor without offering it on test settings', () => {
+test('compiler descriptors expose the property editor without offering it on run settings', () => {
     const h = harness(); const provider = h.registrations[0].provider;
     const raw = provider.provideCodeLenses({ uri: h.source, getText: () => 'ТипФайла: Сценарий' });
     const process = provider.provideCodeLenses({ uri: h.source, getText: () => 'ТипФайла: Процесс' });

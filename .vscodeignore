@@ -39,3 +39,8 @@ tools/checkTestNumbering.cjs
 tools/updateVanessaParameterCatalog.cjs
 out/**
 !out/extension.js
+
+# Design-only preview stays in the repository; the installed page lives in media/.
+docs/ux/**
+# The first-run wizard copies this complete, self-contained workshop.
+!examples/kot-workshop/**

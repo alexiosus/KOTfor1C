@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { deferProjectSetup, completeProjectSetup } from '../src/projectSetupGate';
 import { parse, stringify } from 'yaml';
 import { ProjectLibraryStore, metadataFilePath, projectEntityKey, type ProjectEntityIdentity } from '../src/projectLibraryStore';
 
@@ -305,4 +306,25 @@ test('inline cleanup retains unknown extension data and skips dirty sources', as
     const custom = original + 'KOTМетаданные:\n    ExternalToolField: "Keep me"\n';
     await fs.writeFile(file, custom); await store.read();
     assert.equal(await fs.readFile(file, 'utf8'), custom);
+});
+
+test('setup preview reads central metadata without creating sidecars or deleting the original record', async t => {
+    const directory = await root(t); await source(directory, scenario);
+    const oldFile = await central(directory, scenario); const text = await fs.readFile(oldFile, 'utf8');
+    const store = new ProjectLibraryStore(directory); deferProjectSetup(directory); t.after(() => completeProjectSetup(directory));
+    assert.equal((await store.read()).metadata[projectEntityKey(scenario)].description, 'Central');
+    assert.equal(await fs.readFile(oldFile, 'utf8'), text);
+    await assert.rejects(fs.stat(store.metadataFilePath(scenario)), { code: 'ENOENT' });
+    completeProjectSetup(directory); await store.read();
+    assert.equal(parse(await fs.readFile(store.metadataFilePath(scenario), 'utf8')).version, 2);
+});
+
+test('postponing setup still permits explicit group and metadata edits', async t => {
+    const directory = await root(t); await source(directory, scenario);
+    const store = new ProjectLibraryStore(directory); deferProjectSetup(directory); t.after(() => completeProjectSetup(directory));
+    await store.ensureGroup('My tests', 'main');
+    await store.setMetadata(scenario, { description: 'Edited without setup' });
+    const snapshot = await store.read();
+    assert.equal(snapshot.metadata[projectEntityKey(scenario)].description, 'Edited without setup');
+    assert.ok(snapshot.groups.some(group => group.name === 'My tests'));
 });

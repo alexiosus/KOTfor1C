@@ -39,7 +39,7 @@ test('scenario-only settings commands reject process settings while shared picke
         { userProfileLine: { fieldName: 'ПрофильПользователя', value: 'Tester' } }, receiver);
     assert.ok(h.process.document.text.includes('ПрофильПользователя: "Tester"'));
     assert.ok(h.main.document.text.includes('ПрофильПользователя: "Old"'));
-    await assert.rejects(h.api.getActiveTestSettingsEditor(h.context, h.process.document.uri), /test settings/u);
+    await assert.rejects(h.api.getActiveTestSettingsEditor(h.context, h.process.document.uri), /run settings/u);
 });
 
 test('settings picker snapshot rejects a changed document before updating its field lines', async () => {

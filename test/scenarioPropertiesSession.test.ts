@@ -319,7 +319,7 @@ test('saving a newly selected test does not save dirty documents belonging to th
     assert.equal(h.documents.get(sourceUri)!.dirty, true);
 });
 
-test('unsaved source text marks the test dirty without creating test settings for nested sources', async () => {
+test('unsaved source text marks the test dirty without creating run settings for nested sources', async () => {
     const h = harness(); h.host.listSettings = async () => [];
     h.documents.get(sourceUri)!.dirty = true;
     const state = await h.session.open(sourceUri);
@@ -337,7 +337,7 @@ test('multiple parameter values have a readonly combination preview in the same 
     assert.match(preview?.value ?? '', /Customer = First/);
 });
 
-test('build combination preview accounts for values overridden by selected test settings', async () => {
+test('build combination preview accounts for values overridden by selected run settings', async () => {
     const h = harness();
     const source = h.documents.get(sourceUri)!;
     h.documents.set(sourceUri, { ...source, text: source.text.replace('ПараметрыСценария:\n', 'ПараметрыСценария:\n    - ПараметрыСценария1:\n        Имя: Customer\n        Значение: "First;Second"\n        ТипПараметра: Строка\n') });

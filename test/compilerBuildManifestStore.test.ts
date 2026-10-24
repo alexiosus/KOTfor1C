@@ -89,7 +89,7 @@ test('failed, changed, empty and incomplete builds remove previous certification
 });
 
 test('input comparison must happen after temporarily isolated settings are restored', async t => {
-    const f = await fixture(t); await f.artifact(); await f.write('sources/test.yaml', 'disabled test settings');
+    const f = await fixture(t); await f.artifact(); await f.write('sources/test.yaml', 'disabled run settings');
     const before = (await captureCompilerBuildInputs(f.request)).inputs;
     const setting = path.join(f.sources, 'test.yaml'); const temporary = path.join(f.root, 'temporary');
     await fs.rename(setting, temporary);

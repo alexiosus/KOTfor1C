@@ -97,7 +97,7 @@ test('definition previews do not switch hidden YAML models out of their configur
     assert.equal(switchedDocuments.length, 0);
 });
 
-test('visible process and both compiler test settings enable native YAML highlighting', async () => {
+test('visible process and both compiler run settings enable native YAML highlighting', async () => {
     for (const type of ['Процесс', 'НастройкаТеста', 'НастройкаПроцесса']) {
         const { host, ensureLanguage, switchedDocuments } = languageHarness();
         const document = { ...scenarioDocument(), getText: () => `ТипФайла: "${type}"\n` };

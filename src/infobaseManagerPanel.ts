@@ -690,7 +690,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             refresh: t('Refresh'),
             createInfobase: t('Create infobase'),
             addInfobasePath: t('Add path'),
-            manageEtalonBases: t('Etalon bases'),
+            manageEtalonBases: t('Reference infobases'),
             searchPlaceholder: t('Search bases'),
             sortLabel: t('Sort'),
             sortAlphabetical: t('Alphabetical'),

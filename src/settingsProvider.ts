@@ -27,9 +27,9 @@ export class SettingsProvider {
                     const manager = YamlParametersManager.getInstance(this._context);
                     await manager.openYamlParametersPanel();
                 } catch (error) {
-                    console.error('[SettingsProvider] Error opening Build Scenario Parameters Manager:', error);
+                    console.error('[SettingsProvider] Error opening Compilation and run parameters:', error);
                     vscode.window.showErrorMessage(
-                        vscode.l10n.t('Error opening Build Scenario Parameters Manager: {0}', String(error))
+                        vscode.l10n.t('Error opening Compilation and run parameters: {0}', String(error))
                     );
                 }
             })

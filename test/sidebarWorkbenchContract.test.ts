@@ -58,7 +58,7 @@ test('all KOT view containers compose one common non-duplicated title', () => {
         russian['view.phaseSwitcher.name'],
         russian['view.stepLibrary.name'],
         russian['view.infobases.name']
-    ], ['Менеджер тестов', 'Библиотека', 'Базы']);
+    ], ['Менеджер тестов', 'Библиотека', 'Информационные базы']);
 
 });
 

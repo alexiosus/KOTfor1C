@@ -152,3 +152,23 @@ test('a profile selection cannot be overwritten by an earlier autosave finishing
     releaseFirstStore(); await Promise.all([earlierAutosave, profileSelection]);
     assert.equal(JSON.parse(saved).activeProfileId, 'two');
 });
+
+test('concurrent setup profile creation retains both new profiles and all existing profile values', async () => {
+    const ts = require('typescript') as typeof import('typescript');
+    const compiled = ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'src/yamlParametersManager.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+    let saved = JSON.stringify({ version: 5, activeProfileId: 'existing', profiles: [{ id: 'existing', name: 'Keep', buildParameters: [{ key: 'ScenarioFolder', value: 'old-tests' }, { key: 'Custom', value: 'do-not-change' }], additionalVanessaParameters: [], globalVanessaVariables: [] }] });
+    const moduleObject = { exports: {} as Record<string, unknown> };
+    const dependencies: Record<string, unknown> = { './appContext': { getExtensionUri: () => ({ fsPath: '/extension' }) },
+        './scenarioScanRoot': { updateScenarioScanRoot: async () => undefined, updateProcessScanRoot: async () => undefined, getScenarioScanRootPath: () => 'tests/' },
+        './etalonBases': { getDefaultModelDbSettingsValue: () => 'model.yaml' }, './yamlParameterDefaults': defaults,
+        './compilerBuildParameters': compilerParameters, './compilerBuildValueValidation': compilerValueValidation, './activeYamlParametersProfile': activeProfiles };
+    vm.runInNewContext(compiled, { module: moduleObject, exports: moduleObject.exports, console, Buffer,
+        require: (specifier: string) => specifier === 'vscode' ? { EventEmitter: class { event = () => ({ dispose() {} }); fire() {} },
+            workspace: { getConfiguration: () => ({ get: (_: string, fallback?: unknown) => fallback }) }, commands: { executeCommand: async () => undefined } } : dependencies[specifier] ?? require(specifier) });
+    const Constructor = moduleObject.exports.YamlParametersManager as { getInstance(context: unknown): { createSetupProfile(name: string, rows: unknown[]): Promise<string> } };
+    const manager = Constructor.getInstance({ subscriptions: [], secrets: { get: async () => saved, store: async (_key: string, value: string) => { saved = value; } } });
+    await Promise.all([manager.createSetupProfile('First', [{ key: 'TestFolder', value: 'first' }]), manager.createSetupProfile('Second', [{ key: 'TestFolder', value: 'second' }])]);
+    const state = JSON.parse(saved);
+    assert.deepEqual(state.profiles.map((profile: { name: string }) => profile.name).sort(), ['First', 'Keep', 'Second']);
+    assert.equal(state.profiles.find((profile: { id: string }) => profile.id === 'existing').buildParameters.find((row: { key: string }) => row.key === 'Custom').value, 'do-not-change');
+});

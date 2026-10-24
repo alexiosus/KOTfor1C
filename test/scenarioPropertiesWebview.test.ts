@@ -870,7 +870,7 @@ test('successful feature edits settle normalized drafts while preserving later t
     assert.equal(h.field('title')!.value, 'Second'); assert.equal(h.messages.at(-1).baseValue, 'First');
 });
 
-test('favorite follows Save and Launch JSON is an independently collapsible section', () => {
+test('favorite follows Save and Vanessa parameters (JSON) is an independently collapsible section', () => {
     const h = harness(); h.state({ ...snapshot(), canFavorite: true });
     const yamlActions = h.action('save')!.parentElement!;
     assert.ok(yamlActions.children.indexOf(h.action('favorite')!) > yamlActions.children.indexOf(h.action('save')!));

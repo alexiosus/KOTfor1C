@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>KOT — начало работы и настройки: макет</title>
+    <link rel="stylesheet" href="style.css?v=10">
+    <script defer src="settings-data.js?v=10"></script>
+    <script defer src="app.js?v=10"></script>
+</head>
+<body>
+    <div class="prototype-note">Интерактивный макет · файлы, базы и настройки VS Code не изменяются</div>
+    <div class="workbench">
+        <aside class="navigation">
+            <button id="home" class="brand" aria-label="Вернуться в начало"><span class="brand-icon" aria-hidden="true"></span><strong>KOT for 1C</strong></button>
+            <nav aria-label="Разделы KOT">
+                <button id="nav-setup" class="nav-button selected">Начало работы</button>
+                <button id="nav-settings" class="nav-button">Настройки</button>
+                <button id="nav-help" class="nav-button">Где что находится</button>
+            </nav>
+            <div id="section-navigation"></div>
+            <select id="section-select" aria-label="Раздел настроек" hidden></select>
+        </aside>
+        <main id="content" tabindex="-1"></main>
+    </div>
+    <div id="notice" role="status" aria-live="polite"></div>
+    <dialog id="explanation"><h2 id="explanation-title"></h2><p id="explanation-text"></p><button id="close-explanation">Понятно</button></dialog>
+    <dialog id="path-picker" aria-labelledby="picker-title">
+        <h2 id="picker-title"></h2>
+        <p class="muted">Учебный выбор пути. В расширении здесь откроется системное окно выбора.</p>
+        <label class="field"><span>Расположение</span><select id="picker-location"><option value="project">Внутри проекта</option><option value="computer">На компьютере</option></select></label>
+        <div id="picker-options" class="picker-options"></div>
+        <p id="picker-hint" class="muted"></p>
+        <div class="actions"><button id="picker-cancel">Отмена</button><span class="spacer"></span><button id="picker-choose" class="primary">Выбрать</button></div>
+    </dialog>
+</body>
+</html>

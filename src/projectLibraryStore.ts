@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { parseDocument, stringify } from 'yaml';
+import { isProjectSetupPending } from './projectSetupGate';
 import { ScenarioYamlDocument } from './scenarioYamlDocument';
 import { removeMigratedKotMetadata } from './projectLegacyMetadataCleanup';
 import { collectTreeWithConcurrencyLimit, mapWithConcurrencyLimit } from './boundedConcurrency';
@@ -447,7 +448,7 @@ export class ProjectLibraryStore {
                 }
             }
         }
-        await this.commit(loaded, migrations);
+        if (!isProjectSetupPending(this.rootPath)) { await this.commit(loaded, migrations); }
         return loaded;
     }
     private invalid(filePath: string, error: unknown): never {

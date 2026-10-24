@@ -226,7 +226,7 @@ export function planExportScenarioEdit(
         const bom = request.includeBom ? '\uFEFF' : '';
         const finalNewline = request.finalNewline !== false;
         const featureTitle = request.featureTitle?.trim()
-            || (language === 'ru' ? 'Экспортные сценарии' : 'Export scenarios');
+            || (language === 'ru' ? 'Экспортные сценарии' : 'Exported scenarios');
         const scenarioKeyword = keywords.scenario[0];
         const preamble = [
             `${bom}# language: ${language}`,

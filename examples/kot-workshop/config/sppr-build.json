@@ -1,0 +1,11 @@
+{
+    "ScenarioFolder": "tests",
+    "ProcessFolder": "tests",
+    "FeatureFolder": ".vscode/kot-runtime/features",
+    "ModelDBSettings": "config/bases.yaml",
+    "ExternalMode": "true",
+    "CreateJson": "false",
+    "CreateJUnit": "true",
+    "CreateModellingXML": "true",
+    "Libraries": "libraries"
+}

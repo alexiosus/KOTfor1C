@@ -18,6 +18,7 @@ Thumbs.db
 !.vscode/launch.json
 !.vscode/extensions.json
 *.code-workspace
+!examples/kot-workshop/KOT-workshop.code-workspace
 /coverage
 /.kot/test-numbering.lock
 /.kot/test-numbering.yml.*.tmp

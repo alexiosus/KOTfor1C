@@ -937,7 +937,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             case 'ДанныеСценария':
                 return t('Service header of the scenario. Stores the main metadata used by build, lookup and reporting.');
             case 'ДанныеСценария.UID':
-                return t('Unique identifier of the scenario. Test settings and nested references are linked through this value.');
+                return t('Unique identifier of the scenario. Run settings and nested references are linked through this value.');
             case 'ДанныеСценария.Имя':
                 return t('Human-readable scenario name. Used in snippets, diagnostics and scenario lookup.');
             case 'ДанныеСценария.Код':
@@ -991,9 +991,9 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             case 'ДанныеТеста.СценарийНаименование':
                 return t('Stores the linked scenario name for convenience. KOT can synchronize it with `scen.yaml`.');
             case 'ДанныеТеста.ЭталоннаяБазаИмя':
-                return t('Display name of the etalon base. Useful for UI and manual reading, while SPPR lookup relies primarily on `ИдентификаторБазы`.');
+                return t('Display name of the reference infobase. Useful for UI and manual reading, while SPPR lookup relies primarily on `ИдентификаторБазы`.');
             case 'ДанныеТеста.ИдентификаторБазы':
-                return t('Identifier of the etalon base in `bases.yaml`. SPPR uses it to resolve DT path, login and password for the selected profile.');
+                return t('Identifier of the reference infobase in `bases.yaml`. SPPR uses it to resolve DT path, login and password for the selected profile.');
             case 'ДанныеТеста.ПрофильПользователя':
                 return t('Overrides scenario `ПрофильПользователя` for this test setting. Has priority over the scenario value during build.');
             case 'ДанныеТеста.ПараметрыЗапуска':

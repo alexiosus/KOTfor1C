@@ -83,7 +83,7 @@ test('projects favorites plus six stable source roots and only immediate categor
         ['favorites', 'Favorites', 0, 'source'],
         ['source:builtIn', 'Vanessa built-in steps', 4, 'source'],
         ['source:user', 'User steps', 1, 'source'],
-        ['source:export', 'Export scenarios', 1, 'source'],
+        ['source:export', 'Exported scenarios', 1, 'source'],
         ['source:nested', 'Nested scenarios', 1, 'source'],
         ['source:main', 'Main scenarios', 1, 'source'],
         ['source:process', 'Processes', 0, 'source']

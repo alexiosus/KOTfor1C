@@ -1,3 +1,4 @@
+import * as projectSetupGate from '../src/projectSetupGate';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -78,7 +79,7 @@ async function fixture(t: test.TestContext, multiRoot = false, savedWorkspace = 
     const sourcePath = path.join(process.cwd(), 'src/nativeProjectCatalogSettings.ts');
     const ts = require('typescript') as typeof import('typescript'); const module = { exports: {} };
     const source = fs.existsSync(sourcePath) ? fs.readFileSync(sourcePath, 'utf8') : 'export {};';
-    const deps: Record<string, unknown> = { vscode: host, './projectCatalogSettings': synchronizer, './projectCatalogDiscovery': discovery,
+    const deps: Record<string, unknown> = { './projectSetupGate': projectSetupGate, vscode: host, './projectCatalogSettings': synchronizer, './projectCatalogDiscovery': discovery,
         './projectPropertyCatalogStore': { ProjectPropertyCatalogStore, validatePropertyCatalogName }, './testNumberingStore': { TestNumberingStore },
         './workspaceScanner': { scanWorkspaceForScenarioCatalog: async () => ({ all: [] }) },
         './localization': { getTranslator: async () => (message: string, ...args: string[]) => message.replace(/\{(\d+)\}/g, (_, index) => args[Number(index)] ?? '') } };

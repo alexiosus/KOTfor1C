@@ -211,7 +211,7 @@ export async function createExportScenarioCommand(
         }
         featureTitle = await vscode.window.showInputBox({
             title: t('Feature title'),
-            value: language === 'ru' ? 'Экспортные сценарии' : 'Export scenarios',
+            value: language === 'ru' ? 'Экспортные сценарии' : 'Exported scenarios',
             ignoreFocusOut: true,
             validateInput: value => value.trim() ? undefined : t('Feature title must not be empty.')
         });

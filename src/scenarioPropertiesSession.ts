@@ -62,7 +62,7 @@ function compilerVariantLimitWarning(count: string): ScenarioVariantLimitWarning
     return BigInt(count) > 100n ? { count, limit: 100 } : null;
 }
 
-/** A document-backed session; the form owns no duplicate persistent test settings. */
+/** A document-backed session; the form owns no duplicate persistent run settings. */
 export class ScenarioPropertiesSession {
     private state: ScenarioPropertiesState = { source: null, settings: [], selectedSettingsUri: null, metadata: null, groups: [], pinned: false, dirty: false, canCreateSettings: false, variantLimitWarning: null };
     private tail: Promise<unknown> = Promise.resolve();
@@ -413,8 +413,8 @@ export class ScenarioPropertiesSession {
             const actions = ['openSource', 'openFeature', 'openText', 'openSettings', 'openMetadata', 'copyPath', 'rename', 'changeCode', 'systemFunction', 'base', 'users', 'addSteps', 'aiDescription', 'changeGroup', 'newGroup', 'createSettings', 'addNested', 'openReference', 'fillParameters', 'fillNested', 'convertFormat', 'convertRole', 'run'];
             if (action === 'copyPath' && ![this.sourceUri, this.state.selectedSettingsUri, this.state.metadata?.uri].includes(message.value as string)) { throw new Error('The property target is not bound to the selected test/settings.'); }
             if (!actions.includes(action)) { throw new Error('Unknown test properties action.'); }
-            if (action === 'createSettings' && !this.state.canCreateSettings) { throw new Error('Test settings are available for main scenarios and processes.'); }
-            if (action === 'run' && !this.state.canCreateSettings) { throw new Error('Test settings are available for main scenarios and processes.'); }
+            if (action === 'createSettings' && !this.state.canCreateSettings) { throw new Error('Run settings are available for main scenarios and processes.'); }
+            if (action === 'run' && !this.state.canCreateSettings) { throw new Error('Run settings are available for main scenarios and processes.'); }
             if (['newGroup', 'changeGroup'].includes(action) && !this.state.canCreateSettings) { throw new Error('Groups are available for main scenarios and processes.'); }
             await this.runAction(action, await this.host.readDocument(this.sourceUri), message.value === undefined ? undefined : string(message.value));
             return;

@@ -49,7 +49,7 @@ test('unknown and error responses never become generated steps or a successful r
 test('a new .45 feature starts recording through an idempotent stop, preserving previous text without running a step', async () => {
     const own = setup(); const invoke = own.ports.request; const actions: string[] = [];
     own.ports.request = async (name, args) => {
-        if (name === 'get_vanessa_automation_state') { return reply('В редактор был загружен фича файл, но ещё ни разу не запускался. Для получения подробной информации о загруженном файле нужно вызвать get_editor_state.\nИмя загруженного feature файла: own.feature'); }
+        if (name === 'get_vanessa_automation_state') { return reply('В редактор был загружен фича файл, но ещё ни разу не запускался. Для получения подробной информации о загруженном файле нужно вызвать get_editor_state.\nИмя загруженного feature-файла: own.feature'); }
         actions.push(String(args.action)); return invoke(name, args);
     };
     const token = await own.runtime.start();
@@ -62,7 +62,7 @@ test('an unreadable recording response never resets a recorder and a failed rese
     for (const badState of [true, false]) {
         const own = setup(); const actions: string[] = [];
         own.ports.request = async (name, args) => {
-            if (name === 'get_vanessa_automation_state') { return reply(badState ? 'unknown format' : 'В редактор был загружен фича файл, но ещё ни разу не запускался.\nИмя загруженного feature файла: own.feature'); }
+            if (name === 'get_vanessa_automation_state') { return reply(badState ? 'unknown format' : 'В редактор был загружен фича файл, но ещё ни разу не запускался.\nИмя загруженного feature-файла: own.feature'); }
             actions.push(String(args.action)); return { ...reply('failure with private value'), isError: true };
         };
         await assert.rejects(own.runtime.start());

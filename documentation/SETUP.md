@@ -213,7 +213,7 @@
 
 ## 4) Менеджер параметров: как работает
 
-Открыть: в панели Менеджера тестов иконка "`{ }`" или команда `KOT - Open Build Scenario Parameters Manager` (`KOT - Открыть Менеджер параметров Сборки Сценариев`).
+Открыть: в панели Менеджера тестов иконка "`{ }`" или команда `KOT - Open Compilation and run parameters` (`KOT - Открыть параметры компиляции и запуска`).
 
 Вкладки:
 
@@ -262,7 +262,7 @@ KOT показывает этот минимум прямо во вкладке 
 - `KOT - Create nested scenario` (`KOT - Создать вложенный сценарий`)
 - `KOT - Create main scenario` (`KOT - Создать главный сценарий`)
 - `KOT - Manage system functions` (`KOT - Управление функциями системы`)
-- `KOT - Manage etalon bases` (`KOT - Управление эталонными базами`)
+- `KOT - Manage reference infobases` (`KOT - Управление эталонными базами`)
 
 ### 5.2 Избранное и demo-режим
 
@@ -303,7 +303,7 @@ KOT показывает этот минимум прямо во вкладке 
 
 ### 5.5 Сборка, запуск и сервисные панели
 
-- `KOT - Open Build Scenario Parameters Manager` (`KOT - Открыть Менеджер параметров Сборки Сценариев`)
+- `KOT - Open Compilation and run parameters` (`KOT - Открыть параметры компиляции и запуска`)
 - `KOT - Open Infobase Manager` (`KOT - Открыть Менеджер баз`)
 - `KOT - Manage 1C platforms` (`KOT - Управление платформами 1С`)
 - `KOT - Open 1C Form Explorer` (`KOT - Открыть Исследователь форм 1С`)

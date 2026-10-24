@@ -53,7 +53,7 @@ test('reads scenario headers, optional fields and compiler parameter controls', 
     assert.deepEqual(model.sections.find(section => section.key === 'ВложенныеСценарии')!.records!.map(record => record.key), ['nested-1', 'nested-2']);
 });
 
-test('reads process steps with nested parameters and test settings with exact linkage', () => {
+test('reads process steps with nested parameters and run settings with exact linkage', () => {
     const process = readScenarioProperties(processSource());
     assert.equal(process.kind, 'process');
     const steps = process.sections.find(section => section.key === 'ШагиПроцесса')!.records!;

@@ -5793,7 +5793,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const document = editor.document;
         if (!isScenarioYamlFile(document) && !isProcessYamlFile(document)) {
-            vscode.window.showWarningMessage(this.t('Open a scenario YAML file to open test settings.'));
+            vscode.window.showWarningMessage(this.t('Open a scenario YAML file to open run settings.'));
             return;
         }
 
@@ -6279,13 +6279,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         if (!this.isMainScenario(scenarioInfo)) {
-            vscode.window.showWarningMessage(this.t('Open test settings is available for main scenarios only.'));
+            vscode.window.showWarningMessage(this.t('Open run settings is available for main scenarios only.'));
             return;
         }
 
         const testConfigUri = this.resolveMainScenarioTestConfigUri(scenarioInfo);
         if (!testConfigUri) {
-            vscode.window.showWarningMessage(this.t('Test settings file was not found for scenario "{0}".', trimmedScenarioName));
+            vscode.window.showWarningMessage(this.t('Run settings file was not found for scenario "{0}".', trimmedScenarioName));
             return;
         }
 
@@ -6293,7 +6293,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const document = await vscode.workspace.openTextDocument(testConfigUri);
             await vscode.window.showTextDocument(document, { preview: false });
         } catch (error: any) {
-            vscode.window.showErrorMessage(this.t('Failed to open test settings file: {0}', error?.message || String(error)));
+            vscode.window.showErrorMessage(this.t('Failed to open run settings file: {0}', error?.message || String(error)));
         }
     }
 
@@ -7416,7 +7416,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 showInFileManager: this.t('Show in Finder / Explorer'),
                 resourceActionFailed: this.t('The resource action could not be completed.'),
                 emptyDirectory: this.t('Empty directory'),
-                openTestSettingsTitle: this.t('Open test settings'),
+                openTestSettingsTitle: this.t('Open run settings'),
                 openScenarioProperties: this.t('Open test properties'),
                 changeScenarioGroup: this.t('Change group'),
                 configureVanessaDebugClients: this.t('Configure debug clients'),
@@ -7430,8 +7430,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 noProcesses: this.t('No processes.'),
                 deleteMainScenarioTitle: this.t('Delete main scenario'),
                 deleteProcessTitle: this.t('Delete process'),
-                openYamlParametersManagerTitle: this.t('Open Build Scenario Parameters Manager'),
-                yamlParameters: this.t('Build Scenario Parameters')
+                openYamlParametersManagerTitle: this.t('Open Compilation and run parameters'),
+                yamlParameters: this.t('SPPR compilation parameters')
             };
 
             htmlContent = htmlContent.replace('${localeHtmlLang}', localeHtmlLang);
@@ -8629,7 +8629,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 progress.report({ increment: 10, message: this.t('Preparing parameters...') });
                 const localSettingsPath = vscode.Uri.joinPath(absoluteBuildPathUri, 'yaml_parameters.json');
                 
-                // Генерируем yaml_parameters.json из сохранённых параметров через Build Scenario Parameters Manager
+                // Генерируем yaml_parameters.json из сохранённых параметров через Compilation and run parameters
                 await yamlParametersManager.createYamlParametersFile(localSettingsPath.fsPath, effectiveBuildParameters);
                 this.outputInfo(
                     outputChannel,
@@ -8686,7 +8686,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         const sourceUri = vscode.Uri.file(setting.filePath);
                         const temporaryUri = vscode.Uri.joinPath(legacyTemporaryRootUri, `process-${index}-${path.basename(setting.filePath)}`);
                         if (vscode.workspace.textDocuments.some(document => document.isDirty && this.areUrisEqual(document.uri, sourceUri))) {
-                            throw new Error(this.t('Save process test settings before compiling: {0}', setting.filePath));
+                            throw new Error(this.t('Save process run settings before compiling: {0}', setting.filePath));
                         }
                         await vscode.workspace.fs.rename(sourceUri, temporaryUri, { overwrite: false });
                         temporarilyMovedLegacyFiles.push({ scenarioName: setting.processName, sourceUri, temporaryUri });

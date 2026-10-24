@@ -1812,7 +1812,7 @@
         addDetailsField(labels.categoryLabel, categoryLabel(item), false, true);
         renderProcessSteps(item);
         if (item.featureId) {
-            if (item.jsonPath) { addDetailsField(featureLabels.openJson || 'Launch JSON', item.jsonPath, false, true); }
+            if (item.jsonPath) { addDetailsField(featureLabels.openJson || 'Vanessa parameters (JSON)', item.jsonPath, false, true); }
             const actions = document.createElement('div');
             actions.className = 'feature-details-actions';
             for (const action of ['generateJson', 'selectJson', 'openJson', 'moveFeature']) {

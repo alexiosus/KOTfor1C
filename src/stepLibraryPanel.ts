@@ -835,7 +835,7 @@ export class StepLibraryPanel implements vscode.Disposable {
             actionFailed: t('The action could not be completed.'),
             builtIn: t('Vanessa built-in steps'),
             user: t('User steps'),
-            export: t('Export scenarios'),
+            export: t('Exported scenarios'),
             nested: t('Nested scenarios'),
             main: t('Main scenarios'),
             process: t('Processes'),

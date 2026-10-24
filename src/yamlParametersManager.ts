@@ -949,6 +949,30 @@ export class YamlParametersManager {
         return createActiveYamlParametersProfileSnapshot({ ...state, activeProfileId: selectedId });
     }
 
+    /** Create a distinct setup profile; existing profiles are never rewritten by the wizard. */
+    public async createSetupProfile(name: string, buildParameters: readonly YamlParameter[]): Promise<string> {
+        const transaction = this.parametersSaveQueue.then(async () => {
+            const original = await this._context.secrets.get(YAML_PARAMETERS_KEY);
+            const state = await this.loadParametersState();
+            const source = this.getActiveProfileFromState(state);
+            const id = this.createGeneratedProfileId(state.profiles);
+            const profile: YamlParametersProfile = { ...source, id, name: name.trim() || 'KOT',
+                buildParameters: this.normalizeBuildParametersForUi(this.normalizeParameters([...buildParameters])),
+                additionalVanessaParameters: source.additionalVanessaParameters.map(item => ({ ...item })),
+                globalVanessaVariables: source.globalVanessaVariables.map(item => ({ ...item })) };
+            if (await this._context.secrets.get(YAML_PARAMETERS_KEY) !== original) { throw new Error(vscode.l10n.t('The active build profile changed. Retry the conversion.')); }
+            const next = { activeProfileId: id, profiles: this.normalizeProfiles([...state.profiles, profile]) };
+            await this._context.secrets.store(YAML_PARAMETERS_KEY, JSON.stringify({ version: 5, ...next }));
+            const change = getActiveYamlParametersProfileChange(state, next);
+            if (change) { this.activeProfileChangeEmitter.fire(change); }
+            return { id, parameters: profile.buildParameters };
+        });
+        this.parametersSaveQueue = transaction.then(() => undefined, () => undefined);
+        const result = await transaction;
+        await this.syncYamlSourceDirectorySettingFromBuildParameters(result.parameters);
+        return result.id;
+    }
+
     public async getProfilesSummary(): Promise<YamlParametersProfilesSummary> {
         const state = await this.loadParametersState();
         const activeProfile = this.getActiveProfileFromState(state);
@@ -1159,7 +1183,7 @@ export class YamlParametersManager {
 
         const panel = vscode.window.createWebviewPanel(
             'yamlParametersPanel',
-            'Build Scenario Parameters Manager',
+            'Compilation and run parameters',
             vscode.ViewColumn.One,
             {
                 enableScripts: true,
@@ -1211,9 +1235,9 @@ export class YamlParametersManager {
                         const descriptions = {
                             unconfigured: 'ModelDBSettings is empty. Select a catalog to resolve infobases and user profiles.',
                             inaccessible: 'ModelDBSettings cannot be read on this computer.',
-                            missing: 'ModelDBSettings file does not exist. Create it with the etalon bases manager or select an existing catalog.',
-                            invalid: 'ModelDBSettings is not a valid etalon bases YAML catalog.',
-                            empty: 'ModelDBSettings contains no infobases. Add an infobase in the etalon bases manager.',
+                            missing: 'ModelDBSettings file does not exist. Create it with the reference infobases manager or select an existing catalog.',
+                            invalid: 'ModelDBSettings is not a valid reference infobases YAML catalog.',
+                            empty: 'ModelDBSettings contains no infobases. Add an infobase in the reference infobases manager.',
                             selectedBaseMissing: 'ModelDBid was not found in ModelDBSettings.',
                             noProfiles: 'ModelDBSettings: {0} infobases, {1} user profiles. Some selected infobases have no user profiles.',
                             ready: 'ModelDBSettings: {0} infobases, {1} user profiles.'
@@ -1290,7 +1314,7 @@ export class YamlParametersManager {
 
                             // Предлагаем выбрать место для сохранения
                             const uri = await vscode.window.showSaveDialog({
-                                title: this.t('Save Build Scenario Parameters File'),
+                                title: this.t('Save SPPR compilation parameters File'),
                                 filters: {
                                     [this.t('JSON Files')]: ['json']
                                 },
@@ -1346,7 +1370,7 @@ export class YamlParametersManager {
                     case 'loadBuildFromJson':
                         try {
                             const uris = await vscode.window.showOpenDialog({
-                                title: this.t('Load Build Scenario Parameters from JSON'),
+                                title: this.t('Load SPPR compilation parameters from JSON'),
                                 filters: {
                                     [this.t('JSON Files')]: ['json']
                                 },
@@ -1889,7 +1913,7 @@ export class YamlParametersManager {
 
             // Создаем объект переводов
             const loc = {
-                title: this.t('Build Scenario Parameters Manager'),
+                title: this.t('Compilation and run parameters'),
                 buildSectionTitle: this.t('SPPR build parameters'),
                 resizePanels: this.t('Resize panels'),
                 buildSectionDescription: this.t('Parameters saved into yaml_parameters.json for СборкаТекстовСценариев processing.'),
@@ -2030,7 +2054,7 @@ export class YamlParametersManager {
             return htmlContent;
         } catch (error) {
             console.error('[YamlParametersManager] Error loading HTML template:', error);
-            return `<body><h1>Error loading Build Scenario Parameters Manager</h1><p>${error}</p></body>`;
+            return `<body><h1>Error loading Compilation and run parameters</h1><p>${error}</p></body>`;
         }
     }
 

@@ -1,0 +1,14 @@
+version: 1
+systemFunctions:
+    - name: Работа с учебной заявкой
+      uid: ae0ce176-2aa2-5353-a513-b4d958817e13
+projects:
+    - Учебная мастерская
+responsibles:
+    - Учебный тестировщик
+reportLevel1:
+    - Обучение
+reportLevel2:
+    - Заявки
+categories:
+    - Учебный пример

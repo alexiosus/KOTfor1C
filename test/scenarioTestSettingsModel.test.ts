@@ -3,7 +3,7 @@ import test from 'node:test';
 import { buildScenarioTestSettings } from '../src/scenarioTestSettingsModel';
 import { findLinkedScenarioSettings } from '../src/scenarioPropertiesBindings';
 
-test('creating test settings links the authored scenario UID and chosen infobase/users with compiler fields', () => {
+test('creating run settings links the authored scenario UID and chosen infobase/users with compiler fields', () => {
     const source = 'ТипФайла: Сценарий\nДанныеСценария:\n    UID: source-uid\n    Имя: Sales\n    Код: SALES\nТекстСценария: |\n    And I do something\n';
     const text = buildScenarioTestSettings(source, { uid: 'test-uid', databaseName: 'Model "Drive"', databaseId: 'drive', userProfile: 'Administrator' });
     assert.match(text, /ТипФайла: "НастройкаТеста"/);

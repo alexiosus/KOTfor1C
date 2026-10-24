@@ -71,7 +71,7 @@ export class ScenarioHeaderInlayHintsProvider implements vscode.InlayHintsProvid
                     document,
                     fieldLines.fileTypeLine,
                     isProcess ? 'kotTestToolkit.openProcessTestSettingsFromEditor' : 'kotTestToolkit.openMainScenarioTestSettingsFromEditor',
-                    vscode.l10n.t('Open test settings'),
+                    vscode.l10n.t('Open run settings'),
                     ' ⚙ '
                 ));
             }
@@ -166,10 +166,10 @@ export class ScenarioHeaderInlayHintsProvider implements vscode.InlayHintsProvid
             hints.push(createActionHint(document, testFieldLines.scenarioNameLine, changeLinkCommand, changeLinkTooltip));
         }
         if (testFieldLines.etalonBaseNameLine !== null) {
-            hints.push(createActionHint(document, testFieldLines.etalonBaseNameLine, 'kotTestToolkit.changeTestSettingsEtalonBaseFromEditor', vscode.l10n.t('Change etalon base')));
+            hints.push(createActionHint(document, testFieldLines.etalonBaseNameLine, 'kotTestToolkit.changeTestSettingsEtalonBaseFromEditor', vscode.l10n.t('Change reference infobase')));
         }
         if (testFieldLines.modelDbIdLine !== null) {
-            hints.push(createActionHint(document, testFieldLines.modelDbIdLine, 'kotTestToolkit.changeTestSettingsEtalonBaseFromEditor', vscode.l10n.t('Change etalon base')));
+            hints.push(createActionHint(document, testFieldLines.modelDbIdLine, 'kotTestToolkit.changeTestSettingsEtalonBaseFromEditor', vscode.l10n.t('Change reference infobase')));
         }
         if (testFieldLines.userProfileLine !== null) {
             hints.push(createActionHint(document, testFieldLines.userProfileLine, 'kotTestToolkit.changeTestSettingsUserProfileFromEditor', vscode.l10n.t('Change test user profile')));

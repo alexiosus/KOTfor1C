@@ -2,7 +2,7 @@ import { ScenarioYamlDocument } from './scenarioYamlDocument';
 
 export interface CompilerBuildSource { readonly uri: string; readonly text: string }
 
-/** Includes root settings and reachable definitions, rather than unrelated nested test settings. */
+/** Includes root settings and reachable definitions, rather than unrelated nested run settings. */
 export function selectCompilerBuildSources(sources: readonly CompilerBuildSource[], enabledRootUris: readonly string[]): CompilerBuildSource[] {
     const unique = new Map(sources.map(source => [source.uri, source]));
     const parsed = new Map([...unique.values()].map(source => [source.uri, ScenarioYamlDocument.parse(source.text)]));

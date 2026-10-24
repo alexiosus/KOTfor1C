@@ -72,7 +72,7 @@ test('process header fields resolve process identity without scenario-only actio
     });
 });
 
-test('process test settings expose linked process identity and existing base and user fields', () => {
+test('process run settings expose linked process identity and existing base and user fields', () => {
     const source = [
         'ТипФайла: "НастройкаПроцесса"',
         'ДанныеТеста:',
@@ -98,7 +98,7 @@ test('process test settings expose linked process identity and existing base and
     });
 });
 
-test('YAML header fields keep exact lines in CRLF test settings', () => {
+test('YAML header fields keep exact lines in CRLF run settings', () => {
     const source = [
         'ДанныеТеста:',
         '  Код: TEST-1',

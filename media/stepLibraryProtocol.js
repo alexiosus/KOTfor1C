@@ -12,7 +12,7 @@
     const DEFAULT_SOURCE_LABELS = Object.freeze({
         builtIn: 'Vanessa',
         user: 'User steps',
-        export: 'Export scenarios',
+        export: 'Exported scenarios',
         nested: 'Nested scenarios',
         main: 'Main scenarios',
         process: 'Processes',

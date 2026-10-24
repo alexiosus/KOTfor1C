@@ -1,3 +1,4 @@
+import * as projectSetupGate from '../src/projectSetupGate';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -28,7 +29,7 @@ function loadService(): typeof CatalogService {
     const execute = vm.runInThisContext(`(function(require, module, exports) {\n${compiled}\n})`, {
         filename: 'standaloneFeatureService.js'
     }) as (requireModule: (specifier: string) => unknown, module: unknown, exports: unknown) => void;
-    execute(specifier => specifier === './standaloneFeatureModel' ? standaloneFeatureModel
+    execute(specifier => specifier === './projectSetupGate' ? projectSetupGate : specifier === './standaloneFeatureModel' ? standaloneFeatureModel
         : specifier === './projectLibraryStore' ? projectLibraryStore
         : specifier === './projectLibraryMetadata' ? projectLibraryMetadata : specifier === './projectGroupDisplayOrder' ? projectGroupDisplayOrder : require(specifier), module, module.exports);
     return module.exports.StandaloneFeatureService;

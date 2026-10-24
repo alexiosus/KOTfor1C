@@ -1646,6 +1646,6 @@ export async function handleOpenYamlParametersManager(context: vscode.ExtensionC
         await manager.openYamlParametersPanel();
     } catch (error) {
         console.error('[Cmd:openYamlParametersManager] Error:', error);
-        vscode.window.showErrorMessage(t('Error opening Build Scenario Parameters Manager: {0}', String(error)));
+        vscode.window.showErrorMessage(t('Error opening Compilation and run parameters: {0}', String(error)));
     }
 }

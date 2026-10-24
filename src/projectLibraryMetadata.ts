@@ -1,3 +1,4 @@
+import { isProjectSetupPending } from './projectSetupGate';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { ProjectLibraryStore, projectEntityKey, type ProjectEntityIdentity, type ProjectEntityMetadata, type ProjectEntityMetadataPatch, type ProjectGroup, type ProjectLibrarySnapshot } from './projectLibraryStore';
@@ -134,7 +135,7 @@ export async function loadProjectScenarioMetadata(infos: readonly TestInfo[], wo
         const store = createProjectLibraryStore(root, workspaceRoots, scanRoots, beforeWrite,
             items.map(info => resolveProjectEntityIdentity(info.yamlFileUri.fsPath, root, info.kind === 'process' ? 'process' : 'scenario', info.uid)), sourceTexts);
         let snapshot = !importLegacy ? await store.readMetadata() : sourceTexts ? await store.readKnownSources() : await store.read();
-        if (importLegacy && !snapshot.legacyImports.includes('scenario')) {
+        if (importLegacy && !isProjectSetupPending(root) && !snapshot.legacyImports.includes('scenario')) {
             beforeWrite?.(root);
             const groups = new Map<string, ProjectGroup>();
             const entities: Array<{ identity: ProjectEntityIdentity; metadata: ProjectEntityMetadata }> = [];
@@ -156,7 +157,7 @@ export async function loadProjectScenarioMetadata(infos: readonly TestInfo[], wo
                         ...(info.scenarioCategory !== undefined ? { category: info.scenarioCategory } : {}) } });
             }
             snapshot = await store.importLegacy({ groups: [...groups.values()], entities }, 'scenario');
-        } else if (importLegacy && snapshot.knownScenarioKeys !== undefined) {
+        } else if (importLegacy && !isProjectSetupPending(root) && snapshot.knownScenarioKeys !== undefined) {
             const seeds: Parameters<ProjectLibraryStore['seedLegacyEntities']>[0][number][] = [];
             const known = new Set(snapshot.knownScenarioKeys);
             for (const info of items) {
@@ -173,7 +174,7 @@ export async function loadProjectScenarioMetadata(infos: readonly TestInfo[], wo
         }
         snapshots.set(root, snapshot);
     }
-    return infos.map(info => { const { root, identity } = location(info, workspaceRoots, scanRoots); return project(info, snapshots.get(root)!, identity); });
+    return infos.map(info => { const { root, identity } = location(info, workspaceRoots, scanRoots); return isProjectSetupPending(root) && !snapshots.get(root)?.metadata[projectEntityKey(identity)] ? info : project(info, snapshots.get(root)!, identity); });
 }
 
 export async function renameProjectLibraryGroup(groupId: string, expectedName: string, name: string, roots: readonly string[], beforeWrite: (root: string) => void, scanRoots: readonly string[] = roots): Promise<void> {

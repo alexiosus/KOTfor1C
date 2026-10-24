@@ -1,3 +1,4 @@
+import { KotWorkspacePanel } from './kotWorkspacePanel';
 import { registerVanessaFormToolCommands } from './vanessaControlFormToolCommands';
 import { registerVanessaAuthoringCommands } from './vanessaControlAuthoringCommands';
 import { registerVanessaDiagnosticsCommands } from './vanessaControlDiagnosticsCommands';
@@ -872,6 +873,9 @@ export async function activate(context: vscode.ExtensionContext) {
     registerGherkinTableFormatting(context);
     console.log('Extension "kotTestToolkit" activated.');
     setExtensionUri(context.extensionUri);
+    KotWorkspacePanel.initialize(context);
+    const kotWorkspacePanel = new KotWorkspacePanel(context);
+    context.subscriptions.push(kotWorkspacePanel);
     notifyIfUpdated(context).catch(e => console.error('[Extension] notifyIfUpdated error:', e));
     initializeScenarioScanRoot(context);
     // Resolve the saved profile before any discovery consumer can start scanning.
@@ -957,6 +961,7 @@ export async function activate(context: vscode.ExtensionContext) {
         trackRun: (file, log) => phaseSwitcherProvider.trackVanessaFeatureRun(file, log),
         canAutoStart: () => phaseSwitcherProvider.canAutoStartVanessaManagedControl()
     });
+    kotWorkspacePanel.bindExecution(vanessaControl.ensureConnected);
     const vanessaControlSession = vanessaControl.session;
     const publishVanessaConnection = () => phaseSwitcherProvider.updateVanessaControlState({
         connected: !!vanessaControlSession.snapshot.capabilities && vanessaControlSession.snapshot.status !== 'unknown',
@@ -1105,9 +1110,12 @@ export async function activate(context: vscode.ExtensionContext) {
         ),
         vscode.commands.registerCommand(
             'kotTestToolkit.openSettings',
-            () => vscode.commands.executeCommand('workbench.action.openSettings', 'kotTestToolkit')
+            () => kotWorkspacePanel.open('settings')
         )
     );
+
+    context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.startSetup', () => kotWorkspacePanel.open('setup')));
+    void kotWorkspacePanel.offerWelcome().catch(error => console.error('[KOT setup]', error));
 
     // --- Регистрация Провайдеров Языковых Функций (Автодополнение и Подсказки) ---
     const projectDefinitionIndex = createProjectDefinitionIndexService(context);

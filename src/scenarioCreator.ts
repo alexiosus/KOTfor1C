@@ -530,9 +530,9 @@ async function promptForEtalonBaseName(
     initialValue: string
 ): Promise<string | undefined> {
     return promptForRequiredString(
-        t('Enter etalon base name'),
+        t('Enter reference infobase name'),
         initialValue,
-        t('Etalon base name cannot be empty')
+        t('Reference infobase name cannot be empty')
     );
 }
 
@@ -541,9 +541,9 @@ async function promptForEtalonBaseId(
     initialValue: string
 ): Promise<string | undefined> {
     return promptForRequiredString(
-        t('Enter etalon base identifier'),
+        t('Enter reference infobase identifier'),
         initialValue,
-        t('Etalon base identifier cannot be empty')
+        t('Reference infobase identifier cannot be empty')
     );
 }
 
@@ -590,7 +590,7 @@ async function pickEtalonBase(
             base
         })),
         {
-            title: t('Etalon base'),
+            title: t('Reference infobase'),
             placeHolder,
             ignoreFocusOut: true
         }
@@ -649,7 +649,7 @@ export async function promptForSelectedEtalonBaseValues(
             const selectedBase = await pickEtalonBase(
                 t,
                 etalonBasesState.bases,
-                t('Select etalon base for test.yaml')
+                t('Select reference infobase for test.yaml')
             );
             if (!selectedBase) {
                 return undefined;
@@ -659,7 +659,7 @@ export async function promptForSelectedEtalonBaseValues(
                 t,
                 selectedBase,
                 defaultUserProfile,
-                t('Select user profile for etalon base "{0}"', selectedBase.name || selectedBase.databaseId)
+                t('Select user profile for reference infobase "{0}"', selectedBase.name || selectedBase.databaseId)
             );
             if (selectedProfileName === undefined) {
                 return undefined;
@@ -675,7 +675,7 @@ export async function promptForSelectedEtalonBaseValues(
         const fallbackAction = await vscode.window.showQuickPick(
             [
                 {
-                    label: t('Manage etalon bases'),
+                    label: t('Manage reference infobases'),
                     detail: t('Create or import bases.yaml entries first.'),
                     action: 'manage' as const
                 },
@@ -686,8 +686,8 @@ export async function promptForSelectedEtalonBaseValues(
                 }
             ],
             {
-                title: t('Etalon bases'),
-                placeHolder: t('ModelDBSettings file "{0}" does not contain etalon bases yet.', etalonBasesState.configuredPath || getDefaultModelDbSettingsValue()),
+                title: t('Reference infobases'),
+                placeHolder: t('ModelDBSettings file "{0}" does not contain reference infobases yet.', etalonBasesState.configuredPath || getDefaultModelDbSettingsValue()),
                 ignoreFocusOut: true
             }
         );
@@ -739,7 +739,7 @@ async function promptForEtalonBaseChoice(
             const selectedBase = await pickEtalonBase(
                 t,
                 etalonBasesState.bases,
-                t('Select etalon base for test.yaml'),
+                t('Select reference infobase for test.yaml'),
                 preferredBaseKey
             );
             if (!selectedBase) {
@@ -755,7 +755,7 @@ async function promptForEtalonBaseChoice(
         const fallbackAction = await vscode.window.showQuickPick(
             [
                 {
-                    label: t('Manage etalon bases'),
+                    label: t('Manage reference infobases'),
                     detail: t('Create or import bases.yaml entries first.'),
                     action: 'manage' as const
                 },
@@ -766,8 +766,8 @@ async function promptForEtalonBaseChoice(
                 }
             ],
             {
-                title: t('Etalon bases'),
-                placeHolder: t('ModelDBSettings file "{0}" does not contain etalon bases yet.', etalonBasesState.configuredPath || getDefaultModelDbSettingsValue()),
+                title: t('Reference infobases'),
+                placeHolder: t('ModelDBSettings file "{0}" does not contain reference infobases yet.', etalonBasesState.configuredPath || getDefaultModelDbSettingsValue()),
                 ignoreFocusOut: true
             }
         );
@@ -920,8 +920,8 @@ async function selectScenarioForTestSettingsLink(
         .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }));
 
     const pickedItem = await vscode.window.showQuickPick(items, {
-        title: t('Select scenario for test settings'),
-        placeHolder: t('Choose the scenario linked to this test settings file'),
+        title: t('Select scenario for run settings'),
+        placeHolder: t('Choose the scenario linked to this run settings file'),
         ignoreFocusOut: true,
         matchOnDescription: true,
         matchOnDetail: true
@@ -964,7 +964,7 @@ async function getActiveTestSettingsEditor(
     }
 
     if (!isTestSettingsYamlFile(editor.document) && !(allowProcessSettings && isProcessTestSettingsYamlFile(editor.document))) {
-        throw new Error(t('Open a test settings YAML file to use this command.'));
+        throw new Error(t('Open a run settings YAML file to use this command.'));
     }
 
     return {
@@ -1007,13 +1007,13 @@ export async function handleChangeTestSettingsEtalonBaseFromEditor(context: vsco
         resolvedEditor = await getActiveTestSettingsEditor(context, target, true);
     } catch (error) {
         const t = await getTranslator(context.extensionUri);
-        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open test settings editor context.'));
+        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open run settings editor context.'));
         return;
     }
 
     const { t, editor, fieldLines } = resolvedEditor;
     if (fieldLines.etalonBaseNameLine === null || fieldLines.modelDbIdLine === null) {
-        vscode.window.showWarningMessage(t('Etalon base fields were not found in ДанныеТеста.'));
+        vscode.window.showWarningMessage(t('Reference infobase fields were not found in ДанныеТеста.'));
         return;
     }
 
@@ -1043,7 +1043,7 @@ export async function handleChangeTestSettingsEtalonBaseFromEditor(context: vsco
         }
     }, resolvedEditor);
     if (!updated) {
-        vscode.window.showWarningMessage(t('Failed to update etalon base fields.'));
+        vscode.window.showWarningMessage(t('Failed to update reference infobase fields.'));
     }
 }
 
@@ -1053,7 +1053,7 @@ export async function handleChangeTestSettingsScenarioFromEditor(context: vscode
         resolvedEditor = await getActiveTestSettingsEditor(context);
     } catch (error) {
         const t = await getTranslator(context.extensionUri);
-        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open test settings editor context.'));
+        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open run settings editor context.'));
         return;
     }
 
@@ -1088,7 +1088,7 @@ export async function handleChangeTestSettingsScenarioFromEditor(context: vscode
 
     const pickedAction = await vscode.window.showQuickPick(quickPickItems, {
         title: t('Change linked scenario'),
-        placeHolder: t('Choose how to update the scenario reference in this test settings file'),
+        placeHolder: t('Choose how to update the scenario reference in this run settings file'),
         ignoreFocusOut: true
     });
     if (!pickedAction) {
@@ -1136,11 +1136,11 @@ export async function handleChangeTestSettingsScenarioFromEditor(context: vscode
         }
     });
     if (!updated) {
-        vscode.window.showWarningMessage(t('Failed to update linked scenario fields in test settings.'));
+        vscode.window.showWarningMessage(t('Failed to update linked scenario fields in run settings.'));
         return;
     }
 
-    vscode.window.showInformationMessage(t('Test settings linked to scenario "{0}".', selectedScenario.name));
+    vscode.window.showInformationMessage(t('Run settings linked to scenario "{0}".', selectedScenario.name));
 }
 
 export async function handleChangeTestSettingsUserProfileFromEditor(context: vscode.ExtensionContext, target?: vscode.Uri): Promise<void> {
@@ -1149,7 +1149,7 @@ export async function handleChangeTestSettingsUserProfileFromEditor(context: vsc
         resolvedEditor = await getActiveTestSettingsEditor(context, target, true);
     } catch (error) {
         const t = await getTranslator(context.extensionUri);
-        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open test settings editor context.'));
+        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open run settings editor context.'));
         return;
     }
 
@@ -1195,7 +1195,7 @@ export async function handleChangeTestSettingsUserProfileFromEditor(context: vsc
             t,
             selectedBase,
             defaultProfile,
-            t('Select user profile for test settings')
+            t('Select user profile for run settings')
         )
         : await promptForEtalonBaseUserProfile(t, defaultProfile);
     if (nextProfileName === undefined) {
@@ -1231,7 +1231,7 @@ export async function handleSyncTestSettingsFromScenario(context: vscode.Extensi
         resolvedEditor = await getActiveTestSettingsEditor(context);
     } catch (error) {
         const t = await getTranslator(context.extensionUri);
-        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open test settings editor context.'));
+        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open run settings editor context.'));
         return;
     }
 
@@ -1243,7 +1243,7 @@ export async function handleSyncTestSettingsFromScenario(context: vscode.Extensi
     try {
         scenarioText = Buffer.from(await vscode.workspace.fs.readFile(scenarioUri)).toString('utf-8');
     } catch (error) {
-        vscode.window.showErrorMessage(t('Failed to read sibling scenario YAML near test settings: {0}', String(error)));
+        vscode.window.showErrorMessage(t('Failed to read sibling scenario YAML near run settings: {0}', String(error)));
         return;
     }
 
@@ -1292,18 +1292,18 @@ export async function handleSyncTestSettingsFromScenario(context: vscode.Extensi
     }
 
     if (Object.keys(pendingUpdates).length === 0) {
-        vscode.window.showInformationMessage(t('Test settings are already synchronized with the sibling scenario YAML.'));
+        vscode.window.showInformationMessage(t('Run settings are already synchronized with the sibling scenario YAML.'));
         return;
     }
 
     const updated = await applyTestSettingsFieldUpdates(editor, fieldLines, pendingUpdates);
 
     if (!updated) {
-        vscode.window.showWarningMessage(t('Failed to synchronize test settings from the sibling scenario YAML.'));
+        vscode.window.showWarningMessage(t('Failed to synchronize run settings from the sibling scenario YAML.'));
         return;
     }
 
-    vscode.window.showInformationMessage(t('Test settings synchronized from the sibling scenario YAML.'));
+    vscode.window.showInformationMessage(t('Run settings synchronized from the sibling scenario YAML.'));
 }
 
 async function chooseSystemFunctionProject(t: (message: string, ...args: string[]) => string): Promise<vscode.Uri | undefined> {
@@ -1494,12 +1494,12 @@ async function promptForEtalonBaseDtPath(
             },
             {
                 label: t('Clear DT path'),
-                detail: t('Keep the etalon base without a default DT file.'),
+                detail: t('Keep the reference infobase without a default DT file.'),
                 action: 'clear' as const
             }
         ],
         {
-            title: t('Etalon base DT file'),
+            title: t('Reference infobase DT file'),
             placeHolder: t('Choose how to set ПутьКФайлуВыгрузки'),
             ignoreFocusOut: true
         }
@@ -1602,7 +1602,7 @@ async function manageEtalonBaseProfiles(
                 })),
                 {
                     label: t('Add user profile'),
-                    detail: t('Create a new profile for this etalon base.'),
+                    detail: t('Create a new profile for this reference infobase.'),
                     entryKind: 'add' as const
                 }
             ];
@@ -1647,7 +1647,7 @@ async function manageEtalonBaseProfiles(
                 },
                 {
                     label: t('Delete profile'),
-                    detail: t('Remove this profile from the etalon base.'),
+                    detail: t('Remove this profile from the reference infobase.'),
                     action: 'delete' as const
                 }
             ],
@@ -1738,18 +1738,18 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext, 
                     databaseId: base.databaseId
                 })),
                 {
-                    label: t('Add etalon base'),
-                    detail: t('Create a new etalon base entry in bases.yaml.'),
+                    label: t('Add reference infobase'),
+                    detail: t('Create a new reference infobase entry in bases.yaml.'),
                     entryKind: 'add' as const
                 },
                 {
                     label: t('Import bases.yaml from file'),
-                    detail: t('Load etalon bases from an external YAML file into the current ModelDBSettings path.'),
+                    detail: t('Load reference infobases from an external YAML file into the current ModelDBSettings path.'),
                     entryKind: 'import' as const
                 },
                 {
                     label: t('Export bases.yaml to file'),
-                    detail: t('Save the current etalon bases to an external YAML file.'),
+                    detail: t('Save the current reference infobases to an external YAML file.'),
                     entryKind: 'export' as const
                 },
                 {
@@ -1761,7 +1761,7 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext, 
         const pickedItem = await vscode.window.showQuickPick<EtalonBaseQuickPickItem>(
             items,
             {
-                title: t('Etalon bases'),
+                title: t('Reference infobases'),
                 placeHolder: t('ModelDBSettings: {0}', etalonBasesState.configuredPath || getDefaultModelDbSettingsValue()),
                 ignoreFocusOut: true
             }
@@ -1812,7 +1812,7 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext, 
             };
             await saveEtalonBasesToFile(etalonBasesState.resolvedPath, etalonBasesState.bases);
             vscode.window.showInformationMessage(
-                t('Imported {0} etalon bases into {1}.', String(importedBases.length), etalonBasesState.configuredPath || getDefaultModelDbSettingsValue())
+                t('Imported {0} reference infobases into {1}.', String(importedBases.length), etalonBasesState.configuredPath || getDefaultModelDbSettingsValue())
             );
             continue;
         }
@@ -1831,7 +1831,7 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext, 
             }
 
             await saveEtalonBasesToFile(selectedTarget.fsPath, etalonBasesState.bases);
-            vscode.window.showInformationMessage(t('Exported etalon bases to {0}.', selectedTarget.fsPath));
+            vscode.window.showInformationMessage(t('Exported reference infobases to {0}.', selectedTarget.fsPath));
             continue;
         }
 
@@ -1856,17 +1856,17 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext, 
                 },
                 {
                     label: t('Manage user profiles'),
-                    detail: t('Add, edit or delete user profiles for this etalon base.'),
+                    detail: t('Add, edit or delete user profiles for this reference infobase.'),
                     action: 'profiles' as const
                 },
                 {
                     label: t('Delete'),
-                    detail: t('Remove this etalon base from bases.yaml.'),
+                    detail: t('Remove this reference infobase from bases.yaml.'),
                     action: 'delete' as const
                 }
             ],
             {
-                title: t('Etalon base "{0}"', currentBase.name || currentBase.databaseId),
+                title: t('Reference infobase "{0}"', currentBase.name || currentBase.databaseId),
                 ignoreFocusOut: true
             }
         );
@@ -2564,7 +2564,7 @@ export async function handleCreateMainScenario(
         scenarioHeaderValues.userProfile
     );
     if (!selectedEtalonBaseValues) {
-        console.log("[Cmd:createMainScenario] Cancelled at etalon base prompt.");
+        console.log("[Cmd:createMainScenario] Cancelled at reference infobase prompt.");
         return;
     }
     scenarioHeaderValues = {
@@ -2610,7 +2610,7 @@ export async function handleCreateMainScenario(
                 UserProfile_Placeholder: escapeYamlDoubleQuotedString(scenarioHeaderValues.userProfile)
             });
             await vscode.workspace.fs.writeFile(testTargetFileUri, Buffer.from(testFinalContent, 'utf-8'));
-            console.log(`[Cmd:createMainScenario] Created test file: ${testTargetFileUri.fsPath} with etalon base: ${selectedEtalonBaseValues.baseId}`);
+            console.log(`[Cmd:createMainScenario] Created test file: ${testTargetFileUri.fsPath} with reference infobase: ${selectedEtalonBaseValues.baseId}`);
 
 
             // --- Создаем основной файл сценария ---

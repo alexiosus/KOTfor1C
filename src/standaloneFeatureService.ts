@@ -1,3 +1,4 @@
+import { isProjectSetupPending } from './projectSetupGate';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -695,7 +696,7 @@ export class StandaloneFeatureService implements vscode.Disposable {
             existingRoots.push(root);
             const store = this.store(root);
             let snapshot = await (metadataOnly ? store.readMetadata() : store.read());
-            if (!metadataOnly && !snapshot.legacyImports.includes('standalone')) {
+            if (!metadataOnly && !isProjectSetupPending(root) && !snapshot.legacyImports.includes('standalone')) {
                 const legacyIds = new Set(this.discovered.filter(feature => this.projectRoot(fileURLToPath(feature.id)) === root)
                     .map(feature => feature.id));
                 for (const id of Object.keys(this.legacyOrganization.placements)) {

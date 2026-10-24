@@ -1,5 +1,5 @@
 // Файл: media/yamlParameters.js
-// Скрипт для управления интерфейсом Build Scenario Parameters Manager
+// Скрипт для управления интерфейсом Compilation and run parameters
 
 (function() {
     const vscode = acquireVsCodeApi();
@@ -149,8 +149,8 @@
     let lastSaveMessage = typeof persistedState.lastSaveMessage === 'string' ? persistedState.lastSaveMessage : '';
 
     function log(message) {
-        console.log('[Build Scenario Parameters]', message);
-        vscode.postMessage({ command: 'log', text: '[Build Scenario Parameters] ' + message });
+        console.log('[SPPR compilation parameters]', message);
+        vscode.postMessage({ command: 'log', text: '[SPPR compilation parameters] ' + message });
     }
 
     function escapeHtml(text) {
@@ -1579,7 +1579,7 @@
         }, 100);
     });
 
-    log('Build Scenario Parameters Manager script initialized.');
+    log('Compilation and run parameters script initialized.');
     ensureProfilesState();
     loadProfileIntoTables(activeProfileId);
     renderProfilePicker();

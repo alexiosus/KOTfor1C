@@ -100,7 +100,7 @@ async function etalonState(context: vscode.ExtensionContext, uri: vscode.Uri) {
     const original = await readPropertyCatalogFile(file);
     if (original?.trim()) {
         const yaml = parseDocument(original);
-        if (yaml.errors.length || yaml.warnings.length) { throw new Error('Invalid or ambiguous etalon base YAML. Fix it before changing catalog entries.'); }
+        if (yaml.errors.length || yaml.warnings.length) { throw new Error('Invalid or ambiguous reference infobase YAML. Fix it before changing catalog entries.'); }
     }
     const bases = parseEtalonBasesYaml(original ?? '');
     return { workspaceRoot, file, original, bases };
@@ -116,19 +116,19 @@ function uniqueProfiles(base: EtalonBaseDefinition): string[] {
     return names(base.userProfiles.filter(profile => base.userProfiles.filter(other => normalized(other.profileName) === normalized(profile.profileName)).length === 1).map(profile => profile.profileName));
 }
 function selectedBase(bases: readonly EtalonBaseDefinition[], settings?: ScenarioPropertiesSource): EtalonBaseDefinition {
-    if (!settings) { throw new Error('Select a test settings file first.'); }
+    if (!settings) { throw new Error('Select a run settings file first.'); }
     const document = ScenarioYamlDocument.parse(settings.text); document.requireValidForEdit();
     const base = uniqueBase(bases, scalar(document, ['ДанныеТеста', 'ИдентификаторБазы']));
     if (normalized(base.name) !== normalized(scalar(document, ['ДанныеТеста', 'ЭталоннаяБазаИмя']))) { throw new Error('The selected settings base changed or its name and identifier do not match.'); }
     return base;
 }
 function requireSettings(request: ScenarioPropertiesCatalogActionRequest): ScenarioPropertiesSource {
-    if (!request.selectedSettings || findLinkedScenarioSettings(request.source, [request.selectedSettings]).length !== 1) { throw new Error('Select a linked test settings file first.'); }
+    if (!request.selectedSettings || findLinkedScenarioSettings(request.source, [request.selectedSettings]).length !== 1) { throw new Error('Select a linked run settings file first.'); }
     return request.selectedSettings;
 }
 function assertBasesSaved(file: string): void {
     if ((vscode.workspace.textDocuments ?? []).some(document => document.isDirty && document.uri.scheme === 'file' && path.resolve(document.uri.fsPath) === path.resolve(file))) {
-        throw new Error('Save the modified etalon bases document before changing its catalog.');
+        throw new Error('Save the modified reference infobases document before changing its catalog.');
     }
 }
 
@@ -268,7 +268,7 @@ export async function runScenarioPropertiesCatalogAction(context: vscode.Extensi
         const base = await promptForEtalonBaseValues(t, state.workspaceRoot);
         if (!base) { return undefined; }
         validatePropertyCatalogName(base.name); validatePropertyCatalogName(base.databaseId);
-        if (state.bases.some(value => normalized(value.name) === normalized(base.name) || normalized(value.databaseId) === normalized(base.databaseId))) { throw new Error('An etalon base with this name or identifier already exists.'); }
+        if (state.bases.some(value => normalized(value.name) === normalized(base.name) || normalized(value.databaseId) === normalized(base.databaseId))) { throw new Error('An reference infobase with this name or identifier already exists.'); }
         if (!uniqueProfiles(base).length) {
             const profile = await promptForEtalonBaseProfileValues(t);
             if (!profile) { return undefined; }
@@ -280,8 +280,8 @@ export async function runScenarioPropertiesCatalogAction(context: vscode.Extensi
         if (settings) { base = selectedBase(state.bases, settings); }
         else {
             const choices = state.bases.flatMap(base => { try { uniqueBase(state.bases, base.databaseId); return [{ label: base.name, description: base.databaseId, id: base.databaseId }]; } catch { return []; } });
-            if (!choices.length) { throw new Error('Create an etalon base before creating its user profile.'); }
-            const selected = await vscode.window.showQuickPick(choices, { title: t('Etalon base'), ignoreFocusOut: true });
+            if (!choices.length) { throw new Error('Create an reference infobase before creating its user profile.'); }
+            const selected = await vscode.window.showQuickPick(choices, { title: t('Reference infobase'), ignoreFocusOut: true });
             if (!selected) { return undefined; }
             request.assertCurrent?.(); base = uniqueBase(state.bases, selected.id);
         }

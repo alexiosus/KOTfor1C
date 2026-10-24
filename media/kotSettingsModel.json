@@ -1,0 +1,900 @@
+{
+  "sections": [
+    {
+      "id": "editor",
+      "title": "Редактор и подсказки",
+      "description": "Подсказки, сохранение и вид панелей",
+      "titleEn": "Editor and suggestions"
+    },
+    {
+      "id": "project",
+      "title": "Новые тесты и команда",
+      "description": "Язык, формат, справочники и авторские серии",
+      "titleEn": "New tests and team"
+    },
+    {
+      "id": "build",
+      "title": "Компиляция СППР",
+      "description": "Компилятор и результаты компиляции",
+      "titleEn": "SPPR compilation"
+    },
+    {
+      "id": "vanessa",
+      "title": "Vanessa и выполнение",
+      "description": "Подключение, запуск и результаты",
+      "titleEn": "Vanessa and execution"
+    },
+    {
+      "id": "infobases",
+      "title": "Информационные базы и платформы",
+      "description": "Версии 1С, шаблоны и ключи запуска",
+      "titleEn": "Infobases and platforms"
+    },
+    {
+      "id": "forms",
+      "title": "Исследователь формы",
+      "description": "Данные формы и обновление элементов",
+      "titleEn": "Form Explorer"
+    },
+    {
+      "id": "ai",
+      "title": "AI-помощь",
+      "description": "Подключение сервиса и параметры ответов",
+      "titleEn": "AI assistance"
+    },
+    {
+      "id": "advanced",
+      "title": "Дополнительные инструменты",
+      "description": "Служебные папки и внешние программы",
+      "titleEn": "Additional tools"
+    }
+  ],
+  "settings": [
+    {
+      "key": "kotTestToolkit.localization.languageOverride",
+      "label": "Язык интерфейса KOT",
+      "section": "editor",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Выбор языка интерфейса расширения (может потребоваться перезагрузка панели).",
+      "optionLabels": [
+        "Как в VS Code",
+        "English",
+        "Русский"
+      ],
+      "labelEn": "KOT interface language"
+    },
+    {
+      "key": "kotTestToolkit.editor.autoCollapseOnOpen",
+      "label": "Сворачивать служебные блоки при открытии",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Автоматически сворачивать секции 'ВложенныеСценарии' и 'ПараметрыСценария' при открытии файла.",
+      "labelEn": "Collapse service blocks on open"
+    },
+    {
+      "key": "kotTestToolkit.editor.autoOpenTestProperties",
+      "label": "Открывать свойства выбранного теста",
+      "section": "editor",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Автоматически показывать свойства теста в правой боковой панели при открытии YAML сценария, процесса, настроек запуска или соседних метаданных KOT.",
+      "labelEn": "Open properties for the selected test"
+    },
+    {
+      "key": "kotTestToolkit.editor.useFeatureLanguageModeForScenarioYaml",
+      "label": "Редактировать текст YAML как Gherkin",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Включить Gherkin-подсветку внутри блока `ТекстСценария`, сохраняя сам файл сценария в обычном режиме YAML.",
+      "labelEn": "Edit YAML step text as Gherkin"
+    },
+    {
+      "key": "kotTestToolkit.editor.autoReplaceTabsWithSpacesOnSave",
+      "label": "Заменять табуляцию пробелами при сохранении",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Автоматически заменять табуляции на 4 пробела при сохранении YAML файлов.",
+      "labelEn": "Replace tabs with spaces on save"
+    },
+    {
+      "key": "kotTestToolkit.editor.autoAlignNestedScenarioParametersOnSave",
+      "label": "Выравнивать аргументы вложенных сценариев",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Автоматически выравнивать параметры вызовов вложенных сценариев по знаку '=' при сохранении.",
+      "labelEn": "Align nested scenario arguments"
+    },
+    {
+      "key": "kotTestToolkit.editor.autoAlignGherkinTablesOnSave",
+      "label": "Выравнивать таблицы Gherkin",
+      "section": "editor",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Автоматически выравнивать колонки таблиц Gherkin при сохранении YAML-сценариев и feature-файлов.",
+      "labelEn": "Align Gherkin tables"
+    },
+    {
+      "key": "kotTestToolkit.editor.autoFillNestedScenariosOnSave",
+      "label": "Обновлять вложенные сценарии по тексту",
+      "section": "editor",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Автоматически заполнять секцию 'ВложенныеСценарии' недостающими сценариями при сохранении YAML файлов.",
+      "labelEn": "Update nested scenarios from text"
+    },
+    {
+      "key": "kotTestToolkit.editor.autoFillScenarioParametersOnSave",
+      "label": "Обновлять параметры по тексту",
+      "section": "editor",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Автоматически заполнять секцию 'ПараметрыСценария' недостающими параметрами при сохранении YAML файлов.",
+      "labelEn": "Update parameters from text"
+    },
+    {
+      "key": "kotTestToolkit.editor.showRefillMessages",
+      "label": "Сообщать об обновлении блоков",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Показывать уведомления при автоматическом перезаполнении секций при сохранении.",
+      "labelEn": "Notify when blocks are updated"
+    },
+    {
+      "key": "kotTestToolkit.editor.showActionButtons",
+      "label": "Общее поведение кнопок редактора",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Задаёт показ кнопок, пока для YAML или feature не выбрано отдельное значение. Оставлен для существующих настроек; обычно достаточно двух переключателей выше.",
+      "compatibility": true,
+      "labelEn": "Shared editor button preference"
+    },
+    {
+      "key": "kotTestToolkit.editor.showYamlActionButtons",
+      "label": "Показывать кнопки в YAML",
+      "section": "editor",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Можно использовать общую настройку кнопок или отдельно выбрать показ для этого формата.",
+      "inheritsFrom": "kotTestToolkit.editor.showActionButtons",
+      "labelEn": "Show buttons in YAML"
+    },
+    {
+      "key": "kotTestToolkit.editor.showFeatureActionButtons",
+      "label": "Показывать кнопки в feature",
+      "section": "editor",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Можно использовать общую настройку кнопок или отдельно выбрать показ для этого формата.",
+      "inheritsFrom": "kotTestToolkit.editor.showActionButtons",
+      "labelEn": "Show buttons in feature"
+    },
+    {
+      "key": "kotTestToolkit.catalogs.projects",
+      "label": "Проекты",
+      "section": "project",
+      "advanced": false,
+      "preferredScope": "folder",
+      "editor": "manager",
+      "hint": "Проекты.",
+      "labelEn": "Projects"
+    },
+    {
+      "key": "kotTestToolkit.catalogs.responsibles",
+      "label": "Ответственные за сценарии",
+      "section": "project",
+      "advanced": false,
+      "preferredScope": "folder",
+      "editor": "manager",
+      "hint": "Ответственные.",
+      "labelEn": "Scenario owners"
+    },
+    {
+      "key": "kotTestToolkit.catalogs.reportLevel1",
+      "label": "Группы отчёта первого уровня",
+      "section": "project",
+      "advanced": true,
+      "preferredScope": "folder",
+      "editor": "manager",
+      "hint": "Уровни отчёта 1.",
+      "labelEn": "First report level"
+    },
+    {
+      "key": "kotTestToolkit.catalogs.reportLevel2",
+      "label": "Группы отчёта второго уровня",
+      "section": "project",
+      "advanced": true,
+      "preferredScope": "folder",
+      "editor": "manager",
+      "hint": "Уровни отчёта 2.",
+      "labelEn": "Second report level"
+    },
+    {
+      "key": "kotTestToolkit.catalogs.categories",
+      "label": "Категории сценариев",
+      "section": "project",
+      "advanced": true,
+      "preferredScope": "folder",
+      "editor": "manager",
+      "hint": "Категории.",
+      "labelEn": "Scenario categories"
+    },
+    {
+      "key": "kotTestToolkit.catalogs.systemFunctions",
+      "label": "Функции системы",
+      "section": "project",
+      "advanced": false,
+      "preferredScope": "folder",
+      "editor": "manager",
+      "hint": "Функции системы: имя → UID.",
+      "labelEn": "System functions"
+    },
+    {
+      "key": "kotTestToolkit.numbering.series",
+      "label": "Авторские серии кодов",
+      "section": "project",
+      "advanced": false,
+      "preferredScope": "folder",
+      "editor": "manager",
+      "hint": "Серии тестировщиков: шестизначный префикс → автор, например `000012` → `Имя тестировщика`.",
+      "labelEn": "Author code series"
+    },
+    {
+      "key": "kotTestToolkit.numbering.prefix",
+      "label": "Моя авторская серия",
+      "section": "project",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Ваша серия для новых кодов. Это не ответственный за сценарий и не пользователь 1С.",
+      "labelEn": "My author code series"
+    },
+    {
+      "key": "kotTestToolkit.editor.newScenarioLanguage",
+      "label": "Язык новых сценариев",
+      "section": "project",
+      "advanced": false,
+      "preferredScope": "folder",
+      "hint": "Язык шагов новых сценариев. Язык записи действий выбирается отдельно в параметрах Vanessa.",
+      "optionLabels": [
+        "Английский (en)",
+        "Русский (ru)"
+      ],
+      "labelEn": "New scenario language"
+    },
+    {
+      "key": "kotTestToolkit.newScenarioDefaults.project",
+      "label": "Проект для новых сценариев",
+      "section": "project",
+      "advanced": true,
+      "preferredScope": "folder",
+      "hint": "Значение по умолчанию для `ДанныеСценария.Проект` в новых YAML-сценариях.",
+      "labelEn": "Project for new scenarios"
+    },
+    {
+      "key": "kotTestToolkit.newScenarioDefaults.systemFunctions",
+      "label": "Начальный список функций системы",
+      "section": "project",
+      "advanced": true,
+      "preferredScope": "folder",
+      "hint": "Используется для первого заполнения отсутствующего каталога функций системы. В настроенном проекте редактируйте «Функции системы» через менеджер: здесь менять список не требуется.",
+      "compatibility": true,
+      "labelEn": "Initial system functions"
+    },
+    {
+      "key": "kotTestToolkit.newScenarioDefaults.allowCrossFunctionUsage",
+      "label": "Разрешать использование в других функциях",
+      "section": "project",
+      "advanced": true,
+      "preferredScope": "folder",
+      "hint": "Значение по умолчанию для `ДанныеСценария.РазрешеноИспользоватьВДругихФункциях` в новых YAML-сценариях.",
+      "labelEn": "Allow use in other functions"
+    },
+    {
+      "key": "kotTestToolkit.newScenarioDefaults.userProfile",
+      "label": "Профиль пользователя новых сценариев",
+      "section": "project",
+      "advanced": true,
+      "preferredScope": "folder",
+      "hint": "Профиль пользователя по умолчанию для новых YAML-сценариев и файлов настройки запуска.",
+      "labelEn": "User profile for new scenarios"
+    },
+    {
+      "key": "kotTestToolkit.newScenarioDefaults.reportLevel1",
+      "label": "Группа отчёта первого уровня по умолчанию",
+      "section": "project",
+      "advanced": true,
+      "preferredScope": "folder",
+      "hint": "Значение по умолчанию для `ДанныеСценария.УровеньОтчета1` в новых YAML-сценариях.",
+      "labelEn": "Default first report level"
+    },
+    {
+      "key": "kotTestToolkit.newScenarioDefaults.mainReportLevel2",
+      "label": "Группа отчёта главного сценария по умолчанию",
+      "section": "project",
+      "advanced": true,
+      "preferredScope": "folder",
+      "hint": "Значение по умолчанию для `ДанныеСценария.УровеньОтчета2` в новых главных YAML-сценариях.",
+      "labelEn": "Default report level for main scenarios"
+    },
+    {
+      "key": "kotTestToolkit.newScenarioDefaults.nestedReportLevel2",
+      "label": "Группа отчёта вложенного сценария по умолчанию",
+      "section": "project",
+      "advanced": true,
+      "preferredScope": "folder",
+      "hint": "Значение по умолчанию для `ДанныеСценария.УровеньОтчета2` в новых вложенных YAML-сценариях.",
+      "labelEn": "Default report level for nested scenarios"
+    },
+    {
+      "key": "kotTestToolkit.editor.newFeatureTemplatePath",
+      "label": "Свой шаблон нового feature-файла",
+      "section": "project",
+      "advanced": true,
+      "preferredScope": "folder",
+      "hint": "Пользовательский шаблон новой feature: абсолютный путь или путь относительно проекта; поддерживает ${workspaceFolder}.",
+      "pathKind": "feature",
+      "pathPolicy": "relative",
+      "labelEn": "Custom feature template"
+    },
+    {
+      "key": "kotTestToolkit.newScenarioDefaults.format",
+      "label": "Формат новых сценариев СППР",
+      "section": "project",
+      "advanced": false,
+      "preferredScope": "folder",
+      "hint": "Влияет только на новые сценарии СППР. Формат существующих файлов не меняется.",
+      "optionLabels": [
+        "Сценарий в одном YAML (scen.yaml)",
+        "Текст feature + метаданные YAML (scen.feature + meta.yaml)"
+      ],
+      "labelEn": "New SPPR source format"
+    },
+    {
+      "key": "kotTestToolkit.editor.autoMigrateScenarioYamlOnSave",
+      "label": "Преобразовывать старый YAML при сохранении",
+      "section": "project",
+      "advanced": true,
+      "preferredScope": "folder",
+      "hint": "При сохранении преобразовывать старый scen.yaml в scen.feature + meta.yaml.",
+      "labelEn": "Convert old YAML on save"
+    },
+    {
+      "key": "kotTestToolkit.steps.vanessaVersion",
+      "label": "Версия Vanessa для подсказок шагов",
+      "section": "editor",
+      "advanced": false,
+      "preferredScope": "folder",
+      "hint": "Оставьте пустым: KOT определит версию по docs/Changelog.md рядом с выбранной vanessa-automation.epf. Без подходящего changelog используется последний доступный каталог шагов; точную версию можно задать вручную. Это настройка подсказок, она не обновляет Vanessa.",
+      "placeholder": "Автоматически",
+      "labelEn": "Vanessa version for step suggestions"
+    },
+    {
+      "key": "kotTestToolkit.steps.catalogIndexUrl",
+      "label": "Источник каталога шагов",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "HTTPS URL индекса неизменяемых версионных каталогов шагов Vanessa.",
+      "labelEn": "Step catalog source"
+    },
+    {
+      "key": "kotTestToolkit.diagnostics.ignoredCodes",
+      "label": "Отключённые проверки",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Выберите проверки, сообщения которых нужно скрыть. По умолчанию все проверки включены.",
+      "editor": "choices",
+      "itemEnum": [
+        "kotTestToolkit.unclosedIf",
+        "kotTestToolkit.unclosedDo",
+        "kotTestToolkit.unclosedTry",
+        "kotTestToolkit.unclosedQuote",
+        "kotTestToolkit.compilerSyntax",
+        "kotTestToolkit.compilerFormat",
+        "kotTestToolkit.unknownStep",
+        "kotTestToolkit.unknownScenario",
+        "kotTestToolkit.ambiguousDefinition",
+        "kotTestToolkit.extraScenarioParameter",
+        "kotTestToolkit.missingScenarioParameter",
+        "kotTestToolkit.missingQuotes",
+        "kotTestToolkit.incompleteBlock",
+        "kotTestToolkit.defaultDescription",
+        "kotTestToolkit.duplicateScenarioCode"
+      ],
+      "choiceLabels": [
+        "Незакрытый блок If",
+        "Незакрытый блок Do",
+        "Незакрытый блок Try",
+        "Незакрытые кавычки",
+        "Синтаксис компилятора СППР",
+        "Формат исходника СППР",
+        "Неизвестный шаг",
+        "Неизвестный сценарий",
+        "Неоднозначный вызов",
+        "Лишний параметр сценария",
+        "Недостающий параметр сценария",
+        "Отсутствующие кавычки",
+        "Неполный блок",
+        "Незаполненное описание",
+        "Повторяющийся код сценария"
+      ],
+      "labelEn": "Disabled checks"
+    },
+    {
+      "key": "kotTestToolkit.editor.checkRelatedParentScenarios",
+      "label": "Проверять вызывающие сценарии",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Автоматически проверять связанные родительские сценарии при открытии/сохранении файла сценария.",
+      "labelEn": "Check calling scenarios"
+    },
+    {
+      "key": "kotTestToolkit.phaseSwitcher.highlightAffectedMainScenarios",
+      "label": "Подсвечивать связи в Менеджере тестов",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Подсвечивать в Менеджере тестов затронутые главные сценарии относительно активного файла сценария.",
+      "labelEn": "Highlight relationships in Test Manager"
+    },
+    {
+      "key": "kotTestToolkit.phaseSwitcher.filterRelatedScenarios",
+      "label": "Показывать только связанные тесты",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Показывать только тесты, связанные с текущим открытым файлом сценария.",
+      "labelEn": "Filter related tests"
+    },
+    {
+      "key": "kotTestToolkit.stepLibrary.highlightScenarioRelationships",
+      "label": "Подсвечивать связи в Библиотеке",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Подсвечивать элементы библиотеки, связанные с текущим открытым файлом сценария.",
+      "labelEn": "Highlight relationships in Library"
+    },
+    {
+      "key": "kotTestToolkit.stepLibrary.filterRelatedScenarios",
+      "label": "Показывать только связанные элементы Библиотеки",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Показывать только элементы библиотеки, связанные с текущим открытым файлом сценария.",
+      "labelEn": "Filter related Library entries"
+    },
+    {
+      "key": "kotTestToolkit.phaseSwitcher.autoAddNewScenariosToFavorites",
+      "label": "Добавлять новые сценарии в избранное",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Автоматически добавлять новые созданные сценарии в избранное.",
+      "labelEn": "Favorite new scenarios"
+    },
+    {
+      "key": "kotTestToolkit.paths.buildScenarioBddEpf",
+      "label": "Обработка компилятора СППР",
+      "section": "build",
+      "advanced": false,
+      "preferredScope": "folder",
+      "hint": "В Конфигураторе СППР сохраните обработку СборкаТекстовСценариев в отдельный файл .epf. Положите её в build проекта и выберите здесь. Компилятор нужен для сценариев и процессов СППР.",
+      "pathKind": "epf",
+      "pathPolicy": "project",
+      "labelEn": "SPPR compiler processing"
+    },
+    {
+      "key": "kotTestToolkit.assembleScript.showDriveFeatures",
+      "label": "Показывать специальные команды 1cDrive",
+      "section": "build",
+      "advanced": true,
+      "preferredScope": "folder",
+      "hint": "Показывать в UI сборки функции 1C:Drive (Build FL и переключатель режима учета).",
+      "labelEn": "Show 1cDrive commands"
+    },
+    {
+      "key": "kotTestToolkit.assembleScript.showOutputPanel",
+      "label": "Показывать журнал при компиляции",
+      "section": "build",
+      "advanced": true,
+      "preferredScope": "folder",
+      "hint": "Автоматически показывать панель Output при запуске сборки тестов.",
+      "labelEn": "Show output when compiling"
+    },
+    {
+      "key": "kotTestToolkit.output.advancedLogging",
+      "label": "Подробный технический журнал",
+      "section": "build",
+      "advanced": true,
+      "preferredScope": "folder",
+      "hint": "Показывать дополнительные технические детали в Output (для диагностики).",
+      "labelEn": "Detailed diagnostic output"
+    },
+    {
+      "key": "kotTestToolkit.paths.openBuildScenarioParametersManager",
+      "label": "Открыть параметры компиляции и запуска",
+      "section": "build",
+      "advanced": false,
+      "preferredScope": "folder",
+      "editor": "action",
+      "hint": "Профили параметров компилятора, Vanessa и глобальных переменных открываются в существующем менеджере.",
+      "labelEn": "Compilation and run parameters"
+    },
+    {
+      "key": "kotTestToolkit.runVanessa.vanessaEpfPath",
+      "label": "Обработка Vanessa Automation",
+      "section": "vanessa",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Путь к vanessa-automation.epf для встроенного запуска Vanessa из Менеджера тестов (абсолютный или относительный от корня workspace).",
+      "pathKind": "epf",
+      "pathPolicy": "relative",
+      "labelEn": "Vanessa Automation processing"
+    },
+    {
+      "key": "kotTestToolkit.runVanessa.runtimeDirectory",
+      "label": "Папка результатов выполнения Vanessa",
+      "section": "vanessa",
+      "advanced": true,
+      "preferredScope": "folder",
+      "hint": "Папка для runtime-файлов Vanessa (лог/статус сценария).",
+      "pathKind": "directory",
+      "pathPolicy": "relative",
+      "labelEn": "Vanessa runtime folder"
+    },
+    {
+      "key": "kotTestToolkit.runVanessa.showOutputPanel",
+      "label": "Показывать журнал при запуске",
+      "section": "vanessa",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Автоматически показывать панель Output при запуске Vanessa Automation.",
+      "labelEn": "Show output when running"
+    },
+    {
+      "key": "kotTestToolkit.runVanessa.commandTemplate",
+      "label": "Собственная команда запуска Vanessa",
+      "section": "vanessa",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Опциональный шаблон команды для кнопки запуска в Менеджере тестов.",
+      "labelEn": "Custom Vanessa launch command"
+    },
+    {
+      "key": "kotTestToolkit.runVanessa.executionMode",
+      "label": "Способ выполнения тестов",
+      "section": "vanessa",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Обычно KOT управляет открытой Vanessa и оставляет её доступной после выполнения.",
+      "optionLabels": [
+        "Запускать отдельный процесс",
+        "Управлять открытой Vanessa (MCP)"
+      ],
+      "labelEn": "Test execution mode"
+    },
+    {
+      "key": "kotTestToolkit.runVanessa.liveLogRefreshSeconds",
+      "label": "Как часто обновлять журнал выполнения",
+      "section": "vanessa",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Интервал обновления live-лога выполняемого сценария в секундах.",
+      "labelEn": "Execution log refresh interval"
+    },
+    {
+      "key": "kotTestToolkit.runVanessa.autoDetectMinStartupUpdates",
+      "label": "Ожидание первых обновлений журнала",
+      "section": "vanessa",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Минимальное число свежих обновлений run-лога на старте, после которого фоновое автоопределение Vanessa начинает трекинг.",
+      "labelEn": "Initial log updates to wait for"
+    },
+    {
+      "key": "kotTestToolkit.runVanessa.autoDetectInactivityTimeoutSeconds",
+      "label": "Когда считать журнал неактивным",
+      "section": "vanessa",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Через сколько секунд без обновлений run-лога автоопределенный прогон Vanessa снимается как неактивный.",
+      "labelEn": "Log inactivity timeout"
+    },
+    {
+      "key": "kotTestToolkit.vanessaControl.autoAttach",
+      "label": "Подключаться к найденному сеансу Vanessa",
+      "section": "vanessa",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Предложить найденную локальную Vanessa вместо ручного ввода адреса.",
+      "labelEn": "Attach to a discovered Vanessa session"
+    },
+    {
+      "key": "kotTestToolkit.vanessaControl.autoStart",
+      "label": "Запускать Vanessa при открытии проекта",
+      "section": "vanessa",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Подготовить свой сеанс Vanessa при открытии проекта, если подходящий сеанс не найден.",
+      "labelEn": "Start Vanessa when opening a project"
+    },
+    {
+      "key": "kotTestToolkit.vanessaControl.formCompletions",
+      "label": "Предлагать элементы текущей формы",
+      "section": "vanessa",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Предлагать названия элементов текущей формы даже при закрытом Исследователе формы.",
+      "labelEn": "Suggest current form elements"
+    },
+    {
+      "key": "kotTestToolkit.vanessaControl.autoAddSavedClients",
+      "label": "Добавлять сохранённых клиентов в Vanessa",
+      "section": "vanessa",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Автоматически добавлять отсутствующие сохранённые профили в подключённую Vanessa.",
+      "labelEn": "Add saved clients to Vanessa"
+    },
+    {
+      "key": "kotTestToolkit.formExplorer.snapshotPath",
+      "label": "Файл снимка формы",
+      "section": "forms",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Путь к JSON snapshot-файлу Исследователя форм, который пишет bridge-сессия.",
+      "pathKind": "json",
+      "pathPolicy": "relative",
+      "labelEn": "Form snapshot file"
+    },
+    {
+      "key": "kotTestToolkit.formExplorer.configurationSourceDirectory",
+      "label": "Файловая выгрузка конфигурации",
+      "section": "forms",
+      "advanced": true,
+      "preferredScope": "folder",
+      "hint": "Путь к каталогу исходников конфигурации 1С, который используется для статического обогащения Form Explorer и привязки к исходникам.",
+      "pathKind": "directory",
+      "pathPolicy": "relative",
+      "labelEn": "Configuration source folder"
+    },
+    {
+      "key": "kotTestToolkit.formExplorer.generatedArtifactsDirectory",
+      "label": "Папка файлов исследования формы",
+      "section": "forms",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Каталог для генерируемых артефактов Form Explorer: snapshot-sidecar файлов, bridge-файлов и статического индекса.",
+      "pathKind": "directory",
+      "pathPolicy": "relative",
+      "labelEn": "Form exploration output folder"
+    },
+    {
+      "key": "kotTestToolkit.formExplorer.extensionBuildCommandTemplate",
+      "label": "Команда подготовки расширения исследования формы",
+      "section": "forms",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Необязательный шаблон shell-команды для сборки расширения Form Explorer в один клик.",
+      "labelEn": "Form extension build command"
+    },
+    {
+      "key": "kotTestToolkit.formExplorer.autoRefreshSeconds",
+      "label": "Как часто проверять изменения формы",
+      "section": "forms",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Интервал перечитывания snapshot-файла Исследователя форм в секундах, пока панель открыта.",
+      "labelEn": "Form refresh interval"
+    },
+    {
+      "key": "kotTestToolkit.formExplorer.showOutputPanel",
+      "label": "Показывать журнал Исследователя формы",
+      "section": "forms",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Автоматически показывать панель Output при подготовке и запуске Form Explorer bridge.",
+      "labelEn": "Show Form Explorer output"
+    },
+    {
+      "key": "kotTestToolkit.formExplorer.bridge.testClientPort",
+      "label": "Порт клиента тестирования для моста",
+      "section": "forms",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Порт TCP для TestClient-соединения между служебной (TestManager) и рабочей базами.",
+      "labelEn": "Snapshot bridge test client port"
+    },
+    {
+      "key": "kotTestToolkit.formExplorer.source",
+      "label": "Как получать данные формы",
+      "section": "forms",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Источник Form Explorer.",
+      "labelEn": "Form data source"
+    },
+    {
+      "key": "kotTestToolkit.platforms.catalog",
+      "label": "Установленные платформы 1С",
+      "section": "infobases",
+      "advanced": false,
+      "preferredScope": "user",
+      "editor": "manager",
+      "hint": "Каталог доступных платформ 1С, которые использует KOT при запуске.",
+      "labelEn": "Installed 1C platforms"
+    },
+    {
+      "key": "kotTestToolkit.platforms.promptForLaunches",
+      "label": "Спрашивать платформу перед запуском",
+      "section": "infobases",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Спрашивать, какую платформу 1С использовать при запуске баз, Form Explorer и встроенного запуска Vanessa.",
+      "labelEn": "Ask for a platform before launch"
+    },
+    {
+      "key": "kotTestToolkit.infobaseManager.templateDirectories",
+      "label": "Дополнительные каталоги шаблонов 1С",
+      "section": "infobases",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Дополнительные каталоги установленных шаблонов 1С (tmplts).",
+      "pathKind": "directories",
+      "pathPolicy": "relative",
+      "labelEn": "Additional 1C template folders"
+    },
+    {
+      "key": "kotTestToolkit.ai.apiFormat",
+      "label": "Тип AI-сервиса",
+      "section": "ai",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Формат HTTP API, через который расширение обращается к подключенной LLM.",
+      "optionLabels": [
+        "OpenAI Responses API (`/responses`). Обычно предпочтителен для облачных моделей OpenAI.",
+        "OpenAI-compatible Chat Completions API (`/chat/completions`). Лучший дефолт для локальных провайдеров и прокси."
+      ],
+      "labelEn": "AI service type"
+    },
+    {
+      "key": "kotTestToolkit.ai.baseUrl",
+      "label": "Адрес AI-сервиса",
+      "section": "ai",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Базовый URL подключенной LLM.",
+      "labelEn": "AI service URL"
+    },
+    {
+      "key": "kotTestToolkit.ai.apiVersion",
+      "label": "Версия API сервиса",
+      "section": "ai",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Версия API, добавляемая как `?api-version=...` к каждому URL запроса.",
+      "labelEn": "AI API version"
+    },
+    {
+      "key": "kotTestToolkit.ai.apiKey",
+      "label": "Ключ доступа к AI-сервису",
+      "section": "ai",
+      "advanced": false,
+      "preferredScope": "user",
+      "editor": "password",
+      "hint": "Ключ вашего AI-сервиса. Для него выберите область «Этот компьютер».",
+      "labelEn": "AI access key"
+    },
+    {
+      "key": "kotTestToolkit.ai.model",
+      "label": "Модель",
+      "section": "ai",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Имя модели для генерации описаний сценариев.",
+      "labelEn": "AI model"
+    },
+    {
+      "key": "kotTestToolkit.ai.outputLanguage",
+      "label": "Язык ответов AI",
+      "section": "ai",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Язык, на котором генерируется описание сценария.",
+      "optionLabels": [
+        "Русский (`ru`)",
+        "Английский (`en`)"
+      ],
+      "labelEn": "AI response language"
+    },
+    {
+      "key": "kotTestToolkit.ai.maxLineLength",
+      "label": "Длина строк в AI-описаниях",
+      "section": "ai",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Максимальная видимая длина строки для сгенерированного описания с учетом YAML-отступа.",
+      "labelEn": "AI description line length"
+    },
+    {
+      "key": "kotTestToolkit.ai.timeoutSeconds",
+      "label": "Время ожидания ответа AI",
+      "section": "ai",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Таймаут AI-запроса на генерацию описания в секундах.",
+      "labelEn": "AI response timeout"
+    },
+    {
+      "key": "kotTestToolkit.ai.systemPrompt",
+      "label": "Дополнительные указания для AI",
+      "section": "ai",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Необязательная замена встроенного system prompt, который расширение использует при генерации описания сценария в метаданных KOT.",
+      "labelEn": "Additional AI instructions"
+    },
+    {
+      "key": "kotTestToolkit.startupParams.parameters",
+      "label": "Общие ключи запуска 1С",
+      "section": "infobases",
+      "advanced": true,
+      "preferredScope": "user",
+      "editor": "manager",
+      "hint": "Параметры запуска 1С:Предприятие (разделенные пробелами, например, '/L ru /DisableStartupMessages /Debug').",
+      "labelEn": "Shared 1C launch arguments"
+    },
+    {
+      "key": "kotTestToolkit.runtime.directory",
+      "label": "Служебная папка KOT",
+      "section": "advanced",
+      "advanced": false,
+      "preferredScope": "folder",
+      "hint": "Путь к служебной runtime-папке KOT для yaml_parameters.json, логов и временных артефактов сборки.",
+      "pathKind": "directory",
+      "pathPolicy": "relative",
+      "labelEn": "KOT runtime folder"
+    },
+    {
+      "key": "kotTestToolkit.paths.fileWorkshopExe",
+      "label": "Программа 1С для работы с файлами",
+      "section": "advanced",
+      "advanced": false,
+      "preferredScope": "user",
+      "hint": "Полный путь к '1С:Предприятие — работа с файлами' (1cv8fv.exe).",
+      "pathKind": "exe",
+      "pathPolicy": "absolute",
+      "labelEn": "1C file workshop program"
+    },
+    {
+      "key": "kotTestToolkit.paths.firstLaunchFolder",
+      "label": "Инструменты начальной подготовки 1cDrive",
+      "section": "advanced",
+      "advanced": true,
+      "preferredScope": "user",
+      "hint": "Относительный путь к папке набора данных первого запуска (кнопка сборки архива первого запуска показывается только если папка существует).",
+      "pathKind": "directory",
+      "pathPolicy": "relative",
+      "labelEn": "1cDrive first-run tools"
+    },
+    {
+      "key": "kotTestToolkit.legacy.enableDisabledTestsDirectoryMoveOnBuild",
+      "label": "Исключать выключенные тесты переносом файлов",
+      "section": "build",
+      "advanced": true,
+      "preferredScope": "folder",
+      "hint": "Режим совместимости: перед компиляцией временно убирает настройки запуска выключенных тестов test/*.yaml, затем возвращает их. Обычно выключен; включайте только для старого рабочего процесса, которому нужен такой перенос.",
+      "compatibility": true,
+      "labelEn": "Exclude disabled tests by moving files"
+    }
+  ]
+}

@@ -112,7 +112,7 @@ async function harness(t: test.TestContext) {
                                     return info && (!selectedStepUids || selectedStepUids.includes(info.uid || ''));
                                 });
                             }
-                            if (options.title === 'Etalon base') { return cancelBase ? undefined : items.find(item => item.base?.databaseId === 'synthetic-db'); }
+                            if (options.title === 'Reference infobase') { return cancelBase ? undefined : items.find(item => item.base?.databaseId === 'synthetic-db'); }
                             if (options.title === 'Test user profile') { return cancelProfile ? undefined : items.find(item => item.profile?.profileName === 'Tester'); }
                             const action = actions.shift() ?? 'done';
                             return action.startsWith('step:') ? items.find(item => item.index === Number(action.slice(5))) : items.find(item => item.action === action);

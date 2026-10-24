@@ -1760,6 +1760,11 @@
       {
         "command": "kotTestToolkit.editorMenu.convertScenario",
         "title": "%command.convertScenario.title%"
+      },
+      {
+        "command": "kotTestToolkit.startSetup",
+        "title": "%command.startSetup.title%",
+        "category": "KOT"
       }
     ],
     "submenus": [
@@ -3095,6 +3100,7 @@
     "check": "npm run check:types && npm run lint && npm test",
     "check:test-codes": "node tools/checkTestNumbering.cjs",
     "verify:yaml-corpus": "esbuild ./src/scenarioYamlCorpusVerifier.ts --bundle --outfile=out/scenarioYamlCorpusVerifier.js --format=cjs --platform=node && node out/scenarioYamlCorpusVerifier.js",
+    "verify:demo": "esbuild ./tools/verify-demo-project.ts --bundle --outfile=out/verify-demo-project.js --format=cjs --platform=node && node out/verify-demo-project.js",
     "build:step-catalog-tool": "esbuild ./tools/step-catalog/cli.ts --bundle --outfile=out/tools/step-catalog.js --platform=node --format=cjs",
     "generate:step-catalog": "npm run build:step-catalog-tool && node out/tools/step-catalog.js"
   },

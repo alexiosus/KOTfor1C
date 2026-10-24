@@ -5,7 +5,8 @@
     "rootDir": "."
   },
   "include": [
-    "tools/step-catalog/**/*.ts"
+    "tools/step-catalog/**/*.ts",
+    "tools/verify-demo-project.ts"
   ],
   "exclude": [
     "node_modules",

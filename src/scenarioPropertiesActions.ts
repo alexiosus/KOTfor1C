@@ -287,7 +287,7 @@ export function createScenarioPropertiesActions(
         }
         if (action === 'openSource' || action === 'openSettings') {
             const target = action === 'openSource' ? source.uri : settings;
-            if (!target) { throw new Error(vscode.l10n.t('Select a test settings file first.')); }
+            if (!target) { throw new Error(vscode.l10n.t('Select a run settings file first.')); }
             await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.parse(target)), { preview: false });
             return;
         }
@@ -298,7 +298,7 @@ export function createScenarioPropertiesActions(
         const document = await vscode.workspace.openTextDocument(uri);
         const execute = async (command: string, target = uri): Promise<void> => { await vscode.commands.executeCommand(command, target); };
         if (['base', 'users'].includes(action)) {
-            if (!settings) { throw new Error(t('Select a test settings file first.')); }
+            if (!settings) { throw new Error(t('Select a run settings file first.')); }
             const selected = vscode.Uri.parse(settings);
             await execute(action === 'base' ? 'kotTestToolkit.changeTestSettingsEtalonBaseFromEditor' : 'kotTestToolkit.changeTestSettingsUserProfileFromEditor', selected);
             return;

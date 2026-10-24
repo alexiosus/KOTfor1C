@@ -2901,7 +2901,7 @@
             },
             {
                 icon: 'codicon-settings-gear',
-                label: window.__loc?.openTestSettingsTitle || 'Open test settings',
+                label: window.__loc?.openTestSettingsTitle || 'Open run settings',
                 onClick: () => postScenarioCommand('openMainScenarioTestSettings')
             },
             ...(testInfo.kind === 'process' ? [

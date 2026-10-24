@@ -1,0 +1,7 @@
+.vscode/kot-runtime/
+.local/
+*.log
+*.dt
+*.cf
+*.epf
+*.cfe

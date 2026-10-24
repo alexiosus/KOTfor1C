@@ -39,10 +39,10 @@ export async function openProcessTestSettingsFromEditor(context: vscode.Extensio
         const descriptor = parseScenarioDescriptor(document.getText());
         if (descriptor.kind !== 'process' || !descriptor.uid) { throw new Error(t('Choose a process YAML descriptor.')); }
         const files = await linkedSettings(document);
-        if (!files.length) { throw new Error(t('Test settings file was not found for process "{0}".', descriptor.name || '')); }
+        if (!files.length) { throw new Error(t('Run settings file was not found for process "{0}".', descriptor.name || '')); }
         const selected = files.length === 1 ? files[0] : (await vscode.window.showQuickPick(files.map(uri => ({
             label: path.basename(uri.fsPath), detail: uri.fsPath, uri
-        })), { title: t('Select process test settings'), ignoreFocusOut: true }))?.uri;
+        })), { title: t('Select process run settings'), ignoreFocusOut: true }))?.uri;
         if (selected) { await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(selected), { preview: false }); }
     } catch (error) { await vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error)); }
 }
@@ -136,7 +136,7 @@ export async function changeProcessTestSettingsFromEditor(context: vscode.Extens
         const source = document.getText(); const version = document.version;
         if (document.isDirty) { throw new Error(t('Save modified files before changing process identity.')); }
         const yaml = ScenarioYamlDocument.parse(source); yaml.requireValidForEdit();
-        if (String(yaml.findFieldAtPath(['ТипФайла'])?.value).trim().toLowerCase() !== 'настройкапроцесса') { throw new Error(t('Choose process test settings YAML.')); }
+        if (String(yaml.findFieldAtPath(['ТипФайла'])?.value).trim().toLowerCase() !== 'настройкапроцесса') { throw new Error(t('Choose process run settings YAML.')); }
         const catalog = await scanWorkspaceForScenarioCatalog(workspaceFor(document, t));
         const selected = await vscode.window.showQuickPick(catalog.all.filter(info => info.kind === 'process' && info.uid).map(info => ({
             label: info.name, description: info.processCode, detail: info.relativePath, info
