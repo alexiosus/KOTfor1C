@@ -1,11 +1,43 @@
 import { isProjectSetupPending } from './projectSetupGate';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { ProjectLibraryStore, projectEntityKey, type ProjectEntityIdentity, type ProjectEntityMetadata, type ProjectEntityMetadataPatch, type ProjectGroup, type ProjectLibrarySnapshot } from './projectLibraryStore';
+import { ProjectLibraryStore, projectEntityKey, type ProjectEntityIdentity, type ProjectEntityMetadata, type ProjectEntityMetadataPatch, type ProjectGroup, type ProjectLibrarySnapshot, type ProjectLibraryImport } from './projectLibraryStore';
 import type { TestInfo } from './types';
 import { projectGroupDisplayKey, type ProjectDisplayGroup } from './projectGroupDisplayOrder';
 
 const snapshots = new Map<string, ProjectLibrarySnapshot>();
+const legacyPreviews = new Map<string, { input: ProjectLibraryImport; base?: ProjectLibrarySnapshot; value?: ProjectLibrarySnapshot }>();
+
+/** Display legacy organization while setup postpones writes; persisted records always win. */
+function snapshotForDisplay(root: string, snapshot: ProjectLibrarySnapshot): ProjectLibrarySnapshot {
+    if (!isProjectSetupPending(root) || snapshot.legacyImports.includes('scenario')) { legacyPreviews.delete(root); return snapshot; }
+    const preview = legacyPreviews.get(root);
+    if (!preview) { return snapshot; }
+    if (preview.base === snapshot && preview.value) { return preview.value; }
+    const groups = [...snapshot.groups];
+    const groupIds = new Map<string, string>();
+    for (const imported of preview.input.groups) {
+        const existing = groups.find(group => group.id === imported.id)
+            ?? groups.find(group => group.name === imported.name && group.sections.some(section => section !== 'standalone'));
+        if (existing) {
+            groupIds.set(imported.id, existing.id);
+            groups[groups.indexOf(existing)] = { ...existing, sections: (['main', 'process', 'standalone'] as const)
+                .filter(section => existing.sections.includes(section) || imported.sections.includes(section)) };
+        } else { groups.push(imported); groupIds.set(imported.id, imported.id); }
+    }
+    const metadata = { ...snapshot.metadata }; const identities = { ...snapshot.identities };
+    const known = new Set(snapshot.knownScenarioKeys);
+    for (const entity of preview.input.entities) {
+        const key = projectEntityKey(entity.identity);
+        if (metadata[key] || known.has(key)) { continue; }
+        const groupId = entity.metadata.groupId ? groupIds.get(entity.metadata.groupId) ?? entity.metadata.groupId : entity.metadata.groupId;
+        metadata[key] = { ...entity.metadata, ...(groupId !== undefined ? { groupId } : {}) };
+        identities[key] = entity.identity;
+    }
+    preview.base = snapshot;
+    preview.value = { ...snapshot, groups, metadata, identities };
+    return preview.value;
+}
 
 export function cacheProjectLibrarySnapshot(root: string, snapshot: ProjectLibrarySnapshot): void {
     snapshots.set(path.resolve(root), snapshot);
@@ -13,7 +45,8 @@ export function cacheProjectLibrarySnapshot(root: string, snapshot: ProjectLibra
 
 /** Reuse metadata already discovered by project views; never start discovery for a dropdown. */
 export function getCachedProjectLibrarySnapshot(root: string): ProjectLibrarySnapshot | undefined {
-    return snapshots.get(path.resolve(root));
+    const owner = path.resolve(root); const snapshot = snapshots.get(owner);
+    return snapshot ? snapshotForDisplay(owner, snapshot) : undefined;
 }
 
 /** Metadata watchers reuse the source catalog; source watchers remain responsible for discovery. */
@@ -97,7 +130,7 @@ function project(info: TestInfo, snapshot: ProjectLibrarySnapshot, identity: Pro
 export function applyCachedProjectScenarioMetadata(info: TestInfo, workspaceRoots: readonly string[], scanRoots: readonly string[]): TestInfo {
     try {
         const { root, identity } = location(info, workspaceRoots, scanRoots);
-        const snapshot = snapshots.get(root);
+        const snapshot = getCachedProjectLibrarySnapshot(root);
         return snapshot ? project(info, snapshot, identity) : info;
     } catch { return info; }
 }
@@ -135,8 +168,7 @@ export async function loadProjectScenarioMetadata(infos: readonly TestInfo[], wo
         const store = createProjectLibraryStore(root, workspaceRoots, scanRoots, beforeWrite,
             items.map(info => resolveProjectEntityIdentity(info.yamlFileUri.fsPath, root, info.kind === 'process' ? 'process' : 'scenario', info.uid)), sourceTexts);
         let snapshot = !importLegacy ? await store.readMetadata() : sourceTexts ? await store.readKnownSources() : await store.read();
-        if (importLegacy && !isProjectSetupPending(root) && !snapshot.legacyImports.includes('scenario')) {
-            beforeWrite?.(root);
+        if (importLegacy && !snapshot.legacyImports.includes('scenario')) {
             const groups = new Map<string, ProjectGroup>();
             const entities: Array<{ identity: ProjectEntityIdentity; metadata: ProjectEntityMetadata }> = [];
             for (const info of items) {
@@ -156,7 +188,9 @@ export async function loadProjectScenarioMetadata(infos: readonly TestInfo[], wo
                         ...(info.scenarioDescription !== undefined ? { description: info.scenarioDescription } : {}),
                         ...(info.scenarioCategory !== undefined ? { category: info.scenarioCategory } : {}) } });
             }
-            snapshot = await store.importLegacy({ groups: [...groups.values()], entities }, 'scenario');
+            const input = { groups: [...groups.values()], entities };
+            if (isProjectSetupPending(root)) { legacyPreviews.set(root, { input }); }
+            else { beforeWrite?.(root); snapshot = await store.importLegacy(input, 'scenario'); }
         } else if (importLegacy && !isProjectSetupPending(root) && snapshot.knownScenarioKeys !== undefined) {
             const seeds: Parameters<ProjectLibraryStore['seedLegacyEntities']>[0][number][] = [];
             const known = new Set(snapshot.knownScenarioKeys);
@@ -174,7 +208,7 @@ export async function loadProjectScenarioMetadata(infos: readonly TestInfo[], wo
         }
         snapshots.set(root, snapshot);
     }
-    return infos.map(info => { const { root, identity } = location(info, workspaceRoots, scanRoots); return isProjectSetupPending(root) && !snapshots.get(root)?.metadata[projectEntityKey(identity)] ? info : project(info, snapshots.get(root)!, identity); });
+    return infos.map(info => { const { root, identity } = location(info, workspaceRoots, scanRoots); return project(info, getCachedProjectLibrarySnapshot(root)!, identity); });
 }
 
 export async function renameProjectLibraryGroup(groupId: string, expectedName: string, name: string, roots: readonly string[], beforeWrite: (root: string) => void, scanRoots: readonly string[] = roots): Promise<void> {
@@ -254,7 +288,7 @@ export async function loadProjectLibraryOwnedGroups(workspaceRoots: readonly str
     for (const root of scanRoots) { roots.add(resolveProjectLibraryRoot(root, workspaceRoots, scanRoots)); }
     const groups: ProjectDisplayGroup[] = [];
     for (const root of roots) {
-        const snapshot = await createProjectLibraryStore(root, workspaceRoots, scanRoots, beforeWrite).readMetadata();
+        const snapshot = snapshotForDisplay(root, await createProjectLibraryStore(root, workspaceRoots, scanRoots, beforeWrite).readMetadata());
         for (const group of snapshot.groups) {
             groups.push({ ...group, projectRoot: root, key: projectGroupDisplayKey(root, group.id) });
         }

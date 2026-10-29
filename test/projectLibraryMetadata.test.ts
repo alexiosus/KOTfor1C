@@ -5,7 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { ProjectLibraryStore } from '../src/projectLibraryStore';
-import { applyCachedProjectScenarioMetadata, loadProjectLibraryGroups, loadProjectScenarioMetadata, remapProjectScenarioMetadata, renameProjectLibraryGroup, resolveProjectLibraryRoot, resolveProjectEntityIdentity } from '../src/projectLibraryMetadata';
+import { applyCachedProjectScenarioMetadata, hasCachedProjectScenarioMetadata, loadProjectLibraryGroups, loadProjectScenarioMetadata, reloadProjectScenarioMetadata, remapProjectScenarioMetadata, renameProjectLibraryGroup, resolveProjectLibraryRoot, resolveProjectEntityIdentity } from '../src/projectLibraryMetadata';
+import { completeProjectSetup, deferProjectSetup } from '../src/projectSetupGate';
 import type { TestInfo } from '../src/types';
 
 function scenario(root: string, file = 'tests/main/scen.yaml'): TestInfo {
@@ -13,6 +14,53 @@ function scenario(root: string, file = 'tests/main/scen.yaml'): TestInfo {
     return { name: 'Sales', uid: '11111111-1111-4111-8111-111111111111', tabName: 'Sales tests', order: 7,
         scenarioDescription: 'Legacy description', yamlFileUri: { fsPath, scheme: 'file', toString: () => pathToFileURL(fsPath).toString() } as TestInfo['yamlFileUri'], relativePath: 'main' };
 }
+
+test('pending setup displays legacy groups and cached scenario metadata without migrating project files', async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-pending-'));
+    t.after(async () => { completeProjectSetup(root); await fs.rm(root, { recursive: true, force: true }); });
+    const info = scenario(root);
+    await writeSource(info);
+    const original = await fs.readFile(info.yamlFileUri.fsPath, 'utf8');
+    deferProjectSetup(root);
+    const [projected] = await loadProjectScenarioMetadata([info], [root], [path.join(root, 'tests')]);
+    assert.equal(projected.tabName, 'Sales tests');
+    assert.equal(applyCachedProjectScenarioMetadata(projected, [root], [root]).tabName, 'Sales tests');
+    assert.equal(hasCachedProjectScenarioMetadata(projected, [root], [root]), false, 'displayed legacy metadata is not a persisted sidecar');
+    const groups = await loadProjectLibraryGroups([root], [root]);
+    assert.deepEqual(groups.map(group => group.name), ['Sales tests']);
+    const [refreshed] = await reloadProjectScenarioMetadata([projected], [root], [root]);
+    assert.equal(refreshed.tabName, 'Sales tests');
+    assert.equal(refreshed.scenarioDescription, 'Legacy description');
+    assert.equal(refreshed.order, 7);
+    assert.equal((await loadProjectLibraryGroups([root], [root]))[0].id, groups[0].id);
+    assert.equal(await fs.readFile(info.yamlFileUri.fsPath, 'utf8'), original);
+    await assert.rejects(fs.stat(path.join(root, '.kot')), { code: 'ENOENT' });
+    await assert.rejects(fs.stat(info.yamlFileUri.fsPath + '.kot.yml'), { code: 'ENOENT' });
+    completeProjectSetup(root);
+    await loadProjectScenarioMetadata([info], [root], [path.join(root, 'tests')]);
+    assert.equal((await loadProjectLibraryGroups([root], [root]))[0].id, groups[0].id);
+    assert.equal((await new ProjectLibraryStore(root).read()).legacyImports.includes('scenario'), true);
+});
+
+test('pending setup preserves authoritative shared metadata and does not restore a deleted imported record', async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-pending-shared-'));
+    t.after(async () => { completeProjectSetup(root); await fs.rm(root, { recursive: true, force: true }); });
+    const info = scenario(root);
+    await writeSource(info);
+    await loadProjectScenarioMetadata([info], [root], [root]);
+    const identity = resolveProjectEntityIdentity(info.yamlFileUri.fsPath, root, 'scenario', info.uid);
+    const store = new ProjectLibraryStore(root);
+    await store.setMetadata(identity, { groupId: '', description: 'Shared description', order: 2 });
+    deferProjectSetup(root);
+    const [shared] = await loadProjectScenarioMetadata([info], [root], [root]);
+    assert.equal(shared.tabName, 'Ungrouped');
+    assert.equal(shared.scenarioDescription, 'Shared description');
+    assert.equal(shared.order, 2);
+    await store.deleteMetadata(identity);
+    const [deleted] = await loadProjectScenarioMetadata([info], [root], [root]);
+    assert.equal(deleted.tabName, 'Ungrouped');
+    assert.equal(deleted.scenarioDescription, '');
+});
 
 test('a scan with unchanged project metadata traverses its source directories only once', async t => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-startup-'));

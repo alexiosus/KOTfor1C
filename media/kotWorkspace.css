@@ -1,7 +1,7 @@
 :root { color-scheme: light dark; --bg:var(--vscode-editor-background,#1e1e1e); --panel:var(--vscode-sideBar-background,#252526); --text:var(--vscode-foreground,#ddd); --muted:var(--vscode-descriptionForeground,#aaa); --line:var(--vscode-input-border,#454545); --input:var(--vscode-input-background,#313131); --accent:var(--vscode-button-background,#0e639c); --focus:var(--vscode-focusBorder,#007fd4); }
 * { box-sizing:border-box; }
 [hidden] { display:none!important; }
-body { margin:0; height:100dvh; overflow:hidden; display:flex; flex-direction:column; background:var(--bg); color:var(--text); font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+body { margin:0; padding:0; height:100dvh; overflow:hidden; display:flex; flex-direction:column; background:var(--bg); color:var(--text); font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
 button,input,select,textarea { font:inherit; }
 button { color:inherit; cursor:pointer; border:1px solid var(--line); background:transparent; padding:7px 13px; border-radius:2px; }
 button:hover { background:#ffffff0c; }
@@ -31,7 +31,7 @@ nav { display:grid; gap:3px; }
 #section-navigation:empty { display:none; }
 #section-select { display:none; margin-top:12px; }
 .section-button { font-size:12px; padding:7px 9px; }
-#content { min-width:0; min-height:0; height:100%; overflow:auto; scrollbar-gutter:stable; width:100%; max-width:1050px; padding:34px 42px; }
+#content { min-width:0; min-height:0; height:100%; overflow:auto; scrollbar-gutter:stable; width:100%; padding:34px 42px; }
 .eyebrow { font-size:12px; color:var(--muted); margin-bottom:18px; }
 .lead { font-size:15px; color:#bbb; margin-bottom:25px; }
 .route-list { display:grid; border-block:1px solid var(--line); }
@@ -104,7 +104,7 @@ summary { cursor:pointer; color:var(--muted); padding:8px 0; }
 .technical { color:var(--muted); font-size:11px; margin-top:8px; }
 .save-bar { position:sticky; bottom:0; padding:14px 0; background:var(--bg); display:flex; gap:10px; align-items:center; border-top:1px solid var(--line); margin-top:20px; }
 .save-bar span { flex:1; font-size:12px; color:var(--muted); }
-#notice { position:fixed; right:20px; bottom:20px; max-width:440px; background:#303030; border:1px solid #5b5b5b; padding:14px 17px; box-shadow:0 4px 18px #0006; }
+#notice { flex-shrink:0; color:var(--text); background:var(--panel); border-top:1px solid var(--line); padding:9px 20px; max-height:25dvh; overflow:auto; }
 #notice:empty { display:none; }
 dialog { color:var(--text); background:var(--panel); border:1px solid var(--line); max-width:min(620px,calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow:auto; padding:25px; }
 dialog::backdrop { background:#0007; }
@@ -130,4 +130,3 @@ dialog h2 { margin-top:0; }
 button.primary { color:var(--vscode-button-foreground,white); }
 .route-list,.route,.setting,th,td { border-color:var(--line); }
 pre,.info-popup { color:var(--text); background:var(--panel); }
-#notice { color:var(--text); background:var(--panel); max-height:35dvh; overflow:auto; z-index:40; }

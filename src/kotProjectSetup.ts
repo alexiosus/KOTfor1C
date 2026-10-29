@@ -34,19 +34,34 @@ export function assertPrimarySetupFolder(identity: string, primary: string | und
 const excluded = new Set(['.git', 'node_modules', '.superpowers', '.vscode-test', 'out', 'dist', 'build', 'coverage', 'kot-runtime']);
 export async function inspectSetupProject(root: string, options: { cancelled?: () => boolean; maxFiles?: number } = {}): Promise<SetupInspection> {
     const result: SetupInspection = { root, sppr: [], processes: [], features: [], libraries: [], launchJson: [], metadata: [], examples: [], token: '', truncated: false, warnings: [] };
-    const queue = [{ directory: path.resolve(root), depth: 0 }]; const texts = new Map<string, string>(); const fingerprint: string[] = [];
+    const projectRoot = path.resolve(root);
+    const queue = [projectRoot]; const texts = new Map<string, string>(); const fingerprint: string[] = [];
     const check = () => { if (options.cancelled?.()) { throw new Error('Project inspection cancelled'); } };
     let count = 0;
-    while (queue.length) {
-        check(); const { directory, depth } = queue.shift()!;
+    scan: for (let index = 0; index < queue.length; index++) {
+        check();
+        if (index >= 100000) { result.truncated = true; break; }
+        const directory = queue[index];
         const entries = await fs.readdir(directory, { withFileTypes: true });
+        // Configuration dumps can contain thousands of unrelated metadata folders.
+        // Keep the workspace root itself: tests may live beside Configuration.xml.
+        if (directory !== projectRoot && entries.some(entry => entry.isFile() && entry.name === 'Configuration.xml')) {
+            const file = await fs.open(path.join(directory, 'Configuration.xml'), 'r');
+            let configuration = false;
+            try {
+                const buffer = Buffer.alloc(4096);
+                const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+                configuration = /http:\/\/v8\.1c\.ru\/8\.3\/MDClasses/u.test(buffer.toString('utf8', 0, bytesRead));
+            } finally { await file.close(); }
+            if (configuration) { continue; }
+        }
         for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
             check();
-            if (++count > (options.maxFiles ?? 12000)) { result.truncated = true; queue.length = 0; break; }
             const file = path.join(directory, entry.name);
             if (entry.isDirectory() && !excluded.has(entry.name)) {
-                if (depth < 12) { queue.push({ directory: file, depth: depth + 1 }); } else { result.truncated = true; }
+                queue.push(file);
             } else if (entry.isFile() && /\.(?:feature|ya?ml|json)$/iu.test(entry.name)) {
+                if (++count > (options.maxFiles ?? 12000)) { result.truncated = true; break scan; }
                 const relative = path.relative(root, file).split(path.sep).join('/');
                 const stat = await fs.stat(file);
                 if (stat.size > 2 * 1024 * 1024) { result.warnings.push(relative); result.truncated = true; continue; }

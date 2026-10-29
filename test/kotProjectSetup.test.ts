@@ -41,6 +41,52 @@ test('cancelled inspection stops before creating any project data', async t => {
     assert.deepEqual(await fs.readdir(f.root), []);
 });
 
+test('inspection reaches deeply nested test sources without spending its file budget on configuration files', async t => {
+    const f = await fixture(t);
+    for (let index = 0; index < 20; index++) { await f.put(`cf/Catalogs/Item${index}/Ext/Module.bsl`, '// configuration source'); }
+    const scenario = `tests/${Array.from({ length: 15 }, (_, index) => `group${index}`).join('/')}/scen.yaml`;
+    await f.put(scenario, 'ТипФайла: Сценарий\nДанныеСценария:\n    UID: deep-scenario\n');
+    const result = await inspectSetupProject(f.root, { maxFiles: 1 });
+    assert.equal(result.truncated, false);
+    assert.deepEqual(result.sppr, [scenario]);
+});
+
+test('inspection skips nested 1C configuration exports but keeps tests beside a workspace-root configuration', async t => {
+    const f = await fixture(t);
+    const configuration = '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses"><Configuration/></MetaDataObject>';
+    await f.put('Configuration.xml', configuration);
+    await f.put('cf/Configuration.xml', configuration);
+    await f.put('cf/CommonTemplates/Example/Template.feature', 'Feature: Configuration attachment\n');
+    await f.put('tests/smoke.feature', 'Feature: Project test\n');
+    const result = await inspectSetupProject(f.root, { maxFiles: 1 });
+    assert.equal(result.truncated, false);
+    assert.deepEqual(result.features, ['tests/smoke.feature']);
+});
+
+test('inspection still reports an incomplete scan when actual candidate files exceed its budget', async t => {
+    const f = await fixture(t);
+    await f.put('tests/one.feature', 'Feature: One\n');
+    await f.put('tests/two.feature', 'Feature: Two\n');
+    const partial = await inspectSetupProject(f.root, { maxFiles: 1 });
+    assert.equal(partial.truncated, true);
+    assert.equal(partial.features.length, 1);
+    const complete = await inspectSetupProject(f.root, { maxFiles: 2 });
+    assert.equal(complete.truncated, false);
+    assert.deepEqual(complete.features, ['tests/one.feature', 'tests/two.feature']);
+    assert.notEqual(partial.token, complete.token);
+});
+
+test('inspection fingerprint detects changed test sources without tracking unrelated configuration edits', async t => {
+    const f = await fixture(t);
+    await f.put('cf/Catalogs/Item.xml', '<Catalog/>');
+    await f.put('tests/smoke.feature', 'Feature: Smoke\n');
+    const initial = await inspectSetupProject(f.root);
+    await f.put('cf/Catalogs/Item.xml', '<Catalog changed="true"/>');
+    assert.equal((await inspectSetupProject(f.root)).token, initial.token);
+    await f.put('tests/smoke.feature', 'Feature: Changed\n');
+    assert.notEqual((await inspectSetupProject(f.root)).token, initial.token);
+});
+
 test('new project plan is explicit and cannot overwrite existing or newly edited files', async t => {
     const f = await fixture(t); const plan = planNewProject('vanessa', 'en', 'native');
     assert.ok(plan.some(file => file.path === 'tests/first.feature'));
