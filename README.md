@@ -87,7 +87,20 @@ KOT помогает писать сценарии СППР и Vanessa Automatio
 
 Исходник СППР проходит компиляцию. Самостоятельная feature Vanessa запускается без этого этапа. Дальше Vanessa управляет клиентом проверяемой базы, а KOT управляет сеансом Vanessa через MCP и показывает полученные результаты.
 
-Посмотрите реальные примеры: [запись действий в сценарий · 21 с](docs/assets/recording-flow.mp4), [точка останова, выполнение шагов и ошибка · 42 с](docs/assets/breakpoint-and-error.mp4), [отчёт о сборке с переходом к ошибке](docs/guides/build-and-vanessa-run.md#разобрать-результат-компиляции). Видео открываются по ссылке; кадры с результатом и пояснения есть в [руководстве по управлению Vanessa](docs/guides/vanessa-control.md).
+Посмотрите реальные примеры: 
+
+#### Запись действий в сценарий
+
+https://github.com/user-attachments/assets/61768005-3fce-489f-b8a4-dc3395221d72
+
+#### Точка останова, выполнение шагов и ошибка
+
+https://github.com/user-attachments/assets/eaa3e411-c519-40f0-ac45-1028396db667
+
+#### Отчёт о сборке теста с переходом к ошибке
+[Пример отчета](docs/guides/build-and-vanessa-run.md#разобрать-результат-компиляции)
+
+Кадры с результатом и пояснения есть в [руководстве по управлению Vanessa](docs/guides/vanessa-control.md).
 
 <a id="5-kot-infobase-manager"></a>
 <a id="6-kot-form-explorer-beta"></a>
