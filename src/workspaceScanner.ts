@@ -8,6 +8,7 @@ import { collectTreeWithConcurrencyLimit, mapWithConcurrencyLimit } from './boun
 import { parseTestInfoFromScenarioSource, parseTestSettingsTarget, type ParsedTestSettingsTarget } from './scenarioDescriptor';
 import { loadProjectScenarioMetadata, resolveProjectLibraryRoot } from './projectLibraryMetadata';
 import { assertProjectMetadataSaved, loadSingleProjectScenario } from './projectLibraryIntegration';
+import type { ProjectFileProgress } from './projectLibraryStore';
 
 const SCENARIO_READ_CONCURRENCY = 32;
 const SCENARIO_DIRECTORY_CONCURRENCY = 16;
@@ -279,7 +280,8 @@ export async function readScenarioInfo(
 
 export async function scanWorkspaceForScenarioCatalog(
     workspaceRootUri: vscode.Uri,
-    token?: vscode.CancellationToken
+    token?: vscode.CancellationToken,
+    onProgress?: (progress: ProjectFileProgress) => void
 ): Promise<ScenarioCatalog> {
     const startedAt = Date.now();
     const scanDirUri = vscode.Uri.file(resolveScanDirFsPath(workspaceRootUri));
@@ -287,6 +289,7 @@ export async function scanWorkspaceForScenarioCatalog(
         directoryReadLatenciesMs: [], activeDirectoryReads: 0, maxDirectoryReadsInFlight: 0,
         readLatenciesMs: [], pathTotalMs: 0, parseTotalMs: 0, fallbackAttempts: 0
     };
+    onProgress?.({ label: 'Finding scenario source files…' });
     const potentialFiles = await findScenarioDescriptorUris(workspaceRootUri, token, metrics);
     const enumerationMs = Date.now() - startedAt;
     const legacySourceTexts = new Map<string, string>();
@@ -294,11 +297,17 @@ export async function scanWorkspaceForScenarioCatalog(
     const scenarioDirectories = new Set(potentialFiles.filter(uri => ['meta.yaml', 'scen.yaml'].includes(path.basename(uri.fsPath).toLowerCase())).map(uri => path.dirname(uri.fsPath)));
     // SPPR's orig.yaml is a metadata backup, not another scenario with the same UID.
     const descriptors = potentialFiles.filter(uri => path.basename(uri.fsPath).toLowerCase() !== 'orig.yaml' || !scenarioDirectories.has(path.dirname(uri.fsPath)));
+    let readCount = 0;
+    onProgress?.({ label: 'Reading scenario source files…', completed: 0, total: descriptors.length });
     const parsedDefinitions = await mapWithConcurrencyLimit(
         descriptors,
         SCENARIO_READ_CONCURRENCY,
         // These paths came from readdir beneath scanDirUri; symlink entries are not traversed.
-        async fileUri => (await readScenarioDefinitions([fileUri], scanDirUri, token, metrics, true, legacySourceTexts, settingsTargets))[0] || null
+        async fileUri => {
+            const result = (await readScenarioDefinitions([fileUri], scanDirUri, token, metrics, true, legacySourceTexts, settingsTargets))[0] || null;
+            onProgress?.({ label: 'Reading scenario source files…', completed: ++readCount, total: descriptors.length });
+            return result;
+        }
     );
     const readAndParseMs = Date.now() - startedAt - enumerationMs;
     if (token?.isCancellationRequested) {
@@ -312,7 +321,8 @@ export async function scanWorkspaceForScenarioCatalog(
     const referenced = new Set([...settingsTargets].map(([file, target]) => settingsKey(file, target.kind, target.uid)));
     const infos = parsedDefinitions.filter((item): item is TestInfo => item !== null).map(info => ({ ...info,
         hasTestSettings: !!(info.uid && referenced.has(settingsKey(info.yamlFileUri.fsPath, info.kind === 'process' ? 'process' : 'scenario', info.uid))) }));
-    const definitions = await loadProjectScenarioMetadata(infos, workspaceRoots, scanRoots, true, assertProjectMetadataSaved, legacySourceTexts);
+    onProgress?.({ label: 'Migrating project metadata…' });
+    const definitions = await loadProjectScenarioMetadata(infos, workspaceRoots, scanRoots, true, assertProjectMetadataSaved, legacySourceTexts, onProgress);
     const metadataMs = Date.now() - startedAt - enumerationMs - readAndParseMs;
     const catalog = buildScenarioCatalog(definitions);
     const duplicateNames = [...catalog.byName.values()].filter(items => items.length > 1).length;

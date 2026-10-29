@@ -14,6 +14,7 @@ import { setupProfileParameters } from './kotSetupProfile';
 import { extractVanessaVersionFromChangelog } from './vanessaVersion';
 import { YamlParametersManager } from './yamlParametersManager';
 import { detectInstalledOneCPlatforms, getConfiguredOneCPlatforms, saveConfiguredOneCPlatforms } from './oneCPlatform';
+import type { ProjectFileProgress } from './projectLibraryStore';
 
 interface SetupDraft {
     route: 'new' | 'sppr' | 'vanessa' | 'legacy'; mode: 'sppr' | 'vanessa'; language: 'en' | 'ru'; format: 'native' | 'legacy';
@@ -38,6 +39,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
     bindExecution(prepare: () => Promise<boolean>): void { this.prepareExecution = prepare; }
     private cancelled = false;
     private applying = false;
+    private preparingExecution = false;
     private drafts: SettingsChange[] = [];
     private readonly subscriptions: vscode.Disposable[] = [];
     constructor(private readonly context: vscode.ExtensionContext) {
@@ -143,7 +145,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
             }
             case 'checkRuntime': return this.checkRuntime(this.setupDraft(request.data), identity);
             case 'reviewSetup': return this.reviewSetup(this.setupDraft(request.data), identity);
-            case 'applySetup': return this.applySetup(String(request.value ?? ''));
+            case 'applySetup': return this.applySetup(String(request.value ?? ''), request.id);
             case 'cancel': this.cancelled = true; return;
             case 'action': if (['functions', 'numbering', 'parameters'].includes(request.action!)) { this.assertTrusted(); } await vscode.commands.executeCommand(workspaceActions[request.action!]); return;
             case 'openExample': return this.openExample(identity);
@@ -228,57 +230,80 @@ export class KotWorkspacePanel implements vscode.Disposable {
         return { id: this.review.id, files: files.map(file => file.path), settings: [...changes.map(change => ({ key: change.key, value: change.value, scope: change.scope })), ...(draft.run ? [{ key: 'kotTestToolkit.platforms.catalog', value: draft.platform, scope: 'workspace' }] : [])],
             migrate: isProjectSetupPending(root) ? inspection.metadata : [], migrateLegacy: draft.route === 'legacy' || isProjectSetupPending(root) && inspection.metadata.length > 0, profile: draft.profileId === 'new' ? this.t('Create a separate profile; existing profiles remain unchanged.') : this.t('Use the selected existing profile without editing it.'), run: draft.run };
     }
-    private async applySetup(id: string): Promise<unknown> {
+    private async applySetup(id: string, requestId: string): Promise<unknown> {
         this.assertTrusted(); const review = this.review;
         if (!review || review.id !== id || this.applying) { throw new Error(this.t('Review the setup changes again.')); }
         const folder = this.folder(review.folder); const root = folder.uri.fsPath;
-        if (vscode.workspace.textDocuments.some(document => document.isDirty && document.uri.scheme === 'file' && inRoot(root, document.uri.fsPath) && /\.(?:ya?ml|feature)$/iu.test(document.fileName))) { throw new Error(this.t('Save the modified scenario and metadata files before applying setup.')); }
-        const manager = YamlParametersManager.getInstance(this.context);
-        if (!review.profileApplied && fingerprint(await manager.loadActiveProfileSnapshot()) !== review.profileToken) { throw new Error(this.t('The active profile changed. Review setup again.')); }
-        if (!review.filesApplied && (await inspectSetupProject(root)).token !== review.inspection.token) { throw new Error(this.t('The project changed. Review setup again.')); }
         this.applying = true;
         try {
-            if (!review.filesApplied) { await applySetupFiles(root, review.files); review.filesApplied = true; }
-            if (!review.settingsApplied) {
-                try { await this.session!.apply(review.settings); review.settingsApplied = true; }
-                catch (error) { if (error instanceof SettingsApplyError) { review.settings = review.settings.filter(change => !error.applied.includes(`${change.folder}:${change.scope}:${change.key}`)); } throw error; }
-            }
-            if (!review.profileApplied) {
-                if (review.draft.profileId === 'new') {
-                    const current = review.draft.route === 'new' ? manager.getDefaultParameters() : [...(await manager.loadActiveProfileSnapshot()).buildParameters];
-                    await manager.createSetupProfile(`KOT · ${folder.name}`, setupProfileParameters(current, root, review.draft.sources, review.draft.libraries));
-                } else { await manager.setActiveProfile(review.draft.profileId); }
-                review.profileApplied = true;
-            }
-            if (review.draft.run && !review.platformApplied) {
-                const platforms = getConfiguredOneCPlatforms();
-                if (fingerprint(platforms) !== review.platformsToken) { throw new Error(this.t('The platform catalog changed. Review setup again.')); }
-                await saveConfiguredOneCPlatforms([{ name: path.basename(path.dirname(path.dirname(review.draft.platform))), clientExePath: review.draft.platform },
-                    ...platforms.filter(platform => platform.clientExePath.toLowerCase() !== review.draft.platform.toLowerCase())]);
-                review.platformApplied = true;
-            }
-            completeProjectSetup(root);
-            await (await import('./workspaceScanner.js')).scanWorkspaceForScenarioCatalog(folder.uri);
-            await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcher');
-            const profile = await manager.loadActiveProfileSnapshot();
-            const compilationIssues = review.draft.mode === 'sppr' ? manager.validateCompilerBuildParameters(profile.buildParameters) : [];
-            const readiness = { complete: true, executionReady: false, executionError: '', compilationIssues, editorReady: true };
-            await this.context.workspaceState.update(progressKey(review.folder), { complete: true, step: 6, draft: review.draft, readiness });
-            if (review.draft.run) {
-                try { readiness.executionReady = await this.prepareExecution?.() ?? false; }
-                catch (error) { readiness.executionError = error instanceof Error ? error.message : String(error); }
-            }
-            await this.context.workspaceState.update(progressKey(review.folder), { complete: true, step: 6, draft: review.draft, readiness });
-            return readiness;
+            return await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: this.t('Applying project setup…') }, async progress => {
+                let lastLabel = ''; let lastTime = 0;
+                const report = (value: ProjectFileProgress) => {
+                    const now = Date.now(); const changedStage = value.label !== lastLabel;
+                    if (!changedStage && value.completed !== value.total && now - lastTime < 150) { return; }
+                    lastTime = now;
+                    if (changedStage) { console.info(`[KOT setup] ${value.label}`); lastLabel = value.label; }
+                    const label = this.t(value.label);
+                    progress.report({ message: label + (value.total ? ` ${value.completed ?? 0} / ${value.total}` : '') });
+                    void this.panel?.webview.postMessage({ type: 'setupProgress', id: requestId, ...value, label });
+                };
+                report({ label: 'Checking the reviewed project setup…' });
+                if (vscode.workspace.textDocuments.some(document => document.isDirty && document.uri.scheme === 'file' && inRoot(root, document.uri.fsPath) && /\.(?:ya?ml|feature)$/iu.test(document.fileName))) { throw new Error(this.t('Save the modified scenario and metadata files before applying setup.')); }
+                const manager = YamlParametersManager.getInstance(this.context);
+                if (!review.profileApplied && fingerprint(await manager.loadActiveProfileSnapshot()) !== review.profileToken) { throw new Error(this.t('The active profile changed. Review setup again.')); }
+                if (!review.filesApplied && (await inspectSetupProject(root)).token !== review.inspection.token) { throw new Error(this.t('The project changed. Review setup again.')); }
+                report({ label: 'Creating project files…' });
+                if (!review.filesApplied) { await applySetupFiles(root, review.files); review.filesApplied = true; }
+                report({ label: 'Saving VS Code settings…' });
+                if (!review.settingsApplied) {
+                    try { await this.session!.apply(review.settings); review.settingsApplied = true; }
+                    catch (error) { if (error instanceof SettingsApplyError) { review.settings = review.settings.filter(change => !error.applied.includes(`${change.folder}:${change.scope}:${change.key}`)); } throw error; }
+                }
+                if (!review.profileApplied) {
+                    report({ label: 'Preparing the project parameter profile…' });
+                    if (review.draft.profileId === 'new') {
+                        const current = review.draft.route === 'new' ? manager.getDefaultParameters() : [...(await manager.loadActiveProfileSnapshot()).buildParameters];
+                        await manager.createSetupProfile(`KOT · ${folder.name}`, setupProfileParameters(current, root, review.draft.sources, review.draft.libraries));
+                    } else { await manager.setActiveProfile(review.draft.profileId); }
+                    review.profileApplied = true;
+                }
+                if (review.draft.run && !review.platformApplied) {
+                    report({ label: 'Saving the 1C platform…' });
+                    const platforms = getConfiguredOneCPlatforms();
+                    if (fingerprint(platforms) !== review.platformsToken) { throw new Error(this.t('The platform catalog changed. Review setup again.')); }
+                    await saveConfiguredOneCPlatforms([{ name: path.basename(path.dirname(path.dirname(review.draft.platform))), clientExePath: review.draft.platform },
+                        ...platforms.filter(platform => platform.clientExePath.toLowerCase() !== review.draft.platform.toLowerCase())]);
+                    review.platformApplied = true;
+                }
+                completeProjectSetup(root);
+                await (await import('./workspaceScanner.js')).scanWorkspaceForScenarioCatalog(folder.uri, undefined, report);
+                report({ label: 'Refreshing the Test Manager and libraries…' });
+                await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcher');
+                report({ label: 'Finishing project setup…' });
+                const profile = await manager.loadActiveProfileSnapshot();
+                const compilationIssues = review.draft.mode === 'sppr' ? manager.validateCompilerBuildParameters(profile.buildParameters) : [];
+                const readiness = { complete: true, executionReady: false, executionError: '', compilationIssues, editorReady: true };
+                await this.context.workspaceState.update(progressKey(review.folder), { complete: true, step: 6, draft: review.draft, readiness });
+                return readiness;
+            });
         } finally { this.applying = false; }
     }
     private async retryExecution(identity: string): Promise<{ executionReady: boolean }> {
         this.assertTrusted(); assertPrimarySetupFolder(identity, vscode.workspace.workspaceFolders?.[0]?.uri.toString());
         const progress = this.context.workspaceState.get<{ complete?: boolean; readiness?: object }>(progressKey(identity));
         if (!progress?.complete) { throw new Error(this.t('Review the setup changes again.')); }
-        const executionReady = await this.prepareExecution?.() ?? false;
-        await this.context.workspaceState.update(progressKey(identity), { ...progress, readiness: { ...progress.readiness, executionReady, executionError: '' } });
-        return { executionReady };
+        if (this.preparingExecution) { throw new Error(this.t('Vanessa preparation is already in progress.')); }
+        this.preparingExecution = true;
+        try { return await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: this.t('Preparing Vanessa…') }, async () => {
+            try {
+                const executionReady = await this.prepareExecution?.() ?? false;
+                await this.context.workspaceState.update(progressKey(identity), { ...progress, readiness: { ...progress.readiness, executionReady, executionError: '' } });
+                return { executionReady };
+            } catch (error) {
+                await this.context.workspaceState.update(progressKey(identity), { ...progress, readiness: { ...progress.readiness, executionReady: false, executionError: error instanceof Error ? error.message : String(error) } });
+                throw error;
+            }
+        }); } finally { this.preparingExecution = false; }
     }
     private async openExample(identity: string): Promise<void> {
         const folder = this.folder(identity); const inspection = await inspectSetupProject(folder.uri.fsPath);

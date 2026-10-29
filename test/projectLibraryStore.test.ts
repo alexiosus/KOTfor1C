@@ -19,6 +19,20 @@ async function root(t: test.TestContext): Promise<string> {
 const scenario: ProjectEntityIdentity = { kind: 'scenario', uid: 'ABC-123', relativePath: 'tests/a/scen.yaml' };
 const feature: ProjectEntityIdentity = { kind: 'feature', relativePath: 'features/smoke.feature' };
 
+test('metadata writes report actual completed files in each stage', async t => {
+    const directory = await root(t);
+    const progress: Array<{ label: string; completed?: number; total?: number }> = [];
+    const store = new ProjectLibraryStore(directory, { onProgress: value => progress.push({ ...value }) });
+    await store.importLegacy({ groups: [], entities: [{ identity: scenario, metadata: { description: 'Imported' } }] });
+    for (const label of ['Preparing project metadata…', 'Writing project metadata…']) {
+        const stage = progress.filter(value => value.label === label);
+        assert.ok(stage.length > 1, label);
+        assert.equal(stage[0].completed, 0);
+        assert.ok(stage[0].total! > 0);
+        assert.deepEqual(stage.map(value => value.completed), Array.from({ length: stage[0].total! + 1 }, (_, index) => index));
+    }
+});
+
 test('project identities remain portable and scenario metadata follows its UID after a move', async t => {
     const firstRoot = await root(t);
     const secondRoot = await root(t);

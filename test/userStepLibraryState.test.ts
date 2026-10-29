@@ -3,7 +3,34 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import vm from 'node:vm';
+import { createRequire } from 'node:module';
+import ts from 'typescript';
 import { inspectUserStepLibrary, isUserStepAvailable, userStepSourceFingerprint, writeUserStepBuildState } from '../src/userStepLibraryState';
+
+test('Windows library lookup stops at its root despite path casing differences', async () => {
+    const visited: string[] = []; const nativeRequire = createRequire(__filename);
+    const exports = {} as typeof import('../src/userStepLibraryState');
+    const missing = () => Promise.reject(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+    const source = await fs.readFile(path.join(process.cwd(), 'src/userStepLibraryState.ts'), 'utf8');
+    vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText, {
+        exports, require: (id: string) => {
+            if (id === 'node:path') { return path.win32; }
+            if (id === 'node:fs') { return { promises: { readFile: missing, stat: missing, readdir: async (directory: string) => {
+                visited.push(directory);
+                // Bound the old endless walk without letting it starve the test event loop.
+                if (visited.length > 30) { return new Promise(() => {}); }
+                return [];
+            } } }; }
+            if (id === './projectDefinition') { return {}; }
+            return nativeRequire(id);
+        }
+    });
+    const result = await Promise.race([exports.inspectUserStepLibrary('C:\\Library\\steps.bsl', 'c:\\library'),
+        new Promise<undefined>(resolve => setImmediate(() => resolve(undefined)))]);
+    assert.equal(result?.status, 'sourceOnly');
+    assert.ok(visited.every(directory => !path.win32.relative('c:\\library', directory).startsWith('..')), visited.join(', '));
+});
 
 test('only a matching EPF and source fingerprint make a library available', async t => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-step-state-'));

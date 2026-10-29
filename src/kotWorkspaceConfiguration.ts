@@ -15,7 +15,8 @@ export function createWorkspaceSettingsSession(model: KotSettingsModel): Setting
         inspect: (key, identity) => {
             const layers = config(identity).inspect(property(key));
             return { defaultValue: layers?.defaultValue, globalValue: layers?.globalValue,
-                workspaceValue: layers?.workspaceValue, workspaceFolderValue: layers?.workspaceFolderValue };
+                // A single-folder window aliases these two values to the same settings file.
+                workspaceValue: layers?.workspaceValue, workspaceFolderValue: simpleFolder() ? undefined : layers?.workspaceFolderValue };
         },
         normalizeScope: scope => scope === 'folder' && simpleFolder() ? 'workspace' : scope,
         assertWritable: (key, scope, identity) => {

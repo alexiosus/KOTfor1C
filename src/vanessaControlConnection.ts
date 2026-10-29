@@ -19,7 +19,7 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
     managedRunLog?(port: number): string | undefined;
     attachedRunLog?(endpoint: string): Promise<string | undefined>;
     trackRun?(filePath: string, sessionRunLogPath?: string): (passed: boolean) => Promise<void>;
-}): { session: VanessaControlSession; ensureConnected(): Promise<boolean>; runLogPath(): string | undefined; runFeature(request: VanessaManagedRunRequest): Promise<VanessaManagedRunResult> } {
+}): { session: VanessaControlSession; ensureConnected(startWhenAbsent?: boolean): Promise<boolean>; runLogPath(): string | undefined; runFeature(request: VanessaManagedRunRequest): Promise<VanessaManagedRunResult> } {
     const session = new VanessaControlSession();
     let managedLog: { generation: number; path: string } | undefined;
     let unlinkedLogWarningGeneration: number | undefined;

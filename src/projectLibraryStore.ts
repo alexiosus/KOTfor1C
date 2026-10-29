@@ -69,7 +69,9 @@ interface PendingWrite {
     readonly filePath: string;
     readonly text: string | undefined;
 }
+export interface ProjectFileProgress { readonly label: string; readonly completed?: number; readonly total?: number }
 export interface ProjectLibraryStoreOptions {
+    readonly onProgress?: (progress: ProjectFileProgress) => void;
     /** Legacy-block snapshots from the source scan. Missing entries are already known to be clean. */
     readonly sourceTexts?: ReadonlyMap<string, string>;
     readonly canCleanSource?: (filePath: string) => boolean;
@@ -548,16 +550,23 @@ export class ProjectLibraryStore {
             });
         };
         try {
+            let preparedCount = 0;
+            this.options.onProgress?.({ label: 'Preparing project metadata…', completed: 0, total: changed.length });
             await this.safePaths(changed.map(write => write.filePath));
             await mapWithConcurrencyLimit(changed, 16, async write => {
                 if (this.excludedPath(write.filePath)) { throw new ProjectLibraryStoreError(write.filePath, 'Project metadata belongs to another nested project root'); }
                 await fs.mkdir(path.dirname(write.filePath), { recursive: true });
-                if (write.text === undefined) { prepared.push({ write }); return; }
-                const temporary = `${write.filePath}.${randomUUID()}.tmp`;
-                prepared.push({ write, temporary });
-                await fs.writeFile(temporary, write.text, { encoding: 'utf8', flag: 'wx' });
+                if (write.text === undefined) { prepared.push({ write }); }
+                else {
+                    const temporary = `${write.filePath}.${randomUUID()}.tmp`;
+                    prepared.push({ write, temporary });
+                    await fs.writeFile(temporary, write.text, { encoding: 'utf8', flag: 'wx' });
+                }
+                this.options.onProgress?.({ label: 'Preparing project metadata…', completed: ++preparedCount, total: changed.length });
             });
+            this.options.onProgress?.({ label: 'Checking project metadata before writing…' });
             await guard();
+            this.options.onProgress?.({ label: 'Writing project metadata…', completed: 0, total: changed.length });
             const cleanupPaths = new Set(cleanup.filter((write): write is NonNullable<typeof write> => !!write).map(write => write.filePath));
             // Persist sidecars before removing old objects, and only then clean their source blocks.
             for (const stage of [prepared.filter(item => item.temporary && !cleanupPaths.has(item.write.filePath)),
@@ -568,10 +577,13 @@ export class ProjectLibraryStore {
                     else { await fs.unlink(write.filePath); }
                     applied.push(write);
                     loaded.originals.set(write.filePath, write.text);
+                    this.options.onProgress?.({ label: 'Writing project metadata…', completed: applied.length, total: changed.length });
                 });
             }
         } catch (error) {
             const failures: unknown[] = [];
+            this.options.onProgress?.({ label: 'Restoring project metadata after an error…', completed: 0, total: applied.length });
+            let restored = 0;
             for (const write of applied.reverse()) {
                 try {
                     await this.safePath(write.filePath);
@@ -588,6 +600,7 @@ export class ProjectLibraryStore {
                         } finally { await fs.rm(temporary, { force: true }); }
                     }
                     loaded.originals.set(write.filePath, original);
+                    this.options.onProgress?.({ label: 'Restoring project metadata after an error…', completed: ++restored, total: applied.length });
                 } catch (failure) { failures.push(failure); }
             }
             if (failures.length) { throw new AggregateError([error, ...failures], 'Project metadata write failed and some objects could not be restored'); }

@@ -82,7 +82,7 @@ async function harness(t: test.TestContext, initialSource = false, translate?: (
     let saveSucceeds = true; let applySucceeds = true;
     let autoOpenProperties = true;
     const makeDocument = (uri: Uri, text: string) => ({
-        uri, text, version: 1, isDirty: false, isClosed: false, isUntitled: false, languageId: 'yaml',
+        uri, fileName: uri.fsPath, text, version: 1, isDirty: false, isClosed: false, isUntitled: false, languageId: 'yaml',
         getText() { return this.text; }, positionAt(offset: number) { return { offset }; },
         async save() {
             saved.push(this.uri.toString());
@@ -169,6 +169,7 @@ async function harness(t: test.TestContext, initialSource = false, translate?: (
             }
         },
         commands: { executeCommand: async (id: string, options?: any) => {
+            if (id === 'kotTestToolkit.refreshPhaseSwitcher') { return; }
             assert.equal(id, 'kotTestToolkit.scenarioProperties.focus');
             viewCommands.push({ id, options });
             if (!panels.at(-1) || panels.at(-1).disposed) { await viewProvider.resolveWebviewView(host.window.createView()); }
@@ -214,7 +215,8 @@ async function harness(t: test.TestContext, initialSource = false, translate?: (
     const panel = api.ScenarioPropertiesPanel ? new api.ScenarioPropertiesPanel(context, textEditor, options) : undefined;
     t.after(() => panel?.dispose());
     return { root, yamlRoot, processRoot, sourceUri, settingsUri, native, panel, api, host, documents, panels, watchers, visible,
-        textOpens, actions, saved, writes, openDocument, get viewOptions() { return viewOptions; }, changed, savedEvent, active, visibleEditorsChanged, viewCommands, renamed, deleted, created, rootsChanged,
+        textOpens, actions, saved, writes, openDocument, convertScenarioFormat: spprFiles.handleConvertScenarioFormat,
+        get viewOptions() { return viewOptions; }, changed, savedEvent, active, visibleEditorsChanged, viewCommands, renamed, deleted, created, rootsChanged,
         get readdirCount() { return readdirCount; },
         async open(uri = sourceUri) {
             assert.ok(panel, 'ScenarioPropertiesPanel must connect the native editor and properties session'); await panel.open(uri);
@@ -831,4 +833,70 @@ test('a successful source URI move clears deletion events raised during the form
     await panel.receive.fire({ command: 'action', action: 'save' });
     assert.equal(panel.state().error, undefined);
     assert.ok(h.saved.includes(next.toString()));
+});
+
+for (const [pinned, saveFromProperties] of [[false, false], [false, true], [true, false], [true, true]]) {
+    test(`${saveFromProperties ? 'Properties save' : 'editor save'} YAML conversion keeps ${pinned ? 'pinned' : 'following'} Properties bound to the native test`, async t => {
+        const h = await harness(t);
+        const source = Uri.file(path.join(h.yamlRoot, 'scen.yaml'));
+        const meta = Uri.file(path.join(h.yamlRoot, 'meta.yaml'));
+        const script = Uri.file(path.join(h.yamlRoot, 'scen.feature'));
+        await fsp.rename(h.sourceUri.fsPath, source.fsPath);
+        const view = await h.open(source);
+        await view.receive.fire({ command: 'action', action: 'selectSettings', value: h.settingsUri.toString() });
+        if (pinned) { await view.receive.fire({ command: 'action', action: 'pin' }); }
+        h.savedEvent.event(async document => {
+            if (document.uri.toString() !== source.toString()) { return; }
+            await h.convertScenarioFormat(document.uri, 'native', true);
+            h.panel.fileEvent(source, 'delete');
+        });
+        if (saveFromProperties) { await view.receive.fire({ command: 'action', action: 'save' }); }
+        else { await (await h.openDocument(source)).save(); }
+        await h.panel.queue(async () => {});
+        assert.equal(view.state().source?.uri, meta.toString());
+        assert.equal(view.state().source.scriptUri, script.toString());
+        assert.equal(view.state().selectedSettingsUri, h.settingsUri.toString());
+        assert.equal(view.state().pinned, pinned);
+        assert.equal(view.state().error, undefined);
+        assert.equal(view.state().source.model.kind, 'scenario');
+        await assert.rejects(fsp.stat(source.fsPath), { code: 'ENOENT' });
+        await view.receive.fire({ command: 'edit', documentUri: meta.toString(), documentVersion: view.state().source.version,
+            edit: { section: 'ДанныеСценария', field: 'Проект', value: 'After conversion' } });
+        await view.receive.fire({ command: 'action', action: 'save' });
+        assert.equal(view.state().error, undefined);
+        assert.match(await fsp.readFile(meta.fsPath, 'utf8'), /Проект: "After conversion"/u);
+        assert.equal(await fsp.readFile(script.fsPath, 'utf8'), 'Given ready\n');
+    });
+}
+
+test('format conversion of another scenario cannot replace the selected Properties test', async t => {
+    const h = await harness(t); const view = await h.open();
+    const folder = path.join(h.yamlRoot, 'other'); await fsp.mkdir(folder);
+    const source = Uri.file(path.join(folder, 'scen.yaml'));
+    await fsp.writeFile(source.fsPath, sourceText);
+    const converted = await h.convertScenarioFormat(source, 'native', true);
+    await h.panel.queue(async () => {});
+    assert.ok(converted);
+    assert.equal(view.state().source.uri, h.sourceUri.toString());
+    assert.equal(view.state().error, undefined);
+});
+
+test('native-to-YAML conversion remaps pinned Properties without reopening the test', async t => {
+    const h = await harness(t);
+    const meta = Uri.file(path.join(h.yamlRoot, 'meta.yaml'));
+    const script = Uri.file(path.join(h.yamlRoot, 'scen.feature'));
+    const source = Uri.file(path.join(h.yamlRoot, 'scen.yaml'));
+    const native = spprFormat.splitLegacySpprScenario(sourceText);
+    await fsp.writeFile(meta.fsPath, native.metadata); await fsp.writeFile(script.fsPath, native.script);
+    const view = await h.open(script);
+    await view.receive.fire({ command: 'action', action: 'selectSettings', value: h.settingsUri.toString() });
+    await view.receive.fire({ command: 'action', action: 'pin' });
+    const converted = await h.convertScenarioFormat(meta, 'legacy', true);
+    await h.panel.queue(async () => {});
+    assert.ok(converted);
+    assert.equal(view.state().source.uri, source.toString());
+    assert.equal(view.state().source.scriptUri, undefined);
+    assert.equal(view.state().selectedSettingsUri, h.settingsUri.toString());
+    assert.equal(view.state().pinned, true);
+    assert.equal(view.state().error, undefined);
 });

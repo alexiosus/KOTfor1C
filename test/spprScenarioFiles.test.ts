@@ -15,6 +15,11 @@ async function harness(t: test.TestContext) {
     const documents: Array<{ uri: ReturnType<typeof uri>; isDirty: boolean; getText(): string }> = [];
     const errors: string[] = []; const opened: string[] = []; const commands: string[] = []; const refreshes: any[] = [];
     const host = {
+        EventEmitter: class<T> {
+            private readonly listeners = new Set<(value: T) => void>();
+            readonly event = (listener: (value: T) => void) => { this.listeners.add(listener); return { dispose: () => this.listeners.delete(listener) }; };
+            fire(value: T) { for (const listener of this.listeners) { listener(value); } }
+        },
         Uri: { file: uri, parse: (value: string) => uri(value.replace(/^file:\/\//u, '')), joinPath: (base: ReturnType<typeof uri>, ...segments: string[]) => uri(path.join(base.fsPath, ...segments)) },
         workspace: { textDocuments: documents, fs: { readFile: (target: ReturnType<typeof uri>) => fsp.readFile(target.fsPath), stat: (target: ReturnType<typeof uri>) => fsp.stat(target.fsPath) },
             openTextDocument: async (target: ReturnType<typeof uri>) => ({ uri: target }) },

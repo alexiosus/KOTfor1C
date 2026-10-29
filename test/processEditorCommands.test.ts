@@ -101,6 +101,7 @@ async function harness(t: test.TestContext, options: { dedicated?: boolean; bom?
     const propertiesDependencies: Record<string, unknown> = { ...dependencies,
         './scenarioPropertiesBindings': bindings, './scenarioPropertiesModel': propertiesModel, './scenarioPropertiesSession': propertiesSession,
         './scenarioPropertiesAttachments': propertiesAttachments,
+        './spprScenarioFiles.js': { onDidConvertScenarioFormat: () => ({ dispose() {} }) },
         './projectLibraryMetadata': metadata, './projectLibraryStore': store, './yamlValidator': {},
         '../media/scenarioPropertiesProtocol.js': require(path.join(process.cwd(), 'media/scenarioPropertiesProtocol.js')) };
     vm.runInNewContext(ts.transpileModule(await fs.readFile(path.join(process.cwd(), 'src/scenarioPropertiesPanel.ts'), 'utf8'), {

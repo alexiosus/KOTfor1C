@@ -2,6 +2,10 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { joinNativeSpprScenario, convertSpprScenarioFiles, type SpprScenarioFormat } from './spprScenarioFormat';
 import { waitForProjectLibraryIdle } from './projectLibraryStore';
+import type { ScenarioIdentityChangeResult } from './scenarioPropertyIdentity';
+
+const formatConverted = new vscode.EventEmitter<ScenarioIdentityChangeResult>();
+export const onDidConvertScenarioFormat = formatConverted.event;
 
 export interface ScenarioSourceUris {
     readonly format: SpprScenarioFormat;
@@ -56,7 +60,7 @@ export async function readNativeScenarioMetadata(uri: vscode.Uri): Promise<{ uri
     return source?.format === 'native' ? { uri: source.metadataUri, text: await readSourceText(source.metadataUri) } : undefined;
 }
 
-export async function handleConvertScenarioFormat(uri?: vscode.Uri, targetFormat?: SpprScenarioFormat, silent = false): Promise<import('./scenarioPropertyIdentity').ScenarioIdentityChangeResult | undefined> {
+export async function handleConvertScenarioFormat(uri?: vscode.Uri, targetFormat?: SpprScenarioFormat, silent = false): Promise<ScenarioIdentityChangeResult | undefined> {
     const selected = uri ?? vscode.window.activeTextEditor?.document.uri;
     if (!selected) { return; }
     try {
@@ -76,6 +80,12 @@ export async function handleConvertScenarioFormat(uri?: vscode.Uri, targetFormat
         };
         await waitForProjectLibraryIdle();
         const destination = await convertSpprScenarioFiles(selected.fsPath, target, assertSaved);
+        const oldUri = vscode.Uri.file(path.join(directory, sourceFormat === 'legacy' ? 'scen.yaml' : 'meta.yaml')).toString();
+        const newUri = vscode.Uri.file(destination).toString();
+        const result = { sourceUri: newUri, uriMoves: [{ oldUri, newUri }, { oldUri: oldUri + '.kot.yml', newUri: newUri + '.kot.yml' }] };
+        // Saving can trigger conversion outside the Properties action queue, including while pinned.
+        // Publish the committed identity before editor and catalog events follow the new files.
+        if (sourceFormat !== target) { formatConverted.fire(result); }
         const editorUri = target === 'native' ? vscode.Uri.file(path.join(directory, 'scen.feature')) : vscode.Uri.file(destination);
         await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(editorUri), { preview: false });
         // Opening Properties here would wait on the action queue that called this conversion.
@@ -84,9 +94,7 @@ export async function handleConvertScenarioFormat(uri?: vscode.Uri, targetFormat
             changedSourceUris: sourceFormat === target ? [] : ['scen.yaml', 'meta.yaml', 'scen.feature'].map(file => vscode.Uri.file(path.join(directory, file)).toString())
         });
         if (!silent) { void vscode.window.showInformationMessage(vscode.l10n.t('SPPR scenario format converted successfully.')); }
-        const oldUri = vscode.Uri.file(path.join(directory, sourceFormat === 'legacy' ? 'scen.yaml' : 'meta.yaml')).toString();
-        const newUri = vscode.Uri.file(destination).toString();
-        return { sourceUri: newUri, uriMoves: [{ oldUri, newUri }, { oldUri: oldUri + '.kot.yml', newUri: newUri + '.kot.yml' }] };
+        return result;
     } catch (error) {
         void vscode.window.showErrorMessage(vscode.l10n.t('Could not convert SPPR scenario format: {0}', error instanceof Error ? error.message : String(error)));
     }

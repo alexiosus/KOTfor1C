@@ -154,8 +154,11 @@ export async function inspectUserStepLibrary(sourcePath: string, libraryRootPath
                 return { ...base, status: ready ? 'ready' : 'stale' };
             } catch { return { ...base, status: 'stale' }; }
         }
-        if (directory === root) { break; }
-        directory = path.dirname(directory);
+        // Windows URIs and configured paths can spell the same root with different casing.
+        if (path.relative(root, directory) === '') { break; }
+        const parent = path.dirname(directory);
+        if (parent === directory) { break; }
+        directory = parent;
     }
     const importedModulePath = await importedUserStepModule(sourcePath, root);
     return { status: 'sourceOnly', sourceDirectory: path.dirname(sourcePath), ...(importedModulePath ? { importedModulePath } : {}) };

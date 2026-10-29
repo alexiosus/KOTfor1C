@@ -1,7 +1,7 @@
 import { isProjectSetupPending } from './projectSetupGate';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { ProjectLibraryStore, projectEntityKey, type ProjectEntityIdentity, type ProjectEntityMetadata, type ProjectEntityMetadataPatch, type ProjectGroup, type ProjectLibrarySnapshot, type ProjectLibraryImport } from './projectLibraryStore';
+import { ProjectLibraryStore, projectEntityKey, type ProjectEntityIdentity, type ProjectEntityMetadata, type ProjectEntityMetadataPatch, type ProjectGroup, type ProjectLibrarySnapshot, type ProjectLibraryImport, type ProjectFileProgress } from './projectLibraryStore';
 import type { TestInfo } from './types';
 import { projectGroupDisplayKey, type ProjectDisplayGroup } from './projectGroupDisplayOrder';
 
@@ -80,7 +80,7 @@ let sourceCleanupGuard: (filePath: string) => boolean = () => false;
 export function setProjectSourceCleanupGuard(guard: (filePath: string) => boolean): void { sourceCleanupGuard = guard; }
 
 export function createProjectLibraryStore(root: string, workspaceRoots: readonly string[], scanRoots: readonly string[], beforeWrite?: (root: string) => void,
-    sourceIdentities?: readonly ProjectEntityIdentity[], sourceTexts?: ReadonlyMap<string, string>): ProjectLibraryStore {
+    sourceIdentities?: readonly ProjectEntityIdentity[], sourceTexts?: ReadonlyMap<string, string>, onProgress?: (progress: ProjectFileProgress) => void): ProjectLibraryStore {
     const owner = path.resolve(root);
     const discoveryRoots = [...new Set(scanRoots.map(value => path.resolve(value)))].filter(value =>
         contains(owner, value) && resolveProjectLibraryRoot(value, workspaceRoots, scanRoots) === owner);
@@ -89,6 +89,7 @@ export function createProjectLibraryStore(root: string, workspaceRoots: readonly
         excludedRoots: workspaceRoots.map(value => path.resolve(value)).filter(value => value !== owner && contains(owner, value)),
         sourceIdentities,
         sourceTexts,
+        onProgress,
         canCleanSource: filePath => sourceCleanupGuard(filePath),
         beforeWrite: () => beforeWrite?.(owner),
         onWarning: message => {
@@ -145,7 +146,7 @@ export function hasCachedProjectScenarioMetadata(info: TestInfo, workspaceRoots:
 }
 
 export async function loadProjectScenarioMetadata(infos: readonly TestInfo[], workspaceRoots: readonly string[], scanRoots: readonly string[], importLegacy = true,
-    beforeWrite?: (root: string) => void, sourceTexts?: ReadonlyMap<string, string>): Promise<TestInfo[]> {
+    beforeWrite?: (root: string) => void, sourceTexts?: ReadonlyMap<string, string>, onProgress?: (progress: ProjectFileProgress) => void): Promise<TestInfo[]> {
     const byRoot = new Map<string, TestInfo[]>();
     for (const info of infos) {
         const { root } = location(info, workspaceRoots, scanRoots);
@@ -166,7 +167,7 @@ export async function loadProjectScenarioMetadata(infos: readonly TestInfo[], wo
     }
     for (const [root, items] of byRoot) {
         const store = createProjectLibraryStore(root, workspaceRoots, scanRoots, beforeWrite,
-            items.map(info => resolveProjectEntityIdentity(info.yamlFileUri.fsPath, root, info.kind === 'process' ? 'process' : 'scenario', info.uid)), sourceTexts);
+            items.map(info => resolveProjectEntityIdentity(info.yamlFileUri.fsPath, root, info.kind === 'process' ? 'process' : 'scenario', info.uid)), sourceTexts, onProgress);
         let snapshot = !importLegacy ? await store.readMetadata() : sourceTexts ? await store.readKnownSources() : await store.read();
         if (importLegacy && !snapshot.legacyImports.includes('scenario')) {
             const groups = new Map<string, ProjectGroup>();

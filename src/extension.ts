@@ -925,7 +925,7 @@ export async function activate(context: vscode.ExtensionContext) {
         trackRun: (file, log) => phaseSwitcherProvider.trackVanessaFeatureRun(file, log),
         canAutoStart: () => phaseSwitcherProvider.canAutoStartVanessaManagedControl()
     });
-    kotWorkspacePanel.bindExecution(vanessaControl.ensureConnected);
+    kotWorkspacePanel.bindExecution(() => vanessaControl.ensureConnected(true));
     const vanessaControlSession = vanessaControl.session;
     const publishVanessaConnection = () => phaseSwitcherProvider.updateVanessaControlState({
         connected: !!vanessaControlSession.snapshot.capabilities && vanessaControlSession.snapshot.status !== 'unknown',

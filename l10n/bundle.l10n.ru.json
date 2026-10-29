@@ -3392,5 +3392,22 @@
   "Source directory already contains files. Choose a different name.": "Каталог уже содержит исходники. Выберите другое имя.",
   "Could not import the EPF without replacing an existing library: {0}": "Не удалось импортировать EPF без замены существующей библиотеки: {0}",
   "Dumping user-step library sources...": "Выгрузка исходников библиотеки шагов…",
-  "User-step library sources saved: {0}": "Исходники библиотеки шагов сохранены: {0}"
+  "User-step library sources saved: {0}": "Исходники библиотеки шагов сохранены: {0}",
+  "Applying project setup…": "Применение настроек проекта…",
+  "Checking the reviewed project setup…": "Проверка согласованных изменений проекта…",
+  "Creating project files…": "Создание файлов проекта…",
+  "Saving VS Code settings…": "Сохранение настроек VS Code…",
+  "Preparing the project parameter profile…": "Подготовка профиля параметров проекта…",
+  "Saving the 1C platform…": "Сохранение платформы 1С…",
+  "Finding scenario source files…": "Поиск исходных файлов сценариев…",
+  "Reading scenario source files…": "Чтение исходных файлов сценариев…",
+  "Migrating project metadata…": "Перенос метаданных проекта…",
+  "Preparing project metadata…": "Подготовка метаданных проекта…",
+  "Checking project metadata before writing…": "Проверка метаданных перед записью…",
+  "Writing project metadata…": "Запись метаданных проекта…",
+  "Restoring project metadata after an error…": "Восстановление метаданных после ошибки…",
+  "Refreshing the Test Manager and libraries…": "Обновление Менеджера тестов и библиотек…",
+  "Finishing project setup…": "Завершение настройки проекта…",
+  "Project settings are applied. Preparing 1C and Vanessa…": "Настройки проекта применены. Подготавливаем 1С и Vanessa…",
+  "Vanessa preparation is already in progress.": "Подготовка Vanessa уже выполняется."
 }

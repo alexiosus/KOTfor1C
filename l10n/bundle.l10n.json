@@ -3392,5 +3392,22 @@
   "Source directory already contains files. Choose a different name.": "Source directory already contains files. Choose a different name.",
   "Could not import the EPF without replacing an existing library: {0}": "Could not import the EPF without replacing an existing library: {0}",
   "Dumping user-step library sources...": "Dumping user-step library sources...",
-  "User-step library sources saved: {0}": "User-step library sources saved: {0}"
+  "User-step library sources saved: {0}": "User-step library sources saved: {0}",
+  "Applying project setup…": "Applying project setup…",
+  "Checking the reviewed project setup…": "Checking the reviewed project setup…",
+  "Creating project files…": "Creating project files…",
+  "Saving VS Code settings…": "Saving VS Code settings…",
+  "Preparing the project parameter profile…": "Preparing the project parameter profile…",
+  "Saving the 1C platform…": "Saving the 1C platform…",
+  "Finding scenario source files…": "Finding scenario source files…",
+  "Reading scenario source files…": "Reading scenario source files…",
+  "Migrating project metadata…": "Migrating project metadata…",
+  "Preparing project metadata…": "Preparing project metadata…",
+  "Checking project metadata before writing…": "Checking project metadata before writing…",
+  "Writing project metadata…": "Writing project metadata…",
+  "Restoring project metadata after an error…": "Restoring project metadata after an error…",
+  "Refreshing the Test Manager and libraries…": "Refreshing the Test Manager and libraries…",
+  "Finishing project setup…": "Finishing project setup…",
+  "Project settings are applied. Preparing 1C and Vanessa…": "Project settings are applied. Preparing 1C and Vanessa…",
+  "Vanessa preparation is already in progress.": "Vanessa preparation is already in progress."
 }

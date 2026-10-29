@@ -17,6 +17,7 @@ import { onDidChangeScenarioScanRoot } from './scenarioScanRoot';
 import { isCompilerYamlFile } from './yamlValidator';
 import { ScenarioPropertiesAttachments } from './scenarioPropertiesAttachments';
 import type { ScenarioFilesService } from './scenarioFilesService';
+import { onDidConvertScenarioFormat } from './spprScenarioFiles.js';
 
 const protocol = require('../media/scenarioPropertiesProtocol.js') as {
     DEFAULT_LABELS: Record<string, string>;
@@ -295,6 +296,20 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
         });
         this.disposables.push(
             vscode.window.registerWebviewViewProvider(SCENARIO_PROPERTIES_VIEW, this, { webviewOptions: { retainContextWhenHidden: true } }),
+            onDidConvertScenarioFormat(result => {
+                void this.queue(async () => {
+                    const current = this.session.currentSourceUri;
+                    if (!current || !result.uriMoves.some(move => move.oldUri === current)) { return; }
+                    try {
+                        await this.session.remapFiles(result.uriMoves);
+                        this.unavailable = undefined;
+                        this.followedEditorUri = undefined;
+                        this.host.invalidateSettings();
+                        this.configureWatchers(await this.host.readDocument(this.session.currentSourceUri!));
+                        await this.post();
+                    } catch (reason) { await this.post(errorText(reason)); }
+                });
+            }),
             vscode.window.onDidChangeActiveTextEditor(editor => this.handleActiveEditor(editor)),
             vscode.window.onDidChangeVisibleTextEditors(() => this.handleActiveEditor(vscode.window.activeTextEditor)),
             vscode.workspace.onDidChangeTextDocument(event => {

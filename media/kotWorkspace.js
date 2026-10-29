@@ -4,7 +4,8 @@
     const api = acquireVsCodeApi();
     const saved = api.getState() || {};
     const state = { view:'settings', setupOpen:false, step:0, folder:'', scope:'folder', section:'editor', query:'', tour:0, ...saved };
-    let boot; let rows = []; let sequence = 0; let readGeneration = 0; let review; let inspection; let runtime; let writing = false; let noticeRevision = 0; let activeTasks = 0;
+    let boot; let rows = []; let sequence = 0; let readGeneration = 0; let review; let inspection; let runtime; let writing = false; let noticeRevision = 0; let activeTasks = 0; let setupRequest;
+    let executionPreparing = false;
     const waiting = new Map(); const drafts = new Map();
     const $ = id => document.getElementById(id);
     const content = $('content');
@@ -13,7 +14,12 @@
     const draftId = (folder,scope,key) => JSON.stringify([folder,scope,key]);
     function persist() { api.setState({ view:state.view,setupOpen:state.setupOpen,step:state.step,folder:state.folder,scope:state.scope,section:state.section,query:state.query,tour:state.tour,setup:state.setup }); }
     function notice(text,error=false) { noticeRevision++;$('notice').textContent=text;$('notice').classList.toggle('notice-error',error); }
-    function rpc(type,data={}) { const id=String(++sequence);return new Promise((resolve,reject)=>{waiting.set(id,{resolve,reject});api.postMessage({id,type,folder:state.folder||undefined,scope:state.scope,...data});}); }
+    function rpc(type,data={}) { const id=String(++sequence);if(type==='applySetup')setupRequest=id;return new Promise((resolve,reject)=>{waiting.set(id,{resolve,reject});api.postMessage({id,type,folder:state.folder||undefined,scope:state.scope,...data});}); }
+    function setupControls(disabled) {
+        for(const id of ['brand','section-select','start-setup','to-start','back','next'])if($(id))$(id).disabled=disabled;
+        for(const id of ['navigation','section-navigation'])$(id).querySelectorAll('[data-view]').forEach(button=>button.disabled=disabled);
+        $('notice').classList.toggle('notice-busy',disabled);
+    }
     async function task(label,action) {
         notice(t(label));content.setAttribute('aria-busy','true');
         const progressRevision=noticeRevision;activeTasks++;
@@ -196,17 +202,39 @@
             void task('Preparing the change plan…',async()=>{review=await rpc('reviewSetup',{data:draft});showReview();$('next').disabled=false;notice('');});
         }else{
             content.innerHTML=heading+'<h1>'+t('Ready to start')+'</h1><p class="lead">'+t('Project settings are applied. Open the first test, then use the Library and properties to continue.')+'</p>'+(draft.run?'<p>'+t('See the bottom status bar for the actual Vanessa connection state.')+'</p>':'')+(state.readiness?.compilationIssues?.length?'<div class="subtle-box">'+t('The editor is ready. SPPR compilation needs more parameters:')+' '+state.readiness.compilationIssues.map(escape).join(' ')+' <button id="finish-parameters">'+t('Open editor')+'</button></div>':'')+'<div class="page-actions"><button id="example" class="primary">'+t(draft.mode==='sppr'?'Open the first SPPR scenario':'Open the first Vanessa feature')+'</button><button id="settings-done">'+t('Open settings')+'</button></div><p>'+t(draft.mode==='sppr'?'In SPPR, properties contain parameters and run settings. F12 opens a nested scenario; Test Manager compiles the main test before Vanessa runs it.':'A Vanessa feature runs directly. Find a step in the Library, edit tags and launch JSON in properties, then use F11 after connecting Vanessa.')+'</p>';
-            if(draft.run&&!state.readiness?.executionReady){content.insertAdjacentHTML('afterbegin','<div class="subtle-box">'+t('The editor is ready. Vanessa preparation was not completed; execution is still disconnected.')+(state.readiness?.executionError?'<p>'+escape(state.readiness.executionError)+'</p>':'')+' <button id="retry-execution">'+t('Retry connecting Vanessa')+'</button></div>');$('retry-execution').onclick=()=>task('Preparing Vanessa…',async()=>{const result=await rpc('retryExecution');state.readiness={...state.readiness,...result};render();notice(t(result.executionReady?'Vanessa connected.':'Vanessa is still disconnected.'),!result.executionReady);});}
+            if(draft.run){content.insertAdjacentHTML('afterbegin','<div id="execution-state" class="subtle-box"></div>');renderExecutionState();}
             if($('finish-parameters'))$('finish-parameters').onclick=()=>rpc('action',{action:'parameters'});
             $('example').onclick=()=>task('Opening the test…',()=>rpc('openExample'));$('settings-done').onclick=()=>{state.view='settings';render();};
         }
         if($('to-start'))$('to-start').onclick=()=>nextStep(0);
         if($('back'))$('back').onclick=()=>nextStep(Math.max(0,state.step-1));
         if($('next'))$('next').onclick=()=>{
-            if(state.step===5)void task('Applying the reviewed project setup…',async()=>{ document.querySelector('.workbench').inert=true;$('next').disabled=true;try{state.readiness=await rpc('applySetup',{value:review.id});nextStep(6);notice(t('Project settings applied.'));}finally{document.querySelector('.workbench').inert=false;if($('next'))$('next').disabled=false;} });
+            if(state.step===5){if(setupRequest)return;void task('Applying the reviewed project setup…',async()=>{
+                setupControls(true);
+                try{state.readiness=await rpc('applySetup',{value:review.id});nextStep(6);notice(t('Project settings applied.'));}
+                finally{setupRequest=undefined;setupControls(false);}
+                if(draft.run)void prepareExecution();
+            });}
             else nextStep(state.step+1);
         };
         bindPaths();
+    }
+    function renderExecutionState() {
+        const area=$('execution-state');if(!area)return;
+        area.innerHTML=executionPreparing?t('Project settings are applied. Preparing 1C and Vanessa…'):
+            state.readiness?.executionReady?t('Vanessa connected.'):
+            t('The editor is ready. Vanessa preparation was not completed; execution is still disconnected.')+(state.readiness?.executionError?'<p>'+escape(state.readiness.executionError)+'</p>':'')+' <button id="retry-execution">'+t('Retry connecting Vanessa')+'</button>';
+        area.setAttribute('aria-busy',String(executionPreparing));
+        area.classList.toggle('execution-busy',executionPreparing);
+        if($('retry-execution'))$('retry-execution').onclick=prepareExecution;
+    }
+    async function prepareExecution() {
+        if(executionPreparing)return;
+        executionPreparing=true;renderExecutionState();
+        try{await task('Preparing Vanessa…',async()=>{
+            try{const result=await rpc('retryExecution');state.readiness={...state.readiness,...result,executionError:''};persist();notice(t(result.executionReady?'Vanessa connected.':'Vanessa is still disconnected.'),!result.executionReady);}
+            catch(error){state.readiness={...state.readiness,executionError:error.message};persist();throw error;}
+        });}finally{executionPreparing=false;renderExecutionState();}
     }
     function libraryFields(value) {
         const paths=value.split('|').map(value=>value.trim()).filter(Boolean);
@@ -245,7 +273,11 @@
     }
     window.addEventListener('message',event=>{
         const message=event.data;
-        if(message.type==='response'){
+        if(message.type==='setupProgress'){
+            if(message.id!==setupRequest||!waiting.has(message.id))return;
+            const counts=Number.isInteger(message.completed)&&Number.isInteger(message.total)&&message.total>0;
+            notice(message.label+(counts?' · '+message.completed+' / '+message.total:''));
+        }else if(message.type==='response'){
             const pending=waiting.get(message.id);if(!pending)return;waiting.delete(message.id);
             if(message.error){const error=new Error(message.error);error.applied=message.applied;pending.reject(error);}else pending.resolve(message.data);
         }else if(message.type==='boot'){
