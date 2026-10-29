@@ -300,7 +300,7 @@
   "config.vanessaControl.autoAddSavedClients.description": "Автоматически добавлять отсутствующие сохранённые профили в подключённую Vanessa. Не подключает клиентов и не заменяет конфликтующие или изменённые профили. После отказа повтор возможен через Refresh.",
   "config.newScenarioDefaults.format.legacy": "Сценарий в одном YAML (scen.yaml)",
   "config.newScenarioDefaults.format.native": "Текст feature + метаданные YAML (scen.feature + meta.yaml)",
-  "config.editor.autoMigrateScenarioYamlOnSave.description": "При сохранении преобразовывать старый scen.yaml в scen.feature + meta.yaml. По умолчанию включено. Несохранённые соседние файлы препятствуют конвертации.",
+  "config.editor.autoMigrateScenarioYamlOnSave.description": "При сохранении преобразовывать старый scen.yaml в scen.feature + meta.yaml. По умолчанию выключено. Несохранённые соседние файлы препятствуют конвертации.",
   "cmd.createNestedProcess.title": "Создать вложенный процесс",
   "command.convertScenario.title": "Преобразования…",
   "command.convertScenarioRole.title": "Главный ↔ вложенный сценарий или процесс",

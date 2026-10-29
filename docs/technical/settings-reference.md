@@ -613,14 +613,14 @@ true
 
 `kotTestToolkit.editor.autoMigrateScenarioYamlOnSave`
 
-При сохранении преобразовывать старый scen.yaml в scen.feature + meta.yaml. По умолчанию включено. Несохранённые соседние файлы препятствуют конвертации.
+При сохранении преобразовывать старый scen.yaml в scen.feature + meta.yaml. По умолчанию выключено. Несохранённые соседние файлы препятствуют конвертации.
 
 Тип: `"boolean"`. Область: `resource`.
 
 Значение по умолчанию:
 
 ```json
-true
+false
 ```
 
 ## Компиляция СППР

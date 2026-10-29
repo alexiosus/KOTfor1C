@@ -433,7 +433,7 @@
           },
           "kotTestToolkit.editor.autoMigrateScenarioYamlOnSave": {
             "type": "boolean",
-            "default": true,
+            "default": false,
             "scope": "resource",
             "markdownDescription": "%config.editor.autoMigrateScenarioYamlOnSave.description%",
             "order": 1

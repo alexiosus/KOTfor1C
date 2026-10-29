@@ -436,7 +436,7 @@ window.KOT_SETTINGS_MODEL = {
       "section": "project",
       "advanced": true,
       "type": "boolean",
-      "default": true,
+      "default": false,
       "description": "При сохранении преобразовывать старый scen.yaml в scen.feature + meta.yaml. По умолчанию выключено. Несохранённые соседние файлы препятствуют конвертации.",
       "preferredScope": "folder",
       "hint": "При сохранении преобразовывать старый scen.yaml в scen.feature + meta.yaml."

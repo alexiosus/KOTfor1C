@@ -3410,7 +3410,7 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument(async (document) => {
             if (/(?:^|[\\/])scen\.yaml$/u.test(document.fileName) && !document.isDirty
-                && vscode.workspace.getConfiguration('kotTestToolkit', document.uri).get<boolean>('editor.autoMigrateScenarioYamlOnSave', true)) {
+                && vscode.workspace.getConfiguration('kotTestToolkit', document.uri).get<boolean>('editor.autoMigrateScenarioYamlOnSave', false)) {
                 const { shouldAutoMigrateScenario } = await import('./spprScenarioFormat.js');
                 if (shouldAutoMigrateScenario(document.fileName, document.getText(), true)) {
                     const result = await (await import('./spprScenarioFiles.js')).handleConvertScenarioFormat(document.uri, 'native', true);

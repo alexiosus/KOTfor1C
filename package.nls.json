@@ -300,7 +300,7 @@
   "config.vanessaControl.autoAddSavedClients.description": "Automatically add absent saved profiles to the connected Vanessa. Never connects clients or replaces conflicting or changed profiles. Refresh retries a rejected addition.",
   "config.newScenarioDefaults.format.legacy": "Scenario in one YAML file (scen.yaml)",
   "config.newScenarioDefaults.format.native": "Feature script + YAML metadata (scen.feature + meta.yaml)",
-  "config.editor.autoMigrateScenarioYamlOnSave.description": "Convert legacy scen.yaml to scen.feature + meta.yaml when saving. Enabled by default. Unsaved companion files prevent conversion.",
+  "config.editor.autoMigrateScenarioYamlOnSave.description": "Convert legacy scen.yaml to scen.feature + meta.yaml when saving. Disabled by default. Unsaved companion files prevent conversion.",
   "cmd.createNestedProcess.title": "Create Nested process",
   "command.convertScenario.title": "Conversions…",
   "command.convertScenarioRole.title": "Main ↔ nested scenario or process",
