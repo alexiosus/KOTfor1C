@@ -40,6 +40,7 @@ function definition(overrides: Partial<ProjectDefinition> = {}): ProjectDefiniti
         parameters: [],
         sourceLabel: 'User steps',
         language: 'en',
+        userStepLibrary: { status: 'ready', sourceDirectory: '/workspace/src' },
         ...overrides
     };
 }
@@ -483,6 +484,20 @@ test('copies display text and opens only captured navigable definitions', async 
     assert.equal(await state.service.openDefinition(item({ kind: 'builtInStep', capturedLocation: location })), false);
     assert.equal(await state.service.openDefinition(item({ navigable: false })), false);
     state.service.dispose();
+});
+
+test('source-only and stale user steps stay navigable but cannot be inserted or copied', async () => {
+    for (const status of ['sourceOnly', 'uncompiled', 'stale'] as const) {
+        const current = definition({ userStepLibrary: { status, sourceDirectory: '/workspace/src' } });
+        const snapshot = buildStepLibrarySnapshot(projectView(current));
+        assert.equal(snapshot.items.length, 1);
+        assert.equal(snapshot.items[0].insertable, false);
+        const state = harness(createEditor(), current);
+        assert.equal(await state.service.insert(item()), false, 'An old enabled row must be revalidated');
+        assert.equal(await state.service.copy(item()), false);
+        assert.deepEqual(state.clipboardWrites, []);
+        state.service.dispose();
+    }
 });
 
 test('Properties opens standalone features and revalidates export feature definitions', async () => {

@@ -9,7 +9,7 @@ import { aggregateCompilerJUnit, compilerReportLinkTarget, upgradeCompilerReport
 import type { CompilerBuildJob } from '../src/compilerBuildRuntime';
 import { resolveCompilerBuildErrorLocation } from '../src/compilerBuildErrorLocation';
 
-const MarkdownIt = require('markdown-it') as new () => { render(source: string): string };
+const MarkdownIt = require('markdown-it') as new (options?: { html: boolean }) => { render(source: string): string };
 
 function job(root: string, index: number): CompilerBuildJob {
     const directory = path.join(root, String(index));
@@ -271,4 +271,201 @@ test('an unresolved nested declaration never turns a child stack frame into a ro
     const parent = { uid: 'parent', name: 'Parent', path: path.join(root, 'Parent.yaml') };
     await fs.writeFile(parent.path, 'ВложенныеСценарии:\n    - ВложенныеСценарии1:\n        UIDВложенныйСценарий: "unavailable"\n        ИмяСценария: "Child"\nТекстСценария: |\n    And Child\n    And Unknown\n');
     assert.equal(await resolveCompilerBuildErrorLocation([parent], parent, 'Строка №1. And Child\n    Строка №2. And Unknown'), null);
+});
+
+test('native SPPR compilation failures link to the exact feature line in JUnit and SPPR reports', async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-native-report-'));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    for (const [reporter, eol] of [['junit', '\r\n'], ['sppr', '\n']]) {
+        await t.test(reporter, async () => {
+            const directory = path.join(root, reporter); await fs.mkdir(directory);
+            const metadata = path.join(directory, 'meta.yaml');
+            await fs.writeFile(metadata, ['ТипФайла: "Сценарий"', 'ДанныеСценария:', '    UID: "sale-uid"', ''].join(eol));
+            await fs.writeFile(path.join(directory, 'scen.feature'), ['#language: en', '', 'And Unknown', ''].join(eol));
+            const first = job(directory, 1); await fs.mkdir(first.errorPath, { recursive: true });
+            const message = 'Строка №3. &lt;And Unknown&gt;';
+            if (reporter === 'junit') {
+                await fs.writeFile(first.junitPath, failedJunit.replace('Step not found', message));
+            } else {
+                await fs.writeFile(path.join(first.errorPath, 'error.xml'), '<Structure><Property name="ИсходнаяИнформация"><Value>'
+                    + message + '</Value></Property><Property name="КодСценария"><Value>SALE</Value></Property></Structure>');
+            }
+            const target = path.join(directory, 'report.md');
+            await writeCompilerBuildReport([first], target, [{ uid: 'sale-uid', code: 'SALE', name: 'Sale', path: metadata }]);
+            const report = await fs.readFile(target, 'utf8');
+            assert.match(report, /Source: \[Sale:3\]\(<scen\.feature#L3>\)/u);
+            assert.match(new MarkdownIt().render(report), /<a href="scen\.feature#L3">Sale:3<\/a>/u);
+            assert.doesNotMatch(report, /\]\(<meta\.yaml/u);
+        });
+    }
+});
+
+test('native SPPR parameter binding failures use feature coordinates without the metadata offset', async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-native-binding-report-'));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const source = { uid: 'sale-uid', name: 'Sale', path: path.join(root, 'meta.yaml') };
+    await fs.writeFile(source.path, 'ТипФайла: "Сценарий"\nДанныеСценария:\n    UID: "sale-uid"\n');
+    const script = path.join(root, 'scen.feature');
+    await fs.writeFile(script, '#language: en\n\nAnd Child\n    Missing = "value"\n');
+    assert.deepEqual(await resolveCompilerBuildErrorLocation([source], source,
+        '{ObjectModule(5609)}: В подсценарии <And Child> нет параметра с именем <Missing>.'),
+    { source: { ...source, path: script }, line: 4 });
+});
+
+test('a compiler body line number without a stack resolves to the native script', async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-native-body-line-'));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const source = { uid: 'sale-uid', name: 'Sale', path: path.join(root, 'meta.yaml') };
+    await fs.writeFile(source.path, 'ТипФайла: "Сценарий"\nДанныеСценария:\n    UID: "sale-uid"');
+    const script = path.join(root, 'scen.feature');
+    await fs.writeFile(script, '#language: en\n\nAnd Unknown\n');
+    assert.deepEqual(await resolveCompilerBuildErrorLocation([source], source, 'Unknown step at line 3:'),
+        { source: { ...source, path: script }, line: 3 });
+});
+
+test('compiler error stacks follow nested declarations across native and legacy SPPR sources', async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-native-nested-report-'));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    for (const nativeParent of [true, false]) {
+        await t.test(nativeParent ? 'native parent' : 'native child', async () => {
+            const directory = path.join(root, String(nativeParent));
+            const parentDirectory = path.join(directory, 'Parent'); const childDirectory = path.join(directory, 'Child');
+            await fs.mkdir(parentDirectory, { recursive: true }); await fs.mkdir(childDirectory);
+            const parent = { uid: 'parent', name: 'Parent', path: path.join(parentDirectory, nativeParent ? 'meta.yaml' : 'scen.yaml') };
+            const child = { uid: 'child', name: 'Child', path: path.join(childDirectory, nativeParent ? 'scen.yaml' : 'meta.yaml') };
+            const parentMetadata = 'ТипФайла: "Сценарий"\nДанныеСценария:\n    UID: "parent"\nВложенныеСценарии:\n    - ВложенныеСценарии1:\n        UIDВложенныйСценарий: "child"\n        ИмяСценария: "Child"\n';
+            const childMetadata = 'ТипФайла: "Сценарий"\nДанныеСценария:\n    UID: "child"\n';
+            await fs.writeFile(parent.path, parentMetadata + (nativeParent ? '' : 'ТекстСценария: |\n    And Child\n'));
+            await fs.writeFile(child.path, childMetadata + (nativeParent ? 'ТекстСценария: |\n    And Unknown\n' : ''));
+            await fs.writeFile(path.join(nativeParent ? parentDirectory : childDirectory, 'scen.feature'),
+                nativeParent ? '#language: en\n\nAnd Child\n' : '#language: en\n\nAnd Unknown\n');
+            assert.deepEqual(await resolveCompilerBuildErrorLocation([parent, child], parent,
+                `Строка №${nativeParent ? 3 : 1}. And Child\n    Строка №${nativeParent ? 1 : 3}. <And Unknown>`),
+            { source: nativeParent ? child : { ...child, path: path.join(childDirectory, 'scen.feature') }, line: nativeParent ? 5 : 3 });
+        });
+    }
+});
+
+test('a missing native script keeps the metadata fallback rather than inventing an error line', async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-native-missing-report-'));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const source = { uid: 'sale-uid', name: 'Sale', path: path.join(root, 'meta.yaml') };
+    await fs.writeFile(source.path, 'ТипФайла: "Сценарий"\nДанныеСценария:\n    UID: "sale-uid"\n');
+    assert.equal(await resolveCompilerBuildErrorLocation([source], source, 'Строка №3. And Unknown'), null);
+    const first = job(root, 1); await fs.mkdir(first.directory);
+    await fs.writeFile(first.junitPath, failedJunit.replace('Step not found', 'Строка №3. And Unknown'));
+    const target = path.join(root, 'report.md');
+    await writeCompilerBuildReport([first], target, [source]);
+    assert.match(await fs.readFile(target, 'utf8'), /Source: \[Sale\]\(<meta\.yaml>\)/u);
+});
+
+test('SPPR missing-keyword diagnostics link their quoted source line, including a source with nested declarations', async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-missing-keyword-report-'));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const metadata = 'ТипФайла: "Сценарий"\nДанныеСценария:\n    UID: "sale-uid"\nВложенныеСценарии:\n    - ВложенныеСценарии1:\n        UIDВложенныйСценарий: "child"\n        ИмяСценария: "I prepare workshop customer"\n';
+    const script = '#language: en\n# SPPR script fragment\n\nAnd I prepare workshop customer\n    Customer = [Customer]\nAnd I remember workshop message "Native source is ready"\n\nWrong line\n';
+    const diagnostic = 'Строка №8. Не найдено ключевое слово в начале строки. &lt;Wrong line&gt;';
+    for (const native of [true, false]) {
+        await t.test(native ? 'feature + meta' : 'embedded YAML', async () => {
+            const directory = path.join(root, String(native)); await fs.mkdir(directory);
+            const source = { uid: 'sale-uid', code: 'SALE', name: 'Sale', path: path.join(directory, native ? 'meta.yaml' : 'scen.yaml') };
+            await fs.writeFile(source.path, metadata + (native ? '' : 'ТекстСценария: |\n' + script.replace(/[^\r\n]+/gu, line => '    ' + line)));
+            if (native) { await fs.writeFile(path.join(directory, 'scen.feature'), script); }
+            const first = job(directory, 1); await fs.mkdir(first.errorPath, { recursive: true });
+            await fs.writeFile(first.junitPath, failedJunit.replace('Step not found', diagnostic));
+            await fs.writeFile(path.join(first.errorPath, 'error.xml'), '<Structure><Property name="КодСценария"><Value>SALE</Value></Property>'
+                + '<Property name="ИсходнаяИнформация"><Value>' + diagnostic + '</Value></Property>'
+                + '<Property name="ОбъектыМетаданных"><Value><Value><Property name="УточнениеРасположения"><Value>{ObjectModule(4568)}: '
+                + diagnostic + '</Value></Property></Value></Value></Property></Structure>');
+            const target = path.join(directory, 'report.md');
+            await writeCompilerBuildReport([first], target, [source]);
+            const report = await fs.readFile(target, 'utf8');
+            const expected = native ? 'Source: [Sale:8](<scen.feature#L8>)' : 'Source: [Sale:16](<scen.yaml#L16>)';
+            assert.equal(report.split(expected).length - 1, 1, 'JUnit and SPPR diagnostics must share one source link');
+            assert.doesNotMatch(report, /\]\(<meta\.yaml/u);
+            assert.equal(await resolveCompilerBuildErrorLocation([source], source,
+                'Строка №8. Не найдено ключевое слово в начале строки. <A different line>'), null,
+            'a diagnostic that disagrees with saved source must not produce a line link');
+        });
+    }
+});
+
+test('build report leads with actionable errors, merges duplicate diagnostics and folds technical details', async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-readable-build-report-'));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const first = job(root, 1); await fs.mkdir(first.errorPath, { recursive: true });
+    await fs.writeFile(first.resultPath, '0');
+    const source = { uid: 'sale-uid', code: 'SALE', name: 'Sale', path: path.join(root, 'meta.yaml') };
+    await fs.writeFile(source.path, 'ТипФайла: "Сценарий"\nДанныеСценария:\n    UID: "sale-uid"\n');
+    await fs.writeFile(path.join(root, 'scen.feature'), '#language: en\n\nWrong line\n');
+    const diagnostic = 'Строка №3. Не найдено ключевое слово в начале строки. &lt;Wrong line&gt;';
+    const details = diagnostic + '\n{ObjectModule(4568)}:InternalCompilerCall();';
+    await fs.writeFile(first.junitPath, failedJunit.replace('Step not found', details)
+        .replace('</testsuite>', '<testcase name="ready-settings"/></testsuite>').replace('tests="1"', 'tests="2"'));
+    await fs.writeFile(path.join(first.errorPath, 'error.xml'), '<Structure><Property name="КодСценария"><Value>SALE</Value></Property>'
+        + '<Property name="ИсходнаяИнформация"><Value>' + details + '</Value></Property></Structure>');
+    const target = path.join(root, 'report.md');
+    await writeCompilerBuildReport([first], target, [source]);
+    const report = await fs.readFile(target, 'utf8');
+    assert.match(report, /^# Build report\n/u);
+    assert.match(report, /Compiled: 1 · With errors: 1 · Skipped: 0/u);
+    assert.ok(report.indexOf('## Errors to fix') < report.indexOf('## Compilation results'));
+    assert.ok(report.indexOf('scen.feature#L3') < report.indexOf('<details>'));
+    assert.equal((report.match(/^### .*Sale/gmu) ?? []).length, 1, 'JUnit and SPPR must produce one actionable error');
+    assert.ok(report.indexOf('InternalCompilerCall') > report.indexOf('<summary>Technical details</summary>'));
+    assert.match(report, /\| Test \| Compilation \| Source \|/u);
+    const html = new MarkdownIt({ html: true }).render(report);
+    assert.match(html, /<details>\s*<summary>Technical details<\/summary>/u);
+    assert.match(html, /<a href="scen\.feature#L3">/u);
+    assert.doesNotMatch(report.slice(0, report.indexOf('## Compilation results')), /\]\(<meta\.yaml/u);
+});
+
+test('build report distinguishes complete compilation from unavailable worker results', async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-incomplete-build-report-'));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const first = job(root, 1); await fs.mkdir(first.directory);
+    await fs.writeFile(first.resultPath, '0');
+    await fs.writeFile(first.junitPath, '<testsuite tests="1"><testcase name="Ready"/></testsuite>');
+    const target = path.join(root, 'report.md');
+    await writeCompilerBuildReport([first, job(root, 2)], target);
+    const report = await fs.readFile(target, 'utf8');
+    assert.match(report, /Build results are incomplete/u);
+    assert.match(report, /Compiled: 1 · With errors: 0 · Skipped: 0/u);
+    assert.doesNotMatch(report, /✅ Compilation completed/u);
+});
+
+test('report presentation uses the supplied interface translations while preserving compiler diagnostics', async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-localized-build-report-'));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const first = job(root, 1); await fs.mkdir(first.directory);
+    await fs.writeFile(first.resultPath, '0'); await fs.writeFile(first.junitPath, failedJunit);
+    const translations = JSON.parse(await fs.readFile(path.resolve('l10n/bundle.l10n.ru.json'), 'utf8')) as Record<string, string>;
+    const translate = (message: string, ...args: string[]) => (translations[message] ?? message)
+        .replace(/\{(\d+)\}/gu, (_, index: string) => args[Number(index)] ?? '');
+    const target = path.join(root, 'report.md');
+    await writeCompilerBuildReport([first], target, [], [], translate);
+    const report = await fs.readFile(target, 'utf8');
+    assert.match(report, /^# Отчёт о сборке\n/u);
+    assert.match(report, /## Ошибки сборки/u);
+    assert.match(report, /## Результаты компиляции/u);
+    assert.match(report, /<summary>Технические детали<\/summary>/u);
+    assert.match(report, /Step not found/u);
+});
+
+test('readable report preserves skipped reasons and keeps names with pipes inside one table cell', async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-skipped-build-report-'));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const first = job(root, 1); await fs.mkdir(first.directory);
+    await fs.writeFile(first.resultPath, '0');
+    await fs.writeFile(first.junitPath, '<testsuite tests="1" skipped="1"><testcase name="Optional | variant">'
+        + '<skipped message="Disabled in configuration">The required condition is absent.</skipped></testcase></testsuite>');
+    const target = path.join(root, 'report.md');
+    await writeCompilerBuildReport([first], target);
+    const report = await fs.readFile(target, 'utf8');
+    assert.match(report, /Compiled: 0 · With errors: 0 · Skipped: 1/u);
+    assert.match(report, /Disabled in configuration/u);
+    assert.match(report, /The required condition is absent\./u);
+    const html = new MarkdownIt({ html: true }).render(report);
+    assert.match(html, /<td>Optional \| variant<\/td>/u);
+    assert.doesNotMatch(report, /## Errors to fix/u);
 });

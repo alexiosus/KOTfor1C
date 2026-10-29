@@ -30,6 +30,7 @@
     const paneResizers = [...document.querySelectorAll('.pane-resizer')];
     const liveRegion = document.getElementById('liveRegion');
     const labels = document.body.dataset;
+    const userStepLibraries = globalThis.UserStepLibraries;
     const persisted = vscode.getState() || {};
     const renderedRowsById = new Map();
     const resourceChildrenByParent = new Map();
@@ -86,14 +87,14 @@
     const featureActions = globalThis.StepLibraryFeatureProtocol.createController({
         postMessage: message => vscode.postMessage(message),
         getFeatures: () => state.snapshot?.items.filter(item => item.featureId) || [],
-        getItemActions: item => item.definitionId ? protocol.definitionRowActionOrder(item).map(action => ({
+        getItemActions: item => item.definitionId ? [...protocol.definitionRowActionOrder(item).filter(action => action !== 'copy' || userStepLibraries.canCopy(item)).map(action => ({
             id: action === 'favorite' ? 'toggleFavorite' : action,
             label: action === 'favorite'
                 ? state.favoriteItemIds.has(item.id) ? labels.removeFavorite : labels.addFavorite
                 : labels[action],
             disabled: action !== 'favorite' && (state.pendingActions.has(`${action}\0${item.id}`)
                 || (action === 'insert' && !state.insertionTarget.available))
-        })) : [],
+        })), ...userStepLibraries.actions(item, labels)] : [],
         runItemAction: (action, item) => {
             if (action === 'toggleFavorite') { vscode.postMessage({ command: action, itemId: item.id }); }
             else if (action === 'insert') { requestInsert(item.id); }
@@ -1234,12 +1235,12 @@
                 !state.insertionTarget.available || state.pendingActions.has(`insert\0${item.id}`)
             ));
         }
-        actionButtons.set('copy', createDefinitionActionButton('copy',
+        if (userStepLibraries.canCopy(item)) { actionButtons.set('copy', createDefinitionActionButton('copy',
             'copy',
             labels.copy,
             item,
             state.pendingActions.has(`copy\0${item.id}`)
-        ));
+        )); }
         if (item.navigable === true) {
             actionButtons.set('openDefinition', createDefinitionActionButton('openDefinition',
                 'go-to-file',
@@ -1249,10 +1250,18 @@
             ));
         }
         for (const actionName of protocol.definitionRowActionOrder(item)) {
+            if (item.kind === 'userStep' && actionName === 'openDefinition') { continue; }
+            if (item.kind === 'userStep' && actionName === 'favorite') {
+                featureActions.appendMenuButton(actions, item, 'definition-action icon-button');
+            }
             const actionButton = actionButtons.get(actionName);
             if (actionButton) {
                 actions.append(actionButton);
             }
+        }
+        const libraryState = userStepLibraries.stateLabel(item, labels);
+        if (libraryState) {
+            source.append(document.createTextNode(' · ' + libraryState));
         }
         if (item.featureId) {
             row.addEventListener('dblclick', () => featureActions.send('openFeature', item));
@@ -1784,7 +1793,7 @@
             item,
             state.insertionTarget.available
         ) || insertPending;
-        copyButton.disabled = !item || copyPending;
+        copyButton.disabled = !userStepLibraries.canCopy(item) || copyPending;
         openDefinitionButton.disabled = !item || !item.navigable || openPending;
         favoriteButton.disabled = !item;
         if (convertFormatButton) { convertFormatButton.hidden = !item || !['mainScenario', 'process', 'nestedScenario', 'exportScenario'].includes(item.kind) || !/\.(?:ya?ml|feature)$/iu.test(item.capturedLocation?.uri || ''); convertFormatButton.disabled = !item; }
@@ -1810,6 +1819,23 @@
             true
         );
         addDetailsField(labels.categoryLabel, categoryLabel(item), false, true);
+        const libraryState = userStepLibraries.stateLabel(item, labels);
+        if (libraryState) {
+            const section = document.createElement('section');
+            section.className = 'details-field user-step-library-details';
+            section.setAttribute('aria-label', labels.epfLibrary || 'EPF library');
+            const heading = document.createElement('h4');
+            heading.className = 'details-label'; heading.textContent = labels.epfLibrary || 'EPF library';
+            const status = document.createElement('p');
+            status.className = 'source-description'; status.textContent = libraryState;
+            const operations = document.createElement('div'); operations.className = 'details-actions';
+            for (const action of userStepLibraries.actions(item, labels)) {
+                const button = document.createElement('button'); button.type = 'button'; button.textContent = action.label;
+                button.disabled = state.pendingActions.has(`${action.id}\0${item.id}`);
+                button.addEventListener('click', () => sendAction(action.id, item.id)); operations.append(button);
+            }
+            section.append(heading, status, operations); detailsContent.append(section);
+        }
         renderProcessSteps(item);
         if (item.featureId) {
             if (item.jsonPath) { addDetailsField(featureLabels.openJson || 'Vanessa parameters (JSON)', item.jsonPath, false, true); }
@@ -1861,6 +1887,7 @@
     }
 
     function sendAction(command, itemId) {
+        if (command === 'copy' && !userStepLibraries.canCopy(snapshotItemsById.get(itemId))) { return; }
         const key = `${command}\0${itemId}`;
         if (state.pendingActions.has(key)) {
             return;
@@ -2019,6 +2046,7 @@
         saveState();
         renderResults();
     });
+    document.getElementById('userStepLibrariesButton')?.addEventListener('click', () => vscode.postMessage({ command: 'manageUserStepLibraries' }));
     refreshButton.addEventListener('click', () => {
         refreshButton.disabled = true;
         vscode.postMessage({ command: 'refresh' });
@@ -2258,6 +2286,7 @@
                 insert: labels.inserted,
                 copy: labels.copied,
                 openDefinition: labels.opened,
+                buildUserStepLibrary: labels.opened, dumpUserStepLibrary: labels.opened,
                 moveProcessStep: labels.processStepMoved,
                 reorderProcessStep: labels.processStepMoved,
                 removeProcessStep: labels.processStepRemoved

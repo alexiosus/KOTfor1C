@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import * as sidebarModel from '../src/infobaseSidebarModel';
 import type { ManagedInfobaseRecord } from '../src/infobaseManager';
 import type { ManagedInfobaseSnapshot } from '../src/managedInfobaseService';
+import { translatorFor } from './helpers/localization';
 
 interface Disposable { dispose(): void; }
 
@@ -89,7 +90,7 @@ async function flush(): Promise<void> {
     await new Promise<void>(resolve => setImmediate(resolve));
 }
 
-function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('one'), record('two')], 'two'), clients?: unknown) {
+function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('one'), record('two')], 'two'), clients?: unknown, translate?: (message: string, ...args: string[]) => string) {
     const providerPath = path.join(process.cwd(), 'src', 'infobaseSidebarProvider.ts');
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
     const compiled = ts.transpileModule(fs.readFileSync(providerPath, 'utf8'), {
@@ -165,6 +166,7 @@ function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('o
         dispose(): void;
     };
     const provider = new Provider({
+        translate,
         extensionUri: uri('file:///extension'),
         managedInfobaseService: service,
         clients,
@@ -196,6 +198,15 @@ async function send(harness: ReturnType<typeof createHarness>, message: unknown)
     harness.view.webview.inbound.fire(message);
     await flush();
 }
+
+test('Infobases sidebar uses KOT Russian independently of the host language', async () => {
+    const h = createHarness(undefined, undefined, await translatorFor('Русский'));
+    try {
+        assert.match(h.view.webview.html, /Информационные базы/);
+        assert.match(h.view.webview.html, /Подключить/);
+        assert.doesNotMatch(h.view.webview.html, />Infobases</);
+    } finally { h.provider.dispose(); }
+});
 
 test('client rows use confirmed base runtime status and host-owned identities without rescanning', async () => {
     const calls: unknown[] = [];

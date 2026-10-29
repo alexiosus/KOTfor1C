@@ -6,7 +6,7 @@ import vm from 'node:vm';
 import type * as vscode from 'vscode';
 import type { DriveCompletionProvider } from '../src/completionProvider';
 import type { ProjectDefinitionResolver } from '../src/projectDefinitionResolver';
-import { createProjectDefinitionView, type ProjectDefinition } from '../src/projectDefinition';
+import { createProjectDefinitionView, isUserStepAvailable, type ProjectDefinition } from '../src/projectDefinition';
 import * as blockKeywordParser from '../src/blockKeywordParser';
 import * as gherkinDefinitionKeywords from '../src/gherkinDefinitionKeywords';
 import * as gherkinInsertionContext from '../src/gherkinInsertionContext';
@@ -28,6 +28,7 @@ class SnippetString {
 }
 
 const host = {
+    window: { activeTextEditor: undefined as vscode.TextEditor | undefined },
     CompletionItem: class {
         public constructor(public label: string | { label: string }, public kind: number) {}
     },
@@ -71,6 +72,7 @@ const languageModule = loadModule('gherkinLanguage.ts', {
 let liveFormSnapshot: any = null;
 let snapshotReads = 0;
 const completionModule = loadModule('completionProvider.ts', {
+    './projectDefinition': { isUserStepAvailable },
     './formExplorerLiveSnapshot': { loadLiveFormExplorerSnapshot: async () => { snapshotReads++; return liveFormSnapshot; } },
     vscode: host,
     './gherkinLanguage': languageModule,
@@ -92,7 +94,7 @@ function definitions(language: 'ru' | 'en'): ProjectDefinition[] {
     const shared = language === 'ru' ? 'общее' : 'shared';
     return [
         { id: `built:${language}`, kind: 'builtInStep', template: `${keyword} ${shared} built-in` },
-        { id: `user:${language}`, kind: 'userStep', template: `${keyword} ${shared} user step` },
+        { id: `user:${language}`, kind: 'userStep', template: `${keyword} ${shared} user step`, userStepLibrary: { status: 'ready' as const, sourceDirectory: '/src' } },
         {
             id: `export:${language}`, kind: 'exportScenario', template: `${shared} export "WindowName"`,
             usageExample: `${language === 'ru' ? 'Тогда' : 'Then'} ${shared} export "Main"`,
@@ -118,6 +120,18 @@ function createProvider(language: 'ru' | 'en', additional: ProjectDefinition[] =
         onDidChangeView: () => ({ dispose: () => undefined })
     } as unknown as ProjectDefinitionResolver);
 }
+
+test('completion excludes user steps without a current build, including semantic search entries', () => {
+    const ready = definitions('en').find(item => item.kind === 'userStep')!;
+    const all = ['ready', 'sourceOnly', 'uncompiled', 'stale'].map(status => ({ ...ready,
+        id: status, template: `And ${status}`, normalizedTemplate: `And ${status}`,
+        userStepLibrary: { status, sourceDirectory: '/src' }
+    })) as ProjectDefinition[];
+    const state = (createProvider('en') as any).buildGherkinCompletionState(createProjectDefinitionView('builds', all), true);
+    assert.equal(state.items.length, 1);
+    assert.equal(state.items[0].label, 'And ready');
+    assert.equal(state.semanticEntries.length, 1);
+});
 
 function document(language: 'ru' | 'en', kind: 'feature' | 'export' | 'yaml', semantic = false): vscode.TextDocument {
     const query = language === 'ru' ? 'общее' : 'shared';
@@ -518,3 +532,23 @@ test('native SPPR bracket completions read parameter defaults from meta.yaml', a
     const items = await complete(createProvider('en'), target);
     assert.ok(items.some(item => (typeof item.label === 'string' ? item.label : item.label.label).includes('Amount')));
 });
+
+for (const kind of ['feature', 'native', 'yaml'] as const) {
+    test(`selected quoted snippet placeholder offers form arguments in ${kind}`, async () => {
+        liveFormSnapshot = formSnapshot;
+        const target = argumentTarget('And I click "ButtonName|" button', kind === 'yaml' ? 'yaml' : 'feature');
+        const source = kind === 'native' ? { ...target.source, fileName: '/repo/scen.feature',
+            uri: { fsPath: '/repo/scen.feature', toString: () => 'file:///repo/scen.feature' } } as vscode.TextDocument : target.source;
+        const start = { line: target.position.line, character: '    And I click "'.length };
+        host.window.activeTextEditor = { document: source, selections: [{ start, end: target.position, active: target.position, isEmpty: false }] } as unknown as vscode.TextEditor;
+        try {
+            const items = await complete(createProvider('en'), source, target.position);
+            assert.ok(items.some(item => typeof item.label !== 'string' && item.label.label === 'Create'));
+            start.character++;
+            assert.equal((await complete(createProvider('en'), source, target.position)).length, 0, 'a partial selection must retain the argument query');
+            start.character--;
+            const other = { ...source, uri: { toString: () => 'file:///repo/other.feature' } } as vscode.TextDocument;
+            assert.equal((await complete(createProvider('en'), other, target.position)).length, 0, 'another editor selection must not erase the typed query');
+        } finally { liveFormSnapshot = null; host.window.activeTextEditor = undefined; }
+    });
+}

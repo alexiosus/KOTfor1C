@@ -2,19 +2,21 @@ import * as vscode from 'vscode';
 import { VanessaVariablesPanelModel, type VanessaVariableEdit } from './vanessaControlVariablesPanel';
 import { VanessaVariableControlError, type VanessaRuntimeVariable, type VanessaVariableScope } from './vanessaControlVariables';
 import type { VanessaControlSession } from './vanessaControlSession';
+import type { Translator } from './localization';
 
 const VIEW = 'kotTestToolkit.vanessaVariables';
 type VariableNode = { scope: VanessaVariableScope; variable?: VanessaRuntimeVariable; edit?: VanessaVariableEdit };
 
 /** Runtime values live only in this visible view, never workspace settings, YAML, or session snapshots. */
-export function registerVanessaVariableCommands(context: vscode.ExtensionContext, session: VanessaControlSession): void {
+export function registerVanessaVariableCommands(context: vscode.ExtensionContext, session: VanessaControlSession,
+    t: Translator = (message, ...args) => vscode.l10n.t(message, ...args)): void {
     const events = new vscode.EventEmitter<VariableNode | undefined>();
     const model = new VanessaVariablesPanelModel({
         snapshot: () => ({ generation: session.snapshot.generation, ready: session.snapshot.status === 'ready', busy: session.busy,
             read: !!session.snapshot.capabilities?.variablesRead.supported, write: !!session.snapshot.capabilities?.variablesWrite.supported }),
         run: (work, generation, isCurrent) => session.withVariableControl(work, () => session.snapshot.generation === generation && (!isCurrent || isCurrent()))
     }, () => events.fire(undefined));
-    const scopeLabel = (scope: VanessaVariableScope) => scope === 'local' ? vscode.l10n.t('Local context ($var$)') : vscode.l10n.t('Saved context ($$var$$)');
+    const scopeLabel = (scope: VanessaVariableScope) => scope === 'local' ? t('Local variables ($var$)') : t('Global variables ($$var$$)');
     const view = vscode.window.createTreeView<VariableNode>(VIEW, { treeDataProvider: {
         onDidChangeTreeData: events.event,
         getChildren: node => {
@@ -31,24 +33,30 @@ export function registerVanessaVariableCommands(context: vscode.ExtensionContext
             item.contextValue = row && node.edit ? node.scope === 'local' ? 'vanessaLocalVariable' : 'vanessaGlobalVariable' : '';
             if (row) {
                 // Plain text only: runtime values are not trusted Markdown or commands.
-                item.tooltip = `${row.name}\n${row.representation}\n\n${vscode.l10n.t('MCP returns a text representation without its 1C type. Replacing it stores a string.')}`;
+                item.tooltip = `${row.name}\n${row.representation}\n\n${t('MCP returns a text representation without its 1C type. Replacing it stores a string.')}`;
                 item.iconPath = new vscode.ThemeIcon('symbol-variable');
-            } else { item.description = String(model.state.rows.filter(value => value.scope === node.scope).length); }
+            } else {
+                item.description = String(model.state.rows.filter(value => value.scope === node.scope).length);
+                item.tooltip = node.scope === 'local'
+                    ? t('Local variables are stored in Context and cleared before each scenario starts.')
+                    : t('Global variables are stored in ContextPersisted and remain available between scenarios while Vanessa is running.');
+            }
             return item;
         }
     } });
+    view.title = t('Vanessa variables');
     const messages = {
-        idle: vscode.l10n.t('Refresh to read variables from the attached Vanessa session.'),
+        idle: t('Refresh to read variables from the attached Vanessa session.'),
         ready: undefined,
-        loading: vscode.l10n.t('Loading runtime variables…'),
-        unavailable: vscode.l10n.t('Attach to a ready Vanessa session with manage_variables support.'),
-        error: vscode.l10n.t('Could not read runtime variables. Refresh the session and retry.')
+        loading: t('Loading Vanessa variables…'),
+        unavailable: t('Attach to a ready Vanessa session with manage_variables support.'),
+        error: t('Could not read Vanessa variables. Refresh the connection and retry.')
     };
     const render = () => { view.message = messages[model.state.status]; events.fire(undefined); };
     const changes = events.event(() => { view.message = messages[model.state.status]; });
     const report = async (work: () => Promise<unknown>) => {
         try { await work(); } catch (error) {
-            void vscode.window.showErrorMessage(vscode.l10n.t(error instanceof VanessaVariableControlError ? error.message : 'The Vanessa variable operation was not confirmed. Refresh the variables.'));
+            void vscode.window.showErrorMessage(t(error instanceof VanessaVariableControlError ? error.message : 'The Vanessa variable operation was not confirmed. Refresh the variables.'));
         }
     };
     const write = async (node?: VariableNode) => {
@@ -57,22 +65,22 @@ export function registerVanessaVariableCommands(context: vscode.ExtensionContext
             await model.refresh();
             const captured = model.beginEdit('local', '');
             const scope = await vscode.window.showQuickPick((['local', 'global'] as const).map(value => ({ label: scopeLabel(value), value })), {
-                title: vscode.l10n.t('New runtime string variable'), ignoreFocusOut: true });
+                title: t('New string variable'), ignoreFocusOut: true });
             if (!scope) { return; }
-            const name = await vscode.window.showInputBox({ title: vscode.l10n.t('Runtime variable name'), ignoreFocusOut: true });
+            const name = await vscode.window.showInputBox({ title: t('Variable name'), ignoreFocusOut: true });
             if (!name) { return; }
             edit = model.beginEdit(scope.value, name);
             if (edit.generation !== captured.generation || edit.lifetime !== captured.lifetime) {
                 throw new VanessaVariableControlError('The Vanessa session or variable panel changed. Refresh the variables.');
             }
         }
-        const value = await vscode.window.showInputBox({ title: vscode.l10n.t('Set string value: {0}', edit.name),
-            prompt: vscode.l10n.t('MCP returns a text representation without its 1C type. Replacing it stores a string.'),
+        const value = await vscode.window.showInputBox({ title: t('Set string value: {0}', edit.name),
+            prompt: t('MCP returns a text representation without its 1C type. Replacing it stores a string.'),
             value: edit.expected ?? '', ignoreFocusOut: true });
         if (value === undefined) { return; }
         if (edit.expected !== undefined) {
-            const replace = vscode.l10n.t('Replace with string');
-            if (await vscode.window.showWarningMessage(vscode.l10n.t('Replace the runtime value of "{0}" with a string?', edit.name), { modal: true }, replace) !== replace) { return; }
+            const replace = t('Replace with string');
+            if (await vscode.window.showWarningMessage(t('Replace the value of Vanessa variable "{0}" with a string?', edit.name), { modal: true }, replace) !== replace) { return; }
         }
         await model.set(edit, value);
     };
@@ -92,8 +100,8 @@ export function registerVanessaVariableCommands(context: vscode.ExtensionContext
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.variables.set', (node?: VariableNode) => report(() => write(node))),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.variables.delete', (node?: VariableNode) => report(async () => {
             if (!node?.edit || !node.variable) { return; }
-            const remove = vscode.l10n.t('Delete variable');
-            if (await vscode.window.showWarningMessage(vscode.l10n.t('Delete local runtime variable "{0}"?', node.variable.name), { modal: true }, remove) === remove) { await model.delete(node.edit); }
+            const remove = t('Delete variable');
+            if (await vscode.window.showWarningMessage(t('Delete local variable "{0}"?', node.variable.name), { modal: true }, remove) === remove) { await model.delete(node.edit); }
         })));
     model.setVisible(view.visible);
     if (view.visible) { void model.refresh(); }

@@ -6,6 +6,7 @@ import test from 'node:test';
 import { parseUserStepSource } from '../src/bslStepSourceParser';
 import {
     createNewUserStepLibrarySource,
+    ensureUserStepRuntimeContext,
     planUserStepSourceEdit,
     resolveVanessaTemplateRoot,
     type UserStepSourceEditPlan
@@ -18,6 +19,22 @@ const parseContext = {
     libraryRootUri: 'file:///workspace/libraries',
     sourceLabel: 'Custom user steps'
 };
+
+test('supplies exported runtime contexts without changing the imported step implementation', () => {
+    const original = '// Перем КонтекстСохраняемый Экспорт;\r\n'
+        + '&НаКлиенте\r\nПерем Контекст;\r\n'
+        + '&НаКлиенте\r\nПроцедура Шаг() Экспорт\r\n    Перем КонтекстСохраняемый;\r\n    Сообщить("Перем Контекст Экспорт;");\r\nКонецПроцедуры\r\n';
+    const expected = '&НаКлиенте\r\nПерем КонтекстСохраняемый Экспорт;\r\n\r\n'
+        + '// Перем КонтекстСохраняемый Экспорт;\r\n&НаКлиенте\r\nПерем Контекст Экспорт;\r\n'
+        + '&НаКлиенте\r\nПроцедура Шаг() Экспорт\r\n    Перем КонтекстСохраняемый;\r\n    Сообщить("Перем Контекст Экспорт;");\r\nКонецПроцедуры\r\n';
+    assert.equal(ensureUserStepRuntimeContext(original), expected);
+    assert.equal(ensureUserStepRuntimeContext(expected), expected, 'Repeated builds must not duplicate declarations');
+});
+
+test('preserves a BOM and already exported runtime contexts in a shared variable declaration', () => {
+    const source = '\uFEFF&AtClient\nVar Контекст Export, КонтекстСохраняемый Export;\n\n&AtClient\nProcedure Step() Export\nEndProcedure\n';
+    assert.equal(ensureUserStepRuntimeContext(source), source);
+});
 
 function request(source: string) {
     return {
@@ -93,10 +110,19 @@ test('creates a source-first library from Vanessa metadata without requiring a 1
     ), 'utf8'), '<form-content/>');
 
     const module = await fs.promises.readFile(result.modulePath, 'utf8');
+    assert.match(module, /Перем Контекст Экспорт;/u);
+    assert.match(module, /Перем КонтекстСохраняемый Экспорт;/u);
     assert.match(module, /Функция ПолучитьСписокТестов\(КонтекстФреймворкаBDD\) Экспорт/u);
     const parsed = parseUserStepSource(module, parseContext);
     assert.deepEqual(parsed.definitions.map(item => item.template), ['И я открываю "Объект" для "Роль"']);
     assert.equal(parsed.declarations.some(item => item.name === 'ОткрытьКарточку'), true);
+    await t.test('wrapping an existing BSL preserves its implementation', async () => {
+        const original = module.replace('// TODO: реализовать шаг', 'Сообщить("готово");');
+        const imported = await createNewUserStepLibrarySource({
+            libraryRootPath: root, libraryName: 'ImportedSteps', templateRoot, moduleSource: original
+        });
+        assert.equal(await fs.promises.readFile(imported.modulePath, 'utf8'), original);
+    });
 });
 
 test('plans parser-proven registration and implementation insertions in an existing module', () => {

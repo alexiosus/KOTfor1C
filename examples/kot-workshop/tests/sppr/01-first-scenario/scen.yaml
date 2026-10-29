@@ -28,5 +28,5 @@
     #language: en
     # Start here: F12 on the following call opens a reusable SPPR scenario.
     And I prepare workshop customer
-        Customer = "[Customer]"
+        Customer = [Customer]
     And I remember workshop message "Request is prepared"

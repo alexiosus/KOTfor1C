@@ -19,7 +19,9 @@ function harness(source: string, nativeScript?: string) {
     const document = {
         text: source, languageId: 'yaml', fileName: '/repo/scenario.yaml',
         uri: { scheme: 'file', toString: () => 'file:///repo/scenario.yaml' },
-        getText() { return this.text; },
+        getText(range?: { start: { offset: number }; end: { offset: number } }) {
+            return range ? this.text.slice(range.start.offset, range.end.offset) : this.text;
+        },
         positionAt(offset: number) { return { offset }; }
     };
     class Range { constructor(readonly start: { offset: number }, readonly end: { offset: number }) {} }
@@ -87,6 +89,23 @@ test('Feature table formatting is available explicitly and before save, respecti
     h.configureAlignment(false); pending = undefined;
     h.beforeSave({ document: h.document, waitUntil: (value: typeof pending) => { pending = value; } } as vscode.TextDocumentWillSaveEvent);
     assert.equal(pending, undefined);
+});
+
+test('saving a feature or aligning YAML does not restore a partially deleted table column', async () => {
+    const body = '    And table\n        | Name |\n        | Alice | 1 |\n';
+    for (const feature of [true, false]) {
+        const source = feature ? '#language: en\n' + body : 'ТипФайла: "Сценарий"\nТекстСценария: |\n' + body;
+        const h = harness(source);
+        if (feature) { Object.assign(h.document, { languageId: 'feature', fileName: '/repo/scen.feature' }); }
+        assert.equal(await h.commands.alignGherkinTables(h.document), false);
+        assert.equal(h.document.getText(), source);
+        if (feature) {
+            h.commands.registerGherkinTableFormatting({ subscriptions: [] } as unknown as vscode.ExtensionContext);
+            let pending: Thenable<readonly vscode.TextEdit[]> | undefined;
+            h.beforeSave({ document: h.document, waitUntil: (value: typeof pending) => { pending = value; } } as vscode.TextDocumentWillSaveEvent);
+            assert.equal((await pending)?.length, 0);
+        }
+    }
 });
 
 test('inserting a scenario parameter emits compiler flags and valid choices with or without an existing section', async () => {

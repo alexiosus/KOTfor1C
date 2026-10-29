@@ -1,14 +1,15 @@
 import * as vscode from 'vscode';
-import type { VanessaControlExecution } from './vanessaControlSession';
+import type { VanessaExecutionLine } from './vanessaControlStepResults';
 
 interface ExecutionPaint {
     readonly range: vscode.Range;
-    readonly status: VanessaControlExecution['status'];
+    readonly status: VanessaExecutionLine['status'];
     readonly label?: string;
     readonly detail?: string;
     readonly hoverMessage?: vscode.MarkdownString | vscode.MarkdownString[];
+    readonly hoverPriority?: number;
 }
-const priority = { passed: 0, unknown: 1, stopped: 2, running: 3, failed: 4 };
+const priority = { skipped: -1, passed: 0, unknown: 1, stopped: 2, running: 3, failed: 4 };
 const sources = new WeakMap<vscode.TextEditor, Map<VanessaExecutionHighlighter, readonly ExecutionPaint[]>>();
 let styles: Map<ExecutionPaint['status'], vscode.TextEditorDecorationType> | undefined;
 let owners = 0;
@@ -30,8 +31,9 @@ export class VanessaExecutionHighlighter implements vscode.Disposable {
                 overviewRulerLane: vscode.OverviewRulerLane.Center, rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed }));
         }
     }
-    render(editor: vscode.TextEditor, range?: vscode.Range, status?: VanessaControlExecution['status'], label?: string, detail?: string): void {
-        this.renderMany(editor, range && status ? [{ range, status, label, detail }] : []);
+    render(editor: vscode.TextEditor, range?: vscode.Range, status?: ExecutionPaint['status'], label?: string, detail?: string,
+        hoverMessage?: ExecutionPaint['hoverMessage']): void {
+        this.renderMany(editor, range && status ? [{ range, status, label, detail, hoverMessage }] : []);
     }
     renderMany(editor: vscode.TextEditor, lines: readonly ExecutionPaint[]): void {
         if (this.disposed) { return; }
@@ -40,15 +42,22 @@ export class VanessaExecutionHighlighter implements vscode.Disposable {
             layers.set(this, lines); sources.set(editor, layers);
             if (!this.registered.has(editor)) { this.registered.add(editor); this.editors.add(new WeakRef(editor)); }
         } else { layers.delete(this); }
-        const selected = new Map<number, { line: ExecutionPaint; hovers: vscode.MarkdownString[] }>();
+        const selected = new Map<number, { line: ExecutionPaint; hovers: vscode.MarkdownString[]; hoverPriority: number }>();
         for (const values of layers.values()) {
             for (const line of values) {
+                if (line.status === 'skipped') { continue; }
                 const previous = selected.get(line.range.start.line);
                 const hover = new vscode.MarkdownString(); hover.appendText([line.label, line.detail].filter(Boolean).join('\n\n'));
                 const hovers = line.hoverMessage ? [line.hoverMessage].flat() : line.label || line.detail ? [hover] : [];
+                const hoverPriority = line.hoverPriority ?? (line.hoverMessage ? 1 : 0);
                 if (!previous || priority[line.status] > priority[previous.line.status]) {
-                    selected.set(line.range.start.line, { line, hovers });
-                } else if (line.status === previous.line.status) { previous.hovers.push(...hovers); }
+                    selected.set(line.range.start.line, { line, hovers, hoverPriority });
+                } else if (line.status === previous.line.status) {
+                    if (hoverPriority > previous.hoverPriority) { previous.hovers = hovers; previous.hoverPriority = hoverPriority; }
+                    else if (hoverPriority === previous.hoverPriority) {
+                        previous.hovers.push(...hovers.filter(item => !previous.hovers.some(existing => existing.value === item.value)));
+                    }
+                }
             }
         }
         for (const [status, decoration] of styles ?? []) {

@@ -15,6 +15,7 @@ import * as bindings from '../src/scenarioPropertiesBindings';
 import * as compilerFormat from '../src/compilerFormatDiagnostics';
 import * as attachments from '../src/scenarioPropertiesAttachments';
 import * as spprFormat from '../src/spprScenarioFormat';
+import { translatorFor } from './helpers/localization';
 
 const ts = require(path.join(process.cwd(), 'node_modules/typescript')) as typeof import('typescript');
 const protocol = require(path.join(process.cwd(), 'media/scenarioPropertiesProtocol.js'));
@@ -56,7 +57,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
     assert.ok(predicate(), 'The panel did not reach the expected state.');
 }
 
-async function harness(t: test.TestContext, initialSource = false) {
+async function harness(t: test.TestContext, initialSource = false, translate?: (message: string, ...args: string[]) => string) {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'kot-properties-panel-'));
     t.after(() => fsp.rm(root, { recursive: true, force: true }));
     const yamlRoot = path.join(root, 'tests'); const processRoot = path.join(root, 'processes');
@@ -190,7 +191,7 @@ async function harness(t: test.TestContext, initialSource = false) {
     const integration = load('projectLibraryIntegration.ts', { vscode: host, './scenarioDescriptor': descriptor,
         './projectLibraryMetadata': metadata, './projectLibraryStore': store, './scenarioScanRoot': scanRoot });
     const yamlValidator = load('yamlValidator.ts', { vscode: host, yaml: require(path.join(process.cwd(), 'node_modules/yaml')), './compilerFormatDiagnostics': compilerFormat });
-    const options = { runAction: async (...args: any[]) => { actions.push(args); } };
+    const options = { translate, runAction: async (...args: any[]) => { actions.push(args); } };
     const textEditor = { open: async (uri: Uri) => {
         textOpens.push(uri.toString());
         const document = await openDocument(uri);
@@ -235,6 +236,19 @@ async function harness(t: test.TestContext, initialSource = false) {
         addOwner(value: string) { workspaceRoots.push(value); host.workspace.workspaceFolders.push({ uri: Uri.file(value) }); }
     };
 }
+
+test('Properties uses KOT Russian for all protocol labels while preserving source values', async t => {
+    const h = await harness(t, false, await translatorFor('Русский'));
+    const view = await h.open();
+    const state = view.state();
+    assert.equal(state.labels.save, 'Сохранить тест');
+    assert.equal(state.labels.run, 'Запустить тест');
+    assert.equal(state.labels.groupId, 'Группа');
+    assert.equal(state.labels.order, 'Порядок');
+    assert.equal(state.labels.ungrouped, 'Без группы');
+    assert.equal(view.title, 'Свойства теста');
+    assert.equal(state.source.model.title, 'Sales');
+});
 
 test('native host reads dirty source/settings documents and binds exact UID rather than sibling names', async t => {
     const h = await harness(t); assert.ok(h.native, 'Native property host must read current VS Code documents');

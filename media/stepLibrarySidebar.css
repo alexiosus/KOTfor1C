@@ -28,7 +28,7 @@ body {
 
 .step-toolbar {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 4px;
     align-items: center;
     padding: 4px 6px;
@@ -37,6 +37,13 @@ body {
 
 .step-search-wrap {
     min-width: 0;
+}
+
+.step-library-state {
+    margin-inline-start: 8px;
+    color: var(--vscode-descriptionForeground);
+    font-family: var(--vscode-font-family);
+    font-size: 11px;
 }
 
 .step-status {
@@ -165,7 +172,7 @@ body {
 
 .step-row:hover .step-actions,
 .step-row:has(.step-action:focus-visible) .step-actions {
-    max-width: 112px;
+    max-width: none;
     opacity: 1;
     pointer-events: auto;
 }

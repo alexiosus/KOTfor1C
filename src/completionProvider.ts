@@ -11,7 +11,7 @@ import {
     FormExplorerSnapshot,
 } from './formExplorerTypes';
 import { PreparedStepStateCache } from './preparedStepStateCache';
-import type { ProjectDefinition, ProjectDefinitionView } from './projectDefinition';
+import { isUserStepAvailable, type ProjectDefinition, type ProjectDefinitionView } from './projectDefinition';
 import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 import {
     buildCallableDefinitionText,
@@ -602,9 +602,9 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             definitionByItem: new WeakMap<vscode.CompletionItem, ProjectDefinition>()
         };
 
-        const definitions = includeNestedScenarios
+        const definitions = (includeNestedScenarios
             ? view.all
-            : view.all.filter(definition => definition.kind !== 'nestedScenario');
+            : view.all.filter(definition => definition.kind !== 'nestedScenario')).filter(isUserStepAvailable);
         const builtInTranslations = new Map<string, ProjectDefinition[]>();
         const definitionCounts = new Map<string, number>();
         for (const definition of definitions) {
@@ -765,6 +765,15 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
 
         const quotedTextCompletionContext = parseQuotedTextCompletionContext(lineText, position.character);
         if (quotedTextCompletionContext) {
+            const editor = vscode.window?.activeTextEditor;
+            const selection = editor?.selections.length === 1 ? editor.selections[0] : undefined;
+            if (editor?.document === document && selection && !selection.isEmpty
+                && selection.start.line === position.line && selection.end.line === position.line
+                && selection.start.character === quotedTextCompletionContext.startCharacter
+                && selection.end.character === quotedTextCompletionContext.endCharacter) {
+                // A selected snippet default is about to be replaced, not a query to filter by.
+                quotedTextCompletionContext.typedPrefix = '';
+            }
             const formExplorerQuotedCompletionList = await this.buildFormExplorerQuotedArgumentCompletionList(
                 lineText,
                 position,

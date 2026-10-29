@@ -94,3 +94,14 @@ test('a toggle acknowledgement waits for the editor event before publishing owne
     assert.deepEqual(await sync.reconcile(target, [8], r.ports), [8]);
     assert.deepEqual(r.calls, [8]); assert.deepEqual(sync.ownedLines(target), [8]);
 });
+
+test('an acknowledged toggle with an unchanged MCP list reports the breakpoint failure without claiming ownership', async () => {
+    const r = remote([4]); const sync = new VanessaBreakpointReconciler();
+    r.ports.toggle = async line => { r.calls.push(line); };
+    await assert.rejects(sync.reconcile(target, [4, 8], r.ports), {
+        message: 'Vanessa did not confirm the breakpoint change. The MCP list still shows the previous state. Check the breakpoint in Vanessa before retrying.'
+    });
+    assert.deepEqual(r.calls, [8], 'an acknowledgement must not trigger a second, potentially destructive toggle');
+    assert.deepEqual(r.points(), [4]);
+    assert.deepEqual(sync.ownedLines(target), []);
+});

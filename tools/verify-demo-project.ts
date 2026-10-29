@@ -9,9 +9,15 @@ import { parseUserStepSource } from '../src/bslStepSourceParser';
 import { collectCompilerParameterReferences, getCompilerScenarioBody } from '../src/scenarioCompilerSyntax';
 
 const root = path.resolve('examples/kot-workshop');
+const localDirectories = new Set([
+    path.join(root, '.vscode', 'kot-runtime'),
+    path.join(root, 'build'),
+    path.join(root, 'tools')
+]);
 function files(directory: string): string[] {
     return fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
         const target = path.join(directory, entry.name);
+        if (localDirectories.has(target)) { return []; }
         return entry.isDirectory() ? files(target) : [target];
     });
 }

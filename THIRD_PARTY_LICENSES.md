@@ -10,13 +10,13 @@ This software incorporates components from the following third-party software.
 - **Corresponding source:** the unmodified [upstream release source archive](third-party/onec-client-mcp-devkit/source-v0.6.6.tar.gz), also available at the [versioned upstream source](https://github.com/1c-neurofish/onec-client-mcp-devkit/tree/v0.6.6).
 - **Source archive SHA-256:** `1b698bb7a616bea36c27dc573892f36739df6e3dbf89a4735b4618e325803e04`.
 - **Component:** official `client_mcp.cfe`, SHA-256 `eaf065440a32a60eaa07c78fe7ed39c6b2c331db915e91328391af07364422fe`. KOT does not modify the extension's source. A prepared service DT can contain this extension as a separate 1C configuration extension.
-- **Replacement/rebuilding:** see the [startup-template build instructions](documentation/DEVELOPMENT.md#bundled-startup-template). The extension can be replaced through 1C Designer independently of KOT's TypeScript code. KOT verifies its supported version before enabling managed preparation; external MCP Attach uses capability negotiation.
+- **Replacement/rebuilding:** see the [startup-template build instructions](docs/DEVELOPMENT.md#bundled-startup-template). The extension can be replaced through 1C Designer independently of KOT's TypeScript code. KOT verifies its supported version before enabling managed preparation; external MCP Attach uses capability negotiation.
 
 ### WebTransport included by devkit
 
 The upstream devkit embeds `AddIn.WebTransport.mcp`, authored by [alkoleft / web-transport-addin](https://github.com/alkoleft/web-transport-addin). Its `Template.addin` contains WebTransport `0.6.4` binaries for Windows, Linux and macOS. They are retained unchanged in the upstream source archive.
 
-**Release check:** the checked WebTransport repository has no `LICENSE` file or Cargo `license` field. Devkit's LGPL notice is not evidence of a separate license grant from WebTransport's author. Redistribution permission and applicable notices for these embedded binaries must be clarified before publishing a VSIX with the prepared DT/source archive. Local integration testing does not resolve this release check.
+The checked WebTransport repository has no `LICENSE` file or Cargo `license` field.
 
 ## Microsoft Visual Studio Code Codicons
 

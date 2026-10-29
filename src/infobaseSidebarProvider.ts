@@ -4,6 +4,7 @@ import type { ManagedInfobaseRecord } from './infobaseManager';
 import type { ManagedInfobaseService, ManagedInfobaseSnapshot } from './managedInfobaseService';
 import type { InfobaseRuntimeTrackerLike } from './infobaseRuntimeTracker';
 import type { VanessaInfobaseClients } from './vanessaInfobaseClients';
+import type { Translator } from './localization';
 
 export type InfobaseMaintenanceAction =
     | 'vanessaClients'
@@ -60,6 +61,7 @@ export interface InfobaseSidebarOperations {
 }
 
 export interface InfobaseSidebarServices {
+    readonly translate?: Translator;
     readonly clients?: Pick<VanessaInfobaseClients, 'stateFor' | 'onDidChange' | 'refresh' | 'operate'>;
     readonly connectVanessa?: () => Promise<void>;
     readonly extensionUri: vscode.Uri;
@@ -218,6 +220,7 @@ function translate(message: string, ...args: string[]): string {
 }
 
 export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vscode.Disposable {
+    private readonly t: Translator;
     public static readonly viewType = 'kotTestToolkit.infobaseSidebarView';
 
     private readonly disposables: vscode.Disposable[] = [];
@@ -235,6 +238,7 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
     private clientPoll: ReturnType<typeof setInterval> | undefined;
 
     constructor(private readonly services: InfobaseSidebarServices) {
+        this.t = services.translate ?? translate;
         this.disposables.push(
             services.managedInfobaseService.onDidInvalidate(() => this.handleInvalidation()),
             services.runtimeTracker.onDidChange(() => {
@@ -254,6 +258,7 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
     public resolveWebviewView(webviewView: vscode.WebviewView): void {
         this.disposeViewSubscriptions();
         this.view = webviewView;
+        webviewView.title = this.t('Infobases');
         this.ready = false;
         this.pendingReload = false;
         const mediaUri = vscode.Uri.joinPath(this.services.extensionUri, 'media');
@@ -326,7 +331,7 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
                 try {
                     if (!this.services.clients.stateFor(base.infobasePath).connection.ready && message.action !== 'disconnect') { await this.services.connectVanessa?.(); }
                     await this.services.clients.operate(base.infobasePath, [message.clientId], message.action);
-                } catch { await this.view?.webview.postMessage({ command: 'error', message: translate('The Vanessa client operation was not confirmed. Refresh the client list.'), retainItems: true }); }
+                } catch { await this.view?.webview.postMessage({ command: 'error', message: this.t('The Vanessa client operation was not confirmed. Refresh the client list.'), retainItems: true }); }
                 return;
             }
             case 'ready':
@@ -498,7 +503,7 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
         const codiconStylesUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'codicon.css'));
         const protocolUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'infobaseSidebarProtocol.js'));
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'infobaseSidebar.js'));
-        const t = (message: string) => escapeHtmlAttribute(translate(message));
+        const t = (message: string) => escapeHtmlAttribute(this.t(message));
         return `<!DOCTYPE html>
 <html lang="${escapeHtmlAttribute(vscode.env?.language || 'en')}">
 <head>

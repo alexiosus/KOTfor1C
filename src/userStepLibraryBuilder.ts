@@ -1,5 +1,8 @@
 import * as path from 'node:path';
+import { promises as fs, constants } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { buildFileInfobaseConnectionArgument } from './oneCInfobaseConnection';
+import { userStepSourceFingerprint, userStepBinaryFingerprint, writeUserStepBuildState } from './userStepLibraryState';
 
 export interface UserStepLibraryBuildRequest {
     readonly rootXmlPath: string;
@@ -67,6 +70,8 @@ export async function buildUserStepLibrary(
         return cancelled();
     }
 
+    const sourceFingerprint = await userStepSourceFingerprint(request.rootXmlPath);
+
     const targetDirectory = path.dirname(request.targetEpfPath);
     const baseName = path.basename(request.targetEpfPath, path.extname(request.targetEpfPath));
     const buildId = dependencies.now();
@@ -114,7 +119,35 @@ export async function buildUserStepLibrary(
         if (!output || output.size <= 0) {
             throw new Error('User-step library build produced no valid output EPF.');
         }
-        await dependencies.fileSystem.rename(temporaryEpfPath, request.targetEpfPath);
+        if (await userStepSourceFingerprint(request.rootXmlPath) !== sourceFingerprint) {
+            throw new Error('User-step sources changed during the build. Save and rebuild the library.');
+        }
+        const builtFingerprint = await userStepBinaryFingerprint(temporaryEpfPath);
+        const backup = path.join(targetDirectory, `.${baseName}.kot-previous-${randomUUID()}.epf`);
+        const hadPrevious = await fs.copyFile(request.targetEpfPath, backup, constants.COPYFILE_EXCL)
+            .then(() => true).catch(error => { if (error.code !== 'ENOENT') { throw error; } return false; });
+        let installed = false;
+        let removeBackup = false;
+        try {
+            await dependencies.fileSystem.rename(temporaryEpfPath, request.targetEpfPath);
+            installed = true;
+            await writeUserStepBuildState(request.rootXmlPath, request.targetEpfPath, sourceFingerprint, builtFingerprint);
+            removeBackup = true;
+        } catch (error) {
+            if (!installed) { removeBackup = true; }
+            else {
+                const current = await userStepBinaryFingerprint(request.targetEpfPath).catch(() => undefined);
+                if (current === builtFingerprint || current === undefined) {
+                    if (hadPrevious) { await fs.rename(backup, request.targetEpfPath); }
+                    else { await fs.rm(request.targetEpfPath, { force: true }); }
+                    removeBackup = true;
+                }
+            }
+            throw error;
+        } finally {
+            // Retain the backup if restoration itself failed or another process replaced the EPF.
+            if (removeBackup) { await fs.rm(backup, { force: true }); }
+        }
         return Object.freeze({
             kind: 'success' as const,
             targetEpfPath: request.targetEpfPath,

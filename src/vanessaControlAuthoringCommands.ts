@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { getGherkinInsertionContext } from './gherkinInsertionContext';
+import { readNativeScenarioMetadata } from './spprScenarioFiles';
 import { VanessaAuthoringError, prepareVanessaDraftInsertion, type VanessaInsertionTarget, type VanessaRecordingToken } from './vanessaControlAuthoring';
 import type { VanessaControlSession } from './vanessaControlSession';
 
@@ -13,12 +14,17 @@ export function registerVanessaAuthoringCommands(context: vscode.ExtensionContex
     const retain = (text?: string) => { if (text?.trim() && text !== pending && !retained.includes(text)) { retained.push(text); } };
     const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 9);
     const results = vscode.window.createOutputChannel(vscode.l10n.t('Vanessa generated steps'), 'feature');
-    const captureTarget = (): VanessaInsertionTarget | undefined => {
+    const captureTarget = async (): Promise<VanessaInsertionTarget | undefined> => {
         const active = vscode.window.activeTextEditor;
         const editor = active?.document.uri.scheme === 'file' ? active : lastEditor;
         if (!editor || editor.document.isClosed || editor.document.uri.scheme !== 'file' || editor.selections?.length > 1) { return; }
-        const document = editor.document; const position = editor.selection.active;
-        const insertion = getGherkinInsertionContext(document, position);
+        const document = editor.document;
+        const nativeMetadata = /(?:^|[\\/])scen\.feature$/u.test(document.uri.fsPath)
+            ? await readNativeScenarioMetadata(document.uri) : undefined;
+        const current = vscode.window.activeTextEditor;
+        if (document.isClosed || editor.selections?.length > 1 || (current?.document.uri.scheme === 'file' ? current : lastEditor) !== editor) { return; }
+        const position = editor.selection.active;
+        const insertion = getGherkinInsertionContext(document, position, !!nativeMetadata);
         if (!insertion?.supported) { return; }
         const line = document.lineAt(position.line); const empty = !line.text.trim();
         const nextLine = empty ? position.line : position.line + 1;
@@ -46,7 +52,7 @@ export function registerVanessaAuthoringCommands(context: vscode.ExtensionContex
     const insert = async () => {
         const text = pending ?? retained.at(-1);
         if (!text) { return; }
-        const target = captureTarget();
+        const target = await captureTarget();
         if (!target) { throw new VanessaAuthoringError('Steps are ready. Place the cursor inside a scenario and use Insert captured steps here.'); }
         const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(target.uri));
         const edit = prepareVanessaDraftInsertion(target, { uri: document.uri.toString(), version: document.version, text: document.getText() }, text);
@@ -100,7 +106,7 @@ export function registerVanessaAuthoringCommands(context: vscode.ExtensionContex
         }),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.recording.start', () => report('Vanessa: starting recording…', async () => {
             if (capture) { throw new VanessaAuthoringError('A capture is already active. Use Stop recording first.'); }
-            if (!captureTarget()) { throw new VanessaAuthoringError('Place the cursor inside a YAML scenario body or a feature scenario before recording.'); }
+            if (!await captureTarget()) { throw new VanessaAuthoringError('Place the cursor inside a YAML scenario body or a feature scenario before recording.'); }
             if (!await ensureConnected()) { return; }
             const ownGeneration = session.snapshot.generation;
             try {

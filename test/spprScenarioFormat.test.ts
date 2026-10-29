@@ -23,6 +23,13 @@ test('native script without a final newline remains byte-identical after legacy 
     assert.equal(result.metadata, metadata);
 });
 
+test('short whitespace-only lines in the embedded script are blank lines, not ambiguous step indentation', () => {
+    for (const whitespace of [' ', '  ', '   ', '\t', ' \t']) {
+        const source = metadata + `ТекстСценария: |\r\n    And first\r\n${whitespace}\r\n    And second\r\n`;
+        assert.deepEqual(splitLegacySpprScenario(source), { metadata, script: 'And first\r\n\r\nAnd second\r\n' });
+    }
+});
+
 test('ambiguous and non-SPPR block forms fail before producing conversion output', () => {
     for (const source of [legacy.replace('ТекстСценария: |', 'ТекстСценария: |-'),
         legacy.replace('ТекстСценария: |', 'ТекстСценария: >'),
@@ -108,7 +115,7 @@ test('a destination edited during preparation is kept and the original source is
 });
 
 
-test('automatic migration is opt-in and only accepts an embedded scen.yaml scenario', () => {
+test('automatic migration respects the setting and only accepts an embedded scen.yaml scenario', () => {
     assert.equal(shouldAutoMigrateScenario('C:\\tests\\scen.yaml', 'ТипФайла: Сценарий\nТекстСценария: |\n    And step\n', true), true);
     assert.equal(shouldAutoMigrateScenario('/tests/scen.yaml', 'ТипФайла: Сценарий\nТекстСценария: |\n    And step\n', false), false);
     assert.equal(shouldAutoMigrateScenario('/tests/meta.yaml', 'ТипФайла: Сценарий\n', true), false);

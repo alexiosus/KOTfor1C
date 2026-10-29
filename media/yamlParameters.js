@@ -44,6 +44,9 @@
         paramNamePlaceholder: document.body.dataset.paramNamePlaceholder || 'Parameter name',
         paramValuePlaceholder: document.body.dataset.paramValuePlaceholder || 'Parameter value',
         removeParameter: document.body.dataset.removeParameter || 'Remove parameter',
+        variableNamePlaceholder: document.body.dataset.variableNamePlaceholder || 'Variable name',
+        variableValuePlaceholder: document.body.dataset.variableValuePlaceholder || 'Variable value',
+        removeVariable: document.body.dataset.removeVariable || 'Remove variable',
         overrideTitle: document.body.dataset.overrideTitle || 'When enabled, this value replaces an existing value in the generated Vanessa JSON. Otherwise, it is added only when the key is absent.',
         fixedBuildParameterHint: document.body.dataset.fixedBuildParameterHint || 'This parameter is fixed and cannot be removed.',
         resetBuildParameterValue: document.body.dataset.resetBuildParameterValue || 'Reset value to default',
@@ -477,7 +480,7 @@
         } else if (kind === 'array' || kind === 'object') {
             html = `<textarea ${attrs} rows="3" spellcheck="false" placeholder="${kind === 'array' ? '[]' : '{}'}">${escapeHtml(rawValue)}</textarea>`;
         } else {
-            html = `<input ${attrs} type="${kind === 'number' && (!rawValue || !error) ? 'number' : 'text'}" ${kind === 'number' ? 'step="any" inputmode="decimal"' : ''} value="${escapeHtml(rawValue)}" placeholder="${escapeHtml(uiLoc.paramValuePlaceholder)}">`;
+            html = `<input ${attrs} type="${kind === 'number' && (!rawValue || !error) ? 'number' : 'text'}" ${kind === 'number' ? 'step="any" inputmode="decimal"' : ''} value="${escapeHtml(rawValue)}" placeholder="${escapeHtml(typed ? uiLoc.paramValuePlaceholder : uiLoc.variableValuePlaceholder)}">`;
         }
         const unsupported = typed && getAdditionalParameterDefinition(param.key)?.availability === 'unsupported';
         return `${html}<div class="param-value-error" role="status" ${error ? '' : 'hidden'}>${escapeHtml(error)}</div>
@@ -504,7 +507,7 @@
                 <select class="param-bool-select param-additional-key-select" aria-label="${escapeHtml(param.key)}">
                     ${options.map(key => `<option value="${escapeHtml(key)}" ${key === param.key ? 'selected' : ''}>${escapeHtml(key)}</option>`).join('')}
                 </select></div>`
-            : `<input type="text" class="param-key ${typed ? 'is-catalog' : ''}" ${typed ? 'readonly' : ''} value="${escapeHtml(param.key || '')}" placeholder="${escapeHtml(uiLoc.paramNamePlaceholder)}">`;
+            : `<input type="text" class="param-key ${typed ? 'is-catalog' : ''}" ${typed ? 'readonly' : ''} value="${escapeHtml(param.key || '')}" placeholder="${escapeHtml(typed ? uiLoc.paramNamePlaceholder : uiLoc.variableNamePlaceholder)}">`;
         const hint = typed ? definition?.description || uiLoc.customVanessaParameterDescription : '';
         return `
             <tr data-index="${index}" ${typed && param.valueKind ? `data-value-kind="${escapeHtml(param.valueKind)}" data-original-key="${escapeHtml(param.key)}"` : ''}>
@@ -518,7 +521,7 @@
                     <input type="checkbox" class="param-override" ${isOverride ? 'checked' : ''} title="${escapeHtml(uiLoc.overrideTitle)}">
                 </td>
                 <td>
-                    <button class="button-with-icon remove-row-btn" title="${escapeHtml(uiLoc.removeParameter)}">
+                    <button class="button-with-icon remove-row-btn" title="${escapeHtml(typed ? uiLoc.removeParameter : uiLoc.removeVariable)}">
                         <span class="codicon codicon-trash"></span>
                     </button>
                 </td>
@@ -937,16 +940,16 @@
         row.setAttribute('data-index', String(body.children.length));
         row.innerHTML = `
             <td>
-                <input type="text" class="param-key" value="" placeholder="${escapeHtml(uiLoc.paramNamePlaceholder)}">
+                <input type="text" class="param-key" value="" placeholder="${escapeHtml(uiLoc.variableNamePlaceholder)}">
             </td>
             <td>
-                <input type="text" class="param-value" value="" placeholder="${escapeHtml(uiLoc.paramValuePlaceholder)}">
+                <input type="text" class="param-value" value="" placeholder="${escapeHtml(uiLoc.variableValuePlaceholder)}">
             </td>
             <td class="param-priority-cell">
                 <input type="checkbox" class="param-override" title="${escapeHtml(uiLoc.overrideTitle)}">
             </td>
             <td>
-                <button class="button-with-icon remove-row-btn" title="${escapeHtml(uiLoc.removeParameter)}">
+                <button class="button-with-icon remove-row-btn" title="${escapeHtml(uiLoc.removeVariable)}">
                     <span class="codicon codicon-trash"></span>
                 </button>
             </td>

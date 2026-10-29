@@ -8,7 +8,7 @@ import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 import type { openProjectDefinitionHandler } from './projectDefinitionNavigation';
 import { buildProjectDefinitionInsertion } from './projectDefinitionSnippet';
 import { getProcessStepsSignature, type StepLibraryItem } from './stepLibraryModel';
-import type { ProjectDefinition } from './projectDefinition';
+import { isUserStepAvailable, type ProjectDefinition } from './projectDefinition';
 import { parseScenarioDescriptor } from './scenarioDescriptor';
 import { moveCompilerProcessStep, removeCompilerProcessStep } from './compilerProcesses';
 import { ScenarioYamlDocument } from './scenarioYamlDocument';
@@ -20,6 +20,7 @@ export function buildStepLibraryDropSnippet(
     document: vscode.TextDocument,
     position: vscode.Position
 ): string | null {
+    if (!isUserStepAvailable(definition)) { return null; }
     const context = getGherkinInsertionContext(document, position);
     if (!context) {
         return null;
@@ -173,9 +174,12 @@ export class StepLibraryActionService implements vscode.Disposable {
             return false;
         }
         const targetGeneration = this.insertionTargetGeneration;
-        const view = await this.dependencies.resolver.getView(resource ?? target.editor.document.uri);
+        const resolver = this.dependencies.resolver;
+        const view = await (item.kind === 'userStep' && typeof resolver.ensureReady === 'function'
+            ? resolver.ensureReady(resource ?? target.editor.document.uri)
+            : resolver.getView(resource ?? target.editor.document.uri));
         const definition = view.byId.get(item.definitionId);
-        if (!definition) {
+        if (!definition || !isUserStepAvailable(definition)) {
             return false;
         }
         if (
@@ -204,7 +208,13 @@ export class StepLibraryActionService implements vscode.Disposable {
         );
     }
 
-    public async copy(item: StepLibraryItem): Promise<boolean> {
+    public async copy(item: StepLibraryItem, resource?: vscode.Uri): Promise<boolean> {
+        if (item.kind === 'userStep') {
+            const resolver = this.dependencies.resolver;
+            const view = await (typeof resolver.ensureReady === 'function' ? resolver.ensureReady(resource) : resolver.getView(resource));
+            const definition = view.byId.get(item.definitionId);
+            if (!definition || !isUserStepAvailable(definition)) { return false; }
+        }
         await this.dependencies.host.writeClipboardText(item.displayText);
         return true;
     }

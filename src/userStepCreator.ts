@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { UserStepSourceParseResult } from './bslStepSourceParser';
+import { scanBslTokens, type UserStepSourceParseResult } from './bslStepSourceParser';
 import {
     extractExportScenarioQuotedValues,
     suggestedExportScenarioParameterName
@@ -41,12 +41,12 @@ export interface UserStepSourceEditPlan {
     };
 }
 
-export interface CreateNewUserStepLibraryRequest {
+export type CreateNewUserStepLibraryRequest = {
     readonly libraryRootPath: string;
     readonly libraryName: string;
     readonly templateRoot: string;
-    readonly step: UserStepSourceEditRequest;
-}
+} & ({ readonly step: UserStepSourceEditRequest; readonly moduleSource?: never }
+    | { readonly moduleSource: string; readonly step?: never });
 
 export interface NewUserStepLibrarySourceResult {
     readonly sourceDirectory: string;
@@ -62,6 +62,36 @@ const TEMPLATE_METADATA_FILES = Object.freeze([
 ]);
 const MODULE_RELATIVE_PATH = path.join('Обработка', 'Forms', 'Форма', 'Ext', 'Form', 'Module.bsl');
 const VANESSA_ALIASES = new Set(['vanessafolder', 'vanessadir', 'vanessapath']);
+
+/** Vanessa assigns these exported form variables before invoking a user step. */
+export function ensureUserStepRuntimeContext(source: string): string {
+    const required = new Map([['контекст', 'Контекст'], ['контекстсохраняемый', 'КонтекстСохраняемый']]);
+    const edits: UserStepSourceTextEdit[] = [];
+    const tokens = scanBslTokens(source).filter(token => token.kind !== 'comment' && token.kind !== 'newline');
+    let inCallable = false;
+    for (let index = 0; index < tokens.length; index++) {
+        const token = tokens[index];
+        if (token.kind !== 'identifier') { continue; }
+        const name = token.text.toLocaleLowerCase();
+        if (['функция', 'function', 'процедура', 'procedure'].includes(name)) { inCallable = true; }
+        if (['конецфункции', 'endfunction', 'конецпроцедуры', 'endprocedure'].includes(name)) { inCallable = false; }
+        if (inCallable || !['перем', 'var'].includes(name)) { continue; }
+        while (++index < tokens.length && tokens[index].text !== ';') {
+            const variable = tokens[index];
+            if (variable.kind !== 'identifier' || !required.has(variable.text.toLocaleLowerCase())) { continue; }
+            required.delete(variable.text.toLocaleLowerCase());
+            if (!['экспорт', 'export'].includes(tokens[index + 1]?.text.toLocaleLowerCase())) {
+                edits.push({ startOffset: variable.endOffset, endOffset: variable.endOffset, newText: name === 'var' ? ' Export' : ' Экспорт' });
+            }
+        }
+    }
+    const updated = applyEdits(source, edits);
+    if (!required.size) { return updated; }
+    const eol = source.includes('\r\n') ? '\r\n' : '\n';
+    const declarations = [...required.values()].map(name => `&НаКлиенте${eol}Перем ${name} Экспорт;${eol}`).join('') + eol;
+    const bom = updated.startsWith('\uFEFF') ? '\uFEFF' : '';
+    return bom + declarations + updated.slice(bom.length);
+}
 
 function stripOuterQuotes(value: string): string {
     const trimmed = value.trim();
@@ -350,7 +380,7 @@ export async function createNewUserStepLibrarySource(
             await fs.promises.copyFile(sourcePath, targetPath);
         }
         await fs.promises.mkdir(path.dirname(modulePath), { recursive: true });
-        await fs.promises.writeFile(modulePath, createNewModule(request.step), 'utf8');
+        await fs.promises.writeFile(modulePath, ensureUserStepRuntimeContext(request.moduleSource ?? createNewModule(request.step!)), 'utf8');
     } catch (error) {
         await fs.promises.rm(sourceDirectory, { recursive: true, force: true });
         throw error;

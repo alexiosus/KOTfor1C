@@ -11,10 +11,10 @@
 - Для мелких исправлений документации, текстов или локальных исправлений можно сразу открывать PR.
 - Для крупных изменений поведения, новых команд, новых настроек или заметных изменений интерфейса лучше сначала описать идею в issue или в черновике PR, чтобы согласовать объем работы.
 - Перед началом полезно прочитать:
-  - [`README.md`](./README.md)
-  - [`documentation/QUICK_START.md`](./documentation/QUICK_START.md)
-  - [`documentation/SETUP.md`](./documentation/SETUP.md)
-  - [`documentation/DEVELOPMENT.md`](./documentation/DEVELOPMENT.md)
+  - [`README.md`](README.md)
+  - [`docs/QUICK_START.md`](docs/QUICK_START.md)
+  - [`docs/SETUP.md`](docs/SETUP.md)
+  - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)
 
 ## Локальный запуск
 
@@ -41,13 +41,13 @@ npm run watch
 ## Что важно учитывать при изменениях
 
 - Проект написан на TypeScript и собирается через `esbuild`.
-- В репозитории сейчас нет настроенного набора автоматических тестов: `npm test` намеренно сообщает `No automated tests configured`.
+- Автоматические тесты расширения находятся в `test/`; `npm run check` выполняет проверку типов, ESLint, проверку локализации и тесты. Учебные сценарии 1С находятся отдельно в `examples/`.
 - Если вы меняете команды, настройки, сообщения, заголовки веб-панелей или другой пользовательский текст, обновляйте локализацию:
-  - [`package.nls.json`](./package.nls.json)
-  - [`package.nls.ru.json`](./package.nls.ru.json)
-  - [`l10n/bundle.l10n.json`](./l10n/bundle.l10n.json)
-  - [`l10n/bundle.l10n.ru.json`](./l10n/bundle.l10n.ru.json)
-- Если меняется поведение расширения, обновляйте документацию в [`documentation/`](./documentation/) и, при необходимости, [`README.md`](./README.md).
+  - [`package.nls.json`](package.nls.json)
+  - [`package.nls.ru.json`](package.nls.ru.json)
+  - [`l10n/bundle.l10n.json`](l10n/bundle.l10n.json)
+  - [`l10n/bundle.l10n.ru.json`](l10n/bundle.l10n.ru.json)
+- Если меняется поведение расширения, обновляйте документацию в [`docs/`](docs/) и, при необходимости, [`README.md`](README.md).
 - Старайтесь держать PR узким по объему: одна задача, одна заметная цель, минимум побочных рефакторингов.
 
 ## Минимальная проверка перед PR
@@ -55,7 +55,9 @@ npm run watch
 Перед отправкой изменений выполните:
 
 ```bash
+npm run check
 npm run compile
+npm run docs:check
 ```
 
 Затем вручную проверьте только те области, которых касается изменение.
@@ -66,7 +68,7 @@ npm run compile
 - Для `Infobase Manager`: открытие веб-панели и целевые операции с ИБ.
 - Для `Form Explorer`: запуск, чтение снимка состояния формы, режимы `manual/auto` и состояние панели.
 
-Если меняется основной поток выполнения или архитектура, ориентируйтесь на чеклист из [`documentation/DEVELOPMENT.md`](./documentation/DEVELOPMENT.md).
+Если меняется основной поток выполнения или архитектура, ориентируйтесь на чеклист из [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
 ## Что указать в PR
 

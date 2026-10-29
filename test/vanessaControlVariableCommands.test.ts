@@ -4,13 +4,16 @@ import vm from 'node:vm';
 import test from 'node:test';
 import * as panels from '../src/vanessaControlVariablesPanel';
 import * as variables from '../src/vanessaControlVariables';
+import { translatorFor } from './helpers/localization';
 
 test('an already visible variables view loads when attach becomes ready and has no permanent runtime disclaimer', async () => {
     const listeners: Array<() => void> = []; let provider: any; let reads = 0;
     let snapshot = { generation: 1, status: 'detached', capabilities: { variablesRead: { supported: true }, variablesWrite: { supported: true } } };
     const view: any = { visible: true, dispose() {}, onDidChangeVisibility: () => ({ dispose() {} }) };
     class Emitter { listeners = new Set<() => void>(); event = (listener: () => void) => { this.listeners.add(listener); return { dispose() {} }; }; fire() { for (const listener of this.listeners) { listener(); } } dispose() {} }
-    const vscode = { EventEmitter: Emitter, l10n: { t: (value: string) => value }, window: { createTreeView: (_id: string, options: any) => { provider = options.treeDataProvider; return view; } },
+    const vscode = { EventEmitter: Emitter, l10n: { t: (value: string) => value },
+        TreeItem: class { constructor(public label: string) {} }, TreeItemCollapsibleState: { None: 0, Expanded: 2 },
+        window: { createTreeView: (_id: string, options: any) => { provider = options.treeDataProvider; return view; } },
         commands: { registerCommand: () => ({ dispose() {} }) } };
     const module = { exports: {} as any }; const ts = require('typescript') as typeof import('typescript');
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlVariableCommands.ts', 'utf8'), {
@@ -18,7 +21,12 @@ test('an already visible variables view loads when attach becomes ready and has 
     { module, exports: module.exports, require: (name: string) => name === 'vscode' ? vscode : name.endsWith('VariablesPanel') ? panels : variables });
     module.exports.registerVanessaVariableCommands({ subscriptions: [] }, { get snapshot() { return snapshot; }, busy: false,
         onDidChange: (callback: () => void) => { listeners.push(callback); return { dispose() {} }; },
-        withVariableControl: async (work: (runtime: variables.VanessaRuntimeVariables) => Promise<unknown>) => { reads++; return work(new variables.VanessaRuntimeVariables({ request: async () => ({ content: [{ type: 'text', text: '# Переменные контекста\n\n## Контекст ($var$)\n- `Own` = Value\n\n## Сохраняемый контекст ($$var$$)' }] }) })); } });
+        withVariableControl: async (work: (runtime: variables.VanessaRuntimeVariables) => Promise<unknown>) => { reads++; return work(new variables.VanessaRuntimeVariables({ request: async () => ({ content: [{ type: 'text', text: '# Переменные контекста\n\n## Контекст ($var$)\n- `Own` = Value\n\n## Сохраняемый контекст ($$var$$)' }] }) })); } }, await translatorFor('Русский'));
+    assert.equal(view.title, 'Переменные Vanessa');
+    assert.equal(provider.getTreeItem({ scope: 'local' }).label, 'Локальные переменные ($var$)');
+    assert.equal(provider.getTreeItem({ scope: 'global' }).label, 'Глобальные переменные ($$var$$)');
+    assert.match(provider.getTreeItem({ scope: 'local' }).tooltip, /Контекст.*очищается/);
+    assert.match(provider.getTreeItem({ scope: 'global' }).tooltip, /КонтекстСохраняемый/);
     assert.equal(reads, 0); snapshot = { ...snapshot, status: 'ready' }; for (const listener of listeners) { listener(); }
     const deadline = Date.now() + 1000;
     while (!provider.getChildren({ scope: 'local' }).length && Date.now() < deadline) { await new Promise(resolve => setTimeout(resolve, 5)); }

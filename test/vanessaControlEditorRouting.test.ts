@@ -91,10 +91,16 @@ test('a late failed-step error updates its hover without repainting unrelated fa
         { module, exports: module.exports, require: (name: string) => name === 'vscode' ? vscode : name.endsWith('Highlighting')
             ? { VanessaExecutionHighlighter: class { render() {} renderMany(_editor: unknown, lines: any[]) { painted.push(lines); } } }
             : name.endsWith('Feature') ? feature : yaml });
-    module.exports.registerVanessaControlCommands({ subscriptions: [] }, session);
+    module.exports.registerVanessaControlCommands({ subscriptions: [] }, session, undefined, undefined, undefined,
+        (failure: any) => ({ value: 'Rich failure: ' + failure.message + (failure.details ?? '') }));
     assert.equal(painted.length, 1);
     session.failure = { generation: 1, filePath: '/own.feature', lineNumber: 3, message: 'Own assertion failed' }; update();
     assert.equal(painted.length, 2);
     assert.equal(painted[1].find(line => line.range === 2).detail, 'Own assertion failed');
+    assert.equal(painted[1].find(line => line.range === 2).hoverMessage.value, 'Rich failure: Own assertion failed');
     assert.equal(painted[1].find(line => line.range === 3).detail, undefined);
+    assert.equal(painted[1].find(line => line.range === 3).hoverMessage, undefined);
+    session.failure = { ...session.failure, details: '\nTechnical details' }; update();
+    assert.equal(painted.length, 3);
+    assert.match(painted[2].find(line => line.range === 2).hoverMessage.value, /Technical details/u);
 });

@@ -24,6 +24,7 @@
 .v-client-icon:hover { background: var(--vscode-toolbar-hoverBackground); }
 .v-client-icon:disabled { opacity: .3; cursor: default; }
 .v-client-editor { margin-top: 10px; padding: 12px; border-top: 1px solid var(--ib-border); background: var(--ib-surface-0); }
+.v-client-row > .v-client-editor { grid-column: 1 / -1; margin-top: 0; min-width: 0; }
 .v-client-form { display: flex; flex-direction: column; gap: 14px; }
 .v-client-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
 .v-client-fields label { display: flex; flex-direction: column; gap: 6px; min-width: 0; color: var(--ib-muted); }

@@ -21,6 +21,7 @@ export interface StepLibrarySidebarNode {
     readonly itemId?: string;
     readonly definitionId?: string;
     readonly insertable?: boolean;
+    readonly userStepLibrary?: StepLibraryItem['userStepLibrary'];
     readonly navigable?: boolean;
     readonly scenarioPropertiesUri?: string;
     readonly dragText?: string;
@@ -156,6 +157,7 @@ function definitionNode(
         itemId: item.id,
         definitionId: item.definitionId,
         insertable: item.insertable,
+        ...(item.userStepLibrary ? { userStepLibrary: item.userStepLibrary } : {}),
         navigable: item.navigable,
         ...(item.navigable && item.capturedLocation && ['mainScenario', 'process', 'nestedScenario', 'exportScenario'].includes(item.kind)
             && /^file:.*\.ya?ml$/iu.test(item.capturedLocation.uri) ? { scenarioPropertiesUri: item.capturedLocation.uri } : {}),

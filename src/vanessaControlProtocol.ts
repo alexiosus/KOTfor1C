@@ -145,7 +145,7 @@ export function parseVanessaControlReply(tool: string, value: unknown): VanessaC
         const header = sections[0].split('\n\nТехнические данные:\n');
         if (sections.length === 2 && header.length === 2 && /^- Статус: Failed$/mu.test(header[0])) {
             const count = /^([1-9]\d*)\)\n/u.exec(sections[1])?.[1];
-            const steps = [...sections[1].matchAll(/^([1-9]\d*)\. [^\n]+ → \*\*(Success|Failed|Broken)\*\*(?: \(\d+ мс\))?$/gmu)];
+            const steps = [...sections[1].matchAll(/^([1-9]\d*)\. [^\n]+ → \*\*(Success|Failed|Broken|Pending|Skipped)\*\*(?: \(\d+ мс\))?$/gmu)];
             const paths = [...header[1].matchAll(/^        ПолныйПутьКФиче: ([^\n]+\.feature)$/gmu)];
             const lines = [...header[1].matchAll(/^        НомерСтрокиФичи: ([1-9]\d*)$/gmu)];
             if (count && steps.length === Number(count) && steps.every((step, index) => Number(step[1]) === index + 1) &&
@@ -156,7 +156,7 @@ export function parseVanessaControlReply(tool: string, value: unknown): VanessaC
         const parts = text.split('\n## Шаги (');
         const status = /^- Статус: (Success|Failed|Broken|Pending)$/mu.exec(parts[0])?.[1];
         const count = parts.length === 2 ? /^([1-9]\d*)\)\n/u.exec(parts[1])?.[1] : undefined;
-        const rows = parts.length === 2 ? [...parts[1].matchAll(/^([1-9]\d*)\. [^\n]+ → \*\*(Success|Failed|Broken|Pending)\*\*(?: \([^\n]* мс\))?$/gmu)] : [];
+        const rows = parts.length === 2 ? [...parts[1].matchAll(/^([1-9]\d*)\. [^\n]+ → \*\*(Success|Failed|Broken|Pending|Skipped)\*\*(?: \([^\n]* мс\))?$/gmu)] : [];
         if (!text.includes('Технические данные:') && count && status && rows.length === Number(count) && rows.every((row, index) => Number(row[1]) === index + 1)) {
             const errors = [...text.matchAll(/^- Ошибка: ([^\n]+)$/gmu)];
             if (status === 'Success' && rows.every(row => row[2] === 'Success')) { return { kind: 'runtimeResult', status: 'passed' }; }

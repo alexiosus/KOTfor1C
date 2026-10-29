@@ -6,6 +6,7 @@ import type {
     ProjectDefinitionResolution
 } from './projectDefinition';
 import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
+import { getFeatureNestedScenarioContextAtPosition } from './featureNestedScenarioUtils';
 
 function navigableLocation(definition: ProjectDefinition): ProjectDefinitionLocation | undefined {
     return definition.implementationLocation ?? definition.definitionLocation;
@@ -90,7 +91,12 @@ async function openLocation(location: ProjectDefinitionLocation): Promise<boolea
 }
 
 export class ProjectDefinitionProvider implements vscode.DefinitionProvider {
-    constructor(private readonly resolver: ProjectDefinitionResolver) {}
+    constructor(
+        private readonly resolver: ProjectDefinitionResolver,
+        private readonly resolveCompiledSource?: (
+            document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken
+        ) => Promise<vscode.Location | null>
+    ) {}
 
     async provideDefinition(
         document: vscode.TextDocument,
@@ -102,13 +108,50 @@ export class ProjectDefinitionProvider implements vscode.DefinitionProvider {
         }
         const invocation = document.lineAt(position.line).text;
         const resolution = await this.resolver.resolve(document.uri, invocation);
-        if (token.isCancellationRequested || resolution.kind === 'missing') {
+        if (token.isCancellationRequested) {
             return [];
         }
 
-        const matches = resolution.kind === 'unique' ? [resolution.match] : resolution.matches;
+        const matches = resolution.kind === 'missing' ? []
+            : resolution.kind === 'unique' ? [resolution.match] : resolution.matches;
         const links = await Promise.all(matches.map(match => toLocationLink(match, position.line)));
-        return token.isCancellationRequested ? [] : links.filter((link): link is vscode.LocationLink => link !== null);
+        if (token.isCancellationRequested) {
+            return [];
+        }
+        const navigable = links.filter((link): link is vscode.LocationLink => link !== null);
+        const lineRange = new vscode.Range(position.line, 0, position.line, invocation.length);
+        if (navigable.length > 0) {
+            return navigable.map(link => {
+                const origin = link.originSelectionRange;
+                return origin && position.character >= origin.start.character && position.character <= origin.end.character
+                    ? link : { ...link, originSelectionRange: lineRange };
+            });
+        }
+        if (document.uri.scheme !== 'file' || !/\.feature$/iu.test(document.uri.fsPath)) {
+            return [];
+        }
+        const source = !document.isDirty ? await this.resolveCompiledSource?.(document, position, token) : null;
+        if (token.isCancellationRequested) {
+            return [];
+        }
+        if (source) {
+            return [{ originSelectionRange: lineRange, targetUri: source.uri, targetRange: source.range, targetSelectionRange: source.range }];
+        }
+        const enclosing = getFeatureNestedScenarioContextAtPosition(document, position);
+        if (!enclosing || enclosing.scenarioLine === position.line) {
+            return [];
+        }
+        const enclosingResolution = await this.resolver.resolve(document.uri, document.lineAt(enclosing.scenarioLine).text);
+        if (token.isCancellationRequested || enclosingResolution.kind === 'missing') {
+            return [];
+        }
+        const enclosingMatches = enclosingResolution.kind === 'unique' ? [enclosingResolution.match] : enclosingResolution.matches;
+        const enclosingLinks = await Promise.all(enclosingMatches
+            .filter(match => match.definition.kind === 'nestedScenario' || match.definition.kind === 'exportScenario')
+            .map(match => toLocationLink(match, position.line)));
+        return token.isCancellationRequested ? [] : enclosingLinks
+            .filter((link): link is vscode.LocationLink => link !== null)
+            .map(link => ({ ...link, originSelectionRange: lineRange }));
     }
 }
 

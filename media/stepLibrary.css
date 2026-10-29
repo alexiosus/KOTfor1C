@@ -439,7 +439,7 @@ select:focus-visible,
 .definition-row:not([data-feature-id]):focus-within .definition-actions,
 .definition-row[data-feature-id]:focus-visible .definition-actions,
 .definition-row[data-feature-id]:has(:focus-visible) .definition-actions {
-    max-width: 104px;
+    max-width: none;
     opacity: 1;
     pointer-events: auto;
 }
@@ -945,6 +945,20 @@ select:focus-visible,
     gap: 6px;
     padding: 8px 10px;
     border-top: 1px solid var(--vscode-panel-border);
+}
+
+.user-step-library-details .details-label {
+    margin: 0;
+}
+
+.user-step-library-details .source-description {
+    margin: 6px 0;
+    color: var(--vscode-descriptionForeground);
+}
+
+.user-step-library-details .details-actions {
+    padding: 0;
+    border: 0;
 }
 
 #insertButton.hidden {

@@ -78,7 +78,8 @@ export class DriveHoverProvider implements vscode.HoverProvider {
     constructor(
         context: vscode.ExtensionContext,
         private readonly definitionResolver: ProjectDefinitionResolver,
-        private readonly scenarioCacheProvider?: ScenarioCacheProvider
+        private readonly scenarioCacheProvider?: ScenarioCacheProvider,
+        private readonly isRuntimeFailedLine?: (document: vscode.TextDocument, line: number) => boolean
     ) {
         this.context = context;
 
@@ -1225,7 +1226,8 @@ export class DriveHoverProvider implements vscode.HoverProvider {
 
         const isTableRow = lineText.startsWith('|');
 
-        if (!isTableRow && isFeatureDocument && this.scenarioCacheProvider?.isFailedFeatureLine?.(document.uri, position.line)) {
+        if (!isTableRow && (isFeatureDocument && this.scenarioCacheProvider?.isFailedFeatureLine?.(document.uri, position.line)
+            || this.isRuntimeFailedLine?.(document, position.line))) {
             return null;
         }
 

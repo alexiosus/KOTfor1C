@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import { parseCompilerSourceMap, findCompilerSourceLocation } from '../src/compilerArtifacts';
+import { getCompilerScenarioBody } from '../src/scenarioCompilerSyntax';
 
 test('Create picker routes the process choice to its creation command', async () => {
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
@@ -83,4 +85,71 @@ test('feature source navigation uses the compiler map before the name-based fall
     visits.length = 0;
     await command(editor, {});
     assert.deepEqual(visits, ['map', 'fallback']);
+});
+
+function loadCompilerSourceLookup() {
+    const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
+    const source = fs.readFileSync('src/phaseSwitcher.ts', 'utf8');
+    const ast = ts.createSourceFile('phaseSwitcher.ts', source, ts.ScriptTarget.ES2022, true);
+    let method: string | undefined;
+    const visit = (node: import('typescript').Node) => {
+        if (ts.isMethodDeclaration(node) && node.name.getText(ast) === 'resolveCompilerSourceFromFeature') {
+            method = node.getText(ast);
+        }
+        ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    assert.ok(method);
+    const yaml = 'ТипФайла: Сценарий\nТекстСценария: |\n    And Delay "1"\n    And Delay "2"\n';
+    const opened: string[] = [];
+    const uri = (file: string) => ({ scheme: 'file', fsPath: file, toString: () => 'file://' + file });
+    let mapText = JSON.stringify({ ДанныеСценария: [{ UIDСценария: 'source-uid', СтрокаЛин: 12, СтрокаОриг: 2 }] });
+    const moduleObject = { exports: undefined as any };
+    vm.runInNewContext(ts.transpileModule(`module.exports = class { ${method} };`, {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+    }).outputText, {
+        module: moduleObject, path, parseCompilerSourceMap, findCompilerSourceLocation, getCompilerScenarioBody,
+        fs: { promises: { readFile: async (file: string) => {
+            assert.equal(file, '/repo/built.str');
+            return mapText;
+        } } },
+        vscode: {
+            Location: class { constructor(public uri: unknown, public range: unknown) {} },
+            workspace: { openTextDocument: async (resource: { fsPath: string }) => {
+                opened.push(resource.fsPath);
+                return { uri: resource, getText: () => yaml, lineAt: (line: number) => ({ range: { start: { line, character: 0 }, end: { line, character: 20 } } }) };
+            } },
+            window: { showTextDocument: () => assert.fail('Definition lookup must not show editors') }
+        },
+        require: (name: string) => {
+            assert.equal(name, './spprScenarioFiles.js');
+            return { resolveScenarioSourceUris: async () => ({ scriptUri: uri('/repo/scen.feature') }), readScenarioSource: async () => yaml };
+        }
+    });
+    const lookup = new moduleObject.exports().resolveCompilerSourceFromFeature;
+    return { uri, opened, lookup: (files: string[], token = { isCancellationRequested: false }) => lookup.call({
+        getScenarioCatalog: () => ({ all: files.map(file => ({ uid: 'SOURCE-UID', yamlFileUri: uri(file) })) })
+    }, uri('/repo/built.feature'), 12, token), setMap: (text: string) => { mapText = text; } };
+}
+
+test('compiler definition lookup maps YAML and paired feature rows without showing editors', async () => {
+    const harness = loadCompilerSourceLookup();
+    const legacy = await harness.lookup(['/repo/scen.yaml']);
+    assert.equal(legacy.uri.fsPath, '/repo/scen.yaml');
+    assert.equal(legacy.range.start.line, 3);
+    const native = await harness.lookup(['/repo/meta.yaml']);
+    assert.equal(native.uri.fsPath, '/repo/scen.feature');
+    assert.equal(native.range.start.line, 1);
+    assert.deepEqual(harness.opened, ['/repo/scen.yaml', '/repo/scen.feature']);
+});
+
+test('compiler definition lookup rejects missing, ambiguous and cancelled source mappings', async () => {
+    const harness = loadCompilerSourceLookup();
+    assert.equal(await harness.lookup([]), null);
+    assert.equal(await harness.lookup(['/repo/a.yaml', '/repo/b.yaml']), null);
+    assert.equal(await harness.lookup(['/repo/scen.yaml'], { isCancellationRequested: true }), null);
+    harness.setMap('not JSON');
+    assert.equal(await harness.lookup(['/repo/scen.yaml']), null);
+    harness.setMap(JSON.stringify({ ДанныеСценария: [{ UIDСценария: 'source-uid', СтрокаЛин: 12, СтрокаОриг: 300 }] }));
+    assert.equal(await harness.lookup(['/repo/scen.yaml']), null);
 });

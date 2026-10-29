@@ -53,7 +53,7 @@ export function getStandaloneFeatureLabels(translate: (message: string) => strin
         run: t('Run feature'), openLog: t('Open run log'), watchLog: t('Watch run log'),
         empty: t('No standalone features found.'), noMatches: t('No features match the search.'),
         emptyGroup: t('Empty group'), idle: t('Not run'), running: t('Running'),
-        passed: t('Passed'), failed: t('Failed'), actions: t('Feature actions'),
+        passed: t('Passed'), failed: t('Failed'), actions: t('Feature actions'), stepActions: t('Actions'),
         error: t('The feature action could not be completed.')
     };
 }

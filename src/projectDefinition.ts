@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { UserStepLibraryState } from './userStepLibraryState';
 
 export type ProjectDefinitionKind =
     | 'builtInStep'
@@ -48,6 +49,11 @@ export interface ProjectDefinition {
     readonly libraryRootUri?: string;
     readonly definitionLocation?: ProjectDefinitionLocation;
     readonly implementationLocation?: ProjectDefinitionLocation;
+    readonly userStepLibrary?: UserStepLibraryState;
+}
+
+export function isUserStepAvailable(definition: { readonly kind: string; readonly userStepLibrary?: UserStepLibraryState }): boolean {
+    return definition.kind !== 'userStep' || definition.userStepLibrary?.status === 'ready';
 }
 
 export interface ProjectDefinitionWarning {
@@ -61,6 +67,7 @@ export interface ProjectDefinitionFileRecord {
     readonly size: number;
     readonly mtimeMs: number;
     readonly parserVersion: string;
+    readonly sourceFingerprint?: string;
     readonly definitions: readonly ProjectDefinition[];
     readonly warnings: readonly ProjectDefinitionWarning[];
 }

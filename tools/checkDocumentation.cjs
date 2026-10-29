@@ -1,13 +1,23 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
+// Downloaded runtimes and development snapshots are not current KOT manuals.
+const excludedDirectories = new Set([
+    path.join('docs', 'superpowers'),
+    path.join('docs', 'ux'),
+    path.join('docs', 'qa'),
+    path.join('examples', 'kot-workshop', '.vscode', 'kot-runtime'),
+    path.join('examples', 'kot-workshop', 'tools'),
+    path.join('examples', 'kot-workshop', 'build')
+]);
 function walk(directory) {
     return fs.readdirSync(path.join(root, directory), { withFileTypes: true }).flatMap(entry => {
         const file = path.join(directory, entry.name);
+        if (excludedDirectories.has(file) || entry.isDirectory() && entry.name === '.kot') { return []; }
         return entry.isDirectory() ? walk(file) : entry.name.endsWith('.md') ? [file] : [];
     });
 }
-const files = ['README.md', 'CHANGELOG.md', 'THIRD_PARTY_LICENSES.md', ...walk('documentation'), ...walk('examples/kot-workshop')];
+const files = ['README.md', 'CHANGELOG.md', 'THIRD_PARTY_LICENSES.md', 'CONTRIBUTING.md', 'SECURITY.md', 'artifacts/README.md', ...walk('docs'), ...walk('examples')];
 const failures = [];
 const anchors = new Map();
 function source(file) { return fs.readFileSync(file, 'utf8').replace(/^\s*```[^\n]*\n[\s\S]*?^\s*```\s*$/gmu, ''); }
@@ -36,5 +46,18 @@ for (const file of files) {
         if (fragment && resolved.endsWith('.md') && !slugs(resolved).has(decodeURIComponent(fragment))) { failures.push(`${file}: missing anchor ${target}`); }
     }
 }
+const legacy = require('./documentationAnchors271.json');
+let legacyChecked = 0;
+for (const [file, expected] of Object.entries(legacy.pages)) {
+    // Keep the historical baseline intact; only the current page location changes.
+    const currentFile = file.replace(/^documentation\/blocks\//u, 'docs/guides/').replace(/^documentation\//u, 'docs/');
+    const resolved = path.join(root, currentFile);
+    if (!fs.existsSync(resolved)) { failures.push(`2.7.1 compatibility: missing ${currentFile} (was ${file})`); continue; }
+    const actual = slugs(resolved);
+    for (const fragment of expected) {
+        legacyChecked++;
+        if (!actual.has(fragment)) { failures.push(`2.7.1 compatibility: missing ${file}#${fragment}`); }
+    }
+}
 if (failures.length) { console.error(failures.join('\n')); process.exitCode = 1; }
-else { console.log(`Documentation verified: ${files.length} Markdown files, ${checked} local links and images, including fragment anchors.`); }
+else { console.log(`Documentation verified: ${files.length} Markdown files, ${checked} local links and images, ${legacyChecked} legacy section anchors from 2.7.1 across relocated pages.`); }

@@ -6,7 +6,7 @@
         const states = { local: t('local', 'Saved locally'), added: t('added', 'Added to Vanessa'), connected: t('connected', 'Connected'),
             outdated: t('outdated', 'Changes not applied'), conflict: t('conflict', 'Profile conflict'), unsupported: t('unsupported', 'Unsupported profile'), unknown: t('unknown', 'Not checked') };
         const button = (action, icon, label, id, text = false) => `<button class="${text ? 'toolbar-btn' : 'ghost-btn v-client-icon'}" type="button" data-client-action="${action}" data-client-id="${escapeHtml(id)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"><span class="codicon codicon-${icon}" aria-hidden="true"></span>${text ? ' ' + escapeHtml(label) : ''}</button>`;
-        return rows.map(row => `<div class="v-client-row" role="row">
+        return rows.map(row => `<div class="v-client-row" role="row" data-client-row-id="${escapeHtml(row.id)}">
             <div class="v-client-copy"><span class="infobase-item-name">${escapeHtml(row.name)}</span><span class="infobase-item-path">${escapeHtml(row.username || t('defaultUser', 'Default user'))}</span></div>
             <div class="v-client-runtime"><span class="v-client-state ${row.connected || row.state === 'connected' ? 'is-connected' : row.state === 'conflict' || row.state === 'unsupported' || row.state === 'outdated' ? 'is-conflict' : ''}">${escapeHtml(states[row.state] || states.unknown)}${row.remoteOnly ? ' · ' + escapeHtml(t('liveOnly', 'Vanessa only')) : ''}</span><span class="v-client-meta">${escapeHtml(row.remoteClientType || row.clientType)} · ${escapeHtml(row.computerName)}${row.remoteOnly ? '' : ':' + row.port}</span></div>
             <div class="v-client-actions"><span class="v-client-add-slot">${!row.remoteOnly && row.state === 'local' ? button('add', 'add', t('add', 'Add to Vanessa'), row.id, true) : ''}</span><span class="v-client-connect-slot">${row.connected || row.state === 'connected' ? button('disconnect', 'debug-disconnect', t('disconnect', 'Disconnect'), row.id, true) : button('connect', 'debug-start', row.state === 'outdated' ? t('updateConnect', 'Apply and connect') : t('connect', 'Connect'), row.id, true)}</span><span class="v-client-tools-slot">${row.remoteOnly ? button('import', 'save', t('saveToKot', 'Save to KOT'), row.id) : button('edit', 'edit', t('edit', 'Edit client'), row.id)}${row.replaceable ? button('replace', 'replace', t('replace', 'Replace Vanessa profile'), row.id) : ''}${row.remoteOnly ? '' : button('remove', 'trash', t('remove', 'Remove saved client'), row.id)}</span></div>
@@ -20,11 +20,17 @@
         container.innerHTML = `<details class="v-client-group" open><summary class="v-client-heading"><span class="codicon codicon-chevron-right v-client-disclosure" aria-hidden="true"></span><span class="v-client-title">${escapeHtml(t('title', 'Vanessa test clients'))}</span><span class="v-client-toolbar">${icon('refresh', 'refresh', t('refresh', 'Refresh'))}${icon('new', 'add', t('new', 'Add user'))}</span></summary><div class="v-client-body"><p class="v-client-meta" data-client-progress role="status" hidden></p><p class="v-client-hint" data-client-empty>${escapeHtml(t('emptyShort', 'No saved test clients.'))}</p><div class="v-client-rows" role="table" aria-label="${escapeHtml(t('title', 'Vanessa test clients'))}"></div><div class="v-client-editor" hidden></div><p class="v-client-error" role="alert" hidden></p></div></details>`;
         const rowsHost = container.querySelector('.v-client-rows'); const editor = container.querySelector('.v-client-editor');
         const send = (command, extra = {}) => options.post({ command, infobasePath: base, ...extra });
+        function placeEditor() {
+            const row = draft?.id && [...rowsHost.querySelectorAll('.v-client-row')].find(item => item.dataset.clientRowId === draft.id);
+            if (editor.parentElement === (row || rowsHost.parentElement)) { return; }
+            if (row) { row.appendChild(editor); } else { rowsHost.after(editor); }
+        }
         function showEditor(fields, id) {
             draft = { ...fields, password: fields.password || '', additionalParameters: fields.additionalParameters || '', id }; saving = false;
             const input = (key, label, type = 'text') => `<label>${escapeHtml(label)}<input type="${type}" data-client-field="${key}" value="${escapeHtml(draft[key])}"${key === 'port' ? ' min="1" max="65535"' : ''}></label>`;
             editor.hidden = false;
             editor.innerHTML = `<form class="v-client-form"><div class="v-client-fields v-client-identity">${input('name', t('name', 'Client name'))}${input('username', t('username', 'Infobase user (optional)'))}${input('password', t('passwordLabel', 'Password'), 'password')}</div><details open><summary>${escapeHtml(t('details', 'Connection details'))}</summary><div class="v-client-fields"><label>${escapeHtml(t('type', 'Client type'))}<select data-client-field="clientType"><option value="Thin"${draft.clientType === 'Thin' ? ' selected' : ''}>${escapeHtml(t('thin', 'Thin'))}</option><option value="Thick"${draft.clientType === 'Thick' ? ' selected' : ''}>${escapeHtml(t('thick', 'Thick'))}</option></select></label>${input('additionalParameters', t('keysLabel', 'Launch keys'))}${input('synonym', t('synonym', 'Synonym'))}${input('computerName', t('computer', 'Computer'))}${input('port', t('port', 'Saved port'), 'number')}</div></details><div class="v-client-toolbar"><button type="submit" class="toolbar-btn" data-client-action="save">${escapeHtml(t('save', 'Save'))}</button><button type="button" class="toolbar-btn" data-client-action="cancel">${escapeHtml(t('cancel', 'Cancel'))}</button></div></form>`;
+            placeEditor();
             editor.querySelector('input')?.focus();
         }
         function closeEditor() { draft = null; saving = false; pendingEditor = null; pendingSave = null; editor.hidden = true; editor.innerHTML = ''; }
@@ -60,7 +66,14 @@
             const busy = !!view.pendingAction || saving; const connection = view.connection;
             container.querySelector('[data-client-empty]').hidden = !!view.rows.length;
             const progress = container.querySelector('[data-client-progress]'); progress.hidden = !busy; progress.textContent = busy ? t('working', 'Updating clients…') : '';
-            const markup = renderClientRows(view.rows, null, t); if (rowsHost._lastMarkup !== markup) { rowsHost.innerHTML = markup; rowsHost._lastMarkup = markup; }
+            const markup = renderClientRows(view.rows, null, t); let focused = null;
+            if (rowsHost._lastMarkup !== markup) {
+                focused = editor.contains(document.activeElement) ? document.activeElement : null;
+                rowsHost.after(editor);
+                rowsHost.innerHTML = markup; rowsHost._lastMarkup = markup;
+            }
+            placeEditor();
+            focused?.focus({ preventScroll: true });
             for (const button of container.querySelectorAll('[data-client-action]')) {
                 const action = button.dataset.clientAction; let disabled = !!view.pendingAction;
                 if (action === 'import') { disabled ||= !connection.ready || connection.busy || !connection.read; }

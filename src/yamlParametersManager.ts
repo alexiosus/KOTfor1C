@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { createHash } from 'node:crypto';
 import { getExtensionUri } from './appContext';
 import { updateScenarioScanRoot, updateProcessScanRoot, getScenarioScanRootPath } from './scenarioScanRoot';
 import { getDefaultModelDbSettingsValue } from './etalonBases';
@@ -32,7 +33,7 @@ export type {
     ActiveYamlParametersProfileChangeEvent
 } from './activeYamlParametersProfile';
 
-// Ключ для хранения параметров в SecretStorage
+// Legacy shared profiles remain available for explicit import only.
 const YAML_PARAMETERS_KEY = 'kotTestToolkit.yamlParameters';
 
 export interface YamlParameter {
@@ -89,7 +90,7 @@ interface YamlParametersStorageV5 {
 }
 
 interface ProfileQuickPickItem extends vscode.QuickPickItem {
-    action: 'select' | 'create' | 'duplicate' | 'rename' | 'delete';
+    action: 'select' | 'create' | 'duplicate' | 'rename' | 'delete' | 'importLegacy';
     profileId?: string;
 }
 
@@ -104,12 +105,21 @@ export class YamlParametersManager {
     private _ruBundle: Record<string, string> | null = null;
     private parametersSaveQueue: Promise<void> = Promise.resolve();
     private vanessaCatalogRevision = 0;
+    private readonly storageKey: string;
+    private readonly projectRoot: string | undefined;
+    private projectSeed: Promise<string | undefined> | undefined;
     private readonly activeProfileChangeEmitter = new vscode.EventEmitter<ActiveYamlParametersProfileChangeEvent>();
     public readonly onDidChangeActiveProfile = this.activeProfileChangeEmitter.event;
 
     private constructor(context: vscode.ExtensionContext) {
         this._context = context;
         this._extensionUri = getExtensionUri();
+        // VS Code restarts the host when the first root changes. Use that root's URI
+        // so opening the same project via a .code-workspace keeps its profiles.
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        this.projectRoot = folder?.uri.fsPath;
+        const identity = folder?.uri.toString() ?? 'empty-window';
+        this.storageKey = `${YAML_PARAMETERS_KEY}.project.${createHash('sha256').update(identity).digest('hex')}`;
         context.subscriptions.push(this.activeProfileChangeEmitter);
     }
 
@@ -785,8 +795,36 @@ export class YamlParametersManager {
     }
 
     private async loadParametersState(): Promise<YamlParametersState> {
+        const saved = await this._context.secrets.get(this.storageKey);
+        return this.parseParametersState(saved ?? await this.loadProjectSeed());
+    }
+
+    private loadProjectSeed(): Promise<string | undefined> {
+        this.projectSeed ??= (async () => {
+            if (!this.projectRoot) { return undefined; }
+            const file = path.join(this.projectRoot, '.kot', 'parameter-profiles.json');
+            try {
+                const saved = await fs.promises.readFile(file, 'utf8');
+                const payload = JSON.parse(saved) as Partial<YamlParametersStorageV5>;
+                if (payload?.version !== 5 || !Array.isArray(payload.profiles) || !payload.profiles.length ||
+                    !payload.profiles.every(profile => profile && typeof profile.id === 'string' && typeof profile.name === 'string' &&
+                        Array.isArray(profile.buildParameters) && Array.isArray(profile.additionalVanessaParameters) && Array.isArray(profile.globalVanessaVariables)) ||
+                    !payload.profiles.some(profile => profile.id === payload.activeProfileId)) {
+                    throw new Error('Expected a v5 profile collection with an active profile.');
+                }
+                return saved;
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+                    void vscode.window.showWarningMessage(this.t('Could not load initial project profiles from {0}: {1}', file, String(error)));
+                }
+                return undefined;
+            }
+        })();
+        return this.projectSeed;
+    }
+
+    private parseParametersState(saved: string | undefined): YamlParametersState {
         try {
-            const saved = await this._context.secrets.get(YAML_PARAMETERS_KEY);
             if (!saved) {
                 return this.getDefaultState();
             }
@@ -862,7 +900,7 @@ export class YamlParametersManager {
                 activeProfileId,
                 profiles: normalizedProfiles
             };
-            await this._context.secrets.store(YAML_PARAMETERS_KEY, JSON.stringify(payload));
+            await this._context.secrets.store(this.storageKey, JSON.stringify(payload));
 
             const change = getActiveYamlParametersProfileChange(previousState, {
                 activeProfileId,
@@ -908,7 +946,7 @@ export class YamlParametersManager {
     public async withProjectLibraryFolder<T>(profileId: string, workspaceFolderPath: string, folder: string, operation: () => Promise<T>): Promise<T> {
         const transaction = this.parametersSaveQueue.then(async () => {
             const { addProjectLibraryFolder } = await import('./projectLibraryRoots.js');
-            const original = await this._context.secrets.get(YAML_PARAMETERS_KEY);
+            const original = await this._context.secrets.get(this.storageKey);
             const state = await this.loadParametersState();
             const profile = this.getActiveProfileFromState(state);
             if (profile.id !== profileId) { throw new Error(vscode.l10n.t('The active build profile changed. Retry the conversion.')); }
@@ -917,17 +955,17 @@ export class YamlParametersManager {
             if (JSON.stringify(updated) === JSON.stringify(profile)) { return operation(); }
             const next = { activeProfileId: state.activeProfileId, profiles: state.profiles.map(item => item.id === profileId ? updated : item) };
             const payload = JSON.stringify({ version: 5, ...next });
-            if (await this._context.secrets.get(YAML_PARAMETERS_KEY) !== original) { throw new Error(vscode.l10n.t('The active build profile changed. Retry the conversion.')); }
-            await this._context.secrets.store(YAML_PARAMETERS_KEY, payload);
+            if (await this._context.secrets.get(this.storageKey) !== original) { throw new Error(vscode.l10n.t('The active build profile changed. Retry the conversion.')); }
+            await this._context.secrets.store(this.storageKey, payload);
             let result: T;
             try { result = await operation(); }
             catch (error) {
                 try {
-                    if (await this._context.secrets.get(YAML_PARAMETERS_KEY) !== payload) {
+                    if (await this._context.secrets.get(this.storageKey) !== payload) {
                         throw new Error(vscode.l10n.t('The build profile changed externally; its current settings were preserved.'));
                     }
-                    if (original === undefined) { await this._context.secrets.delete(YAML_PARAMETERS_KEY); }
-                    else { await this._context.secrets.store(YAML_PARAMETERS_KEY, original); }
+                    if (original === undefined) { await this._context.secrets.delete(this.storageKey); }
+                    else { await this._context.secrets.store(this.storageKey, original); }
                 } catch (recoveryError) { throw new AggregateError([error, recoveryError], `${String(error)}; ${String(recoveryError)}`, { cause: error }); }
                 throw error;
             }
@@ -949,20 +987,36 @@ export class YamlParametersManager {
         return createActiveYamlParametersProfileSnapshot({ ...state, activeProfileId: selectedId });
     }
 
-    /** Create a distinct setup profile; existing profiles are never rewritten by the wizard. */
+    /** Copy a legacy shared profile into this project without modifying the original. */
+    public async importLegacyProfile(profileId: string): Promise<boolean> {
+        const transaction = this.parametersSaveQueue.then(async () => {
+            const saved = await this._context.secrets.get(YAML_PARAMETERS_KEY);
+            if (!saved) { return false; }
+            const source = this.parseParametersState(saved).profiles.find(profile => profile.id === profileId);
+            if (!source) { return false; }
+            const state = await this.loadParametersState();
+            const profile = this.cloneProfile(source, { id: this.createGeneratedProfileId(state.profiles) });
+            const next = { activeProfileId: profile.id, profiles: [...state.profiles, profile] };
+            await this._context.secrets.store(this.storageKey, JSON.stringify({ version: 5, ...next }));
+            const change = getActiveYamlParametersProfileChange(state, next);
+            if (change) { this.activeProfileChangeEmitter.fire(change); }
+            return true;
+        });
+        this.parametersSaveQueue = transaction.then(() => undefined, () => undefined);
+        return transaction;
+    }
+
+    /** New setup profiles start clean; explicit duplication copies existing values. */
     public async createSetupProfile(name: string, buildParameters: readonly YamlParameter[]): Promise<string> {
         const transaction = this.parametersSaveQueue.then(async () => {
-            const original = await this._context.secrets.get(YAML_PARAMETERS_KEY);
+            const original = await this._context.secrets.get(this.storageKey);
             const state = await this.loadParametersState();
-            const source = this.getActiveProfileFromState(state);
             const id = this.createGeneratedProfileId(state.profiles);
-            const profile: YamlParametersProfile = { ...source, id, name: name.trim() || 'KOT',
-                buildParameters: this.normalizeBuildParametersForUi(this.normalizeParameters([...buildParameters])),
-                additionalVanessaParameters: source.additionalVanessaParameters.map(item => ({ ...item })),
-                globalVanessaVariables: source.globalVanessaVariables.map(item => ({ ...item })) };
-            if (await this._context.secrets.get(YAML_PARAMETERS_KEY) !== original) { throw new Error(vscode.l10n.t('The active build profile changed. Retry the conversion.')); }
+            const profile: YamlParametersProfile = { ...this.createDefaultProfile(id, name.trim() || 'KOT'),
+                buildParameters: this.normalizeBuildParametersForUi(this.normalizeParameters([...buildParameters])) };
+            if (await this._context.secrets.get(this.storageKey) !== original) { throw new Error(vscode.l10n.t('The active build profile changed. Retry the conversion.')); }
             const next = { activeProfileId: id, profiles: this.normalizeProfiles([...state.profiles, profile]) };
-            await this._context.secrets.store(YAML_PARAMETERS_KEY, JSON.stringify({ version: 5, ...next }));
+            await this._context.secrets.store(this.storageKey, JSON.stringify({ version: 5, ...next }));
             const change = getActiveYamlParametersProfileChange(state, next);
             if (change) { this.activeProfileChangeEmitter.fire(change); }
             return { id, parameters: profile.buildParameters };
@@ -1183,7 +1237,7 @@ export class YamlParametersManager {
 
         const panel = vscode.window.createWebviewPanel(
             'yamlParametersPanel',
-            'Compilation and run parameters',
+            this.t('Compilation and run parameters'),
             vscode.ViewColumn.One,
             {
                 enableScripts: true,
@@ -1522,7 +1576,7 @@ export class YamlParametersManager {
                                 });
 
                                 vscode.window.showInformationMessage(
-                                    this.t('Loaded {0} parameters from {1}', globalVariables.length.toString(), path.basename(filePath))
+                                    this.t('Loaded {0} global variables from {1}', globalVariables.length.toString(), path.basename(filePath))
                                 );
                             }
                         } catch (error) {
@@ -1739,6 +1793,8 @@ export class YamlParametersManager {
         };
 
         const activeProfile = this.getActiveProfileFromState(state);
+        const legacySaved = await this._context.secrets.get(YAML_PARAMETERS_KEY);
+        const legacyProfiles = legacySaved ? this.parseParametersState(legacySaved).profiles : [];
         const items: ProfileQuickPickItem[] = [
             { label: this.t('Profiles'), kind: vscode.QuickPickItemKind.Separator, action: 'select' },
             ...state.profiles.map(profile => ({
@@ -1769,6 +1825,10 @@ export class YamlParametersManager {
                 action: 'delete'
             }
         ];
+        if (legacyProfiles.length) {
+            items.push({ label: this.t('Import previous shared profile'),
+                description: this.t('Copy into this project; keep the original unchanged'), action: 'importLegacy' });
+        }
 
         const selection = await vscode.window.showQuickPick(items, {
             title: this.t('Manage profiles'),
@@ -1782,6 +1842,19 @@ export class YamlParametersManager {
         }
 
         switch (selection.action) {
+            case 'importLegacy': {
+                const legacy = await vscode.window.showQuickPick(legacyProfiles.map(profile => ({ label: profile.name, profileId: profile.id })), {
+                    title: this.t('Import previous shared profile'),
+                    placeHolder: this.t('Choose a shared profile to copy into this project'), ignoreFocusOut: true
+                });
+                if (legacy) {
+                    // Preserve edits made before opening the picker, then import into that state.
+                    await this.saveParametersState(state);
+                    await this.importLegacyProfile(legacy.profileId);
+                    state = await this.loadParametersState();
+                }
+                break;
+            }
             case 'select': {
                 if (!selection.profileId || selection.profileId === state.activeProfileId) {
                     await persistSelection();
@@ -1914,6 +1987,9 @@ export class YamlParametersManager {
             // Создаем объект переводов
             const loc = {
                 title: this.t('Compilation and run parameters'),
+                projectProfiles: this.escapeHtml(this.projectRoot
+                    ? this.t('Profiles for project: {0}', vscode.workspace.workspaceFolders?.[0]?.name || path.basename(this.projectRoot))
+                    : this.t('Profiles for this empty window')),
                 buildSectionTitle: this.t('SPPR build parameters'),
                 resizePanels: this.t('Resize panels'),
                 buildSectionDescription: this.t('Parameters saved into yaml_parameters.json for СборкаТекстовСценариев processing.'),
@@ -1929,11 +2005,11 @@ export class YamlParametersManager {
                 genericBuildParameterDescription: this.t('Additional SPPR parameter passed to СборкаТекстовСценариев.'),
                 customBuildParameterDescription: this.t('User parameter added manually and passed to SPPR processing.'),
                 additionalSectionTitle: this.t('Additional Vanessa Automation parameters'),
-                additionalSectionDescription: this.t('Use this section for VAParams keys not supported by SPPR processing (for example, gherkinlanguage).'),
+                additionalSectionDescription: this.t('Vanessa Automation settings, using the same keys as VAParams.json: generator language, libraries, reports, and more. KOT adds them to the launch JSON. Import settings exported from Vanessa here.'),
                 globalVarsSectionTitle: this.t('Global variables'),
-                globalVarsSectionDescription: this.t('Scenario-level custom GlobalVars merged into VAParams JSON.'),
+                globalVarsSectionDescription: this.t('Initial global variable values ($$Name$$) passed through GlobalVars in the launch JSON. View and edit current values in Vanessa variables.'),
                 pathHint: this.t('You can use relative paths from project root or full paths.'),
-                sectionsHint: this.t('• SPPR tab: parameters for СборкаТекстовСценариев. Processing uses them to build yaml_parameters.json and Vanessa settings JSON, but not all VAParams keys are supported.\n• Additional tab: use for unsupported VAParams keys. You can import your own Vanessa settings JSON here.\n• Global variables tab: user GlobalVars that are merged into VAParams at launch time.\n• VAParams: runtime JSON settings for Vanessa Automation scenario launch.\n• Priority: if the same key exists in SPPR and Additional tabs, SPPR value wins by default. To override it, enable \"Override existing value\" in Additional tab.'),
+                sectionsHint: this.t('• SPPR tab: parameters for СборкаТекстовСценариев. Processing uses them to build yaml_parameters.json and Vanessa settings JSON, but not all VAParams keys are supported.\n• Additional tab: Vanessa Automation settings, using the same keys as VAParams.json. Import settings exported from Vanessa here; KOT merges them into the launch JSON.\n• Global variables tab: initial global variable values ($$Name$$), added to GlobalVars in the launch JSON. Current values are in Vanessa variables.\n• VAParams: runtime JSON settings for Vanessa Automation scenario launch.\n• Priority: if the same key exists in SPPR and Additional tabs, SPPR value wins by default. To override it, enable \"Override existing value\" in Additional tab.'),
                 addBuildParameter: this.t('Add build parameter'),
                 addAdditionalParameter: this.t('Add additional parameter'),
                 addGlobalVariable: this.t('Add global variable'),
@@ -1965,6 +2041,7 @@ export class YamlParametersManager {
                 savedWithIssues: this.t('Saved with issues'),
                 autosaveError: this.t('Auto-save error'),
                 parameter: this.t('Parameter'),
+                variable: this.t('Variable'),
                 value: this.t('Value'),
                 priority: this.t('Priority'),
                 priorityDescription: this.t('When enabled, this value replaces an existing value in the generated Vanessa JSON. Otherwise, it is added only when the key is absent.'),
@@ -1983,6 +2060,9 @@ export class YamlParametersManager {
                 parameterNamePlaceholder: this.t('Parameter name'),
                 parameterValuePlaceholder: this.t('Parameter value'),
                 removeParameter: this.t('Remove parameter'),
+                variableNamePlaceholder: this.t('Variable name'),
+                variableValuePlaceholder: this.t('Variable value'),
+                removeVariable: this.t('Remove variable'),
                 buildMoreActionsLabel: this.t('Build actions'),
                 additionalMoreActionsLabel: this.t('Additional actions'),
                 globalVarsMoreActionsLabel: this.t('GlobalVars actions'),
@@ -2010,9 +2090,9 @@ export class YamlParametersManager {
             );
             const globalVariablesRows = this.renderAdditionalParametersRows(
                 globalVanessaVariables,
-                loc.parameterNamePlaceholder,
-                loc.parameterValuePlaceholder,
-                loc.removeParameter,
+                loc.variableNamePlaceholder,
+                loc.variableValuePlaceholder,
+                loc.removeVariable,
                 loc.priorityDescription
             );
 
@@ -2025,36 +2105,38 @@ export class YamlParametersManager {
             );
             htmlContent = htmlContent.replace('${codiconsUri}', codiconsUri.toString());
             htmlContent = htmlContent.replace(/\$\{webview.cspSource\}/g, webview.cspSource);
-            htmlContent = htmlContent.replace('${buildParametersRows}', buildParametersRows);
-            htmlContent = htmlContent.replace('${additionalParametersRows}', additionalParametersRows);
-            htmlContent = htmlContent.replace('${globalVariablesRows}', globalVariablesRows);
+            htmlContent = htmlContent.replace('${buildParametersRows}', () => buildParametersRows);
+            htmlContent = htmlContent.replace('${additionalParametersRows}', () => additionalParametersRows);
+            htmlContent = htmlContent.replace('${globalVariablesRows}', () => globalVariablesRows);
             htmlContent = htmlContent.replace(
                 '${buildParameterSuggestionOptions}',
                 this.getKnownBuildParameterKeys()
                     .map(key => `<option value="${this.escapeHtml(key)}"></option>`)
                     .join('')
             );
-            htmlContent = htmlContent.replace('${buildParameterDefinitionsJson}', JSON.stringify(this.getBuildParameterDefinitions()));
-            htmlContent = htmlContent.replace('${vanessaParameterDefinitionsJson}', JSON.stringify(vanessaParameterDefinitions).replace(/</g, '\\u003c'));
-            htmlContent = htmlContent.replace('${vanessaCatalogStatusJson}', JSON.stringify(this.vanessaCatalogStatus(vanessaCatalog)).replace(/</g, '\\u003c'));
-            htmlContent = htmlContent.replace('${fixedBuildParameterKeysJson}', JSON.stringify(this.getFixedBuildParameterKeys()));
-            htmlContent = htmlContent.replace('${buildParametersJson}', JSON.stringify(buildParameters));
-            htmlContent = htmlContent.replace('${additionalParametersJson}', JSON.stringify(additionalVanessaParameters));
-            htmlContent = htmlContent.replace('${globalVanessaVariablesJson}', JSON.stringify(globalVanessaVariables));
-            htmlContent = htmlContent.replace('${defaultBuildParametersJson}', JSON.stringify(this.getDefaultParameters()));
-            htmlContent = htmlContent.replace('${profilesJson}', JSON.stringify(profiles));
-            htmlContent = htmlContent.replace('${activeProfileIdJson}', JSON.stringify(activeProfileId));
+            const scriptData: Record<string, unknown> = {
+                buildParameterDefinitionsJson: this.getBuildParameterDefinitions(),
+                vanessaParameterDefinitionsJson: vanessaParameterDefinitions,
+                vanessaCatalogStatusJson: this.vanessaCatalogStatus(vanessaCatalog),
+                fixedBuildParameterKeysJson: this.getFixedBuildParameterKeys(),
+                buildParametersJson: buildParameters, additionalParametersJson: additionalVanessaParameters,
+                globalVanessaVariablesJson: globalVanessaVariables, defaultBuildParametersJson: this.getDefaultParameters(),
+                profilesJson: profiles, activeProfileIdJson: activeProfileId
+            };
+            for (const [key, value] of Object.entries(scriptData)) {
+                htmlContent = htmlContent.replace(`\${${key}}`, () => JSON.stringify(value).replace(/</g, '\\u003c'));
+            }
 
             // Заменяем переводы
             htmlContent = htmlContent.replace('${localeHtmlLang}', localeHtmlLang);
             for (const [k, v] of Object.entries(loc)) {
-                htmlContent = htmlContent.replace(new RegExp(`\\$\\{loc\\.${k}\\}`, 'g'), v);
+                htmlContent = htmlContent.replace(new RegExp(`\\$\\{loc\\.${k}\\}`, 'g'), () => v);
             }
 
             return htmlContent;
         } catch (error) {
             console.error('[YamlParametersManager] Error loading HTML template:', error);
-            return `<body><h1>Error loading Compilation and run parameters</h1><p>${error}</p></body>`;
+            return `<body><h1>${this.escapeHtml(this.t('Compilation and run parameters'))}</h1><p>${this.escapeHtml(this.t('Error opening Compilation and run parameters: {0}', String(error)))}</p></body>`;
         }
     }
 

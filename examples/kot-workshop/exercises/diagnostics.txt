@@ -4,4 +4,4 @@ And I prepare workshop customer
     UnknownParameter = "Нет такого параметра"
 
 And I prepare workshop customer
-    Customer = "[MissingParameter]"
+    Customer = [MissingParameter]

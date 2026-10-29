@@ -27,5 +27,5 @@
 ТекстСценария: |
     #language: en
     And I prepare workshop customer
-        Customer = "[Customer]"
+        Customer = [Customer]
     And I save "[Customer]" in "VariantCustomer" variable

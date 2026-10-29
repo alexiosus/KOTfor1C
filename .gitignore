@@ -29,3 +29,8 @@ junit.xml
 !.env.example
 
 /.superpowers/
+
+# Local release packages and other generated artifacts.
+/artifacts/*
+!/artifacts/README.md
+/docs/.kot/

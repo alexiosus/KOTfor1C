@@ -152,6 +152,11 @@ interface ValidatedManifestEntry {
     readonly size?: number;
 }
 
+interface ResourceRoot {
+    readonly uri: ScenarioFilesUri;
+    readonly compiledFeatureUri?: string;
+}
+
 const MAX_CHUNK_BYTES = 256 * 1024;
 const MAX_BASE64_CHARACTERS = Math.ceil(MAX_CHUNK_BYTES / 3) * 4;
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
@@ -179,39 +184,44 @@ export class ScenarioFilesService implements ScenarioFilesDisposable {
         item: StepLibraryItem,
         relativeDirectory: string
     ): Promise<readonly ScenarioFileNode[]> {
-        const root = this.resourceRoot(item);
         const normalizedDirectory = this.requireRelativePath(relativeDirectory);
-        return this.listChildrenFromRoot(root, normalizedDirectory, item.id);
+        const children = await Promise.all((await this.resourceRoots(item)).map(root =>
+            this.listChildrenFromRoot(root.uri, normalizedDirectory, item.id, root.compiledFeatureUri)));
+        const merged = new Map<string, ScenarioFileNode>();
+        for (const node of children.flat()) {
+            if (!merged.has(node.name)) { merged.set(node.name, node); }
+        }
+        return Object.freeze([...merged.values()].sort((left, right) =>
+            (left.kind === right.kind ? 0 : left.kind === 'directory' ? -1 : 1) || compareName(left.name, right.name)));
     }
 
     async listAttachmentPaths(item: StepLibraryItem): Promise<readonly string[]> {
         if (this.disposed) {
             return Object.freeze([]);
         }
-        const roots = new Map<string, ScenarioFilesUri>();
+        const roots = new Map<string, ResourceRoot>();
         if (item.kind === 'nestedScenario' || item.kind === 'mainScenario' || item.kind === 'process') {
             if (/^file:/iu.test(item.capturedLocation?.uri ?? '')) {
                 const definition = this.host.parseUri(item.capturedLocation!.uri);
                 const root = this.host.joinPath(this.host.dirname(definition), 'files');
-                roots.set(root.toString(), root);
+                roots.set(root.toString(), { uri: root });
             }
             if ((item.kind === 'mainScenario' || item.kind === 'process') && scenarioFilesAvailable(item)) {
-                const root = this.resourceRoot(item);
-                roots.set(root.toString(), root);
+                for (const root of await this.resourceRoots(item)) { roots.set(this.rootCacheKey(root), root); }
             }
         }
         const paths = await Promise.all([...roots.values()].map(root => this.attachmentPathsForRoot(root, item.id)));
         return Object.freeze([...new Set(paths.flat())].sort(compareName));
     }
 
-    private attachmentPathsForRoot(root: ScenarioFilesUri, itemId: string): Promise<readonly string[]> {
-        const key = root.toString();
+    private attachmentPathsForRoot(root: ResourceRoot, itemId: string): Promise<readonly string[]> {
+        const key = this.rootCacheKey(root);
         const current = this.attachmentPathLoads.get(key);
         if (current) {
             return current;
         }
         if (!this.attachmentIndexWatches.has(key)) {
-            this.attachmentIndexWatches.set(key, this.watchRoot(root, itemId, () => undefined));
+            this.attachmentIndexWatches.set(key, this.watchRoot(root.uri, itemId, () => undefined));
         }
         const load = this.collectAttachmentPaths(root, itemId).catch(error => {
             if (this.attachmentPathLoads.get(key) === load) {
@@ -223,11 +233,11 @@ export class ScenarioFilesService implements ScenarioFilesDisposable {
         return load;
     }
 
-    private async collectAttachmentPaths(root: ScenarioFilesUri, itemId: string): Promise<readonly string[]> {
+    private async collectAttachmentPaths(root: ResourceRoot, itemId: string): Promise<readonly string[]> {
         const directories = [''];
         const paths: string[] = [];
         while (directories.length > 0) {
-            const children = await this.listChildrenFromRoot(root, directories.pop()!, itemId);
+            const children = await this.listChildrenFromRoot(root.uri, directories.pop()!, itemId, root.compiledFeatureUri);
             for (const child of children) {
                 if (child.kind === 'directory') {
                     directories.push(child.relativePath);
@@ -242,7 +252,8 @@ export class ScenarioFilesService implements ScenarioFilesDisposable {
     private async listChildrenFromRoot(
         root: ScenarioFilesUri,
         normalizedDirectory: string,
-        itemId: string
+        itemId: string,
+        compiledFeatureUri?: string
     ): Promise<readonly ScenarioFileNode[]> {
         if (!await this.existingResourcePathIsSafe(root, normalizedDirectory)) {
             return Object.freeze([]);
@@ -260,10 +271,13 @@ export class ScenarioFilesService implements ScenarioFilesDisposable {
         const parentDepth = normalizedDirectory
             ? normalizedDirectory.split('/').length
             : 0;
+        const excluded = compiledFeatureUri && !normalizedDirectory
+            ? await this.compiledSiblingArtifacts(root, compiledFeatureUri, entries) : new Set<string>();
         return Object.freeze(entries
             .filter(entry => (
                 entry.kind === 'directory' || entry.kind === 'file'
-            ) && !this.isHiddenResourceArtifact(entry.name))
+            ) && !this.isHiddenResourceArtifact(entry.name)
+                && !excluded.has(entry.name.normalize('NFC').toLowerCase()))
             .sort((left, right) => {
                 const kindDifference = left.kind === right.kind
                     ? 0
@@ -293,7 +307,7 @@ export class ScenarioFilesService implements ScenarioFilesDisposable {
             if (!normalized) {
                 return false;
             }
-            const root = this.resourceRoot(item);
+            const root = await this.resourceRootForPath(item, normalized);
             if (!await this.existingResourcePathIsSafe(root, normalized)) {
                 return false;
             }
@@ -323,7 +337,7 @@ export class ScenarioFilesService implements ScenarioFilesDisposable {
     async revealInOs(item: StepLibraryItem, relativePath: string): Promise<boolean> {
         try {
             const normalized = this.requireRelativePath(relativePath);
-            const root = this.resourceRoot(item);
+            const root = await this.resourceRootForPath(item, normalized);
             if (!await this.existingResourcePathIsSafe(root, normalized)) {
                 return false;
             }
@@ -346,7 +360,7 @@ export class ScenarioFilesService implements ScenarioFilesDisposable {
         if (!normalized) {
             throw new Error('A scenario attachment file path is required.');
         }
-        const root = this.resourceRoot(item);
+        const root = await this.resourceRootForPath(item, normalized);
         const rootPath = fileURLToPath(root.toString());
         const rootStat = await this.tryLstat(rootPath);
         if (!rootStat) {
@@ -396,7 +410,7 @@ export class ScenarioFilesService implements ScenarioFilesDisposable {
         if (this.disposed) { throw new Error('Scenario files service is disposed.'); }
         const normalized = this.requireRelativePath(relativePath);
         if (!normalized) { throw new Error('A scenario attachment file path is required.'); }
-        const root = this.resourceRoot(item);
+        const root = await this.resourceRootForPath(item, normalized);
         const rootPath = fileURLToPath(root.toString());
         const validateSource = async () => {
             const rootStat = await fs.lstat(rootPath);
@@ -422,6 +436,7 @@ export class ScenarioFilesService implements ScenarioFilesDisposable {
         if (trimmed === path.posix.basename(normalized)) { return 'cancelled'; }
         const parent = path.posix.dirname(normalized);
         const destination = parent === '.' ? trimmed : `${parent}/${trimmed}`;
+        await this.assertCompiledSiblingPath(item, root, destination);
         const from = this.resourceUri(root, normalized); const to = this.resourceUri(root, destination);
         if (await this.tryLstat(fileURLToPath(to.toString()))) { throw new Error('An attachment with this name already exists.'); }
         if (this.host.renameFile) { await this.host.renameFile(from, to); }
@@ -430,7 +445,7 @@ export class ScenarioFilesService implements ScenarioFilesDisposable {
             try { await fs.unlink(fileURLToPath(from.toString())); }
             catch (reason) { await fs.unlink(fileURLToPath(to.toString())); throw reason; }
         }
-        this.attachmentPathLoads.delete(root.toString());
+        this.clearRootCache(root.toString());
         this.scheduleInvalidation(root.toString(), from); this.scheduleInvalidation(root.toString(), to);
         return 'renamed';
     }
@@ -448,10 +463,11 @@ export class ScenarioFilesService implements ScenarioFilesDisposable {
             if (stillCurrent && !stillCurrent()) { throw new Error('The selected source changed. Retry the attachment action.'); }
         };
         assertCurrent();
-        const rootUri = this.resourceRoot(item);
-        const rootPath = fileURLToPath(rootUri.toString());
         const normalizedTarget = this.requireRelativePath(targetDirectory);
+        const rootUri = await this.resourceRootForPath(item, normalizedTarget);
+        const rootPath = fileURLToPath(rootUri.toString());
         const validated = this.validateManifest(normalizedTarget, entries);
+        for (const entry of validated) { await this.assertCompiledSiblingPath(item, rootUri, entry.destinationRelativePath); }
         const existingRoot = await this.tryLstat(rootPath);
         if (existingRoot?.isSymbolicLink()) {
             throw new Error('Scenario files root cannot be a symbolic link.');
@@ -657,6 +673,8 @@ export class ScenarioFilesService implements ScenarioFilesDisposable {
         }
         const root = this.resourceRoot(item);
         const watches = [this.watchRoot(root, item.id, listener)];
+        const sibling = this.compiledSiblingRoot(item);
+        if (sibling && sibling.toString() !== root.toString()) { watches.push(this.watchRoot(sibling, item.id, listener)); }
         if (item.sourceScenarioFilesRootUri && item.sourceScenarioFilesRootUri !== root.toString()) {
             watches.push(this.watchRoot(this.host.parseUri(item.sourceScenarioFilesRootUri), item.id, listener));
         }
@@ -739,6 +757,67 @@ export class ScenarioFilesService implements ScenarioFilesDisposable {
         }
         const definition = this.host.parseUri(item.capturedLocation.uri);
         return this.host.joinPath(this.host.dirname(definition), 'files');
+    }
+
+    private compiledSiblingRoot(item: StepLibraryItem): ScenarioFilesUri | undefined {
+        if ((item.kind !== 'mainScenario' && item.kind !== 'process') || !/^file:/iu.test(item.compiledFeatureUri ?? '')
+            || item.scenarioFilesRootUri === item.sourceScenarioFilesRootUri) { return undefined; }
+        return this.host.dirname(this.host.parseUri(item.compiledFeatureUri!));
+    }
+
+    private async resourceRoots(item: StepLibraryItem): Promise<readonly ResourceRoot[]> {
+        const primary = this.resourceRoot(item);
+        const sibling = this.compiledSiblingRoot(item);
+        if (!sibling) { return [{ uri: primary }]; }
+        const feature = await this.tryLstat(fileURLToPath(item.compiledFeatureUri!));
+        if (!feature?.isFile() || feature.isSymbolicLink()) { return [{ uri: primary }]; }
+        const flat = { uri: sibling, compiledFeatureUri: item.compiledFeatureUri };
+        return primary.toString() === sibling.toString() ? [flat] : [{ uri: primary }, flat];
+    }
+
+    private async compiledSiblingArtifacts(root: ScenarioFilesUri, featureUri: string, entries: readonly ScenarioFilesDirectoryEntry[]): Promise<Set<string>> {
+        const names = new Set(['compile.txt', 'yaml_parameters.json', 'yaml_build_log.txt', '.kot-build-manifest.json']);
+        const featureName = path.basename(fileURLToPath(featureUri));
+        const stems = new Set([featureName.slice(0, -'.feature'.length), ...entries
+            .filter(entry => entry.kind === 'file' && /\.feature$/iu.test(entry.name))
+            .map(entry => entry.name.slice(0, -'.feature'.length))]);
+        for (const stem of stems) {
+            for (const suffix of ['.feature', '.str', '.json', '.combined.json']) { names.add((stem + suffix).normalize('NFC').toLowerCase()); }
+            // The conventional per-feature container is already projected through its Файлы root.
+            const legacy = await this.tryLstat(fileURLToPath(this.host.joinPath(root, stem, 'Файлы').toString()));
+            if (legacy?.isDirectory()) { names.add(stem.normalize('NFC').toLowerCase()); }
+        }
+        return names;
+    }
+
+    private async assertCompiledSiblingPath(item: StepLibraryItem, root: ScenarioFilesUri, relativePath: string): Promise<void> {
+        if (!relativePath || this.compiledSiblingRoot(item)?.toString() !== root.toString()) { return; }
+        const first = relativePath.split('/')[0].normalize('NFC').toLowerCase();
+        const entries = await this.host.readDirectory(root);
+        if (/\.feature$/u.test(first) || (await this.compiledSiblingArtifacts(root, item.compiledFeatureUri!, entries)).has(first)) {
+            throw new Error('Invalid scenario files path.');
+        }
+    }
+
+    private async resourceRootForPath(item: StepLibraryItem, relativePath: string): Promise<ScenarioFilesUri> {
+        for (const root of await this.resourceRoots(item)) {
+            if (await this.existingResourcePathIsSafe(root.uri, relativePath)) {
+                await this.assertCompiledSiblingPath(item, root.uri, relativePath);
+                return root.uri;
+            }
+        }
+        return this.resourceRoot(item);
+    }
+
+    private rootCacheKey(root: ResourceRoot): string {
+        // Features sharing an output folder share the same flat attachment inventory.
+        return root.uri.toString() + (root.compiledFeatureUri ? '\0compiled' : '');
+    }
+
+    private clearRootCache(rootUri: string): void {
+        for (const key of this.attachmentPathLoads.keys()) {
+            if (key === rootUri || key.startsWith(rootUri + '\0')) { this.attachmentPathLoads.delete(key); }
+        }
     }
 
     private requireRelativePath(value: string): string {
@@ -941,7 +1020,7 @@ export class ScenarioFilesService implements ScenarioFilesDisposable {
         if (!shared) {
             return;
         }
-        this.attachmentPathLoads.delete(key);
+        this.clearRootCache(key);
         shared.changedUris.add(changedUri.toString());
         if (shared.timer !== undefined) {
             return;

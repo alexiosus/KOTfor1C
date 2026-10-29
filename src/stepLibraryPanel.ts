@@ -43,12 +43,12 @@ export interface StepLibraryPanelServices {
 }
 
 export type StepLibraryInboundMessage =
-    | { readonly command: 'ready' }
+    | { readonly command: 'ready' | 'manageUserStepLibraries' }
     | { readonly command: 'refresh' }
     | { readonly command: 'create' }
     | { readonly command: 'insert'; readonly itemId: string }
     | { readonly command: 'copy'; readonly itemId: string }
-    | { readonly command: 'openDefinition' | 'openScenarioProperties' | 'convertFormat'; readonly itemId: string }
+    | { readonly command: 'openDefinition' | 'openScenarioProperties' | 'convertFormat' | 'buildUserStepLibrary' | 'dumpUserStepLibrary'; readonly itemId: string }
     | { readonly command: 'rename'; readonly itemId: string }
     | { readonly command: 'renameMainGroup'; readonly itemId: string }
     | { readonly command: 'deleteDefinition'; readonly itemId: string }
@@ -122,7 +122,7 @@ export function parseStepLibraryInboundMessage(value: unknown): StepLibraryInbou
             processUid: record.processUid as string, stepUid: record.stepUid as string, viewIdentity: record.viewIdentity as string,
             stepsSignature: record.stepsSignature as string, direction: record.direction };
     }
-    if (record.command === 'ready' || record.command === 'refresh' || record.command === 'create') {
+    if (record.command === 'manageUserStepLibraries' || record.command === 'ready' || record.command === 'refresh' || record.command === 'create') {
         return { command: record.command };
     }
     if (
@@ -131,6 +131,8 @@ export function parseStepLibraryInboundMessage(value: unknown): StepLibraryInbou
         || record.command === 'openDefinition'
         || record.command === 'openScenarioProperties'
         || record.command === 'convertFormat'
+        || record.command === 'buildUserStepLibrary'
+        || record.command === 'dumpUserStepLibrary'
         || record.command === 'rename'
         || record.command === 'renameMainGroup'
         || record.command === 'deleteDefinition'
@@ -364,7 +366,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     }
 
     private async postActionResult(
-        action: 'insert' | 'copy' | 'openDefinition' | 'openScenarioProperties' | 'convertFormat' | 'rename' | 'renameMainGroup' | 'deleteDefinition' | 'moveProcessStep' | 'reorderProcessStep' | 'removeProcessStep' | 'addProcessSteps',
+        action: 'insert' | 'copy' | 'openDefinition' | 'openScenarioProperties' | 'convertFormat' | 'buildUserStepLibrary' | 'dumpUserStepLibrary' | 'rename' | 'renameMainGroup' | 'deleteDefinition' | 'moveProcessStep' | 'reorderProcessStep' | 'removeProcessStep' | 'addProcessSteps',
         itemId: string,
         success: boolean,
         message?: string
@@ -379,7 +381,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     }
 
     private async runItemAction(
-        action: 'insert' | 'copy' | 'openDefinition' | 'openScenarioProperties' | 'convertFormat' | 'rename' | 'renameMainGroup' | 'deleteDefinition' | 'moveProcessStep' | 'reorderProcessStep' | 'removeProcessStep' | 'addProcessSteps',
+        action: 'insert' | 'copy' | 'openDefinition' | 'openScenarioProperties' | 'convertFormat' | 'buildUserStepLibrary' | 'dumpUserStepLibrary' | 'rename' | 'renameMainGroup' | 'deleteDefinition' | 'moveProcessStep' | 'reorderProcessStep' | 'removeProcessStep' | 'addProcessSteps',
         itemId: string,
         operation: (item: StepLibraryItem) => Promise<boolean>
     ): Promise<void> {
@@ -438,6 +440,18 @@ export class StepLibraryPanel implements vscode.Disposable {
             case 'standaloneFeatureAction':
                 await this.standaloneController?.handleMessage(message);
                 return;
+            case 'manageUserStepLibraries':
+                await vscode.commands.executeCommand('kotTestToolkit.manageUserStepLibraries');
+                return;
+            case 'buildUserStepLibrary':
+            case 'dumpUserStepLibrary':
+                await this.runItemAction(message.command, message.itemId, async item => {
+                    if (item.kind !== 'userStep') { return false; }
+                    return await vscode.commands.executeCommand('kotTestToolkit.' + message.command, {
+                        definitionId: item.definitionId, documentUri: item.capturedLocation?.uri
+                    }) === true;
+                });
+                return;
             case 'insert':
                 await this.runItemAction(
                     'insert',
@@ -449,7 +463,7 @@ export class StepLibraryPanel implements vscode.Disposable {
                 await this.runItemAction(
                     'copy',
                     message.itemId,
-                    item => this.services.actionService.copy(item)
+                    item => this.services.actionService.copy(item, this.resource)
                 );
                 return;
             case 'convertFormat':
@@ -822,6 +836,9 @@ export class StepLibraryPanel implements vscode.Disposable {
             translation: t('Translation'),
             template: t('Template'),
             insert: t('Insert'),
+            userStepLibraries: t('EPF libraries'), epfLibrary: t('EPF library'), buildEpf: t('Build EPF'), dumpSources: t('Dump sources…'),
+            createStepLibrary: t('Create EPF library…'), sourceOnly: t('Source only'), notBuilt: t('Not built'),
+            rebuildRequired: t('Rebuild required'), libraryBuilt: t('Built'),
             copy: t('Copy'),
             openDefinition: t('Open definition'),
             insertionUnavailable: t('Open a supported Feature or scenario text block to insert a step.'),
@@ -926,6 +943,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     data-copied="${escapeHtml(labels.copied)}"
     data-opened="${escapeHtml(labels.opened)}"
     data-insert="${escapeHtml(labels.insert)}"
+    data-user-step-libraries="${escapeHtml(labels.userStepLibraries)}" data-epf-library="${escapeHtml(labels.epfLibrary)}" data-build-epf="${escapeHtml(labels.buildEpf)}" data-dump-sources="${escapeHtml(labels.dumpSources)}" data-create-step-library="${escapeHtml(labels.createStepLibrary)}" data-source-only="${escapeHtml(labels.sourceOnly)}" data-not-built="${escapeHtml(labels.notBuilt)}" data-rebuild-required="${escapeHtml(labels.rebuildRequired)}" data-library-built="${escapeHtml(labels.libraryBuilt)}"
     data-copy="${escapeHtml(labels.copy)}"
     data-open-definition="${escapeHtml(labels.openDefinition)}"
     data-add-favorite="${escapeHtml(labels.addFavorite)}"
@@ -974,6 +992,7 @@ export class StepLibraryPanel implements vscode.Disposable {
                 <option value="alphabetical">${escapeHtml(labels.alphabetical)}</option>
             </select>
             <button id="createButton" class="icon-button codicon codicon-add" type="button" title="${escapeHtml(labels.create)}" aria-label="${escapeHtml(labels.create)}"></button>
+            <button id="userStepLibrariesButton" class="icon-button codicon codicon-package" type="button" title="${escapeHtml(labels.userStepLibraries)}" aria-label="${escapeHtml(labels.userStepLibraries)}"></button>
             <button id="refreshButton" class="icon-button codicon codicon-refresh" type="button" title="${escapeHtml(labels.refresh)}" aria-label="${escapeHtml(labels.refresh)}"></button>
         </header>
         <main class="library-grid">
@@ -1019,6 +1038,7 @@ export class StepLibraryPanel implements vscode.Disposable {
     <script nonce="${nonce}" src="${scenarioFilesProtocolUri}"></script>
     <script nonce="${nonce}">window.__standaloneFeatureLabels = ${standaloneLabels};</script>
     <script nonce="${nonce}" src="${featureProtocolUri}"></script>
+    <script nonce="${nonce}" src="${webview.asWebviewUri(vscode.Uri.joinPath(this.services.extensionUri, 'media', 'userStepLibraries.js'))}"></script>
     <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

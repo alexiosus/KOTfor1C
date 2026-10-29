@@ -45,6 +45,7 @@ function fixture(dependencies: Record<string, unknown> = {}) {
             }
         },
         Selection: class { constructor(public start: { line: number }, public end: { line: number }) {} },
+        Location: class { constructor(public uri: ReturnType<typeof uri>, public range: unknown) {} },
         TextEditorRevealType: { InCenter: 1 },
         window: { showWarningMessage() {}, showInformationMessage: async () => undefined,
             showErrorMessage: async (text: string) => { notifications.push(text); },
@@ -367,6 +368,34 @@ test('unchecked Test Manager scenarios are filtered by compiler code, including 
             assert.equal(parameters.getCompilerBuildParameterValue(rows, 'ScenarioFilter'), '');
         } finally { f.dispose(); }
     } }
+});
+
+test('unchecked processes do not add a global definition filter that also suppresses selected main scenarios', async () => {
+    for (const enabledProcess of [false, true]) {
+        const manager = { loadActiveProfileSnapshot: async () => ({ buildParameters: [], additionalVanessaParameters: [], globalVanessaVariables: [] }),
+            validateCompilerBuildParameters: () => [] };
+        const f = fixture({ './yamlParametersManager.js': { YamlParametersManager: { getInstance: () => manager } } });
+        try {
+            const main = { ...f.scenario('Main', 'main'), scenarioCode: 'MAIN' };
+            const process = { ...f.scenario('Process', 'process'), kind: 'process', processCode: 'P' };
+            const unchecked = { ...f.scenario('Unchecked process', 'unchecked'), kind: 'process', processCode: 'SKIP' };
+            const all = [main, process, unchecked];
+            const catalog = { all, byUri: new Map(all.map(info => [info.yamlFileUri.toString(), info])), byName: new Map(all.map(info => [info.name, [info]])) };
+            let rows: parameters.CompilerBuildParameter[] | undefined;
+            Object.assign(f.provider, {
+                _context: {}, _activeBuildProcesses: new Set(), _view: { webview: { postMessage() {} } }, t: (key: string) => key,
+                hasAnyScenarioRunsInProgress: () => false, getOutputChannel: () => ({ clear() {} }), outputInfo() {}, outputError() {},
+                ensureFreshScenarioCatalog: async () => catalog, isMainScenario: () => true,
+                getMainScenarioSelectionSnapshotForBuild: async () => runtimeIdentity.projectScenarioBuildSelection(all as any, {
+                    [main.yamlFileUri.toString()]: true, [process.yamlFileUri.toString()]: enabledProcess, [unchecked.yamlFileUri.toString()]: false
+                }), captureCompilerControlInputs: async () => undefined,
+                verifyCompilerBuildPreflight: async (value: parameters.CompilerBuildParameter[]) => { rows = value; throw new Error('stop before 1C'); }
+            });
+            await f.provider._handleRunAssembleScriptTypeScript('0');
+            assert.ok(rows, f.notifications.join('\n'));
+            assert.equal(parameters.getCompilerBuildParameterValue(rows, 'ProcessFilter'), '');
+        } finally { f.dispose(); }
+    }
 });
 
 test('build selection separates code collisions from identical display titles', () => {

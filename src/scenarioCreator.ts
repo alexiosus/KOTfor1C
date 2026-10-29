@@ -122,7 +122,7 @@ type EtalonBaseQuickPickItem = vscode.QuickPickItem & (
 async function promptForScenarioFormat(config: vscode.WorkspaceConfiguration, seed?: unknown): Promise<SpprScenarioFormat | undefined> {
     const explicit = seed && typeof seed === 'object' ? (seed as { format?: unknown }).format : undefined;
     if (explicit === 'legacy' || explicit === 'native') { return explicit; }
-    const preferred = config.get<string>('newScenarioDefaults.format', 'legacy');
+    const preferred = config.get<string>('newScenarioDefaults.format', 'native');
     const items = [
         { label: 'scen.yaml', description: vscode.l10n.t('SPPR metadata and script in one YAML file'), value: 'legacy' as const },
         { label: 'meta.yaml + scen.feature', description: vscode.l10n.t('SPPR metadata and original script in separate files'), value: 'native' as const }

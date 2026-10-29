@@ -164,6 +164,53 @@ const userStep = (title: string) => [
     'КонецФункции'
 ].join('\n');
 
+test('library changes update step availability and view identity even without a BSL text change', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const watchers = new WatchHarness();
+    const source = '/workspace/active/step_definitions-src/Steps/Module.bsl';
+    fileSystem.setFile(source, userStep('И готовый шаг'), 1);
+    let status: 'ready' | 'stale' | 'uncompiled' = 'ready';
+    const service = new ProjectDefinitionIndexService({
+        parserVersion: 'test', fileSystem, watch: watchers.watch,
+        resolveUserStepLibrary: async () => ({ status, sourceDirectory: '/workspace/active/step_definitions-src/Steps' })
+    });
+    service.startProfile(configuration('active'));
+    await service.waitForIdle();
+    const original = service.getSnapshot()!;
+    assert.equal(original.definitions[0].userStepLibrary?.status, 'ready');
+    status = 'stale';
+    watchers.callbacks.get('/workspace/active')!.change('/workspace/active/step_definitions/Steps.epf');
+    await service.waitForIdle();
+    assert.equal(service.getSnapshot()!.definitions[0].userStepLibrary?.status, 'stale');
+    assert.notEqual(service.getSnapshot()!.identity, original.identity);
+    status = 'uncompiled';
+    watchers.callbacks.get('/workspace/active')!.delete('/workspace/active/step_definitions/Steps.epf');
+    await service.waitForIdle();
+    assert.equal(service.getSnapshot()!.definitions[0].userStepLibrary?.status, 'uncompiled');
+    service.dispose();
+});
+
+test('library rebuild does not reuse stale parsed registrations when source size and mtime are unchanged', async () => {
+    const fileSystem = new MemoryFileSystem();
+    const watchers = new WatchHarness();
+    const source = '/workspace/active/step_definitions-src/Steps/Module.bsl';
+    fileSystem.setFile(source, userStep('И старый шаг'), 1);
+    let records: readonly ProjectDefinitionFileRecord[] = [];
+    let status: 'ready' | 'stale' = 'ready';
+    const service = new ProjectDefinitionIndexService({
+        parserVersion: 'test', fileSystem, watch: watchers.watch,
+        cache: { load: async () => records, save: async (_configuration, _parser, current) => { records = current; } },
+        resolveUserStepLibrary: async () => ({ status, sourceDirectory: '/workspace/active/step_definitions-src/Steps' })
+    });
+    service.startProfile(configuration('active')); await service.waitForIdle();
+    fileSystem.setFile(source, userStep('И свежий шаг'), 1);
+    status = 'stale'; watchers.callbacks.get('/workspace/active')!.change(source); await service.waitForIdle();
+    status = 'ready'; watchers.callbacks.get('/workspace/active')!.change('/workspace/active/step_definitions/Steps.epf'); await service.waitForIdle();
+    assert.equal(service.getSnapshot()!.definitions[0].template, 'И свежий шаг');
+    assert.equal(service.getSnapshot()!.definitions[0].userStepLibrary?.status, 'ready');
+    service.dispose();
+});
+
 function configuration(
     profileId: string,
     root = `/workspace/${profileId}`,

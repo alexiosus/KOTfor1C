@@ -19,13 +19,13 @@
 
 ## Что сейчас делает KOT
 
-1. Верхняя команда ручной отладки открывает новую Vanessa в общей базе менеджера. JSON создаётся из дополнительных параметров и глобальных переменных активного профиля. Параметры клиентов из buildParameters автоматически сюда не переносятся. См. [phaseSwitcher.ts:6535](/Users/alexeremeev/Development/1cDriveTestHelper/src/phaseSwitcher.ts:6535), [создание JSON:6598](/Users/alexeremeev/Development/1cDriveTestHelper/src/phaseSwitcher.ts:6598).
-2. Ручная отладка собранного сценария берёт его JSON без обработки выбора базы и без подмены параметров. См. [createVanessaDebugLaunchContext:11465](/Users/alexeremeev/Development/1cDriveTestHelper/src/phaseSwitcher.ts:11465).
-3. Командная строка включает ShowMainForm, QuietInstallVanessaExt, VAParams, WithoutSendingStatistics, UseEditor, /TESTMANAGER. В ручном режиме не добавляет StartFeaturePlayer; процесс запускается detached. Подключения к запущенному процессу и регистрации VS Code debugger в исходниках не найдено. См. [параметры:11601](/Users/alexeremeev/Development/1cDriveTestHelper/src/phaseSwitcher.ts:11601), [запуск:11656](/Users/alexeremeev/Development/1cDriveTestHelper/src/phaseSwitcher.ts:11656).
-4. Генератор standalone feature заполняет только первый элемент datatestclients; дополнительные элементы исходного JSON могут сохраниться, но интерфейса набора клиентов нет. См. [selectedClient:122](/Users/alexeremeev/Development/1cDriveTestHelper/src/standaloneFeatureLaunch.ts:122), [параметры первого клиента:232](/Users/alexeremeev/Development/1cDriveTestHelper/src/standaloneFeatureLaunch.ts:232).
-5. Учётные данные Infobase Manager кешируются в Map в памяти; перезапуск Extension Host их теряет. Это ещё не постоянное защищённое хранилище. См. [infobaseManager.ts:180](/Users/alexeremeev/Development/1cDriveTestHelper/src/infobaseManager.ts:180), [кеширование:1629](/Users/alexeremeev/Development/1cDriveTestHelper/src/infobaseManager.ts:1629).
+1. Верхняя команда ручной отладки открывает новую Vanessa в общей базе менеджера. JSON создаётся из дополнительных параметров и глобальных переменных активного профиля. Параметры клиентов из buildParameters автоматически сюда не переносятся. См. [phaseSwitcher.ts:6535](../../../src/phaseSwitcher.ts:6535), [создание JSON:6598](../../../src/phaseSwitcher.ts:6598).
+2. Ручная отладка собранного сценария берёт его JSON без обработки выбора базы и без подмены параметров. См. [createVanessaDebugLaunchContext:11465](../../../src/phaseSwitcher.ts:11465).
+3. Командная строка включает ShowMainForm, QuietInstallVanessaExt, VAParams, WithoutSendingStatistics, UseEditor, /TESTMANAGER. В ручном режиме не добавляет StartFeaturePlayer; процесс запускается detached. Подключения к запущенному процессу и регистрации VS Code debugger в исходниках не найдено. См. [параметры:11601](../../../src/phaseSwitcher.ts:11601), [запуск:11656](../../../src/phaseSwitcher.ts:11656).
+4. Генератор standalone feature заполняет только первый элемент datatestclients; дополнительные элементы исходного JSON могут сохраниться, но интерфейса набора клиентов нет. См. [selectedClient:122](../../../src/standaloneFeatureLaunch.ts:122), [параметры первого клиента:232](../../../src/standaloneFeatureLaunch.ts:232).
+5. Учётные данные Infobase Manager кешируются в Map в памяти; перезапуск Extension Host их теряет. Это ещё не постоянное защищённое хранилище. См. [infobaseManager.ts:180](../../../src/infobaseManager.ts:180), [кеширование:1629](../../../src/infobaseManager.ts:1629).
 
-При добавлении профилей нужен runtime overlay для manual debug: запрет автозапуска/автозакрытия независимо от исходного JSON. Сейчас standalone генератор задаёт ExecuteScenarios=true и CloseSystemOnComplete=true, а ручной запуск сохраняет JSON. Простого отсутствия StartFeaturePlayer недостаточно как общего контракта. См. [defaults:186](/Users/alexeremeev/Development/1cDriveTestHelper/src/standaloneFeatureLaunch.ts:186). Поведение конфликтующего JSON не проверялось на живой Vanessa.
+При добавлении профилей нужен runtime overlay для manual debug: запрет автозапуска/автозакрытия независимо от исходного JSON. Сейчас standalone генератор задаёт ExecuteScenarios=true и CloseSystemOnComplete=true, а ручной запуск сохраняет JSON. Простого отсутствия StartFeaturePlayer недостаточно как общего контракта. См. [defaults:186](../../../src/standaloneFeatureLaunch.ts:186). Поведение конфликтующего JSON не проверялось на живой Vanessa.
 
 ## Минимальный UX для клиентов
 
@@ -69,7 +69,7 @@ manage_breakpoints требует включённого Vanessa Editor и ак�
 
 Запуск со строки не создаёт состояние базы, окна и переменные, которые должны были подготовить пропущенные шаги. Для штатной воспроизводимой отладки предпочтительнее запуск сначала до breakpoint. Для уже подготовленного сеанса — запуск со строки.
 
-Для исходного YAML нужен перевод строки через свежую карту СППР: sourceBodyLineNumber относится к телу ТекстСценария, а не к номеру YAML-строки; один исходный шаг может соответствовать нескольким строкам сборки. Начать разумно с standalone .feature; для YAML подключать .str и проверку актуальности сборки. См. [compilerArtifacts.ts:1](/Users/alexeremeev/Development/1cDriveTestHelper/src/compilerArtifacts.ts:1), [парсер:92](/Users/alexeremeev/Development/1cDriveTestHelper/src/compilerArtifacts.ts:92).
+Для исходного YAML нужен перевод строки через свежую карту СППР: sourceBodyLineNumber относится к телу ТекстСценария, а не к номеру YAML-строки; один исходный шаг может соответствовать нескольким строкам сборки. Начать разумно с standalone .feature; для YAML подключать .str и проверку актуальности сборки. См. [compilerArtifacts.ts:1](../../../src/compilerArtifacts.ts:1), [парсер:92](../../../src/compilerArtifacts.ts:92).
 
 ## Что необходимо для MCP
 

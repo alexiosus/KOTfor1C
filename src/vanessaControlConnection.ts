@@ -251,7 +251,7 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
             ] : []),
             ...(!connectionOnly ? [
             { label: vscode.l10n.t('Test clients and saved connections…'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.clients') },
-            { label: vscode.l10n.t('Runtime variables…'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.variables') },
+            { label: vscode.l10n.t('Vanessa variables…'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.variables') },
             { label: vscode.l10n.t('Diagnostics…'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.diagnostics') },
             { label: vscode.l10n.t('Search runtime steps…'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.searchRuntimeSteps') },
             { label: vscode.l10n.t('Check feature syntax in Vanessa'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.checkRuntimeSyntax') },

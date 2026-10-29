@@ -7,13 +7,16 @@ import { getConfiguredScenarioLanguage } from './gherkinLanguage';
 import { VanessaYamlTrialControl, type VanessaYamlTrial, type VanessaYamlTrialPorts } from './vanessaControlYamlTrial';
 import { prepareVanessaSelection } from './vanessaControlSelection';
 import { nativeDocumentTextMatchesFileText } from './scenarioNativeDocumentSnapshot';
-import { sameVanessaFeaturePath, type VanessaControlSession } from './vanessaControlSession';
+import { sameVanessaFeaturePath, type VanessaControlFailure, type VanessaControlSession } from './vanessaControlSession';
 import type { VanessaFeatureDocument } from './vanessaControlFeature';
 import { VanessaExecutionHighlighter } from './vanessaControlHighlighting';
 
 /** Runtime fragments never replace the user's native YAML document. */
 export function registerVanessaYamlTrialCommand(context: vscode.ExtensionContext, session: VanessaControlSession,
-    getDefinitions: (uri: vscode.Uri) => Promise<ProjectDefinitionView>, ensureConnected: () => Promise<boolean> = async () => true): void {
+    getDefinitions: (uri: vscode.Uri) => Promise<ProjectDefinitionView>, ensureConnected: () => Promise<boolean> = async () => true,
+    failureHover?: (failure: VanessaControlFailure, document: vscode.TextDocument) => vscode.MarkdownString | undefined): {
+        isFailedLine(document: vscode.TextDocument, line: number): boolean
+    } {
     const decoration = new VanessaExecutionHighlighter();
     let directory: Promise<string> | undefined; let disposed = false; let sequence = 0;
     let selected: { trial: VanessaYamlTrial; file: string; generation: number } | undefined;
@@ -35,11 +38,13 @@ export function registerVanessaYamlTrialCommand(context: vscode.ExtensionContext
         for (const editor of vscode.window.visibleTextEditors) {
             const line = active ? active.trial.sourceLines[(execution!.currentLineNumber ?? execution!.lineNumber) - active.trial.lineNumber] ?? active.trial.source.line : -1;
             const matches = active && editor.document.uri.toString() === active.trial.source.uri && !editor.document.isDirty && textOf(editor.document) === active.trial.source.text;
-            const key = matches && line >= 0 && line < editor.document.lineCount ? `${editor.document.version}:${line}:${execution!.status}` : '';
+            const key = matches && line >= 0 && line < editor.document.lineCount ? `${editor.document.version}:${line}:${execution!.status}:${JSON.stringify(session.failure ?? '')}` : '';
             if (rendered.get(editor) === key) { continue; } rendered.set(editor, key);
             const label = execution?.status === 'passed' ? vscode.l10n.t('Step trial passed') : execution?.status === 'failed' ? vscode.l10n.t('Step trial failed')
                 : execution?.status === 'running' ? vscode.l10n.t('Trying step…') : vscode.l10n.t('Step trial result not confirmed');
-            decoration.render(editor, key ? editor.document.lineAt(line).range : undefined, execution?.status, label, session.failure?.message);
+            const hover = key && execution?.status === 'failed' && session.failure ? failureHover?.({ ...session.failure,
+                filePath: editor.document.uri.fsPath, lineNumber: line + 1, scenarioName: undefined }, editor.document) : undefined;
+            decoration.render(editor, key ? editor.document.lineAt(line).range : undefined, execution?.status, label, session.failure?.message, hover);
         }
     };
     const ports: VanessaYamlTrialPorts = { current,
@@ -118,4 +123,11 @@ export function registerVanessaYamlTrialCommand(context: vscode.ExtensionContext
             finally { render(); }
         }), session.onDidChange(render), vscode.window.onDidChangeVisibleTextEditors(render), vscode.workspace.onDidChangeTextDocument(render),
         { dispose: () => { disposed = true; void directory?.then(root => fs.rm(root, { recursive: true, force: true })).catch(() => { /* Own transient files may already be gone. */ }); } });
+    return { isFailedLine: (document, line) => {
+        const execution = session.snapshot.execution;
+        if (!selected || selected.generation !== session.snapshot.generation || execution?.status !== 'failed'
+            || !sameVanessaFeaturePath(selected.file, execution.filePath) || document.isDirty
+            || document.uri.toString() !== selected.trial.source.uri || textOf(document) !== selected.trial.source.text) { return false; }
+        return line === (selected.trial.sourceLines[(execution.currentLineNumber ?? execution.lineNumber) - selected.trial.lineNumber] ?? selected.trial.source.line);
+    } };
 }

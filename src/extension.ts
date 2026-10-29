@@ -1,3 +1,5 @@
+import { getGherkinInsertionContext } from './gherkinInsertionContext';
+import { readNativeScenarioMetadata } from './spprScenarioFiles';
 import { KotWorkspacePanel } from './kotWorkspacePanel';
 import { registerVanessaFormToolCommands } from './vanessaControlFormToolCommands';
 import { registerVanessaAuthoringCommands } from './vanessaControlAuthoringCommands';
@@ -9,6 +11,7 @@ import { registerFormExplorerMcpSource } from './formExplorerLiveSnapshot';
 import { buildStepLibrarySnapshot } from './stepLibraryModel';
 import { createPropertiesLibrarySupport } from './scenarioPropertiesLibrarySupport';
 import * as vscode from 'vscode';
+import { registerGherkinTableColumnDeletion } from './gherkinTableEditing';
 import { controlledCodeLenses, controlledInlayHints, editorActionSetting, editorActionsAreEnabled } from './editorActionControls';
 import { registerScenarioPropertiesEditor } from './scenarioPropertiesEditorIntegration';
 import { scenarioDefaultFoldLines } from './scenarioYamlEditor';
@@ -81,6 +84,7 @@ import { ScenarioDiagnosticsProvider } from './scenarioDiagnostics';
 import {
     collectScenarioBracketParameterRanges,
     collectScenarioPlainTextRanges,
+    collectScenarioRuntimeVariableRanges,
     ScenarioSyntaxHighlightProvider
 } from './scenarioSyntaxHighlightProvider';
 import { isScenarioYamlFile, isCompilerYamlFile, isProcessYamlFile, isProcessTestSettingsYamlFile } from './yamlValidator';
@@ -216,10 +220,7 @@ const loadOneCPlatform = createDeferredLoader(
 const loadUserStepCommands = createDeferredLoader(
     () => import('./userStepCommands.js')
 );
-const GHERKIN_STEP_LINE_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|дано|к тому же|но)\b/i;
-const FEATURE_SCENARIO_HEADER_REGEX = /^(?:Scenario|Сценарий|Scenario Outline|Структура сценария|Background|Предыстория)\s*:/i;
-const FEATURE_SCENARIO_BLOCK_BREAK_REGEX = /^(?:Feature|Функционал|Rule|Правило|Examples|Примеры)\s*:?/i;
-const FEATURE_NON_STEP_LINE_REGEX = /^(?:Feature|Функционал|Rule|Правило|Scenario|Сценарий|Scenario Outline|Структура сценария|Examples|Примеры|Scenarios|Сценарии)\s*:/i;
+const GHERKIN_STEP_LINE_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|дано|к тому же|но)(?=\s|$)/i;
 const FORM_EXPLORER_SUGGEST_RELEVANT_LINE_REGEX = /(window|окн(?:о|а|у|е|ом)?|form|форм(?:а|ы|у|е|ой)?|table|таблиц|grid|spreadsheet\s+document|табличн(?:ый|ого)?\s+документ|field|поле|attribute|атрибут|реквизит|checkbox|флаг|radio\s*button|переключател|drop-?down|dropdown|выпадающ|html\s+(?:document\s+)?field|form\s+item\s+addition|дополнени(?:е|я)\s+формы|button|кнопк|hyperlink|link|гиперссыл|submenu|подменю|element|элемент(?:\s+формы)?|group|групп)/i;
 const PROJECT_DEFINITION_PARSER_VERSION = '4';
 
@@ -229,6 +230,16 @@ function createProjectDefinitionIndexService(
     const workspaceFolderCount = vscode.workspace.workspaceFolders?.length ?? 0;
     return new ProjectDefinitionIndexService({
         parserVersion: PROJECT_DEFINITION_PARSER_VERSION,
+        resolveUserStepLibrary: async (sourcePath, rootPath) => {
+            const { inspectUserStepLibrary } = await import('./userStepLibraryState.js');
+            const state = await inspectUserStepLibrary(sourcePath, rootPath);
+            const dirty = vscode.workspace.textDocuments.some(document => {
+                if (!document.isDirty || document.uri.scheme !== 'file') { return false; }
+                const relative = path.relative(state.sourceDirectory, document.uri.fsPath);
+                return !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`);
+            });
+            return dirty && state.status === 'ready' ? { ...state, status: 'stale' } : state;
+        },
         fileSystem: {
             async readDirectory(directoryPath) {
                 const entries = await fs.promises.readdir(directoryPath, { withFileTypes: true });
@@ -255,12 +266,24 @@ function createProjectDefinitionIndexService(
         ),
         watch: (rootPath, callbacks) => {
             const watcher = vscode.workspace.createFileSystemWatcher(
-                new vscode.RelativePattern(rootPath, '**/*.{feature,bsl,epf}')
+                new vscode.RelativePattern(rootPath, '**/*')
             );
             watcher.onDidCreate(uri => callbacks.create(uri.fsPath));
             watcher.onDidChange(uri => callbacks.change(uri.fsPath));
             watcher.onDidDelete(uri => callbacks.delete(uri.fsPath));
-            return watcher;
+            const editorChanges = vscode.workspace.onDidChangeTextDocument(event => {
+                if (event.document.uri.scheme !== 'file' || !/\.(?:bsl|xml)$/iu.test(event.document.uri.fsPath)) { return; }
+                const relative = path.relative(rootPath, event.document.uri.fsPath);
+                if (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`)) {
+                    callbacks.change(event.document.uri.fsPath);
+                }
+            });
+            const closedDocuments = vscode.workspace.onDidCloseTextDocument(document => {
+                if (document.uri.scheme !== 'file' || !/\.(?:bsl|xml)$/iu.test(document.uri.fsPath)) { return; }
+                const relative = path.relative(rootPath, document.uri.fsPath);
+                if (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`)) { callbacks.change(document.uri.fsPath); }
+            });
+            return { dispose: () => { watcher.dispose(); editorChanges.dispose(); closedDocuments.dispose(); } };
         },
         loadConfigurations: async () => {
             const folders = vscode.workspace.workspaceFolders ?? [];
@@ -480,69 +503,6 @@ function escapeRegexLiteral(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function isFeatureDocument(document: vscode.TextDocument): boolean {
-    return document.fileName.toLowerCase().endsWith('.feature');
-}
-
-function isInScenarioTextBlockForAutoSuggest(document: vscode.TextDocument, position: vscode.Position): boolean {
-    if (isFeatureDocument(document)) {
-        const currentLine = document.lineAt(position.line).text.trim();
-        if (!currentLine || currentLine.startsWith('#') || currentLine.startsWith('@') || currentLine.startsWith('|') || currentLine.startsWith('"""')) {
-            return false;
-        }
-        if (FEATURE_NON_STEP_LINE_REGEX.test(currentLine)) {
-            return false;
-        }
-
-        for (let lineIndex = position.line; lineIndex >= 0; lineIndex -= 1) {
-            const trimmed = document.lineAt(lineIndex).text.trim();
-            if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('@')) {
-                continue;
-            }
-
-            if (FEATURE_SCENARIO_HEADER_REGEX.test(trimmed)) {
-                return true;
-            }
-
-            if (FEATURE_SCENARIO_BLOCK_BREAK_REGEX.test(trimmed)) {
-                return false;
-            }
-        }
-
-        return false;
-    }
-
-    if (!isScenarioYamlFile(document)) {
-        return false;
-    }
-
-    const textUpToPosition = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
-    const scenarioBlockStartRegex = /ТекстСценария:\s*\|?\s*(\r\n|\r|\n)/gm;
-    let lastScenarioBlockStartOffset = -1;
-    let match: RegExpExecArray | null;
-    while ((match = scenarioBlockStartRegex.exec(textUpToPosition)) !== null) {
-        lastScenarioBlockStartOffset = match.index + match[0].length;
-    }
-
-    if (lastScenarioBlockStartOffset < 0) {
-        return false;
-    }
-
-    const textAfterLastBlockStart = textUpToPosition.substring(lastScenarioBlockStartOffset);
-    for (const line of textAfterLastBlockStart.split(/\r\n|\r|\n/)) {
-        const trimmedLine = line.trim();
-        if (!trimmedLine || trimmedLine.startsWith('#')) {
-            continue;
-        }
-
-        if (!line.startsWith(' ') && !line.startsWith('\t') && trimmedLine.includes(':') && !trimmedLine.startsWith('|')) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
 function getQuotedTextContextForAutoSuggest(
     lineText: string,
     character: number
@@ -590,14 +550,10 @@ function getQuotedTextContextForAutoSuggest(
     };
 }
 
-function shouldAutoTriggerFormExplorerQuotedSuggest(
+async function shouldAutoTriggerFormExplorerQuotedSuggest(
     document: vscode.TextDocument,
     position: vscode.Position
-): boolean {
-    if (!isInScenarioTextBlockForAutoSuggest(document, position)) {
-        return false;
-    }
-
+): Promise<boolean> {
     const lineText = document.lineAt(position.line).text;
     const quotedContext = getQuotedTextContextForAutoSuggest(lineText, position.character);
     if (!quotedContext) {
@@ -609,7 +565,13 @@ function shouldAutoTriggerFormExplorerQuotedSuggest(
         return false;
     }
 
-    return FORM_EXPLORER_SUGGEST_RELEVANT_LINE_REGEX.test(`${quotedContext.beforeQuote} ${quotedContext.afterQuote}`);
+    if (!FORM_EXPLORER_SUGGEST_RELEVANT_LINE_REGEX.test(`${quotedContext.beforeQuote} ${quotedContext.afterQuote}`)) { return false; }
+    if (getGherkinInsertionContext(document, position)) { return true; }
+    // A native SPPR script is a fragment without a Scenario header. Confirm its
+    // metadata before applying compiler-body rules rather than treating any feature as a fragment.
+    return /(?:^|[\\/])scen\.feature$/u.test(document.fileName)
+        && !!await readNativeScenarioMetadata(document.uri)
+        && !!getGherkinInsertionContext(document, position, true);
 }
 
 async function ensureScenarioYamlLanguage(document: vscode.TextDocument): Promise<void> {
@@ -871,8 +833,10 @@ async function notifyIfUpdated(context: vscode.ExtensionContext): Promise<void> 
  */
 export async function activate(context: vscode.ExtensionContext) {
     registerGherkinTableFormatting(context);
+    registerGherkinTableColumnDeletion(context);
     console.log('Extension "kotTestToolkit" activated.');
     setExtensionUri(context.extensionUri);
+    const uiTranslator = await getTranslator(context.extensionUri);
     KotWorkspacePanel.initialize(context);
     const kotWorkspacePanel = new KotWorkspacePanel(context);
     context.subscriptions.push(kotWorkspacePanel);
@@ -938,11 +902,11 @@ export async function activate(context: vscode.ExtensionContext) {
             return new InfobaseManagerPanel(context, managedInfobaseService, {
                 service: vanessaInfobaseClients,
                 handle: (infobase, message) => handleVanessaInfobaseClientMessage(vanessaInfobaseClients, infobase, message, {
-                    input: options => Promise.resolve(vscode.window.showInputBox({ ...options, title: vscode.l10n.t(options.title),
-                        prompt: vscode.l10n.t('Leave empty to clear the saved value.'), ignoreFocusOut: true })),
+                    input: options => Promise.resolve(vscode.window.showInputBox({ ...options, title: uiTranslator(options.title),
+                        prompt: uiTranslator('Leave empty to clear the saved value.'), ignoreFocusOut: true })),
                     confirmReplace: async (local, remote) => {
-                        const replace = vscode.l10n.t('Replace Vanessa profile');
-                        return await vscode.window.showWarningMessage(vscode.l10n.t('Replace Vanessa profile "{0}" with saved client "{1}"?', remote, local),
+                        const replace = uiTranslator('Replace Vanessa profile');
+                        return await vscode.window.showWarningMessage(uiTranslator('Replace Vanessa profile "{0}" with saved client "{1}"?', remote, local),
                             { modal: true }, replace) === replace;
                     },
                     connectManager: async () => { await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.connect'); }
@@ -979,7 +943,7 @@ export async function activate(context: vscode.ExtensionContext) {
     phaseSwitcherProvider.attachVanessaManagedRunner(request => vanessaControl.runFeature(request));
     registerVanessaClientCommands(context, vanessaControlSession, () => phaseSwitcherProvider.configureVanessaDebugClients(),
         async path => { await (await loadInfobaseManagerPanel()).open(path, true); });
-    registerVanessaVariableCommands(context, vanessaControlSession);
+    registerVanessaVariableCommands(context, vanessaControlSession, uiTranslator);
     registerVanessaFormToolCommands(context, vanessaControlSession, vanessaControl.ensureConnected);
     registerVanessaAuthoringCommands(context, vanessaControlSession, vanessaControl.ensureConnected, async text => {
         const { translateVanessaFormSteps } = await import('./vanessaControlFormLanguage.js');
@@ -1002,7 +966,9 @@ export async function activate(context: vscode.ExtensionContext) {
         vanessaControlSession.onDidChange(() => vanessaFormSource.sessionChanged()));
     const vanessaBreakpointMarkers = new VanessaBreakpointMarkers();
     const vanessaYamlControl = createVanessaYamlControl(context, vanessaControlSession, () => phaseSwitcherProvider.loadVanessaYamlControlBuild(), vanessaBreakpointMarkers);
-    registerVanessaControlCommands(context, vanessaControlSession, vanessaYamlControl, vanessaControl.ensureConnected, file => phaseSwitcherProvider.trackVanessaFeatureRun(file, vanessaControl.runLogPath()));
+    registerVanessaControlCommands(context, vanessaControlSession, vanessaYamlControl, vanessaControl.ensureConnected,
+        file => phaseSwitcherProvider.trackVanessaFeatureRun(file, vanessaControl.runLogPath()),
+        (failure, document) => phaseSwitcherProvider.buildVanessaControlFailureHover(failure, document, vanessaControl.runLogPath()));
     registerVanessaBreakpointCommands(context, vanessaControlSession, vanessaYamlControl, vanessaBreakpointMarkers);
     const standaloneFeatureService = StandaloneFeatureService.getInstance(context);
     watchProjectLibrary(context, () => {
@@ -1032,7 +998,7 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     let batchProcessingInProgress = false;
     let scenarioRepairCancellationSource: vscode.CancellationTokenSource | null = null;
-    const scenarioPropertiesEditor = registerScenarioPropertiesEditor(context, { renameScenario: (target, value, field) => phaseSwitcherProvider.renameScenarioTarget(target, value, field) });
+    const scenarioPropertiesEditor = registerScenarioPropertiesEditor(context, { renameScenario: (target, value, field) => phaseSwitcherProvider.renameScenarioTarget(target, value, field) }, uiTranslator);
     const updateActiveScenarioContext = async (editor?: vscode.TextEditor) => {
         const document = editor?.document;
         const isScenario = !!(document && isScenarioYamlFile(document));
@@ -1124,12 +1090,20 @@ export async function activate(context: vscode.ExtensionContext) {
         scenarios: phaseSwitcherProvider,
         steps: stepCatalogService
     });
-    registerVanessaYamlTrialCommand(context, vanessaControlSession, uri => projectDefinitionResolver.ensureReady(uri), vanessaControl.ensureConnected);
+    context.subscriptions.push(vanessaControlSession.useResultSourceResolver(async (filePath, text) => {
+        const { prepareVanessaResultSources } = await import('./vanessaControlStepSources.js');
+        const definitions = await projectDefinitionResolver.ensureReady(vscode.Uri.file(filePath));
+        return prepareVanessaResultSources(text, definitions, async uri =>
+            Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.parse(uri))).toString('utf8'));
+    }));
+    const vanessaYamlTrials = registerVanessaYamlTrialCommand(context, vanessaControlSession, uri => projectDefinitionResolver.ensureReady(uri), vanessaControl.ensureConnected,
+        (failure, document) => phaseSwitcherProvider.buildVanessaControlFailureHover(failure, document, vanessaControl.runLogPath()));
     const projectDefinitionReferenceService = createProjectDefinitionReferenceService(
         context,
         projectDefinitionResolver
     );
-    const definitionProvider = new ProjectDefinitionProvider(projectDefinitionResolver);
+    const definitionProvider = new ProjectDefinitionProvider(projectDefinitionResolver,
+        (document, position, token) => phaseSwitcherProvider.resolveCompilerSourceFromFeature(document.uri, position.line + 1, token));
     const referenceProvider = new ProjectDefinitionReferenceProvider(projectDefinitionReferenceService, projectDefinitionResolver);
     const relationshipService = new ScenarioRelationshipService({
         catalogProvider: phaseSwitcherProvider,
@@ -1478,6 +1452,7 @@ export async function activate(context: vscode.ExtensionContext) {
     scenarioPropertiesEditor.panel.attachScenarioFilesService(scenarioFilesService);
     snapshotService.attachScenarioFilesService(scenarioFilesService);
     const stepLibrarySidebarProvider = new StepLibrarySidebarProvider({
+        translate: uiTranslator,
         extensionUri: context.extensionUri,
         context,
         standaloneFeatureService,
@@ -1492,6 +1467,7 @@ export async function activate(context: vscode.ExtensionContext) {
         refreshDefinitions: refreshStepDefinitions
     });
     const infobaseSidebarProvider = new InfobaseSidebarProvider({
+        translate: uiTranslator,
         clients: vanessaInfobaseClients,
         connectVanessa: async () => { await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.connect'); },
         extensionUri: context.extensionUri,
@@ -1567,7 +1543,9 @@ export async function activate(context: vscode.ExtensionContext) {
     const hoverProvider = new DriveHoverProvider(
         context,
         projectDefinitionResolver,
-        phaseSwitcherProvider
+        phaseSwitcherProvider,
+        (document, line) => vanessaControlSession.failure?.lineNumber === line + 1
+            && vanessaControlSession.executionMatchesSource(document.uri.fsPath, document.getText()) || vanessaYamlTrials.isFailedLine(document, line)
     );
     const completionAndHoverSelector: vscode.DocumentSelector = [
         { pattern: '**/*.yaml', scheme: 'file' },
@@ -1712,7 +1690,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     const definitionItem = dataTransfer.get(STEP_LIBRARY_DEFINITION_DROP_MIME);
                     if (definitionItem) {
                         const definitionId = (await definitionItem.asString()).trim();
-                        const view = await projectDefinitionResolver.getView(document.uri);
+                        const view = await projectDefinitionResolver.ensureReady(document.uri);
                         const definition = view.byId.get(definitionId);
                         if (!definition || token.isCancellationRequested) {
                             return undefined;
@@ -1794,7 +1772,7 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(scenarioSyntaxHighlightProvider);
     context.subscriptions.push(
         vscode.languages.registerDocumentSemanticTokensProvider(
-            [{ pattern: '**/*.yaml', scheme: 'file' }, { pattern: '**/scen.feature', scheme: 'file' }],
+            [{ pattern: '**/*.yaml', scheme: 'file' }, { pattern: '**/*.feature', scheme: 'file' }],
             scenarioSyntaxHighlightProvider,
             ScenarioSyntaxHighlightProvider.legend
         )
@@ -1818,6 +1796,23 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     });
     context.subscriptions.push(scenarioBracketParameterDecorationType);
+    const scenarioRuntimeVariableDecorationType = vscode.window.createTextEditorDecorationType({
+        color: '#98c379',
+        fontStyle: 'italic',
+        dark: { color: '#98c379' },
+        light: { color: '#267326' }
+    });
+    const updateRuntimeVariableDecorations = (document?: vscode.TextDocument) => {
+        for (const editor of vscode.window.visibleTextEditors) {
+            if (!document || editor.document === document) {
+                editor.setDecorations(scenarioRuntimeVariableDecorationType, collectScenarioRuntimeVariableRanges(editor.document));
+            }
+        }
+    };
+    context.subscriptions.push(scenarioRuntimeVariableDecorationType,
+        vscode.workspace.onDidChangeTextDocument(event => updateRuntimeVariableDecorations(event.document)),
+        vscode.window.onDidChangeVisibleTextEditors(() => updateRuntimeVariableDecorations()));
+    updateRuntimeVariableDecorations();
 
     // Seed per-file session caches for currently open scenario documents.
     vscode.workspace.textDocuments.forEach(document => {
@@ -1847,6 +1842,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
         const document = event.document;
+        if (/\.feature$/iu.test(document.fileName)) {
+            updateScenarioBracketParameterDecorationsForDocument(document, scenarioBracketParameterDecorationType);
+        }
         if (document.isUntitled || !isScenarioYamlFile(document)) {
             return;
         }
@@ -1873,7 +1871,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }));
 
     let lastAutoQuotedSuggestKey: string | null = null;
-    context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(event => {
+    context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(async event => {
         const editor = event.textEditor;
         if (vscode.window.activeTextEditor !== editor) {
             return;
@@ -1885,10 +1883,12 @@ export async function activate(context: vscode.ExtensionContext) {
         }
 
         const position = event.selections[0].active;
-        if (!shouldAutoTriggerFormExplorerQuotedSuggest(editor.document, position)) {
-            lastAutoQuotedSuggestKey = null;
-            return;
-        }
+        const version = editor.document.version;
+        const shouldSuggest = await shouldAutoTriggerFormExplorerQuotedSuggest(editor.document, position);
+        if (vscode.window.activeTextEditor !== editor || editor.document.version !== version
+            || editor.selections.length !== 1 || !editor.selection.isEmpty
+            || editor.selection.active.line !== position.line || editor.selection.active.character !== position.character) { return; }
+        if (!shouldSuggest) { lastAutoQuotedSuggestKey = null; return; }
 
         const triggerKey = [
             editor.document.uri.toString(),
@@ -2108,11 +2108,14 @@ export async function activate(context: vscode.ExtensionContext) {
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openFailedNestedScenarioFromRun',
-        async (scenarioName: unknown, scenarioKey?: unknown) => {
+        async (scenarioName: unknown, scenarioKey?: unknown, source?: unknown) => {
             if (typeof scenarioName !== 'string') {
                 return;
             }
-            await phaseSwitcherProvider.openFailedNestedScenarioFromCommand(scenarioName, typeof scenarioKey === 'string' ? scenarioKey : undefined);
+            const target = source && typeof source === 'object' ? source as { featurePath?: unknown; lineNumber?: unknown } : undefined;
+            await phaseSwitcherProvider.openFailedNestedScenarioFromCommand(scenarioName, typeof scenarioKey === 'string' ? scenarioKey : undefined,
+                typeof target?.featurePath === 'string' && /\.feature$/iu.test(target.featurePath) && Number.isSafeInteger(target.lineNumber) && Number(target.lineNumber) > 0
+                    ? { featurePath: target.featurePath, lineNumber: Number(target.lineNumber) } : undefined);
         }
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
@@ -2149,6 +2152,10 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.convertScenarioFormat', async (target?: vscode.Uri) => {
         const { handleConvertScenarioFormat } = await import('./spprScenarioFiles.js');
         return handleConvertScenarioFormat(target instanceof vscode.Uri ? target : undefined);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.convertScenarioFormatsBatch', async () => {
+        const { handleBatchScenarioFormatConversion } = await import('./spprScenarioBatchConversion.js');
+        return handleBatchScenarioFormatConversion(async () => (await phaseSwitcherProvider.ensureFreshScenarioCatalog()).all, uiTranslator);
     }));
     context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.convertScenarioRole', async (target?: vscode.Uri, main?: boolean) => {
         const { handleConvertScenarioRole } = await import('./scenarioTestRoleCommands.js');
@@ -2318,18 +2325,30 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         }
     ));
-    context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.buildUserStepLibrary', async (request?: unknown) => {
+    for (const operation of ['buildUserStepLibrary', 'dumpUserStepLibrary'] as const) {
+        context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.' + operation, async (request?: unknown) => {
             const t = await getTranslator(context.extensionUri);
-            const { buildUserStepLibraryCommand } = await loadUserStepCommands();
-            await buildUserStepLibraryCommand(request, {
-                context,
-                index: projectDefinitionIndex,
-                loadLibraryRoots: resourceUri => loadUserStepLibraryRoots(context, resourceUri),
-                translate: t
-            });
-        }
-    ));
+            const commands = await loadUserStepCommands();
+            try {
+                return await commands[operation === 'buildUserStepLibrary' ? 'buildUserStepLibraryCommand' : 'dumpUserStepLibraryCommand'](request, {
+                    context, index: projectDefinitionIndex,
+                    loadLibraryRoots: resourceUri => loadUserStepLibraryRoots(context, resourceUri), translate: t,
+                    refreshLibraries: () => projectDefinitionIndex.refreshLibraries()
+                });
+            } catch (error) {
+                vscode.window.showErrorMessage(t('User-step library operation failed: {0}', String(error)));
+                return false;
+            }
+        }));
+    }
+    context.subscriptions.push(vscode.commands.registerCommand('kotTestToolkit.manageUserStepLibraries', async () => {
+        const t = await getTranslator(context.extensionUri);
+        const selected = await vscode.window.showQuickPick([
+            { label: '$(tools) ' + t('Build EPF'), command: 'kotTestToolkit.buildUserStepLibrary' },
+            { label: '$(file-code) ' + t('Dump sources…'), command: 'kotTestToolkit.dumpUserStepLibrary' }
+        ], { title: t('EPF libraries'), ignoreFocusOut: true });
+        if (selected) { await vscode.commands.executeCommand(selected.command); }
+    }));
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.refreshPhaseSwitcher',
         async (options?: { refreshCache?: boolean; changedSourceUris?: readonly string[] }) => {
@@ -2559,6 +2578,7 @@ export async function activate(context: vscode.ExtensionContext) {
             scenarioSyntaxHighlightProvider.refresh();
             updateScenarioPlainTextDecorationsForVisibleEditors(scenarioPlainTextDecorationType);
             updateScenarioBracketParameterDecorationsForVisibleEditors(scenarioBracketParameterDecorationType);
+            updateRuntimeVariableDecorations();
         }
 
         if (
@@ -3390,7 +3410,7 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument(async (document) => {
             if (/(?:^|[\\/])scen\.yaml$/u.test(document.fileName) && !document.isDirty
-                && vscode.workspace.getConfiguration('kotTestToolkit', document.uri).get<boolean>('editor.autoMigrateScenarioYamlOnSave', false)) {
+                && vscode.workspace.getConfiguration('kotTestToolkit', document.uri).get<boolean>('editor.autoMigrateScenarioYamlOnSave', true)) {
                 const { shouldAutoMigrateScenario } = await import('./spprScenarioFormat.js');
                 if (shouldAutoMigrateScenario(document.fileName, document.getText(), true)) {
                     const result = await (await import('./spprScenarioFiles.js')).handleConvertScenarioFormat(document.uri, 'native', true);
@@ -3837,14 +3857,8 @@ function updateScenarioBracketParameterDecorationForEditor(
     decorationType: vscode.TextEditorDecorationType
 ): void {
     const document = editor.document;
-    if (/(?:^|[\\/])scen\.feature$/u.test(document.fileName)) {
-        const version = document.version;
-        void import('./spprScenarioFiles.js').then(async source => {
-            const metadata = await source.readNativeScenarioMetadata(document.uri);
-            if (editor.document === document && !document.isClosed && document.version === version) {
-                editor.setDecorations(decorationType, metadata ? collectScenarioBracketParameterRanges(document, true) : []);
-            }
-        }).catch(() => { /* A closing/removed pair will be refreshed by the next editor event. */ });
+    if (/\.feature$/iu.test(document.fileName)) {
+        editor.setDecorations(decorationType, collectScenarioBracketParameterRanges(document, true));
         return;
     }
     if (!isScenarioYamlFile(document)) {

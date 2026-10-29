@@ -3,5 +3,22 @@
         {
             "path": "."
         }
-    ]
+    ],
+    "settings": {
+        "kotTestToolkit.localization.languageOverride": "Русский",
+        "kotTestToolkit.platforms.catalog": [
+            {
+                "name": "1C:Enterprise 8.5.1.1522",
+                "clientExePath": "C:\\Program Files\\1cv8\\8.5.1.1522\\bin\\1cv8c.exe"
+            },
+            {
+                "name": "1C:Enterprise 8.3.27.2074",
+                "clientExePath": "C:\\Program Files\\1cv8\\8.3.27.2074\\bin\\1cv8c.exe"
+            },
+            {
+                "name": "1C:Enterprise 8.3.24.1738",
+                "clientExePath": "C:\\Program Files\\1cv8\\8.3.24.1738\\bin\\1cv8c.exe"
+            }
+        ]
+    }
 }

@@ -104,7 +104,13 @@ test('tests, internal plans, agent settings, and build configs are excluded from
         '.superpowers/**',
         'docs/superpowers/**',
         'test/**',
-        'tests/**',
+        'artifacts/**',
+        'examples/kot-workshop/.vscode/kot-runtime/**',
+        'examples/kot-workshop/tools/**',
+        'examples/kot-workshop/build/**',
+        'examples/kot-workshop/libraries/step_definitions/**',
+        'examples/kot-workshop/libraries/step_definitions-src/**',
+        'examples/kot-workshop/libraries/user-steps/*.kot-import.json',
         'eslint.config.mjs',
         'tsconfig.json'
     ]) {

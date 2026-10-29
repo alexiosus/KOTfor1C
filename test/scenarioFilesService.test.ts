@@ -378,7 +378,59 @@ test('scenario files service uses the compiled attachments root for a main scena
     assert.deepEqual(nodes.map(node => [node.kind, node.name]), [
         ['file', 'Expected.mxl']
     ]);
-    assert.deepEqual(host.readDirectoryCalls, [pathToFileURL(filesRootPath).toString()]);
+    assert.deepEqual([...host.readDirectoryCalls].sort(), [pathToFileURL(filesRootPath).toString(), pathToFileURL(directory).toString()].sort());
+});
+
+test('compiled attachments include files beside the feature and exclude generated companions', async t => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-flat-compiled-files-'));
+    t.after(() => fs.rm(directory, { recursive: true, force: true }));
+    const featurePath = path.join(directory, 'Main.feature');
+    for (const name of ['Main.feature', 'Main.json', 'Main.str', 'Main.combined.json', 'Other.feature', 'Other.json', 'compile.txt', 'yaml_parameters.json', 'Expected.mxl', 'Data.json']) {
+        await fs.writeFile(path.join(directory, name), name);
+    }
+    await fs.mkdir(path.join(directory, 'Fixtures'));
+    await fs.writeFile(path.join(directory, 'Fixtures', 'Input.xlsx'), 'input');
+    const host = new RecordingHost(); const service = new ScenarioFilesService(host);
+    t.after(() => service.dispose());
+    const item = compiledMainItem(featurePath, path.join(directory, 'Main', 'Файлы'));
+    assert.deepEqual((await service.listChildren(item, '')).map(node => node.name), ['Fixtures', 'Data.json', 'Expected.mxl']);
+    assert.deepEqual(await service.listAttachmentPaths(item), ['Data.json', 'Expected.mxl', 'Fixtures/Input.xlsx']);
+    const reads = host.readDirectoryCalls.length;
+    await service.listAttachmentPaths(item);
+    assert.equal(host.readDirectoryCalls.length, reads, 'flat attachment inventories are cached');
+    await service.listAttachmentPaths(compiledMainItem(path.join(directory, 'Other.feature'), path.join(directory, 'Other', 'Файлы')));
+    assert.equal(host.readDirectoryCalls.length, reads, 'features in a shared output folder reuse its flat inventory');
+    const added = path.join(directory, 'Added.csv');
+    await fs.writeFile(added, 'added');
+    host.createdWatchers.find(record => record.root === pathToFileURL(directory).toString())!.watcher.creates.fire(pathToFileURL(added));
+    assert.ok((await service.listAttachmentPaths(item)).includes('Added.csv'));
+    assert.equal(await service.openExternal(item, 'Expected.mxl'), true);
+    assert.deepEqual(host.opened, [pathToFileURL(path.join(directory, 'Expected.mxl')).toString()]);
+    assert.equal(await service.openExternal(item, 'Main.feature'), false);
+    await assert.rejects(service.deleteFile(item, 'Main.json'));
+    assert.equal(host.deleteConfirmations.length, 0);
+    host.renameTo = 'Renamed.mxl';
+    assert.equal(await service.renameFile(item, 'Expected.mxl'), 'renamed');
+    assert.equal(await fs.readFile(path.join(directory, 'Renamed.mxl'), 'utf8'), 'Expected.mxl');
+    assert.equal(await service.deleteFile(item, 'Renamed.mxl'), 'deleted');
+    assert.deepEqual(host.deleted, [pathToFileURL(path.join(directory, 'Renamed.mxl')).toString()]);
+});
+
+test('compiled attachments merge both layouts while authored files retain their own root', async t => {
+    const f = await createScenarioFilesFixture(t, { 'Source.txt': 'source' });
+    const output = path.join(f.directory, 'build'); const legacy = path.join(output, 'Main', 'Файлы');
+    await fs.mkdir(legacy, { recursive: true });
+    await fs.writeFile(path.join(output, 'Main.feature'), 'Feature: Main');
+    await fs.writeFile(path.join(output, 'Beside.csv'), 'beside');
+    await fs.writeFile(path.join(legacy, 'Legacy.csv'), 'legacy');
+    const item = { ...compiledMainItem(path.join(output, 'Main.feature'), legacy), capturedLocation: f.item.capturedLocation,
+        sourceScenarioFilesRootUri: pathToFileURL(path.join(f.directory, 'files')).toString() };
+    assert.deepEqual((await f.service.listChildren(item, '')).map(node => node.name), ['Beside.csv', 'Legacy.csv']);
+    assert.deepEqual(await f.service.listAttachmentPaths(item), ['Beside.csv', 'Legacy.csv', 'Source.txt']);
+    assert.deepEqual((await f.service.listChildren({ ...item, scenarioFilesRootUri: item.sourceScenarioFilesRootUri }, '')).map(node => node.name), ['Source.txt']);
+    const watch = f.service.watch(item, () => undefined);
+    assert.ok(f.host.createdWatchers.some(record => record.root === pathToFileURL(output).toString()));
+    watch.dispose();
 });
 
 test('scenario files service opens the compiled feature in the editor', async t => {

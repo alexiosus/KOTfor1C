@@ -2,6 +2,7 @@
     'use strict';
 
     const vscode = acquireVsCodeApi();
+    const userStepLibraries = globalThis.UserStepLibraries;
     const protocol = globalThis.StepLibrarySidebarProtocol;
     const filesProtocol = globalThis.KotScenarioFilesProtocol;
     const root = document.querySelector('.step-sidebar');
@@ -15,7 +16,8 @@
         getItemActions: node => node.kind === 'definition' && node.itemId ? [
             { id: 'toggleFavorite', label: node.favorite ? loc.removeFavorite : loc.addFavorite },
             ...(node.insertable === true ? [{ id: 'insert', label: loc.insertStep, disabled: !insertionAvailable }] : []),
-            { id: 'copy', label: loc.copyStep },
+            ...(userStepLibraries.canCopy(node) ? [{ id: 'copy', label: loc.copyStep }] : []),
+            ...userStepLibraries.actions(node, loc),
             ...(node.navigable === true ? [{ id: 'openDefinition', label: loc.openDefinition }] : [])
         ] : [],
         labels: window.__standaloneFeatureLabels || {}
@@ -291,6 +293,10 @@
         row.style.setProperty('--step-depth', String(node.depth));
         row.setAttribute('role', 'treeitem');
         row.title = protocol.nodeTooltip(node);
+        const libraryState = userStepLibraries.stateLabel(node, loc);
+        if (libraryState) {
+            row.title += '\n' + libraryState;
+        }
         row.tabIndex = node.id === uiState.selectedId ? 0 : -1;
         row.setAttribute('aria-level', String(node.depth + 1));
         featureActions.install(row, node);
@@ -314,7 +320,7 @@
                     return;
                 }
                 event.dataTransfer.effectAllowed = 'copy';
-                event.dataTransfer.setData('text/plain', node.dragText);
+                if (node.definitionType !== 'userStep') { event.dataTransfer.setData('text/plain', node.dragText); }
                 event.dataTransfer.setData('application/x-kot-step-definition-id', node.definitionId);
                 row.classList.add('is-dragging');
             });
@@ -380,6 +386,12 @@
         } else {
             labelContent.textContent = node.label;
         }
+        if (libraryState) {
+            const stateLabel = document.createElement('span');
+            stateLabel.className = 'step-library-state';
+            stateLabel.textContent = libraryState;
+            labelContent.append(stateLabel);
+        }
         label.appendChild(labelContent);
         row.appendChild(label);
 
@@ -428,8 +440,10 @@
                     !insertionAvailable
                 ));
             }
-            actions.appendChild(createActionButton('copy', 'copy', loc.copyStep, node));
-            if (node.navigable === true) {
+            if (userStepLibraries.canCopy(node)) { actions.appendChild(createActionButton('copy', 'copy', loc.copyStep, node)); }
+            if (node.definitionType === 'userStep') {
+                featureActions.appendMenuButton(actions, node, 'kot-icon-button step-action');
+            } else if (node.navigable === true) {
                 actions.appendChild(createActionButton('openDefinition', 'go-to-file', loc.openDefinition, node));
             }
         } else if (node.kind === 'feature' && node.itemId) {
@@ -939,6 +953,7 @@
             requestAnimationFrame(() => updateLabelOverflow(row));
         }
     };
+    document.getElementById('userStepLibrariesButton')?.addEventListener('click', () => vscode.postMessage({ command: 'manageUserStepLibraries' }));
     tree.addEventListener('mouseover', refreshHoveredLabelOverflow);
     tree.addEventListener('mouseout', refreshHoveredLabelOverflow);
 
@@ -999,7 +1014,7 @@
         }
         switch (message.command) {
             case 'loading':
-                status.textContent = loc.loading;
+                status.textContent = message.retainItems ? '' : loc.loading;
                 break;
             case 'roots':
                 bulkExpansion.cancel();

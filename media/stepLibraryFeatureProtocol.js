@@ -12,7 +12,7 @@
         createFeature: 'New feature', createGroup: 'New feature group',
         renameGroup: 'Rename group', deleteGroup: 'Delete group',
         openFeature: 'Open feature', renameFeature: 'Change feature title', renameFeatureFile: 'Rename feature file', generateJson: 'Generate launch JSON',
-        selectJson: 'Select launch JSON', openJson: 'Open launch JSON',
+        selectJson: 'Select launch JSON', openJson: 'Open launch JSON', stepActions: 'Actions',
         moveFeature: 'Move feature', moveUp: 'Move up', moveDown: 'Move down', actions: 'Feature actions',
         renameScenario: 'Rename scenario', renameMainGroup: 'Rename group', scenarioActions: 'Scenario actions', deleteDefinition: 'Delete',
         renameProcess: 'Rename process', processActions: 'Process actions', openScenarioProperties: 'Open test properties', convertFormat: 'Conversions…'
@@ -38,7 +38,7 @@
             return (canRename(node) || Boolean(node?.featureId)) && typeof uri === 'string' && /^file:.*\.(?:ya?ml|feature)$/iu.test(uri);
         }
         function send(action, node, extra) {
-            if (['toggleFavorite', 'insert', 'copy', 'openDefinition', 'openScenarioProperties', 'convertFormat', 'deleteDefinition'].includes(action) && (node?.itemId || node?.id)) {
+            if (['toggleFavorite', 'insert', 'copy', 'openDefinition', 'openScenarioProperties', 'convertFormat', 'deleteDefinition', 'buildUserStepLibrary', 'dumpUserStepLibrary'].includes(action) && (node?.itemId || node?.id)) {
                 if (action === 'deleteDefinition' && !canDelete(node)) { return; }
                 if (options.runItemAction) { options.runItemAction(action, node); }
                 else { options.postMessage({ command: action, itemId: node.itemId || node.id }); }
@@ -118,7 +118,8 @@
         function appendMenuButton(container, node, className) {
             const button = document.createElement('button');
             button.type = 'button'; button.className = `${className} codicon codicon-ellipsis`;
-            const title = node.processUri || node.definitionType === 'process' ? labels.processActions
+            const title = node.kind === 'userStep' || node.definitionType === 'userStep' ? labels.stepActions
+                : node.processUri || node.definitionType === 'process' ? labels.processActions
                 : canRename(node) || canRenameGroup(node) ? labels.scenarioActions : labels.actions;
             button.title = title; button.setAttribute('aria-label', `${title}: ${node.label || node.displayText || ''}`);
             button.addEventListener('click', event => {

@@ -4,7 +4,7 @@ import { assessVanessaControlCapabilities, normalizeVanessaControlEndpoint, pars
     type VanessaControlCapabilities, type VanessaControlReply } from './vanessaControlProtocol';
 import { VanessaControlTransportError, type VanessaControlProgress, type VanessaControlTransport } from './vanessaControlTransport';
 import { createHash } from 'node:crypto';
-import { VanessaBreakpointReconciler, VanessaBreakpointUnavailableError, type VanessaBreakpointPorts } from './vanessaControlBreakpoints';
+import { VanessaBreakpointReconciler, VanessaBreakpointUnavailableError, VanessaBreakpointConfirmationError, type VanessaBreakpointPorts } from './vanessaControlBreakpoints';
 import { nativeDocumentTextMatchesFileText } from './scenarioNativeDocumentSnapshot';
 import { VanessaRuntimeClients, VanessaClientControlError, parseVanessaClientProfiles } from './vanessaControlClients';
 import { VanessaRuntimeVariables, VanessaVariableControlError } from './vanessaControlVariables';
@@ -13,7 +13,7 @@ import { VanessaDiagnosticError, VanessaRuntimeDiagnostics, type VanessaDiagnost
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { mapVanessaStepResults, type VanessaExecutionLine } from './vanessaControlStepResults';
+import { mapVanessaStepResults, type VanessaExecutionLine, type VanessaResultSourceMap } from './vanessaControlStepResults';
 
 export interface VanessaControlExecution {
     readonly filePath: string;
@@ -48,12 +48,15 @@ interface RunRequest {
     confirmedStop: boolean;
     executing?: boolean;
 }
-export interface VanessaControlFailure { readonly generation: number; readonly filePath: string; readonly lineNumber: number; readonly message: string }
+export interface VanessaControlFailure {
+    readonly generation: number; readonly filePath: string; readonly lineNumber: number; readonly message: string;
+    readonly scenarioName?: string; readonly details?: string; readonly stepDescription?: string;
+}
 /** An ancillary MCP error must still reject the command without erasing its confirmed failure. */
 class VanessaCommandRejectedError extends Error {}
 class VanessaConfirmedRunFailureError extends VanessaCommandRejectedError {}
-function safeFailureText(value: string): string {
-    return value.slice(0, 8_000).replace(/\b(Pwd|Password|Пароль)\s*=\s*(?:"[^"]*"|'[^']*'|[^;\s]+)/giu, '$1=***')
+function safeFailureText(value: string, maxLength = 8_000): string {
+    return value.slice(0, maxLength).replace(/\b(Pwd|Password|Пароль)\s*=\s*(?:"[^"]*"|'[^']*'|[^;\s]+)/giu, '$1=***')
         .replace(/\/P(?:"[^"]*"|[^\s]+)/giu, '/P***').replace(/Bearer\s+[^\s]+/giu, 'Bearer ***').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/gu, '');
 }
 function commandFailureText(result: Awaited<ReturnType<VanessaControlTransport['callTool']>>): string | undefined {
@@ -77,7 +80,12 @@ export class VanessaControlSession {
     private readonly runningLines = new Set<number>();
     private failureValue?: VanessaControlFailure;
     private resumeSource?: { generation: number; filePath: string; lineNumber: number; hash: string };
-    private executionSource?: { generation: number; filePath: string; text: string };
+    private executionSource?: { generation: number; filePath: string; text: string; resultMap?: VanessaResultSourceMap };
+    private resultSourceResolver?: (filePath: string, text: string) => Promise<VanessaResultSourceMap | undefined>;
+    useResultSourceResolver(resolve: NonNullable<VanessaControlSession['resultSourceResolver']>): { dispose(): void } {
+        this.resultSourceResolver = resolve;
+        return { dispose: () => { if (this.resultSourceResolver === resolve) { this.resultSourceResolver = undefined; } } };
+    }
     private observedScenarioName?: string;
     private breakpointSource?: { generation: number; filePath: string; text: string };
     /** Details are local to explicit editor control, excluded from public Test Manager state/logs. */
@@ -371,9 +379,15 @@ export class VanessaControlSession {
             const request: RunRequest = { generation, controller: new AbortController(), stopRequested: false, confirmedStop: false };
             this.runRequest = request;
             try {
+                if (sourceText !== undefined && mode !== 'oneStep' && this.resultSourceResolver) {
+                    const resultMap = await this.resultSourceResolver(filePath, sourceText).catch(() => undefined);
+                    this.checkGeneration(generation); assertSource();
+                    this.executionSource = { generation, filePath, text: sourceText, resultMap };
+                }
                 const before = this.value.capabilities?.results.supported ? await this.readResults(generation) : undefined;
                 assertSource();
                 const source = sourceText === undefined ? undefined : { filePath, text: sourceText };
+                let stepFilePath = filePath;
                 if (source && !withBreakpoints) {
                     const loadForRun = mode === 'runFeature' || mode === 'runFromLine';
                     if (loadForRun) { await this.invokeChecked('open_feature_file', { filePath }, generation); }
@@ -389,6 +403,9 @@ export class VanessaControlSession {
                         editor = await this.readEditor(generation, source);
                     }
                     if (!editor || !sameVanessaFeaturePath(filePath, editor.featurePath)) { throw new VanessaEditorSourceMismatchError(); }
+                    // Vanessa identifies tabs by the literal path. Its own normalized
+                    // Windows spelling can differ from VS Code's (for example c: / C:).
+                    if (mode === 'oneStep') { stepFilePath = editor.featurePath; }
                     if (mode === 'resume' && editor.lineNumber !== lineNumber) { throw new Error('Vanessa moved away from the confirmed breakpoint. Select a step explicitly.'); }
                     if (mode === 'runFromLine') {
                         await this.invokeChecked('select_step', { lineNumber }, generation);
@@ -425,14 +442,41 @@ export class VanessaControlSession {
                     }
                 }
                 assertSource();
-                if (request.stopRequested) { throw new Error('Execution was cancelled before launch.'); }
                 const args = mode === 'resume' ? { mode: 'fromCurrentStep' }
                     : withBreakpoints ? { mode: mode === 'runFeature' ? 'all' : 'fromCurrentStep' }
                         : source && (mode === 'runFeature' || mode === 'runFromLine') ? { filePath, ...(mode === 'runFromLine' ? { lineNumber } : {}), mode: mode === 'runFeature' ? 'reloadAndRun' : 'reloadAndRunFromLine' }
                         : mode === 'runFeature' ? { filePath, mode: 'reloadAndRun' }
-                            : { filePath, lineNumber, ...(mode === 'runFromLine' ? { mode: 'reloadAndRunFromLine' } : {}) };
-                request.executing = true;
-                const result = await this.invoke(tool, args, generation, request.controller.signal);
+                            : { filePath: mode === 'oneStep' ? stepFilePath : filePath, lineNumber, ...(mode === 'runFromLine' ? { mode: 'reloadAndRunFromLine' } : {}) };
+                // .45's one-step tool loads the feature internally, which can erase its
+                // breakpoints. Capture the actual same-file list, including foreign points.
+                let stepPoints: readonly number[] | undefined;
+                let stepOwned: readonly number[] = [];
+                const target = { generation, filePath };
+                if (mode === 'oneStep' && (source || this.value.breakpoints && sameVanessaFeaturePath(filePath, this.value.breakpoints.filePath)) &&
+                    this.value.capabilities?.breakpoints.supported && this.value.capabilities.editor.supported) {
+                    stepPoints = await this.breakpointSync.reconcile(target, undefined, this.breakpointPorts(generation, isCurrent, source));
+                    stepOwned = this.breakpointSync.ownedLines(target);
+                    this.publishBreakpoints(filePath, stepPoints, generation);
+                }
+                assertSource();
+                if (request.stopRequested) { throw new Error('Execution was cancelled before launch.'); }
+                let result: Awaited<ReturnType<VanessaControlTransport['callTool']>>;
+                try {
+                    request.executing = true;
+                    result = await this.invoke(tool, args, generation, request.controller.signal);
+                } finally {
+                    if (stepPoints?.length && this.value.generation === generation) {
+                        try {
+                            // A local tab change must not strand points erased by the reload.
+                            // The ports still verify the remote tab and its saved content.
+                            const restored = await this.breakpointSync.restore(target, stepPoints, stepOwned, this.breakpointPorts(generation, undefined, source));
+                            this.publishBreakpoints(filePath, restored, generation);
+                        } catch (error) {
+                            this.set({ ...this.value, breakpoints: undefined });
+                            throw error;
+                        }
+                    }
+                }
                 const parsed = parseVanessaControlReply(tool, result);
                 let status: VanessaControlExecution['status'] = ['failed', 'stopped'].includes(this.value.execution!.status) ? this.value.execution!.status
                     : parsed.kind === 'stepResult' || parsed.kind === 'runResult' ? parsed.status : 'unknown';
@@ -454,18 +498,18 @@ export class VanessaControlSession {
                 if (after && matches && after.parsed.kind === 'runtimeResult' && after.parsed.status !== 'passed' &&
                     (after.hash !== before?.hash || ['failed', 'pending'].includes(observed.stepStatus ?? ''))) {
                     status = 'failed';
-                    if (after.parsed.message) { this.failureValue = Object.freeze({ generation, filePath, lineNumber: observed.lineNumber ?? lineNumber, message: safeFailureText(after.parsed.message) }); }
+                    if (after.parsed.message) { this.failureValue = Object.freeze({ generation, filePath, lineNumber: observed.lineNumber ?? lineNumber, message: safeFailureText(after.parsed.message), ...after.presentation }); }
                 }
                 if (before && after && after.hash !== before.hash && after.parsed.kind === 'failureResult' && sameVanessaFeaturePath(filePath, after.parsed.featurePath) &&
                     (mode !== 'oneStep' || lineNumber === after.parsed.lineNumber)) {
                     status = 'failed';
                     this.failureValue = Object.freeze({ generation, filePath, lineNumber: after.parsed.lineNumber,
-                        message: safeFailureText(after.message ?? 'Vanessa reported a failed step without an error description.') });
+                        message: safeFailureText(after.message ?? 'Vanessa reported a failed step without an error description.'), ...after.presentation });
                 }
                 if (status === 'failed' && !this.failureValue) {
                     const message = after?.message ?? (parsed.kind !== 'stepResult' && parsed.kind !== 'runResult' ? commandFailureText(result) : undefined)
                         ?? 'Vanessa reported a failed step without an error description.';
-                    this.failureValue = Object.freeze({ generation, filePath, lineNumber: matches ? observed.lineNumber ?? lineNumber : lineNumber, message: safeFailureText(message) });
+                    this.failureValue = Object.freeze({ generation, filePath, lineNumber: matches ? observed.lineNumber ?? lineNumber : lineNumber, message: safeFailureText(message), ...after?.presentation });
                 }
                 if (stateError && status !== 'failed') { throw stateError; }
                 let stopLine: number | undefined;
@@ -549,7 +593,7 @@ export class VanessaControlSession {
             confirmed = await this.breakpointSync.reconcile(target, desired, ports);
             this.breakpointSource = sourceText === undefined ? undefined : { generation, filePath, text: sourceText };
             this.publishBreakpoints(filePath, confirmed, generation);
-        });
+        }, false);
         return confirmed;
     }
 
@@ -621,7 +665,7 @@ export class VanessaControlSession {
                 this.set({ ...this.value, status: 'unknown', error: 'request',
                     execution: this.value.execution ? Object.freeze({ ...this.value.execution, status: 'unknown' }) : undefined });
             }
-            if (error instanceof VanessaCommandRejectedError || error instanceof VanessaBreakpointUnavailableError || error instanceof VanessaEditorSourceMismatchError || error instanceof VanessaClientControlError || error instanceof VanessaVariableControlError || error instanceof VanessaFormControlError || error instanceof VanessaAuthoringError || error instanceof VanessaDiagnosticError) { throw error; }
+            if (error instanceof VanessaCommandRejectedError || error instanceof VanessaBreakpointUnavailableError || error instanceof VanessaBreakpointConfirmationError || error instanceof VanessaEditorSourceMismatchError || error instanceof VanessaClientControlError || error instanceof VanessaVariableControlError || error instanceof VanessaFormControlError || error instanceof VanessaAuthoringError || error instanceof VanessaDiagnosticError) { throw error; }
             throw new Error('Vanessa command was not confirmed. Refresh state before retrying.');
         } finally {
             if (generation === this.value.generation) {
@@ -670,13 +714,23 @@ export class VanessaControlSession {
         try {
             const result = await this.invoke('get_test_results', {}, generation);
             const parsed = parseVanessaControlReply('get_test_results', result);
+            const text = result.content?.filter(item => item.type === 'text').map(item => 'text' in item ? item.text : '').join('\n').replace(/\r\n/gu, '\n') ?? '';
             const message = parsed.kind === 'failureResult' || parsed.kind === 'runtimeResult' && parsed.status !== 'passed'
-                ? /^- Ошибка: ([^\r\n]+)$/mu.exec(result.content?.filter(item => item.type === 'text').map(item => 'text' in item ? item.text : '').join('\n') ?? '')?.[1] : undefined;
+                ? /^- Ошибка: ([^\r\n]+)$/mu.exec(text)?.[1] : undefined;
+            const technical = parsed.kind === 'failureResult' ? /\n\n(Технические данные:\n[\s\S]*?)(?=\n## Шаги \()/u.exec(text)?.[1] : undefined;
+            const scenarioName = technical ? /^        ИмяСценария: (.+)$/mu.exec(technical)?.[1].trim() : undefined;
+            const failedSteps = parsed.kind === 'failureResult' || parsed.kind === 'runtimeResult' && parsed.status === 'failed'
+                ? [...text.matchAll(/^\d+\. ([^\n]+) → \*\*Failed\*\*/gmu)] : [];
+            const presentation = { ...(scenarioName ? { scenarioName: safeFailureText(scenarioName) } : {}),
+                ...(technical ? { details: safeFailureText(technical.trim(), 20_000) } : {}),
+                ...(failedSteps.length === 1 ? { stepDescription: safeFailureText(failedSteps[0][1]) } : {}) };
             const source = this.executionSource;
             const execution = this.value.execution;
-            const steps = source && execution ? mapVanessaStepResults(result, source.text, execution.mode === 'runFeature' ? 1 : execution.lineNumber, this.observedScenarioName)
+            const expanded = source?.resultMap && await source.resultMap.isCurrent() ? source.resultMap.steps : undefined;
+            this.checkGeneration(generation);
+            const steps = source && execution ? mapVanessaStepResults(result, source.text, execution.mode === 'runFeature' ? 1 : execution.lineNumber, this.observedScenarioName, expanded)
                 .filter(step => execution.mode !== 'oneStep' || step.lineNumber === execution.lineNumber) : [];
-            return { hash: createHash('sha256').update(JSON.stringify(result)).digest('hex'), parsed, message, steps };
+            return { hash: createHash('sha256').update(JSON.stringify(result)).digest('hex'), parsed, message, presentation, steps };
         } catch {
             this.checkGeneration(generation);
             return undefined;

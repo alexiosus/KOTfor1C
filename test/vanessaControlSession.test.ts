@@ -4,6 +4,9 @@ import test from 'node:test';
 import { VanessaControlSession } from '../src/vanessaControlSession';
 import { VanessaAuthoringError } from '../src/vanessaControlAuthoring';
 import type { VanessaControlTransport } from '../src/vanessaControlTransport';
+import { createProjectDefinitionView } from '../src/projectDefinition';
+import { parseExportScenarios } from '../src/exportScenarioParser';
+import { prepareVanessaResultSources } from '../src/vanessaControlStepSources';
 
 const tools = JSON.parse(fs.readFileSync('test/fixtures/vanessa-control/1.2.043.45/tools.json', 'utf8')).tools;
 
@@ -19,6 +22,58 @@ test('in-flight requests expose a safe tool label until completion, without requ
 });
 const state = (running = false) => ({ content: [{ type: 'text' as const, text: fs.readFileSync('test/fixtures/vanessa-control/1.2.043.45/state-running.ru.md', 'utf8').replace('Выполнение сценариев: да', `Выполнение сценариев: ${running ? 'да' : 'нет'}`) }] });
 const capturedReply = (name: string) => ({ content: [{ type: 'text' as const, text: fs.readFileSync(`test/fixtures/vanessa-control/1.2.043.45/${name}`, 'utf8') }] });
+
+for (const mode of ['runFromLine', 'runFeature'] as const) {
+test(`${mode} reports the actual failed line and message when the remaining rows are Skipped and state is loaded-not-run`, async () => {
+    const session = new VanessaControlSession(); let executed = false; let cursor = 26;
+    const file = 'C:\\KOT\\failure-skipped.feature';
+    const steps = [
+        'And I save "Покупатель из feature" in "WorkshopCustomer" variable',
+        'And I remember workshop message "Native source is ready"',
+        'And In the command interface I select "Sales" "Customers"',
+        'Then "Customers" window is opened', 'And I click the button named "Create"',
+        'Then "Counterparty (create)" window is opened',
+        'And I input "$WorkshopCustomer$" text in the field named "DescriptionFull"',
+        'And I move to the next attribute', 'And I click the button named "FormWriteAndClose"',
+        'And I wait "Counterparty (create)*" window closing in 10 seconds',
+        'Then "Customers" window is opened', 'And I activate field named "Description" in "List" table',
+        'And I go to line in "List" table', 'And I go to line in "List" table'
+    ];
+    const source = ['# language: en', 'Feature: Failure', 'Scenario: Failure', ...Array(22).fill(''), ...steps.map(step => '    ' + step)].join('\n');
+    const library = '# language: en\n@ExportScenarios\nFeature: Library\nScenario: I remember workshop message "Message"\n  And I save "Message" in "WorkshopMessage" variable\n';
+    const definitions = createProjectDefinitionView('exports', parseExportScenarios(library, {
+        sourceUri: 'file:///KOT/library.feature', workspaceFolderUri: 'file:///KOT', profileId: '', libraryRootUri: 'file:///KOT', sourceLabel: 'Library', defaultLanguage: 'en'
+    }).definitions);
+    session.useResultSourceResolver(async (_file, text) => prepareVanessaResultSources(text, definitions, async () => library));
+    const loaded = { content: [{ type: 'text' as const, text: 'В редактор был загружен фича файл, но ещё ни разу не запускался. Для получения подробной информации о загруженном файле нужно вызвать get_editor_state.\nИмя загруженного feature файла: ' + file }] };
+    const wire = fake(async (name, args) => {
+        if (name === 'get_vanessa_automation_state') { return loaded; }
+        if (name === 'get_editor_state') { return { content: [{ type: 'text', text: `# Состояние редактора\n\n## Открытые вкладки\nКоличество: 1\n\n- **→** ${file}\n\n## Активный документ\n- Строка: ${cursor}\n\n### Содержимое\n\`\`\`gherkin\n${source}\n\`\`\`` }] }; }
+        if (name === 'select_step') { cursor = Number(args.lineNumber); }
+        if (name === 'run_scenario') { executed = true; return { content: [{ type: 'text', text: 'Выполнение сценариев закончено. БЫЛИ ОШИБКИ.' }] }; }
+        if (name === 'get_test_results') { return executed ? { content: capturedReply('results-failed-skipped.live.ru.md').content.map(item => ({ ...item,
+            text: item.text.replace(/ДопПараметрыПодключения:[ \t]*/u, 'ДопПараметрыПодключения: /P"private-test-password" ') })) } : { content: [{ type: 'text', text: 'No results' }] }; }
+        return { content: [] };
+    });
+    await session.attach(wire, 'http://localhost:9876');
+    await session.run(mode, file, mode === 'runFeature' ? 1 : 26, source);
+    assert.equal(session.snapshot.execution?.status, 'failed');
+    assert.equal(session.snapshot.execution?.currentLineNumber, 28);
+    assert.equal(session.failure?.lineNumber, 28);
+    assert.match(session.failure?.message ?? '', /Клиент тестирования не подключен/u);
+    assert.equal(session.failure?.scenarioName, 'Подготовить заявку из раздельного исходника');
+    assert.match(session.failure?.details ?? '', /Технические данные:\n\s+ЗаголовокАктивногоОкна/u);
+    assert.doesNotMatch(session.failure?.details ?? '', /private-test-password/u);
+    assert.match(session.failure?.details ?? '', /\/P\*\*\*/u);
+    assert.equal(session.failure?.stepDescription, 'And In the command interface I select "Sales" "Customers"');
+    assert.deepEqual(session.snapshot.execution?.steps?.slice(0, 4), [
+        { lineNumber: 26, status: 'passed' }, { lineNumber: 27, status: 'passed' },
+        { lineNumber: 28, status: 'failed' }, { lineNumber: 29, status: 'skipped' }
+    ]);
+    assert.equal(session.snapshot.execution?.steps?.filter(step => String(step.status) === 'skipped').length, 11);
+    assert.equal(session.snapshot.status, 'ready'); await session.detach();
+});
+}
 
 test('a rejected preparation tool reports its sanitized native error', async () => {
     const session = new VanessaControlSession();
@@ -322,6 +377,7 @@ test('F11 reuses the active matching saved feature without an expensive reopen',
     const wire = fake(async name => {
         if (name === 'get_editor_state') { return { content: [{ type: 'text', text: '# Состояние редактора\n\n## Открытые вкладки\nКоличество: 1\n\n- **→** C:\\own.feature\n\n## Активный документ\n- Строка: 4\n\n### Содержимое\n```gherkin\n' + source + '\n```' }] }; }
         if (name === 'execute_feature_step') { return { content: [{ type: 'text', text: 'Шаг в строке фича файла успешно выполнен' }] }; }
+        if (name === 'manage_breakpoints') { return { content: [{ type: 'text', text: '# Точки останова\n\nТочек останова нет.' }] }; }
         return state();
     });
     const session = new VanessaControlSession(); await session.attach(wire, 'http://localhost:9876');
@@ -332,6 +388,25 @@ test('F11 reuses the active matching saved feature without an expensive reopen',
     assert.equal(session.executionMatchesSource('C:\\other.feature', source), false);
     assert.equal(wire.calls.filter(name => name === 'open_feature_file').length, 0);
     assert.ok(wire.calls.indexOf('get_editor_state') < wire.calls.indexOf('execute_feature_step'));
+});
+
+test('F11 keeps the exact active Vanessa path so drive-letter casing cannot create another editor tab', async () => {
+    const source = '# language: en\nFeature: Safe\nScenario: Safe\n    And Delay 1\n';
+    const sent: string[] = [];
+    const wire = fake(async (name, args) => {
+        if (name === 'get_editor_state') { return { content: [{ type: 'text', text:
+            '# Состояние редактора\n\n## Открытые вкладки\nКоличество: 1\n\n- **→** c:\\Tests\\safe.feature\n\n## Активный документ\n- Строка: 4\n\n### Содержимое\n```gherkin\n' + source + '\n```' }] }; }
+        if (name === 'manage_breakpoints') { return { content: [{ type: 'text', text: '# Точки останова\n\nТочек останова нет.' }] }; }
+        if (name === 'execute_feature_step') {
+            sent.push(String(args.filePath)); return { content: [{ type: 'text', text: 'Шаг в строке фича файла успешно выполнен' }] };
+        }
+        return state();
+    });
+    const session = new VanessaControlSession(); await session.attach(wire, 'http://localhost:9876');
+    await session.run('oneStep', 'C:\\Tests\\safe.feature', 4, source);
+    assert.deepEqual(sent, ['c:\\Tests\\safe.feature']);
+    assert.equal(session.snapshot.execution?.filePath, 'C:\\Tests\\safe.feature', 'local decorations still use the local source identity');
+    await session.detach();
 });
 
 test('a full feature run reloads the whole file instead of skipping its preparation from a step', async () => {
@@ -669,6 +744,33 @@ test('breakpoint commands verify the remote editor and publish confirmed points 
     assert.deepEqual(session.ownedBreakpointsForSource('C:\\test.feature', source), []);
 });
 
+test('an unconfirmed breakpoint reports the specific failure and preserves the preceding execution', async () => {
+    const session = new VanessaControlSession(); let toggles = 0;
+    const wire = fake(async (name, args) => {
+        if (name === 'get_vanessa_automation_state') { return state(); }
+        if (name === 'execute_feature_step') { return { content: [{ type: 'text', text: 'Шаг в строке фича файла успешно выполнен' }] }; }
+        if (name === 'get_editor_state') { return { content: [{ type: 'text', text:
+            '# Состояние редактора\n\n## Открытые вкладки\nКоличество: 1\n\n- **→** C:\\test.feature\n\n## Активный документ\n- Строка: 8' }] }; }
+        if (name === 'manage_breakpoints' && args.action === 'toggle') {
+            toggles++; return { content: [{ type: 'text', text: '# Брейкпоинт переключён\n\n- Строка: 8' }] };
+        }
+        return { content: [{ type: 'text', text: '# Точки останова\n\nТочек останова нет.' }] };
+    });
+    await session.attach(wire, 'http://localhost:9876');
+    await session.run('oneStep', 'C:\\test.feature', 8);
+    const previous = session.snapshot.execution; const statuses: string[] = [];
+    session.onDidChange(snapshot => statuses.push(snapshot.status));
+    await assert.rejects(session.synchronizeBreakpoints('C:\\test.feature', [8]), {
+        message: 'Vanessa did not confirm the breakpoint change. The MCP list still shows the previous state. Check the breakpoint in Vanessa before retrying.'
+    });
+    assert.equal(toggles, 1);
+    assert.equal(session.snapshot.breakpoints, undefined);
+    assert.equal(statuses.includes('unknown'), false);
+    assert.deepEqual(session.snapshot.execution, previous);
+    assert.equal(session.snapshot.status, 'ready');
+    await session.detach();
+});
+
 test('an unavailable Monaco editor cannot confirm an empty breakpoint list or allow a toggle', async () => {
     const session = new VanessaControlSession();
     const wire = fake(async name => name === 'get_vanessa_automation_state' ? state() : { content: [{ type: 'text', text:
@@ -679,6 +781,87 @@ test('an unavailable Monaco editor cannot confirm an empty breakpoint list or al
     assert.equal(session.snapshot.breakpoints, undefined);
     assert.equal(wire.calls.filter(name => name === 'manage_breakpoints').length, 1);
 });
+
+function singleStepBreakpoints() {
+    const session = new VanessaControlSession();
+    const source = '# language: en\nFeature: Safe\nScenario: Safe\n' + '    And Delay 1\n'.repeat(10);
+    const h = { session, source, points: [4], toggles: [] as number[], current: true,
+        activeFile: 'C:\\test.feature', failStep: false, switchLocal: false, switchRemote: false, failRestore: false, executed: false, erasePoints: true };
+    const wire = fake(async (name, args) => {
+        if (name === 'get_vanessa_automation_state') { return state(); }
+        if (name === 'get_editor_state') { return { content: [{ type: 'text', text:
+            `# Состояние редактора\n\n## Открытые вкладки\nКоличество: 1\n\n- **→** ${h.activeFile}\n\n## Активный документ\n- Строка: 6` +
+            (args.includeContent ? '\n\n### Содержимое\n```gherkin\n' + source + '\n```' : '') }] }; }
+        if (name === 'manage_breakpoints') {
+            if (args.action === 'toggle') {
+                const line = Number(args.line); h.toggles.push(line);
+                if (!h.executed || !h.failRestore) { h.points = h.points.includes(line) ? h.points.filter(value => value !== line) : [...h.points, line]; }
+            }
+            return { content: [{ type: 'text', text: h.points.length ? `# Точки останова\n\nКоличество: ${h.points.length}\n${h.points.map(line => `- ${line}`).join('\n')}` : '# Точки останова\n\nТочек останова нет.' }] };
+        }
+        if (name === 'execute_feature_step') {
+            h.executed = true;
+            if (h.erasePoints) { h.points = []; } // .45 reloads the feature as part of this tool.
+            if (h.switchLocal) { h.current = false; }
+            if (h.switchRemote) { h.activeFile = 'C:\\other.feature'; }
+            if (h.failStep) { throw new Error('Step request failed after reload'); }
+            return { content: [{ type: 'text', text: 'Шаг в строке фича файла успешно выполнен' }] };
+        }
+        return { content: [] };
+    });
+    return { ...h, wire, data: h };
+}
+
+for (const outcome of ['passed', 'request failed', 'local tab changed'] as const) {
+test(`F11 restores owned and foreign breakpoints after its internal reload when ${outcome}`, async () => {
+    const { session, source, wire, data } = singleStepBreakpoints();
+    await session.attach(wire, 'http://localhost:9876');
+    await session.synchronizeBreakpoints('C:\\test.feature', [8], undefined, source);
+    data.failStep = outcome === 'request failed'; data.switchLocal = outcome === 'local tab changed';
+    const run = session.run('oneStep', 'C:\\test.feature', 5, source, () => data.current);
+    if (data.failStep) { await assert.rejects(run); } else { await run; }
+    assert.deepEqual(data.points, [4, 8], 'the step reload must not erase either owner\'s points');
+    assert.deepEqual(session.snapshot.breakpoints, { filePath: 'C:\\test.feature', lines: [4, 8], ownedLines: [8] });
+    assert.deepEqual(session.ownedBreakpointsForSource('C:\\test.feature', source), [8]);
+    await session.synchronizeBreakpoints('C:\\test.feature', [], undefined, source);
+    assert.deepEqual(data.points, [4], 'restored native points must not become KOT-owned');
+    await session.detach();
+});
+}
+
+test('F11 also preserves native Vanessa breakpoints before any KOT breakpoint command', async () => {
+    const { session, source, wire, data } = singleStepBreakpoints();
+    await session.attach(wire, 'http://localhost:9876');
+    await session.run('oneStep', 'C:\\test.feature', 5, source);
+    assert.deepEqual(data.points, [4]);
+    assert.deepEqual(session.snapshot.breakpoints?.ownedLines, []);
+    await session.detach();
+});
+
+test('F11 does not toggle points that the runtime kept after the step', async () => {
+    const { session, source, wire, data } = singleStepBreakpoints(); data.erasePoints = false;
+    await session.attach(wire, 'http://localhost:9876');
+    await session.synchronizeBreakpoints('C:\\test.feature', [8], undefined, source);
+    await session.run('oneStep', 'C:\\test.feature', 5, source);
+    await session.run('oneStep', 'C:\\test.feature', 6, source);
+    assert.deepEqual(data.toggles, [8], 'do not remove/re-add points that are already present');
+    assert.deepEqual(data.points, [4, 8]);
+    await session.detach();
+});
+
+for (const reason of ['unconfirmed restoration', 'remote tab changed'] as const) {
+test(`F11 clears obsolete local markers when ${reason}`, async () => {
+    const { session, source, wire, data } = singleStepBreakpoints();
+    await session.attach(wire, 'http://localhost:9876');
+    await session.synchronizeBreakpoints('C:\\test.feature', [8], undefined, source);
+    data.failRestore = reason === 'unconfirmed restoration'; data.switchRemote = reason === 'remote tab changed';
+    await assert.rejects(session.run('oneStep', 'C:\\test.feature', 5, source));
+    assert.equal(session.snapshot.breakpoints, undefined, 'do not retain confirmed-looking gutter points after the reload');
+    assert.deepEqual(data.points, []);
+    if (data.switchRemote) { assert.deepEqual(data.toggles, [8], 'do not restore into a different remote editor'); }
+    await session.detach();
+});
+}
 
 for (const mode of ['runFromLine', 'runFeature'] as const) {
 test(`${mode} preserves breakpoints and a partial stop cannot be passed`, async () => {

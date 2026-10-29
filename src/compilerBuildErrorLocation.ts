@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { ScenarioYamlDocument } from './scenarioYamlDocument';
 import { findCompilerScenarioCall, getCompilerScenarioBody, parseCompilerParameterBinding, scanCompilerLines } from './scenarioCompilerSyntax';
+import { joinNativeSpprScenario } from './spprScenarioFormat';
 import type { CompilerBuildReportSource } from './compilerBuildReport';
 
 interface ErrorLocation { source: CompilerBuildReportSource; line: number }
@@ -9,12 +11,15 @@ const stepName = (value: string) => value.trim().replace(/^<(.*)>$/u, '$1').repl
 /** Compiler settings UIDs identify the root. Stack coordinates must follow declarations into each nested source. */
 export async function resolveCompilerBuildErrorLocation(sources: readonly CompilerBuildReportSource[], root: CompilerBuildReportSource,
     message: string): Promise<ErrorLocation | null> {
-    const cache = new Map<string, Promise<{ body: ReturnType<typeof getCompilerScenarioBody>; children: Map<string, CompilerBuildReportSource>; declared: Set<string> }>>();
+    const cache = new Map<string, Promise<{ body: ReturnType<typeof getCompilerScenarioBody>; bodySource: CompilerBuildReportSource;
+        children: Map<string, CompilerBuildReportSource>; declared: Set<string> }>>();
     const load = (source: CompilerBuildReportSource) => {
         let pending = cache.get(source.path);
         if (!pending) {
-            pending = fs.readFile(source.path, 'utf8').catch(() => '').then(text => {
+            pending = fs.readFile(source.path, 'utf8').catch(() => '').then(async text => {
                 const yaml = ScenarioYamlDocument.parse(text); const children = new Map<string, CompilerBuildReportSource>(); const declared = new Set<string>();
+                let body = text && !yaml.errors.length ? getCompilerScenarioBody(text) : null;
+                let bodySource = source;
                 if (!yaml.errors.length) {
                     for (const entry of yaml.readRecords('ВложенныеСценарии')) {
                         const uid = String(entry.fields.get('UIDВложенныйСценарий') ?? '').trim().toLowerCase();
@@ -24,8 +29,20 @@ export async function resolveCompilerBuildErrorLocation(sources: readonly Compil
                         declared.add(name);
                         if (name && matches.length === 1) { children.set(name, matches[0]); }
                     }
+                    if (!body && path.basename(source.path) === 'meta.yaml') {
+                        try {
+                            const scriptPath = path.join(path.dirname(source.path), 'scen.feature');
+                            const script = await fs.readFile(scriptPath, 'utf8');
+                            const joined = joinNativeSpprScenario(text.endsWith('\n') ? text : text + '\n', script);
+                            const nativeBody = getCompilerScenarioBody(joined);
+                            if (nativeBody) {
+                                body = { ...nativeBody, startLine: 0 };
+                                bodySource = { ...source, path: scriptPath };
+                            }
+                        } catch { /* Invalid metadata or a missing script keeps the metadata fallback. */ }
+                    }
                 }
-                return { body: text && !yaml.errors.length ? getCompilerScenarioBody(text) : null, children, declared };
+                return { body, bodySource, children, declared };
             });
             cache.set(source.path, pending);
         }
@@ -37,7 +54,8 @@ export async function resolveCompilerBuildErrorLocation(sources: readonly Compil
     for (const line of message.split(/\r\n|\r|\n/u)) {
         const match = /^([ \t]*)(?:---)*Строка\s*№\s*(\d+)\.[ \t]*(.+)$/iu.exec(line);
         if (!match) { flushTrace(); continue; }
-        const frame = { number: Number(match[2]), text: stepName(match[3]), indent: match[1].length };
+        const missingKeyword = /^Не найдено ключевое слово в начале строки\.[ \t]*<(.+)>$/iu.exec(match[3]);
+        const frame = { number: Number(match[2]), text: stepName(missingKeyword?.[1] ?? match[3]), indent: match[1].length };
         if (trace.length && frame.indent <= trace[trace.length - 1].indent) { flushTrace(); }
         trace.push(frame);
     }
@@ -52,7 +70,7 @@ export async function resolveCompilerBuildErrorLocation(sources: readonly Compil
                 const frame = frames[index]; const data = await load(current); const body = data.body;
                 if (!body || frame.number < 1 || frame.number > body.lines.length || stepName(body.lines[frame.number - 1]) !== frame.text) { break; }
                 if (index === frames.length - 1) {
-                    locations.push({ source: current, line: body.startLine + frame.number, depth: frames.length });
+                    locations.push({ source: data.bodySource, line: body.startLine + frame.number, depth: frames.length });
                     break;
                 }
                 const child = data.children.get(frame.text);
@@ -74,7 +92,7 @@ export async function resolveCompilerBuildErrorLocation(sources: readonly Compil
     while (queue.length) {
         const source = queue.shift()!;
         if (visited.has(source.path)) { continue; } visited.add(source.path);
-        const { body, children, declared } = await load(source);
+        const { body, bodySource, children, declared } = await load(source);
         queue.push(...children.values());
         if (!body) { continue; }
         if (parameter) {
@@ -82,11 +100,11 @@ export async function resolveCompilerBuildErrorLocation(sources: readonly Compil
             body.lines.forEach((text, index) => {
                 if (scanned[index].kind === 'code' && parseCompilerParameterBinding(text)?.name === parameter
                     && (!childName || stepName(findCompilerScenarioCall(body.lines, index) ?? '') === stepName(childName))) {
-                    bindings.push({ source, line: body.startLine + index + 1 });
+                    bindings.push({ source: bodySource, line: body.startLine + index + 1 });
                 }
             });
         } else if (source === root && !declared.size) {
-            if (numbers.length === 1 && numbers[0] > 0 && numbers[0] <= body.lines.length) { return { source, line: body.startLine + numbers[0] }; }
+            if (numbers.length === 1 && numbers[0] > 0 && numbers[0] <= body.lines.length) { return { source: bodySource, line: body.startLine + numbers[0] }; }
         }
     }
     return bindings.length === 1 ? bindings[0] : null;

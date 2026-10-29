@@ -767,7 +767,9 @@ input.param-key.is-catalog[readonly] {
 
 .priority-header {
     text-align: center;
-    width: 95px;
+    /* Fixed-layout tables must fit the translated caption, gap, icon and cell padding.
+       Otherwise the next sticky header paints over the information icon. */
+    width: 9em;
 }
 
 .priority-heading {
@@ -1162,10 +1164,6 @@ body {
     width: 64px;
 }
 
-.priority-header {
-    width: 80px;
-}
-
 .remove-row-btn,
 .reset-row-btn {
     width: 28px !important;
@@ -1247,9 +1245,6 @@ body {
         width: 54px;
     }
 
-    .priority-header {
-        width: 60px;
-    }
 }
 
 /* List, editor and contextual help use the same pane hierarchy as Library. */

@@ -100,11 +100,108 @@ function harness(sidebar: boolean) {
     };
     Object.assign(window, { innerWidth: 1200, innerHeight: 900, matchMedia: () => ({ matches: true }), setTimeout: (callback: () => void) => { timers.push(callback); return timers.length; }, __standaloneFeatureLabels: { openFeature: 'Open feature', generateJson: 'Generate JSON', selectJson: 'Select JSON', openJson: 'Open JSON', moveFeature: 'Move feature', createFeature: 'New feature', createGroup: 'New group', renameGroup: 'Rename group', deleteGroup: 'Delete group', actions: 'Actions' } });
     const context = vm.createContext({ window, document, Element, HTMLElement: Element, console, CSS: { escape: (value: string) => value }, requestAnimationFrame: (callback: () => void) => { callback(); return 1; }, setTimeout: (callback: () => void) => { timers.push(callback); return timers.length; }, clearTimeout() {}, acquireVsCodeApi: () => ({ getState: () => ({}), setState() {}, postMessage: (message: unknown) => messages.push(JSON.parse(JSON.stringify(message))) }) });
-    for (const file of [sidebar ? 'stepLibrarySidebarProtocol.js' : 'stepLibraryProtocol.js', 'scenarioFilesProtocol.js', 'stepLibraryFeatureProtocol.js', sidebar ? 'stepLibrarySidebar.js' : 'stepLibrary.js']) {
+    for (const file of [sidebar ? 'stepLibrarySidebarProtocol.js' : 'stepLibraryProtocol.js', 'scenarioFilesProtocol.js', 'stepLibraryFeatureProtocol.js', 'userStepLibraries.js', sidebar ? 'stepLibrarySidebar.js' : 'stepLibrary.js']) {
         vm.runInContext(fs.readFileSync(`media/${file}`, 'utf8'), context);
     }
     return { body, window, elements, messages, shell, get activeElement() { return activeElement; }, focusOptions, receive: (message: unknown) => window.fire('message', { data: message }), runTimers: () => { while (timers.length) { timers.shift()!(); } } };
 }
+
+for (const sidebar of [true, false]) {
+    test(`${sidebar ? 'sidebar' : 'full'} Library withholds copy and insertion but routes EPF actions for an uncompiled step`, () => {
+        const h = harness(sidebar);
+        const item = { ...snapshot.items[0], id: 'uncompiled', definitionId: 'step:uncompiled',
+            kind: 'userStep', sourceGroup: 'user', featureId: undefined, displayText: 'And custom step',
+            insertable: false, navigable: true, categoryPath: [], userStepLibrary: {
+                status: 'uncompiled', sourceDirectory: '/src', rootXmlPath: '/src/Обработка.xml', targetEpfPath: '/Steps.epf'
+            } };
+        h.receive(sidebar ? { command: 'roots', identity: 'uncompiled-library', insertionTarget: { available: true },
+            nodes: [{ ...item, kind: 'definition', definitionType: 'userStep', itemId: item.id, label: item.displayText, depth: 0, expandable: false }] }
+            : { command: 'snapshot', snapshot: { ...snapshot, items: [item] }, insertionTarget: { available: true } });
+        const row = sidebar ? h.elements.get('tree')!.querySelectorAll('.step-row')[0]
+            : h.elements.get('definitionListContent')!.querySelectorAll('[role="option"]')[0];
+        row.fire('contextmenu');
+        const menu = h.body.querySelector('[role="menu"]')!;
+        assert.equal(menu.querySelector('[data-action="insert"]'), undefined);
+        assert.equal(menu.querySelector('[data-action="copy"]'), undefined);
+        assert.ok(menu.querySelector('[data-action="openDefinition"]'));
+        menu.querySelector('[data-action="buildUserStepLibrary"]')!.click();
+        assert.deepEqual(h.messages.at(-1), { command: 'buildUserStepLibrary', itemId: item.id });
+    });
+}
+
+for (const sidebar of [true, false]) {
+    for (const status of ['ready', 'uncompiled'] as const) {
+        test(`${sidebar ? 'sidebar' : 'full'} Library moves user-step source operations into the row overflow menu (${status})`, () => {
+            const h = harness(sidebar);
+            const item = { ...snapshot.items[0], id: 'compact-user-step', definitionId: 'step:compact', kind: 'userStep', sourceGroup: 'user',
+                featureId: undefined, groupId: undefined, categoryPath: [], displayText: 'And custom step', navigable: true, insertable: status === 'ready',
+                userStepLibrary: { status, sourceDirectory: '/src', rootXmlPath: '/src/Обработка.xml', targetEpfPath: '/Steps.epf' } };
+            h.receive(sidebar ? { command: 'roots', identity: 'compact-actions', insertionTarget: { available: true },
+                nodes: [{ ...item, kind: 'definition', definitionType: 'userStep', itemId: item.id, label: item.displayText, depth: 0, expandable: false }] }
+                : { command: 'snapshot', snapshot: { ...snapshot, items: [item] }, insertionTarget: { available: true } });
+            const row = h.elements.get(sidebar ? 'tree' : 'definitionListContent')!.querySelector(sidebar ? '.step-row' : '.definition-row')!;
+            const actions = row.querySelector(sidebar ? '.step-actions' : '.definition-actions')!;
+            assert.ok(actions.querySelectorAll('button').length <= 4, 'Source operations must not expand the inline toolbar');
+            assert.equal(actions.querySelector('.step-action-buildUserStepLibrary'), undefined);
+            assert.equal(actions.querySelector('.step-action-dumpUserStepLibrary'), undefined);
+            assert.equal(actions.querySelector('.codicon-tools'), undefined);
+            assert.equal(actions.querySelector('.codicon-file-code'), undefined);
+            assert.equal(actions.querySelector('.codicon-go-to-file'), undefined);
+            const more = actions.querySelector('.codicon-ellipsis');
+            assert.ok(more, 'Source operations remain discoverable without a right click');
+            for (const command of ['openDefinition', 'buildUserStepLibrary', ...(status === 'ready' ? ['dumpUserStepLibrary'] : [])]) {
+                more.click();
+                const menu = h.body.querySelector('[role="menu"]')!;
+                menu.querySelector(`[data-action="${command}"]`)!.click();
+                assert.deepEqual(h.messages.at(-1), { command, itemId: item.id });
+                assert.equal(h.body.querySelector('[role="menu"]'), undefined);
+                if (!sidebar) { h.receive({ command: 'actionResult', action: command, itemId: item.id, succeeded: true }); }
+            }
+        });
+    }
+}
+
+for (const [status, expectedActions] of [
+    ['sourceOnly', ['Create EPF library…']],
+    ['uncompiled', ['Build EPF']],
+    ['ready', ['Build EPF', 'Dump sources…']]
+] as const) {
+    test(`full Library exposes ${status} library operations in the selected step's properties`, () => {
+        const h = harness(false);
+        h.body.dataset.epfLibrary = 'Библиотека EPF';
+        const item = { ...snapshot.items[0], id: 'selected-user-step', definitionId: 'step:selected',
+            kind: 'userStep', sourceGroup: 'user', featureId: undefined, groupId: undefined,
+            displayText: 'And selected custom step', insertable: status === 'ready', navigable: true,
+            categoryPath: [], userStepLibrary: { status, sourceDirectory: '/src',
+                ...(status === 'sourceOnly' ? {} : { rootXmlPath: '/src/Обработка.xml', targetEpfPath: '/Steps.epf' }) } };
+        h.receive({ command: 'snapshot', snapshot: { ...snapshot, items: [snapshot.items[1], item] }, insertionTarget: { available: true } });
+        h.elements.get('definitionListContent')!.querySelector('[data-item-id="selected-user-step"]')!.click();
+        const details = h.elements.get('detailsContent')!;
+        const library = details.querySelector('.user-step-library-details');
+        assert.ok(library, 'The selected step must expose an identifiable EPF library section');
+        assert.equal(library.getAttribute('aria-label'), 'Библиотека EPF');
+        const buttons = library.querySelectorAll('button');
+        assert.deepEqual(buttons.map(button => button.textContent), [...expectedActions]);
+        buttons[0].click();
+        assert.deepEqual(h.messages.at(-1), { command: 'buildUserStepLibrary', itemId: 'selected-user-step' });
+        assert.equal(details.querySelector('.user-step-library-details')!.querySelector('button')!.disabled, true);
+    });
+}
+
+test('dragging a user step carries only the guarded definition ID, never a plain-text fallback', () => {
+    const h = harness(true);
+    h.receive({ command: 'roots', identity: 'user-drag', insertionTarget: { available: true }, nodes: [{
+        id: 'user:step', kind: 'definition', definitionType: 'userStep', itemId: 'user:step', definitionId: 'definition:user',
+        sourceGroup: 'user', label: 'And ready', insertable: true, navigable: true, depth: 0,
+        expandable: false, dragText: 'And ready', userStepLibrary: { status: 'ready', sourceDirectory: '/src' }
+    }] });
+    const transferred = new Map<string, string>();
+    h.elements.get('tree')!.querySelectorAll('.step-row')[0].fire('dragstart', {
+        dataTransfer: { setData: (mime: string, value: string) => transferred.set(mime, value) }
+    });
+    assert.equal(transferred.get('application/x-kot-step-definition-id'), 'definition:user');
+    assert.equal(transferred.has('text/plain'), false);
+});
 
 test('Library labels and icons distinguish a process from a main scenario in separate sources', () => {
     const mixed = buildStepLibrarySnapshot({ identity: 'mixed-types', all: [], byId: new Map(), byNormalizedTemplate: new Map() }, [
@@ -125,6 +222,21 @@ test('Library labels and icons distinguish a process from a main scenario in sep
     const nodes = [...index.children('category:main:Sales').nodes, ...index.children('category:process:Sales').nodes];
     assert.equal(nodes.find(node => node.itemId === 'mainScenario#file:///process.yaml')?.definitionType, 'process');
     assert.equal(nodes.find(node => node.itemId === 'mainScenario#file:///scen.yaml')?.definitionType, 'mainScenario');
+});
+
+test('sidebar background refresh keeps the displayed tree and does not flash the initial loading message', () => {
+    const h = harness(true);
+    h.shell.dataset.loading = 'Loading step library...';
+    h.receive({ command: 'loading', retainItems: false });
+    assert.equal(h.elements.get('status')!.textContent, 'Loading step library...');
+    h.receive({ command: 'roots', identity: 'ready', nodes: [
+        { id: 'source:nested', kind: 'sourceGroup', label: 'Nested', depth: 0, expandable: true }
+    ] });
+    const tree = h.elements.get('tree')!;
+    const rows = [...tree.children];
+    h.receive({ command: 'loading', retainItems: true });
+    assert.equal(h.elements.get('status')!.textContent, '');
+    assert.deepEqual(tree.children, rows);
 });
 
 test('every Library definition type has an icon while steps keep syntax highlighting', () => {

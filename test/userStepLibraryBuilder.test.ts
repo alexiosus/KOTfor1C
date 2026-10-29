@@ -149,3 +149,36 @@ test('cancellation before platform selection makes no filesystem or process chan
     assert.equal(harness.commands.length, 0);
     assert.equal(await fs.promises.readFile(harness.request.targetEpfPath, 'utf8'), 'old epf');
 });
+
+test('successful build records source and EPF fingerprints for availability checks', async t => {
+    const harness = await createHarness();
+    t.after(() => fs.promises.rm(harness.directory, { recursive: true, force: true }));
+    await buildUserStepLibrary(harness.request, harness.dependencies, { isCancellationRequested: false });
+    const manifest = harness.request.targetEpfPath + '.kot-build.json';
+    assert.ok(fs.existsSync(manifest), 'A successful build must record which sources were compiled');
+    const state = JSON.parse(await fs.promises.readFile(manifest, 'utf8'));
+    assert.match(state.sourceFingerprint, /^[a-f0-9]{64}$/u);
+    assert.match(state.epfFingerprint, /^[a-f0-9]{64}$/u);
+});
+
+test('changing sources during a build preserves the previous EPF', async t => {
+    const harness = await createHarness();
+    t.after(() => fs.promises.rm(harness.directory, { recursive: true, force: true }));
+    await assert.rejects(() => buildUserStepLibrary(harness.request, {
+        ...harness.dependencies,
+        runProcess: async (command, token) => {
+            const result = await harness.dependencies.runProcess(command, token);
+            await fs.promises.writeFile(harness.request.rootXmlPath, '<changed/>');
+            return result;
+        }
+    }, { isCancellationRequested: false }), /source.*changed/iu);
+    assert.equal(await fs.promises.readFile(harness.request.targetEpfPath, 'utf8'), 'old epf');
+});
+
+test('failure to publish build metadata rolls back the EPF replacement', async t => {
+    const harness = await createHarness();
+    t.after(() => fs.promises.rm(harness.directory, { recursive: true, force: true }));
+    await fs.promises.mkdir(harness.request.targetEpfPath + '.kot-build.json');
+    await assert.rejects(() => buildUserStepLibrary(harness.request, harness.dependencies, { isCancellationRequested: false }));
+    assert.equal(await fs.promises.readFile(harness.request.targetEpfPath, 'utf8'), 'old epf');
+});

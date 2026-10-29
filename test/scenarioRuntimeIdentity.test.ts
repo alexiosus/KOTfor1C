@@ -84,6 +84,34 @@ test('an old scenario Default value does not enable a scenario without saved sel
     });
 });
 
+test('source format conversion preserves selected and unselected scenarios in either direction', () => {
+    for (const [oldName, newName] of [['scen.yaml', 'meta.yaml'], ['meta.yaml', 'scen.yaml']]) {
+        const converted = scenario('Same name', 'converted', `file:///converted/${newName}`);
+        const sibling = scenario('Same name', 'sibling', `file:///sibling/${newName}`);
+        const catalog = buildScenarioCatalog([converted, sibling]);
+        for (const selected of [true, false]) {
+            assert.deepEqual(migrateLegacySelectionStates(catalog, { 'Same name': !selected }, {
+                [`file:///converted/${oldName}`]: selected
+            }), {
+                [`file:///converted/${newName}`]: selected,
+                [`file:///sibling/${newName}`]: false
+            });
+        }
+        assert.equal(migrateLegacySelectionStates(catalog, {}, {
+            [`file:///converted/${oldName}`]: true,
+            [`file:///converted/${newName}`]: false
+        })[`file:///converted/${newName}`], false, 'the current descriptor state takes precedence');
+    }
+});
+
+test('coexisting YAML descriptors do not borrow each other\'s selection', () => {
+    const legacy = scenario('Legacy', 'same', 'file:///same/scen.yaml');
+    const native = scenario('Native', 'same', 'file:///same/meta.yaml');
+    assert.deepEqual(migrateLegacySelectionStates(buildScenarioCatalog([legacy, native]), {}, {
+        'file:///same/scen.yaml': true
+    }), { 'file:///same/scen.yaml': true, 'file:///same/meta.yaml': false });
+});
+
 test('name-only runtime association is allowed only for unique definitions', () => {
     const first = scenario('Duplicate', 'a', 'file:///a/scen.yaml');
     const second = scenario('Duplicate', 'b', 'file:///b/scen.yaml');

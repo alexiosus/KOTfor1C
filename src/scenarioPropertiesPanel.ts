@@ -1,5 +1,6 @@
 import type { PropertiesLibrarySupport } from './scenarioPropertiesLibrarySupport';
 import type { FeaturePropertiesController } from './featurePropertiesController';
+import type { Translator } from './localization';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -24,6 +25,7 @@ const protocol = require('../media/scenarioPropertiesProtocol.js') as {
 
 export interface ScenarioPropertiesPanelOptions {
     context?: vscode.ExtensionContext;
+    translate?: Translator;
     runAction: ScenarioPropertiesHost['runAction'];
 }
 interface SettingsScope { root: string; recursive: boolean; owner: string }
@@ -265,7 +267,8 @@ export const SCENARIO_PROPERTIES_VIEW = 'kotTestToolkit.scenarioProperties';
 export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vscode.Disposable {
     private readonly host: ScenarioPropertiesNativeHost;
     private readonly session: ScenarioPropertiesSession;
-    private readonly labels = Object.fromEntries(Object.entries(protocol.DEFAULT_LABELS).map(([key, value]) => [key, vscode.l10n.t(value)]));
+    private readonly t: Translator;
+    private readonly labels: Record<string, string>;
     private readonly disposables: vscode.Disposable[] = [];
     private readonly panelDisposables: vscode.Disposable[] = [];
     private watchers: vscode.Disposable[] = [];
@@ -284,6 +287,8 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
     private get pinned(): boolean { return this.feature?.currentSourceUri ? this.feature.pinned : this.session.pinned; }
 
     constructor(private readonly context: vscode.ExtensionContext, private readonly textEditor: ScenarioYamlEditor, options: ScenarioPropertiesPanelOptions) {
+        this.t = options.translate ?? ((message, ...args) => vscode.l10n.t(message, ...args));
+        this.labels = Object.fromEntries(Object.entries(protocol.DEFAULT_LABELS).map(([key, value]) => [key, this.t(value)]));
         this.host = createScenarioPropertiesHost({ ...options, context });
         this.session = new ScenarioPropertiesSession(this.host, () => {
             void this.queue(async () => { if (this.pendingMessages === 0) { await this.post(); } });
@@ -364,7 +369,7 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
                 if (this.disposed) { return; }
                 await this.ensurePanel();
                 await this.post(errorText(reason));
-                void vscode.window.showErrorMessage(vscode.l10n.t(errorText(reason)));
+                void vscode.window.showErrorMessage(this.t(errorText(reason)));
             }
         });
     }
@@ -394,7 +399,7 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
                 return model.kind === 'scenario' || model.kind === 'process';
             },
             chooseFiles: async sourceUri => (await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: true,
-                defaultUri: vscode.Uri.file(path.dirname(vscode.Uri.parse(sourceUri, true).fsPath)), openLabel: vscode.l10n.t('Add files') }))?.map(uri => uri.toString()),
+                defaultUri: vscode.Uri.file(path.dirname(vscode.Uri.parse(sourceUri, true).fsPath)), openLabel: this.t('Add files') }))?.map(uri => uri.toString()),
             insertFileName: async (name, stillCurrent) => {
                 const editor = vscode.window.activeTextEditor;
                 if (!editor || !stillCurrent()) { return false; }
@@ -405,7 +410,7 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
             },
             postMessage: async message => {
                 if (this.panel && !this.disposed) {
-                    await this.panel.webview.postMessage({ ...message, ...(typeof message.error === 'string' ? { error: vscode.l10n.t(message.error) } : {}) });
+                    await this.panel.webview.postMessage({ ...message, ...(typeof message.error === 'string' ? { error: this.t(message.error) } : {}) });
                 }
             }
         });
@@ -644,12 +649,12 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
         if (!panel || this.disposed || !acknowledgement && this.pendingMessages > 0) { return; }
         if (this.feature?.state) {
             const state = this.feature.state;
-            const actions = (values: typeof state.model.actions) => values.map(action => ({ ...action, title: vscode.l10n.t(action.title) }));
+            const actions = (values: typeof state.model.actions) => values.map(action => ({ ...action, title: this.t(action.title) }));
             const message = error ?? state.error;
             await panel.webview.postMessage({ command: 'featureState', acknowledgement, state: { ...state,
                 model: { ...state.model, actions: actions(state.model.actions),
                     scenarios: state.model.scenarios.map(scenario => ({ ...scenario, actions: actions(scenario.actions) })) },
-                ...(message ? { error: vscode.l10n.t(message) } : {}), labels: this.labels } });
+                ...(message ? { error: this.t(message) } : {}), labels: this.labels } });
             this.attachments?.bindSource(undefined); return;
         }
         let state = this.session.getState();
@@ -661,7 +666,8 @@ export class ScenarioPropertiesPanel implements vscode.WebviewViewProvider, vsco
                     settings: [], selectedSettingsUri: null, metadata: null, groups: [], dirty: document.dirty, canCreateSettings: false };
             } catch { /* Preserve the last readable state and its source link. */ }
         }
-        const outgoing: ScenarioPropertiesState = { ...state, ...(error ? { error, ...(acknowledgement ? { mutationError: true } : {}) } : {}) };
+        const message = error ?? state.error;
+        const outgoing: ScenarioPropertiesState = { ...state, ...(message ? { error: this.t(message), ...(error && acknowledgement ? { mutationError: true } : {}) } : {}) };
         if (this.panel === panel && !this.disposed) {
             await panel.webview.postMessage({ command: 'state', acknowledgement, state: { ...outgoing, ...(state.source && this.library ? this.library.favorite(state.source.uri) : {}), labels: this.labels } });
             this.attachments?.bindSource(state.source && !this.unavailable ? state.source.uri : undefined);

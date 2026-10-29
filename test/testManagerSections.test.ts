@@ -507,6 +507,19 @@ test('virtual Ungrouped creation preserves the empty group identity in both sect
     }
 });
 
+test('virtual group labels are localized without translating user group names or changing group identity', () => {
+    const h = harness({}, { ungrouped: 'Без группы' });
+    h.load({ virtual: [fixture['Sales & inventory'][0]], named: [fixture['Sales & inventory'][1]] }, undefined, [
+        { id: '', key: 'virtual', name: 'Ungrouped', sections: ['main', 'process'], order: Infinity },
+        { id: 'custom', key: 'named', name: 'Ungrouped', sections: ['process'], order: 0 }
+    ]);
+    const headers = h.tree.querySelectorAll('.phase-header');
+    assert.equal(headers.filter(header => header.textContent.includes('Без группы')).length, 2);
+    assert.equal(headers.filter(header => header.textContent.includes('Ungrouped')).length, 1);
+    const virtual = headers.find(header => header.textContent.includes('Без группы'))!;
+    assert.equal(virtual.getAttribute('data-phase-name'), 'virtual');
+});
+
 test('a main-only business group can create its first process through the shared group menu', () => {
     const h = harness();
     h.load({ Sales: [fixture['Sales & inventory'][0]] }, { 'file:///main.yaml': 'checked' });

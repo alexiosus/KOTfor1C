@@ -60,7 +60,7 @@ test('manifest provides a standalone Feature language and TextMate grammar', () 
     const language = packageManifest.contributes.languages?.find(entry => entry.id === 'feature');
     assert.ok(language);
     assert.ok(language.extensions?.includes('.feature'));
-    assert.equal(language.configuration, './language-configuration-feature.json');
+    assert.equal(language.configuration, './syntaxes/feature-language-configuration.json');
 
     const grammar = packageManifest.contributes.grammars?.find(entry => entry.language === 'feature');
     assert.ok(grammar);

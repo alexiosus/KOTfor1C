@@ -8,6 +8,15 @@ const fixture = (name: string) => fs.readFileSync(path.join(process.cwd(), 'test
 const tools = () => JSON.parse(fixture('tools.json')).tools;
 const reply = (text: string) => ({ content: [{ type: 'text', text }] });
 
+test('a captured failed run with skipped rows retains its source-bound failure', () => {
+    const text = fixture('results-failed-skipped.live.ru.md');
+    assert.deepEqual(parseVanessaControlReply('get_test_results', reply(text)), {
+        kind: 'failureResult', featurePath: 'C:\\KOT\\failure-skipped.feature', lineNumber: 28
+    });
+    assert.equal(parseVanessaControlReply('get_test_results', reply(text.replace('## Шаги (14)', '## Шаги (15)'))).kind, 'unknown');
+    assert.equal(parseVanessaControlReply('get_test_results', reply(text.replace('**Skipped**', '**Unrecognized**'))).kind, 'unknown');
+});
+
 test('diagnostic capabilities negotiate runtime syntax, search, environment and bounded logs independently', () => {
     const captured = tools(); const caps = assessVanessaControlCapabilities(captured);
     for (const name of ['environment', 'runtimeSyntax', 'runtimeSearch', 'managerLog', 'clientLog'] as const) { assert.equal(caps[name]?.supported, true); }

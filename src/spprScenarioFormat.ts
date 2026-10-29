@@ -23,7 +23,7 @@ export function splitLegacySpprScenario(source: string): NativeSpprScenario {
     validateMetadata(metadata);
     const body = source.slice(marker.index + marker[0].length);
     const script = body.replace(/[^\r\n]+/gu, line => {
-        if (!line.startsWith('    ')) { throw new Error('Script lines must use the SPPR four-space wrapper; conversion would be ambiguous.'); }
+        if (line.trim() && !line.startsWith('    ')) { throw new Error('Script lines must use the SPPR four-space wrapper; conversion would be ambiguous.'); }
         return line.slice(4);
     });
     return { metadata, script };

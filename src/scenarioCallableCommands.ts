@@ -220,7 +220,7 @@ export async function handleConvertCallableScenario(services: CallableConversion
             const code = ((archive ? parseScenarioDescriptor(archive.source).scenarioCode : answer) || 'nested').replace(/[\\/:*?"<>|]/gu, '_');
             const previousFolder = archive?.originalFolder === undefined ? path.dirname(uri.fsPath) : path.resolve(path.dirname(uri.fsPath), archive.originalFolder);
             const folder = roots.length && !roots.some(root => within(previousFolder, root)) ? path.join(roots[0], code) : previousFolder;
-            const preferredFormat = archive?.format ?? vscode.workspace.getConfiguration('kotTestToolkit', uri).get<string>('newScenarioDefaults.format', 'legacy');
+            const preferredFormat = archive?.format ?? vscode.workspace.getConfiguration('kotTestToolkit', uri).get<string>('newScenarioDefaults.format', 'native');
             const destination = await vscode.window.showSaveDialog({ title: t('Nested scenario file'), defaultUri: vscode.Uri.file(path.join(folder, preferredFormat === 'native' ? 'meta.yaml' : 'scen.yaml')), filters: { YAML: ['yaml'] } });
             if (!destination) { return; }
             if (destination.scheme !== 'file' || roots.length && !roots.some(root => within(destination.fsPath, root))) { throw new Error(t('Choose a destination inside a configured SPPR scenario folder.')); }

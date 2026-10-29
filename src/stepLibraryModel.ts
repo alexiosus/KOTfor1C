@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { isUserStepAvailable } from './projectDefinition';
+import type { UserStepLibraryState } from './userStepLibraryState';
 import path from 'node:path';
 import type {
     ProjectDefinition,
@@ -40,6 +42,7 @@ export interface StepLibraryItem {
     readonly sourceLabel: string;
     readonly navigable: boolean;
     readonly insertable: boolean;
+    readonly userStepLibrary?: UserStepLibraryState;
     readonly capturedLocation?: ProjectDefinitionLocation;
     readonly hasScenarioFiles?: true;
     readonly compiledFeatureUri?: string;
@@ -381,7 +384,8 @@ export function buildStepLibrarySnapshot(
             parameters: definitionParameters,
             sourceLabel: definition.sourceLabel,
             navigable,
-            insertable: true,
+            insertable: isUserStepAvailable(definition),
+            ...(definition.userStepLibrary ? { userStepLibrary: definition.userStepLibrary } : {}),
             ...(capturedLocation ? { capturedLocation } : {}),
             ...(itemSupportsScenarioFiles ? { hasScenarioFiles: true as const } : {}),
             ...(scenarioKey ? { scenarioKey } : {}),

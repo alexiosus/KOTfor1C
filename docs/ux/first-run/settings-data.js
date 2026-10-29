@@ -417,7 +417,7 @@ window.KOT_SETTINGS_MODEL = {
       "section": "project",
       "advanced": false,
       "type": "string",
-      "default": "legacy",
+      "default": "native",
       "description": "Предпочтительный формат нового сценария СППР: `legacy` — scen.yaml; `native` — meta.yaml и scen.feature. Мастер позволяет изменить выбор для каждого сценария.",
       "preferredScope": "folder",
       "enum": [
@@ -436,7 +436,7 @@ window.KOT_SETTINGS_MODEL = {
       "section": "project",
       "advanced": true,
       "type": "boolean",
-      "default": false,
+      "default": true,
       "description": "При сохранении преобразовывать старый scen.yaml в scen.feature + meta.yaml. По умолчанию выключено. Несохранённые соседние файлы препятствуют конвертации.",
       "preferredScope": "folder",
       "hint": "При сохранении преобразовывать старый scen.yaml в scen.feature + meta.yaml."
@@ -624,12 +624,12 @@ window.KOT_SETTINGS_MODEL = {
     },
     {
       "key": "kotTestToolkit.paths.openBuildScenarioParametersManager",
-      "label": "Открыть параметры компиляции и запуска",
+      "label": "Открыть параметры сборки и запуска",
       "section": "build",
       "advanced": false,
       "type": "null",
       "default": null,
-      "description": "Нажмите кнопку ниже, чтобы открыть панель параметров компиляции и запуска, где вы можете настроить параметры тестов.\n\n[Открыть параметры компиляции и запуска](command:kotTestToolkit.openYamlParametersManager)",
+      "description": "Нажмите кнопку ниже, чтобы открыть панель параметров сборки и запуска, где вы можете настроить параметры тестов.\n\n[Открыть параметры сборки и запуска](command:kotTestToolkit.openYamlParametersManager)",
       "preferredScope": "folder",
       "editor": "action",
       "hint": "Профили параметров компилятора, Vanessa и глобальных переменных открываются в существующем менеджере."
@@ -769,7 +769,7 @@ window.KOT_SETTINGS_MODEL = {
     },
     {
       "key": "kotTestToolkit.vanessaControl.autoAddSavedClients",
-      "label": "Добавлять сохранённых клиентов в Vanessa",
+      "label": "Добавлять сохранённые клиенты тестирования в Vanessa",
       "section": "vanessa",
       "advanced": false,
       "type": "boolean",

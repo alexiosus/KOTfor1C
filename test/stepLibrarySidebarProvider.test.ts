@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import { translatorFor } from './helpers/localization';
 import vm from 'node:vm';
 import * as sidebarModel from '../src/stepLibrarySidebarModel';
 import { buildStepLibrarySnapshot } from '../src/stepLibraryModel';
@@ -122,6 +123,7 @@ async function flush(): Promise<void> {
 }
 
 interface HarnessOptions {
+    translate?: (message: string, ...args: string[]) => string;
     translations?: Readonly<Record<string, string>>;
     readonly ensureReady?: (resource?: unknown) => Promise<StepLibrarySnapshot>;
     readonly initialSnapshot?: StepLibrarySnapshot;
@@ -308,6 +310,7 @@ function createHarness(options: HarnessOptions = {}) {
         dispose(): void;
     };
     const provider = new Provider({
+        translate: options.translate,
         extensionUri: uri('file:///extension'),
         snapshotService,
         actionService,
@@ -355,6 +358,15 @@ function createHarness(options: HarnessOptions = {}) {
         get refreshCalls() { return refreshCalls; }
     };
 }
+
+test('Library sidebar uses KOT Russian for controls and standalone labels', async () => {
+    const h = createHarness({ translate: await translatorFor('Русский'), standalone: true });
+    try {
+        assert.match(h.view.webview.html, /<title>Библиотека<\/title>/);
+        assert.match(h.view.webview.html, /"ungrouped":"Без группы"/);
+        assert.doesNotMatch(h.view.webview.html, />Library</);
+    } finally { h.provider.dispose(); }
+});
 
 test('scenario Files expansion stays lazy and does not reload the sidebar snapshot', async () => {
     const definition = item(1, {

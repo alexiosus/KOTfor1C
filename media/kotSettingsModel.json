@@ -389,7 +389,7 @@
       "section": "editor",
       "advanced": true,
       "preferredScope": "user",
-      "hint": "Выберите проверки, сообщения которых нужно скрыть. По умолчанию все проверки включены.",
+      "hint": "Коды диагностик KOT, которые нужно скрыть для пользователя, рабочей области или отдельной папки. Изменение списка сразу обновляет диагностику.",
       "editor": "choices",
       "itemEnum": [
         "kotTestToolkit.unclosedIf",
@@ -521,7 +521,7 @@
     },
     {
       "key": "kotTestToolkit.paths.openBuildScenarioParametersManager",
-      "label": "Открыть параметры компиляции и запуска",
+      "label": "Открыть параметры сборки и запуска",
       "section": "build",
       "advanced": false,
       "preferredScope": "folder",
@@ -535,7 +535,7 @@
       "section": "vanessa",
       "advanced": false,
       "preferredScope": "user",
-      "hint": "Путь к vanessa-automation.epf для встроенного запуска Vanessa из Менеджера тестов (абсолютный или относительный от корня workspace).",
+      "hint": "Путь к vanessa-automation.epf для встроенного запуска Vanessa из Менеджера тестов: абсолютный или относительно папки проекта.",
       "pathKind": "epf",
       "pathPolicy": "relative",
       "labelEn": "Vanessa Automation processing"
@@ -546,7 +546,7 @@
       "section": "vanessa",
       "advanced": true,
       "preferredScope": "folder",
-      "hint": "Папка для runtime-файлов Vanessa (лог/статус сценария).",
+      "hint": "Каталог служебных файлов Vanessa: журналов выполнения и состояния сценариев. Путь абсолютный или относительно папки проекта.",
       "pathKind": "directory",
       "pathPolicy": "relative",
       "labelEn": "Vanessa runtime folder"
@@ -588,7 +588,7 @@
       "section": "vanessa",
       "advanced": true,
       "preferredScope": "user",
-      "hint": "Интервал обновления live-лога выполняемого сценария в секундах.",
+      "hint": "Интервал обновления журнала выполняемого сценария в секундах.",
       "labelEn": "Execution log refresh interval"
     },
     {
@@ -597,7 +597,7 @@
       "section": "vanessa",
       "advanced": true,
       "preferredScope": "user",
-      "hint": "Минимальное число свежих обновлений run-лога на старте, после которого фоновое автоопределение Vanessa начинает трекинг.",
+      "hint": "Минимальное число свежих обновлений журнала на старте для автоматического обнаружения и отслеживания прогона Vanessa.",
       "labelEn": "Initial log updates to wait for"
     },
     {
@@ -606,7 +606,7 @@
       "section": "vanessa",
       "advanced": true,
       "preferredScope": "user",
-      "hint": "Через сколько секунд без обновлений run-лога автоопределенный прогон Vanessa снимается как неактивный.",
+      "hint": "Время без обновлений журнала в секундах, после которого автоматически обнаруженный прогон Vanessa считается неактивным.",
       "labelEn": "Log inactivity timeout"
     },
     {
@@ -633,12 +633,12 @@
       "section": "vanessa",
       "advanced": false,
       "preferredScope": "user",
-      "hint": "Предлагать названия элементов текущей формы даже при закрытом Исследователе формы.",
+      "hint": "Читать текущую форму подключённого клиента тестирования для подсказок редактора, даже если Исследователь форм закрыт. Первый подходящий запрос загружает форму; следующие используют общий кеш и проверяют её идентификатор не чаще раза в пять секунд. Выключите, чтобы использовать только формы, уже загруженные в Исследователе форм.",
       "labelEn": "Suggest current form elements"
     },
     {
       "key": "kotTestToolkit.vanessaControl.autoAddSavedClients",
-      "label": "Добавлять сохранённых клиентов в Vanessa",
+      "label": "Добавлять сохранённые клиенты тестирования в Vanessa",
       "section": "vanessa",
       "advanced": false,
       "preferredScope": "user",
@@ -651,7 +651,7 @@
       "section": "forms",
       "advanced": true,
       "preferredScope": "user",
-      "hint": "Путь к JSON snapshot-файлу Исследователя форм, который пишет bridge-сессия.",
+      "hint": "Путь к JSON-файлу снимка формы, который создаёт сеанс моста Исследователя форм. Путь абсолютный или относительно папки проекта.",
       "pathKind": "json",
       "pathPolicy": "relative",
       "labelEn": "Form snapshot file"
@@ -662,7 +662,7 @@
       "section": "forms",
       "advanced": true,
       "preferredScope": "folder",
-      "hint": "Путь к каталогу исходников конфигурации 1С, который используется для статического обогащения Form Explorer и привязки к исходникам.",
+      "hint": "Каталог исходников конфигурации 1С для дополнения данных Исследователя форм и переходов к исходникам. Путь абсолютный или относительно папки проекта.",
       "pathKind": "directory",
       "pathPolicy": "relative",
       "labelEn": "Configuration source folder"
@@ -673,7 +673,7 @@
       "section": "forms",
       "advanced": true,
       "preferredScope": "user",
-      "hint": "Каталог для генерируемых артефактов Form Explorer: snapshot-sidecar файлов, bridge-файлов и статического индекса.",
+      "hint": "Каталог служебных файлов Исследователя форм: дополнительных данных снимков, файлов моста и статического индекса. Путь абсолютный или относительно папки проекта.",
       "pathKind": "directory",
       "pathPolicy": "relative",
       "labelEn": "Form exploration output folder"
@@ -684,7 +684,7 @@
       "section": "forms",
       "advanced": true,
       "preferredScope": "user",
-      "hint": "Необязательный шаблон shell-команды для сборки расширения Form Explorer в один клик.",
+      "hint": "Необязательный шаблон команды оболочки для замены встроенной сборки расширения Исследователя форм в файл .cfe через 1С на Windows.",
       "labelEn": "Form extension build command"
     },
     {
@@ -693,7 +693,7 @@
       "section": "forms",
       "advanced": false,
       "preferredScope": "user",
-      "hint": "Интервал перечитывания snapshot-файла Исследователя форм в секундах, пока панель открыта.",
+      "hint": "Интервал перечитывания файла снимка формы в секундах, пока панель Исследователя форм открыта.",
       "labelEn": "Form refresh interval"
     },
     {
@@ -702,7 +702,7 @@
       "section": "forms",
       "advanced": true,
       "preferredScope": "user",
-      "hint": "Автоматически показывать панель Output при подготовке и запуске Form Explorer bridge.",
+      "hint": "Автоматически показывать панель «Вывод» при подготовке и запуске моста Исследователя форм.",
       "labelEn": "Show Form Explorer output"
     },
     {
@@ -720,7 +720,7 @@
       "section": "forms",
       "advanced": false,
       "preferredScope": "user",
-      "hint": "Источник Form Explorer.",
+      "hint": "Источник Исследователя форм. Автоматический режим использует подключённый совместимый сеанс Vanessa MCP. Режим снимков сохраняет прежний мост, включая локатор и чтение строк таблицы формы.",
       "labelEn": "Form data source"
     },
     {
@@ -739,7 +739,7 @@
       "section": "infobases",
       "advanced": false,
       "preferredScope": "user",
-      "hint": "Спрашивать, какую платформу 1С использовать при запуске баз, Form Explorer и встроенного запуска Vanessa.",
+      "hint": "Спрашивать платформу 1С при запуске баз, Исследователя форм и встроенном запуске Vanessa. Если выключено, используется платформа по умолчанию.",
       "labelEn": "Ask for a platform before launch"
     },
     {
@@ -781,7 +781,7 @@
       "section": "ai",
       "advanced": true,
       "preferredScope": "user",
-      "hint": "Версия API, добавляемая как `?api-version=...` к каждому URL запроса.",
+      "hint": "Необязательная версия API в параметре ?api-version=. Укажите только если её требует сервер. Для Azure OpenAI v1, стандартного OpenAI и локальных провайдеров оставьте пустым.",
       "labelEn": "AI API version"
     },
     {
@@ -859,7 +859,7 @@
       "section": "advanced",
       "advanced": false,
       "preferredScope": "folder",
-      "hint": "Путь к служебной runtime-папке KOT для yaml_parameters.json, логов и временных артефактов сборки.",
+      "hint": "Путь к служебному каталогу KOT для yaml_parameters.json, журналов и временных результатов сборки. Это отдельный каталог, не FeatureFolder СППР.",
       "pathKind": "directory",
       "pathPolicy": "relative",
       "labelEn": "KOT runtime folder"
@@ -892,7 +892,7 @@
       "section": "build",
       "advanced": true,
       "preferredScope": "folder",
-      "hint": "Режим совместимости: перед компиляцией временно убирает настройки запуска выключенных тестов test/*.yaml, затем возвращает их. Обычно выключен; включайте только для старого рабочего процесса, которому нужен такой перенос.",
+      "hint": "Режим совместимости: при сборке временно переносить test/*.yaml отключённых сценариев во временный каталог ОС и возвращать после сборки.",
       "compatibility": true,
       "labelEn": "Exclude disabled tests by moving files"
     }

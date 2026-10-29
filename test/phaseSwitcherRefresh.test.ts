@@ -13,6 +13,7 @@ import { ScenarioDirectoryIndex } from '../src/scenarioCatalog';
 import { ScenarioRelationshipIndex } from '../src/scenarioRelationshipIndex';
 import { findExportScenarioBuildCallers } from '../src/scenarioBuildDependencies';
 import { createProjectDefinitionView } from '../src/projectDefinition';
+import * as vanessaLaunchJson from '../src/vanessaLaunchJson';
 
 function loadPhaseSwitcherProvider(workspaceUri: object, dependencies: Record<string, unknown> = {}): { prototype: object } {
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
@@ -537,6 +538,60 @@ test('artifact refresh avoids hash evaluation and build-root watcher is debounce
     assert.doesNotMatch(refreshSource, /evaluateScenarioArtifactFreshness/u);
     assert.match(source, /setTimeout\(\(\) => \{[\s\S]*?refreshScenarioBuildArtifactsFromDisk/u);
     assert.doesNotMatch(source, /SCENARIO_ARTIFACT_MANIFEST_FILE/u);
+});
+
+test('artifact watcher ignores derived combined JSON while retaining real compiler inputs and attachments', () => {
+    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' });
+    const provider = Object.create(Provider.prototype) as Record<string, any>;
+    const uri = (file: string, scheme = 'file') => ({ fsPath: file, scheme });
+    for (const file of ['/build/own.combined.json', '/build/OWN.COMBINED.JSON', '/build/Файлы/own.combined.json']) {
+        assert.equal(provider.isRelevantScenarioArtifactWatchUri(uri(file)), false, file);
+    }
+    for (const file of ['/build/own.json', '/build/own.feature', '/build/Файлы/fixture.txt']) {
+        assert.equal(provider.isRelevantScenarioArtifactWatchUri(uri(file)), true, file);
+    }
+    assert.equal(provider.isRelevantScenarioArtifactWatchUri(uri('/build/own.json', 'untitled')), false);
+});
+
+test('combined launch JSON is written once with final runtime paths and is untouched on an identical refresh', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-combined-refresh-'));
+    try {
+        const writes: string[] = [];
+        const trackedFs = { ...fs, promises: { ...fs.promises, writeFile: async (...args: Parameters<typeof fs.promises.writeFile>) => {
+            writes.push(String(args[0]));
+            return fs.promises.writeFile(...args);
+        } } };
+        const Provider = loadPhaseSwitcherProvider({ fsPath: root }, { fs: trackedFs, './vanessaLaunchJson': vanessaLaunchJson });
+        const provider = Object.create(Provider.prototype) as Record<string, any>;
+        provider.loadVanessaLaunchOverlayParameters = async () => ({ additionalParameters: [], globalVariables: [] });
+        provider.resolveVanessaRuntimeDirectory = () => path.join(root, 'runtime');
+        for (const [name, source] of [
+            ['runtime', '{"TextLogName":"old.log","LogPath":"old.status.log","ownSetting":true}'],
+            ['plain', '{"ownSetting":true}'],
+            ['invalid', 'not valid JSON']
+        ]) {
+            const sourcePath = path.join(root, `${name}.json`);
+            fs.writeFileSync(sourcePath, source);
+            const combined = await provider.createCombinedScenarioJsonArtifact(name, sourcePath, root);
+            assert.equal(writes.filter(file => file === combined).length, 1, 'publish the final payload in a single write');
+            const content = fs.readFileSync(combined, 'utf8');
+            if (name === 'runtime') {
+                const parsed = JSON.parse(content);
+                assert.equal(parsed.TextLogName, path.join(root, 'runtime', 'runtime.combined.log').replace(/\\/gu, '/'));
+                assert.equal(parsed.LogPath, path.join(root, 'runtime', 'runtime.combined.status.log').replace(/\\/gu, '/'));
+            }
+            const timestamp = new Date('2000-01-01T00:00:00Z');
+            fs.utimesSync(combined, timestamp, timestamp);
+            await provider.createCombinedScenarioJsonArtifact(name, sourcePath, root);
+            assert.equal(writes.filter(file => file === combined).length, 1, 'identical final bytes must not create another watcher event');
+            assert.equal(fs.statSync(combined).mtimeMs, timestamp.getTime());
+            assert.equal(fs.readFileSync(combined, 'utf8'), content);
+            fs.writeFileSync(sourcePath, '{"ownSetting":false}');
+            await provider.createCombinedScenarioJsonArtifact(name, sourcePath, root);
+            assert.equal(writes.filter(file => file === combined).length, 2, 'changed source JSON is still applied');
+            assert.equal(JSON.parse(fs.readFileSync(combined, 'utf8')).ownSetting, false);
+        }
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('artifact integration rescans external artifacts without pre-build hashing', () => {

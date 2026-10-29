@@ -1,3 +1,4 @@
+import { isUserStepAvailable } from '../src/projectDefinition';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,6 +39,7 @@ test('project definition completion logging does not grow with the number of mat
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './projectDefinition') { return { isUserStepAvailable }; }
             if (specifier === 'vscode') {
                 return vscode;
             }
@@ -149,6 +151,7 @@ test('Feature IntelliSense offers structural Gherkin keywords outside a scenario
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './projectDefinition') { return { isUserStepAvailable }; }
             if (specifier === 'vscode') {
                 return vscode;
             }

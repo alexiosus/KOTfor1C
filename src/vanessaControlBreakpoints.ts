@@ -14,6 +14,11 @@ export class VanessaBreakpointUnavailableError extends Error {
     constructor() { super('Vanessa Editor is not ready. Open or reload the feature in Vanessa, then retry.'); }
 }
 
+/** An MCP acknowledgement alone does not prove that the editor applied the change. */
+export class VanessaBreakpointConfirmationError extends Error {
+    constructor() { super('Vanessa did not confirm the breakpoint change. The MCP list still shows the previous state. Check the breakpoint in Vanessa before retrying.'); }
+}
+
 /** Ownership lasts only for one attachment; external breakpoints are never removed. */
 export class VanessaBreakpointReconciler {
     private owned: { target: VanessaBreakpointTarget; lines: Set<number> }[] = [];
@@ -68,12 +73,12 @@ export class VanessaBreakpointReconciler {
                     if (ports.settle) { await ports.settle(); } else { await new Promise<void>(resolve => setTimeout(resolve, 100)); }
                     remote = await read();
                 }
-                if (remote.has(line) !== wanted.has(line)) { throw new Error('Vanessa breakpoint change was not confirmed.'); }
+                if (remote.has(line) !== wanted.has(line)) { throw new VanessaBreakpointConfirmationError(); }
                 if (wanted.has(line)) { entry.lines.add(line); } else { entry.lines.delete(line); }
             }
             return Object.freeze([...remote].sort((a, b) => a - b));
         } catch (error) {
-            if (error instanceof VanessaBreakpointUnavailableError) { throw error; }
+            if (error instanceof VanessaBreakpointUnavailableError || error instanceof VanessaBreakpointConfirmationError) { throw error; }
             throw new Error('Could not confirm Vanessa breakpoints. Refresh before retrying.');
         } finally { this.busy = false; }
     }

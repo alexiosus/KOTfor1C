@@ -536,7 +536,7 @@ test('compact Step Library exposes insert, copy, open, and editor drag affordanc
     const compactCss = read('media/stepLibrarySidebar.css');
 
     assert.match(compactProvider, /\| \{ readonly command: 'copy'; readonly itemId: string \}/u);
-    assert.match(compactProvider, /actionService\.copy\(item\)/u);
+    assert.match(compactProvider, /actionService\.copy\(item, this\.resource\)/u);
     assert.match(compactScript, /createActionButton\(\s*'insert'/u);
     assert.match(compactScript, /createActionButton\('copy'/u);
     assert.match(compactScript, /createActionButton\('openDefinition'/u);

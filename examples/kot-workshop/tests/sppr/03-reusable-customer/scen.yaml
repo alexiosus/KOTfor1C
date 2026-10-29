@@ -22,5 +22,6 @@
 ВложенныеСценарии:
 
 ТекстСценария: |
-    #language: en
+    #language: ru
     And I save "[Customer]" in "WorkshopCustomer" variable
+    И я показываю учебное сообщение

@@ -8,6 +8,29 @@ test('completed runtime rows map to unique executable source lines, not a guesse
         [{ lineNumber: 5, status: 'passed' }, { lineNumber: 6, status: 'failed' }]);
     assert.deepEqual(mapVanessaStepResults(reply('1. And literal → **Success**\n2. And Delay 99 → **Success**'), source, 5), []);
 });
+
+test('skipped rows do not discard the successful and failed rows of the same run', () => {
+    const source = '# language: en\nFeature: Own\nScenario: Own\n  And Delay 0\n  And own assertion\n  And later step\n';
+    const result = { content: [{ type: 'text', text: '# Результаты тестов\n\n- Статус: Failed\n\n## Шаги (3)\n' +
+        '1. And Delay 0 → **Success** (1 мс)\n2. And own assertion → **Failed** (2 мс)\n   - Ошибка: Assertion failed\n3. And later step → **Skipped** (0 мс)\n   - Ошибка: Пропущен' }] };
+    assert.deepEqual(mapVanessaStepResults(result, source, 4), [
+        { lineNumber: 4, status: 'passed' }, { lineNumber: 5, status: 'failed' }, { lineNumber: 6, status: 'skipped' }
+    ]);
+});
+
+test('an exported call is passed only after all of its expanded steps passed', () => {
+    const source = '# language: en\nFeature: Own\nScenario: Own\n  And reusable "value"\n  And later\n';
+    const expanded = [
+        { lineNumber: 4, text: 'And save "value"' }, { lineNumber: 4, text: 'And verify "value"' },
+        { lineNumber: 5, text: 'And later' }
+    ];
+    assert.deepEqual(mapVanessaStepResults(reply('1. And save "value" → **Success**\n2. And verify "value" → **Success**'), source, 1, undefined, expanded),
+        [{ lineNumber: 4, status: 'passed' }]);
+    assert.deepEqual(mapVanessaStepResults(reply('1. And save "value" → **Success**\n2. And later → **Success**'), source, 1, undefined, expanded),
+        [{ lineNumber: 5, status: 'passed' }]);
+    assert.deepEqual(mapVanessaStepResults(reply('1. And save "value" → **Success**\n2. And verify "value" → **Failed**'), source, 1, undefined, expanded),
+        [{ lineNumber: 4, status: 'failed' }]);
+});
 test('ordered repeated steps are mapped only when their alignment is unique', () => {
     const source = '# language: en\nFeature: Own\nScenario: Own\n  And Delay 0\n  And Delay 0\n';
     assert.deepEqual(mapVanessaStepResults(reply('1. And Delay 0 → **Success**\n2. And Delay 0 → **Success**'), source, 1), [{ lineNumber: 4, status: 'passed' }, { lineNumber: 5, status: 'passed' }]);

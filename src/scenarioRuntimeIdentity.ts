@@ -101,6 +101,14 @@ export function migrateLegacySelectionStates(
             continue;
         }
 
+        // Format conversion replaces the descriptor within the same scenario directory.
+        const previousKey = key.endsWith('/meta.yaml') ? key.slice(0, -9) + 'scen.yaml'
+            : key.endsWith('/scen.yaml') ? key.slice(0, -9) + 'meta.yaml' : undefined;
+        if (previousKey && !catalog.byUri.has(previousKey) && hasOwnBoolean(currentByKey, previousKey)) {
+            migrated[key] = currentByKey[previousKey];
+            continue;
+        }
+
         const primary = catalog.primaryByName.get(scenario.name);
         if (primary === scenario && hasOwnBoolean(legacyByName, scenario.name)) {
             migrated[key] = legacyByName[scenario.name];

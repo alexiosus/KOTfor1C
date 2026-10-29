@@ -1,3 +1,4 @@
+import { isUserStepAvailable } from '../src/projectDefinition';
 import * as parameterUtils from '../src/scenarioParameterUtils';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -18,6 +19,7 @@ interface Definition {
     category?: string;
     usageExample?: string;
     sourceLabel: string;
+    userStepLibrary?: { status: 'ready'; sourceDirectory: string };
     definitionLocation?: {
         uri: string;
         range: {
@@ -104,6 +106,7 @@ function loadProvider(fileName: string): Record<string, unknown> {
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './projectDefinition') { return { isUserStepAvailable }; }
             if (specifier === './spprScenarioFiles.js') { return { readNativeScenarioMetadata: async () => ({ uri: { toString: () => 'file:///repo/meta.yaml' }, text: 'ТипФайла: Сценарий\nПараметрыСценария:\n    - ПараметрыСценария1:\n        Имя: Amount\n        Значение: 42\n' }) }; }
             if (specifier === './scenarioParameterUtils') { return parameterUtils; }
             if (specifier === './scenarioCompilerSyntax') { return compilerSyntax; }
@@ -151,6 +154,7 @@ function loadProvider(fileName: string): Record<string, unknown> {
 function definition(overrides: Partial<Definition> & Pick<Definition, 'id' | 'kind' | 'template' | 'sourceLabel'>): Definition {
     return {
         normalizedTemplate: overrides.template.replace(/\s+/g, ' ').trim(),
+        ...(overrides.kind === 'userStep' ? { userStepLibrary: { status: 'ready' as const, sourceDirectory: '/src' } } : {}),
         parameters: [],
         ...overrides
     };

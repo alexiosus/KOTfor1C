@@ -13,6 +13,9 @@
     data-param-name-placeholder="${loc.parameterNamePlaceholder}"
     data-param-value-placeholder="${loc.parameterValuePlaceholder}"
     data-remove-parameter="${loc.removeParameter}"
+    data-variable-name-placeholder="${loc.variableNamePlaceholder}"
+    data-variable-value-placeholder="${loc.variableValuePlaceholder}"
+    data-remove-variable="${loc.removeVariable}"
     data-override-title="${loc.priorityDescription}"
     data-fixed-build-parameter-hint="${loc.fixedBuildParameterHint}"
     data-reset-build-parameter-value="${loc.resetBuildParameterValue}"
@@ -51,6 +54,7 @@
             <div class="topbar-title-wrap">
                 <div class="topbar-copy">
                     <h1 class="topbar-title">${loc.title}</h1>
+                    <p class="path-hint">${loc.projectProfiles}</p>
                 </div>
             </div>
             <div class="toolbar parameters-toolbar">
@@ -321,7 +325,7 @@
                         <table id="globalVarsTable">
                             <thead>
                                 <tr>
-                                    <th>${loc.parameter}</th>
+                                    <th>${loc.variable}</th>
                                     <th>${loc.value}</th>
                                     <th class="priority-header"><span class="priority-heading"><span>${loc.priority}</span><button type="button" class="priority-hint" aria-label="${loc.priority}" aria-describedby="priorityTooltip"><span class="codicon codicon-info" aria-hidden="true"></span></button></span></th>
                                     <th class="actions-header">${loc.actions}</th>

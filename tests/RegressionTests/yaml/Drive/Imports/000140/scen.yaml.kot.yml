@@ -1,8 +1,0 @@
-version: 2
-identity:
-  kind: scenario
-  uid: 8b30cfed-bf31-4bc9-8724-847ed664bc9c
-metadata:
-  description: |-
-    - Demonstrates a file-based flow with a parameterized source path.
-    - The import file path has a default value so parent scenarios can omit it.

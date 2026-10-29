@@ -1,0 +1,97 @@
+{
+    "version": 5,
+    "activeProfileId": "workshop",
+    "profiles": [
+        {
+            "id": "workshop",
+            "name": "KOT Workshop",
+            "buildParameters": [
+                {
+                    "key": "ScenarioFolder",
+                    "value": "tests"
+                },
+                {
+                    "key": "ProcessFolder",
+                    "value": "tests"
+                },
+                {
+                    "key": "FeatureFolder",
+                    "value": ".vscode/kot-runtime/features"
+                },
+                {
+                    "key": "ModelDBSettings",
+                    "value": "config/bases.yaml"
+                },
+                {
+                    "key": "ExternalMode",
+                    "value": "true"
+                },
+                {
+                    "key": "CreateJson",
+                    "value": "false"
+                },
+                {
+                    "key": "CreateJUnit",
+                    "value": "true"
+                },
+                {
+                    "key": "CreateModellingXML",
+                    "value": "true"
+                },
+                {
+                    "key": "Libraries",
+                    "value": "libraries"
+                }
+            ],
+            "additionalVanessaParameters": [
+                {
+                    "key": "ЯзыкГенератораGherkin",
+                    "value": "en",
+                    "overrideExisting": true
+                },
+                {
+                    "key": "КаталогиБиблиотек",
+                    "value": "[\"libraries\"]",
+                    "overrideExisting": true
+                },
+                {
+                    "key": "ЗавершитьРаботуСистемы",
+                    "value": "false",
+                    "overrideExisting": true
+                },
+                {
+                    "key": "ИспользоватьКомпонентуVanessaExt",
+                    "value": "true",
+                    "overrideExisting": true
+                },
+                {
+                    "key": "ИспользоватьПарсерGherkinИзКомпонентыVanessaExt",
+                    "value": "true",
+                    "overrideExisting": true
+                },
+                {
+                    "key": "ПоискФайловСПомощьюКомпонентыVanessaExt",
+                    "value": "true",
+                    "overrideExisting": true
+                },
+                {
+                    "key": "ShowHelperOnFirstLaunch",
+                    "value": "false",
+                    "overrideExisting": true
+                }
+            ],
+            "globalVanessaVariables": [
+                {
+                    "key": "WorkshopProject",
+                    "value": "Учебная мастерская",
+                    "overrideExisting": false
+                },
+                {
+                    "key": "WorkshopRun",
+                    "value": "Первое знакомство",
+                    "overrideExisting": false
+                }
+            ]
+        }
+    ]
+}

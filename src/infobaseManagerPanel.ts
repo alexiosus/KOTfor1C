@@ -668,6 +668,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
         const splitScriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'kotWebviewSplit.js'));
 
         const loc = {
+            hidden: t('Hidden'),
             vanessaClients: {
                 title: t('Vanessa test clients'), connectManager: t('Connect Vanessa'), settings: t('Connection settings'), refresh: t('Refresh'),
                 hint: t('Select saved users to add or connect them in the current Vanessa session.'), all: t('All users'), new: t('Add user'),

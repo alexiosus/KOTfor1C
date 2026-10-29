@@ -1,15 +1,20 @@
 import { collectGherkinExecutableLines } from './gherkinAnnotations';
 import { vanessaFormReplyText } from './vanessaControlForms';
-export interface VanessaExecutionLine { readonly lineNumber: number; readonly status: 'running' | 'passed' | 'failed' | 'stopped' | 'unknown' }
+export interface VanessaExecutionLine { readonly lineNumber: number; readonly status: 'running' | 'passed' | 'failed' | 'stopped' | 'unknown' | 'skipped' }
+export interface VanessaResultStepSource { readonly lineNumber: number; readonly text: string }
+export interface VanessaResultSourceMap {
+    readonly steps: readonly VanessaResultStepSource[];
+    isCurrent(): Promise<boolean>;
+}
 /** Without line IDs, only unique text or a unique ordered alignment proves a source occurrence. */
-export function mapVanessaStepResults(reply: unknown, source: string, firstLine = 1, scenarioName?: string): VanessaExecutionLine[] {
+export function mapVanessaStepResults(reply: unknown, source: string, firstLine = 1, scenarioName?: string, expandedSteps?: readonly VanessaResultStepSource[]): VanessaExecutionLine[] {
     let text: string;
     try { text = vanessaFormReplyText(reply); } catch { return []; }
     if (!text.startsWith('# Результаты тестов\n')) { return []; }
     const parts = text.split('\n## Шаги (');
     if (parts.length !== 2) { return []; }
     const count = /^([1-9]\d*)\)\n/u.exec(parts[1])?.[1];
-    const rows = [...parts[1].matchAll(/^([1-9]\d*)\. ([^\n]+) → \*\*(Success|Failed|Broken|Pending)\*\*(?: \([^\n]* мс\))?$/gmu)];
+    const rows = [...parts[1].matchAll(/^([1-9]\d*)\. ([^\n]+) → \*\*(Success|Failed|Broken|Pending|Skipped)\*\*(?: \([^\n]* мс\))?$/gmu)];
     if (!count || Number(count) !== rows.length || rows.length > 10_000 || rows.some((row, index) => Number(row[1]) !== index + 1)) { return []; }
     const headers = source.split(/\r\n|\n|\r/u).flatMap((line, index) => {
         const match = /^\s*(?:Scenario(?: Outline)?|Сценарий|Структура сценария):\s*(.+)$/iu.exec(line);
@@ -18,7 +23,7 @@ export function mapVanessaStepResults(reply: unknown, source: string, firstLine 
     const key = (value: string) => value.trim().replace(/^\*\s*/u, '');
     const ordered = rows.map(row => key(row[2]));
     const backgroundEnd = headers[0]?.line ?? 0;
-    const allLines = collectGherkinExecutableLines({ text: source, uri: 'file:///runtime.feature', language: /^# language: ru$/mu.test(source) ? 'ru' : 'en' })
+    const allLines = (expandedSteps ?? collectGherkinExecutableLines({ text: source, uri: 'file:///runtime.feature', language: /^# language: ru$/mu.test(source) ? 'ru' : 'en' }))
         .filter(line => line.lineNumber >= firstLine || line.lineNumber < backgroundEnd);
     const scope = (owner: typeof headers[number]) => {
         const end = headers.find(header => header.line > owner.line)?.line ?? Infinity;
@@ -45,19 +50,29 @@ export function mapVanessaStepResults(reply: unknown, source: string, firstLine 
         return matches;
     };
     const earliest = align(false); const latest = align(true);
-    const byText = new Map<string, typeof lines>();
-    for (const line of lines) {
+    const byText = new Map<string, number[]>();
+    for (const [index, line] of lines.entries()) {
         const matches = byText.get(key(line.text));
-        if (matches) { matches.push(line); } else { byText.set(key(line.text), [line]); }
+        if (matches) { matches.push(index); } else { byText.set(key(line.text), [index]); }
     }
-    const result = new Map<number, VanessaExecutionLine>();
+    const statuses = new Map<number, VanessaExecutionLine['status']>();
     for (const [index, row] of rows.entries()) {
         const candidates = byText.get(key(row[2]));
-        const line = earliest && latest && earliest[index] === latest[index] ? lines[earliest[index]] : candidates?.length === 1 ? candidates[0] : undefined;
-        if (!line) { continue; }
-        const lineNumber = line.lineNumber;
-        const status = row[3] === 'Success' ? 'passed' : row[3] === 'Broken' ? 'stopped' : row[3] === 'Pending' ? 'unknown' : 'failed';
-        if (result.get(lineNumber)?.status !== 'failed') { result.set(lineNumber, { lineNumber, status }); }
+        const target = earliest && latest && earliest[index] === latest[index] ? earliest[index] : candidates?.length === 1 ? candidates[0] : undefined;
+        if (target === undefined) { continue; }
+        const status = row[3] === 'Success' ? 'passed' : row[3] === 'Broken' ? 'stopped' : row[3] === 'Pending' ? 'unknown' : row[3] === 'Skipped' ? 'skipped' : 'failed';
+        if (statuses.get(target) !== 'failed') { statuses.set(target, status); }
     }
-    return [...result.values()].sort((a, b) => a.lineNumber - b.lineNumber);
+    const byLine = new Map<number, (VanessaExecutionLine['status'] | undefined)[]>();
+    for (const [index, line] of lines.entries()) {
+        const values = byLine.get(line.lineNumber) ?? []; values.push(statuses.get(index)); byLine.set(line.lineNumber, values);
+    }
+    return [...byLine].flatMap(([lineNumber, values]): VanessaExecutionLine[] => {
+        // One failed child proves a failed call; success requires every expanded child.
+        if (values.includes('failed')) { return [{ lineNumber, status: 'failed' }]; }
+        if (values.includes(undefined)) { return []; }
+        const status = values.includes('stopped') ? 'stopped' : values.every(value => value === 'passed') ? 'passed'
+            : values.every(value => value === 'skipped') ? 'skipped' : 'unknown';
+        return [{ lineNumber, status }];
+    }).sort((a, b) => a.lineNumber - b.lineNumber);
 }

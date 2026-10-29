@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
     collectTreeWithConcurrencyLimit,
@@ -13,6 +14,7 @@ import type {
     ProjectDefinitionWarning
 } from './projectDefinition';
 import { buildProjectDefinitionSnapshot } from './projectDefinitionIndex';
+import type { UserStepLibraryState } from './userStepLibraryState';
 
 export interface ProjectDefinitionIndexConfiguration {
     readonly identity: string;
@@ -85,6 +87,7 @@ export interface ProjectDefinitionIndexProvider {
 }
 
 export interface ProjectDefinitionIndexServiceOptions {
+    readonly resolveUserStepLibrary?: (sourcePath: string, libraryRootPath: string) => Promise<UserStepLibraryState>;
     readonly parserVersion: string;
     readonly fileSystem: ProjectDefinitionFileSystem;
     readonly cache?: ProjectDefinitionCacheStore;
@@ -125,6 +128,8 @@ interface EnumerationResult {
 }
 
 interface FolderCoordinator {
+    libraryRefreshRequested?: boolean;
+    libraryRefreshJob?: Promise<void>;
     readonly configuration: ProjectDefinitionIndexConfiguration;
     readonly generation: number;
     readonly cancellation: CancellationFlag;
@@ -411,6 +416,11 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
         }
     }
 
+    async refreshLibraries(): Promise<void> {
+        for (const coordinator of this.#coordinators.values()) { this.#queueLibraryRefresh(coordinator); }
+        await this.waitForIdle();
+    }
+
     dispose(): void {
         if (this.#disposed) {
             return;
@@ -565,6 +575,13 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
         if (!this.#isCurrent(coordinator)) {
             return;
         }
+        const sourceDirectories = this.#options.resolveUserStepLibrary
+            ? new Set(coordinator.snapshot?.definitions.flatMap(definition => definition.userStepLibrary ? [definition.userStepLibrary.sourceDirectory] : [])) : undefined;
+        const inSourceProject = sourceDirectories && [...sourceDirectories].some(directory => relativePathWithin(directory, filePath) !== null);
+        if (this.#options.resolveUserStepLibrary && (inSourceProject || /\.(?:bsl|epf|xml)$|\.kot-(?:build|import)\.json$|[\\/]\.kot-library\.json$/iu.test(filePath))) {
+            this.#queueLibraryRefresh(coordinator);
+            return;
+        }
         if (isEpfPath(filePath)) {
             if (change === 'delete') {
                 coordinator.epfPaths.delete(normalizedPath(filePath));
@@ -594,6 +611,21 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
         coordinator.job = this.#track(job);
     }
 
+    #queueLibraryRefresh(coordinator: FolderCoordinator): void {
+        coordinator.libraryRefreshRequested = true;
+        if (coordinator.libraryRefreshJob) { return; }
+        const previous = coordinator.job;
+        const job = (async () => {
+            if (previous) { await previous.catch(() => undefined); }
+            while (coordinator.libraryRefreshRequested && this.#isCurrent(coordinator)) {
+                coordinator.libraryRefreshRequested = false;
+                await this.#scan(coordinator);
+            }
+        })().finally(() => { coordinator.libraryRefreshJob = undefined; });
+        coordinator.libraryRefreshJob = job;
+        coordinator.job = this.#track(job);
+    }
+
     async #scan(coordinator: FolderCoordinator): Promise<void> {
         try {
             const cachedRecords = await coordinator.cache?.load(
@@ -603,7 +635,7 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
             if (!this.#isCurrent(coordinator)) {
                 return;
             }
-            if (cachedRecords.length > 0) {
+            if (cachedRecords.length > 0 && !this.#options.resolveUserStepLibrary) {
                 this.#publish(coordinator, this.#buildSnapshot(coordinator, cachedRecords, []), 'cache');
             }
 
@@ -737,11 +769,16 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
             return this.#errorRecord(uri, `Cannot stat project definition source: ${String(error)}`);
         }
         const cached = cachedByUri.get(uri);
-        if (cached && sameFileIdentity(cached, uri, stat, this.#options.parserVersion)) {
-            return cached;
+        const verifyContent = !!this.#options.resolveUserStepLibrary && path.extname(source.filePath).toLowerCase() === '.bsl';
+        if (!verifyContent && cached && sameFileIdentity(cached, uri, stat, this.#options.parserVersion)) {
+            return this.#withLibraryState(cached, source);
         }
         try {
             const content = await this.#options.fileSystem.readFile(source.filePath);
+            const sourceFingerprint = verifyContent ? createHash('sha256').update(content).digest('hex') : undefined;
+            if (sourceFingerprint && cached?.sourceFingerprint === sourceFingerprint && cached.parserVersion === this.#options.parserVersion) {
+                return this.#withLibraryState({ ...cached, size: stat.size, mtimeMs: stat.mtimeMs }, source);
+            }
             const extension = path.extname(source.filePath).toLocaleLowerCase();
             const commonContext = {
                 sourceUri: uri,
@@ -753,14 +790,15 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
             const parsed = extension === '.feature'
                 ? parseExportScenarios(content, { ...commonContext, defaultLanguage: 'en' })
                 : parseUserStepSource(content, commonContext);
-            return Object.freeze({
+            return this.#withLibraryState(Object.freeze({
                 uri,
                 size: stat.size,
                 mtimeMs: stat.mtimeMs,
                 parserVersion: this.#options.parserVersion,
+                ...(sourceFingerprint ? { sourceFingerprint } : {}),
                 definitions: parsed.definitions,
                 warnings: parsed.warnings
-            });
+            }), source);
         } catch (error) {
             return Object.freeze({
                 ...this.#errorRecord(uri, `Cannot read or parse project definition source: ${String(error)}`),
@@ -768,6 +806,15 @@ export class ProjectDefinitionIndexService implements ProjectDefinitionIndexProv
                 mtimeMs: stat.mtimeMs
             });
         }
+    }
+
+    async #withLibraryState(record: ProjectDefinitionFileRecord, source: DiscoveredSource): Promise<ProjectDefinitionFileRecord> {
+        if (!this.#options.resolveUserStepLibrary || path.extname(source.filePath).toLowerCase() !== '.bsl') { return record; }
+        const state = await this.#options.resolveUserStepLibrary(source.uriPath, source.rootPath).catch(() => ({
+            status: 'stale' as const, sourceDirectory: path.dirname(source.filePath)
+        }));
+        return Object.freeze({ ...record, definitions: Object.freeze(record.definitions.map(definition =>
+            Object.freeze({ ...definition, userStepLibrary: Object.freeze(state) }))) });
     }
 
     #errorRecord(uri: string, message: string): ProjectDefinitionFileRecord {

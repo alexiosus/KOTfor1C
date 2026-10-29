@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import {
     normalizeProjectDefinitionTemplate,
     type ProjectDefinition,
@@ -100,7 +101,8 @@ function freezeDefinition(value: ProjectDefinition): ProjectDefinition {
         ...value,
         parameters: Object.freeze(value.parameters.map(parameter => Object.freeze({ ...parameter }))),
         definitionLocation: freezeLocation(value.definitionLocation),
-        implementationLocation: freezeLocation(value.implementationLocation)
+        implementationLocation: freezeLocation(value.implementationLocation),
+        ...(value.userStepLibrary ? { userStepLibrary: Object.freeze({ ...value.userStepLibrary }) } : {})
     });
 }
 
@@ -121,6 +123,7 @@ function freezeRecord(value: ProjectDefinitionFileRecord): ProjectDefinitionFile
         size: value.size,
         mtimeMs: value.mtimeMs,
         parserVersion: value.parserVersion,
+        ...(value.sourceFingerprint ? { sourceFingerprint: value.sourceFingerprint } : {}),
         definitions: Object.freeze(value.definitions.map(freezeDefinition)),
         warnings: Object.freeze(value.warnings.map(freezeWarning))
     });
@@ -200,10 +203,12 @@ function recordFingerprint(value: ProjectDefinitionFileRecord): string {
         size: value.size,
         mtimeMs: value.mtimeMs,
         parserVersion: value.parserVersion,
+        sourceFingerprint: value.sourceFingerprint,
         definitions: value.definitions.map(definition => ({
             id: definition.id,
             template: definition.normalizedTemplate,
             kind: definition.kind,
+            userStepLibrary: definition.userStepLibrary,
             range: definition.definitionLocation?.range
         })),
         warnings: value.warnings.map(warningKey)
@@ -254,9 +259,13 @@ export function buildProjectDefinitionSnapshot(
     const files = immutableMap(records.map(record => [record.uri, record] as const));
     const definitions: ProjectDefinition[] = [];
     const bySourceEntries: Array<readonly [string, readonly ProjectDefinition[]]> = [];
+    const sourceUris = new Set(records.map(record => normalizedUri(record.uri)));
 
     for (const record of records) {
-        const ordered = Object.freeze([...record.definitions].sort(compareDefinitions));
+        const ordered = Object.freeze(record.definitions.filter(definition => {
+            const importedModule = definition.kind === 'userStep' ? definition.userStepLibrary?.importedModulePath : undefined;
+            return !importedModule || !sourceUris.has(normalizedUri(pathToFileURL(importedModule).href));
+        }).sort(compareDefinitions));
         definitions.push(...ordered);
         bySourceEntries.push([record.uri, ordered]);
     }

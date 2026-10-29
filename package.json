@@ -112,7 +112,7 @@
         "extensions": [
           ".feature"
         ],
-        "configuration": "./language-configuration-feature.json"
+        "configuration": "./syntaxes/feature-language-configuration.json"
       }
     ],
     "grammars": [
@@ -422,7 +422,7 @@
               "legacy",
               "native"
             ],
-            "default": "legacy",
+            "default": "native",
             "scope": "window",
             "markdownDescription": "%config.newScenarioDefaults.format.description%",
             "enumItemLabels": [
@@ -433,7 +433,7 @@
           },
           "kotTestToolkit.editor.autoMigrateScenarioYamlOnSave": {
             "type": "boolean",
-            "default": false,
+            "default": true,
             "scope": "resource",
             "markdownDescription": "%config.editor.autoMigrateScenarioYamlOnSave.description%",
             "order": 1
@@ -961,6 +961,16 @@
       {
         "command": "kotTestToolkit.buildUserStepLibrary",
         "title": "%cmd.buildUserStepLibrary.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.manageUserStepLibraries",
+        "title": "%cmd.manageUserStepLibraries.title%",
+        "category": "%cmd.category%"
+      },
+      {
+        "command": "kotTestToolkit.dumpUserStepLibrary",
+        "title": "%cmd.dumpUserStepLibrary.title%",
         "category": "%cmd.category%"
       },
       {
@@ -1734,6 +1744,13 @@
         "category": "KOT"
       },
       {
+        "command": "kotTestToolkit.convertScenarioFormatsBatch",
+        "title": "%command.convertScenarioFormatsBatch.title%",
+        "category": "KOT",
+        "icon": "$(replace-all)",
+        "enablement": "workspaceFolderCount > 0"
+      },
+      {
         "command": "kotTestToolkit.editorMenu.convertScenarioFormat",
         "title": "%command.convertScenarioFormat.title%"
       },
@@ -2194,6 +2211,11 @@
         {
           "command": "kotTestToolkit.cancelScenarioRepair",
           "group": "1_maintenance@4"
+        },
+        {
+          "command": "kotTestToolkit.convertScenarioFormatsBatch",
+          "when": "workspaceFolderCount > 0",
+          "group": "2_conversion@1"
         }
       ],
       "kotTestToolkit.phaseSwitcher.ai": [
@@ -2712,11 +2734,6 @@
           "group": "00_navigation@0"
         },
         {
-          "command": "kotTestToolkit.editorMenu.openNestedScenarioFromFeature",
-          "when": "editorTextFocus && resourceExtname == .feature",
-          "group": "00_navigation@0"
-        },
-        {
           "command": "kotTestToolkit.editorMenu.findCurrentFileReferences",
           "when": "editorTextFocus && !editorReadonly && (resourceExtname == .yaml || resourceExtname == .yml)",
           "group": "00_navigation@1"
@@ -2952,6 +2969,11 @@
         "id": "gherkinTable",
         "description": "Gherkin table line",
         "superType": "keyword"
+      },
+      {
+        "id": "gherkinVariable",
+        "description": "Vanessa runtime variable",
+        "superType": "variable"
       }
     ],
     "semanticTokenScopes": [
@@ -2992,6 +3014,9 @@
           ],
           "gherkinTable": [
             "keyword.control.cucumber.table"
+          ],
+          "gherkinVariable": [
+            "constant.numeric"
           ]
         }
       },
@@ -3032,6 +3057,9 @@
           ],
           "gherkinTable": [
             "keyword.control.cucumber.table"
+          ],
+          "gherkinVariable": [
+            "constant.numeric"
           ]
         }
       }
@@ -3097,7 +3125,8 @@
     "test": "npm run compile-tests && node --test out/test/*.test.js",
     "check:types": "tsc --noEmit && tsc -p tsconfig.tools.json --noEmit",
     "lint": "eslint src test tools/step-catalog --max-warnings 0",
-    "check": "npm run check:types && npm run lint && npm test",
+    "check": "npm run check:types && npm run lint && npm run l10n:check && npm test",
+    "l10n:check": "node tools/checkLocalization.cjs",
     "check:test-codes": "node tools/checkTestNumbering.cjs",
     "verify:yaml-corpus": "esbuild ./src/scenarioYamlCorpusVerifier.ts --bundle --outfile=out/scenarioYamlCorpusVerifier.js --format=cjs --platform=node && node out/scenarioYamlCorpusVerifier.js",
     "verify:demo": "esbuild ./tools/verify-demo-project.ts --bundle --outfile=out/verify-demo-project.js --format=cjs --platform=node && node out/verify-demo-project.js",

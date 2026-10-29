@@ -1,14 +1,15 @@
 import * as vscode from 'vscode';
 import fs from 'node:fs/promises';
 import { VanessaFeatureControl, isExecutableFeatureLine, type VanessaFeatureDocument } from './vanessaControlFeature';
-import type { VanessaControlSession } from './vanessaControlSession';
+import type { VanessaControlFailure, VanessaControlSession } from './vanessaControlSession';
 import { isExecutableYamlControlLine, type VanessaYamlControl } from './vanessaControlYaml';
 import { VanessaExecutionHighlighter } from './vanessaControlHighlighting';
 
 /** Manual feature commands share the attached session; ordinary F5/debug launches stay independent. */
 export function registerVanessaControlCommands(context: vscode.ExtensionContext, session: VanessaControlSession, yamlControl?: VanessaYamlControl,
     ensureConnected: () => Promise<boolean> = async () => true,
-    trackRun?: (filePath: string) => (passed: boolean) => Promise<void>): void {
+    trackRun?: (filePath: string) => (passed: boolean) => Promise<void>,
+    failureHover?: (failure: VanessaControlFailure, document: vscode.TextDocument) => vscode.MarkdownString | undefined): void {
     const decoration = new VanessaExecutionHighlighter();
     let reportedFailure: unknown;
     let executedSource: VanessaFeatureDocument | undefined;
@@ -30,7 +31,7 @@ export function registerVanessaControlCommands(context: vscode.ExtensionContext,
         return cached.text;
     };
     const labels = { running: vscode.l10n.t('Executing step…'), passed: vscode.l10n.t('Step passed'),
-        failed: vscode.l10n.t('Step failed'), stopped: vscode.l10n.t('Execution stopped'), unknown: vscode.l10n.t('Result not confirmed') };
+        failed: vscode.l10n.t('Step failed'), skipped: vscode.l10n.t('Step skipped'), stopped: vscode.l10n.t('Execution stopped'), unknown: vscode.l10n.t('Result not confirmed') };
     const current = (): VanessaFeatureDocument | undefined => {
         const editor = currentEditor();
         if (!editor) { return undefined; }
@@ -62,13 +63,14 @@ export function registerVanessaControlCommands(context: vscode.ExtensionContext,
             const line = execution ? (execution.currentLineNumber ?? execution.lineNumber) - 1 : -1;
             const lines = new Map(execution?.steps?.map(step => [step.lineNumber - 1, step.status]));
             if (execution && (execution.status === 'running' || !lines.has(line))) { lines.set(line, execution.status); }
-            const key = matches ? `${editor.document.version}:${JSON.stringify([...lines])}:${execution?.stopReason ?? ''}:${session.failure?.message ?? ''}` : '';
+            const key = matches ? `${editor.document.version}:${JSON.stringify([...lines])}:${execution?.stopReason ?? ''}:${JSON.stringify(session.failure ?? '')}` : '';
             if (decorated.get(editor) === key) { continue; }
             decorated.set(editor, key);
             if (!key || !execution) { decoration.render(editor); continue; }
             decoration.renderMany(editor, [...lines].filter(([number]) => number >= 0 && number < editor.document.lineCount).map(([number, status]) => ({ range: editor.document.lineAt(number).range, status,
                 label: execution.stopReason === 'breakpoint' && number === line ? vscode.l10n.t('Stopped before this step') : labels[status],
-                detail: status === 'failed' && session.failure?.lineNumber === number + 1 ? session.failure.message : undefined })));
+                detail: status === 'failed' && session.failure?.lineNumber === number + 1 ? session.failure.message : undefined,
+                hoverMessage: status === 'failed' && session.failure?.lineNumber === number + 1 ? failureHover?.(session.failure, editor.document) : undefined })));
         }
     };
     const control = new VanessaFeatureControl({ current,

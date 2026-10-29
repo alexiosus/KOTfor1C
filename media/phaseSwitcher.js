@@ -1017,7 +1017,7 @@
             compiledFeatureUri: runInfo?.compiledFeatureUri,
             scenarioFilesRootUri: runInfo?.scenarioFilesRootUri,
             depth: 0
-        }, { files: window.__loc?.files || 'Files' });
+        }, { files: window.__loc?.compiledFiles || 'Compiled files' });
         return `<div class="scenario-resource-tree expanded" role="group" data-scenario-key="${escapeHtmlAttr(scenarioKey)}" style="max-height:none">${nodes.map(renderScenarioFileNode).join('')}</div>`;
     }
 
@@ -1722,7 +1722,9 @@
                     ? sourceTests.filter(testInfo => scenarioSectionKind(testInfo) === kind)
                     : [];
                 const declaredGroup = declaredScenarioGroup(phaseName);
-                const displayName = declaredGroup?.name || phaseName;
+                const displayName = declaredGroup?.id === ''
+                    ? (window.__loc?.ungrouped || 'Ungrouped')
+                    : declaredGroup?.name || phaseName;
                 const groupKey = phaseGroupStateKey(phaseName, kind);
                 const domSuffix = phaseGroupDomSuffix(phaseName, kind);
                 const phaseGroupId = 'phase-group-' + domSuffix;

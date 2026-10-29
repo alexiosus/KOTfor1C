@@ -413,6 +413,7 @@ function projectDefinition(
         normalizedTemplate: overrides.template.replace(/\s+/gu, ' ').trim(),
         parameters: [],
         sourceLabel: 'Project definitions',
+        ...(overrides.kind === 'userStep' ? { userStepLibrary: { status: 'ready' as const, sourceDirectory: '/src' } } : {}),
         language: 'en',
         ...overrides
     };

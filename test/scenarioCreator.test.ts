@@ -25,7 +25,7 @@ function uri(fsPath: string) {
     return { scheme: 'file', fsPath, toString: () => pathToFileURL(fsPath).toString() };
 }
 
-async function harness(t: test.TestContext, inputs: string[], customTemplate?: string) {
+async function harness(t: test.TestContext, inputs: string[], customTemplate?: string, preferredFormat: 'legacy' | 'native' | 'default' = 'legacy') {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'kot-scenario-creator-'));
     t.after(() => fsp.rm(root, { recursive: true, force: true }));
     const modelPath = path.join(root, 'bases.yml');
@@ -45,7 +45,8 @@ async function harness(t: test.TestContext, inputs: string[], customTemplate?: s
         FileType: { File: 1, Directory: 2 },
         workspace: {
             workspaceFolders: [{ uri: uri(root) }], textDocuments: [],
-            getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'phaseSwitcher.autoAddNewScenariosToFavorites' ? false : fallback }),
+            getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'phaseSwitcher.autoAddNewScenariosToFavorites' ? false
+                : key === 'newScenarioDefaults.format' && preferredFormat !== 'default' ? preferredFormat : fallback }),
             fs: {
                 createDirectory: (target: ReturnType<typeof uri>) => fsp.mkdir(target.fsPath, { recursive: true }),
                 readFile: (target: ReturnType<typeof uri>) => customTemplate && target.fsPath.endsWith('scen.yaml')
@@ -284,6 +285,15 @@ test('the first wizard prompt opens before slow scenario discovery completes', a
     assert.ok(visible > 0, 'the name dialog must not await the full catalog scan');
 });
 
+
+test('main creation defaults to native SPPR when no source-format setting is present', async t => {
+    const h = await harness(t, ['Native Default', 'NativeDefault', '7'], undefined, 'default');
+    await h.api.handleCreateMainScenario(h.context, { groupName: 'Smoke' });
+    assert.deepEqual(h.errors, []);
+    await fsp.access(path.join(h.root, 'NativeDefault/meta.yaml'));
+    assert.deepEqual(h.opened, [path.join(h.root, 'NativeDefault/scen.feature')]);
+    await assert.rejects(fsp.access(path.join(h.root, 'NativeDefault/scen.yaml')));
+});
 
 test('main creation selects native SPPR files while keeping UID and settings linked', async t => {
     const h = await harness(t, ['Native Main', 'NativeMain', '7']);

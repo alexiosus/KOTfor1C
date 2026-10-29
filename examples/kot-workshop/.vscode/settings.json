@@ -3,8 +3,8 @@
     "kotTestToolkit.newScenarioDefaults.format": "native",
     "kotTestToolkit.editor.autoCollapseOnOpen": false,
     "kotTestToolkit.editor.autoMigrateScenarioYamlOnSave": false,
-    "kotTestToolkit.editor.showYamlActionButtons": true,
-    "kotTestToolkit.editor.showFeatureActionButtons": true,
+    "kotTestToolkit.editor.showYamlActionButtons": false,
+    "kotTestToolkit.editor.showFeatureActionButtons": false,
     "kotTestToolkit.phaseSwitcher.autoAddNewScenariosToFavorites": false,
     "kotTestToolkit.numbering.prefix": "900001"
 }

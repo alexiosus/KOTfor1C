@@ -48,6 +48,9 @@ class Range {
 }
 
 class Selection extends Range {}
+class Location {
+    public constructor(public uri: unknown, public range: Range) {}
+}
 
 const opened: Array<{ uri: string; selection?: Range }> = [];
 let quickPickIndex = 0;
@@ -56,6 +59,7 @@ const vscode = {
     Position,
     Range,
     Selection,
+    Location,
     TextEditorRevealType: { InCenterIfOutsideViewport: 1 },
     Uri: {
         parse: (value: string) => ({
@@ -98,10 +102,14 @@ function loadNavigationModule(): Record<string, unknown> {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
     }).outputText;
     const moduleObject = { exports: {} as Record<string, unknown> };
+    const nestedModule = { exports: {} as Record<string, unknown> };
+    vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/featureNestedScenarioUtils.ts', 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+    }).outputText, { module: nestedModule, exports: nestedModule.exports, require: () => vscode });
     vm.runInNewContext(compiled, {
         module: moduleObject,
         exports: moduleObject.exports,
-        require: (specifier: string) => specifier === 'vscode' ? vscode : {},
+        require: (specifier: string) => specifier === 'vscode' ? vscode : specifier === './featureNestedScenarioUtils' ? nestedModule.exports : {},
         console
     });
     return moduleObject.exports;
@@ -204,6 +212,106 @@ test('built-in definitions without source locations do not navigate', async () =
     const item = definition('built:click', 'builtInStep');
     const links = await provide({ kind: 'unique', match: match(item) });
     assert.equal(links.length, 0);
+});
+
+async function provideFromFeature(lines: string[], lineIndex: number, resolve: (text: string) => object, options: {
+    character?: number; uri?: string; cancelled?: () => boolean;
+    mappedSource?: (...args: any[]) => Promise<Location | null>; dirty?: boolean;
+} = {}) {
+    const exports = loadNavigationModule();
+    const Provider = exports.ProjectDefinitionProvider as new (resolver: object, mappedSource?: unknown) => {
+        provideDefinition: (...args: unknown[]) => Promise<unknown[]>;
+    };
+    return new Provider({ resolve: async (_uri: unknown, text: string) => resolve(text) }, options.mappedSource).provideDefinition({
+        uri: vscode.Uri.parse(options.uri ?? 'file:///repo/built.feature'),
+        lineCount: lines.length, lineAt: (line: number) => ({ text: lines[line] }), isDirty: options.dirty ?? false
+    }, new Position(lineIndex, options.character ?? 0), { get isCancellationRequested() { return options.cancelled?.() ?? false; } });
+}
+
+test('F12 inside an expanded scenario falls back to the enclosing source when the step has no source', async () => {
+    const nested = definition('nested:prepare', 'nestedScenario', {
+        definitionLocation: location('file:///repo/tests/prepare/scen.yaml', 2)
+    });
+    const lines = ['Feature: Test', 'Scenario: Main', '    *And Prepare order', '        And Delay "1"'];
+    const links = await provideFromFeature(lines, 3, text => text.includes('Prepare order')
+        ? { kind: 'unique', match: match(nested) }
+        : { kind: 'unique', match: match(definition('builtin:delay', 'builtInStep')) });
+    assert.equal(links.length, 1);
+    assert.equal((links[0] as any).targetUri.toString(), 'file:///repo/tests/prepare/scen.yaml');
+    assert.equal((links[0] as any).originSelectionRange.start.line, 3);
+    assert.equal((links[0] as any).originSelectionRange.start.character, 0);
+    assert.equal((links[0] as any).originSelectionRange.end.character, lines[3].length);
+});
+
+test('F12 returns the exact compiler source row without opening an editor', async () => {
+    opened.length = 0;
+    const lines = ['Scenario: Main', '    *And Outer', '        And Delay "1"'];
+    const nested = definition('nested:outer', 'nestedScenario', { definitionLocation: location('file:///repo/scen.yaml', 0) });
+    const links = await provideFromFeature(lines, 2, text => text.includes('Outer')
+        ? { kind: 'unique', match: match(nested) } : { kind: 'missing' }, {
+        mappedSource: async (document, position) => {
+            assert.equal(document.uri.toString(), 'file:///repo/built.feature');
+            assert.equal(position.line, 2);
+            return new Location(vscode.Uri.parse('file:///repo/scen.yaml'), new Range(17, 4, 17, 30));
+        }
+    });
+    assert.equal((links[0] as any).targetSelectionRange.start.line, 17);
+    assert.equal((links[0] as any).originSelectionRange.start.line, 2);
+    assert.deepEqual(opened, []);
+});
+
+test('F12 skips a saved compiler map for an unsaved feature and uses the enclosing call', async () => {
+    const nested = definition('nested:outer', 'nestedScenario', { definitionLocation: location('file:///repo/scen.yaml', 0) });
+    const links = await provideFromFeature(['    *And Outer', '        And Delay "1"'], 1, text => text.includes('Outer')
+        ? { kind: 'unique', match: match(nested) } : { kind: 'missing' }, {
+        dirty: true,
+        mappedSource: async () => { assert.fail('An unsaved feature cannot use the saved line map'); }
+    });
+    assert.equal((links[0] as any).targetSelectionRange.start.line, 0);
+});
+
+test('F12 uses the innermost expanded scenario and does not cross the next Scenario boundary', async () => {
+    const inner = definition('nested:inner', 'nestedScenario', {
+        definitionLocation: location('file:///repo/tests/inner.yaml', 4)
+    });
+    const lines = ['Scenario: Main', '    *And Outer', '        *And Inner', '            And Delay "1"', 'Scenario: Next', '    And Delay "2"'];
+    const resolve = (text: string) => text.includes('Inner') ? { kind: 'unique', match: match(inner) } : { kind: 'missing' };
+    const links = await provideFromFeature(lines, 3, resolve);
+    assert.equal((links[0] as any).targetUri.toString(), 'file:///repo/tests/inner.yaml');
+    assert.equal((await provideFromFeature(lines, 5, resolve)).length, 0);
+});
+
+test('F12 prefers a real step definition to its surrounding scenario', async () => {
+    const step = definition('user:step', 'userStep', { implementationLocation: location('file:///repo/steps.bsl', 40) });
+    const links = await provideFromFeature(['Scenario: Main', '    *And Outer', '        And Custom step'], 2,
+        () => ({ kind: 'unique', match: match(step) }));
+    assert.equal((links[0] as any).targetUri.toString(), 'file:///repo/steps.bsl');
+});
+
+test('F12 accepts the keyword and indentation of a call line as well as the scenario name', async () => {
+    const nested = definition('nested:prepare', 'nestedScenario', { definitionLocation: location('file:///repo/tests/prepare.yaml', 4) });
+    const lines = ['Scenario: Main', '    And Prepare order'];
+    const links = await provideFromFeature(lines, 1, () => ({ kind: 'unique', match: match(nested, 8, lines[1].length) }));
+    assert.equal((links[0] as any).originSelectionRange.start.character, 0);
+    assert.equal((links[0] as any).originSelectionRange.end.character, lines[1].length);
+});
+
+test('cancelled enclosing lookup does not publish targets and ordinary YAML keeps its navigation', async () => {
+    let cancelled = false;
+    let enclosingRequested = false;
+    const nested = definition('nested:prepare', 'nestedScenario', { definitionLocation: location('file:///repo/tests/prepare.yaml', 4) });
+    const lines = ['    *And Prepare order', '        And Delay "1"'];
+    const links = await provideFromFeature(lines, 1, text => {
+        if (text.includes('Prepare order')) { enclosingRequested = true; cancelled = true; return { kind: 'unique', match: match(nested) }; }
+        return { kind: 'missing' };
+    }, { cancelled: () => cancelled });
+    assert.equal(links.length, 0);
+    assert.equal(enclosingRequested, true);
+    assert.equal((await provideFromFeature(lines, 1, () => ({ kind: 'unique', match: match(nested) }), { uri: 'file:///repo/scen.yaml' })).length, 1);
+    assert.equal((await provideFromFeature(lines, 1, text => {
+        assert.equal(text, lines[1]);
+        return { kind: 'missing' };
+    }, { uri: 'file:///repo/scen.yaml' })).length, 0);
 });
 
 test('ambiguous calls return one LocationLink per navigable definition', async () => {
@@ -345,7 +453,8 @@ test('activation registers navigation for file-backed YAML and feature documents
         extension,
         /registerDefinitionProvider\(\s*completionAndHoverSelector,\s*definitionProvider/
     );
-    assert.match(extension, /const definitionProvider = new ProjectDefinitionProvider\(projectDefinitionResolver\)/);
+    assert.match(extension, /const definitionProvider = new ProjectDefinitionProvider\(projectDefinitionResolver,/);
+    assert.match(extension, /phaseSwitcherProvider\.resolveCompilerSourceFromFeature\(document\.uri, position\.line \+ 1, token\)/);
     assert.match(extension, /pattern: '\*\*\/\*\.yaml', scheme: 'file'/);
     assert.match(extension, /pattern: '\*\*\/\*\.feature', scheme: 'file'/);
     assert.ok(
