@@ -614,7 +614,7 @@
         const hasGroup = state.canCreateSettings !== false || state.settings.length > 0;
         shell.content.append(fields([
             ...(hasGroup ? [{ key: 'groupId', value: values.groupId || '', choices: ['', ...state.groups.map(group => group.id)], createAction: 'newGroup' },
-                { key: 'order', value: values.order ?? '' }] : []),
+                { key: 'order', value: state.displayOrder !== undefined ? state.displayOrder ?? '' : values.order ?? '' }] : []),
             { key: 'description', value: values.description || '', multiline: true, inlineAction: 'aiDescription' },
             { key: 'category', value: values.category || '', choices: ['', ...(state.catalogs?.categories || [])], createAction: 'createChoice', action: 'catalogChoice' }
         ], sourceDocument, { section: 'metadata' }, true));

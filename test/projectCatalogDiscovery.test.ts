@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -10,7 +11,7 @@ import { TestNumberingStore } from '../src/testNumberingStore';
 import type { TestInfo } from '../src/types';
 
 test('saved headers populate shared catalogs without treating the current responsible as the code-series author', async t => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-discovery-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-discovery-')));
     t.after(() => fs.rm(root, { force: true, recursive: true }));
     const info = (code: string, responsible: string, file = path.join(root, code, 'scen.yaml')) => parseTestInfoFromScenarioSource(
         `ТипФайла: Сценарий\nДанныеСценария:\n  Имя: Test ${code}\n  Код: '${code}'\n  Проект: Drive\n  Ответственный: ${responsible}\n  УровеньОтчета1: Sales\n  УровеньОтчета2: Orders\n  ФункцияСистемы: Sales\n  UIDФункцияСистемы: 98999f57-13dc-11e8-aed1-005056a5c4e8\nТекстСценария: |\n  И готово\n`,
@@ -32,8 +33,8 @@ test('saved headers populate shared catalogs without treating the current respon
 });
 
 test('dirty catalog blocks discovery before writing shared values', async t => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-discovery-dirty-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-discovery-dirty-')));
     t.after(() => fs.rm(root, { force: true, recursive: true }));
     await assert.rejects(discoverProjectCatalogs(root, [], () => { throw new Error('Save catalog'); }), /Save catalog/);
-    await assert.rejects(fs.stat(path.join(root, '.kot')), /ENOENT/);
+    assert.deepEqual(await fs.readdir(path.join(root,'.kot')),['project.yml']);
 });

@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -9,7 +10,7 @@ import { inspectSetupProject, applySetupFiles, planNewProject, suggestSetupRoots
 import { deferProjectSetup, completeProjectSetup, isProjectSetupPending } from '../src/projectSetupGate';
 
 async function fixture(t: test.TestContext) {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-setup-')); t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-setup-'));  t.after(() => fs.rm(root, { recursive: true, force: true }));
     async function put(relative: string, text: string) { const file = path.join(root, relative); await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, text); }
     return { root, put };
 }
@@ -99,6 +100,7 @@ test('new project plan is explicit and cannot overwrite existing or newly edited
 
 test('a deferred project is isolated from sibling roots and explicit completion releases only that project', async t => {
     const f = await fixture(t); const other = path.join(f.root, 'other');
+    await v3Fixture(f.root); await v3Fixture(other);
     deferProjectSetup(f.root); deferProjectSetup(other);
     assert.equal(isProjectSetupPending(path.join(f.root, 'tests')), true);
     completeProjectSetup(other);

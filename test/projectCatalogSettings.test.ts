@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -8,7 +9,7 @@ import { TestNumberingStore } from '../src/testNumberingStore';
 import { ProjectCatalogSettings, type CatalogSettingsBaseline } from '../src/projectCatalogSettings';
 
 async function fixture(t: test.TestContext) {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-native-catalogs-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-native-catalogs-')));
     t.after(() => fs.rm(root, { recursive: true, force: true }));
     const settings = new Map<string, unknown>(); const userOnly = new Set<string>();
     let baseline: CatalogSettingsBaseline | undefined; let dirty = false; let writes = 0;
@@ -28,7 +29,7 @@ async function fixture(t: test.TestContext) {
 test('native settings stay inert until shared data or explicit workspace values exist', async t => {
     const h = await fixture(t);
     assert.deepEqual(await h.sync.synchronize('project'), []);
-    assert.deepEqual(await fs.readdir(h.root), []); assert.equal(h.writes(), 0);
+    assert.deepEqual(await fs.readdir(path.join(h.root,'.kot')), ['project.yml']); assert.equal(h.writes(), 0);
     h.settings.set('catalogs.responsibles', ['Owner']);
     assert.deepEqual(await h.sync.synchronize('settings'), []);
     assert.deepEqual((await h.store.read()).responsibles, ['Owner']);
@@ -135,7 +136,7 @@ test('global catalog defaults do not create workspace configuration or project Y
     h.settings.set('catalogs.projects', ['Global default']); h.userOnly.add('catalogs.projects');
     h.host.readSetting = key => ({ value: h.settings.get(key) ?? [], explicit: !h.userOnly.has(key) && h.settings.has(key), userOnly: h.userOnly.has(key) });
     await h.sync.synchronize('project');
-    assert.equal(h.writes(), 0); assert.deepEqual(await fs.readdir(h.root), []);
+    assert.equal(h.writes(), 0); assert.deepEqual(await fs.readdir(path.join(h.root,'.kot')), ['project.yml']);
 });
 
 test('a new native system function gets a stable generated UID while blanking an existing UID preserves it', async t => {

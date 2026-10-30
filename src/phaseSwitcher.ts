@@ -1,3 +1,4 @@
+import { projectFormat } from './projectFormat';
 ﻿import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import * as path from 'path';
@@ -12,7 +13,7 @@ import { applyVanessaManualDebugOverlay, VanessaDebugClientStore, writeVanessaDe
 import type { DebugClientConfigurationUi } from './vanessaDebugClientConfiguration';
 import { readScenarioInfo, scanWorkspaceForScenarioCatalog, resolveScanDirFsPath } from './workspaceScanner';
 import { assertProjectMetadataSaved, assertProjectOrderingSourcesSaved, projectLibraryEnvironment, projectedProjectScenario, persistProjectMetadata } from './projectLibraryIntegration';
-import { applyCachedProjectScenarioMetadata, cacheProjectLibrarySnapshot, createProjectLibraryStore, loadProjectLibraryOwnedGroups, reloadProjectScenarioMetadata, remapProjectScenarioMetadata, renameProjectLibraryGroup, resolveProjectLibraryRoot, resolveProjectEntityIdentity } from './projectLibraryMetadata';
+import { applyCachedProjectScenarioMetadata, cacheProjectLibrarySnapshot, getCachedProjectLibrarySnapshot, createProjectLibraryStore, loadProjectLibraryOwnedGroups, reloadProjectScenarioMetadata, remapProjectScenarioMetadata, renameProjectLibraryGroup, resolveProjectLibraryRoot, resolveProjectEntityIdentity } from './projectLibraryMetadata';
 import { projectEntityKey, type ProjectGroup, type ProjectSection } from './projectLibraryStore';
 import { ProjectGroupDisplayOrder, projectGroupDisplayKey, type ProjectDisplayGroup } from './projectGroupDisplayOrder';
 import { TestInfo } from './types';
@@ -5861,7 +5862,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const root = resolveProjectLibraryRoot(uri.fsPath, env.workspaceRoots, env.scanRoots);
         assertProjectMetadataSaved(root);
         const store = createProjectLibraryStore(root, env.workspaceRoots, env.scanRoots, assertProjectMetadataSaved);
-        const groups = (await store.readGroups()).filter(group => group.sections.includes(section));
+        const groups = (projectFormat(root).kind === 'v3' ? await store.readGroups() : getCachedProjectLibrarySnapshot(root)?.groups ?? [])
+            .filter(group => group.sections.includes(section));
         const selected = await vscode.window.showQuickPick([
             { label: this.t('Ungrouped'), id: '', create: false },
             ...groups.map(group => ({ label: group.name, id: group.id, create: false })), { label: this.t('New group…'), id: '', create: true }
@@ -5874,7 +5876,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             if (!name?.trim()) { return; }
             groupId = (await store.ensureGroup(name.trim(), section)).id;
         } else if (groupId) {
-            const local = (await store.readGroups()).find(group => group.id === groupId);
+            const local = (projectFormat(root).kind === 'v3' ? await store.readGroups() : getCachedProjectLibrarySnapshot(root)?.groups ?? []).find(group => group.id === groupId);
             if (!local || local.name !== selected.label) { vscode.window.showWarningMessage(this.t('The group changed. Refresh the panel and try again.')); return; }
         }
         if (document.version !== version) { vscode.window.showWarningMessage(this.t('The scenario changed. Run the command again.')); return; }

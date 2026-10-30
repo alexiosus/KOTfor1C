@@ -30,7 +30,7 @@ test('an explicitly selected process without launch settings warns instead of si
 test('preflight ignores unrelated YAML, native features and project metadata', () => {
     assert.deepEqual(issues([
         { uri: 'file:///repo/bases.yaml', text: 'ЭталонныеБД:\n    broken: [\n' },
-        { uri: 'file:///repo/.kot/groups.yml', text: 'ТипФайла: "Сценарий"\nДанныеСценария: [' },
+        { uri: 'file:///repo/.kot/groups/smoke.yml', text: 'ТипФайла: "Сценарий"\nДанныеСценария: [' },
         { uri: 'file:///repo/scen.yaml.kot.yml', text: 'ТипФайла: "Сценарий"\nДанныеСценария: [' },
         { uri: 'file:///repo/native.feature', text: 'ТипФайла: "Сценарий"\nДанныеСценария: [' }
     ]), []);

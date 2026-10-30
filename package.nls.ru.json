@@ -296,11 +296,11 @@
   "config.vanessaControl.autoStart.description": "Запускать один управляемый MCP-сеанс Vanessa при активации расширения, если работающий локальный сеанс не найден. Требуются доверенная рабочая область и заполненные настройки запуска служебной базы. По умолчанию выключено; неудачная попытка при активации не повторяется.",
   "config.vanessaControl.formCompletions.description": "Читать текущую форму подключённого клиента тестирования для подсказок редактора, даже если Исследователь форм закрыт. Первый подходящий запрос загружает форму; следующие используют общий кеш и проверяют её идентификатор не чаще раза в пять секунд. Выключите, чтобы использовать только формы, уже загруженные в Исследователе форм.",
   "command.convertScenarioFormat.title": "Преобразовать формат сценария СППР…",
-  "config.newScenarioDefaults.format.description": "Предпочтительный формат нового сценария СППР: `legacy` — scen.yaml; `native` — meta.yaml и scen.feature. Мастер позволяет изменить выбор для каждого сценария.",
+  "config.newScenarioDefaults.format.description": "Предпочтительный формат нового сценария СППР: `legacy` — scen.yaml; `native` — meta.yaml и scen.feature. Мастер позволяет изменить выбор для каждого сценария. В ветках без .kot/project.yml версии 3 новые сценарии всегда создаются как scen.yaml.",
   "config.vanessaControl.autoAddSavedClients.description": "Автоматически добавлять отсутствующие сохранённые профили в подключённую Vanessa. Не подключает клиентов и не заменяет конфликтующие или изменённые профили. После отказа повтор возможен через Refresh.",
   "config.newScenarioDefaults.format.legacy": "Сценарий в одном YAML (scen.yaml)",
   "config.newScenarioDefaults.format.native": "Текст feature + метаданные YAML (scen.feature + meta.yaml)",
-  "config.editor.autoMigrateScenarioYamlOnSave.description": "При сохранении преобразовывать старый scen.yaml в scen.feature + meta.yaml. По умолчанию выключено. Несохранённые соседние файлы препятствуют конвертации.",
+  "config.editor.autoMigrateScenarioYamlOnSave.description": "При сохранении преобразовывать старый scen.yaml в scen.feature + meta.yaml. По умолчанию выключено. Несохранённые соседние файлы препятствуют конвертации. Работает только в ветках с .kot/project.yml версии 3; пользовательская настройка не включает переход проекта.",
   "cmd.createNestedProcess.title": "Создать вложенный процесс",
   "command.convertScenario.title": "Преобразования…",
   "command.convertScenarioRole.title": "Главный ↔ вложенный сценарий или процесс",
@@ -308,5 +308,6 @@
   "command.startSetup.title": "Настроить проект",
   "command.convertScenarioFormatsBatch.title": "Преобразовать YAML-сценарии в feature + meta…",
   "cmd.dumpUserStepLibrary.title": "KOT - Выгрузить исходники EPF-библиотеки",
-  "cmd.manageUserStepLibraries.title": "KOT - Библиотеки EPF"
+  "cmd.manageUserStepLibraries.title": "KOT - Библиотеки EPF",
+  "command.resolveMetadataConflicts.title": "Разрешить конфликты метаданных KOT…"
 }

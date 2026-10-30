@@ -1,3 +1,6 @@
+import * as projectFormatModule from '../src/projectFormat';
+import * as projectLegacyModule from '../src/projectLegacyMetadata';
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -13,7 +16,7 @@ import * as runtimeIdentity from '../src/scenarioRuntimeIdentity';
 import * as catalogModule from '../src/scenarioCatalog';
 
 async function fixture(t: test.TestContext) {
-    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'kot-order-provider-'));
+    const root = await v3Fixture(fsp.mkdtemp(path.join(os.tmpdir(), 'kot-order-provider-')));
     t.after(() => fsp.rm(root, { recursive: true, force: true }));
     const store = new storeModule.ProjectLibraryStore(root);
     const group = await store.ensureGroup('Smoke', 'main', 'smoke');
@@ -29,7 +32,7 @@ async function fixture(t: test.TestContext) {
         infos.push({ name, uid: name, kind, yamlFileUri: uri, tabName: kind === 'process' ? 'Ungrouped' : group.name, relativePath: file, order: index });
     }
     const values = new Map<string, unknown>();
-    let dirty = false;
+    let dirty = false; let cancelGroupPick=false;
     const warnings: string[] = [];
     const groupChoices: any[] = [];
     const refreshOptions: unknown[] = [];
@@ -45,13 +48,14 @@ async function fixture(t: test.TestContext) {
             if (specifier === 'vscode') { return { EventEmitter: class {},
                 workspace: { openTextDocument: async (uri: any) => ({ uri, version: 1 }) },
                 window: { showWarningMessage: (message: string) => warnings.push(message),
-                    showQuickPick: async (items: any[]) => { groupChoices.push(...items); return items.find(item => item.id === '' && !item.create); },
+                    showQuickPick: async (items: any[]) => { groupChoices.push(...items); return cancelGroupPick?undefined:items.find(item => item.id === '' && !item.create); },
                     showInputBox: async () => { throw new Error('Ungrouped must not prompt for a new group.'); }
                 } }; }
             if (specifier === 'path') { return path; }
             if (specifier === 'fs') { return fs; }
             if (specifier === 'os') { return os; }
             if (specifier === './projectLibraryMetadata') { return metadata; }
+            if (specifier === './projectFormat') { return projectFormatModule; }
             if (specifier === './projectGroupDisplayOrder') { return ordering; }
             if (specifier === './projectLibraryStore') { return storeModule; }
             if (specifier === './scenarioRuntimeIdentity') { return runtimeIdentity; }
@@ -79,7 +83,7 @@ async function fixture(t: test.TestContext) {
     provider.getScenarioCatalog = () => current;
     provider.publishScenarioCatalog = (catalog: typeof current) => { current = catalog; publications++; };
     provider.refreshFromExternalStateChange = async (options: unknown) => { refreshOptions.push(options); };
-    return { root, store, group, other, infos, provider, values, warnings, refreshOptions, groupChoices, publications: () => publications, setDirty: () => { dirty = true; } };
+    return { root, store, group, other, infos, provider, values, warnings, refreshOptions, groupChoices, publications: () => publications, cancelGroupPick: () => { cancelGroupPick=true; }, setDirty: () => { dirty = true; } };
 }
 
 test('existing tests can be moved to empty Ungrouped from the group picker and by drag', async t => {
@@ -94,20 +98,20 @@ test('existing tests can be moved to empty Ungrouped from the group picker and b
     assert.ok(f.groupChoices.some(choice => choice.label === 'Ungrouped' && !choice.create));
     assert.equal(f.refreshOptions[0].refreshCache, false);
     await f.provider.reorderProjectLibrary({ type: 'item', section: 'main', projectRoot: f.root, groupId: '', uri: f.infos[1].yamlFileUri.toString(),
-        expectedSource: [{ key: 'uid:b', order: 1 }], expectedDestination: [{ key: 'uid:a', order: 0 }] });
+        expectedSource: [{ key: 'uid:b', order: 1 }], expectedDestination: [{ key: 'uid:a', order: null }] });
     assert.equal((await f.store.read()).metadata['uid:b'].groupId, '');
     assert.deepEqual(f.warnings, []);
 });
 
 test('provider routes local group preference and shared item metadata through separate persistence scopes', async t => {
     const f = await fixture(t);
-    const groupsFile = path.join(f.root, '.kot', 'groups.yml');
-    const before = await fsp.readFile(groupsFile, 'utf8');
+    const groupsText = async () => JSON.stringify(await Promise.all((await fsp.readdir(path.join(f.root, '.kot/groups'))).sort().map(name => fsp.readFile(path.join(f.root, '.kot/groups', name), 'utf8'))));
+    const before = await groupsText();
     await f.provider.reorderProjectLibrary({ type: 'group', section: 'main', projectRoot: f.root, groupId: 'smoke', beforeId: 'other', expectedIds: ['other', 'smoke'] });
     assert.equal(f.publications(), 1, 'both Library snapshots are notified about personal group order');
     const groups = await f.provider.getProjectScenarioGroups();
     assert.equal(groups.find((group: any) => group.id === 'smoke').displayOrders.main, 0);
-    assert.equal(await fsp.readFile(groupsFile, 'utf8'), before);
+    assert.equal(await groupsText(), before);
     const data = f.provider._groupAndSortTestData(f.infos);
     assert.equal(Object.values<any[]>(data).flat().find(info => info.name === 'a').entityKey, 'uid:a');
     assert.ok(Object.keys(data).every(key => key.includes(f.root)), 'groups use their project owner and stable identity');
@@ -136,5 +140,12 @@ test('provider refuses foreign project, stale, malformed and cross-section drag 
     assert.equal(f.values.size, 0);
     f.setDirty();
     await f.provider.reorderProjectLibrary(base);
-    assert.deepEqual(await f.store.read(), before);
+    assert.equal((await f.store.read()).metadata['uid:b'].order, 0, 'local drag works while shared metadata is dirty');
+});
+
+test('legacy group picker includes existing inline groups without creating v3 metadata',async t=>{
+    const f=await fixture(t);await fsp.unlink(path.join(f.root,'.kot/project.yml'));
+    await metadata.loadProjectScenarioMetadata(f.infos,[f.root],[f.root]);f.cancelGroupPick();
+    await f.provider.changeScenarioGroup(f.infos[0].yamlFileUri);
+    assert.ok(f.groupChoices.some(choice=>choice.label==='Smoke'&&!choice.create));
 });

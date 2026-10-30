@@ -1,4 +1,8 @@
+import { projectFormat, assertProjectFormat3, assertProjectFormatUnchanged, type ProjectFormat } from './projectFormat';
+import { assertProjectTransitionBranch } from './projectFormatTransition';
 import fs from 'node:fs/promises';
+import { getProjectEntityDisplayOrder, type ProjectEntityDisplayOrder } from './projectEntityDisplayOrder';
+import { readProjectOrganization, planProjectOrganizationWrites, projectDeletionHistoryWrite, type ProjectOrganization } from './projectLibraryOrganization';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { parseDocument, stringify } from 'yaml';
@@ -38,7 +42,7 @@ export interface ProjectLibrarySnapshot {
     readonly metadata: Readonly<Record<string, ProjectEntityMetadata>>;
     readonly identities: Readonly<Record<string, ProjectEntityIdentity>>;
     readonly legacyImports: readonly ProjectLegacyImportScope[];
-    /** Absent on older imported projects until their next explicit shared write. */
+    /** Derived from live sidecars and per-object deletion history; never persisted as a shared list. */
     readonly knownScenarioKeys?: readonly string[];
 }
 export interface ProjectLibraryImport {
@@ -57,13 +61,13 @@ interface MetadataDocument {
     readonly metadata: ProjectEntityMetadata;
 }
 interface LoadedLibrary {
+    organization: ProjectOrganization;
     groups: ProjectGroup[];
     legacyImports: ProjectLegacyImportScope[];
     records: Map<string, MetadataDocument>;
     recordPaths: Map<string, string>;
     originals: Map<string, string | undefined>;
     knownScenarioKeys: Set<string>;
-    hasScenarioLedger: boolean;
 }
 interface PendingWrite {
     readonly filePath: string;
@@ -71,6 +75,7 @@ interface PendingWrite {
 }
 export interface ProjectFileProgress { readonly label: string; readonly completed?: number; readonly total?: number }
 export interface ProjectLibraryStoreOptions {
+    readonly displayOrder?: ProjectEntityDisplayOrder;
     readonly onProgress?: (progress: ProjectFileProgress) => void;
     /** Legacy-block snapshots from the source scan. Missing entries are already known to be clean. */
     readonly sourceTexts?: ReadonlyMap<string, string>;
@@ -194,6 +199,7 @@ function group(value: unknown): ProjectGroup {
     if (typeof source.order !== 'number' || !Number.isFinite(source.order) || source.order < 0) { throw new Error('Group order must be a finite nonnegative number'); }
     return { id, name, sections: sections.filter(section => (source.sections as unknown[]).includes(section)), order: source.order };
 }
+export function validateProjectGroup(value: unknown): ProjectGroup { return group(value); }
 function sameGroupFamily(candidate: ProjectGroup, requestedSections: readonly ProjectSection[]): boolean {
     return candidate.sections.includes('standalone') === requestedSections.includes('standalone');
 }
@@ -216,17 +222,35 @@ export class ProjectLibraryStore {
     readonly rootPath: string;
     private readonly groupsPath: string;
     private readonly metadataDirectory: string;
+    private operationFormat: ProjectFormat | undefined;
 
     constructor(rootPath: string, private readonly options: ProjectLibraryStoreOptions = {}) {
         this.rootPath = path.resolve(rootPath);
-        this.groupsPath = path.join(this.rootPath, '.kot', 'groups.yml');
+        this.groupsPath = path.join(this.rootPath, '.kot', 'groups');
         this.metadataDirectory = path.join(this.rootPath, '.kot', 'metadata');
     }
     metadataFilePath(identity: ProjectEntityIdentity): string { return metadataFilePath(this.rootPath, identity); }
+    private displayOrder(): ProjectEntityDisplayOrder { return this.options.displayOrder ?? getProjectEntityDisplayOrder(); }
+    private entitySection(identity: ProjectEntityIdentity): ProjectSection {
+        return identity.kind === 'feature' ? 'standalone' : identity.kind === 'process' ? 'process' : 'main';
+    }
+    private displayedMetadata(key: string, document: MetadataDocument): ProjectEntityMetadata {
+        const { order: fallback, ...shared } = document.metadata;
+        const order = this.displayOrder().rank(this.rootPath, this.entitySection(document.identity), document.metadata.groupId ?? '', key, fallback);
+        return { ...shared, ...(order === undefined ? {} : { order }) };
+    }
+
     private async serial<T>(operation: () => Promise<T>): Promise<T> {
+        const expected = projectFormat(this.rootPath);
         const key = await fs.realpath(this.rootPath).catch(() => this.rootPath);
         const previous = mutationQueues.get(key) ?? Promise.resolve();
-        const result = previous.then(operation);
+        const result = previous.then(async () => {
+            assertProjectTransitionBranch(this.rootPath);
+            assertProjectFormatUnchanged(this.rootPath, expected);
+            this.operationFormat = expected;
+            try { return await operation(); }
+            finally { this.operationFormat = undefined; }
+        });
         const tail = result.then(() => undefined, () => undefined);
         mutationQueues.set(key, tail);
         try { return await result; }
@@ -317,34 +341,20 @@ export class ProjectLibraryStore {
         });
     }
     private async load(discoverSources = true, cleanSources = discoverSources): Promise<LoadedLibrary> {
+        const format = projectFormat(this.rootPath);
         const unsafeLegacyGroups = path.join(this.rootPath, '.kot', 'groups.yaml');
-        if (await readOptional(unsafeLegacyGroups) !== undefined) {
+        if (format.kind === 'v3' && await readOptional(unsafeLegacyGroups) !== undefined) {
             throw new ProjectLibraryStoreError(unsafeLegacyGroups, 'Project library files must use .yml so the scenario compiler does not read them');
         }
-        const loaded: LoadedLibrary = { groups: [], legacyImports: [], records: new Map(), recordPaths: new Map(), originals: new Map(),
-            knownScenarioKeys: new Set(), hasScenarioLedger: true };
-        const groupsText = await readOptional(this.groupsPath);
-        loaded.originals.set(this.groupsPath, groupsText);
-        if (groupsText !== undefined) {
-            try {
-                const source = parseYaml(groupsText, this.groupsPath);
-                allowedFields(source, ['version', 'groups', 'legacyImports', 'knownScenarioKeys'], 'groups document');
-                if (source.version !== 1) { throw new Error('Unsupported project groups version'); }
-                if (!Array.isArray(source.groups)) { throw new Error('groups must be an array'); }
-                loaded.groups = source.groups.map(group);
-                if (new Set(loaded.groups.map(item => item.id)).size !== loaded.groups.length) { throw new Error('Duplicate group ID'); }
-                if (source.legacyImports !== undefined) {
-                    if (!Array.isArray(source.legacyImports) || source.legacyImports.some(scope => !importScopes.includes(scope)) || new Set(source.legacyImports).size !== source.legacyImports.length) { throw new Error('Unsupported legacy import marker'); }
-                    loaded.legacyImports = importScopes.filter(scope => (source.legacyImports as unknown[]).includes(scope));
-                }
-                if (source.knownScenarioKeys !== undefined) {
-                    if (!Array.isArray(source.knownScenarioKeys)) { throw new Error('Known scenario keys must be an array'); }
-                    const keys = source.knownScenarioKeys.map(scenarioLedgerKey);
-                    if (new Set(keys).size !== keys.length) { throw new Error('Duplicate known scenario key'); }
-                    loaded.knownScenarioKeys = new Set(keys);
-                } else if (loaded.legacyImports.includes('scenario')) { loaded.hasScenarioLedger = false; }
-            } catch (error) { this.invalid(this.groupsPath, error); }
-        }
+        let organization: ProjectOrganization;
+        const originals = new Map<string, string | undefined>();
+        try { organization = await readProjectOrganization(this.rootPath, { originals, guard: file => this.safePath(file),
+            parseGroup: group, parseKey: scenarioLedgerKey }); }
+        catch (error) { return this.invalid(this.groupsPath, error); }
+        const loaded: LoadedLibrary = { organization, groups: organization.groups, legacyImports: organization.legacyImports,
+            records: new Map(), recordPaths: new Map(), originals,
+            knownScenarioKeys: new Set(organization.knownKeys) };
+        if (format.kind !== 'v3') { return loaded; }
         await this.safePath(this.metadataDirectory);
         const entries = await fs.readdir(this.metadataDirectory, { withFileTypes: true }).catch(error => {
             if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return []; }
@@ -441,6 +451,7 @@ export class ProjectLibraryStore {
         for (const [key, document] of loaded.records) {
             if (document.identity.kind !== 'feature') { loaded.knownScenarioKeys.add(key); }
         }
+        migrations.push(...planProjectOrganizationWrites(organization, loaded.groups, loaded.legacyImports));
         if (cleanSources) {
             for (const filePath of loaded.recordPaths.values()) {
                 if (this.options.sourceTexts && !this.options.sourceTexts.has(filePath.slice(0, -'.kot.yml'.length))) { continue; }
@@ -460,35 +471,28 @@ export class ProjectLibraryStore {
     private snapshot(loaded: LoadedLibrary): ProjectLibrarySnapshot {
         return {
             groups: [...loaded.groups].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id)),
-            metadata: Object.fromEntries([...loaded.records].map(([key, value]) => [key, value.metadata])),
+            metadata: Object.fromEntries([...loaded.records].map(([key, value]) => [key, this.displayedMetadata(key, value)])),
             identities: Object.fromEntries([...loaded.records].map(([key, value]) => [key, value.identity])),
             legacyImports: loaded.legacyImports,
-            ...(loaded.hasScenarioLedger ? { knownScenarioKeys: [...loaded.knownScenarioKeys].sort() } : {})
+            knownScenarioKeys: [...loaded.knownScenarioKeys].sort()
         };
     }
     read(): Promise<ProjectLibrarySnapshot> { return this.serial(async () => this.snapshot(await this.load())); }
     /** Group choices do not require entity discovery, migration or the mutation queue. */
     async readGroups(): Promise<ProjectGroup[]> {
-        await this.safePath(this.groupsPath);
-        const text = await readOptional(this.groupsPath);
-        if (text === undefined) { return []; }
         try {
-            const source = parseYaml(text, this.groupsPath);
-            allowedFields(source, ['version', 'groups', 'legacyImports', 'knownScenarioKeys'], 'groups document');
-            if (source.version !== 1) { throw new Error('Unsupported project groups version'); }
-            if (!Array.isArray(source.groups)) { throw new Error('groups must be an array'); }
-            const groups = source.groups.map(group);
-            if (new Set(groups.map(item => item.id)).size !== groups.length) { throw new Error('Duplicate group ID'); }
-            return groups.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+            const organization = await readProjectOrganization(this.rootPath, { originals: new Map(), guard: file => this.safePath(file),
+                parseGroup: group, parseKey: scenarioLedgerKey, groupsOnly: true });
+            return organization.groups.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
         } catch (error) { return this.invalid(this.groupsPath, error); }
     }
     /** Reload known adjacent objects without rediscovering or parsing the source corpus. */
     readMetadata(): Promise<ProjectLibrarySnapshot> { return this.serial(async () => this.snapshot(await this.load(false))); }
     /** The scanner has already supplied all source identities and legacy-block snapshots. */
     readKnownSources(): Promise<ProjectLibrarySnapshot> { return this.serial(async () => this.snapshot(await this.load(false, true))); }
-    private groupsWrite(loaded: LoadedLibrary): PendingWrite {
-        return { filePath: this.groupsPath, text: stringify({ version: 1, groups: loaded.groups,
-            legacyImports: loaded.legacyImports, knownScenarioKeys: [...loaded.knownScenarioKeys].sort() }) };
+    private groupsWrites(loaded: LoadedLibrary): PendingWrite[] {
+        const writes = planProjectOrganizationWrites(loaded.organization, loaded.groups, loaded.legacyImports);
+        return writes;
     }
     private recordWrite(loaded: LoadedLibrary, key: string, document: MetadataDocument | undefined, preserveLocation = false): PendingWrite {
         const oldPath = loaded.recordPaths.get(key);
@@ -532,11 +536,18 @@ export class ProjectLibraryStore {
         }
         const changed = [...uniqueWrites.values()].filter(write => write.text !== loaded.originals.get(write.filePath));
         if (changed.length === 0) { return; }
+        const formatToken = this.operationFormat?.token;
+        assertProjectTransitionBranch(this.rootPath);
+        if (!this.operationFormat) { throw new Error('Project metadata operation has no format baseline'); }
+        assertProjectFormatUnchanged(this.rootPath, this.operationFormat);
+        assertProjectFormat3(this.rootPath, formatToken);
         this.options.beforeWrite?.(changed.map(write => write.filePath));
         const prepared: { write: PendingWrite; temporary?: string }[] = [];
         const applied: PendingWrite[] = [];
         const originals = new Map(loaded.originals);
         const guard = async () => {
+            assertProjectTransitionBranch(this.rootPath);
+            assertProjectFormat3(this.rootPath, formatToken);
             if (cleanup.some(write => write && this.options.canCleanSource?.(write.filePath) === false)) {
                 throw new ProjectLibraryStoreError(this.rootPath, 'Source changed in an editor during metadata migration');
             }
@@ -552,6 +563,7 @@ export class ProjectLibraryStore {
         try {
             let preparedCount = 0;
             this.options.onProgress?.({ label: 'Preparing project metadata…', completed: 0, total: changed.length });
+            assertProjectFormat3(this.rootPath, formatToken);
             await this.safePaths(changed.map(write => write.filePath));
             await mapWithConcurrencyLimit(changed, 16, async write => {
                 if (this.excludedPath(write.filePath)) { throw new ProjectLibraryStoreError(write.filePath, 'Project metadata belongs to another nested project root'); }
@@ -573,6 +585,8 @@ export class ProjectLibraryStore {
                 prepared.filter(item => !item.temporary), prepared.filter(item => cleanupPaths.has(item.write.filePath))]) {
                 await this.safePaths(stage.map(item => item.write.filePath));
                 await mapWithConcurrencyLimit(stage, 16, async ({ write, temporary }) => {
+                    assertProjectTransitionBranch(this.rootPath);
+                    assertProjectFormat3(this.rootPath, formatToken);
                     if (temporary) { await fs.rename(temporary, write.filePath); }
                     else { await fs.unlink(write.filePath); }
                     applied.push(write);
@@ -586,6 +600,8 @@ export class ProjectLibraryStore {
             let restored = 0;
             for (const write of applied.reverse()) {
                 try {
+                    assertProjectTransitionBranch(this.rootPath);
+                    assertProjectFormat3(this.rootPath, formatToken);
                     await this.safePath(write.filePath);
                     if (await readOptional(write.filePath) !== write.text) {
                         throw new ProjectLibraryStoreError(write.filePath, 'Cannot restore metadata changed externally during the failed write');
@@ -619,14 +635,14 @@ export class ProjectLibraryStore {
                 if (existing.sections.includes(section)) { return existing; }
                 const updated = { ...existing, sections: sections.filter(value => value === section || existing.sections.includes(value)) };
                 loaded.groups = loaded.groups.map(item => item.id === existing.id ? updated : item);
-                await this.commit(loaded, [this.groupsWrite(loaded)]);
+                await this.commit(loaded, this.groupsWrites(loaded));
                 return updated;
             }
             const id = preferredId ? textField(preferredId, 'group id') : randomUUID();
             if (loaded.groups.some(item => item.id === id)) { throw new Error('Group ID already exists'); }
             const created: ProjectGroup = { id, name: normalizedName, sections: [section], order: Math.max(-1, ...loaded.groups.map(item => item.order)) + 1 };
             loaded.groups.push(created);
-            await this.commit(loaded, [this.groupsWrite(loaded)]);
+            await this.commit(loaded, this.groupsWrites(loaded));
             return created;
         });
     }
@@ -639,7 +655,7 @@ export class ProjectLibraryStore {
             if (loaded.groups.some(item => item.id !== id && item.name === normalizedName && sameGroupFamily(item, existing.sections))) { throw new Error('A group with this name already exists'); }
             const updated = { ...existing, name: normalizedName };
             loaded.groups = loaded.groups.map(item => item.id === id ? updated : item);
-            await this.commit(loaded, [this.groupsWrite(loaded)]);
+            await this.commit(loaded, this.groupsWrites(loaded));
             return updated;
         });
     }
@@ -648,7 +664,7 @@ export class ProjectLibraryStore {
             const loaded = await this.load();
             if (!loaded.groups.some(item => item.id === id)) { return; }
             loaded.groups = loaded.groups.filter(item => item.id !== id);
-            const writes = [this.groupsWrite(loaded)];
+            const writes = this.groupsWrites(loaded);
             for (const [key, document] of loaded.records) {
                 if (document.metadata.groupId === id) { writes.push(this.recordWrite(loaded, key, { ...document, metadata: { ...document.metadata, groupId: '' } }, true)); }
             }
@@ -662,23 +678,43 @@ export class ProjectLibraryStore {
             const supplied = record(patch, 'metadata patch');
             allowedFields(supplied, metadataFields, 'metadata patch');
             const loaded = await this.load();
-            const actualSource = await this.sourceIdentity(path.join(this.rootPath, normalizedIdentity.relativePath));
+            const actualSource = await this.sourceIdentity(path.join(this.rootPath, normalizedIdentity.relativePath), loaded.originals);
             if (actualSource && (actualSource.kind !== normalizedIdentity.kind || actualSource.uid !== normalizedIdentity.uid)) {
                 throw new ProjectLibraryStoreError(this.metadataFilePath(normalizedIdentity), 'Metadata identity does not match its source UID or kind');
             }
-            const merged: Record<string, unknown> = { ...loaded.records.get(key)?.metadata };
+            const existing = loaded.records.get(key);
+            const merged: Record<string, unknown> = { ...existing?.metadata };
             for (const [field, value] of Object.entries(supplied)) {
+                if (field === 'order') { continue; }
                 if (value === null) { delete merged[field]; }
                 else if (value !== undefined) { merged[field] = value; }
             }
             const validated = metadata(merged);
             if (validated.groupId && !loaded.groups.some(item => item.id === validated.groupId)) { throw new Error('Project metadata references a missing group'); }
-            const writes = this.replacementWrites(loaded, key, { version: 2, identity: normalizedIdentity, metadata: validated });
-            if (normalizedIdentity.kind !== 'feature') { loaded.knownScenarioKeys.add(key); writes.push(this.groupsWrite(loaded)); }
-            await this.commit(loaded, writes);
+            const hasOrder = supplied.order !== undefined;
+            if (hasOrder && supplied.order !== null && (typeof supplied.order !== 'number' || !Number.isFinite(supplied.order) || supplied.order < 0)) {
+                throw new Error('Display order must be a finite nonnegative number.');
+            }
+            const hasSharedPatch = Object.entries(supplied).some(([field, value]) => field !== 'order' && value !== undefined);
+            const writes = (hasSharedPatch || !hasOrder) && (!existing || JSON.stringify(existing.metadata) !== JSON.stringify(validated)
+                || JSON.stringify(existing.identity) !== JSON.stringify(normalizedIdentity))
+                ? this.replacementWrites(loaded, key, { version: 2, identity: normalizedIdentity, metadata: validated }) : [];
+            if (writes.length && normalizedIdentity.kind !== 'feature') {
+                loaded.knownScenarioKeys.add(key);
+            }
+            const display = this.displayOrder(); const section = this.entitySection(normalizedIdentity);
+            const before = display.capture(this.rootPath, section);
+            if (hasOrder) {
+                const initial = [...loaded.records].filter(([, value]) => this.entitySection(value.identity) === section
+                    && (value.metadata.groupId ?? '') === (validated.groupId ?? ''))
+                    .map(([memberKey, value]) => ({ key: memberKey, order: display.rank(this.rootPath, section, validated.groupId ?? '', memberKey, value.metadata.order) ?? null }));
+                await display.set(this.rootPath, section, validated.groupId ?? '', key, supplied.order as number | null, initial);
+            }
+            try { await this.commit(loaded, writes); }
+            catch (error) { if (hasOrder) { await display.restore(this.rootPath, section, before); } throw error; }
         });
     }
-    /** One guarded transaction for shared membership/order; source and process-step YAML stay unchanged. */
+    /** Shared membership changes one record; all display positions are personal workspace state. */
     moveEntity(section: ProjectSection, identity: ProjectEntityIdentity, groupId: string, beforeKey: string | undefined,
         expectedSource: readonly ProjectEntityOrderState[], expectedDestination: readonly ProjectEntityOrderState[]): Promise<ProjectLibrarySnapshot> {
         return this.serial(async () => {
@@ -718,7 +754,7 @@ export class ProjectLibraryStore {
                 const memberMap = new Map(members);
                 for (const value of expected) {
                     const document = value && memberMap.get(value.key);
-                    if (!document || value.order !== (document.metadata.order ?? null)) {
+                    if (!document || value.order !== (this.displayOrder().rank(this.rootPath, section, owner, value.key, document.metadata.order) ?? null)) {
                         throw new Error('The group contents changed. Refresh the panel and try again.');
                     }
                 }
@@ -730,25 +766,16 @@ export class ProjectLibraryStore {
                 throw new Error('The ordering item no longer belongs to its target group.');
             }
             if (beforeKey === key) { return this.snapshot(loaded); }
-            const destination = targetKeys.filter(value => value !== key);
-            destination.splice(beforeKey === undefined ? destination.length : destination.indexOf(beforeKey), 0, key);
-            const updates = new Map(destination.map((value, order) => [value, { groupId, order }]));
-            if (sourceGroupId !== groupId) {
-                sourceKeys.filter(value => value !== key).forEach((value, order) => updates.set(value, { groupId: sourceGroupId, order }));
-            }
+            const display = this.displayOrder(); const before = display.capture(this.rootPath, section);
+            await display.move(this.rootPath, section, sourceGroupId, groupId, key, beforeKey, sourceKeys, targetKeys);
             const writes: PendingWrite[] = [];
-            for (const [memberKey, placement] of updates) {
-                const document = loaded.records.get(memberKey)!;
-                if (document.metadata.groupId === placement.groupId && document.metadata.order === placement.order) { continue; }
-                const owner = await this.sourceIdentity(path.join(this.rootPath, document.identity.relativePath), loaded.originals);
-                if (!owner || projectEntityKey(owner) !== memberKey || owner.kind !== requiredKind) {
-                    throw new Error('A group source changed. Refresh the panel and try again.');
-                }
-                const updated = { ...document, metadata: { ...document.metadata, ...placement } };
-                writes.push(this.recordWrite(loaded, memberKey, updated, loaded.recordPaths.has(memberKey)));
-                loaded.records.set(memberKey, updated);
+            if (sourceGroupId !== groupId) {
+                const updated = { ...source, metadata: { ...source.metadata, groupId } };
+                writes.push(this.recordWrite(loaded, key, updated, loaded.recordPaths.has(key)));
+                loaded.records.set(key, updated);
             }
-            await this.commit(loaded, writes, false);
+            try { await this.commit(loaded, writes, false); }
+            catch (error) { await display.restore(this.rootPath, section, before); throw error; }
             return this.snapshot(loaded);
         });
     }
@@ -758,7 +785,7 @@ export class ProjectLibraryStore {
             const key = projectEntityKey(normalizedIdentity);
             const loaded = await this.load();
             const writes: PendingWrite[] = [];
-            if (normalizedIdentity.kind !== 'feature') { loaded.knownScenarioKeys.add(key); writes.push(this.groupsWrite(loaded)); }
+            if (normalizedIdentity.kind !== 'feature') { loaded.knownScenarioKeys.add(key); writes.push(...projectDeletionHistoryWrite(loaded.organization, key)); }
             if (loaded.records.has(key)) { writes.push(this.recordWrite(loaded, key, undefined)); }
             await this.commit(loaded, writes);
         });
@@ -771,7 +798,10 @@ export class ProjectLibraryStore {
             const newKey = projectEntityKey(normalizedIdentity);
             const loaded = await this.load();
             const oldRecord = loaded.records.get(oldKey);
-            if (!oldRecord) { return; }
+            if (!oldRecord) {
+                await this.displayOrder().remap(this.rootPath, this.entitySection(oldIdentity), oldKey, newKey);
+                return;
+            }
             const existing = loaded.records.get(newKey);
             const writes = this.replacementWrites(loaded, newKey, { version: 2, identity: normalizedIdentity,
                 metadata: overwriteTarget ? oldRecord.metadata : existing?.metadata ?? oldRecord.metadata });
@@ -779,8 +809,12 @@ export class ProjectLibraryStore {
             if (oldPath && !writes.some(write => write.filePath === oldPath)) { writes.push({ filePath: oldPath, text: undefined }); }
             if (oldRecord.identity.kind !== 'feature') { loaded.knownScenarioKeys.add(oldKey); }
             if (normalizedIdentity.kind !== 'feature') { loaded.knownScenarioKeys.add(newKey); }
-            if (oldRecord.identity.kind !== 'feature' || normalizedIdentity.kind !== 'feature') { writes.push(this.groupsWrite(loaded)); }
-            await this.commit(loaded, writes);
+            if (oldRecord.identity.kind !== 'feature' && oldKey !== newKey) { writes.push(...projectDeletionHistoryWrite(loaded.organization, oldKey)); }
+            const display = this.displayOrder(); const section = this.entitySection(oldRecord.identity);
+            const previous = display.capture(this.rootPath, section);
+            await display.remap(this.rootPath, section, oldKey, newKey);
+            try { await this.commit(loaded, writes); }
+            catch (reason) { await display.restore(this.rootPath, section, previous); throw reason; }
         });
     }
     /** Seeds a single legacy editor document without marking the rest of the project as migrated. */
@@ -798,8 +832,7 @@ export class ProjectLibraryStore {
             for (const { identity, metadata: legacyMetadata, groupSeed } of entities) {
                 const normalizedIdentity = portableIdentity(identity);
                 const key = projectEntityKey(normalizedIdentity);
-                if (loaded.records.has(key) || loaded.knownScenarioKeys.has(key)
-                    || (loaded.legacyImports.includes('scenario') && !loaded.hasScenarioLedger)) { continue; }
+                if (loaded.records.has(key) || loaded.knownScenarioKeys.has(key)) { continue; }
                 let seededMetadata = metadata(legacyMetadata);
                 if (groupSeed) {
                     const name = textField(groupSeed.name, 'group name').trim();
@@ -823,9 +856,9 @@ export class ProjectLibraryStore {
                 writes.push(this.recordWrite(loaded, key, { version: 2, identity: normalizedIdentity, metadata: seededMetadata }));
                 loaded.records.set(key, { version: 2, identity: normalizedIdentity, metadata: seededMetadata });
                 if (normalizedIdentity.kind !== 'feature') { loaded.knownScenarioKeys.add(key); }
-                groupsChanged ||= !!groupSeed || normalizedIdentity.kind !== 'feature';
+                groupsChanged ||= !!groupSeed;
             }
-            if (groupsChanged) { writes.push(this.groupsWrite(loaded)); }
+            if (groupsChanged) { writes.push(...this.groupsWrites(loaded)); }
             await this.commit(loaded, writes);
             return this.snapshot(loaded);
         });
@@ -873,7 +906,7 @@ export class ProjectLibraryStore {
                 writes.push(this.recordWrite(loaded, key, document));
             }
             loaded.legacyImports = importScopes.filter(value => value === scope || loaded.legacyImports.includes(value));
-            writes.push(this.groupsWrite(loaded));
+            writes.push(...this.groupsWrites(loaded));
             await this.commit(loaded, writes);
             return this.snapshot(loaded);
         });

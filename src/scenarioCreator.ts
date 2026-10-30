@@ -1,3 +1,4 @@
+import { permitsNativeScenario, projectFormat, projectFormatRoot, assertProjectFormatUnchanged, assertProjectFormat3 } from './projectFormat';
 ﻿import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'node:fs/promises';
@@ -119,7 +120,8 @@ type EtalonBaseQuickPickItem = vscode.QuickPickItem & (
     | { entryKind: 'openCurrent' }
 );
 
-async function promptForScenarioFormat(config: vscode.WorkspaceConfiguration, seed?: unknown): Promise<SpprScenarioFormat | undefined> {
+async function promptForScenarioFormat(config: vscode.WorkspaceConfiguration, seed?: unknown, resource?: vscode.Uri): Promise<SpprScenarioFormat | undefined> {
+    if (resource && !permitsNativeScenario(resource.fsPath)) { return 'legacy'; }
     const explicit = seed && typeof seed === 'object' ? (seed as { format?: unknown }).format : undefined;
     if (explicit === 'legacy' || explicit === 'native') { return explicit; }
     const preferred = config.get<string>('newScenarioDefaults.format', 'native');
@@ -132,6 +134,7 @@ async function promptForScenarioFormat(config: vscode.WorkspaceConfiguration, se
 }
 
 async function writeCreatedScenario(uri: vscode.Uri, legacySource: string, format: SpprScenarioFormat): Promise<string> {
+    if(format==='native'){assertProjectFormat3(projectFormatRoot(uri.fsPath));}
     const native = format === 'native' ? splitLegacySpprScenario(legacySource) : undefined;
     const metadata = native?.metadata ?? legacySource;
     await vscode.workspace.fs.writeFile(uri, Buffer.from(metadata, 'utf8'));
@@ -161,7 +164,7 @@ const DEFAULT_NEW_SCENARIO_DEFAULTS: NewScenarioDefaults = {
 const DRIVE_MAIN_SCENARIO_BLOCK = [
     '    And I set "TestClientAlias_Placeholder" synonym to the current TestClient',
     '',
-    '    And I initialize TestClient connections',
+    '    And I refill TestClient connections table',
     '',
     '    And I save key parameters from pipeline and initialize main variables',
     '',
@@ -2385,7 +2388,9 @@ export async function handleCreateNestedScenario(
         return;
     }
 
-    const scenarioFormat = await promptForScenarioFormat(config, options);
+    const creationRoot = projectFormatRoot(baseFolderUri.fsPath);
+    const creationFormat = projectFormat(creationRoot);
+    const scenarioFormat = await promptForScenarioFormat(config, options, baseFolderUri);
     if (!scenarioFormat) { return; }
 
     // 5. Создание папок и файла
@@ -2400,6 +2405,7 @@ export async function handleCreateNestedScenario(
 
     try {
         await code.claim(baseFolderUri, async () => {
+            assertProjectFormatUnchanged(creationRoot, creationFormat);
             await fs.mkdir(scenarioFolderUri.fsPath);
             // Создаем пустую папку files
             await vscode.workspace.fs.createDirectory(filesFolderUri);
@@ -2572,7 +2578,9 @@ export async function handleCreateMainScenario(
         userProfile: selectedEtalonBaseValues.userProfile
     };
 
-    const scenarioFormat = await promptForScenarioFormat(config, seed);
+    const creationRoot = projectFormatRoot(baseFolderUri.fsPath);
+    const creationFormat = projectFormat(creationRoot);
+    const scenarioFormat = await promptForScenarioFormat(config, seed, baseFolderUri);
     if (!scenarioFormat) { return; }
 
     // 4. Подготовка путей и UID
@@ -2592,6 +2600,7 @@ export async function handleCreateMainScenario(
 
     try {
         await code.claim(baseFolderUri, async () => {
+            assertProjectFormatUnchanged(creationRoot, creationFormat);
             await fs.mkdir(scenarioFolderUri.fsPath);
             // Создаем папку сценария и вложенные папки test и files (рекурсивно)
             await vscode.workspace.fs.createDirectory(testFolderUri);

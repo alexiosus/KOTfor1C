@@ -1,3 +1,6 @@
+import { projectFormat } from './projectFormat';
+import { readLegacyMetadata } from './projectLegacyMetadata';
+import { stringify } from 'yaml';
 import type { PropertiesLibrarySupport } from './scenarioPropertiesLibrarySupport';
 import type { FeaturePropertiesController } from './featurePropertiesController';
 import type { Translator } from './localization';
@@ -9,8 +12,9 @@ import { ScenarioPropertiesSession, type ScenarioPropertiesDocument, type Scenar
 import { findLinkedScenarioSettings, type ScenarioPropertiesSource } from './scenarioPropertiesBindings';
 import { readScenarioProperties } from './scenarioPropertiesModel';
 import { parseScenarioDescriptor } from './scenarioDescriptor';
-import { createProjectLibraryStore, resolveProjectLibraryRoot } from './projectLibraryMetadata';
-import { parseProjectMetadataSidecar } from './projectLibraryStore';
+import { createProjectLibraryStore, resolveProjectLibraryRoot, resolveProjectEntityIdentity, getCachedProjectLibrarySnapshot } from './projectLibraryMetadata';
+import { getProjectEntityDisplayOrder } from './projectEntityDisplayOrder';
+import { parseProjectMetadataSidecar, projectEntityKey } from './projectLibraryStore';
 import { assertProjectMetadataSaved, persistProjectMetadata, projectLibraryEnvironment } from './projectLibraryIntegration';
 import type { ScenarioYamlEditor } from './scenarioYamlEditor';
 import { onDidChangeScenarioScanRoot } from './scenarioScanRoot';
@@ -25,6 +29,7 @@ const protocol = require('../media/scenarioPropertiesProtocol.js') as {
 };
 
 export interface ScenarioPropertiesPanelOptions {
+    onDisplayOrderChanged?(): Promise<void>;
     context?: vscode.ExtensionContext;
     translate?: Translator;
     runAction: ScenarioPropertiesHost['runAction'];
@@ -60,7 +65,9 @@ function settingsScopes(source: ScenarioPropertiesDocument): SettingsScope[] {
     const directory = path.dirname(uri.fsPath);
     // The sibling fallback is deliberately flat: a source in the project root
     // must not cause an inventory walk through the 1C configuration tree.
-    if (!scopes.some(scope => contains(scope.root, directory))) { scopes.push({ root: directory, recursive: false, owner }); }
+    if (!scopes.some(scope => contains(scope.root, directory))) {
+        scopes.push({ root: directory, recursive: false, owner }, { root: path.join(directory, 'test'), recursive: false, owner });
+    }
     return scopes;
 }
 
@@ -165,9 +172,21 @@ export function createScenarioPropertiesHost(options: ScenarioPropertiesPanelOpt
         return { uri: value.uri.toString(), text: value.getText(), version: value.version, dirty: value.isDirty || !!script?.isDirty,
             ...(script ? { scriptText: script.getText(), scriptUri: script.uri.toString() } : {}) };
     };
+    const displayTarget = (source: ScenarioPropertiesDocument) => {
+        const uri = vscode.Uri.parse(source.uri, true);
+        const env = projectLibraryEnvironment();
+        const root = resolveProjectLibraryRoot(uri.fsPath, env.workspaceRoots, env.scanRoots);
+        const descriptor = parseScenarioDescriptor(source.text);
+        const kind = descriptor.kind === 'process' ? 'process' : 'scenario';
+        const identity = resolveProjectEntityIdentity(uri.fsPath, root, kind, descriptor.uid);
+        return { root, identity, section: kind === 'process' ? 'process' as const : 'main' as const };
+    };
     const readMetadata = async (source: ScenarioPropertiesDocument): Promise<ScenarioPropertiesDocument | undefined> => {
         const sourceUri = vscode.Uri.parse(source.uri, true);
         if (sourceUri.scheme !== 'file') { throw new Error('Project metadata requires a local source file.'); }
+        const environment = projectLibraryEnvironment();
+        const owner = resolveProjectLibraryRoot(sourceUri.fsPath, environment.workspaceRoots, environment.scanRoots);
+        if (projectFormat(owner).kind !== 'v3') { return { ...source, text: stringify({ metadata: readLegacyMetadata(source.text).values }), scriptText: undefined, scriptUri: undefined }; }
         const uri = vscode.Uri.file(sourceUri.fsPath + '.kot.yml');
         const opened = vscode.workspace.textDocuments.some(value => value.uri.toString() === uri.toString() && !value.isClosed);
         if (!opened) {
@@ -218,16 +237,18 @@ export function createScenarioPropertiesHost(options: ScenarioPropertiesPanelOpt
             const scopes = settingsScopes(source);
             const directory = path.dirname(sourceUri.fsPath);
             const owner = scopes[0].owner;
-            if (!await withoutLinks(directory, owner, true)) { return []; }
-            const names = await fs.readdir(directory, { withFileTypes: true });
-            const values = await Promise.all(names.filter(entry => entry.isFile() && isYaml(entry.name)).map(async entry => {
-                const file = path.join(directory, entry.name);
-                if (file === sourceUri.fsPath || !scopes.some(scope => allowed(file, scope)) || !await withoutLinks(file, owner)) { return undefined; }
-                const uri = vscode.Uri.file(file).toString();
-                const opened = vscode.workspace.textDocuments.find(document => document.uri.toString() === uri && !document.isClosed);
-                return { uri, text: opened?.getText() ?? await fs.readFile(file, 'utf8') };
+            const values = await Promise.all([directory, path.join(directory, 'test')].map(async local => {
+                if (!await withoutLinks(local, owner, true)) { return []; }
+                const names = await fs.readdir(local, { withFileTypes: true });
+                return Promise.all(names.filter(entry => entry.isFile() && isYaml(entry.name)).map(async entry => {
+                    const file = path.join(local, entry.name);
+                    if (file === sourceUri.fsPath || !scopes.some(scope => allowed(file, scope)) || !await withoutLinks(file, owner)) { return undefined; }
+                    const uri = vscode.Uri.file(file).toString();
+                    const opened = vscode.workspace.textDocuments.find(document => document.uri.toString() === uri && !document.isClosed);
+                    return { uri, text: opened?.getText() ?? await fs.readFile(file, 'utf8') };
+                }));
             }));
-            return values.filter((value): value is ScenarioPropertiesSource => !!value);
+            return values.flat().filter((value): value is ScenarioPropertiesSource => !!value);
         },
         loadGroups: async source => {
             const uri = vscode.Uri.parse(source.uri, true);
@@ -235,9 +256,31 @@ export function createScenarioPropertiesHost(options: ScenarioPropertiesPanelOpt
             const root = resolveProjectLibraryRoot(uri.fsPath, env.workspaceRoots, env.scanRoots);
             const descriptor = parseScenarioDescriptor(source.text);
             const kind = descriptor.kind === 'process' ? 'process' : 'scenario';
-            const groups = await createProjectLibraryStore(root, env.workspaceRoots, env.scanRoots).readGroups();
+            const groups = projectFormat(root).kind !== 'v3'
+                ? getCachedProjectLibrarySnapshot(root)?.groups ?? (readLegacyMetadata(source.text).group ? [{ ...readLegacyMetadata(source.text).group!, sections: [kind === 'process' ? 'process' : 'main'] }] : [])
+                : await createProjectLibraryStore(root, env.workspaceRoots, env.scanRoots).readGroups();
             return groups.filter(group => group.sections.includes(kind === 'process' ? 'process' : 'main'))
                 .map(group => ({ id: group.id, name: group.name }));
+        },
+        readDisplayOrder: async (source, groupId) => {
+            const target = displayTarget(source);
+            if (projectFormat(target.root).kind !== 'v3') { return readLegacyMetadata(source.text).values.order ?? null; }
+            const raw = await readMetadata(source);
+            const fallback = raw ? parseProjectMetadataSidecar(raw.text, vscode.Uri.parse(raw.uri, true).fsPath, target.root).metadata.order : undefined;
+            return getProjectEntityDisplayOrder().rank(target.root, target.section, groupId, projectEntityKey(target.identity), fallback) ?? null;
+        },
+        setDisplayOrder: async (source, groupId, value) => {
+            const target = displayTarget(source);
+            const snapshot = getCachedProjectLibrarySnapshot(target.root);
+            const initial = Object.entries(snapshot?.metadata ?? {}).filter(([key, metadata]) => (metadata.groupId ?? '') === groupId
+                && snapshot?.identities[key]?.kind === target.identity.kind).map(([key, metadata]) => ({ key, order: metadata.order ?? null }));
+            await getProjectEntityDisplayOrder().set(target.root, target.section, groupId, projectEntityKey(target.identity), value, initial);
+            await options.onDisplayOrderChanged?.();
+        },
+        editProjectMetadata: async (source, patch) => {
+            const target = displayTarget(source);
+            if (projectFormat(target.root).kind === 'v3') { return false; }
+            return persistProjectMetadata(await document(source.uri), patch);
         },
         readMetadata,
         ensureMetadata: async source => {

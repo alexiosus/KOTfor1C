@@ -12,6 +12,7 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
         { name: 'get_editor_state', inputSchema: { type: 'object', properties: { includeContent: { type: 'boolean' } } } }];
     const commands = new Map<string, () => Promise<unknown>>(); const inspected: string[] = []; const attached: string[] = [];
     const state = new Map<string, unknown>(); const prompts: unknown[][] = []; const errors: string[] = [];
+    const contexts = new Map<string, unknown>();
     const tracked: Array<{ file: string; log?: string }> = [];
     const listeners: Array<(snapshot: unknown) => void> = [];
     const subscriptions: Array<{ dispose(): void }> = []; let launches = 0; let trusted = startupOptions.trusted !== false; let informationPrompts = 0;
@@ -52,7 +53,8 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
                     showInputBox: async () => { throw new Error('Unexpected endpoint input'); }, showErrorMessage: (error: string) => errors.push(error),
                     showInformationMessage: async (_message: string, _options: unknown, current: string) => { informationPrompts++; return startupOptions.useCurrent ? current : undefined; },
                     withProgress: async (_options: unknown, work: (progress: unknown, token: unknown) => Promise<unknown>) => work({}, { onCancellationRequested: noop, isCancellationRequested: false }) },
-                commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return noop(); }, executeCommand: async () => undefined } }; }
+                commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return noop(); },
+                    executeCommand: async (command: string, key: string, value: unknown) => { if (command === 'setContext') { contexts.set(key, value); } } } }; }
             if (name === './vanessaControlSession') { return { VanessaControlSession: Session }; }
             if (name === './vanessaControlTransport') { return { VanessaControlHttpTransport: Transport }; }
             if (name === './vanessaControlProtocol') { return { assessVanessaControlCapabilities, normalizeVanessaControlEndpoint }; }
@@ -68,11 +70,37 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
     { managedRunLog: (port: number) => port === 8888 ? '/own/manager.log' : undefined,
         attachedRunLog: async () => startupOptions.recoveredLog, trackRun: (file: string, log?: string) => { tracked.push({ file, log }); return async () => {}; },
         launch: async () => { launches++; return true; }, canAutoStart: () => startupOptions.canAutoStart !== false });
-    return { ...control, prompts, inspected, attached, errors, state, commands, status, tracked, notify: (snapshot: unknown) => { for (const listener of listeners) { listener(snapshot); } }, setPorts: (value: typeof resolvePorts) => { resolvePorts = value; },
+    return { ...control, prompts, inspected, attached, errors, state, contexts, commands, status, tracked, notify: (snapshot: unknown) => { for (const listener of listeners) { listener(snapshot); } }, setPorts: (value: typeof resolvePorts) => { resolvePorts = value; },
         launches: () => launches, informationPrompts: () => informationPrompts, trust: (value: boolean) => { trusted = value; },
         dispose: () => { for (const disposable of subscriptions) { disposable.dispose(); } },
         startup: async () => { initial(); for (let n = 0; n < 20; n++) { await new Promise<void>(resolve => setImmediate(resolve)); } } };
 }
+
+test('editor execution controls reset after completion and disable repeated stop while stopping', () => {
+    const h=harness([]);const executing=()=>h.contexts.get('kotTestToolkit.vanessaControlExecuting');
+    const canStop=()=>h.contexts.get('kotTestToolkit.vanessaControlCanStop');
+    assert.equal(executing(),false);assert.equal(canStop(),false);
+    const capabilities={stop:{supported:true}};
+    for(const status of ['running','stopping','ready','unknown','detached'] as const){
+        h.notify({generation:1,status,...(status==='detached'?{}:{capabilities})});
+        assert.equal(executing(),status==='running'||status==='stopping',status);
+        assert.equal(canStop(),status!=='stopping'&&status!=='detached',status);
+    }
+    h.notify({generation:1,status:'running',capabilities:{stop:{supported:false}}});
+    assert.equal(executing(),true);assert.equal(canStop(),false);
+    h.dispose();
+});
+
+test('Stop remains visible when a state poll fails during an unfinished run', () => {
+    const h=harness([]);const capabilities={stop:{supported:true}};
+    h.notify({generation:1,status:'running',runActive:true,capabilities});
+    h.notify({generation:1,status:'unknown',runActive:true,error:'request',capabilities});
+    assert.equal(h.contexts.get('kotTestToolkit.vanessaControlExecuting'),true);
+    assert.equal(h.contexts.get('kotTestToolkit.vanessaControlCanStop'),true);
+    h.notify({generation:1,status:'ready',runActive:false,capabilities});
+    assert.equal(h.contexts.get('kotTestToolkit.vanessaControlExecuting'),false);
+    h.dispose();
+});
 
 test('explicit Connect starts a managed session when discovery finds none without a second confirmation', async () => {
     const h = harness([]);

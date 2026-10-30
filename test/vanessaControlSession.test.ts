@@ -576,6 +576,31 @@ test('Stop and state bypass an active run, and selection/mutations cannot overwr
     assert.equal(session.snapshot.status, 'ready');
 });
 
+for (const mode of ['runFeature','runFromLine','oneStep'] as const) {
+test(`${mode} keeps its run active after a passed step and a failed state poll`, async () => {
+    const pending=deferred<ReturnType<typeof state>>();const started=deferred<void>();
+    let reply=state();let failPoll=false;
+    const tool=mode==='oneStep'?'execute_feature_step':'run_scenario';
+    const wire=fake(async name=>{
+        if(name===tool){started.resolve();return pending.promise;}
+        if(name==='get_vanessa_automation_state'&&failPoll){throw new Error('Polling temporarily unavailable');}
+        return reply;
+    });
+    const session=new VanessaControlSession();await session.attach(wire,'http://localhost:9876');
+    const executing=session.run(mode,'C:\\Tests\\sales.feature',12);await started.promise;
+    try {
+        reply={content:[{type:'text',text:state(true).content[0].text.replace('status: Running','status: Success')}]};
+        await session.refreshState();assert.ok(session.snapshot.execution?.steps?.some(step=>step.status==='passed'));
+        failPoll=true;await assert.rejects(session.refreshState(),/Could not read Vanessa state/u);
+        assert.equal(session.snapshot.status,'unknown');
+        assert.equal(session.snapshot.runActive,true,'the first passed step and lost status do not finish the run');
+        await session.stop();assert.ok(wire.calls.includes('stop_scenario'));
+        assert.equal(session.snapshot.runActive,true,'a Stop acknowledgement alone does not finish the run');
+    } finally {failPoll=false;reply=state();pending.resolve(reply);await executing;}
+    assert.equal(session.snapshot.runActive,false);await session.detach();
+});
+}
+
 test('unknown state and remote tool failures never become a successful run; raw server errors are not exposed', async () => {
     let fail = false; const wire = fake(async name => {
         if (fail) { throw new Error('Pwd=secret-business-value'); }

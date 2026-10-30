@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -14,7 +15,7 @@ import * as projectLibraryStore from '../src/projectLibraryStore';
 import * as projectLibraryMetadata from '../src/projectLibraryMetadata';
 
 async function harness(t: test.TestContext) {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-definition-delete-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-definition-delete-')));
     t.after(() => fs.rm(root, { recursive: true, force: true }));
     const uri = (fsPath: string) => ({ scheme: 'file', fsPath, toString: () => `file://${fsPath}` });
     const documents: any[] = [];

@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as fs from 'node:fs/promises';
@@ -7,7 +8,7 @@ import * as os from 'node:os';
 import { applyCallableFileConversion } from '../src/scenarioCallableFiles';
 
 async function fixture(run: (directory: string) => Promise<void>) {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-callable-'));
+    const directory = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-callable-')));
     try { await run(directory); } finally { await fs.rm(directory, { recursive: true, force: true }); }
 }
 test('callable conversion creates export/archive, removes source and updates caller together', () => fixture(async directory => {
@@ -19,7 +20,7 @@ test('callable conversion creates export/archive, removes source and updates cal
     await assert.rejects(fs.stat(source), { code: 'ENOENT' });
     assert.equal(await fs.readFile(caller, 'utf8'), 'new call');
     assert.equal(await fs.readFile(archive, 'utf8'), 'archive');
-    assert.deepEqual((await fs.readdir(directory)).sort(), ['exports.feature', 'exports.feature.kot-nested.json', 'parent.yaml']);
+    assert.deepEqual(((await fs.readdir(directory)).filter(name => name !== '.kot')).sort(), ['exports.feature', 'exports.feature.kot-nested.json', 'parent.yaml']);
 }));
 test('collision and changed source leave every original intact', () => fixture(async directory => {
     const source = path.join(directory, 'scen.yaml'); const output = path.join(directory, 'export.feature');
@@ -35,7 +36,7 @@ test('mid-transaction failure rolls back removed source, changed caller and newl
         if (++checks === 4) { throw new Error('buffer changed'); }
     }), /buffer changed/u);
     assert.equal(await fs.readFile(source, 'utf8'), 'original'); assert.equal(await fs.readFile(caller, 'utf8'), 'old');
-    assert.deepEqual((await fs.readdir(directory)).sort(), ['caller.yaml', 'scen.yaml']);
+    assert.deepEqual(((await fs.readdir(directory)).filter(name => name !== '.kot')).sort(), ['caller.yaml', 'scen.yaml']);
 }));
 
 test('creating a nested scenario directory is rolled back with a failed conversion', () => fixture(async directory => {
@@ -43,7 +44,7 @@ test('creating a nested scenario directory is rolled back with a failed conversi
     await assert.rejects(applyCallableFileConversion([{ path: output, after: 'new' }], async () => {
         if (++checks === 3) { throw new Error('changed'); }
     }), /changed/u);
-    assert.deepEqual(await fs.readdir(directory), []);
+    assert.deepEqual((await fs.readdir(directory)).filter(name => name !== '.kot'), []);
 }));
 
 test('conversion works on a filesystem without hard-link support', t => fixture(async directory => {
@@ -63,7 +64,7 @@ test('Parallels EINVAL hard links fall back to exclusive copies for conversion a
         if (++checks === 4) { throw new Error('buffer changed'); }
     }), /buffer changed/u);
     assert.equal(await fs.readFile(source, 'utf8'), 'original');
-    assert.deepEqual(await fs.readdir(directory), ['meta.yaml']);
+    assert.deepEqual((await fs.readdir(directory)).filter(name => name !== '.kot'), ['meta.yaml']);
     await applyCallableFileConversion([{ path: source, before: 'original' }, { path: output, after: 'export' }], async () => undefined);
     assert.equal(await fs.readFile(output, 'utf8'), 'export');
     await assert.rejects(fs.stat(source), { code: 'ENOENT' });

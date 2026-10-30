@@ -1,3 +1,5 @@
+import { projectFormat, type ProjectFormat } from './projectFormat';
+import { transitionProjectFormat3 } from './projectFormatTransition';
 import * as vscode from 'vscode';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -8,7 +10,7 @@ import { SettingsApplyError, type SettingsChange, type SettingsDraftSession, typ
 import { portableSettingPath } from './kotSettingsPaths';
 import { parseKotWorkspaceRequest, workspaceActions, type KotWorkspaceRequest } from './kotWorkspaceProtocol';
 import { applySetupFiles, inspectSetupProject, planNewProject, suggestSetupRoots, validateSetupSourceRoot, assertPrimarySetupFolder, selectSetupExample, type SetupFile, type SetupInspection } from './kotProjectSetup';
-import { completeProjectSetup, deferProjectSetup, isProjectSetupPending } from './projectSetupGate';
+import { completeProjectSetup, deferProjectSetup, isProjectSetupPending, preserveSourceDuringProjectTransition } from './projectSetupGate';
 import { getCompilerBuildParameterValue } from './compilerBuildParameters';
 import { setupProfileParameters } from './kotSetupProfile';
 import { extractVanessaVersionFromChangelog } from './vanessaVersion';
@@ -18,10 +20,10 @@ import type { ProjectFileProgress } from './projectLibraryStore';
 
 interface SetupDraft {
     route: 'new' | 'sppr' | 'vanessa' | 'legacy'; mode: 'sppr' | 'vanessa'; language: 'en' | 'ru'; format: 'native' | 'legacy';
-    sources: string; libraries: string; run: boolean; platform: string; vanessa: string; compiler: string; profileId: string;
+    transition?: boolean; sources: string; libraries: string; run: boolean; platform: string; vanessa: string; compiler: string; profileId: string;
 }
 interface SetupReview {
-    id: string; folder: string; draft: SetupDraft; inspection: SetupInspection; files: SetupFile[];
+    id: string; folder: string; draft: SetupDraft; projectFormat?: ProjectFormat; inspection: SetupInspection; files: SetupFile[];
     settings: SettingsChange[]; profileToken: string; filesApplied: boolean; profileApplied: boolean; settingsApplied: boolean; platformsToken: string; platformApplied: boolean;
 }
 const progressKey = (folder: string) => `kot.setup.v1:${folder}`;
@@ -91,7 +93,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
     }
     private async sendBoot(): Promise<void> {
         if (!this.panel || !this.model) { return; }
-        const folders = (vscode.workspace.workspaceFolders ?? []).filter(item => item.uri.scheme === 'file').map(item => ({ id: item.uri.toString(), name: item.name, path: item.uri.fsPath }));
+        const folders = (vscode.workspace.workspaceFolders ?? []).filter(item => item.uri.scheme === 'file').map(item => ({ id: item.uri.toString(), name: item.name, path: item.uri.fsPath, format: projectFormat(item.uri.fsPath).kind }));
         if (!folders.some(folder => folder.id === this.selectedFolder)) { this.selectedFolder = folders[0]?.id ?? ''; }
         const manager = YamlParametersManager.getInstance(this.context);
         const profiles = await manager.getProfilesSummary();
@@ -178,7 +180,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
     private setupDraft(value: unknown): SetupDraft {
         if (!value || typeof value !== 'object' || Array.isArray(value)) { throw new Error('Invalid setup draft'); }
         const draft = value as SetupDraft;
-        if (!['new', 'sppr', 'vanessa', 'legacy'].includes(draft.route) || !['sppr', 'vanessa'].includes(draft.mode) || !['en', 'ru'].includes(draft.language) || !['native', 'legacy'].includes(draft.format) || typeof draft.run !== 'boolean') { throw new Error('Invalid setup draft'); }
+        if (draft.transition !== undefined && typeof draft.transition !== 'boolean' || !['new', 'sppr', 'vanessa', 'legacy'].includes(draft.route) || !['sppr', 'vanessa'].includes(draft.mode) || !['en', 'ru'].includes(draft.language) || !['native', 'legacy'].includes(draft.format) || typeof draft.run !== 'boolean') { throw new Error('Invalid setup draft'); }
         for (const key of ['sources', 'libraries', 'platform', 'vanessa', 'compiler', 'profileId'] as const) { if (typeof draft[key] !== 'string' || draft[key].length > 4096 || draft[key].includes('\0')) { throw new Error('Invalid setup path'); } }
         return { ...draft };
     }
@@ -213,6 +215,9 @@ export class KotWorkspacePanel implements vscode.Disposable {
             if (!draft.platform) { draft.platform = (runtime as unknown as { platforms: Array<{ clientExePath: string }> }).platforms[0]?.clientExePath ?? ''; }
             if (runtime.checks.some(check => !check.ok)) { throw new Error(this.t('Complete the environment checks or continue with the editor.')); }
         }
+        const format = projectFormat(root);
+        if (format.kind === 'invalid') { throw new Error(format.error); }
+        if (draft.route !== 'new' && format.kind !== 'v3' && draft.transition !== true) { draft.format = 'legacy'; }
         const files = draft.route === 'new' ? planNewProject(draft.mode, draft.language, draft.format).map(file => ({ ...file, path: file.path.startsWith('tests/') ? path.posix.join(draft.sources.replace(/\\/gu, '/'), file.path.slice(6)) : file.path })) : [];
         const changes: SettingsChange[] = [];
         const stage = (key: string, value: unknown, scope: SettingsScope) => {
@@ -226,9 +231,9 @@ export class KotWorkspacePanel implements vscode.Disposable {
             if (draft.mode === 'sppr') { stage('kotTestToolkit.paths.buildScenarioBddEpf', draft.compiler, target('kotTestToolkit.paths.buildScenarioBddEpf')); }
         }
         const manager = YamlParametersManager.getInstance(this.context); const profile = await manager.loadActiveProfileSnapshot();
-        this.review = { id: randomUUID(), folder: identity, draft, inspection, files, settings: changes, profileToken: fingerprint(profile), filesApplied: false, profileApplied: false, settingsApplied: false, platformsToken: fingerprint(getConfiguredOneCPlatforms()), platformApplied: false };
+        this.review = { id: randomUUID(), folder: identity, draft, projectFormat: format, inspection, files, settings: changes, profileToken: fingerprint(profile), filesApplied: false, profileApplied: false, settingsApplied: false, platformsToken: fingerprint(getConfiguredOneCPlatforms()), platformApplied: false };
         return { id: this.review.id, files: files.map(file => file.path), settings: [...changes.map(change => ({ key: change.key, value: change.value, scope: change.scope })), ...(draft.run ? [{ key: 'kotTestToolkit.platforms.catalog', value: draft.platform, scope: 'workspace' }] : [])],
-            migrate: isProjectSetupPending(root) ? inspection.metadata : [], migrateLegacy: draft.route === 'legacy' || isProjectSetupPending(root) && inspection.metadata.length > 0, profile: draft.profileId === 'new' ? this.t('Create a separate profile; existing profiles remain unchanged.') : this.t('Use the selected existing profile without editing it.'), run: draft.run };
+            migrate: draft.transition === true ? inspection.metadata : [], migrateLegacy: format.kind !== 'v3' && (draft.route === 'new' || draft.transition === true), transition: format.kind !== 'v3' && (draft.route === 'new' || draft.transition === true), profile: draft.profileId === 'new' ? this.t('Create a separate profile; existing profiles remain unchanged.') : this.t('Use the selected existing profile without editing it.'), run: draft.run };
     }
     private async applySetup(id: string, requestId: string): Promise<unknown> {
         this.assertTrusted(); const review = this.review;
@@ -275,8 +280,20 @@ export class KotWorkspacePanel implements vscode.Disposable {
                         ...platforms.filter(platform => platform.clientExePath.toLowerCase() !== review.draft.platform.toLowerCase())]);
                     review.platformApplied = true;
                 }
-                completeProjectSetup(root);
-                await (await import('./workspaceScanner.js')).scanWorkspaceForScenarioCatalog(folder.uri, undefined, report);
+                const scan = async () => {
+                    completeProjectSetup(root);
+                    await (await import('./workspaceScanner.js')).scanWorkspaceForScenarioCatalog(folder.uri, undefined, report);
+                };
+                const expectedFormat=review.projectFormat??projectFormat(root);
+                if (review.draft.route === 'new' || review.draft.transition === true) {
+                    const release=preserveSourceDuringProjectTransition(root);
+                    try { await transitionProjectFormat3(root,expectedFormat,scan); }
+                    catch(error){deferProjectSetup(root);throw error;} finally{release();}
+                } else {
+                    const currentFormat=projectFormat(root);
+                    if(currentFormat.kind!==expectedFormat.kind||currentFormat.token!==expectedFormat.token){throw new Error(this.t('The project format changed. Review setup again.'));}
+                    await scan();
+                }
                 report({ label: 'Refreshing the Test Manager and libraries…' });
                 await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcher');
                 report({ label: 'Finishing project setup…' });
@@ -322,7 +339,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
     }
     static initialize(context: vscode.ExtensionContext): void {
         for (const folder of vscode.workspace.workspaceFolders ?? []) {
-            if (folder.uri.scheme === 'file' && !context.workspaceState.get<{ complete?: boolean }>(progressKey(folder.uri.toString()))?.complete) { deferProjectSetup(folder.uri.fsPath); }
+            if (folder.uri.scheme === 'file' && projectFormat(folder.uri.fsPath).kind !== 'v3' && !context.workspaceState.get<{ complete?: boolean }>(progressKey(folder.uri.toString()))?.complete) { deferProjectSetup(folder.uri.fsPath); }
         }
     }
     async offerWelcome(): Promise<void> {

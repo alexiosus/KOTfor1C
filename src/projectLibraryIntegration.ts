@@ -1,7 +1,9 @@
+import { projectFormat, assertProjectFormat3, projectGitWatchRoots } from './projectFormat';
+import { editLegacyMetadata, legacyScenarioGroupId } from './projectLegacyMetadata';
 import path from 'node:path';
 import * as vscode from 'vscode';
 import { parseTestInfoFromScenarioSource } from './scenarioDescriptor';
-import { applyCachedProjectScenarioMetadata, createProjectLibraryStore, hasCachedProjectScenarioMetadata, loadProjectScenarioMetadata, registerProjectScenarioMetadata, resolveProjectEntityIdentity, resolveProjectLibraryRoot, writeProjectScenarioMetadata } from './projectLibraryMetadata';
+import { applyCachedProjectScenarioMetadata, createProjectLibraryStore, hasCachedProjectScenarioMetadata, loadProjectScenarioMetadata, registerProjectScenarioMetadata, cacheLegacyScenario, getCachedProjectLibrarySnapshot, clearProjectLibrarySnapshot, resolveProjectEntityIdentity, resolveProjectLibraryRoot, writeProjectScenarioMetadata } from './projectLibraryMetadata';
 import { waitForProjectLibraryIdle, type ProjectEntityMetadataPatch } from './projectLibraryStore';
 import type { TestInfo } from './types';
 import type { CreatedProjectScenarioMetadata } from './projectLibraryMetadata';
@@ -70,6 +72,23 @@ export async function persistProjectMetadata(document: Pick<vscode.TextDocument,
     if (!info || document.uri.scheme !== 'file') { return false; }
     const env = projectLibraryEnvironment();
     if (!env.workspaceRoots.length && !env.scanRoots.length) { return false; }
+    const root = resolveProjectLibraryRoot(document.uri.fsPath, env.workspaceRoots, env.scanRoots);
+    const format = projectFormat(root);
+    if (format.kind === 'invalid') { throw new Error(format.error); }
+    if (format.kind !== 'v3') {
+        const before = document.getText(); const current = await vscode.workspace.openTextDocument(document.uri);
+        if (current.getText() !== before) { throw new Error('The source changed. Refresh and retry the metadata edit.'); }
+        const groups = getCachedProjectLibrarySnapshot(root)?.groups ?? [];
+        const text = editLegacyMetadata(before, patch, groups);
+        if (text !== before) {
+            const edit = new vscode.WorkspaceEdit(); edit.replace(current.uri, new vscode.Range(current.positionAt(0), current.positionAt(before.length)), text);
+            if (projectFormat(root).kind === 'v3' || current.getText() !== before) { throw new Error('The project format or source changed. Refresh and retry.'); }
+            if (!await vscode.workspace.applyEdit(edit)) { throw new Error('Could not update legacy KOT metadata.'); }
+        }
+        const updated = rawProjectScenario(current);
+        if (updated) { cacheLegacyScenario(updated, env.workspaceRoots, env.scanRoots, current.getText()); }
+        return true;
+    }
     await bootstrapProjectMetadata(info, env);
     await writeProjectScenarioMetadata(info, patch, env.workspaceRoots, env.scanRoots, assertProjectMetadataSaved);
     return true;
@@ -80,7 +99,20 @@ export async function registerCreatedProjectScenario(uri: vscode.Uri, source: st
     if (!info) { return; }
     const env = projectLibraryEnvironment();
     if (env.workspaceRoots.length || env.scanRoots.length) {
-        assertProjectMetadataSaved(resolveProjectLibraryRoot(uri.fsPath, env.workspaceRoots, env.scanRoots));
+        const root = resolveProjectLibraryRoot(uri.fsPath, env.workspaceRoots, env.scanRoots);
+        const format = projectFormat(root);
+        if (format.kind === 'invalid') { throw new Error(format.error); }
+        if (format.kind !== 'v3') {
+            const name = metadata?.groupName ?? info.tabName;
+            const groups = name ? [{ id: legacyScenarioGroupId(name), name }] : [];
+            const text = editLegacyMetadata(source, { groupId: groups[0]?.id ?? '', description: info.scenarioDescription ?? '', category: metadata?.category ?? info.scenarioCategory ?? '', ...(Number.isFinite(metadata?.order ?? info.order) ? { order: metadata?.order ?? info.order } : {}) }, groups);
+            if(projectFormat(root).kind==='v3'){throw new Error('The project format changed. Retry scenario creation.');}
+            await vscode.workspace.fs.writeFile(uri, Buffer.from(text, 'utf8'));
+            const updated = parseTestInfoFromScenarioSource(text, uri, path.dirname(uri.fsPath));
+            if(updated){cacheLegacyScenario(updated,env.workspaceRoots,env.scanRoots,text);}
+            return;
+        }
+        assertProjectMetadataSaved(root);
         await registerProjectScenarioMetadata(info, env.workspaceRoots, env.scanRoots, assertProjectMetadataSaved, metadata);
     }
 }
@@ -99,18 +131,20 @@ export async function openProjectMetadata(uri: vscode.Uri): Promise<void> {
     const root = resolveProjectLibraryRoot(uri.fsPath, env.workspaceRoots, env.scanRoots);
     const identity = resolveProjectEntityIdentity(uri.fsPath, root, info.kind === 'process' ? 'process' : 'scenario', info.uid);
     const store = createProjectLibraryStore(root, env.workspaceRoots, env.scanRoots, assertProjectMetadataSaved, [identity]);
+    assertProjectFormat3(root);
     await bootstrapProjectMetadata(info, env);
     await store.setMetadata(identity, {});
     await loadSingleProjectScenario(info);
     await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(store.metadataFilePath(identity))));
 }
 
-export function watchProjectLibrary(context: vscode.ExtensionContext, changed: () => void | Promise<void>): void {
+export function watchProjectLibrary(context: vscode.ExtensionContext, changed: (formatChanged?: boolean) => void | Promise<void>): void {
     setProjectSourceCleanupGuard(filePath => !(vscode.workspace.textDocuments ?? []).some(document => document.isDirty
         && document.uri.scheme === 'file' && path.resolve(document.uri.fsPath) === path.resolve(filePath)));
     if (typeof vscode.workspace.createFileSystemWatcher !== 'function') { return; }
     let watchers: vscode.Disposable[] = [];
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let formatRefresh = false;
     let refreshing = false; let revision = 0; let disposed = false;
     const refresh = () => {
         revision++;
@@ -123,7 +157,7 @@ export function watchProjectLibrary(context: vscode.ExtensionContext, changed: (
                 try {
                     await waitForProjectLibraryIdle();
                     consumed = revision;
-                    if (!disposed) { await changed(); }
+                    if (!disposed) { const full=formatRefresh;formatRefresh=false;await changed(full); }
                 } finally {
                     refreshing = false;
                     if (!disposed && revision !== consumed) { refresh(); }
@@ -135,11 +169,16 @@ export function watchProjectLibrary(context: vscode.ExtensionContext, changed: (
         for (const watcher of watchers) { watcher.dispose(); }
         const env = projectLibraryEnvironment();
         const roots = new Set([...env.workspaceRoots, ...env.scanRoots.map(root => resolveProjectLibraryRoot(root, env.workspaceRoots, env.scanRoots))]);
+        const branchChanged = () => { clearProjectLibrarySnapshot(); formatRefresh=true; refresh(); };
         watchers = [...roots].flatMap(root => {
             return ['.kot/**/*.{yaml,yml}', '**/*.kot.yml'].flatMap(pattern => {
                 const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(root), pattern));
-                return [watcher, watcher.onDidCreate(refresh), watcher.onDidChange(refresh), watcher.onDidDelete(refresh)];
-            });
+                const change=(uri?: vscode.Uri) => { if(uri?.fsPath.replace(/\\/gu,'/').endsWith('/.kot/project.yml')){branchChanged();}else{refresh();} };
+                return [watcher, watcher.onDidCreate(change), watcher.onDidChange(change), watcher.onDidDelete(change)];
+            }).concat(projectGitWatchRoots(root).flatMap(directory=>['HEAD','index','packed-refs','refs/heads/**'].flatMap(pattern=>{
+                const watcher=vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(directory),pattern));
+                return [watcher,watcher.onDidCreate(branchChanged),watcher.onDidChange(branchChanged),watcher.onDidDelete(branchChanged)];
+            })));
         });
     };
     setup();

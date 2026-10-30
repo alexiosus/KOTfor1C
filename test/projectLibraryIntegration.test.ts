@@ -1,3 +1,6 @@
+import * as projectFormatModule from '../src/projectFormat';
+import * as projectLegacyModule from '../src/projectLegacyMetadata';
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -46,7 +49,7 @@ function harness(root: string, external = path.join(root, 'tests'), waitForIdle 
         l10n: { t: (message: string) => message }
     };
     const dependencies: Record<string, unknown> = {
-        vscode: host, 'node:path': path,
+        vscode: host, './projectFormat': projectFormatModule, './projectLegacyMetadata': projectLegacyModule, 'node:path': path,
         './scenarioDescriptor': descriptor, './projectLibraryMetadata': metadata,
         './projectLibraryStore': { waitForProjectLibraryIdle: waitForIdle },
         './scenarioScanRoot': {
@@ -66,7 +69,7 @@ function harness(root: string, external = path.join(root, 'tests'), waitForIdle 
 
 test('dirty adjacent metadata and central groups block writes, while source and other project editors do not', () => {
     const h = harness('/repo');
-    for (const file of ['/repo/tests/scen.yaml.kot.yml', '/repo/tests/UPPER.yaml.KOT.YML', '/repo/.kot/groups.yml']) {
+    for (const file of ['/repo/tests/scen.yaml.kot.yml', '/repo/tests/UPPER.yaml.KOT.YML', '/repo/.kot/groups/smoke.yml']) {
         h.documents.splice(0, h.documents.length, { uri: uri(file), isDirty: true });
         assert.throws(() => h.api.assertProjectMetadataSaved('/repo'), /Save project metadata/);
     }
@@ -108,7 +111,7 @@ test('Git sidecar and group changes refresh both owning roots and reconfigure wa
     t.after(() => context.subscriptions.forEach(value => value.dispose()));
     let refreshes = 0;
     h.api.watchProjectLibrary(context as Parameters<typeof h.api.watchProjectLibrary>[0], () => { refreshes++; });
-    assert.deepEqual(h.watchers.map(value => [value.root, value.pattern]), [
+    assert.deepEqual(h.watchers.filter(watcher => !['HEAD','index','packed-refs','refs/heads/**'].includes(watcher.pattern)).map(value => [value.root, value.pattern]), [
         ['/repo', '.kot/**/*.{yaml,yml}'], ['/repo', '**/*.kot.yml'],
         ['/external-tests', '.kot/**/*.{yaml,yml}'], ['/external-tests', '**/*.kot.yml']
     ]);
@@ -121,8 +124,19 @@ test('Git sidecar and group changes refresh both owning roots and reconfigure wa
     assert.ok(h.watchers.slice(4, 8).every(value => value.disposed));
 });
 
+test('Git checkout events request a full library rescan while ordinary metadata events do not', async t => {
+    const h=harness('/repo');const context={subscriptions:[] as Array<{dispose():void}>};
+    t.after(()=>context.subscriptions.forEach(value=>value.dispose()));const fullRefreshes:boolean[]=[];
+    h.api.watchProjectLibrary(context as any,full=>{fullRefreshes.push(!!full);});
+    h.watchers.find(watcher=>watcher.pattern==='HEAD')!.change?.();
+    h.watchers.find(watcher=>watcher.pattern==='refs/heads/**')!.create?.();
+    await new Promise(resolve=>setTimeout(resolve,150));assert.deepEqual(fullRefreshes,[true]);
+    h.watchers[0].change?.();await new Promise(resolve=>setTimeout(resolve,150));
+    assert.deepEqual(fullRefreshes,[true,false]);
+});
+
 test('opening scenario metadata creates and opens its adjacent file without altering source YAML', async t => {
-    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'kot-meta-editor-'));
+    const root = await v3Fixture(fsp.mkdtemp(path.join(os.tmpdir(), 'kot-meta-editor-')));
     t.after(() => fsp.rm(root, { recursive: true, force: true }));
     const file = path.join(root, 'tests/scen.yaml');
     const source = 'ТипФайла: Сценарий\nДанныеСценария:\n    Имя: Sales\n    UID: sales\nТекстСценария: |\n    And I open a Sales form\n';
@@ -137,7 +151,7 @@ test('opening scenario metadata creates and opens its adjacent file without alte
 
 for (const groupName of ['Sales tests', '']) {
     test(`created main scenario retains classification and ordering with ${groupName ? 'a named' : 'an empty'} group`, async t => {
-        const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'kot-created-main-'));
+        const root = await v3Fixture(fsp.mkdtemp(path.join(os.tmpdir(), 'kot-created-main-')));
         t.after(() => fsp.rm(root, { recursive: true, force: true }));
         const file = path.join(root, 'tests/scen.yaml');
         const source = 'ТипФайла: Сценарий\nДанныеСценария:\n    Имя: Sales\n    UID: sales\nТекстСценария: |\n    And I open a Sales form\n';
@@ -162,7 +176,7 @@ for (const groupName of ['Sales tests', '']) {
 }
 
 test('created nested category lives in the sidecar without introducing a main group and removes migrated inline data', async t => {
-    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'kot-created-nested-'));
+    const root = await v3Fixture(fsp.mkdtemp(path.join(os.tmpdir(), 'kot-created-nested-')));
     t.after(() => fsp.rm(root, { recursive: true, force: true }));
     const file = path.join(root, 'tests/scen.yaml');
     const source = 'ДанныеСценария:\n    Имя: Nested\n    UID: nested\nKOTМетаданные:\n    Описание: Authored description\n    Категория: Legacy category\nТекстСценария: |\n    And I open a form\n';
@@ -180,7 +194,7 @@ test('created nested category lives in the sidecar without introducing a main gr
 });
 
 test('single-source reads guard automatic central migration against unsaved sidecars', async t => {
-    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'kot-meta-editor-migration-'));
+    const root = await v3Fixture(fsp.mkdtemp(path.join(os.tmpdir(), 'kot-meta-editor-migration-')));
     t.after(() => fsp.rm(root, { recursive: true, force: true }));
     const file = path.join(root, 'tests/scen.yaml');
     const identity = { kind: 'scenario' as const, uid: 'sales', relativePath: 'tests/scen.yaml' };

@@ -1532,7 +1532,9 @@
       {
         "command": "kotTestToolkit.vanessaControl.stop",
         "title": "%cmd.vanessaControl.stop.title%",
-        "category": "%cmd.category%"
+        "category": "%cmd.category%",
+        "icon": "$(debug-stop)",
+        "enablement": "kotTestToolkit.vanessaControlCanStop"
       },
       {
         "command": "kotTestToolkit.vanessaControl.detach",
@@ -1781,6 +1783,11 @@
       {
         "command": "kotTestToolkit.startSetup",
         "title": "%command.startSetup.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.resolveMetadataConflicts",
+        "title": "%command.resolveMetadataConflicts.title%",
         "category": "KOT"
       }
     ],
@@ -2216,6 +2223,11 @@
           "command": "kotTestToolkit.convertScenarioFormatsBatch",
           "when": "workspaceFolderCount > 0",
           "group": "2_conversion@1"
+        },
+        {
+          "command": "kotTestToolkit.resolveMetadataConflicts",
+          "when": "workspaceFolderCount > 0",
+          "group": "3_git@1"
         }
       ],
       "kotTestToolkit.phaseSwitcher.ai": [
@@ -2266,12 +2278,17 @@
         },
         {
           "command": "kotTestToolkit.vanessaControl.recording.start",
-          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.vanessaRecordingSupported && !kotTestToolkit.vanessaRecording",
+          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.vanessaRecordingSupported && !kotTestToolkit.vanessaRecording && !kotTestToolkit.vanessaControlExecuting",
           "group": "navigation@90"
         },
         {
           "command": "kotTestToolkit.vanessaControl.recording.stop",
-          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.vanessaRecording",
+          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.vanessaRecording && !kotTestToolkit.vanessaControlExecuting",
+          "group": "navigation@90"
+        },
+        {
+          "command": "kotTestToolkit.vanessaControl.stop",
+          "when": "resourceScheme == file && (resourceExtname == .feature || resourceExtname == .yaml || resourceExtname == .yml) && kotTestToolkit.vanessaControlExecuting",
           "group": "navigation@90"
         },
         {

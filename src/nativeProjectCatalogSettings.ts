@@ -186,7 +186,10 @@ export async function registerNativeProjectCatalogSettings(context: vscode.Exten
             const projection = structuredClone(context.workspaceState.get<Record<string, NativeProjection>>(projectionKey) ?? {});
             const entry = { folder, active: true, lastError: '', disposables: [] as vscode.Disposable[], timer: undefined as ReturnType<typeof setTimeout> | undefined,
                 sync: undefined as unknown as ProjectCatalogSettings };
-            const assertActive = () => { if (!entry.active || disposed) { throw new Error(t('The project was closed.')); } };
+            const assertActive = () => {
+                if (!entry.active || disposed) { throw new Error(t('The project was closed.')); }
+                if (isProjectSetupPending(folder.uri.fsPath)) { throw new Error(t('The project format changed. Review and retry the operation.')); }
+            };
             entry.sync = new ProjectCatalogSettings(folder.uri.fsPath, {
                 translate: t,
                 readLegacySystemFunctions: () => {
@@ -273,7 +276,7 @@ export async function registerNativeProjectCatalogSettings(context: vscode.Exten
         const catalog = catalogProvider?.getScenarioCatalog();
         if (!catalog || disposed) { return; }
         for (const entry of entries.values()) {
-            if (!entry.active) { continue; }
+            if (!entry.active || isProjectSetupPending(entry.folder.uri.fsPath)) { continue; }
             try {
                 await discoverProjectCatalogs(entry.folder.uri.fsPath, catalog.all, file => {
                     if (!entry.active || disposed) { throw new Error(t('The project was closed.')); }

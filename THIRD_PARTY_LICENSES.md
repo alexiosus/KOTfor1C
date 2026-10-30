@@ -16,7 +16,9 @@ This software incorporates components from the following third-party software.
 
 The upstream devkit embeds `AddIn.WebTransport.mcp`, authored by [alkoleft / web-transport-addin](https://github.com/alkoleft/web-transport-addin). Its `Template.addin` contains WebTransport `0.6.4` binaries for Windows, Linux and macOS. They are retained unchanged in the upstream source archive.
 
-The checked WebTransport repository has no `LICENSE` file or Cargo `license` field.
+WebTransport references [medigor/addin1c](https://github.com/medigor/addin1c) as its Rust add-in foundation. That helper is [MIT-licensed](https://github.com/medigor/addin1c/blob/main/LICENSE).
+
+WebTransport is published under the [MIT License](https://github.com/alkoleft/web-transport-addin/blob/main/LICENSE), copyright (c) 2026 Koryakin Aleksey. The upstream notice is preserved verbatim in [third-party/web-transport-addin/LICENSE](third-party/web-transport-addin/LICENSE). Verified on 2026-10-30; upstream license blob `08c0580074e0cad357c7b0f8ddebd9e63ef7edbe`. This notice accompanies the WebTransport component included by devkit; the component binaries remain unchanged.
 
 ## Microsoft Visual Studio Code Codicons
 

@@ -1,3 +1,6 @@
+import * as projectFormatModule from '../src/projectFormat';
+import * as projectLegacyModule from '../src/projectLegacyMetadata';
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -26,7 +29,7 @@ function uri(fsPath: string) {
 }
 
 async function harness(t: test.TestContext, inputs: string[], customTemplate?: string, preferredFormat: 'legacy' | 'native' | 'default' = 'legacy') {
-    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'kot-scenario-creator-'));
+    const root = await v3Fixture(fsp.mkdtemp(path.join(os.tmpdir(), 'kot-scenario-creator-')));
     t.after(() => fsp.rm(root, { recursive: true, force: true }));
     const modelPath = path.join(root, 'bases.yml');
     await fsp.writeFile(modelPath, etalonBases.stringifyEtalonBasesYaml([{
@@ -92,7 +95,7 @@ async function harness(t: test.TestContext, inputs: string[], customTemplate?: s
             './yamlParametersManager': { YamlParametersManager: { getInstance: () => ({ loadParameters: async () => [{ key: 'ModelDBSettings', value: modelPath }] }) } },
             './etalonBases': etalonBases, './yamlHeaderFields': fields, './scenarioCategory': categories,
             './scenarioCreationSeed': { resolveMainScenarioGroupSeed }, './scenarioDescriptor': descriptor,
-            './projectLibraryMetadata': metadata,
+            './projectFormat': projectFormatModule, './projectLegacyMetadata': projectLegacyModule, './projectLibraryMetadata': metadata,
             './testNumberingStore': { TestNumberingStore, validateNewTestCode },
             './projectPropertyCatalogStore': { ProjectPropertyCatalogStore },
             './scenarioPropertiesModel': propertyModel,
@@ -140,7 +143,8 @@ test('main creation writes group and order to the adjacent metadata while keepin
     assert.equal(source.ДанныеСценария.Код, 'Main');
     assert.equal(settings.ДанныеТеста.UIDСценария, source.ДанныеСценария.UID);
     assert.equal(sidecar.identity.uid, source.ДанныеСценария.UID);
-    assert.equal(sidecar.metadata.order, 7);
+    assert.equal(sidecar.metadata.order, undefined);
+    assert.equal((await new ProjectLibraryStore(h.root).read()).metadata[`uid:${sidecar.identity.uid.toLowerCase()}`].order, 7);
     const group = (await new ProjectLibraryStore(h.root).read()).groups.find(value => value.id === sidecar.metadata.groupId);
     assert.equal(group?.name, 'Smoke');
     assert.deepEqual(group?.sections, ['main']);
@@ -155,7 +159,8 @@ for (const seed of [undefined, { groupName: '' }]) {
         const file = path.join(h.root, 'Main/scen.yaml');
         const sidecar = parseDocument(await fsp.readFile(`${file}.kot.yml`, 'utf8')).toJS();
         assert.equal(sidecar.metadata.groupId, '');
-        assert.equal(sidecar.metadata.order, 7);
+        assert.equal(sidecar.metadata.order, undefined);
+    assert.equal((await new ProjectLibraryStore(h.root).read()).metadata[`uid:${sidecar.identity.uid.toLowerCase()}`].order, 7);
         assert.deepEqual(await new ProjectLibraryStore(h.root).readGroups(), []);
         assert.equal(h.prompts.some(prompt => prompt.prompt === 'Enter group name'), false);
     });
@@ -174,7 +179,7 @@ test('the existing group picker can explicitly leave a new main scenario ungroup
 
 test('an external configured root uses its own shared series rather than the workspace series', async t => {
     const h = await harness(t, ['External nested', '$default']);
-    const external = await fsp.mkdtemp(path.join(os.tmpdir(), 'kot-external-numbering-'));
+    const external = await v3Fixture(fsp.mkdtemp(path.join(os.tmpdir(), 'kot-external-numbering-')));
     t.after(() => fsp.rm(external, { recursive: true, force: true }));
     await new TestNumberingStore(external).addSeries('000013', 'External author', []);
     h.useDestination(external); h.useSeries('000013');
@@ -324,4 +329,16 @@ test('nested creation selects native SPPR files without flattening its script', 
     assert.match(script, /#language: en/u);
     await assert.rejects(fsp.stat(path.join(h.root, '001/scen.yaml')));
     assert.deepEqual(h.opened, [path.join(h.root, '001/scen.feature')]);
+});
+
+test('legacy project creation keeps unified YAML despite a native user default', async t => {
+    const h = await harness(t, ['Legacy', 'Legacy', '7'], undefined, 'native');
+    await fsp.unlink(path.join(h.root, '.kot/project.yml'));
+    await h.api.handleCreateMainScenario(h.context, { groupName: 'Smoke', format: 'native' });
+    assert.deepEqual(h.errors, []);
+    const file = path.join(h.root, 'Legacy/scen.yaml');
+    const source = parseDocument(await fsp.readFile(file, 'utf8')).toJS();
+    assert.equal(source.KOTМетаданные.PhaseSwitcher.Tab, 'Smoke');
+    await assert.rejects(fsp.stat(file + '.kot.yml'), { code: 'ENOENT' });
+    await assert.rejects(fsp.stat(path.join(h.root, 'Legacy/meta.yaml')), { code: 'ENOENT' });
 });

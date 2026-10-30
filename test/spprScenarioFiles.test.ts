@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -10,7 +11,7 @@ import * as format from '../src/spprScenarioFormat';
 const metadata = 'ТипФайла: "Сценарий"\nДанныеСценария:\n    Имя: "Native"\n    UID: "native-uid"\n';
 const uri = (fsPath: string) => ({ fsPath, scheme: 'file', toString: () => `file://${fsPath}` });
 async function harness(t: test.TestContext) {
-    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'kot-sppr-editor-'));
+    const root = await v3Fixture(fsp.mkdtemp(path.join(os.tmpdir(), 'kot-sppr-editor-')));
     t.after(() => fsp.rm(root, { recursive: true, force: true }));
     const documents: Array<{ uri: ReturnType<typeof uri>; isDirty: boolean; getText(): string }> = [];
     const errors: string[] = []; const opened: string[] = []; const commands: string[] = []; const refreshes: any[] = [];

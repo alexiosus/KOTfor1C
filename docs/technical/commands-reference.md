@@ -199,3 +199,4 @@
 | Преобразовать вложенный / экспортный сценарий… | `kotTestToolkit.convertCallableScenario` |
 | Преобразования… | `kotTestToolkit.editorMenu.convertScenario` |
 | Настроить проект | `kotTestToolkit.startSetup` |
+| Разрешить конфликты метаданных KOT… | `kotTestToolkit.resolveMetadataConflicts` |

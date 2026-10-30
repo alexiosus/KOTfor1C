@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -6,7 +7,7 @@ import test from 'node:test';
 import { convertScenarioTestRole } from '../src/scenarioTestRole';
 
 async function fixture(t: test.TestContext) {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-test-role-')); t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-test-role-'))); t.after(() => fs.rm(root, { recursive: true, force: true }));
     const sourcePath = path.join(root, 'tests', 'own', 'meta.yaml');
     await fs.mkdir(path.dirname(sourcePath), { recursive: true });
     await fs.writeFile(sourcePath, 'ТипФайла: "Сценарий"\nДанныеСценария:\n    UID: "own"\n');

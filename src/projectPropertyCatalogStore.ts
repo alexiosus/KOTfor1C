@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isMap, parseDocument } from 'yaml';
+import { assertProjectFormat3, assertProjectFormatUnchanged, projectFormat } from './projectFormat';
+import { assertProjectTransitionBranch } from './projectFormatTransition';
 
 export interface ProjectSystemFunction { name: string; uid: string }
 export interface ProjectPropertyCatalogs {
@@ -18,6 +20,12 @@ export interface ProjectPropertyCatalogStoreOptions {
 }
 const keys: readonly ProjectPropertyCatalogKey[] = ['projects', 'reportLevel1', 'reportLevel2', 'categories', 'responsibles'];
 const queues = new Map<string, Promise<unknown>>();
+const activeGuards = new Map<string, () => void>();
+function catalogFormatGuard(file: string): () => void {
+    if (path.basename(path.dirname(file)) !== '.kot' || !['property-catalogs.yml','test-numbering.yml'].includes(path.basename(file))) { return () => {}; }
+    const root=path.dirname(path.dirname(path.resolve(file)));const expected=projectFormat(root);
+    return () => { assertProjectTransitionBranch(root);assertProjectFormat3(root,expected.token);assertProjectFormatUnchanged(root,expected); };
+}
 
 export function validatePropertyCatalogName(value: string): string {
     if (typeof value !== 'string' || !value.trim() || /[\r\n\0]/u.test(value)) { throw new Error('Catalog name must be a nonempty single-line string.'); }
@@ -27,8 +35,12 @@ export function validatePropertyCatalogName(value: string): string {
 /** Serialize all writers to a physical file, including separate store instances. */
 export function serializePropertyCatalogWrite<T>(file: string, operation: () => Promise<T>): Promise<T> {
     const key = path.resolve(file);
+    const guard=catalogFormatGuard(key);
     const previous = queues.get(key) ?? Promise.resolve();
-    const result = previous.then(operation);
+    const result = previous.then(async()=>{
+        guard();activeGuards.set(key,guard);
+        try{return await operation();}finally{activeGuards.delete(key);}
+    });
     const tail = result.then(() => undefined, () => undefined);
     queues.set(key, tail);
     void tail.finally(() => { if (queues.get(key) === tail) { queues.delete(key); } });
@@ -42,18 +54,22 @@ export async function readPropertyCatalogFile(file: string): Promise<string | un
 
 /** Atomic replacement with an optimistic guard against edits made outside this process. */
 export async function writePropertyCatalogFile(file: string, text: string, expected: string | undefined, beforeWrite?: () => void | Promise<void>): Promise<void> {
+    const guard=activeGuards.get(path.resolve(file))??catalogFormatGuard(file);
     await beforeWrite?.();
+    guard();
     await fs.mkdir(path.dirname(file), { recursive: true });
     const temporary = `${file}.${randomUUID()}.tmp`;
     try {
         await fs.writeFile(temporary, text, { encoding: 'utf8', flag: 'wx' });
         await beforeWrite?.();
+        guard();
         if (await readPropertyCatalogFile(file) !== expected) { throw new Error('Property catalog write conflict: the file changed. Refresh and retry.'); }
+        guard();
         await fs.rename(temporary, file);
     } finally { await fs.rm(temporary, { force: true }); }
 }
 
-function parseCatalogs(text: string | undefined): { catalogs: ProjectPropertyCatalogs; document: ReturnType<typeof parseDocument> } {
+export function parseCatalogs(text: string | undefined): { catalogs: ProjectPropertyCatalogs; document: ReturnType<typeof parseDocument> } {
     const document = parseDocument(text ?? 'version: 1\n');
     if (document.errors.length || !isMap(document.contents)) { throw new Error('Invalid or ambiguous property catalog YAML.'); }
     const data = document.toJS() as Record<string, unknown>;
@@ -98,11 +114,13 @@ export class ProjectPropertyCatalogStore {
         }
     }
     async read(): Promise<ProjectPropertyCatalogs> {
+        if(projectFormat(this.root).kind!=='v3'){return parseCatalogs(undefined).catalogs;}
         await this.safePath();
         return parseCatalogs(await readPropertyCatalogFile(this.filePath)).catalogs;
     }
     /** Append values found in saved scenarios, retaining curated entries and their identities. */
     async mergeDetected(values: Partial<ProjectPropertyCatalogs>): Promise<void> {
+        if(projectFormat(this.root).kind!=='v3'){return;}
         return serializePropertyCatalogWrite(this.filePath, async () => {
             await this.safePath(); const original = await readPropertyCatalogFile(this.filePath);
             const { catalogs, document } = parseCatalogs(original);
@@ -127,6 +145,7 @@ export class ProjectPropertyCatalogStore {
         });
     }
     async ensureSystemFunctions(legacy: readonly ProjectSystemFunction[]): Promise<ProjectSystemFunction[]> {
+        if(projectFormat(this.root).kind!=='v3'){return validateSystemFunctions(legacy);}
         return serializePropertyCatalogWrite(this.filePath, async () => {
             await this.safePath(); const original = await readPropertyCatalogFile(this.filePath);
             const { catalogs, document } = parseCatalogs(original);

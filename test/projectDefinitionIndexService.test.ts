@@ -711,3 +711,11 @@ test('persistent cache round-trips valid records and rejects incompatible or mal
         await fs.rm(directory, { recursive: true, force: true });
     }
 });
+
+test('a full library refresh replaces files removed and added by a branch change', async () => {
+    const files=new MemoryFileSystem();files.setFile('/workspace/active/old.feature',exportFeature('Old branch'),1);
+    const service=createService(files);service.startProfile(configuration('active'));await service.waitForIdle();
+    files.deleteFile('/workspace/active/old.feature');files.setFile('/workspace/active/new.feature',exportFeature('New branch'),2);
+    await service.refreshLibraries();
+    assert.deepEqual([...service.getSnapshot()!.files.keys()],['file:///workspace/active/new.feature']);service.dispose();
+});

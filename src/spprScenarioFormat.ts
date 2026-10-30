@@ -1,3 +1,4 @@
+import { assertProjectFormat3, projectFormatRoot, projectFormat } from './projectFormat';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -60,6 +61,9 @@ export async function convertSpprScenarioFiles(
     const name = path.basename(sourcePath);
     if (!['scen.yaml', 'meta.yaml', 'scen.feature'].includes(name)) { throw new Error('Select scen.yaml, meta.yaml or scen.feature.'); }
     const sourceFormat = name === 'scen.yaml' ? 'legacy' : 'native';
+    const owner = projectFormatRoot(directory);
+    assertProjectFormat3(owner);
+    const formatToken = projectFormat(owner).token;
     if (sourceFormat === targetFormat) { return path.join(directory, targetFormat === 'native' ? 'meta.yaml' : 'scen.yaml'); }
     const lock = path.join(directory, '.kot-format.lock');
     await fs.mkdir(lock);
@@ -69,6 +73,7 @@ export async function convertSpprScenarioFiles(
     const moved: Array<{ source: string; backup: string }> = [];
     let committed = false;
     try {
+        assertProjectFormat3(owner, formatToken);
         await assertSaved?.();
         const read = async (file: string) => {
             const bytes = await readUtf8File(file); originals.set(file, bytes); return bytes.toString('utf8');
@@ -90,10 +95,12 @@ export async function convertSpprScenarioFiles(
         // A stale sidecar is also a conflict even when the source has no sidecar.
         await assertAbsent(`${targetDescriptor}.kot.yml`);
         for (const destination of outputs.keys()) { await assertAbsent(destination); }
+        assertProjectFormat3(owner, formatToken);
         for (const [destination, bytes] of outputs) {
             const handle = await fs.open(destination, 'wx'); created.push(destination);
             try { await handle.writeFile(bytes); } finally { await handle.close(); }
         }
+        assertProjectFormat3(owner, formatToken);
         await assertSaved?.();
         for (const [file, bytes] of originals) {
             if (!(await fs.readFile(file)).equals(bytes)) { throw new Error(`Source changed during conversion: ${file}`); }
@@ -101,6 +108,7 @@ export async function convertSpprScenarioFiles(
         for (const [file, bytes] of outputs) {
             if (!(await fs.readFile(file)).equals(bytes)) { throw new Error(`Destination changed during conversion: ${file}`); }
         }
+        assertProjectFormat3(owner, formatToken);
         for (const source of originals.keys()) {
             const backup = path.join(directory, `.kot-format-${randomUUID()}.backup`);
             await fs.rename(source, backup); moved.push({ source, backup });

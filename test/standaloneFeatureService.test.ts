@@ -1,3 +1,6 @@
+import * as projectFormatModule from '../src/projectFormat';
+import * as projectLegacyModule from '../src/projectLegacyMetadata';
+import { v3Fixture } from './helpers/projectFormat';
 import * as projectSetupGate from '../src/projectSetupGate';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -16,6 +19,7 @@ import type { StandaloneFeatureSnapshot } from '../src/standaloneFeatureModel';
 import * as standaloneFeatureModel from '../src/standaloneFeatureModel';
 import * as projectLibraryStore from '../src/projectLibraryStore';
 import * as projectLibraryMetadata from '../src/projectLibraryMetadata';
+import * as projectEntityDisplayOrder from '../src/projectEntityDisplayOrder';
 import * as projectGroupDisplayOrder from '../src/projectGroupDisplayOrder';
 
 // The real filesystem service runs in Node; only its optional VS Code adapter is unavailable there.
@@ -29,13 +33,16 @@ function loadService(): typeof CatalogService {
     const execute = vm.runInThisContext(`(function(require, module, exports) {\n${compiled}\n})`, {
         filename: 'standaloneFeatureService.js'
     }) as (requireModule: (specifier: string) => unknown, module: unknown, exports: unknown) => void;
-    execute(specifier => specifier === './projectSetupGate' ? projectSetupGate : specifier === './standaloneFeatureModel' ? standaloneFeatureModel
-        : specifier === './projectLibraryStore' ? projectLibraryStore
+    execute(specifier => specifier === './projectFormat' ? projectFormatModule : specifier === './projectLegacyMetadata' ? projectLegacyModule : specifier === './projectSetupGate' ? projectSetupGate : specifier === './standaloneFeatureModel' ? standaloneFeatureModel
+        : specifier === './projectEntityDisplayOrder' ? projectEntityDisplayOrder : specifier === './projectLibraryStore' ? projectLibraryStore
         : specifier === './projectLibraryMetadata' ? projectLibraryMetadata : specifier === './projectGroupDisplayOrder' ? projectGroupDisplayOrder : require(specifier), module, module.exports);
     return module.exports.StandaloneFeatureService;
 }
 
 const StandaloneFeatureService = loadService();
+async function groupsText(root: string): Promise<string> {
+    return JSON.stringify(await Promise.all((await fs.readdir(path.join(root, '.kot/groups'))).sort().map(name => fs.readFile(path.join(root, '.kot/groups', name), 'utf8'))));
+}
 
 test('standalone personal group order survives rename and shared content drag keeps source order scope', async t => {
     const h = await harness(t);
@@ -45,10 +52,10 @@ test('standalone personal group order survives rename and shared content drag ke
     const first = await service.createGroup('First');
     const second = await service.createGroup('Second');
     let snapshot = service.getSnapshot();
-    const groupsText = await fs.readFile(path.join(h.root(), '.kot', 'groups.yml'), 'utf8');
+    const groupFilesBefore = await groupsText(h.root());
     await service.moveGroupDisplay(h.root(), second.id, first.id, [first.id, second.id], snapshot.revision);
     assert.deepEqual(service.getSnapshot().groups.map(group => group.id), [second.id, first.id]);
-    assert.equal(await fs.readFile(path.join(h.root(), '.kot', 'groups.yml'), 'utf8'), groupsText);
+    assert.equal(await groupsText(h.root()), groupFilesBefore);
     await service.renameGroup(second.id, 'Renamed');
     assert.deepEqual((await h.createService().ensureReady()).groups.map(group => group.id), [second.id, first.id]);
     snapshot = service.getSnapshot();
@@ -58,7 +65,7 @@ test('standalone personal group order survives rename and shared content drag ke
     try {
         await service.moveFeature(pathToFileURL(b).href, '', pathToFileURL(a).href, { projectRoot: h.root(), revision: snapshot.revision });
     } finally { fs.readdir = readdir; }
-    assert.ok(walked.every(directory => directory === path.join(h.root(), '.kot', 'metadata')), walked.join('\n'));
+    assert.ok(walked.every(directory => ['metadata', 'groups', 'history'].some(name => directory === path.join(h.root(), '.kot', name))), walked.join('\n'));
     assert.deepEqual(service.getSnapshot().features.map(feature => feature.id), [pathToFileURL(b).href, pathToFileURL(a).href]);
     const metadata = await new projectLibraryStore.ProjectLibraryStore(h.root()).read();
     assert.equal(metadata.metadata['feature:b.feature'].order, 0);
@@ -79,14 +86,14 @@ test('standalone personal order isolates copied stable group IDs in separate pro
     h.changeRoots([firstRoot, secondRoot]);
     const snapshot = await service.ensureReady();
     assert.equal(snapshot.groups.length, 4, 'each project retains its own display group for the copied shared IDs');
-    const beforeFirst = await fs.readFile(path.join(firstRoot, '.kot', 'groups.yml'), 'utf8');
-    const beforeSecond = await fs.readFile(path.join(secondRoot, '.kot', 'groups.yml'), 'utf8');
+    const beforeFirst = await groupsText(firstRoot);
+    const beforeSecond = await groupsText(secondRoot);
     await service.moveGroupDisplay(firstRoot, second.id, first.id, [first.id, second.id], snapshot.revision);
     const reordered = service.getSnapshot();
     assert.deepEqual(reordered.groups.filter(group => group.projectRoot === firstRoot).map(group => group.id), [second.id, first.id]);
     assert.deepEqual(reordered.groups.filter(group => group.projectRoot === secondRoot).map(group => group.id), [first.id, second.id]);
-    assert.equal(await fs.readFile(path.join(firstRoot, '.kot', 'groups.yml'), 'utf8'), beforeFirst);
-    assert.equal(await fs.readFile(path.join(secondRoot, '.kot', 'groups.yml'), 'utf8'), beforeSecond);
+    assert.equal(await groupsText(firstRoot), beforeFirst);
+    assert.equal(await groupsText(secondRoot), beforeSecond);
     await assert.rejects(service.moveFeature(pathToFileURL(firstFile).href, first.id, undefined, { projectRoot: secondRoot, revision: reordered.revision }), /another project/u);
 });
 
@@ -117,7 +124,7 @@ function event<T>() {
 }
 
 async function harness(t: test.TestContext) {
-    const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'standalone-feature-catalog-'));
+    const temp = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'standalone-feature-catalog-')));
     const state = new Map<string, unknown>();
     const rootChanged = event<void>();
     const renames = event<readonly { oldPath: string; newPath: string }[]>();
@@ -129,7 +136,7 @@ async function harness(t: test.TestContext) {
     const dirtyProjects = new Set<string>();
     let roots = [path.join(temp, 'tests')];
     let beforeStateWrite: (() => Promise<void>) | undefined;
-    await fs.mkdir(roots[0], { recursive: true });
+    await fs.mkdir(roots[0], { recursive: true }); await v3Fixture(roots[0]);
     const dependencies: StandaloneFeatureServiceDependencies = {
         getRoots: () => roots,
         assertProjectMetadataSaved: root => {
@@ -344,7 +351,7 @@ test('watch events update sources and adjacent JSON and rebind an external scan 
     const jsonAdded = await nextSnapshot(service, () => h.watches.get(h.root())!());
     assert.equal(jsonAdded.features[0].jsonPath, path.join(h.root(), 'checkout.json'));
     const external = path.join(h.temp, 'external');
-    await fs.mkdir(external);
+    await v3Fixture(external);
     await fs.writeFile(path.join(external, 'outside.feature'), 'Feature: External\nScenario: Run');
     const oldRoot = h.root();
     const changedRoot = await nextSnapshot(service, () => h.changeRoot(external));
@@ -591,7 +598,7 @@ test('shares portable groups and ordering across cloned roots while keeping laun
     const snapshot = await clone.createService().ensureReady();
     assert.deepEqual(snapshot.groups, [{ id: empty.id, name: 'Empty shared group' }, { id: group.id, name: 'Shared smoke' }]);
     assert.deepEqual(snapshot.features.map(feature => [feature.relativePath, feature.groupId, feature.order]), [
-        ['b.feature', group.id, 0], ['a.feature', group.id, 1]
+        ['a.feature', group.id, 0], ['b.feature', group.id, 1]
     ]);
     assert.ok(snapshot.features.every(feature => feature.jsonPath === undefined));
     const shared = await new projectLibraryStore.ProjectLibraryStore(source.root()).read();
@@ -656,7 +663,7 @@ test('keeps project objects above a contained test root and watches that shared 
     assert.equal(Object.values(snapshot.metadata)[0].groupId, group.id);
     assert.equal(h.watches.has(path.join(h.temp, '.kot')), true);
     assert.equal(h.metadataWatches.has(h.temp), true);
-    await assert.rejects(fs.stat(path.join(h.root(), '.kot')), { code: 'ENOENT' });
+    await assert.rejects(fs.stat(path.join(h.root(), '.kot/groups')), { code: 'ENOENT' });
 });
 
 test('workspace sidecar edits refresh standalone organization and dispose their scoped watcher', async t => {
@@ -682,7 +689,7 @@ test('moving between independent project groups with the same name uses the dest
     const firstRoot = h.root();
     const secondRoot = path.join(h.temp, 'second-project');
     const firstFile = await h.write('first.feature');
-    await fs.mkdir(secondRoot);
+    await v3Fixture(secondRoot);
     const secondFile = path.join(secondRoot, 'second.feature');
     await fs.writeFile(secondFile, 'Feature: Second\nScenario: Run');
     h.changeRoots([firstRoot, secondRoot]);
@@ -716,6 +723,7 @@ test('nested project roots keep source discovery and legacy sidecar imports with
     const nestedRoot = path.join(outerRoot, 'nested-project');
     const outerFile = await h.write('outer.feature');
     const nestedFile = await h.write('nested-project/inner.feature');
+    await v3Fixture(nestedRoot);
     h.changeRoots([outerRoot, nestedRoot]);
     const outerStore = new projectLibraryStore.ProjectLibraryStore(outerRoot, { excludedRoots: [nestedRoot] });
     const nestedStore = new projectLibraryStore.ProjectLibraryStore(nestedRoot);
@@ -743,7 +751,7 @@ test('a filesystem rename into another project maps a same-name group to its des
     const firstRoot = h.root();
     const secondRoot = path.join(h.temp, 'second-project');
     const firstFile = await h.write('source.feature');
-    await fs.mkdir(secondRoot);
+    await v3Fixture(secondRoot);
     h.changeRoots([firstRoot, secondRoot]);
     const firstStore = new projectLibraryStore.ProjectLibraryStore(firstRoot);
     const secondStore = new projectLibraryStore.ProjectLibraryStore(secondRoot);
@@ -773,7 +781,7 @@ test('a directory move between projects rebinds carried sidecars and local JSON 
     const secondRoot = path.join(h.temp, 'second-project');
     const firstFile = await h.write('source/login.feature');
     const json = await h.write('source/profile.json', '{}');
-    await fs.mkdir(secondRoot);
+    await v3Fixture(secondRoot);
     h.changeRoots([firstRoot, secondRoot]);
     const firstStore = new projectLibraryStore.ProjectLibraryStore(firstRoot);
     const secondStore = new projectLibraryStore.ProjectLibraryStore(secondRoot);
@@ -811,7 +819,7 @@ test('cross-project directory moves keep missing source groups deleted despite c
     const firstRoot = h.root();
     const secondRoot = path.join(h.temp, 'second-project');
     const firstFile = await h.write('source/login.feature');
-    await fs.mkdir(secondRoot);
+    await v3Fixture(secondRoot);
     h.changeRoots([firstRoot, secondRoot]);
     const firstStore = new projectLibraryStore.ProjectLibraryStore(firstRoot);
     const secondStore = new projectLibraryStore.ProjectLibraryStore(secondRoot);
@@ -822,9 +830,7 @@ test('cross-project directory moves keep missing source groups deleted despite c
     });
     const service = h.createService();
     await service.ensureReady();
-    await fs.writeFile(path.join(firstRoot, '.kot', 'groups.yml'), JSON.stringify({
-        version: 1, groups: [], legacyImports: ['standalone'], knownScenarioKeys: []
-    }));
+    await fs.unlink(path.join(firstRoot, '.kot/groups', `${sourceGroup.id}.yml`));
     const from = path.join(firstRoot, 'source');
     const to = path.join(secondRoot, 'moved');
     await fs.rename(from, to);
@@ -869,7 +875,7 @@ test('dirty project metadata prevents the initial legacy import without clearing
     const service = h.createService();
 
     await assert.rejects(service.ensureReady(), /Save project metadata first/u);
-    await assert.rejects(fs.stat(path.join(h.root(), '.kot')), { code: 'ENOENT' });
+    await assert.rejects(fs.stat(path.join(h.root(), '.kot/groups')), { code: 'ENOENT' });
     assert.deepEqual(h.state.get('kotTestToolkit.standaloneFeatures'), legacy);
     h.setProjectMetadataDirty(h.root(), false);
     assert.equal((await service.ensureReady()).features[0].groupId, 'legacy');
@@ -904,12 +910,12 @@ test('dirty metadata prevents automatic central-record migration until shared ob
 
 test('creating a group from feature Properties writes it to that feature project', async t => {
     const h = await harness(t); const firstRoot = h.root(); const secondRoot = path.join(h.temp, 'other-tests');
-    await fs.mkdir(secondRoot, { recursive: true }); const file = path.join(secondRoot, 'other.feature');
+    await v3Fixture(secondRoot); const file = path.join(secondRoot, 'other.feature');
     await fs.writeFile(file, 'Feature: Other\nScenario: Ready\n'); h.changeRoots([firstRoot, secondRoot]);
     const service = h.createService(); await service.ensureReady();
     const group = await service.createGroupForFeature(pathToFileURL(file).toString(), 'From Properties');
     assert.deepEqual([...service.getSnapshot().ordering!.groupRoots[group.id]], [secondRoot]);
-    assert.match(await fs.readFile(path.join(secondRoot, '.kot/groups.yml'), 'utf8'), /From Properties/u);
+    assert.match(await groupsText(secondRoot), /From Properties/u);
 });
 
 test('native SPPR scen.feature stays with its metadata instead of appearing as an independent Vanessa feature', async t => {

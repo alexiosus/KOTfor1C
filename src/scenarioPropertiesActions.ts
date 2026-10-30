@@ -8,6 +8,7 @@ import type { TestInfo } from './types';
 import type { ScenarioIdentityChangeResult } from './scenarioPropertyIdentity';
 
 export interface ScenarioPropertiesActionOptions {
+    onDisplayOrderChanged?(): Promise<void>;
     renameScenario(target: { name: string; uri: string }, value?: string, field?: 'name' | 'code'): Promise<ScenarioIdentityChangeResult | void>;
 }
 
@@ -39,13 +40,14 @@ async function sourceWorkspace(uri: vscode.Uri, t: Translator): Promise<vscode.U
     return owners[0].uri;
 }
 
-export async function createScenarioLaunchSettings(context: vscode.ExtensionContext, document: vscode.TextDocument, source: ScenarioPropertiesDocument, t: Translator): Promise<vscode.Uri | undefined> {
+export async function createScenarioLaunchSettings(context: vscode.ExtensionContext, document: vscode.TextDocument, source: ScenarioPropertiesDocument, t: Translator,
+    assertOperationCurrent: () => void = () => {}): Promise<vscode.Uri | undefined> {
     const [{ readScenarioProperties }, { projectLibraryEnvironment }, { resolveProjectLibraryRoot },
         { promptForSelectedEtalonBaseValues }, { buildScenarioTestSettings }] = await Promise.all([
         import('./scenarioPropertiesModel.js'), import('./projectLibraryIntegration.js'), import('./projectLibraryMetadata.js'),
         import('./scenarioCreator.js'), import('./scenarioTestSettingsModel.js')
     ]);
-    assertCurrent(document, source, t);
+    assertCurrent(document, source, t);assertOperationCurrent();
     if (document.uri.scheme !== 'file') { throw new Error(t('Choose a scenario in the configured project or test roots.')); }
     const model = readScenarioProperties(source.text);
     const environment = projectLibraryEnvironment();
@@ -59,7 +61,7 @@ export async function createScenarioLaunchSettings(context: vscode.ExtensionCont
     const workspace = await sourceWorkspace(document.uri, t);
     const selectedBase = await promptForSelectedEtalonBaseValues(t, context, user, workspace.fsPath);
     if (!selectedBase) { return; }
-    assertCurrent(document, source, t);
+    assertCurrent(document, source, t);assertOperationCurrent();
     const target = vscode.Uri.file(path.join(path.dirname(document.uri.fsPath), 'test', `${code}.yaml`));
     assertCurrent(document, source, t);
     if (target.scheme !== 'file' || target.query || target.fragment || !/\.ya?ml$/iu.test(target.fsPath)
@@ -73,13 +75,14 @@ export async function createScenarioLaunchSettings(context: vscode.ExtensionCont
     };
     assertTargetSaved();
     if (await fileExists(target)) { throw new Error(t('The launch settings path already exists: {0}', target.fsPath)); }
+    assertOperationCurrent();
     assertTargetSaved();
     const text = buildScenarioTestSettings(source.text, {
         uid: randomUUID(), databaseName: selectedBase.baseName, databaseId: selectedBase.baseId, userProfile: selectedBase.userProfile
     });
     assertCurrent(document, source, t);
     await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(target.fsPath)));
-    assertCurrent(document, source, t); assertTargetSaved();
+    assertCurrent(document, source, t); assertTargetSaved();assertOperationCurrent();
     const edit = new vscode.WorkspaceEdit();
     edit.createFile(target, { overwrite: false, ignoreIfExists: false });
     edit.insert(target, new vscode.Position(0, 0), text);
@@ -170,6 +173,7 @@ export function createScenarioPropertiesActions(
         if (metadata) {
             const { createScenarioPropertiesHost } = await import('./scenarioPropertiesPanel.js');
             const host = createScenarioPropertiesHost({ runAction: async () => undefined });
+            if (await host.editProjectMetadata?.(source, { category: result.value })) { return; }
             if (target.uri === source.uri) {
                 target = await host.ensureMetadata(source);
                 targetDocument = await vscode.workspace.openTextDocument(vscode.Uri.parse(target.uri));

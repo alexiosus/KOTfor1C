@@ -1,3 +1,6 @@
+import { refreshProjectBranch } from './projectBranchRefresh';
+import { permitsNativeScenario, setProjectFormatTranslator } from './projectFormat';
+import { registerMetadataConflictCommand } from './projectMetadataConflictCommand';
 import { getGherkinInsertionContext } from './gherkinInsertionContext';
 import { readNativeScenarioMetadata } from './spprScenarioFiles';
 import { KotWorkspacePanel } from './kotWorkspacePanel';
@@ -14,6 +17,7 @@ import * as vscode from 'vscode';
 import { registerGherkinTableColumnDeletion } from './gherkinTableEditing';
 import { controlledCodeLenses, controlledInlayHints, editorActionSetting, editorActionsAreEnabled } from './editorActionControls';
 import { registerScenarioPropertiesEditor } from './scenarioPropertiesEditorIntegration';
+import { bindProjectEntityDisplayState } from './projectEntityDisplayOrder';
 import { scenarioDefaultFoldLines } from './scenarioYamlEditor';
 import { ProcessEditorCodeLensProvider } from './processEditorCodeLens';
 import { openProjectMetadata, projectedProjectScenario, watchProjectLibrary } from './projectLibraryIntegration';
@@ -832,11 +836,14 @@ async function notifyIfUpdated(context: vscode.ExtensionContext): Promise<void> 
  * @param context Контекст расширения, предоставляемый VS Code.
  */
 export async function activate(context: vscode.ExtensionContext) {
+    registerMetadataConflictCommand(context);
+    context.subscriptions.push({ dispose: bindProjectEntityDisplayState(context.workspaceState) });
     registerGherkinTableFormatting(context);
     registerGherkinTableColumnDeletion(context);
     console.log('Extension "kotTestToolkit" activated.');
     setExtensionUri(context.extensionUri);
     const uiTranslator = await getTranslator(context.extensionUri);
+    setProjectFormatTranslator(uiTranslator);
     KotWorkspacePanel.initialize(context);
     const kotWorkspacePanel = new KotWorkspacePanel(context);
     context.subscriptions.push(kotWorkspacePanel);
@@ -971,8 +978,10 @@ export async function activate(context: vscode.ExtensionContext) {
         (failure, document) => phaseSwitcherProvider.buildVanessaControlFailureHover(failure, document, vanessaControl.runLogPath()));
     registerVanessaBreakpointCommands(context, vanessaControlSession, vanessaYamlControl, vanessaBreakpointMarkers);
     const standaloneFeatureService = StandaloneFeatureService.getInstance(context);
-    watchProjectLibrary(context, () => {
-        return phaseSwitcherProvider.refreshProjectLibraryMetadata().catch(error => {
+    let bindBranchRefresh!: (refresh: () => Promise<void>) => void;
+    const branchRefreshReady=new Promise<() => Promise<void>>(resolve=>{bindBranchRefresh=resolve;});
+    watchProjectLibrary(context, formatChanged => {
+        return Promise.resolve(formatChanged ? branchRefreshReady.then(refresh=>refresh()) : phaseSwitcherProvider.refreshProjectLibraryMetadata()).then(() => undefined).catch(error => {
             void vscode.window.showErrorMessage(vscode.l10n.t('Could not refresh project library: {0}',
                 error instanceof Error ? error.message : String(error)));
         });
@@ -998,7 +1007,7 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     let batchProcessingInProgress = false;
     let scenarioRepairCancellationSource: vscode.CancellationTokenSource | null = null;
-    const scenarioPropertiesEditor = registerScenarioPropertiesEditor(context, { renameScenario: (target, value, field) => phaseSwitcherProvider.renameScenarioTarget(target, value, field) }, uiTranslator);
+    const scenarioPropertiesEditor = registerScenarioPropertiesEditor(context, { renameScenario: (target, value, field) => phaseSwitcherProvider.renameScenarioTarget(target, value, field), onDisplayOrderChanged: () => phaseSwitcherProvider.refreshProjectLibraryMetadata() }, uiTranslator);
     const updateActiveScenarioContext = async (editor?: vscode.TextEditor) => {
         const document = editor?.document;
         const isScenario = !!(document && isScenarioYamlFile(document));
@@ -1277,6 +1286,12 @@ export async function activate(context: vscode.ExtensionContext) {
         scenarios: phaseSwitcherProvider,
         standaloneFeatures: standaloneFeatureService
     });
+    bindBranchRefresh(()=>refreshProjectBranch({
+        invalidateLibrary:()=>snapshotService.invalidate(),
+        reloadScenarios:()=>phaseSwitcherProvider.refreshFromExternalStateChange({refreshCache:true}),
+        reloadDefinitions:async()=>{await projectDefinitionIndex.reloadConfigurations();await projectDefinitionIndex.waitForIdle();},
+        reloadStandalone:()=>standaloneFeatureService.refresh()
+    }));
     scenarioPropertiesEditor.panel.attachLibrarySupport(createPropertiesLibrarySupport({
         favoriteItems: async uri => {
             const view = await projectDefinitionResolver.getView(uri);
@@ -3409,7 +3424,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // Добавляем автоматические операции после сохранения YAML файлов
     context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument(async (document) => {
-            if (/(?:^|[\\/])scen\.yaml$/u.test(document.fileName) && !document.isDirty
+            if (/(?:^|[\\/])scen\.yaml$/u.test(document.fileName) && !document.isDirty && permitsNativeScenario(document.fileName)
                 && vscode.workspace.getConfiguration('kotTestToolkit', document.uri).get<boolean>('editor.autoMigrateScenarioYamlOnSave', false)) {
                 const { shouldAutoMigrateScenario } = await import('./spprScenarioFormat.js');
                 if (shouldAutoMigrateScenario(document.fileName, document.getText(), true)) {

@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { isMap, isSeq, parseDocument, visit } from 'yaml';
 import { readPropertyCatalogFile, serializePropertyCatalogWrite, validatePropertyCatalogName, writePropertyCatalogFile } from './projectPropertyCatalogStore';
+import { assertProjectFormat3, assertProjectFormatUnchanged, projectFormat } from './projectFormat';
+import { assertProjectTransitionBranch } from './projectFormatTransition';
 
 export interface TestNumberingSeries { prefix: string; author: string; lastNumber: number }
 export type TestNumberingDefinition = Pick<TestNumberingSeries, 'prefix' | 'author'>;
@@ -21,7 +23,7 @@ export function validateNewTestCode(code: string, numericOnly = false): string |
     return undefined;
 }
 
-function parseCatalog(text?: string) {
+export function parseNumberingCatalog(text?: string) {
     const document = parseDocument(text ?? 'version: 1\nseries: []\n');
     let alias = false; visit(document, { Alias: () => { alias = true; } });
     if (document.errors.length || document.warnings.length || !isMap(document.contents) || alias) {
@@ -85,13 +87,14 @@ export class TestNumberingStore {
         });
     }
     async read(): Promise<TestNumberingCatalog> {
-        await this.safePath(); return parseCatalog(await readPropertyCatalogFile(this.filePath)).catalog;
+        if(projectFormat(this.root).kind!=='v3'){return {version:1,series:[]};}
+        await this.safePath(); return parseNumberingCatalog(await readPropertyCatalogFile(this.filePath)).catalog;
     }
     async addSeries(prefix: string, author: string, codes: readonly string[]): Promise<TestNumberingSeries> {
         validatePrefix(prefix); const name = validatePropertyCatalogName(author);
         return this.exclusive(async () => {
             const original = await readPropertyCatalogFile(this.filePath);
-            const { document, catalog } = parseCatalog(original);
+            const { document, catalog } = parseNumberingCatalog(original);
             if (catalog.series.some(entry => entry.prefix === prefix)) { throw new Error('A numbering series with this prefix already exists.'); }
             const entry = { prefix, author: name, lastNumber: highestNumber(prefix, codes) };
             document.addIn(['series'], entry);
@@ -111,7 +114,7 @@ export class TestNumberingStore {
         const updated = definitions(entries); const before = definitions(expected);
         return this.exclusive(async () => {
             const original = await readPropertyCatalogFile(this.filePath);
-            const { document, catalog } = parseCatalog(original);
+            const { document, catalog } = parseNumberingCatalog(original);
             const current = catalog.series.map(({ prefix, author }) => ({ prefix, author }));
             if (JSON.stringify(current) !== JSON.stringify(before)) { throw new Error('Numbering series changed. Refresh and retry.'); }
             const codes = await loadCodes();
@@ -138,9 +141,20 @@ export class TestNumberingStore {
     async claim(code: string, loadCodes: () => Promise<readonly string[]>, expectedSeries?: Pick<TestNumberingSeries, 'prefix' | 'author'>,
         create?: () => Promise<void>): Promise<string | undefined> {
         const invalid = validateNewTestCode(code); if (invalid) { throw new Error(invalid); }
+        const format=projectFormat(this.root);
+        if(format.kind!=='v3'){
+            return serializePropertyCatalogWrite(path.join(this.root,'.legacy-code-claim'),async()=>{
+                assertProjectTransitionBranch(this.root);assertProjectFormatUnchanged(this.root,format);
+                if(expectedSeries){assertProjectFormat3(this.root);}
+                const codes=await loadCodes();
+                assertProjectFormatUnchanged(this.root,format);
+                if(codes.some(value=>value.toLocaleLowerCase()===code.toLocaleLowerCase())){throw new Error(`Test code "${code}" already exists.`);}
+                await create?.();return undefined;
+            });
+        }
         return this.exclusive(async () => {
             const original = await readPropertyCatalogFile(this.filePath);
-            const { document, catalog } = parseCatalog(original);
+            const { document, catalog } = parseNumberingCatalog(original);
             if (expectedSeries && !catalog.series.some(entry => entry.prefix === expectedSeries.prefix && entry.author === expectedSeries.author)) {
                 throw new Error('The selected numbering series changed. Choose a series again.');
             }

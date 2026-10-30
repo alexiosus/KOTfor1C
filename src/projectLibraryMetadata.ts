@@ -1,11 +1,14 @@
-import { isProjectSetupPending } from './projectSetupGate';
-import { createHash } from 'node:crypto';
+import { projectFormat } from './projectFormat';
+import { legacyScenarioGroupId, readLegacyMetadata } from './projectLegacyMetadata';
+import { isProjectSetupPending, projectTransitionPreservesSource } from './projectSetupGate';
 import path from 'node:path';
 import { ProjectLibraryStore, projectEntityKey, type ProjectEntityIdentity, type ProjectEntityMetadata, type ProjectEntityMetadataPatch, type ProjectGroup, type ProjectLibrarySnapshot, type ProjectLibraryImport, type ProjectFileProgress } from './projectLibraryStore';
 import type { TestInfo } from './types';
 import { projectGroupDisplayKey, type ProjectDisplayGroup } from './projectGroupDisplayOrder';
 
 const snapshots = new Map<string, ProjectLibrarySnapshot>();
+const snapshotModes = new Map<string, string>();
+const formatKey = (root: string) => { const format=projectFormat(root);return `${format.kind}:${format.token??''}`; };
 const legacyPreviews = new Map<string, { input: ProjectLibraryImport; base?: ProjectLibrarySnapshot; value?: ProjectLibrarySnapshot }>();
 
 /** Display legacy organization while setup postpones writes; persisted records always win. */
@@ -40,12 +43,13 @@ function snapshotForDisplay(root: string, snapshot: ProjectLibrarySnapshot): Pro
 }
 
 export function cacheProjectLibrarySnapshot(root: string, snapshot: ProjectLibrarySnapshot): void {
-    snapshots.set(path.resolve(root), snapshot);
+    snapshots.set(path.resolve(root), snapshot); snapshotModes.set(path.resolve(root), formatKey(root));
 }
 
 /** Reuse metadata already discovered by project views; never start discovery for a dropdown. */
 export function getCachedProjectLibrarySnapshot(root: string): ProjectLibrarySnapshot | undefined {
     const owner = path.resolve(root); const snapshot = snapshots.get(owner);
+    if (snapshot && snapshotModes.get(owner) !== formatKey(owner)) { clearProjectLibrarySnapshot(owner); return undefined; }
     return snapshot ? snapshotForDisplay(owner, snapshot) : undefined;
 }
 
@@ -90,7 +94,7 @@ export function createProjectLibraryStore(root: string, workspaceRoots: readonly
         sourceIdentities,
         sourceTexts,
         onProgress,
-        canCleanSource: filePath => sourceCleanupGuard(filePath),
+        canCleanSource: filePath => !projectTransitionPreservesSource(filePath) && sourceCleanupGuard(filePath),
         beforeWrite: () => beforeWrite?.(owner),
         onWarning: message => {
             const key = `${owner}:${message}`;
@@ -179,8 +183,7 @@ export async function loadProjectScenarioMetadata(infos: readonly TestInfo[], wo
                     const name = info.tabName.trim();
                     group = groups.get(name) ?? snapshot.groups.find(value => value.name === name && value.sections.some(value => value !== 'standalone'));
                     if (!group) {
-                        const hash = createHash('sha256').update(`scenario:${name}`).digest('hex');
-                        group = { id: `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`, name, sections: [section], order: groups.size };
+                        group = { id: legacyScenarioGroupId(name), name, sections: [section], order: groups.size };
                     } else if (!group.sections.includes(section)) { group = { ...group, sections: [...group.sections, section] }; }
                     groups.set(name, group);
                 }
@@ -190,7 +193,7 @@ export async function loadProjectScenarioMetadata(infos: readonly TestInfo[], wo
                         ...(info.scenarioCategory !== undefined ? { category: info.scenarioCategory } : {}) } });
             }
             const input = { groups: [...groups.values()], entities };
-            if (isProjectSetupPending(root)) { legacyPreviews.set(root, { input }); }
+            if (projectFormat(root).kind !== 'v3' || isProjectSetupPending(root)) { legacyPreviews.set(root, { input }); }
             else { beforeWrite?.(root); snapshot = await store.importLegacy(input, 'scenario'); }
         } else if (importLegacy && !isProjectSetupPending(root) && snapshot.knownScenarioKeys !== undefined) {
             const seeds: Parameters<ProjectLibraryStore['seedLegacyEntities']>[0][number][] = [];
@@ -207,7 +210,7 @@ export async function loadProjectScenarioMetadata(infos: readonly TestInfo[], wo
             }
             if (seeds.length) { beforeWrite?.(root); snapshot = await store.seedLegacyEntities(seeds); }
         }
-        snapshots.set(root, snapshot);
+        cacheProjectLibrarySnapshot(root, snapshot);
     }
     return infos.map(info => { const { root, identity } = location(info, workspaceRoots, scanRoots); return project(info, getCachedProjectLibrarySnapshot(root)!, identity); });
 }
@@ -231,7 +234,7 @@ export async function renameProjectLibraryGroup(groupId: string, expectedName: s
 export async function writeProjectScenarioMetadata(info: TestInfo, patch: ProjectEntityMetadataPatch, workspaceRoots: readonly string[], scanRoots: readonly string[], beforeWrite?: (root: string) => void): Promise<void> {
     const { root, identity, store } = location(info, workspaceRoots, scanRoots, beforeWrite);
     await store.setMetadata(identity, patch);
-    snapshots.set(root, await store.read());
+    cacheProjectLibrarySnapshot(root, await store.read());
 }
 
 export async function registerProjectScenarioMetadata(info: TestInfo, workspaceRoots: readonly string[], scanRoots: readonly string[], beforeWrite?: (root: string) => void, createdMetadata?: CreatedProjectScenarioMetadata): Promise<void> {
@@ -295,4 +298,20 @@ export async function loadProjectLibraryOwnedGroups(workspaceRoots: readonly str
         }
     }
     return groups.sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+}
+
+/** Update one inline source without replacing the cached organization of other legacy sources. */
+export function cacheLegacyScenario(info: TestInfo, workspaceRoots: readonly string[], scanRoots: readonly string[], source: string): void {
+    const { root, identity } = location(info, workspaceRoots, scanRoots);
+    const old = legacyPreviews.get(root)?.input ?? { groups: [], entities: [] };
+    const legacy = readLegacyMetadata(source); const section = info.kind === 'process' ? 'process' : 'main';
+    const group = legacy.group ? { ...legacy.group, sections: [section] as ProjectGroup['sections'], order: 0 } : undefined;
+    const groups = group && !old.groups.some(value => value.id === group.id) ? [...old.groups, group] : old.groups;
+    legacyPreviews.set(root, { input: { groups, entities: [...old.entities.filter(value => projectEntityKey(value.identity) !== projectEntityKey(identity)), { identity, metadata: legacy.values }] } });
+    cacheProjectLibrarySnapshot(root, { groups: [], metadata: {}, identities: {}, legacyImports: [], knownScenarioKeys: [] });
+}
+
+export function clearProjectLibrarySnapshot(root?: string): void {
+    if(root){const owner=path.resolve(root);snapshots.delete(owner);snapshotModes.delete(owner);legacyPreviews.delete(owner);}
+    else{snapshots.clear();snapshotModes.clear();legacyPreviews.clear();}
 }

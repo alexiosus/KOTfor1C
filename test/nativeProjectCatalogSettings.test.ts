@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import * as projectSetupGate from '../src/projectSetupGate';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -23,7 +24,7 @@ async function fixture(t: test.TestContext, multiRoot = false, savedWorkspace = 
     t.after(() => fs.promises.rm(base, { recursive: true, force: true }));
     const uri = (fsPath: string) => ({ scheme: 'file', fsPath, toString: () => `file://${fsPath}` });
     const roots = multiRoot ? [path.join(base, 'first'), path.join(base, 'second')] : [base];
-    for (const root of roots) { await fs.promises.mkdir(root, { recursive: true }); }
+    for (const root of roots) { await fs.promises.mkdir(root, { recursive: true }); await v3Fixture(root); }
     const folders = roots.map((root, index) => ({ uri: uri(root), name: `Project ${index + 1}` }));
     const workspaceConfig = new Map<string, unknown>(); const globalConfig = new Map<string, unknown>();
     const folderScope = multiRoot || savedWorkspace;

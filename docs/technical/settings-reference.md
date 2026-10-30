@@ -597,7 +597,7 @@ true
 
 `kotTestToolkit.newScenarioDefaults.format`
 
-Предпочтительный формат нового сценария СППР: `legacy` — scen.yaml; `native` — meta.yaml и scen.feature. Мастер позволяет изменить выбор для каждого сценария.
+Предпочтительный формат нового сценария СППР: `legacy` — scen.yaml; `native` — meta.yaml и scen.feature. Мастер позволяет изменить выбор для каждого сценария. В ветках без .kot/project.yml версии 3 новые сценарии всегда создаются как scen.yaml.
 
 Тип: `"string"`. Область: `window`.
 
@@ -613,7 +613,7 @@ true
 
 `kotTestToolkit.editor.autoMigrateScenarioYamlOnSave`
 
-При сохранении преобразовывать старый scen.yaml в scen.feature + meta.yaml. По умолчанию выключено. Несохранённые соседние файлы препятствуют конвертации.
+При сохранении преобразовывать старый scen.yaml в scen.feature + meta.yaml. По умолчанию выключено. Несохранённые соседние файлы препятствуют конвертации. Работает только в ветках с .kot/project.yml версии 3; пользовательская настройка не включает переход проекта.
 
 Тип: `"boolean"`. Область: `resource`.
 

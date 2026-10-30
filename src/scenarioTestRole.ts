@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { assertProjectFormat3, assertProjectFormatUnchanged, projectFormat } from './projectFormat';
+import { assertProjectTransitionBranch } from './projectFormatTransition';
 
 interface RoleRequest {
     root: string; sourcePath: string; uid: string; kind: 'scenario' | 'process'; targetMain: boolean;
@@ -27,6 +29,9 @@ async function moveExclusive(from: string, to: string): Promise<void> {
 /** Role changes move only linked launch settings; descriptors and their references retain their identity. */
 export async function convertScenarioTestRole(request: RoleRequest): Promise<'unchanged' | 'archived' | 'restored' | 'needsSettings'> {
     const root = path.resolve(request.root);
+    const expectedFormat=projectFormat(root);
+    const assertFormat=()=>{assertProjectTransitionBranch(root);assertProjectFormat3(root,expectedFormat.token);assertProjectFormatUnchanged(root,expectedFormat);};
+    assertFormat();
     if (!/^[\w-]+$/u.test(request.uid)) { throw new Error('The source UID is invalid.'); }
     const folder = path.join(root, '.kot', 'launch-settings', `${request.kind}-${request.uid.toLowerCase()}`);
     if (active.has(folder)) { throw new Error('A role conversion is already in progress.'); }
@@ -35,6 +40,7 @@ export async function convertScenarioTestRole(request: RoleRequest): Promise<'un
     let createdArchive = false;
     try {
         await request.assertCurrent();
+        assertFormat();
         const realRoot = await fs.realpath(root);
         inside(realRoot, await fs.realpath(request.sourcePath));
         const sourceFolder = inside(root, path.dirname(request.sourcePath));
@@ -42,7 +48,9 @@ export async function convertScenarioTestRole(request: RoleRequest): Promise<'un
         let guardedPaths = request.settingsPaths;
         const current = async () => {
             await request.assertCurrent(guardedPaths);
+            assertFormat();
             if (!(await fs.readFile(request.sourcePath)).equals(sourceBytes)) { throw new Error('The source changed during role conversion.'); }
+            assertFormat();
         };
         if (request.targetMain && request.settingsPaths.length) { return 'unchanged'; }
         if (!request.targetMain && !request.settingsPaths.length) { return 'unchanged'; }
@@ -58,6 +66,7 @@ export async function convertScenarioTestRole(request: RoleRequest): Promise<'un
                 const from = path.join(root, file.path); const to = path.join(folder, file.archive);
                 await current();
                 if (digest(await fs.readFile(from)) !== file.hash) { throw new Error('Launch settings changed during role conversion.'); }
+                assertFormat();
                 await moveExclusive(from, to); moved.push({ from, to });
             }
             await current();
@@ -92,8 +101,8 @@ export async function convertScenarioTestRole(request: RoleRequest): Promise<'un
         return 'restored';
     } catch (error) {
         const failures: unknown[] = [];
-        for (const move of moved.reverse()) { try { await moveExclusive(move.to, move.from); } catch (failure) { failures.push(failure); } }
-        if (createdArchive && !failures.length) { await fs.rmdir(folder).catch(() => {}); }
+        for (const move of moved.reverse()) { try { assertFormat();await moveExclusive(move.to, move.from); } catch (failure) { failures.push(failure); } }
+        if (createdArchive && !failures.length) { assertFormat();await fs.rmdir(folder).catch(() => {}); }
         if (failures.length) { throw new AggregateError([error, ...failures], `Role conversion rollback was incomplete. Preserved settings: ${folder}`); }
         throw error;
     } finally { active.delete(folder); }

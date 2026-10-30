@@ -5,7 +5,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import * as phaseMetadata from '../src/phaseSwitcherMetadata';
 
-function harness(source: string) {
+function harness(source: string, autoMigrate = false) {
     const ts = require('typescript') as typeof import('typescript');
     const sourceFile = ts.createSourceFile('extension.ts', fs.readFileSync(path.join(process.cwd(), 'src/extension.ts'), 'utf8'), ts.ScriptTarget.ES2022, true);
     let save: import('typescript').Expression | undefined;
@@ -35,7 +35,7 @@ function harness(source: string) {
     }
     const savedSnapshots = new Map();
     const state = {
-        ...phaseMetadata, console: { ...console, error: (...values: unknown[]) => { errors.push(values); } },
+        permitsNativeScenario: () => false, ...phaseMetadata, console: { ...console, error: (...values: unknown[]) => { errors.push(values); } },
         context: { extensionUri: {} }, setTimeout, clearTimeout,
         isScenarioYamlFile: () => true, isMainScenarioDocument: () => true, hasProjectMetadata: () => false,
         buildScenarioSaveSnapshot: () => ({}), calculateScenarioDirtyFlags: () => ({}),
@@ -61,7 +61,7 @@ function harness(source: string) {
             },
             workspace: {
                 workspaceFolders: [{ uri: { scheme: 'file', fsPath: '/repo' } }],
-                getConfiguration: () => ({ get: (key: string) => key === 'editor.autoEnsureKotMetadataForMainScenarios' || key === 'editor.enableLegacyMetadataMigrationForMainScenarios' }),
+                getConfiguration: () => ({ get: (key: string) => key === 'editor.autoMigrateScenarioYamlOnSave' && autoMigrate || key === 'editor.autoEnsureKotMetadataForMainScenarios' || key === 'editor.enableLegacyMetadataMigrationForMainScenarios' }),
                 openTextDocument: async () => document,
                 applyEdit: async (edit: WorkspaceEdit) => { document.text = edit.text ?? document.text; return true; }
             }
@@ -97,3 +97,8 @@ for (const action of ['save', 'repair'] as const) {
         assert.equal(h.saves(), 0);
     });
 }
+
+test('legacy branch ignores a user-level save-migration preference', async () => {
+    const h=harness(scenario,true);await h.handlers.save(h.document);
+    assert.deepEqual(h.errors,[]);assert.equal(h.document.text,scenario);assert.equal(h.saves(),0);
+});

@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -13,7 +14,7 @@ const uri = (file: string) => ({ scheme: 'file', fsPath: file, toString: () => p
 const scenario = (directory: string, name = path.basename(directory)) => ({ name, relativePath: directory, yamlFileUri: uri(path.join(directory, 'scen.yaml')) });
 
 async function fixture(t: test.TestContext) {
-    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'kot-batch-format-'));
+    const root = await v3Fixture(fsp.mkdtemp(path.join(os.tmpdir(), 'kot-batch-format-')));
     t.after(() => fsp.rm(root, { recursive: true, force: true }));
     const documents: any[] = []; const opened: any[] = []; const commands: any[] = []; const messages: string[] = [];
     const host = {

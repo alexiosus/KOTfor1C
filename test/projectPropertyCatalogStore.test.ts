@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -6,7 +7,7 @@ import { test, type TestContext } from 'node:test';
 import { ProjectPropertyCatalogStore } from '../src/projectPropertyCatalogStore';
 
 async function fixture(t: TestContext) {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'property-catalogs-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'property-catalogs-')));
     t.after(() => fs.rm(root, { recursive: true, force: true }));
     return { root, file: path.join(root, '.kot', 'property-catalogs.yml') };
 }
@@ -45,7 +46,7 @@ test('dirty metadata and external edits block catalog writes without replacing t
 
 test('invalid or ambiguous catalog YAML is rejected before any write', async t => {
     const { root, file } = await fixture(t);
-    await fs.mkdir(path.dirname(file));
+    await fs.mkdir(path.dirname(file), { recursive: true });
     for (const text of ['version: 1\nprojects: [42]\n', 'version: 1\nprojects: [A]\nprojects: [B]\n', 'version: 2\n', 'version: 1\nprojects: [A, a]\n']) {
         await fs.writeFile(file, text);
         await assert.rejects(new ProjectPropertyCatalogStore(root).add('projects', 'New'), /catalog|version|duplicate|ambiguous/iu);
@@ -60,15 +61,16 @@ test('catalog writes reject a symlinked metadata directory', async t => {
     const { root } = await fixture(t);
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'property-catalog-outside-'));
     t.after(() => fs.rm(outside, { recursive: true, force: true }));
+    await fs.rm(path.join(root, '.kot'), {recursive: true});
     await fs.symlink(outside, path.join(root, '.kot'));
-    await assert.rejects(new ProjectPropertyCatalogStore(root).add('projects', 'Outside'), /symbolic|symlink/iu);
+    await assert.rejects(new ProjectPropertyCatalogStore(root).add('projects', 'Outside'), /symbolic|symlink|KOT 3/iu);
     assert.deepEqual(await fs.readdir(outside), []);
 });
 
 const salesFunction = { name: 'Sales', uid: '98999f57-13dc-11e8-aed1-005056a5c4e8' };
 const purchaseFunction = { name: 'Purchases', uid: '11111111-2222-4333-8444-555555555555' };
 test('discovered values merge without replacing shared names, function identities or comments', async t => {
-    const { root, file } = await fixture(t); await fs.mkdir(path.dirname(file));
+    const { root, file } = await fixture(t); await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, '# Shared values\nversion: 1\nprojects: [Manual]\nsystemFunctions:\n  - name: Sales\n    uid: 98999f57-13dc-11e8-aed1-005056a5c4e8\n');
     const store = new ProjectPropertyCatalogStore(root);
     await store.mergeDetected({ projects: ['manual', 'Drive'], responsibles: ['Alex'], systemFunctions: [
@@ -83,7 +85,7 @@ test('discovered values merge without replacing shared names, function identitie
     assert.equal(await fs.readFile(file, 'utf8'), saved);
 });
 test('legacy system functions migrate once preserving identities and remain portable without local settings', async t => {
-    const { root, file } = await fixture(t); await fs.mkdir(path.dirname(file));
+    const { root, file } = await fixture(t); await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, '# Project catalogs\nversion: 1\nprojects: [Drive]\ncategories: [Smoke]\n');
     const store = new ProjectPropertyCatalogStore(root);
     assert.deepEqual(await store.ensureSystemFunctions([salesFunction]), [salesFunction]);
@@ -108,7 +110,7 @@ test('shared system function edits retain other catalogs and reject stale list r
 });
 
 test('ambiguous or malformed shared system functions are rejected without altering YAML', async t => {
-    const { root, file } = await fixture(t); await fs.mkdir(path.dirname(file));
+    const { root, file } = await fixture(t); await fs.mkdir(path.dirname(file), { recursive: true });
     for (const entries of [[salesFunction, { ...salesFunction, name: 'Another' }], [{ ...salesFunction, uid: 'invalid' }], [{ ...salesFunction, name: '' }]]) {
         const text = 'version: 1\nsystemFunctions: ' + JSON.stringify(entries) + '\n'; await fs.writeFile(file, text);
         await assert.rejects(new ProjectPropertyCatalogStore(root).ensureSystemFunctions([purchaseFunction]), /function|GUID|ambiguous|duplicate|name/iu);

@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -16,7 +17,7 @@ function scenario(root: string, file = 'tests/main/scen.yaml'): TestInfo {
 }
 
 test('pending setup displays legacy groups and cached scenario metadata without migrating project files', async t => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-pending-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-pending-')));
     t.after(async () => { completeProjectSetup(root); await fs.rm(root, { recursive: true, force: true }); });
     const info = scenario(root);
     await writeSource(info);
@@ -34,7 +35,7 @@ test('pending setup displays legacy groups and cached scenario metadata without 
     assert.equal(refreshed.order, 7);
     assert.equal((await loadProjectLibraryGroups([root], [root]))[0].id, groups[0].id);
     assert.equal(await fs.readFile(info.yamlFileUri.fsPath, 'utf8'), original);
-    await assert.rejects(fs.stat(path.join(root, '.kot')), { code: 'ENOENT' });
+    await assert.rejects(fs.stat(path.join(root, '.kot/groups')), { code: 'ENOENT' });
     await assert.rejects(fs.stat(info.yamlFileUri.fsPath + '.kot.yml'), { code: 'ENOENT' });
     completeProjectSetup(root);
     await loadProjectScenarioMetadata([info], [root], [path.join(root, 'tests')]);
@@ -43,7 +44,7 @@ test('pending setup displays legacy groups and cached scenario metadata without 
 });
 
 test('pending setup preserves authoritative shared metadata and does not restore a deleted imported record', async t => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-pending-shared-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-pending-shared-')));
     t.after(async () => { completeProjectSetup(root); await fs.rm(root, { recursive: true, force: true }); });
     const info = scenario(root);
     await writeSource(info);
@@ -63,7 +64,7 @@ test('pending setup preserves authoritative shared metadata and does not restore
 });
 
 test('a scan with unchanged project metadata traverses its source directories only once', async t => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-startup-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-startup-')));
     t.after(() => fs.rm(root, { recursive: true, force: true }));
     const info = scenario(root);
     await writeSource(info);
@@ -87,7 +88,7 @@ async function writeSource(info: TestInfo): Promise<void> {
 }
 
 test('ungrouped main scenarios and processes do not create a shared group or promote nested scenarios', async t => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-ungrouped-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-ungrouped-')));
     t.after(() => fs.rm(root, { recursive: true, force: true }));
     const main = { ...scenario(root), tabName: undefined, hasTestSettings: true };
     const nested = { ...scenario(root, 'tests/nested/scen.yaml'), uid: 'nested', tabName: undefined };
@@ -104,8 +105,8 @@ test('ungrouped main scenarios and processes do not create a shared group or pro
 });
 
 test('scenario metadata imports once, remains authoritative after source saves and travels to a cloned checkout', async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-'));
-    const clone = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-clone-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-')));
+    const clone = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-clone-')));
     try {
         const legacy = scenario(root);
         await writeSource(legacy);
@@ -128,8 +129,10 @@ test('scenario metadata imports once, remains authoritative after source saves a
         const [cloned] = await loadProjectScenarioMetadata([scenario(clone, 'tests/moved/scen.yaml')], [clone], [path.join(clone, 'tests')]);
         assert.equal(cloned.tabName, 'Shared sales');
         assert.equal(cloned.scenarioDescription, 'Shared description');
-        assert.equal(cloned.order, 2);
-        assert.doesNotMatch(await fs.readFile(path.join(clone, '.kot', 'groups.yml'), 'utf8'), /kot-meta-/u);
+        assert.equal(cloned.order, 7, 'personal override is not copied; legacy initial position remains');
+        for (const name of await fs.readdir(path.join(clone, '.kot', 'groups'))) {
+            assert.doesNotMatch(await fs.readFile(path.join(clone, '.kot', 'groups', name), 'utf8'), /kot-meta-/u);
+        }
     } finally { await fs.rm(root, { recursive: true, force: true }); await fs.rm(clone, { recursive: true, force: true }); }
 });
 
@@ -142,7 +145,7 @@ test('workspace root owns portable metadata and external test roots own theirs',
 });
 
 test('shared deletion is not undone by legacy grouping on a later scan', async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-delete-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-delete-')));
     try {
         const legacy = scenario(root);
         await loadProjectScenarioMetadata([legacy], [root], [path.join(root, 'tests')]);
@@ -156,8 +159,8 @@ test('shared deletion is not undone by legacy grouping on a later scan', async (
 });
 
 test('matching business groups across project roots preserve both sections and independently renamed names', async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-roots-'));
-    const external = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-external-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-roots-')));
+    const external = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-external-')));
     try {
         await loadProjectScenarioMetadata([scenario(root), { ...scenario(external), kind: 'process' }], [root], [root, external]);
         const groups = await loadProjectLibraryGroups([root], [root, external]);
@@ -171,7 +174,7 @@ test('matching business groups across project roots preserve both sections and i
 });
 
 test('newly discovered legacy files migrate after the initial scan while deleted known metadata stays deleted', async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-new-root-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-new-root-')));
     try {
         const first = scenario(root);
         await loadProjectScenarioMetadata([first], [root], [root]);
@@ -186,8 +189,8 @@ test('newly discovered legacy files migrate after the initial scan while deleted
 });
 
 test('renaming a business group checks every owning project before making any changes', async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-rename-'));
-    const other = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-rename-other-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-rename-')));
+    const other = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-rename-other-')));
     try {
         await loadProjectScenarioMetadata([scenario(root), { ...scenario(other), kind: 'process' }], [root], [root, other]);
         const group = (await loadProjectLibraryGroups([root], [root, other]))[0];
@@ -203,25 +206,25 @@ test('renaming a business group checks every owning project before making any ch
 });
 
 test('duplicate scenario and process UIDs are rejected before any legacy data is written', async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-duplicate-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-duplicate-')));
     try {
         const first = scenario(root);
         const second = { ...scenario(root, 'tests/second/process.yaml'), kind: 'process' as const, tabName: 'Returns', scenarioDescription: 'Different description' };
         await assert.rejects(loadProjectScenarioMetadata([first, second], [root], [root]), /Duplicate.*UID/u);
-        await assert.rejects(fs.stat(path.join(root, '.kot')), { code: 'ENOENT' });
+        await assert.rejects(fs.stat(path.join(root, '.kot/groups')), { code: 'ENOENT' });
         const store = new ProjectLibraryStore(root);
         await assert.rejects(store.importLegacy({ groups: [], entities: [first, second].map(info => ({
             identity: resolveProjectEntityIdentity(info.yamlFileUri.fsPath, root, info.kind === 'process' ? 'process' : 'scenario', info.uid), metadata: {}
         })) }), /Duplicate.*UID/u);
-        await assert.rejects(fs.stat(path.join(root, '.kot')), { code: 'ENOENT' });
+        await assert.rejects(fs.stat(path.join(root, '.kot/groups')), { code: 'ENOENT' });
     } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
 test('project objects inside an external test root cannot match the stock compiler yaml inputs', async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-compiler-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-compiler-')));
     try {
         await loadProjectScenarioMetadata([scenario(root)], [], [root]);
-        assert.equal((await fs.readdir(path.join(root, '.kot'))).includes('groups.yml'), true);
+        assert.equal((await fs.readdir(path.join(root, '.kot'))).includes('groups'), true);
         const records = await fs.readdir(path.join(root, 'tests/main'));
         assert.deepEqual(records, ['scen.yaml.kot.yml']);
         await assert.rejects(fs.stat(path.join(root, '.kot', 'metadata')), { code: 'ENOENT' });
@@ -231,7 +234,7 @@ test('project objects inside an external test root cannot match the stock compil
 for (const kind of ['scenario', 'process'] as const) {
     for (const hasUid of [true, false]) {
         test(`${kind} source-only rename preserves adjacent fields and group with${hasUid ? '' : 'out'} UID`, async t => {
-            const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-file-rename-'));
+            const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-file-rename-')));
             t.after(() => fs.rm(root, { recursive: true, force: true }));
             const previous = { ...scenario(root), kind, ...(hasUid ? {} : { uid: undefined }) };
             const next = { ...scenario(root, 'tests/main/renamed.yaml'), kind, uid: previous.uid };
@@ -254,7 +257,7 @@ for (const kind of ['scenario', 'process'] as const) {
 }
 
 test('carried scenario folder metadata is unchanged after a rename notification', async t => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-folder-rename-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-folder-rename-')));
     t.after(() => fs.rm(root, { recursive: true, force: true }));
     const previous = scenario(root);
     const next = scenario(root, 'tests/moved/scen.yaml');
@@ -269,8 +272,8 @@ test('carried scenario folder metadata is unchanged after a rename notification'
 
 for (const carried of [true, false]) {
     test(`cross-project ${carried ? 'folder' : 'source-only'} move uses the destination group ID`, async t => {
-        const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-move-old-'));
-        const target = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-move-new-'));
+        const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-move-old-')));
+        const target = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-move-new-')));
         t.after(async () => { await fs.rm(root, { recursive: true, force: true }); await fs.rm(target, { recursive: true, force: true }); });
         const previous = scenario(root);
         const next = scenario(target);
@@ -294,8 +297,8 @@ for (const carried of [true, false]) {
 }
 
 test('cross-project rename rejects independent destination metadata without changing either record', async t => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-conflict-old-'));
-    const target = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-conflict-new-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-conflict-old-')));
+    const target = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-meta-conflict-new-')));
     t.after(async () => { await fs.rm(root, { recursive: true, force: true }); await fs.rm(target, { recursive: true, force: true }); });
     const previous = scenario(root);
     const next = scenario(target);

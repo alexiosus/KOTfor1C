@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -13,6 +14,7 @@ import { ProjectLibraryStore } from '../src/projectLibraryStore';
 test('scanner discovers named compiler YAML descriptors and skips settings and unsupported extensions', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-process-scan-'));
     const processRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-separate-process-root-'));
+    await v3Fixture(root); await v3Fixture(processRoot);
     try {
         fs.writeFileSync(path.join(processRoot, 'other.yaml'), 'ТипФайла: "Процесс"\nДанныеПроцесса:\n  Имя: "Separate process"\n  UID: "separate"\n');
         fs.writeFileSync(path.join(root, 'order.yaml'), 'ДанныеСценария:\n    Имя: "Order"\n    UID: "order"\n');
@@ -67,8 +69,8 @@ test('scanner discovers named compiler YAML descriptors and skips settings and u
         assert.equal(catalog.byName.get('Sales')?.[0].tabName, 'Ungrouped');
         assert.equal(catalog.byName.get('Sales')?.[0].kind, 'process');
         assert.equal(catalog.byName.get('Sales')?.[0].yamlFileUri.fsPath, path.join(root, 'process.yaml'));
-        assert.equal(fs.existsSync(path.join(root, '.kot', 'groups.yml')), true);
-        assert.equal(fs.existsSync(path.join(processRoot, '.kot', 'groups.yml')), true);
+        assert.equal(fs.existsSync(path.join(root, '.kot', 'imports.yml')), true);
+        assert.equal(fs.existsSync(path.join(processRoot, '.kot', 'imports.yml')), true);
         assert.deepEqual(await new ProjectLibraryStore(root).readGroups(), []);
         assert.deepEqual(await new ProjectLibraryStore(processRoot).readGroups(), []);
     } finally {

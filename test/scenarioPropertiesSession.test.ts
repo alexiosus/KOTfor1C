@@ -34,6 +34,21 @@ function harness() {
     return { documents, saved, host, session: new ScenarioPropertiesSession(host) };
 }
 
+test('display order edits use local state without creating or dirtying a sidecar', async () => {
+    const h = harness();
+    let order: number | null = 7;
+    h.host.readDisplayOrder = async () => order;
+    h.host.setDisplayOrder = async (_source, _group, value) => { order = value; };
+    let state = await h.session.open(sourceUri);
+    assert.equal(state.displayOrder, 7);
+    state = await h.session.handle({ command: 'editMetadata', documentUri: sourceUri, documentVersion: 1,
+        field: 'order', value: '2' });
+    assert.equal(state.displayOrder, 2);
+    assert.equal(state.dirty, false);
+    assert.equal(h.documents.has(metadataUri), false);
+    assert.deepEqual(h.saved, []);
+});
+
 test('opening and copying bound files do not save or reload linked settings', async () => {
     const h = harness(); let scans = 0;
     const list = h.host.listSettings; h.host.listSettings = async source => { scans++; return list(source); };

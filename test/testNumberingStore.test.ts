@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -8,7 +9,7 @@ import { parseDocument } from 'yaml';
 import { TestNumberingStore as StoreClass } from '../src/testNumberingStore';
 
 async function fixture(t: test.TestContext, options?: { beforeWrite?: () => Promise<void> | void }) {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-numbering-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-numbering-')));
     t.after(() => fs.rm(root, { recursive: true, force: true }));
     return { root, store: new StoreClass(root, options) };
 }
@@ -16,7 +17,7 @@ async function fixture(t: test.TestContext, options?: { beforeWrite?: () => Prom
 test('reading an unconfigured project does not create a catalog', async t => {
     const { root, store } = await fixture(t);
     assert.deepEqual(await store.read(), { version: 1, series: [] });
-    assert.deepEqual(await fs.readdir(root), []);
+    assert.deepEqual(await fs.readdir(path.join(root, '.kot')), ['project.yml']);
 });
 
 test('a series continues the highest existing number and preserves nine characters', async t => {
@@ -108,7 +109,7 @@ test('catalog comments survive reservations and duplicate or invalid series cann
 });
 
 test('invalid, duplicate, aliased and future catalog schemas are rejected without replacement', async t => {
-    const { store } = await fixture(t); await fs.mkdir(path.dirname(store.filePath));
+    const { store } = await fixture(t); await fs.mkdir(path.dirname(store.filePath), { recursive: true });
     for (const source of [
         'version: 2\nseries: []\n', 'version: 1\nseries: []\nseries: []\n',
         'version: 1\nseries: [{prefix: 000012, author: A, lastNumber: 1}]\n',
@@ -140,10 +141,11 @@ test('symlinked catalogs and busy locks do not write outside the project', async
     const { root, store } = await fixture(t);
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-numbering-outside-'));
     t.after(() => fs.rm(outside, { recursive: true, force: true }));
+    await fs.rm(path.join(root, '.kot'), {recursive: true});
     await fs.symlink(outside, path.join(root, '.kot'));
-    await assert.rejects(store.addSeries('000012', 'Tester A', []), /symbolic|symlink/iu);
+    await assert.rejects(store.addSeries('000012', 'Tester A', []), /symbolic|symlink|KOT 3/iu);
     assert.deepEqual(await fs.readdir(outside), []);
-    await fs.unlink(path.join(root, '.kot')); await fs.mkdir(path.join(root, '.kot'));
+    await fs.unlink(path.join(root, '.kot')); await v3Fixture(root);
     const lock = path.join(root, '.kot', 'test-numbering.lock');
     await fs.writeFile(lock, 'another writer');
     await assert.rejects(store.addSeries('000012', 'Tester A', []), /busy|locked|progress/iu);

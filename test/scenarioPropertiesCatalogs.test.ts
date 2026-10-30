@@ -1,3 +1,4 @@
+import { v3FixtureSync } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,7 +20,7 @@ function settings(name = 'Main', id = 'main', profile = 'Tester') {
     return `ТипФайла: НастройкаТеста\nДанныеТеста:\n    UIDСценария: scenario-1\n    ЭталоннаяБазаИмя: ${name}\n    ИдентификаторБазы: ${id}\n    ПрофильПользователя: ${profile}\n`;
 }
 function harness(t: TestContext) {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'properties-catalogs-'));
+    const root = v3FixtureSync(fs.mkdtempSync(path.join(os.tmpdir(), 'properties-catalogs-')));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const uri = (file: string) => ({ scheme: 'file', fsPath: file, toString: () => pathToFileURL(file).toString() });
     const source = { uri: uri(path.join(root, 'scenario.yaml')).toString(), text: scenario() };

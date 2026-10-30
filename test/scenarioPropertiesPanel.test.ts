@@ -1,3 +1,7 @@
+import * as projectFormatModule from '../src/projectFormat';
+import * as projectLegacyModule from '../src/projectLegacyMetadata';
+import { v3Fixture } from './helpers/projectFormat';
+import * as entityDisplayOrder from '../src/projectEntityDisplayOrder';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -58,14 +62,14 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 async function harness(t: test.TestContext, initialSource = false, translate?: (message: string, ...args: string[]) => string) {
-    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'kot-properties-panel-'));
+    const root = await v3Fixture(fsp.mkdtemp(path.join(os.tmpdir(), 'kot-properties-panel-')));
     t.after(() => fsp.rm(root, { recursive: true, force: true }));
     const yamlRoot = path.join(root, 'tests'); const processRoot = path.join(root, 'processes');
-    await fsp.mkdir(yamlRoot); await fsp.mkdir(processRoot); await fsp.mkdir(path.join(root, '.kot'));
-    await fsp.writeFile(path.join(root, '.kot/groups.yml'), 'version: 1\nlegacyImports: [scenario]\ngroups:\n'
-        + '  - {id: main, name: Main, sections: [main], order: 0}\n'
-        + '  - {id: process, name: Process, sections: [process], order: 1}\n'
-        + '  - {id: standalone, name: Features, sections: [standalone], order: 2}\n');
+    await fsp.mkdir(yamlRoot); await fsp.mkdir(processRoot); await fsp.mkdir(path.join(root, '.kot'), { recursive: true });
+    await fsp.mkdir(path.join(root, '.kot/groups'));
+    for (const [id, name, section] of [['main', 'Main', 'main'], ['process', 'Process', 'process'], ['standalone', 'Features', 'standalone']]) {
+        await fsp.writeFile(path.join(root, `.kot/groups/${id}.yml`), `version: 1\nid: ${id}\nname: ${name}\nsections: [${section}]\n`);
+    }
     const sourceUri = Uri.file(path.join(yamlRoot, 'sales.yaml'));
     const settingsUri = Uri.file(path.join(yamlRoot, 'test.yml'));
     await fsp.writeFile(sourceUri.fsPath, sourceText); await fsp.writeFile(settingsUri.fsPath, settingsText());
@@ -190,7 +194,7 @@ async function harness(t: test.TestContext, initialSource = false, translate?: (
         return module.exports;
     };
     const integration = load('projectLibraryIntegration.ts', { vscode: host, './scenarioDescriptor': descriptor,
-        './projectLibraryMetadata': metadata, './projectLibraryStore': store, './scenarioScanRoot': scanRoot });
+        './projectEntityDisplayOrder': entityDisplayOrder, './projectFormat': projectFormatModule, './projectLegacyMetadata': projectLegacyModule, './projectLibraryMetadata': metadata, './projectLibraryStore': store, './scenarioScanRoot': scanRoot });
     const yamlValidator = load('yamlValidator.ts', { vscode: host, yaml: require(path.join(process.cwd(), 'node_modules/yaml')), './compilerFormatDiagnostics': compilerFormat });
     const options = { translate, runAction: async (...args: any[]) => { actions.push(args); } };
     const textEditor = { open: async (uri: Uri) => {
@@ -202,7 +206,7 @@ async function harness(t: test.TestContext, initialSource = false, translate?: (
     const api = load('scenarioPropertiesPanel.ts', { vscode: host, './spprScenarioFiles.js': spprFiles, './scenarioPropertiesSession': session,
         './scenarioPropertiesBindings': bindings, './scenarioPropertiesModel': model, './scenarioDescriptor': descriptor,
         './scenarioPropertiesAttachments': attachments,
-        './projectLibraryMetadata': metadata, './projectLibraryStore': store, './projectLibraryIntegration': integration,
+        './projectEntityDisplayOrder': entityDisplayOrder, './projectFormat': projectFormatModule, './projectLegacyMetadata': projectLegacyModule, './projectLibraryMetadata': metadata, './projectLibraryStore': store, './projectLibraryIntegration': integration,
         './scenarioScanRoot': scanRoot, './yamlValidator': yamlValidator, '../media/scenarioPropertiesProtocol.js': protocol,
         './scenarioPropertiesCatalogs.js': { loadScenarioPropertiesCatalogs: async () => ({ projects: ['Drive'], reportLevel1: [], reportLevel2: [], categories: [], systemFunctions: [], bases: [], userProfiles: [], settingsUserProfiles: [] }) },
         'node:fs/promises': { ...fsp, readdir: async (...args: any[]) => { readdirCount++; return (fsp.readdir as any)(...args); } } });
@@ -246,7 +250,7 @@ test('Properties uses KOT Russian for all protocol labels while preserving sourc
     assert.equal(state.labels.save, 'Сохранить тест');
     assert.equal(state.labels.run, 'Запустить тест');
     assert.equal(state.labels.groupId, 'Группа');
-    assert.equal(state.labels.order, 'Порядок');
+    assert.equal(state.labels.order, 'Порядок отображения (локально)');
     assert.equal(state.labels.ungrouped, 'Без группы');
     assert.equal(view.title, 'Свойства теста');
     assert.equal(state.source.model.title, 'Sales');
@@ -899,4 +903,53 @@ test('native-to-YAML conversion remaps pinned Properties without reopening the t
     assert.equal(view.state().selectedSettingsUri, h.settingsUri.toString());
     assert.equal(view.state().pinned, true);
     assert.equal(view.state().error, undefined);
+});
+
+for (const kind of ['scenario', 'process'] as const) {
+    test(`cold Properties finds ${kind} launch settings in test/ before the full inventory completes`, async t => {
+        const h = await harness(t);
+        if (kind === 'process') {
+            await fsp.writeFile(h.sourceUri.fsPath, 'ТипФайла: Процесс\nДанныеПроцесса:\n    UID: sales\n    Имя: Sales\nШагиПроцесса:\n');
+        }
+        const directory = path.join(h.yamlRoot, 'test'); await fsp.mkdir(directory);
+        await fsp.unlink(h.settingsUri.fsPath);
+        const file = path.join(directory, '900001.yaml');
+        await fsp.writeFile(file, settingsText().replace('НастройкаТеста', kind === 'process' ? 'НастройкаПроцесса' : 'НастройкаТеста').replace('UIDСценария:', kind === 'process' ? 'UIDПроцесса:' : 'UIDСценария:'));
+        await new store.ProjectLibraryStore(h.root).setMetadata(
+            { kind, uid: 'sales', relativePath: path.relative(h.root, h.sourceUri.fsPath) }, { groupId: kind === 'process' ? 'process' : 'main', order: 6 });
+        let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+        h.panel.host.listSettings = async () => { await gate; return []; };
+        try {
+            await h.panel.open(h.sourceUri);
+            const state = h.panels.at(-1).state();
+            assert.equal(state.loading, true);
+            assert.equal(state.canCreateSettings, true);
+            assert.equal(state.displayOrder, 6);
+            assert.equal(state.metadata.values.groupId, kind === 'process' ? 'process' : 'main');
+        } finally { release(); }
+    });
+}
+
+test('initial test/ discovery excludes symlinks and settings owned by another source', async t => {
+    const h = await harness(t); const directory = path.join(h.yamlRoot, 'test'); await fsp.mkdir(directory);
+    await fsp.unlink(h.settingsUri.fsPath);
+    await fsp.writeFile(path.join(directory, 'other.yaml'), settingsText('another'));
+    const elsewhere = path.join(h.root, 'elsewhere.yaml'); await fsp.writeFile(elsewhere, settingsText());
+    await fsp.symlink(elsewhere, path.join(directory, 'linked.yaml'));
+    const source = await h.native.readDocument(h.sourceUri.toString());
+    assert.equal(bindings.findLinkedScenarioSettings(source, await h.native.listInitialSettings(source)).length, 0);
+});
+
+test('legacy Properties edits inline KOT fields without sidecars or source cleanup', async t => {
+    const h = await harness(t);
+    await fsp.unlink(path.join(h.root, '.kot/project.yml'));
+    await fsp.writeFile(h.sourceUri.fsPath, sourceText.replace('ТекстСценария:', 'KOTМетаданные:\n    Описание: Before\n    PhaseSwitcher:\n        Tab: Sales\n        OrderOnTab: 7\nТекстСценария:'));
+    const panel = await h.open(); await waitFor(() => !panel.state().loading);
+    assert.equal(panel.state().metadata.values.description, 'Before');
+    const version = panel.state().source.version;
+    await panel.receive.fire({ command: 'editMetadata', documentUri: h.sourceUri.toString(), documentVersion: version, field: 'description', value: 'After' });
+    await waitFor(() => panel.state().metadata?.values.description === 'After');
+    const text = (await h.openDocument(h.sourceUri)).getText();
+    assert.match(text, /KOTМетаданные:/u); assert.match(text, /Tab: Sales/u); assert.match(text, /Given ready/u); assert.doesNotMatch(text, /\nmetadata:/u);
+    await assert.rejects(fsp.stat(h.sourceUri.fsPath + '.kot.yml'), { code: 'ENOENT' });
 });

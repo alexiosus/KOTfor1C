@@ -1,3 +1,4 @@
+import { assertProjectFormat3, assertProjectFormatUnchanged, projectFormat } from './projectFormat';
 import * as vscode from 'vscode';
 import { convertScenarioTestRole } from './scenarioTestRole';
 import { resolveScenarioSourceUris } from './spprScenarioFiles';
@@ -16,6 +17,8 @@ export async function handleConvertScenarioRole(context: vscode.ExtensionContext
     try {
         const selected = target ?? vscode.window.activeTextEditor?.document.uri;
         if (!selected || selected.scheme !== 'file') { throw new Error(t('Choose a local scenario or process.')); }
+        const env = projectLibraryEnvironment(); const root = resolveProjectLibraryRoot(selected.fsPath, env.workspaceRoots, env.scanRoots);
+        const expectedFormat=projectFormat(root);assertProjectFormat3(root,expectedFormat.token);
         const pair = await resolveScenarioSourceUris(selected);
         const uri = pair?.metadataUri ?? selected;
         const host = createScenarioPropertiesHost({ runAction: async () => undefined });
@@ -29,13 +32,14 @@ export async function handleConvertScenarioRole(context: vscode.ExtensionContext
             return other.uid?.toLowerCase() === descriptor.uid!.toLowerCase() && other.kind === descriptor.kind;
         })) { throw new Error(t('The source UID is ambiguous. Resolve duplicate definitions before converting the test role.')); }
         const settings = findLinkedScenarioSettings(source, candidates);
-        const env = projectLibraryEnvironment(); const root = resolveProjectLibraryRoot(uri.fsPath, env.workspaceRoots, env.scanRoots);
         const guard = async (paths: readonly string[] = []) => {
+            assertProjectFormatUnchanged(root,expectedFormat);
             const affected = new Set([source.uri, source.scriptUri, ...settings.map(setting => setting.uri), ...paths.map(file => vscode.Uri.file(file).toString())]);
             if (vscode.workspace.textDocuments.some(document => !document.isClosed && document.isDirty && affected.has(document.uri.toString()))) {
                 throw new Error(t('Save the source and launch settings before converting the test role.'));
             }
             const current = await host.readDocument(source.uri);
+            assertProjectFormatUnchanged(root,expectedFormat);
             if (current.text !== source.text || current.version !== source.version || current.scriptText !== source.scriptText) {
                 throw new Error(t('The source changed. Refresh the properties and retry the action.'));
             }
@@ -47,7 +51,7 @@ export async function handleConvertScenarioRole(context: vscode.ExtensionContext
             settingsPaths: settings.map(setting => vscode.Uri.parse(setting.uri).fsPath), assertCurrent: guard });
         if (result === 'needsSettings') {
             const document = await vscode.workspace.openTextDocument(uri);
-            const created = await createScenarioLaunchSettings(context, document, source, t);
+            const created = await createScenarioLaunchSettings(context, document, source, t,()=>assertProjectFormatUnchanged(root,expectedFormat));
             if (!created) { return; }
             if (!await (await vscode.workspace.openTextDocument(created)).save()) { throw new Error(t('Could not save the new launch settings. Unsaved text is retained.')); }
         }

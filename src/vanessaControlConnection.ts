@@ -55,6 +55,8 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
         status.tooltip = vscode.l10n.t('Vanessa MCP connection and controls');
         if (snapshot.status === 'detached') { status.hide(); } else { status.show(); }
         void vscode.commands.executeCommand('setContext', 'kotTestToolkit.vanessaControlConnected', !!snapshot.capabilities);
+        void vscode.commands.executeCommand('setContext', 'kotTestToolkit.vanessaControlExecuting', !!snapshot.runActive || snapshot.status === 'running' || snapshot.status === 'stopping');
+        void vscode.commands.executeCommand('setContext', 'kotTestToolkit.vanessaControlCanStop', !!snapshot.capabilities?.stop.supported && snapshot.status !== 'stopping');
     };
     const report = async (work: () => Promise<unknown>) => {
         try { await work(); } catch (error) {

@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -8,12 +9,13 @@ import { loadProjectScenarioMetadata, setProjectSourceCleanupGuard } from '../sr
 import { ProjectLibraryStore } from '../src/projectLibraryStore';
 
 test('group-only reads do not inspect source files or adjacent metadata', async t => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-groups-only-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-groups-only-')));
     t.after(() => fs.rm(root, { recursive: true, force: true }));
-    await fs.mkdir(path.join(root, '.kot'));
-    await fs.writeFile(path.join(root, '.kot/groups.yml'), 'version: 1\ngroups:\n  - {id: second, name: Second, sections: [main], order: 2}\n  - {id: first, name: First, sections: [process, main], order: 1}\n');
+    await fs.mkdir(path.join(root, '.kot/groups'), { recursive: true });
+    await fs.writeFile(path.join(root, '.kot/groups/second.yml'), 'version: 1\nid: second\nname: Second\nsections: [main]\n');
+    await fs.writeFile(path.join(root, '.kot/groups/first.yml'), 'version: 1\nid: first\nname: First\nsections: [process, main]\n');
     const original = fs.readdir;
-    fs.readdir = (async () => { throw new Error('Group choices must not enumerate the project'); }) as typeof fs.readdir;
+    fs.readdir = (async (...args: Parameters<typeof fs.readdir>) => { assert.equal(String(args[0]), path.join(root, '.kot/groups')); return original(...args); }) as typeof fs.readdir;
     try {
         const started = performance.now();
         const groups = await new ProjectLibraryStore(root).readGroups();
@@ -23,7 +25,7 @@ test('group-only reads do not inspect source files or adjacent metadata', async 
 });
 
 test('scanning reuses source snapshots and reordering only reads changed sources', async t => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-library-io-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-library-io-')));
     t.after(() => fs.rm(root, { recursive: true, force: true }));
     const count = Number(process.env.KOT_LIBRARY_PERFORMANCE_COUNT || 80); const snapshots = new Map<string, string>(); const infos: any[] = [];
     for (let index = 0; index < count; index++) {

@@ -1,3 +1,7 @@
+import * as projectFormatModule from '../src/projectFormat';
+import * as projectLegacyModule from '../src/projectLegacyMetadata';
+import { v3Fixture } from './helpers/projectFormat';
+import * as entityDisplayOrder from '../src/projectEntityDisplayOrder';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -21,7 +25,7 @@ import * as propertiesSession from '../src/scenarioPropertiesSession';
 import * as propertiesAttachments from '../src/scenarioPropertiesAttachments';
 
 async function harness(t: test.TestContext, options: { dedicated?: boolean; bom?: boolean; separateRoots?: boolean; settingsExtension?: 'yml' } = {}) {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-process-editor-'));
+    const root = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-process-editor-')));
     t.after(() => fs.rm(root, { recursive: true, force: true }));
     const uri = (fsPath: string) => ({ scheme: 'file', fsPath, toString: () => `file://${fsPath}` });
     const scenarioRoot = options.separateRoots ? path.join(root, 'yaml') : root;
@@ -102,7 +106,7 @@ async function harness(t: test.TestContext, options: { dedicated?: boolean; bom?
         './scenarioPropertiesBindings': bindings, './scenarioPropertiesModel': propertiesModel, './scenarioPropertiesSession': propertiesSession,
         './scenarioPropertiesAttachments': propertiesAttachments,
         './spprScenarioFiles.js': { onDidConvertScenarioFormat: () => ({ dispose() {} }) },
-        './projectLibraryMetadata': metadata, './projectLibraryStore': store, './yamlValidator': {},
+        './projectEntityDisplayOrder': entityDisplayOrder, './projectFormat': projectFormatModule, './projectLegacyMetadata': projectLegacyModule, './projectLibraryMetadata': metadata, './projectLibraryStore': store, './yamlValidator': {},
         '../media/scenarioPropertiesProtocol.js': require(path.join(process.cwd(), 'media/scenarioPropertiesProtocol.js')) };
     vm.runInNewContext(ts.transpileModule(await fs.readFile(path.join(process.cwd(), 'src/scenarioPropertiesPanel.ts'), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }

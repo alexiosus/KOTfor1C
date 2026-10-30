@@ -1,3 +1,4 @@
+import { v3FixtureSync } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -21,7 +22,7 @@ import { ScenarioYamlDocument } from '../src/scenarioYamlDocument';
 function uri(fsPath: string) { return { scheme: 'file', fsPath, toString: () => `file://${fsPath}` }; }
 
 async function harness(t: test.TestContext) {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-process-creator-'));
+    const root = v3FixtureSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kot-process-creator-')));
     t.after(() => fs.promises.rm(root, { recursive: true, force: true }));
     const scenarioUri = uri(path.join(root, 'order.yaml'));
     fs.writeFileSync(scenarioUri.fsPath, [

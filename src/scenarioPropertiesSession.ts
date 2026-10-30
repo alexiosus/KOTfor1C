@@ -21,6 +21,7 @@ export interface ScenarioPropertiesState {
     settings: (BoundDocument & { label: string })[];
     selectedSettingsUri: string | null;
     metadata: { uri: string; version: number; values: { groupId?: string; order?: number; description?: string; category?: string } } | null;
+    displayOrder?: number | null;
     groups: { id: string; name: string }[];
     pinned: boolean;
     dirty: boolean;
@@ -44,6 +45,9 @@ export interface ScenarioPropertiesHost {
     /** Only adjacent settings; never wait for the recursive project inventory. */
     listInitialSettings?(source: ScenarioPropertiesDocument): Promise<ScenarioPropertiesSource[]>;
     loadGroups(source: ScenarioPropertiesDocument): Promise<{ id: string; name: string }[]>;
+    readDisplayOrder?(source: ScenarioPropertiesDocument, groupId: string): Promise<number | null>;
+    setDisplayOrder?(source: ScenarioPropertiesDocument, groupId: string, value: number | null): Promise<void>;
+    editProjectMetadata?(source: ScenarioPropertiesDocument, patch: import('./projectLibraryStore').ProjectEntityMetadataPatch): Promise<boolean>;
     readMetadata(source: ScenarioPropertiesDocument): Promise<ScenarioPropertiesDocument | undefined>;
     ensureMetadata(source: ScenarioPropertiesDocument): Promise<ScenarioPropertiesDocument>;
     runAction(action: string, source: ScenarioPropertiesDocument, settings: string | null, value?: string, catalogs?: { candidates: ScenarioPropertiesSource[] }): Promise<void | ScenarioIdentityChangeResult>;
@@ -202,9 +206,11 @@ export class ScenarioPropertiesSession {
                 } catch { this.state.metadata = null; }
             }
         }
+        const initialDisplayOrder = !sameSource ? await this.host.readDisplayOrder?.(source, String(initialMetadata?.values.groupId ?? '')) : this.state.displayOrder;
+        if (generation !== this.generation) { return this.state; }
         this.state = { ...this.state, source: { uri: source.uri, version: source.version, model, scriptUri: source.scriptUri }, loading: true, variantLimitWarning,
             autoFill: presentation?.autoFill,
-            ...(!sameSource ? { catalogs: undefined, settings: [], selectedSettingsUri: null, metadata: initialMetadata, groups: initialGroups ?? [], canCreateSettings: initiallyMain } : {}),
+            ...(!sameSource ? { catalogs: undefined, settings: [], selectedSettingsUri: null, metadata: initialMetadata, groups: initialGroups ?? [], canCreateSettings: initiallyMain, displayOrder: initialDisplayOrder } : {}),
             dirty: source.dirty || sameSource && this.state.dirty };
         const enrich = async (): Promise<ScenarioPropertiesState> => {
             try {
@@ -260,8 +266,11 @@ export class ScenarioPropertiesSession {
                             value: [preview.count, ...preview.samples.map(sample => Object.entries(sample).map(([name, value]) => `${name} = ${value}`).join(', ')), ...(preview.truncated ? ['…'] : [])].join('\n') }];
                     } else if (parameters) { parameters.fields = []; variantLimitWarning = null; }
                 }
+                const displayOrder = await this.host.readDisplayOrder?.(source, values.groupId ?? '');
+                if (generation !== this.generation) { return this.state; }
                 this.state = { ...this.state, loading: false, catalogs, settings: settings.map(({ dirty: _dirty, text: _text, ...item }) => item),
                     selectedSettingsUri,
+                    displayOrder,
                     metadata: metadata ? { uri: metadata.uri, version: metadata.version, values } : null, groups,
                     dirty: source.dirty || settings.some(value => value.dirty) || !!metadata?.dirty,
                     canCreateSettings, variantLimitWarning };
@@ -454,6 +463,12 @@ export class ScenarioPropertiesSession {
             if (field === 'groupId' && rawValue && !this.state.groups.some(group => group.id === rawValue)) { throw new Error('The selected group no longer exists.'); }
             const fieldValue = field === 'order' ? rawValue.trim() ? Number(rawValue) : null : rawValue;
             if (typeof fieldValue === 'number' && (!Number.isFinite(fieldValue) || fieldValue < 0)) { throw new Error('Order must be a finite nonnegative number.'); }
+            if (await this.host.editProjectMetadata?.(await this.host.readDocument(this.sourceUri!), { [field]: fieldValue })) { return; }
+            if (field === 'order' && this.host.setDisplayOrder) {
+                const source = await this.host.readDocument(this.sourceUri!);
+                await this.host.setDisplayOrder(source, this.state.metadata?.values.groupId ?? '', fieldValue as number | null);
+                return;
+            }
             if (!this.state.metadata) { document = await this.host.ensureMetadata(document); }
             await this.replace(document, applyYamlMapField(document.text, ['metadata', field], fieldValue));
             return;

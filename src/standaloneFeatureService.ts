@@ -1,3 +1,4 @@
+import { getProjectEntityDisplayOrder } from './projectEntityDisplayOrder';
 import { isProjectSetupPending } from './projectSetupGate';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -739,6 +740,14 @@ export class StandaloneFeatureService implements vscode.Disposable {
                     ...(jsonPath ? { jsonPath } : {}) };
             }
         }
+        // Unorganized features may have no sidecar at all; their drag order is still personal.
+        for (const feature of this.discovered) {
+            const root = this.projectRoot(fileURLToPath(feature.id));
+            if (!existingRoots.includes(root) || placements[feature.id]) { continue; }
+            const rank = getProjectEntityDisplayOrder().rank(root, 'standalone', '', projectEntityKey(this.identity(feature.id, root)));
+            sharedOrders.set(feature.id, rank ?? null);
+            placements[feature.id] = { groupId: '', order: rank ?? this.nextDefaultOrder(placements, '') };
+        }
         for (const [id, jsonPath] of localJsonPaths) {
             if (!placements[id]) { placements[id] = { groupId: '', order: this.nextDefaultOrder(placements, ''), jsonPath }; }
         }
@@ -820,7 +829,10 @@ export class StandaloneFeatureService implements vscode.Disposable {
         const newRoot = this.projectRoot(fileURLToPath(newId));
         const oldIdentity = this.identity(oldId, oldRoot);
         // A directory move already carries the sidecar. Its physical filename is authoritative.
-        if (oldRoot === newRoot && sidecarMoved) { return; }
+        if (oldRoot === newRoot && sidecarMoved) {
+            await getProjectEntityDisplayOrder().remap(oldRoot, 'standalone', projectEntityKey(oldIdentity), projectEntityKey(this.identity(newId, newRoot)));
+            return;
+        }
         this.assertSharedWritesAllowed([oldRoot, newRoot]);
         if (oldRoot === newRoot) {
             await this.writableStore(oldRoot).remapEntity(oldIdentity, this.identity(newId, newRoot), true);
@@ -835,7 +847,7 @@ export class StandaloneFeatureService implements vscode.Disposable {
         const destinationGroupId = group
             ? (await this.writableStore(newRoot).ensureGroup(group.name, 'standalone', group.id)).id : '';
         await this.writableStore(newRoot).setMetadata(this.identity(newId, newRoot), {
-            groupId: destinationGroupId, order: metadata.order ?? null,
+            groupId: destinationGroupId, order: this.sharedOrders.get(oldId) ?? metadata.order ?? null,
             description: metadata.description ?? null, category: metadata.category ?? null
         });
         await this.writableStore(oldRoot).deleteMetadata(oldIdentity);

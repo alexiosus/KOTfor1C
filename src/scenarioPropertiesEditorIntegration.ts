@@ -13,7 +13,7 @@ export function registerScenarioPropertiesEditor(context: vscode.ExtensionContex
 ): { textEditor: ScenarioYamlEditor; panel: ScenarioPropertiesPanel } {
     const t: Translator = translate ?? ((message, ...args) => vscode.l10n.t(message, ...args));
     const textEditor = new ScenarioYamlEditor();
-    const panel = new ScenarioPropertiesPanel(context, textEditor, { translate: t, runAction: createScenarioPropertiesActions(context, textEditor, options) });
+    const panel = new ScenarioPropertiesPanel(context, textEditor, { translate: t, runAction: createScenarioPropertiesActions(context, textEditor, options), onDisplayOrderChanged: options.onDisplayOrderChanged });
     context.subscriptions.push(vscode.languages.registerFoldingRangeProvider([
         { pattern: '**/*.yaml', scheme: 'file' }, { pattern: '**/*.yml', scheme: 'file' }
     ], new ScenarioYamlFoldingProvider()));

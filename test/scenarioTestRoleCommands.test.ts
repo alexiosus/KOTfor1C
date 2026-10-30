@@ -1,3 +1,4 @@
+import * as projectFormatModule from '../src/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -11,7 +12,7 @@ import * as model from '../src/scenarioPropertiesModel';
 import * as bindings from '../src/scenarioPropertiesBindings';
 
 function harness(t: test.TestContext, process = false) {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-role-command-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-role-command-')); fs.mkdirSync(path.join(root, '.kot')); fs.writeFileSync(path.join(root,'.kot/project.yml'),'version: 3\n'); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const uri = (file: string) => ({ scheme: 'file', fsPath: file, toString: () => pathToFileURL(file).href });
     const metadata = path.join(root, process ? 'process.yaml' : 'meta.yaml'); const script = path.join(root, 'scen.feature');
     fs.writeFileSync(metadata, `ТипФайла: "${process ? 'Процесс' : 'Сценарий'}"\n${process ? 'ДанныеПроцесса' : 'ДанныеСценария'}:\n    UID: "own"\n    Имя: "Own"\n    Код: "001"\n`);
@@ -22,7 +23,9 @@ function harness(t: test.TestContext, process = false) {
     const dirty = new Set<string>(); const notifications: string[] = []; const commands: string[] = []; const refreshes: any[] = []; let cancelCreation = false;
     const document = (file: string) => ({ uri: uri(file), version: 1, isClosed: false,
         get isDirty() { return dirty.has(file); }, getText: () => fs.readFileSync(file, 'utf8'), save: async () => true });
+    let reads=0;let onRead:((count:number)=>void)|undefined;let onCreate:(()=>void)|undefined;
     const host = { readDocument: async (value: string) => {
+        onRead?.(++reads);
         const file = fileURLToPath(value); return { uri: value, version: 1, text: fs.readFileSync(file, 'utf8'), dirty: dirty.has(file),
             ...(!process && file === metadata ? { scriptUri: uri(script).toString(), scriptText: fs.readFileSync(script, 'utf8') } : {}) };
     }, listSettings: async () => fs.readdirSync(root).filter(file => file.endsWith('.yaml')).map(file => ({ uri: uri(path.join(root, file)).toString(), text: fs.readFileSync(path.join(root, file), 'utf8') })) };
@@ -33,10 +36,10 @@ function harness(t: test.TestContext, process = false) {
     const ts = require(path.join(processCwd(), 'node_modules/typescript')) as typeof import('typescript');
     const module = { exports: {} as Record<string, any> };
     const dependencies: Record<string, unknown> = {
-        vscode, './scenarioTestRole': role, './scenarioDescriptor': descriptor, './scenarioPropertiesModel': model, './scenarioPropertiesBindings': bindings,
+        vscode, './projectFormat': projectFormatModule, './scenarioTestRole': role, './scenarioDescriptor': descriptor, './scenarioPropertiesModel': model, './scenarioPropertiesBindings': bindings,
         './spprScenarioFiles': { resolveScenarioSourceUris: async () => process ? undefined : ({ metadataUri: uri(metadata), scriptUri: uri(script), format: 'native' }) },
         './scenarioPropertiesPanel': { createScenarioPropertiesHost: () => host },
-        './scenarioPropertiesActions': { createScenarioLaunchSettings: async () => { if (cancelCreation) { return undefined; } fs.writeFileSync(setting, settingsText); return uri(setting); } },
+        './scenarioPropertiesActions': { createScenarioLaunchSettings: async (_context:unknown,_document:unknown,_source:unknown,_t:unknown,assertCurrent?:()=>void) => { if (cancelCreation) { return undefined; } onCreate?.();assertCurrent?.();fs.writeFileSync(setting, settingsText); return uri(setting); } },
         './projectLibraryIntegration': { projectLibraryEnvironment: () => ({ workspaceRoots: [root], scanRoots: [root] }) },
         './projectLibraryMetadata': { resolveProjectLibraryRoot: () => root },
         './localization': { getTranslator: async () => (message: string, ...args: string[]) => message.replace(/\{(\d+)\}/gu, (_, index) => args[Number(index)] ?? '') }
@@ -45,9 +48,23 @@ function harness(t: test.TestContext, process = false) {
         { module, exports: module.exports, require: (name: string) => dependencies[name] ?? require(name) });
     return { root, metadata, script, setting, dirty, notifications, commands, refreshes, api: module.exports,
         cancelCreation: () => { cancelCreation = true; },
+        onRead: (callback:(count:number)=>void) => {onRead=callback;},
+        onCreate: (callback:()=>void) => {onCreate=callback;},
         convert: (main: boolean) => module.exports.handleConvertScenarioRole({ extensionUri: uri(root) }, uri(process ? metadata : script), main) };
 }
 function processCwd() { return process.cwd(); }
+
+test('role conversion refuses a branch format changed during source validation',async t=>{
+    const h=harness(t);h.onRead(count=>{if(count===2){fs.unlinkSync(path.join(h.root,'.kot/project.yml'));}});
+    assert.equal(await h.convert(false),undefined);
+    assert.equal(fs.existsSync(h.setting),true);
+    assert.match(h.notifications.join('\n'),/format|changed|KOT 3/iu);
+});
+test('role promotion refuses a branch changed while choosing new launch settings',async t=>{
+    const h=harness(t);fs.unlinkSync(h.setting);h.onCreate(()=>fs.unlinkSync(path.join(h.root,'.kot/project.yml')));
+    assert.equal(await h.convert(true),undefined);assert.equal(fs.existsSync(h.setting),false);
+    assert.match(h.notifications.join('\n'),/format|changed|KOT 3/iu);
+});
 
 test('scenario and process role commands archive and restore settings while refreshing views', async t => {
     for (const process of [false, true]) {

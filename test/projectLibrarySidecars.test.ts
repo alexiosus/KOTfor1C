@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -9,7 +10,7 @@ import { parse, stringify } from 'yaml';
 import { ProjectLibraryStore, metadataFilePath, projectEntityKey, type ProjectEntityIdentity } from '../src/projectLibraryStore';
 
 async function root(t: test.TestContext): Promise<string> {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-adjacent-library-'));
+    const directory = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-adjacent-library-')));
     t.after(() => fs.rm(directory, { recursive: true, force: true }));
     return directory;
 }
@@ -220,8 +221,7 @@ test('discovery roots limit crawling while explicit source identities and nested
 
 test('group deletion changes retained orphan central metadata in place without creating its missing source folder', async t => {
     const directory = await root(t);
-    await write(directory, '.kot/groups.yml', stringify({ version: 1,
-        groups: [{ id: 'sales', name: 'Sales', sections: ['main'], order: 0 }], legacyImports: [], knownScenarioKeys: [] }));
+    await write(directory, '.kot/groups/sales.yml', stringify({ version: 1, id: 'sales', name: 'Sales', sections: ['main'] }));
     const oldFile = await central(directory, scenario);
     const document = parse(await fs.readFile(oldFile, 'utf8'));
     document.metadata.groupId = 'sales';
@@ -274,7 +274,7 @@ test('new metadata cannot be written through a symbolic link to another project'
     const outside = await root(t);
     await fs.symlink(outside, path.join(directory, 'tests'), 'dir');
     await assert.rejects(new ProjectLibraryStore(directory).setMetadata(scenario, { description: 'Do not escape' }), /symlink/i);
-    assert.deepEqual(await fs.readdir(outside), []);
+    assert.deepEqual((await fs.readdir(outside)).filter(name => name !== '.kot'), []);
 });
 
 test('creating a sidecar removes migrated KOT metadata without changing the scenario body', async t => {

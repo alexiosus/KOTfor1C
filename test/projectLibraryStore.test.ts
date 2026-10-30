@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -11,7 +12,7 @@ import {
 } from '../src/projectLibraryStore';
 
 async function root(t: test.TestContext): Promise<string> {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-project-library-'));
+    const directory = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-project-library-')));
     t.after(() => fs.rm(directory, { recursive: true, force: true }));
     return directory;
 }
@@ -42,13 +43,15 @@ test('project identities remain portable and scenario metadata follows its UID a
     await first.setMetadata(feature, { groupId: '', category: 'Smoke' });
     await fs.cp(firstRoot, secondRoot, { recursive: true });
     const cloned = new ProjectLibraryStore(secondRoot);
-    assert.deepEqual(await cloned.read(), await first.read());
+    const originalSnapshot = await first.read();
+    const { order: _personal, ...sharedMetadata } = originalSnapshot.metadata[projectEntityKey(scenario)];
+    assert.deepEqual((await cloned.read()).metadata[projectEntityKey(scenario)], sharedMetadata);
     const moved = { ...scenario, uid: 'abc-123', relativePath: 'tests/renamed/scen.yaml' };
     assert.equal(projectEntityKey(moved), projectEntityKey(scenario));
     await cloned.setMetadata(moved, { description: 'Updated' });
     const snapshot = await cloned.read();
     assert.equal(snapshot.metadata[projectEntityKey(moved)].groupId, group.id);
-    assert.equal(snapshot.metadata[projectEntityKey(moved)].order, 4);
+    assert.equal(snapshot.metadata[projectEntityKey(moved)].order, undefined);
     assert.equal(snapshot.identities[projectEntityKey(moved)].relativePath, moved.relativePath);
     await assert.rejects(fs.stat(cloned.metadataFilePath(scenario)), { code: 'ENOENT' });
     for (const identity of [moved, feature]) {
@@ -68,15 +71,15 @@ test('empty groups persist and main/process sections share a stable business gro
     assert.equal(renamed.id, main.id);
     const groups = (await store.read()).groups;
     assert.equal(groups.length, 2);
-    assert.deepEqual(groups[0].sections, ['main', 'process']);
-    assert.equal(groups[0].name, 'Commercial');
+    assert.deepEqual(groups.find(value => value.id === main.id)?.sections, ['main', 'process']);
+    assert.equal(groups.find(value => value.id === main.id)?.name, 'Commercial');
 });
 
 test('reading an untouched project does not create shared objects', async t => {
     const directory = await root(t);
     const store = new ProjectLibraryStore(directory);
     assert.deepEqual(await store.read(), { groups: [], metadata: {}, identities: {}, legacyImports: [], knownScenarioKeys: [] });
-    await assert.rejects(fs.stat(path.join(directory, '.kot')), { code: 'ENOENT' });
+    await assert.rejects(fs.stat(path.join(directory, '.kot/groups')), { code: 'ENOENT' });
 });
 
 test('an imported group name reuses the shared group identity and preserves its order', async t => {
@@ -173,23 +176,6 @@ test('an unseen legacy scenario from a new scan root can be seeded after the pro
     assert.deepEqual(snapshot.legacyImports, ['scenario']);
 });
 
-test('older imported group files block unknown bootstrap until an explicit write persists their known records', async t => {
-    const directory = await root(t);
-    const store = new ProjectLibraryStore(directory);
-    await store.importLegacy({ groups: [], entities: [{ identity: scenario, metadata: { description: 'Known existing' } }] });
-    const groupsFile = path.join(directory, '.kot', 'groups.yml');
-    const oldDocument = parse(await fs.readFile(groupsFile, 'utf8'));
-    delete oldDocument.knownScenarioKeys;
-    await fs.writeFile(groupsFile, stringify(oldDocument));
-    const unknown = { ...scenario, uid: 'unknown-old-root', relativePath: 'tests/new/scen.yaml' };
-    await store.seedLegacyEntity(unknown, { description: 'Unknown origin' });
-    assert.equal((await store.read()).metadata[projectEntityKey(unknown)], undefined);
-    assert.equal((await store.read()).knownScenarioKeys, undefined);
-    await store.ensureGroup('Explicit user group', 'main');
-    assert.deepEqual((await store.read()).knownScenarioKeys, [projectEntityKey(scenario)]);
-    await store.seedLegacyEntity(unknown, { description: 'Newly discovered after upgrade' });
-    assert.equal((await store.read()).metadata[projectEntityKey(unknown)].description, 'Newly discovered after upgrade');
-});
 
 test('the scenario ledger keeps both path identities after moving a legacy file without a UID', async t => {
     const store = new ProjectLibraryStore(await root(t));
@@ -209,7 +195,7 @@ test('deleting a group preserves explicit ungrouped membership and unrelated met
     const group = await store.ensureGroup('Sales', 'main');
     await store.setMetadata(scenario, { groupId: group.id, description: 'Keep', category: 'Sales', order: 0 });
     await store.deleteGroup(group.id);
-    assert.deepEqual((await store.read()).metadata[projectEntityKey(scenario)], { groupId: '', description: 'Keep', category: 'Sales', order: 0 });
+    assert.deepEqual((await store.read()).metadata[projectEntityKey(scenario)], { groupId: '', description: 'Keep', category: 'Sales' });
     await store.setMetadata(scenario, { description: '', category: '', order: null });
     assert.deepEqual((await store.read()).metadata[projectEntityKey(scenario)], { groupId: '', description: '', category: '' });
 });
@@ -228,9 +214,9 @@ test('external valid YAML edits are reread by the next mutation', async t => {
     const directory = await root(t);
     const store = new ProjectLibraryStore(directory);
     const group = await store.ensureGroup('Sales', 'main');
-    const file = path.join(directory, '.kot', 'groups.yml');
+    const file = path.join(directory, '.kot', 'groups', group.id + '.yml');
     const document = parse(await fs.readFile(file, 'utf8'));
-    document.groups[0].name = 'Git renamed';
+    document.name = 'Git renamed';
     await fs.writeFile(file, stringify(document));
     await store.ensureGroup('Stock', 'process');
     assert.equal((await store.read()).groups.find(item => item.id === group.id)?.name, 'Git renamed');
@@ -239,8 +225,8 @@ test('external valid YAML edits are reread by the next mutation', async t => {
 test('invalid, conflicted and unsupported group YAML is reported and preserved', async t => {
     const directory = await root(t);
     const store = new ProjectLibraryStore(directory);
-    await fs.mkdir(path.join(directory, '.kot'), { recursive: true });
-    const file = path.join(directory, '.kot', 'groups.yml');
+    await fs.mkdir(path.join(directory, '.kot/groups'), { recursive: true });
+    const file = path.join(directory, '.kot/groups/invalid.yml');
     for (const content of ['<<<<<<< HEAD\nversion: 1\n=======\nversion: 2\n>>>>>>> branch\n', 'version: 8\ngroups: []\n', 'version: 1\ngroups: []\nunknownSetting: true\n', 'version: 1\nversion: 1\ngroups: []\n']) {
         await fs.writeFile(file, content);
         await assert.rejects(store.ensureGroup('Do not overwrite', 'main'));
@@ -259,7 +245,7 @@ test('an invalid bulk import never writes any part of its groups or records', as
         ]
     }));
     assert.deepEqual(await store.read(), { groups: [], metadata: {}, identities: {}, legacyImports: [], knownScenarioKeys: [] });
-    await assert.rejects(fs.stat(path.join(directory, '.kot')), { code: 'ENOENT' });
+    await assert.rejects(fs.stat(path.join(directory, '.kot/groups')), { code: 'ENOENT' });
 });
 
 test('invalid metadata prevents a mutation without rewriting any shared object', async t => {

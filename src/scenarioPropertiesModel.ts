@@ -363,8 +363,10 @@ export function moveScenarioPropertyRecord(source: string, target: ScenarioPrope
 }
 
 /** Standard sidecar YAML is parsed strictly; null removes the targeted pair. */
-export function applyYamlMapField(source: string, path: readonly string[], value: string | number | null): string {
+export function applyYamlMapField(source: string, path: readonly string[], value: string | number | null, options: { indent?: number; plainKeys?: boolean } = {}): string {
     if (!path.length || path.some(key => !key || /[\r\n]/u.test(key)) || (typeof value === 'number' && !Number.isFinite(value))) { throw new Error('Invalid metadata field path or value'); }
+    const step = ' '.repeat(options.indent ?? 2);
+    const renderKey = (key: string) => options.plainKeys && /^[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё_0-9]*$/u.test(key) ? key : JSON.stringify(key);
     const document = parseDocument(source, { keepSourceTokens: true, prettyErrors: false, uniqueKeys: true });
     if (document.errors.length) { throw new Error(`Unsafe YAML edit: ${document.errors.map(error => error.message).join('; ')}`); }
     const eol = newline(source); let map: YAMLMap | null = isMap(document.contents) ? document.contents : null;
@@ -376,7 +378,7 @@ export function applyYamlMapField(source: string, path: readonly string[], value
         if (checked.errors.length) { throw new Error(`Unsafe metadata edit: ${checked.errors.map(error => error.message).join('; ')}`); }
         return updated;
     };
-    const render = (depth: number): string => path.slice(depth).map((key, index, remaining) => `${indent}${'  '.repeat(index)}${JSON.stringify(key)}:${index === remaining.length - 1 ? ' ' + (typeof value === 'string' ? JSON.stringify(value) : String(value)) : ''}`).join(eol);
+    const render = (depth: number): string => path.slice(depth).map((key, index, remaining) => `${indent}${step.repeat(index)}${renderKey(key)}:${index === remaining.length - 1 ? ' ' + (typeof value === 'string' ? JSON.stringify(value) : String(value)) : ''}`).join(eol);
     for (let index = 0; index < path.length; index++) {
         const pair: Pair | undefined = map?.items.find(item => isScalar(item.key) && item.key.value === path[index]);
         if (!pair) {
@@ -420,7 +422,7 @@ export function applyYamlMapField(source: string, path: readonly string[], value
         map = pair.value; parent = pair;
         const first = map.items[0]?.key;
         if (!map.range) { throw new Error('Metadata parent has no source range'); }
-        indent = isScalar(first) && first.range ? lineIndent(source, first.range[0]) : lineIndent(source, pair.key.range[0]) + '  ';
+        indent = isScalar(first) && first.range ? lineIndent(source, first.range[0]) : lineIndent(source, pair.key.range[0]) + step;
         insertion = map.range[2];
     }
     return source;

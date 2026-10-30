@@ -1,3 +1,6 @@
+import { v3Fixture } from './helpers/projectFormat';
+import * as projectFormatModule from '../src/projectFormat';
+import * as projectLegacyModule from '../src/projectLegacyMetadata';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -18,8 +21,8 @@ import * as yaml from 'yaml';
 import * as nativeSnapshot from '../src/scenarioNativeDocumentSnapshot';
 import { collectCompilerFormatIssues } from '../src/compilerFormatDiagnostics';
 
-function harness(t: test.TestContext, native = false) {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-callable-command-')); t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+async function harness(t: test.TestContext, native = false) {
+    const directory = await v3Fixture(fs.mkdtempSync(path.join(os.tmpdir(), 'kot-callable-command-'))); t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
     const uri = (file: string): any => ({ scheme: 'file', fsPath: file, toString: () => pathToFileURL(file).href });
     const metadata = path.join(directory, native ? 'meta.yaml' : 'scen.yaml'); const script = path.join(directory, 'scen.feature');
     const exported = path.join(directory, 'nested.feature'); let caller = path.join(directory, 'parent.yaml');
@@ -69,7 +72,7 @@ function harness(t: test.TestContext, native = false) {
         }
         return { format: 'legacy', metadataUri: resource, scriptUri: resource };
     };
-    const dependencies: Record<string, unknown> = { vscode, yaml, './scenarioNativeDocumentSnapshot': nativeSnapshot, './scenarioCallableConversion': core, './scenarioCallableFiles': files, './spprScenarioFormat': formats,
+    const dependencies: Record<string, unknown> = { vscode, './projectFormat': projectFormatModule, './projectLegacyMetadata': projectLegacyModule, yaml, './scenarioNativeDocumentSnapshot': nativeSnapshot, './scenarioCallableConversion': core, './scenarioCallableFiles': files, './spprScenarioFormat': formats,
         './scenarioDescriptor': descriptor, './exportScenarioParser': parser, './scenarioCompilerSyntax': syntax, './projectDefinitionMatcher': matcher,
         './projectDefinition': definitions, './scenarioPropertiesModel': model, './spprScenarioFiles': { resolveScenarioSourceUris: resolvePair },
         './scenarioCreator': { getNewScenarioDefaults: () => ({ project: 'Project', systemFunctions: [{ name: 'Function', uid: 'function-uid' }],
@@ -114,7 +117,7 @@ function harness(t: test.TestContext, native = false) {
 
 test('immediate export to nested accepts clean editor models for files removed by the export', async t => {
     for (const native of [false, true]) {
-        const h = harness(t, native);
+        const h = await harness(t, native);
         const pair = formats.splitLegacySpprScenario(h.original);
         const oldMetadata = yaml.parseDocument(pair.metadata).toString(); // Files produced by the previous two-space writer.
         fs.writeFileSync(h.metadata, native ? oldMetadata : formats.joinNativeSpprScenario(oldMetadata, pair.script));
@@ -130,7 +133,7 @@ test('immediate export to nested accepts clean editor models for files removed b
 });
 
 test('immediate reverse conversion accepts a caller editor still showing the last KOT write input', async t => {
-    const h = harness(t); const callerText = fs.readFileSync(h.caller, 'utf8');
+    const h = await harness(t); const callerText = fs.readFileSync(h.caller, 'utf8');
     h.buffers.push({ uri: { toString: () => pathToFileURL(h.caller).href, fsPath: h.caller }, version: 1, isDirty: false, isClosed: false, getText: () => callerText });
     assert.ok(await h.convert(), h.notices.join('\n'));
     assert.ok(await h.convert(), h.notices.join('\n'));
@@ -139,7 +142,7 @@ test('immediate reverse conversion accepts a caller editor still showing the las
 
 test('reverse conversion preserves dirty orphan editors, recreated destinations and mismatched input models', async t => {
     for (const state of ['dirty', 'recreated', 'mismatch']) {
-        const h = harness(t); assert.ok(await h.convert(), h.notices.join('\n'));
+        const h = await harness(t); assert.ok(await h.convert(), h.notices.join('\n'));
         const feature = fs.readFileSync(h.exported, 'utf8');
         if (state === 'dirty') { h.dirty.add(h.metadata); }
         if (state === 'recreated') { fs.writeFileSync(h.metadata, 'external source'); }
@@ -152,7 +155,7 @@ test('reverse conversion preserves dirty orphan editors, recreated destinations 
 });
 
 test('existing destination offers indexed library features in QuickPick without opening a file dialog', async t => {
-    const h = harness(t, true); h.appendToExisting();
+    const h = await harness(t, true); h.appendToExisting();
     fs.writeFileSync(h.exported, '# language: en\nFeature: Shared\n');
     const another = path.join(h.directory, 'other.feature'); fs.writeFileSync(another, '# language: en\nFeature: Other\n');
     h.libraryFiles.push(another, another, h.script); // Include a duplicate and an SPPR paired script.
@@ -165,7 +168,7 @@ test('existing destination offers indexed library features in QuickPick without 
 });
 
 test('existing destination keeps a browse fallback when the configured library has no feature files', async t => {
-    const h = harness(t); h.appendToExisting(); h.withoutLibraries();
+    const h = await harness(t); h.appendToExisting(); h.withoutLibraries();
     fs.writeFileSync(h.exported, '# language: en\nFeature: Shared\n');
     assert.ok(await h.convert(), h.notices.join('\n'));
     assert.equal(h.openDialogs(), 1);
@@ -174,7 +177,7 @@ test('existing destination keeps a browse fallback when the configured library h
 
 test('recent KOT writes do not authorize changed documents or another writer', async t => {
     for (const state of ['version', 'document', 'disk', 'dirty']) {
-        const h = harness(t); const callerText = fs.readFileSync(h.caller, 'utf8');
+        const h = await harness(t); const callerText = fs.readFileSync(h.caller, 'utf8');
         const document = { uri: { toString: () => pathToFileURL(h.caller).href, fsPath: h.caller }, version: 1, isDirty: false, isClosed: false, getText: () => callerText };
         h.buffers.push(document); assert.ok(await h.convert(), h.notices.join('\n'));
         if (state === 'version') { document.version++; }
@@ -189,7 +192,7 @@ test('recent KOT writes do not authorize changed documents or another writer', a
 });
 
 test('cancelling the existing library picker leaves source and destination unchanged', async t => {
-    const h = harness(t); h.appendToExisting(); h.cancelDestination();
+    const h = await harness(t); h.appendToExisting(); h.cancelDestination();
     fs.writeFileSync(h.exported, '# language: en\nFeature: Shared\n');
     assert.equal(await h.convert(), undefined);
     assert.equal(fs.readFileSync(h.metadata, 'utf8'), h.original);
@@ -198,13 +201,13 @@ test('cancelling the existing library picker leaves source and destination uncha
 });
 
 test('reverse conversion finds the declaration when editor and index encode the same file URI differently', async t => {
-    const h = harness(t); assert.ok(await h.convert(), h.notices.join('\n')); h.encodeIndexUris();
+    const h = await harness(t); assert.ok(await h.convert(), h.notices.join('\n')); h.encodeIndexUris();
     assert.ok(await h.convert(), h.notices.join('\n'));
     assert.equal(descriptor.parseScenarioDescriptor(fs.readFileSync(h.metadata, 'utf8')).uid, 'nested-uid');
 });
 
 test('conversion appends to an existing export file and reverses only the selected declaration and archive', async t => {
-    const h = harness(t); h.appendToExisting();
+    const h = await harness(t); h.appendToExisting();
     const existing = '# language: en\n@ExportScenarios\nFeature: Shared\n\nScenario: Other\n    And Delay 1\n';
     const archive = { version: 1, title: 'Other', source: h.original.replace(/Nested/gu, 'Other').replace('nested-uid', 'other-uid'), format: 'legacy' };
     fs.writeFileSync(h.exported, existing); fs.writeFileSync(h.exported + '.kot-nested.json', JSON.stringify(archive));
@@ -220,7 +223,7 @@ test('conversion appends to an existing export file and reverses only the select
 
 test('appending does not make unrelated scenarios exported or overwrite a library with a different language', async t => {
     for (const language of ['en', 'ru']) {
-        const h = harness(t); h.appendToExisting();
+        const h = await harness(t); h.appendToExisting();
         const existing = language === 'en' ? '# language: en\nFeature: Shared\nScenario: Ordinary test\n    And Delay 1\n'
             : '# language: ru\nФункциональность: Библиотека\nСценарий: Другой\n    И Пауза 1\n';
         fs.writeFileSync(h.exported, existing);
@@ -237,7 +240,7 @@ test('appending does not make unrelated scenarios exported or overwrite a librar
 
 test('export conversion registers its destination when the profile has no library folders', async t => {
     for (const native of [false, true]) {
-        const h = harness(t, native); h.withoutLibraries();
+        const h = await harness(t, native); h.withoutLibraries();
         assert.ok(await h.convert(), h.notices.join('\n'));
         assert.deepEqual(h.registeredLibraries, [h.directory]);
         assert.match(fs.readFileSync(h.caller, 'utf8'), /And Nested "actual"/u);
@@ -248,7 +251,7 @@ test('export conversion registers its destination when the profile has no librar
 
 test('cancelled or failed export conversion does not register a library folder', async t => {
     for (const cancelled of [false, true]) {
-        const h = harness(t); h.withoutLibraries();
+        const h = await harness(t); h.withoutLibraries();
         if (cancelled) { h.cancelDestination(); } else { fs.writeFileSync(h.exported, 'existing'); }
         assert.equal(await h.convert(), undefined);
         assert.deepEqual(h.registeredLibraries, []);
@@ -258,7 +261,7 @@ test('cancelled or failed export conversion does not register a library folder',
 
 test('conversion command round trips both SPPR formats and updates saved callers and declarations', async t => {
     for (const native of [false, true]) {
-        const h = harness(t, native);
+        const h = await harness(t, native);
         assert.ok(await h.convert(), h.notices.join('\n'));
         assert.equal(fs.existsSync(h.metadata), false);
         assert.ok(h.changedSources[0].includes(h.metadata));
@@ -279,7 +282,7 @@ test('conversion command round trips both SPPR formats and updates saved callers
 });
 test('cancelled prompt, missing title parameter and dirty source never write files', async t => {
     for (const state of ['cancel', 'invalidName', 'dirty'] as const) {
-        const h = harness(t);
+        const h = await harness(t);
         if (state === 'dirty') { h.dirty.add(h.metadata); } else { h[state](); }
         assert.equal(await h.convert(), undefined);
         assert.equal(fs.readFileSync(h.metadata, 'utf8'), h.original); assert.equal(fs.existsSync(h.exported), false);
@@ -287,15 +290,15 @@ test('cancelled prompt, missing title parameter and dirty source never write fil
     }
 });
 test('destination collision and dirty callers retain the original scenario', async t => {
-    const collision = harness(t); fs.writeFileSync(collision.exported, 'existing');
+    const collision = await harness(t); fs.writeFileSync(collision.exported, 'existing');
     assert.equal(await collision.convert(), undefined); assert.equal(fs.readFileSync(collision.metadata, 'utf8'), collision.original);
     assert.equal(fs.readFileSync(collision.exported, 'utf8'), 'existing');
-    const dirty = harness(t); dirty.dirty.add(dirty.caller);
+    const dirty = await harness(t); dirty.dirty.add(dirty.caller);
     assert.equal(await dirty.convert(), undefined); assert.equal(fs.readFileSync(dirty.metadata, 'utf8'), dirty.original);
 });
 
 test('native SPPR caller script and metadata are both rewritten', async t => {
-    const h = harness(t); const caller = h.nativeCaller();
+    const h = await harness(t); const caller = h.nativeCaller();
     assert.ok(await h.convert(), h.notices.join('\n'));
     assert.match(fs.readFileSync(caller.script, 'utf8'), /And Nested "actual"/u);
     assert.doesNotMatch(fs.readFileSync(caller.metadata, 'utf8'), /ИмяСценария/u);
@@ -305,7 +308,7 @@ test('native SPPR caller script and metadata are both rewritten', async t => {
 });
 
 test('an existing export without an archive gets a new UID, declared arguments and configured defaults', async t => {
-    const h = harness(t); fs.unlinkSync(h.metadata); fs.unlinkSync(h.metadata + '.kot.yml');
+    const h = await harness(t); fs.unlinkSync(h.metadata); fs.unlinkSync(h.metadata + '.kot.yml');
     fs.writeFileSync(h.exported, core.nestedToExport(h.original, 'Nested "Value"').feature);
     fs.writeFileSync(h.caller, fs.readFileSync(h.caller, 'utf8').replace('And Nested\n        Value = "actual"', 'And Nested "actual"'));
     assert.ok(await h.convert(), h.notices.join('\n'));
@@ -317,7 +320,7 @@ test('an existing export without an archive gets a new UID, declared arguments a
 });
 
 test('compiled feature references are left for the next build in both conversion directions', async t => {
-    const h = harness(t); fs.writeFileSync(h.generated, 'And Nested\n');
+    const h = await harness(t); fs.writeFileSync(h.generated, 'And Nested\n');
     assert.ok(await h.convert(), h.notices.join('\n'));
     assert.equal(fs.readFileSync(h.generated, 'utf8'), 'And Nested\n');
     fs.writeFileSync(h.generated, 'And Nested "compiled value"\n');
@@ -327,7 +330,7 @@ test('compiled feature references are left for the next build in both conversion
 
 test('saved BOM files and native editor line endings convert in both SPPR formats', async t => {
     for (const native of [false, true]) {
-        const h = harness(t, native);
+        const h = await harness(t, native);
         for (const file of native ? [h.metadata, h.script] : [h.metadata]) {
             const text = '\uFEFF' + fs.readFileSync(file, 'utf8').replace(/\n/gu, '\r\n'); fs.writeFileSync(file, text);
             h.buffers.push({ uri: { toString: () => pathToFileURL(file).href, fsPath: file }, version: 1, isDirty: false, isClosed: false,
@@ -339,14 +342,14 @@ test('saved BOM files and native editor line endings convert in both SPPR format
 });
 
 test('clean editor model reloads caused by conversion do not count as concurrent edits', async t => {
-    const h = harness(t); const initial = fs.readFileSync(h.metadata, 'utf8');
+    const h = await harness(t); const initial = fs.readFileSync(h.metadata, 'utf8');
     h.buffers.push({ uri: { toString: () => pathToFileURL(h.metadata).href, fsPath: h.metadata }, isDirty: false, isClosed: false,
         get version() { return fs.existsSync(h.metadata) ? 1 : 2; }, getText: () => initial });
     assert.ok(await h.convert(), h.notices.join('\n'));
 });
 
 test('parameterless nested calls are expanded while root parameters remain callable arguments', async t => {
-    const h = harness(t); const child = h.addChild('Child', 'And Delay 1\nAnd I save "value" in "variable" variable');
+    const h = await harness(t); const child = h.addChild('Child', 'And Delay 1\nAnd I save "value" in "variable" variable');
     fs.writeFileSync(h.metadata, h.original.replace('And I input "[Value]"', 'And I input "[Value]"\n    And Child'));
     assert.ok(await h.convert(), h.notices.join('\n'));
     const feature = fs.readFileSync(h.exported, 'utf8');
@@ -356,7 +359,7 @@ test('parameterless nested calls are expanded while root parameters remain calla
 });
 
 test('cyclic nested calls are rejected before creating an export', async t => {
-    const h = harness(t); h.addChild('Child', 'And Nested');
+    const h = await harness(t); h.addChild('Child', 'And Nested');
     fs.writeFileSync(h.metadata, h.original.replace('And I input "[Value]"', 'And Child'));
     assert.equal(await h.convert(), undefined); assert.equal(fs.existsSync(h.exported), false);
     assert.match(h.notices.at(-1) ?? '', /cyclic|recursive/iu);

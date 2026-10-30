@@ -296,11 +296,11 @@
   "config.vanessaControl.autoStart.description": "Start one managed Vanessa MCP session when the extension activates and no running local session is found. Requires a trusted workspace and a complete service infobase launch configuration. Disabled by default; an unsuccessful activation attempt is not repeated.",
   "config.vanessaControl.formCompletions.description": "Read the current connected test client form for editor IntelliSense even when Form Explorer is closed. The first relevant completion loads the form; subsequent requests share cached data and check the form identity at most once every five seconds. Disable to use only forms already loaded by Form Explorer.",
   "command.convertScenarioFormat.title": "Convert SPPR scenario format…",
-  "config.newScenarioDefaults.format.description": "Preferred new SPPR source format: `legacy` uses scen.yaml; `native` uses meta.yaml and scen.feature. The wizard offers a choice for each scenario.",
+  "config.newScenarioDefaults.format.description": "Preferred new SPPR source format: `legacy` uses scen.yaml; `native` uses meta.yaml and scen.feature. The wizard offers a choice for each scenario. Branches without a version-3 .kot/project.yml always create scen.yaml.",
   "config.vanessaControl.autoAddSavedClients.description": "Automatically add absent saved profiles to the connected Vanessa. Never connects clients or replaces conflicting or changed profiles. Refresh retries a rejected addition.",
   "config.newScenarioDefaults.format.legacy": "Scenario in one YAML file (scen.yaml)",
   "config.newScenarioDefaults.format.native": "Feature script + YAML metadata (scen.feature + meta.yaml)",
-  "config.editor.autoMigrateScenarioYamlOnSave.description": "Convert legacy scen.yaml to scen.feature + meta.yaml when saving. Disabled by default. Unsaved companion files prevent conversion.",
+  "config.editor.autoMigrateScenarioYamlOnSave.description": "Convert legacy scen.yaml to scen.feature + meta.yaml when saving. Disabled by default. Unsaved companion files prevent conversion. Applies only to branches with a version-3 .kot/project.yml; a user preference cannot opt a project into migration.",
   "cmd.createNestedProcess.title": "Create Nested process",
   "command.convertScenario.title": "Conversions…",
   "command.convertScenarioRole.title": "Main ↔ nested scenario or process",
@@ -308,5 +308,6 @@
   "command.startSetup.title": "Set up project",
   "command.convertScenarioFormatsBatch.title": "Convert YAML scenarios to feature + meta…",
   "cmd.dumpUserStepLibrary.title": "KOT - Dump EPF Library Sources",
-  "cmd.manageUserStepLibraries.title": "KOT - EPF Libraries"
+  "cmd.manageUserStepLibraries.title": "KOT - EPF Libraries",
+  "command.resolveMetadataConflicts.title": "Resolve KOT metadata conflicts…"
 }

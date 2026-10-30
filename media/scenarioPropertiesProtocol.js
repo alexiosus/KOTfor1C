@@ -30,7 +30,7 @@
         base: 'Select infobase', users: 'Select users', addRecord: 'Add record', removeRecord: 'Remove record',
         addSteps: 'Add process step', addNested: 'Add nested scenario', openReference: 'Open referenced definition',
         moveUp: 'Move up', moveDown: 'Move down', dragRecord: 'Drag to reorder', dropAtEnd: 'Move record to the end',
-        groupId: 'Group', ungrouped: 'Ungrouped', order: 'Order', description: 'Description', category: 'Category',
+        groupId: 'Group', ungrouped: 'Ungrouped', order: 'Display order (local)', description: 'Description', category: 'Category',
         newGroup: 'New group', aiDescription: 'Generate description with AI',
         files: 'Files', dropAttachments: 'Drop files anywhere in this panel to attach them to the test.',
         openAttachment: 'Open attachment', revealAttachments: 'Open folder', deleteAttachment: 'Delete attachment', renameAttachment: 'Rename attachment',

@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import syncFs from 'node:fs';
@@ -16,11 +17,11 @@ const second = { name: 'Purchases', uid: '11111111-2222-4333-8444-555555555555' 
 const ts = require(path.join(process.cwd(), 'node_modules/typescript')) as typeof import('typescript');
 
 async function harness(t: TestContext) {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'shared-functions-native-'));
+    const directory = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'shared-functions-native-')));
     t.after(() => fs.rm(directory, { recursive: true, force: true }));
     const roots = [path.join(directory, 'first-project'), path.join(directory, 'second-project')];
     const external = path.join(directory, 'external-tests');
-    await Promise.all([...roots, external].map(root => fs.mkdir(root)));
+    await Promise.all([...roots, external].map(root => v3Fixture(root)));
     const uri = (file: string) => ({ scheme: 'file', fsPath: file, toString: () => pathToFileURL(file).toString() });
     const folders = roots.map((root, index) => ({ name: `Project ${index}`, uri: uri(root), index }));
     const documents: any[] = []; const inputs: string[] = []; const picks: string[] = []; const choices: any[] = []; const updates: any[] = [];
@@ -76,7 +77,7 @@ test('project catalogs resolve their own workspace and external scan root and su
     const result = await h.creator.getProjectScenarioDefaults(h.document.uri);
     assert.deepEqual(JSON.parse(JSON.stringify(result.systemFunctions)), [second]);
     assert.deepEqual(await h.api.loadProjectSystemFunctions(h.uri(path.join(h.external, 'scenario.yaml')), [first]), [second]);
-    const clone = path.join(h.roots[0], 'clone'); await fs.mkdir(path.join(clone, '.kot'), { recursive: true });
+    const clone = path.join(h.roots[0], 'clone'); await v3Fixture(clone);
     await fs.copyFile(path.join(h.roots[1], '.kot', 'property-catalogs.yml'), path.join(clone, '.kot', 'property-catalogs.yml'));
     assert.deepEqual(await new storeModule.ProjectPropertyCatalogStore(clone).ensureSystemFunctions([]), [second]);
     assert.equal(h.updates.length, 0);

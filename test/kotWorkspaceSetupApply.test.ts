@@ -1,3 +1,8 @@
+import * as projectSetupGateModule from '../src/projectSetupGate';
+import os from 'node:os';
+import { pathToFileURL } from 'node:url';
+import * as projectFormatModule from '../src/projectFormat';
+import * as projectFormatTransitionModule from '../src/projectFormatTransition';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,8 +14,8 @@ import ts from 'typescript';
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-function fixture() {
-    const uri = { scheme: 'file', fsPath: '/project', toString: () => 'file:///project' };
+function fixture(root = '/project', scan?: () => Promise<void>) {
+    const uri = { scheme: 'file', fsPath: root, toString: () => pathToFileURL(root).href };
     const saved = new Map<string, unknown>(); const events: Array<{ type: string; label?: string; id?: string }> = [];
     const nativeRequire = createRequire(__filename);
     const manager = { loadActiveProfileSnapshot: async () => ({ buildParameters: [] }), validateCompilerBuildParameters: () => [] };
@@ -19,10 +24,11 @@ function fixture() {
             ProgressLocation: { Notification: 15 }, window: { withProgress: async (_options: unknown, work: (progress: { report(value: unknown): void }) => unknown) => work({ report() {} }) },
             commands: { executeCommand: async () => undefined } },
         './yamlParametersManager': { YamlParametersManager: { getInstance: () => manager } },
-        './projectSetupGate': { completeProjectSetup() {} },
+        './projectFormat': projectFormatModule, './projectFormatTransition': projectFormatTransitionModule,
+        './projectSetupGate': projectSetupGateModule,
         './kotProjectSetup': { assertPrimarySetupFolder() {} },
         './workspaceScanner.js': { scanWorkspaceForScenarioCatalog: async (_uri: unknown, _token: unknown, report?: (value: unknown) => void) => {
-            report?.({ label: 'Reading scenario source files…', completed: 2, total: 2 });
+            report?.({ label: 'Reading scenario source files…', completed: 2, total: 2 }); await scan?.();
         } }
     };
     const exports: Record<string, any> = {};
@@ -74,4 +80,22 @@ test('a failed Vanessa preparation retains completed setup and can be retried', 
     h.panel.bindExecution(async () => true);
     assert.equal((await h.panel.retryExecution('file:///project')).executionReady, true);
     assert.equal((h.saved.values().next().value as any).readiness.executionError, '');
+});
+
+test('environment setup with an old completed window state does not enable the project format', async t => {
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'kot-legacy-setup-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+    const h=fixture(root);await h.panel.applySetup('review','legacy');
+    assert.equal(projectFormatModule.projectFormat(root).kind,'legacy');assert.equal(projectSetupGateModule.isProjectSetupPending(root),true);
+});
+test('an explicit reviewed transition writes the branch marker and preserves legacy sources while importing', async t => {
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'kot-explicit-setup-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+    const h=fixture(root,async()=>{assert.equal(projectFormatModule.projectFormat(root).kind,'v3');assert.equal(projectSetupGateModule.projectTransitionPreservesSource(path.join(root,'scen.yaml')),true);});
+    h.panel.review.draft.transition=true;h.panel.review.projectFormat=projectFormatModule.projectFormat(root);
+    await h.panel.applySetup('review','transition');assert.equal(projectFormatModule.projectFormat(root).kind,'v3');assert.equal(projectSetupGateModule.projectTransitionPreservesSource(root),false);
+});
+test('failed transition revokes its marker and leaves the branch in legacy mode', async t => {
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'kot-failed-setup-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+    const h=fixture(root,async()=>{throw new Error('Import interrupted');});h.panel.review.draft.transition=true;
+    await assert.rejects(h.panel.applySetup('review','failed'),/interrupted/u);
+    assert.equal(projectFormatModule.projectFormat(root).kind,'legacy');assert.equal(projectSetupGateModule.projectTransitionPreservesSource(root),false);
 });

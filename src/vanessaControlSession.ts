@@ -31,6 +31,8 @@ export interface VanessaControlExecution {
 export interface VanessaControlSnapshot {
     readonly generation: number;
     readonly status: 'detached' | 'connecting' | 'ready' | 'running' | 'stopping' | 'unknown';
+    /** The owned run is still pending, even if its latest state poll failed. */
+    readonly runActive?: boolean;
     readonly endpoint?: string;
     readonly server?: Readonly<{ name: string; version: string }>;
     readonly capabilities?: VanessaControlCapabilities;
@@ -737,7 +739,7 @@ export class VanessaControlSession {
         }
     }
     private set(value: VanessaControlSnapshot): void {
-        this.value = Object.freeze(value);
+        this.value = Object.freeze({ ...value, runActive: this.runRequest?.generation === value.generation });
         for (const listener of this.listeners) { listener(this.value); }
     }
 }

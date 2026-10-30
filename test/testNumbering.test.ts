@@ -1,3 +1,4 @@
+import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,7 +10,7 @@ import { ProjectPropertyCatalogStore } from '../src/projectPropertyCatalogStore'
 import { resolveProjectLibraryRoot } from '../src/projectLibraryMetadata';
 
 async function fixture(t: test.TestContext) {
-    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'kot-numbering-ui-'));
+    const root = await v3Fixture(fs.promises.mkdtemp(path.join(os.tmpdir(), 'kot-numbering-ui-')));
     t.after(() => fs.promises.rm(root, { recursive: true, force: true }));
     const uri = (fsPath: string) => ({ scheme: 'file', fsPath, toString: () => `file://${fsPath}` });
     const state = new Map<string, unknown>(); const choices: string[] = []; const inputs: Array<string | undefined> = [];

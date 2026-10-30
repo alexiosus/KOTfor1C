@@ -68,7 +68,7 @@ for (const file of runSettings) {
     settingsUids.add(data.UID);
     assert.ok(scenarios.has(data.UIDСценария ?? data.UIDПроцесса), `Missing linked source: ${file}`);
 }
-const groups = new Set(yaml(path.join(root, '.kot/groups.yml')).groups.map((group: { id: string }) => group.id));
+const groups = new Set(fs.readdirSync(path.join(root, '.kot/groups')).filter(file => file.endsWith('.yml')).map(file => yaml(path.join(root, '.kot/groups', file)).id));
 for (const file of allFiles.filter(file => file.endsWith('.kot.yml'))) {
     const metadata = yaml(file);
     assert.equal(metadata.version, 2);
