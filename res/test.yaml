@@ -1,7 +1,7 @@
 ﻿ТипФайла: "НастройкаТеста"
 ДанныеТеста:
     UID: "Random_UID"
-    Код: "Name_Placeholder"
+    Код: "Code_Placeholder"
     UIDСценария: "UID_Placeholder"
     Имя: "Name_Placeholder"
     ЭталоннаяБазаИмя: "ModelDBName_Placeholder"

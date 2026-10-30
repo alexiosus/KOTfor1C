@@ -1,0 +1,8 @@
+version: 2
+identity:
+    kind: process
+    uid: 4cc1a359-2063-5053-a130-d282b70af604
+metadata:
+    groupId: b8446b95-8846-5111-b113-87520404ec18
+    order: 0
+    description: "Учебный процесс с повторным использованием сценариев"

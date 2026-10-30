@@ -1,6 +1,12 @@
 import * as vscode from 'vscode';
+import { type ScenarioLanguage } from './gherkinDefinitionKeywords';
 
-export type ScenarioLanguage = 'en' | 'ru';
+export {
+    getGherkinDefinitionKeywords,
+    type GherkinDefinitionKeywords,
+    type ScenarioLanguage
+} from './gherkinDefinitionKeywords';
+
 type CanonicalStepKeyword = 'and' | 'given' | 'when' | 'then' | 'but';
 
 const CANONICAL_KEYWORDS_EN: Record<CanonicalStepKeyword, string> = {
@@ -33,7 +39,7 @@ function toConfiguredLanguage(value: string | undefined): ScenarioLanguage {
     return value === 'ru' ? 'ru' : 'en';
 }
 
-const LANGUAGE_TAG_REGEX = /^#language:\s*(en|ru)\b/i;
+const LANGUAGE_TAG_REGEX = /^#\s*language\s*:\s*(en|ru)\b/i;
 
 function toCanonicalStepKeyword(rawKeyword: string): CanonicalStepKeyword | null {
     for (const entry of KEYWORD_TO_CANONICAL) {

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}}; font-src {{cspSource}}; script-src 'nonce-{{nonce}}';">
+    <link rel="stylesheet" href="{{codiconsUri}}">
+    <link rel="stylesheet" href="{{styleUri}}">
+    <title>Test properties</title>
+</head>
+<body>
+    <main id="scenario-properties" aria-busy="true"></main>
+    <script nonce="{{nonce}}" src="{{protocolUri}}"></script>
+    <script nonce="{{nonce}}" src="{{filesProtocolUri}}"></script>
+    <script nonce="{{nonce}}" src="{{featureScriptUri}}"></script>
+    <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
+</body>
+</html>

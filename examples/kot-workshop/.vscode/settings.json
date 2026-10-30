@@ -1,0 +1,32 @@
+{
+    "kotTestToolkit.editor.newScenarioLanguage": "en",
+    "kotTestToolkit.newScenarioDefaults.format": "native",
+    "kotTestToolkit.editor.autoCollapseOnOpen": false,
+    "kotTestToolkit.editor.autoMigrateScenarioYamlOnSave": false,
+    "kotTestToolkit.editor.showYamlActionButtons": false,
+    "kotTestToolkit.editor.showFeatureActionButtons": false,
+    "kotTestToolkit.phaseSwitcher.autoAddNewScenariosToFavorites": false,
+    "kotTestToolkit.numbering.prefix": "900001",
+    "kotTestToolkit.catalogs.projects": [
+        "Учебная мастерская"
+    ],
+    "kotTestToolkit.catalogs.responsibles": [
+        "Учебный тестировщик"
+    ],
+    "kotTestToolkit.catalogs.reportLevel1": [
+        "Обучение"
+    ],
+    "kotTestToolkit.catalogs.reportLevel2": [
+        "Заявки",
+        "Процессы"
+    ],
+    "kotTestToolkit.catalogs.categories": [
+        "Учебный пример"
+    ],
+    "kotTestToolkit.catalogs.systemFunctions": {
+        "Работа с учебной заявкой": "ae0ce176-2aa2-5353-a513-b4d958817e13"
+    },
+    "kotTestToolkit.numbering.series": {
+        "900001": "Учебный тестировщик"
+    }
+}

@@ -1,0 +1,8 @@
+version: 2
+identity:
+    kind: scenario
+    uid: 7e240160-9bc3-55bf-9fa7-ff9969e20e4d
+metadata:
+    groupId: 2fb3720b-2692-51d9-b1ad-99ac40207abd
+    order: 0
+    description: "Подготовить учебную заявку"

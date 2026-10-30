@@ -28,4 +28,4 @@ is no longer documented as the primary path.
 
 For the supported end-to-end workflow, see:
 
-- `documentation/blocks/form-explorer.md`
+- `docs/guides/form-explorer.md`

@@ -90,7 +90,7 @@ function buildDetectedPlatformName(clientExePath: string): string {
 }
 
 function normalizeConfiguredPlatformEntry(
-    entry: RawConfiguredOneCPlatform | ConfiguredOneCPlatform
+    entry: RawConfiguredOneCPlatform
 ): ConfiguredOneCPlatform | null {
     const clientExePathSource = typeof entry.clientExePath === 'string'
         ? entry.clientExePath
@@ -110,7 +110,7 @@ function normalizeConfiguredPlatformEntry(
     };
 }
 
-function dedupePlatforms(platforms: ConfiguredOneCPlatform[]): ConfiguredOneCPlatform[] {
+function dedupePlatforms(platforms: readonly RawConfiguredOneCPlatform[]): ConfiguredOneCPlatform[] {
     const uniquePlatforms = new Map<string, ConfiguredOneCPlatform>();
     for (const platform of platforms) {
         const normalizedPlatform = normalizeConfiguredPlatformEntry(platform);
@@ -343,7 +343,7 @@ async function showPlatformManagerQuickPick(
         };
 
         quickPick.title = t('1C platforms');
-        quickPick.placeHolder = t('Manage available 1C platforms');
+        quickPick.placeholder = t('Manage available 1C platforms');
         quickPick.ignoreFocusOut = true;
         quickPick.matchOnDescription = true;
         quickPick.matchOnDetail = true;
@@ -474,7 +474,7 @@ export async function resolveOneCPlatformForLaunch(
 
     const shouldPromptUser = options?.forcePicker
         || (options?.promptUser ?? config.get<boolean>(PROMPT_FOR_LAUNCHES_CONFIG_KEY, true));
-    if (!shouldPromptUser || configuredPlatforms.length === 1) {
+    if (!shouldPromptUser || (configuredPlatforms.length === 1 && !options?.forcePicker)) {
         return configuredPlatforms[0];
     }
 
@@ -544,6 +544,10 @@ export async function handleManagePlatforms(context: vscode.ExtensionContext): P
                 ...platforms,
                 createConfiguredPlatform(clientExePath, name)
             ]);
+            continue;
+        }
+
+        if (!pickedItem.clientExePath) {
             continue;
         }
 

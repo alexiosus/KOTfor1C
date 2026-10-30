@@ -11,15 +11,6 @@
     УровеньОтчета1: "ReportLevel1_Placeholder"
     УровеньОтчета2: "ReportLevel2_Placeholder"
 
-KOTМетаданные:
-    Описание: |
-        
-        -
-    PhaseSwitcher:
-        Tab: "Phase_Placeholder"
-        OrderOnTab: Order_Placeholder
-        Default: Default_Placeholder
-
 ПараметрыСценария:
 
 ВложенныеСценарии:

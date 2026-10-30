@@ -1,31 +1,37 @@
+@import url("./kotWebviewTheme.css");
+@import url("./kotWebviewText.css");
+@import url("./kotWebviewSplit.css");
+
 html,
 body {
     height: 100%;
 }
 
 :root {
-    --fe-bg:
-        radial-gradient(circle at top right, color-mix(in srgb, var(--vscode-focusBorder) 14%, transparent) 0, transparent 24%),
-        linear-gradient(180deg, color-mix(in srgb, var(--vscode-editor-background) 96%, var(--vscode-sideBar-background) 4%) 0%, var(--vscode-editor-background) 100%);
-    --fe-surface-0: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--vscode-sideBar-background) 8%);
-    --fe-surface-1: color-mix(in srgb, var(--vscode-editor-background) 86%, var(--vscode-sideBar-background) 14%);
-    --fe-surface-2: color-mix(in srgb, var(--vscode-editor-background) 78%, var(--vscode-list-hoverBackground) 22%);
-    --fe-button-bg: color-mix(in srgb, var(--vscode-editor-background) 83%, var(--vscode-sideBar-background) 17%);
-    --fe-border: color-mix(in srgb, var(--vscode-panel-border) 84%, transparent);
-    --fe-border-strong: color-mix(in srgb, var(--vscode-focusBorder) 62%, transparent);
-    --fe-muted: var(--vscode-descriptionForeground);
-    --fe-accent: var(--vscode-focusBorder);
-    --fe-good: var(--vscode-testing-iconPassed);
-    --fe-warning: var(--vscode-testing-iconQueued);
-    --fe-shadow: 0 12px 28px rgba(0, 0, 0, 0.12);
+    --fe-bg: var(--kot-bg);
+    --fe-surface-0: var(--kot-surface-0);
+    --fe-surface-1: var(--kot-surface-1);
+    --fe-surface-2: var(--kot-surface-2);
+    --fe-button-bg: var(--kot-button-bg);
+    --fe-border: var(--kot-border);
+    --fe-border-strong: var(--kot-border-strong);
+    --fe-muted: var(--kot-muted);
+    --fe-accent: var(--kot-accent);
+    --fe-good: var(--kot-good);
+    --fe-warning: var(--kot-warning);
+    --fe-shadow: var(--kot-shadow);
 }
 
 body {
     margin: 0;
+    padding: 0;
+    width: 100%;
+    min-width: 0;
     overflow: hidden;
     background: var(--fe-bg);
     color: var(--vscode-editor-foreground);
-    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
 }
 
 button,
@@ -34,22 +40,23 @@ input {
 }
 
 .app-shell {
+    width: 100%;
+    min-width: 0;
     height: 100%;
     min-height: 0;
     box-sizing: border-box;
-    padding: 10px;
+    padding: 0;
     display: grid;
     grid-template-rows: auto auto minmax(0, 1fr);
-    gap: 10px;
+    gap: 0;
 }
 
 .topbar,
 .panel,
 .banner {
-    border: 1px solid var(--fe-border);
-    border-radius: 16px;
+    border: 0;
+    border-radius: 0;
     background: var(--fe-surface-0);
-    box-shadow: var(--fe-shadow);
 }
 
 .topbar {
@@ -58,8 +65,10 @@ input {
     grid-template-areas: "title toolbar";
     gap: 10px 14px;
     align-items: center;
-    padding: 6px 10px;
+    padding: 8px;
     min-height: 44px;
+    border-bottom: 1px solid var(--fe-border);
+    background: var(--fe-surface-1);
 }
 
 .eyebrow,
@@ -72,17 +81,17 @@ input {
     color: var(--fe-muted);
     font-size: 11px;
     line-height: 1.2;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: none;
+    font-weight: 600;
 }
 
 .topbar-title {
     grid-area: title;
     margin: 0;
-    font-size: 16px;
+    font-size: var(--vscode-font-size);
     line-height: 1.1;
-    font-weight: 800;
+    font-weight: 600;
 }
 
 .topbar-title-wrap {
@@ -105,8 +114,8 @@ input {
     display: flex;
     flex-direction: column;
     gap: 3px;
-    padding: 6px 8px;
-    border-radius: 12px;
+    padding: 4px 8px;
+    border-radius: 3px;
     border: 1px solid var(--fe-border);
     background: var(--fe-surface-1);
 }
@@ -120,8 +129,12 @@ input {
 }
 
 .toolbar .meta-chip.compact {
-    min-height: 52px;
-    height: 52px;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    min-height: 28px;
+    height: 28px;
     box-sizing: border-box;
     justify-content: center;
 }
@@ -129,8 +142,8 @@ input {
 .topbar .toolbar > .toolbar-btn,
 .topbar .toolbar > .menu-shell > .toolbar-btn,
 .topbar .toolbar > .menu-shell > .split-btn-group > .toolbar-btn {
-    min-height: 52px;
-    height: 52px;
+    min-height: 28px;
+    height: 28px;
     box-sizing: border-box;
 }
 
@@ -138,7 +151,15 @@ input {
 .toolbar .meta-chip-value {
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    text-overflow: clip;
+}
+
+.toolbar .meta-chip-label {
+    flex-shrink: 0;
+}
+
+.toolbar .meta-chip-value {
+    min-width: 0;
 }
 
 .interactive-chip {
@@ -253,7 +274,7 @@ input {
     max-width: 120px;
     padding-inline: 10px;
     justify-content: space-between;
-    border-radius: 0 12px 12px 0 !important;
+    border-radius: 0 3px 3px 0 !important;
 }
 
 .platform-selector-label {
@@ -261,7 +282,7 @@ input {
     flex: 1 1 auto;
     display: block;
     overflow: hidden;
-    text-overflow: ellipsis;
+    text-overflow: clip;
     white-space: nowrap;
 }
 
@@ -281,16 +302,17 @@ input {
 
 .menu-popover {
     position: absolute;
-    top: calc(100% + 8px);
+    top: calc(100% + 4px);
     right: 0;
     min-width: 220px;
     display: none;
     flex-direction: column;
-    gap: 4px;
-    padding: 6px;
-    border-radius: 12px;
-    border: 1px solid var(--fe-border);
-    background: var(--fe-surface-0);
+    gap: 0;
+    padding: 4px;
+    border-radius: 3px;
+    border: 1px solid var(--vscode-menu-border, var(--fe-border));
+    background: var(--vscode-menu-background, var(--fe-surface-0));
+    color: var(--vscode-menu-foreground, var(--vscode-foreground));
     box-shadow: var(--fe-shadow);
     z-index: 10;
 }
@@ -316,9 +338,9 @@ input {
     display: flex;
     align-items: center;
     gap: 8px;
-    min-height: 32px;
-    padding: 7px 10px;
-    border-radius: 10px;
+    min-height: 28px;
+    padding: 4px 10px;
+    border-radius: 3px;
     color: inherit;
 }
 
@@ -335,19 +357,19 @@ input {
     color: var(--fe-muted);
     font-size: 10px;
     line-height: 1.2;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: none;
+    font-weight: 600;
 }
 
 .menu-item {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    min-height: 32px;
-    padding: 7px 10px;
+    min-height: 28px;
+    padding: 4px 10px;
     border: 1px solid transparent;
-    border-radius: 10px;
+    border-radius: 3px;
     background: transparent;
     color: inherit;
     text-align: left;
@@ -355,8 +377,8 @@ input {
 }
 
 .menu-item:hover {
-    border-color: var(--fe-border-strong);
-    background: var(--fe-surface-1);
+    color: var(--vscode-menu-selectionForeground, var(--vscode-foreground));
+    background: var(--vscode-menu-selectionBackground, var(--fe-surface-2));
 }
 
 .platform-menu {
@@ -419,14 +441,14 @@ input {
     align-items: center;
     justify-content: center;
     gap: 8px;
-    min-height: 32px;
-    padding: 7px 10px;
-    border-radius: 12px;
+    min-height: 28px;
+    padding: 4px 10px;
+    border-radius: 3px;
     border: 1px solid var(--fe-border);
     background: var(--fe-button-bg);
     color: inherit;
     cursor: pointer;
-    transition: transform 0.12s ease, border-color 0.12s ease, background-color 0.12s ease;
+    transition: background-color 80ms ease;
 }
 
 .toolbar-btn,
@@ -448,12 +470,12 @@ input {
 
 .toolbar-btn.primary {
     border-color: color-mix(in srgb, var(--vscode-button-background) 70%, transparent);
-    background: color-mix(in srgb, var(--vscode-button-background) 82%, var(--vscode-textLink-foreground) 18%);
+    background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
 }
 
 .toolbar-btn.primary:hover {
-    background: color-mix(in srgb, var(--vscode-button-hoverBackground) 84%, var(--vscode-textLink-foreground) 16%);
+    background: var(--vscode-button-hoverBackground);
 }
 
 .toolbar-btn:disabled,
@@ -466,7 +488,7 @@ input {
 
 .ghost-btn.small {
     min-height: 28px;
-    padding: 5px 9px;
+    padding: 4px 8px;
 }
 
 .toggle-btn.is-active,
@@ -499,28 +521,36 @@ input {
 }
 
 .workspace {
+    --kot-split-axis: x;
+    --kot-split-min-before-x: 240;
+    --kot-split-min-after-x: 320;
+    --kot-split-min-before-y: 200;
+    --kot-split-min-after-y: 200;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+    grid-template-columns: var(--kot-split-width, 320px) 4px minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
-    gap: 10px;
+    gap: 0;
 }
 
 .panel {
+    min-width: 0;
     min-height: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    padding: 12px;
+    padding: 10px;
 }
 
 .sidebar-panel {
     grid-column: 1;
     grid-row: 2;
-    gap: 12px;
+    gap: 8px;
+    background: var(--fe-surface-1);
 }
 
 .sidebar-section-head {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -528,7 +558,7 @@ input {
 }
 
 .content {
-    grid-column: 2;
+    grid-column: 3;
     grid-row: 2;
     min-height: 0;
     display: grid;
@@ -537,23 +567,28 @@ input {
 }
 
 .current-form-panel {
-    grid-column: 1 / -1;
-    grid-row: 1;
-    min-height: 44px;
-    display: grid;
-    grid-template-columns: max-content minmax(0, 1fr) auto;
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    min-width: 0;
+    gap: 4px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--fe-border);
+}
+
+.current-form-heading {
+    display: flex;
     align-items: center;
-    column-gap: 14px;
-    row-gap: 0;
-    padding: 6px 10px;
-    position: relative;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 8px;
 }
 
 .current-form-actions {
     display: flex;
     justify-content: flex-end;
     align-items: center;
-    gap: 8px;
+    gap: 3px;
 }
 
 .current-form-label {
@@ -564,9 +599,41 @@ input {
 
 .current-form-copy {
     min-width: 0;
-    display: grid;
-    gap: 1px;
-    align-content: center;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.current-form-checks {
+    align-self: flex-start;
+    margin-top: 6px;
+}
+
+.native-steps-text {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 140px;
+    padding: 8px;
+    border: 1px solid var(--vscode-input-border, var(--fe-border));
+    border-radius: 3px;
+    background: var(--vscode-editor-background);
+    color: var(--vscode-editor-foreground);
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: var(--vscode-editor-font-size, 13px);
+    line-height: 1.5;
+    white-space: pre;
+    overflow: auto;
+    resize: vertical;
+    user-select: text;
+    cursor: text;
+}
+
+.native-steps-loading {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--fe-muted);
 }
 
 .panel-head {
@@ -584,13 +651,13 @@ input {
 .panel-head h2 {
     font-size: 15px;
     line-height: 1.2;
-    font-weight: 800;
+    font-weight: 600;
 }
 
 .panel-head h3 {
     font-size: 14px;
     line-height: 1.2;
-    font-weight: 700;
+    font-weight: 600;
 }
 
 .meta-line,
@@ -612,17 +679,18 @@ input {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 28px;
-    height: 28px;
-    padding: 0 9px;
-    border-radius: 999px;
-    border: 1px solid var(--fe-border);
-    background: var(--fe-surface-1);
-    font-size: 12px;
-    font-weight: 700;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 3px;
+    background: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
 }
 
 .sidebar-actions {
+    flex-shrink: 0;
     display: flex;
     gap: 8px;
     align-items: stretch;
@@ -644,6 +712,7 @@ input {
 }
 
 .search-row {
+    flex-shrink: 0;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
@@ -669,14 +738,14 @@ input {
     background: transparent;
     color: inherit;
     text-align: left;
-    font-size: 15px;
+    font-size: var(--vscode-font-size);
     line-height: 1.25;
-    font-weight: 800;
+    font-weight: 600;
     cursor: pointer;
     position: relative;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    text-overflow: clip;
     justify-self: start;
 }
 
@@ -693,7 +762,7 @@ input {
     margin-top: 0;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    text-overflow: clip;
 }
 
 .search-frame {
@@ -712,7 +781,7 @@ input {
 
 .search-frame .codicon {
     position: absolute;
-    left: 12px;
+    left: 8px;
     top: 50%;
     transform: translateY(-50%);
     color: var(--fe-muted);
@@ -722,10 +791,11 @@ input {
 .search-input {
     width: 100%;
     box-sizing: border-box;
-    padding: 8px 12px 8px 36px;
-    border-radius: 12px;
-    border: 1px solid var(--fe-border);
-    background: color-mix(in srgb, var(--vscode-input-background) 84%, var(--fe-surface-1) 16%);
+    min-height: 28px;
+    padding: 4px 8px 4px 28px;
+    border-radius: 3px;
+    border: 1px solid var(--vscode-input-border, transparent);
+    background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
 }
 
@@ -743,57 +813,93 @@ input {
 .outline-scroll {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding-right: 4px;
+    gap: 0;
+    padding-right: 0;
+}
+
+.sidebar-panel > .outline-scroll {
+    margin-inline: -10px;
 }
 
 .outline-row {
+    flex: 0 0 auto;
     width: 100%;
     box-sizing: border-box;
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 9px 10px 9px calc(10px + (var(--depth, 0) * 14px));
-    border-radius: 14px;
-    border: 1px solid var(--fe-border);
-    background: var(--fe-button-bg);
+    display: grid;
+    grid-template-columns: 16px 16px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px 3px calc(8px + (var(--depth, 0) * 14px));
+    min-height: 26px;
+    border-radius: 0;
+    border: 1px solid transparent;
+    background: transparent;
     color: inherit;
     text-align: left;
     cursor: pointer;
 }
 
 .outline-row:hover {
-    border-color: color-mix(in srgb, var(--fe-accent) 48%, transparent);
+    color: var(--vscode-list-hoverForeground, var(--vscode-foreground));
     background: var(--fe-surface-2);
 }
 
 .outline-row.is-selected {
-    border-color: color-mix(in srgb, var(--fe-accent) 82%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fe-accent) 54%, transparent);
+    color: var(--vscode-list-activeSelectionForeground);
+    background: var(--vscode-list-activeSelectionBackground);
+}
+
+.outline-row.is-selected .outline-subtitle,
+.outline-row.is-selected .outline-value {
+    color: inherit;
 }
 
 .outline-row.is-active {
-    background: color-mix(in srgb, var(--fe-accent) 10%, var(--fe-surface-1) 90%);
+    border-color: var(--vscode-list-focusOutline, var(--fe-accent));
 }
 
 .outline-main {
     min-width: 0;
-    display: grid;
-    gap: 3px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+}
+
+.outline-row .outline-title { min-width: 0; font-weight: 400; white-space: nowrap; }
+.outline-icon { color: var(--vscode-symbolIcon-fieldForeground, var(--fe-muted)); }
+
+.outline-expander {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 2px;
+    color: inherit;
+    background: transparent;
+}
+
+button.outline-expander {
+    cursor: pointer;
+}
+
+button.outline-expander:hover {
+    background: var(--vscode-toolbar-hoverBackground, var(--fe-surface-2));
 }
 
 .outline-title,
 .record-title {
-    font-size: 14px;
+    font-size: var(--vscode-font-size);
     line-height: 1.28;
-    font-weight: 700;
+    font-weight: 600;
 }
 
 .outline-subtitle {
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    text-overflow: clip;
 }
 
 .outline-value {
@@ -837,35 +943,34 @@ input {
 .key-facts {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-auto-rows: minmax(102px, auto);
-    gap: 8px;
+    grid-auto-rows: minmax(64px, auto);
+    gap: 0;
     padding-bottom: 2px;
     flex-shrink: 0;
 }
 
 .key-fact {
     min-width: 0;
-    min-height: 102px;
+    min-height: 64px;
     height: 100%;
-    padding: 10px 12px;
+    padding: 8px 10px;
     flex-direction: column;
     align-items: flex-start;
     justify-content: flex-start;
     text-align: left;
     position: relative;
+    border: 0;
+    border-bottom: 1px solid var(--fe-border);
+    border-radius: 0;
+    background: transparent;
 }
 
 .key-fact.is-copyable {
-    border-color: color-mix(in srgb, var(--fe-accent) 56%, transparent);
-    background:
-        linear-gradient(180deg, color-mix(in srgb, var(--fe-accent) 10%, var(--fe-surface-1) 90%) 0%, var(--fe-surface-1) 100%);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fe-accent) 22%, transparent);
+    background: transparent;
 }
 
 .key-fact.is-copyable:hover {
-    border-color: color-mix(in srgb, var(--fe-accent) 82%, transparent);
-    background:
-        linear-gradient(180deg, color-mix(in srgb, var(--fe-accent) 14%, var(--fe-surface-1) 86%) 0%, var(--fe-surface-2) 100%);
+    background: var(--fe-surface-2);
 }
 
 .key-fact.is-empty {
@@ -917,13 +1022,13 @@ input {
     align-items: center;
     justify-content: center;
     padding: 3px 7px;
-    border-radius: 999px;
+    border-radius: 3px;
     border: 1px solid var(--fe-border);
     background: var(--fe-surface-1);
-    font-size: 9px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0;
+    text-transform: none;
+    font-weight: 600;
 }
 
 .chip-row.compact {
@@ -957,12 +1062,28 @@ input {
 }
 
 .tabs-bar {
-    padding: 8px 10px;
+    padding: 0 8px;
     border-bottom: 1px solid var(--fe-border);
+    background: var(--fe-surface-1);
+}
+
+.tab-buttons {
+    gap: 0;
 }
 
 .tab-btn {
-    min-height: 32px;
+    min-height: 34px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    color: var(--fe-muted);
+}
+
+.tab-btn.is-active {
+    border-color: var(--vscode-tab-activeBorderTop, var(--fe-accent));
+    background: var(--vscode-tab-activeBackground, var(--fe-surface-0));
+    color: var(--vscode-tab-activeForeground, var(--vscode-foreground));
 }
 
 .tab-note {
@@ -1044,9 +1165,10 @@ input {
 
 .section-card,
 .record-card {
-    border: 1px solid var(--fe-border);
-    border-radius: 14px;
-    background: var(--fe-surface-1);
+    border: 0;
+    border-bottom: 1px solid var(--fe-border);
+    border-radius: 0;
+    background: var(--fe-surface-0);
 }
 
 .section-card {
@@ -1061,8 +1183,8 @@ input {
     margin: 0 0 12px;
     font-size: 11px;
     line-height: 1.2;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--fe-muted);
 }
 
@@ -1083,9 +1205,10 @@ input {
     align-items: center;
     justify-content: flex-start;
     gap: 10px;
-    padding: 10px;
+    min-height: 28px;
+    padding: 4px 8px;
     border: 0;
-    border-radius: 14px;
+    border-radius: 0;
     background: transparent;
     color: inherit;
     text-align: left;
@@ -1103,7 +1226,7 @@ input {
 }
 
 .section-toggle:hover {
-    background: color-mix(in srgb, var(--fe-surface-2) 56%, transparent);
+    background: var(--fe-surface-2);
 }
 
 .section-toggle-icon {
@@ -1116,9 +1239,9 @@ input {
     color: var(--fe-muted);
     font-size: 11px;
     line-height: 1.2;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: none;
+    font-weight: 600;
 }
 
 .section-card-body {
@@ -1164,7 +1287,7 @@ input {
     display: inline-block;
     max-width: 100%;
     padding: 2px 6px;
-    border-radius: 8px;
+    border-radius: 3px;
     background: color-mix(in srgb, var(--vscode-textCodeBlock-background) 72%, transparent);
     font-family: var(--vscode-editor-font-family, Consolas, monospace);
     font-size: 12px;
@@ -1195,7 +1318,7 @@ input {
 
 .record-list {
     display: grid;
-    gap: 10px;
+    gap: 0;
 }
 
 .record-card {
@@ -1203,8 +1326,8 @@ input {
 }
 
 .record-card.is-highlighted {
-    border-color: color-mix(in srgb, var(--fe-accent) 78%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fe-accent) 50%, transparent);
+    outline: 1px solid var(--fe-accent);
+    outline-offset: -1px;
 }
 
 .record-head {
@@ -1290,7 +1413,7 @@ input {
 }
 
 .step-suggestion-inline-copy {
-    border-radius: 12px;
+    border-radius: 3px;
     gap: 10px;
 }
 
@@ -1325,11 +1448,9 @@ input {
     gap: 8px;
     justify-items: stretch;
     text-align: left;
-    border-radius: 14px;
+    border-radius: 3px;
     border: 1px solid color-mix(in srgb, var(--fe-accent) 56%, transparent);
-    background:
-        linear-gradient(180deg, color-mix(in srgb, var(--fe-accent) 10%, var(--fe-surface-1) 90%) 0%, var(--fe-surface-1) 100%);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fe-accent) 22%, transparent);
+    background: var(--vscode-textCodeBlock-background, var(--fe-surface-1));
     padding: 10px;
     color: inherit;
     cursor: pointer;
@@ -1343,8 +1464,7 @@ input {
 
 .gherkin-inline-copy:hover {
     border-color: color-mix(in srgb, var(--fe-accent) 82%, transparent);
-    background:
-        linear-gradient(180deg, color-mix(in srgb, var(--fe-accent) 14%, var(--fe-surface-1) 86%) 0%, var(--fe-surface-2) 100%);
+    background: var(--fe-surface-2);
 }
 
 .gherkin-inline-head {
@@ -1362,26 +1482,23 @@ input {
 
 .mini-btn {
     min-height: 28px;
-    padding: 5px 9px;
+    padding: 4px 8px;
     position: relative;
 }
 
 .mini-btn.compact {
     min-height: 28px;
-    padding: 5px 9px;
+    padding: 4px 8px;
 }
 
 .empty-state {
-    min-height: 120px;
-    padding: 18px;
-    box-sizing: border-box;
-    border-radius: 14px;
-    border: 1px dashed var(--fe-border);
-    background: var(--fe-surface-1);
-    display: grid;
-    place-items: center;
-    gap: 8px;
-    text-align: center;
+    padding: 10px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-start;
+    color: var(--fe-muted);
+    text-align: left;
 }
 
 .empty-state strong {
@@ -1398,13 +1515,13 @@ input {
     left: 50%;
     transform: translate(-50%, -50%);
     padding: 2px 6px;
-    border-radius: 999px;
+    border-radius: 3px;
     border: 1px solid color-mix(in srgb, var(--fe-accent) 54%, transparent);
     background: color-mix(in srgb, var(--fe-surface-0) 90%, var(--fe-accent) 10%);
     color: var(--vscode-editor-foreground);
     font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
+    font-weight: 600;
+    letter-spacing: 0;
     pointer-events: none;
     box-shadow: var(--fe-shadow);
     z-index: 2;
@@ -1413,7 +1530,7 @@ input {
 .gherkin-table-preview {
     margin: 10px 0 0;
     padding: 10px;
-    border-radius: 10px;
+    border-radius: 3px;
     border: 1px solid var(--fe-border);
     background: color-mix(in srgb, var(--vscode-textCodeBlock-background) 72%, transparent);
     max-height: 260px;
@@ -1427,6 +1544,10 @@ input {
 .gherkin-table-preview.inline {
     margin: 0;
     max-height: 220px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
 }
 
 .gherkin-table-preview code {
@@ -1440,19 +1561,16 @@ input {
     left: 50%;
     transform: translate(-50%, -50%);
     padding: 2px 6px;
-    border-radius: 999px;
+    border-radius: 3px;
     border: 1px solid color-mix(in srgb, var(--fe-accent) 54%, transparent);
     background: color-mix(in srgb, var(--fe-surface-0) 90%, var(--fe-accent) 10%);
     color: var(--vscode-editor-foreground);
     font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
+    font-weight: 600;
+    letter-spacing: 0;
     pointer-events: none;
     box-shadow: var(--fe-shadow);
     z-index: 2;
-}
-
-@media (max-width: 1400px) {
 }
 
 @media (max-width: 900px) {
@@ -1475,23 +1593,14 @@ input {
         grid-row: 2;
         min-height: 220px;
         max-height: none;
+        border-right: 0;
+        border-bottom: 1px solid var(--fe-border);
     }
 
     .content {
         grid-column: 1;
         grid-row: 3;
         grid-template-rows: minmax(0, 1fr);
-    }
-
-    .current-form-panel {
-        grid-column: 1;
-        grid-row: 1;
-        grid-template-columns: 1fr;
-        row-gap: 8px;
-    }
-
-    .current-form-actions {
-        justify-content: flex-start;
     }
 
     .window-title-btn {
@@ -1554,6 +1663,11 @@ input {
             "toolbar";
     }
 
+    .topbar .menu-popover {
+        left: 0;
+        right: auto;
+    }
+
     .toolbar,
     .banner-actions,
     .inline-actions,
@@ -1573,7 +1687,7 @@ input {
     }
 
     .key-facts {
-        grid-template-columns: repeat(3, minmax(150px, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .record-grid {
@@ -1602,6 +1716,10 @@ input {
 }
 
 @media (max-width: 760px) {
+    .key-facts {
+        grid-template-columns: 1fr;
+    }
+
     .launch-split-shell {
         width: 100%;
     }
@@ -1620,11 +1738,27 @@ input {
         max-width: 120px;
     }
 
-    .search-row {
-        grid-template-columns: 1fr;
-    }
-
     .filter-shell-inline {
         justify-self: flex-start;
     }
 }
+
+/* The form belongs to the element outline; the detail pane keeps its own tab strip. */
+.workspace { grid-row: 3; grid-template-rows: minmax(0, 1fr); }
+.app-shell > .banner { grid-row: 2; }
+.sidebar-panel, .content { grid-row: 1; }
+.workspace > .kot-pane-resizer { grid-column: 2; grid-row: 1; }
+.key-facts { display: flex; flex-direction: column; }
+.key-fact { min-height: 32px; height: auto; display: grid; grid-template-columns: minmax(100px, 35%) minmax(0, 1fr); align-items: start; gap: 8px; padding: 6px 0; }
+.key-fact-label-row { width: auto; }
+.key-fact-value { margin: 0; }
+.selected-topline { padding-bottom: 6px; border-bottom: 1px solid var(--fe-border); }
+.toolbar .meta-chip { border: 0; background: transparent; }
+@media (max-width: 900px) {
+    .workspace { --kot-split-axis: y; grid-template-rows: var(--kot-split-height, minmax(200px, 42vh)) 4px minmax(0, 1fr); }
+    .sidebar-panel { grid-row: 1; min-height: 0; overflow: hidden; }
+    .workspace > .kot-pane-resizer { grid-column: 1; grid-row: 2; }
+    .content { grid-row: 3; }
+}
+
+.outline-expander { flex: 0 0 14px; width: 14px; align-self: flex-start; padding-top: 1px; color: var(--fe-muted); }

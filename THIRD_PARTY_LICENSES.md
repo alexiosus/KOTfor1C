@@ -2,6 +2,24 @@
 
 This software incorporates components from the following third-party software.
 
+## 1c-neurofish onec-client-mcp-devkit
+
+- **Authors/project:** [1c-neurofish and contributors](https://github.com/1c-neurofish/onec-client-mcp-devkit).
+- **Version:** `v0.6.6`, upstream commit `8d7fe150f9d6ac7385266acf438d7aebc2215c0c`.
+- **License:** GNU Lesser General Public License, version 3. The upstream license is preserved in [COPYING.LESSER](third-party/onec-client-mcp-devkit/COPYING.LESSER), alongside the [GNU GPL v3 text](third-party/onec-client-mcp-devkit/COPYING) which it incorporates.
+- **Corresponding source:** the unmodified [upstream release source archive](third-party/onec-client-mcp-devkit/source-v0.6.6.tar.gz), also available at the [versioned upstream source](https://github.com/1c-neurofish/onec-client-mcp-devkit/tree/v0.6.6).
+- **Source archive SHA-256:** `1b698bb7a616bea36c27dc573892f36739df6e3dbf89a4735b4618e325803e04`.
+- **Component:** official `client_mcp.cfe`, SHA-256 `eaf065440a32a60eaa07c78fe7ed39c6b2c331db915e91328391af07364422fe`. KOT does not modify the extension's source. A prepared service DT can contain this extension as a separate 1C configuration extension.
+- **Replacement/rebuilding:** see the [startup-template build instructions](docs/DEVELOPMENT.md#bundled-startup-template). The extension can be replaced through 1C Designer independently of KOT's TypeScript code. KOT verifies its supported version before enabling managed preparation; external MCP Attach uses capability negotiation.
+
+### WebTransport included by devkit
+
+The upstream devkit embeds `AddIn.WebTransport.mcp`, authored by [alkoleft / web-transport-addin](https://github.com/alkoleft/web-transport-addin). Its `Template.addin` contains WebTransport `0.6.4` binaries for Windows, Linux and macOS. They are retained unchanged in the upstream source archive.
+
+WebTransport references [medigor/addin1c](https://github.com/medigor/addin1c) as its Rust add-in foundation. That helper is [MIT-licensed](https://github.com/medigor/addin1c/blob/main/LICENSE).
+
+WebTransport is published under the [MIT License](https://github.com/alkoleft/web-transport-addin/blob/main/LICENSE), copyright (c) 2026 Koryakin Aleksey. The upstream notice is preserved verbatim in [third-party/web-transport-addin/LICENSE](third-party/web-transport-addin/LICENSE). Verified on 2026-10-30; upstream license blob `08c0580074e0cad357c7b0f8ddebd9e63ef7edbe`. This notice accompanies the WebTransport component included by devkit; the component binaries remain unchanged.
+
 ## Microsoft Visual Studio Code Codicons
 
 This project vendors selected assets from `@vscode/codicons` version `0.0.44`.

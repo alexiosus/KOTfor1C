@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" version="2.4">
+  <Form uuid="16985a0b-e0b0-4478-8750-909712ab950d"><Properties><Name>Settings</Name><Synonym/><Comment/><FormType>Managed</FormType><IncludeHelpInContents>false</IncludeHelpInContents><UsePurposes><v8:Value xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="app:ApplicationUsePurpose">PersonalComputer</v8:Value></UsePurposes><ExtendedPresentation/></Properties></Form>
+</MetaDataObject>

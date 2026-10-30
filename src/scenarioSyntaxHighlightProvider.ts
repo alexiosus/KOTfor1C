@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { parseBlockKeyword } from './blockKeywordParser';
 import { isScenarioYamlFile } from './yamlValidator';
+import { getCompilerScenarioBody, scanCompilerLines } from './scenarioCompilerSyntax';
 
 const semanticTokenTypes = [
     'gherkinComment',
@@ -13,7 +14,8 @@ const semanticTokenTypes = [
     'gherkinTag',
     'gherkinPlaceholder',
     'gherkinBracketParameter',
-    'gherkinTable'
+    'gherkinTable',
+    'gherkinVariable'
 ] as const;
 
 const semanticTokensLegend = new vscode.SemanticTokensLegend([...semanticTokenTypes]);
@@ -27,11 +29,12 @@ const topLevelYamlKeyRegex = /^\s*[А-Яа-яЁёA-Za-z][А-Яа-яЁёA-Za-z0-9
 const commentLineRegex = /^(\s*)#.*$/;
 const featureKeywordRegex = /^(\s*)(Feature|Функционал|Функция|Функциональность|Свойство)\s*:(.*)$/i;
 const scenarioElementRegex = /^(\s*)(Rule|Правило|Background|Контекст|Scenario Outline|Scenario Template|Scenario|Сценарий|Examples|Примеры|Example|Пример|Scenarios|Сценарии)\s*:(.*)$/i;
-const stepKeywordRegex = /^(\s*)(\*\s*)?(And|Then|When|Given|But|If|ElseIf|Else|EndIf|Do|EndDo|Try|Except|EndTry|Но|Тогда|Когда|Если|ИначеЕсли|Иначе|КонецЕсли|Цикл|КонецЦикла|Попытка|Исключение|КонецПопытки|И|К тому же|Допустим|Дано)(?=\s|$)/i;
+const stepKeywordRegex = /^(\s*)(\*\s*)?(#Если|#ИначеЕсли|#Иначе|#КонецЕсли|Return|Возврат|And|Then|When|Given|But|If|ElseIf|Else|EndIf|Do|EndDo|Try|Except|EndTry|Но|Тогда|Когда|Если|ИначеЕсли|Иначе|КонецЕсли|Цикл|КонецЦикла|Попытка|Исключение|КонецПопытки|И|К тому же|Допустим|Дано)(?=\s|$)/i;
 const nestedParamAssignmentRegex = /^(\s*)([A-Za-zА-Яа-яЁё0-9_-]+)(\s*)=(?=\s|$)/;
 const tagRegex = /@[^\s@|#]+/g;
 const placeholderRegex = /<[^<>\s]+>/g;
 const bracketParameterRegex = /\[[^\[\]\r\n]+\]/g;
+const runtimeVariableRegex = /(?<![\\$])(?:\$\$[^$\r\n]+\$\$|\$[^$\r\n]+\$)(?!\$)/gu;
 const doubleQuotedArgumentRegex = /"(?:[^"\\]|\\.)*"/g;
 const singleQuotedArgumentRegex = /'(?:[^'\\]|\\.)*'/g;
 const docStringDelimiterRegex = /^(\s*)("""|```)(.*)$/;
@@ -40,6 +43,7 @@ interface LineSpan {
     start: number;
     end: number;
 }
+interface TokenSink { push(line: number, char: number, length: number, type: number, modifiers: number): void }
 
 function isScenarioHighlightingEnabled(document: vscode.TextDocument): boolean {
     return vscode.workspace
@@ -48,7 +52,7 @@ function isScenarioHighlightingEnabled(document: vscode.TextDocument): boolean {
 }
 
 function pushToken(
-    builder: vscode.SemanticTokensBuilder,
+    builder: TokenSink,
     line: number,
     char: number,
     length: number,
@@ -67,7 +71,7 @@ function pushToken(
 }
 
 function pushRegexMatches(
-    builder: vscode.SemanticTokensBuilder,
+    builder: TokenSink,
     lineIndex: number,
     lineText: string,
     regex: RegExp,
@@ -123,6 +127,10 @@ function mergeLineSpans(spans: LineSpan[]): LineSpan[] {
 }
 
 function findBlockKeywordRange(lineText: string, blockKeyword: NonNullable<ReturnType<typeof parseBlockKeyword>>): { start: number; length: number } | null {
+    const firstWord = /^(\s*)(#?[\wА-Яа-яЁё]+)/u.exec(lineText);
+    if (firstWord && parseBlockKeyword(firstWord[2]) === blockKeyword) {
+        return { start: firstWord[1].length, length: firstWord[2].length };
+    }
     const keywordPatterns: Record<NonNullable<ReturnType<typeof parseBlockKeyword>>, RegExp> = {
         If: /\b(?:If|Если)\b/i,
         ElseIf: /\b(?:ElseIf|ИначеЕсли)\b/i,
@@ -162,6 +170,7 @@ export class ScenarioSyntaxHighlightProvider implements vscode.DocumentSemanticT
     }
 
     provideDocumentSemanticTokens(document: vscode.TextDocument): vscode.ProviderResult<vscode.SemanticTokens> {
+        if (/\.feature$/iu.test(document.fileName)) { return this.buildTokens(document, true); }
         if (
             document.languageId !== 'yaml'
             || !isScenarioYamlFile(document)
@@ -170,8 +179,18 @@ export class ScenarioSyntaxHighlightProvider implements vscode.DocumentSemanticT
             return new vscode.SemanticTokens(new Uint32Array());
         }
 
-        const builder = new vscode.SemanticTokensBuilder(ScenarioSyntaxHighlightProvider.legend);
-        let insideScenarioText = false;
+        return this.buildTokens(document, false);
+    }
+
+    private buildTokens(document: vscode.TextDocument, native: boolean): vscode.SemanticTokens {
+        const output = new vscode.SemanticTokensBuilder(ScenarioSyntaxHighlightProvider.legend);
+        const tokens = new Map<number, { start: number; end: number; type: number }[]>();
+        const builder: TokenSink = { push: (line, char, length, type) => {
+            const values = tokens.get(line) ?? []; values.push({ start: char, end: char + length, type }); tokens.set(line, values);
+        } };
+        const body = native ? { lines: document.getText().split(/\r\n|\r|\n/u), startLine: 0 } : getCompilerScenarioBody(document.getText());
+        const scanned = scanCompilerLines(body?.lines ?? []);
+        let insideScenarioText = native;
         let scenarioHeaderIndent = 0;
         let docStringDelimiter: string | null = null;
 
@@ -188,8 +207,14 @@ export class ScenarioSyntaxHighlightProvider implements vscode.DocumentSemanticT
             }
 
             const trimmed = lineText.trim();
+            const info = body ? scanned[lineIndex - body.startLine] : undefined;
+            if (info?.kind === 'comment') {
+                const indent = lineText.match(/^[ \t]*/u)![0].length;
+                pushToken(builder, lineIndex, indent, lineText.length - indent, 'gherkinComment');
+                continue;
+            }
             const currentIndent = (lineText.match(/^[ \t]*/)?.[0].length) ?? 0;
-            if (!docStringDelimiter && currentIndent <= scenarioHeaderIndent && topLevelYamlKeyRegex.test(lineText)) {
+            if (!native && !docStringDelimiter && currentIndent <= scenarioHeaderIndent && topLevelYamlKeyRegex.test(lineText)) {
                 insideScenarioText = false;
                 const headerMatch = lineText.match(scenarioTextHeaderRegex);
                 if (headerMatch) {
@@ -206,6 +231,7 @@ export class ScenarioSyntaxHighlightProvider implements vscode.DocumentSemanticT
             const docStringMatch = lineText.match(docStringDelimiterRegex);
             if (docStringDelimiter) {
                 pushToken(builder, lineIndex, currentIndent, lineText.length - currentIndent, 'gherkinString');
+                pushRegexMatches(builder, lineIndex, lineText, runtimeVariableRegex, 'gherkinVariable');
                 if (docStringMatch?.[2] === docStringDelimiter) {
                     docStringDelimiter = null;
                 }
@@ -219,7 +245,7 @@ export class ScenarioSyntaxHighlightProvider implements vscode.DocumentSemanticT
             }
 
             const commentMatch = lineText.match(commentLineRegex);
-            if (commentMatch) {
+            if (commentMatch && info?.block?.dialect !== 'preprocessor') {
                 pushToken(builder, lineIndex, commentMatch[1].length, lineText.length - commentMatch[1].length, 'gherkinComment');
                 continue;
             }
@@ -229,6 +255,7 @@ export class ScenarioSyntaxHighlightProvider implements vscode.DocumentSemanticT
             pushRegexMatches(builder, lineIndex, lineText, singleQuotedArgumentRegex, 'gherkinString');
             pushRegexMatches(builder, lineIndex, lineText, bracketParameterRegex, 'gherkinBracketParameter');
             pushRegexMatches(builder, lineIndex, lineText, placeholderRegex, 'gherkinPlaceholder');
+            pushRegexMatches(builder, lineIndex, lineText, runtimeVariableRegex, 'gherkinVariable');
 
             const featureMatch = lineText.match(featureKeywordRegex);
             if (featureMatch) {
@@ -295,7 +322,30 @@ export class ScenarioSyntaxHighlightProvider implements vscode.DocumentSemanticT
             }
         }
 
-        return builder.build();
+        // Semantic tokens cannot overlap. Keep variables/parameters visible inside
+        // quoted strings and tables instead of letting the enclosing token hide them.
+        const priority = (type: number) => {
+            const name = semanticTokenTypes[type];
+            return name === 'gherkinTable' ? 0 : name === 'gherkinFeatureTitle' || name === 'gherkinScenarioTitle' ? 1
+                : name === 'gherkinString' ? 2 : ['gherkinVariable', 'gherkinBracketParameter', 'gherkinPlaceholder'].includes(name) ? 4 : 3;
+        };
+        for (const [line, values] of tokens) {
+            const boundaries = [...new Set(values.flatMap(value => [value.start, value.end]))].sort((a, b) => a - b);
+            let previous: { start: number; end: number; type: number } | undefined;
+            for (let index = 0; index + 1 < boundaries.length; index++) {
+                const start = boundaries[index]; const end = boundaries[index + 1];
+                const selected = values.filter(value => value.start <= start && value.end >= end)
+                    .sort((a, b) => priority(b.type) - priority(a.type))[0];
+                if (!selected) { continue; }
+                if (previous && previous.end === start && previous.type === selected.type) { previous.end = end; }
+                else {
+                    if (previous) { output.push(line, previous.start, previous.end - previous.start, previous.type, 0); }
+                    previous = { start, end, type: selected.type };
+                }
+            }
+            if (previous) { output.push(line, previous.start, previous.end - previous.start, previous.type, 0); }
+        }
+        return output.build();
     }
 }
 
@@ -309,6 +359,8 @@ export function collectScenarioPlainTextRanges(document: vscode.TextDocument): v
     }
 
     const ranges: vscode.Range[] = [];
+    const body = getCompilerScenarioBody(document.getText());
+    const scanned = scanCompilerLines(body?.lines ?? []);
     let insideScenarioText = false;
     let scenarioHeaderIndent = 0;
     let docStringDelimiter: string | null = null;
@@ -326,6 +378,8 @@ export function collectScenarioPlainTextRanges(document: vscode.TextDocument): v
         }
 
         const trimmed = lineText.trim();
+        const info = body ? scanned[lineIndex - body.startLine] : undefined;
+        if (info && info.kind !== 'code') { continue; }
         const currentIndent = (lineText.match(/^[ \t]*/)?.[0].length) ?? 0;
         if (!docStringDelimiter && currentIndent <= scenarioHeaderIndent && topLevelYamlKeyRegex.test(lineText)) {
             insideScenarioText = false;
@@ -355,7 +409,7 @@ export function collectScenarioPlainTextRanges(document: vscode.TextDocument): v
         }
 
         if (
-            commentLineRegex.test(lineText)
+            (commentLineRegex.test(lineText) && info?.block?.dialect !== 'preprocessor')
             || featureKeywordRegex.test(lineText)
             || scenarioElementRegex.test(lineText)
             || trimmed.startsWith('|')
@@ -368,7 +422,8 @@ export function collectScenarioPlainTextRanges(document: vscode.TextDocument): v
             ...collectRegexSpans(lineText, doubleQuotedArgumentRegex),
             ...collectRegexSpans(lineText, singleQuotedArgumentRegex),
             ...collectRegexSpans(lineText, bracketParameterRegex),
-            ...collectRegexSpans(lineText, placeholderRegex)
+            ...collectRegexSpans(lineText, placeholderRegex),
+            ...collectRegexSpans(lineText, runtimeVariableRegex)
         ];
 
         const stepMatch = lineText.match(stepKeywordRegex);
@@ -433,17 +488,27 @@ export function collectScenarioPlainTextRanges(document: vscode.TextDocument): v
     return ranges;
 }
 
-export function collectScenarioBracketParameterRanges(document: vscode.TextDocument): vscode.Range[] {
-    if (
+export function collectScenarioBracketParameterRanges(document: vscode.TextDocument, native = false): vscode.Range[] {
+    return collectScenarioReferenceRanges(document, bracketParameterRegex, native, false);
+}
+
+export function collectScenarioRuntimeVariableRanges(document: vscode.TextDocument): vscode.Range[] {
+    return collectScenarioReferenceRanges(document, runtimeVariableRegex, /\.feature$/iu.test(document.fileName), true);
+}
+
+function collectScenarioReferenceRanges(document: vscode.TextDocument, pattern: RegExp, native: boolean, includeDocstrings: boolean): vscode.Range[] {
+    if (!native && (
         document.languageId !== 'yaml'
         || !isScenarioYamlFile(document)
         || !isScenarioHighlightingEnabled(document)
-    ) {
+    )) {
         return [];
     }
 
     const ranges: vscode.Range[] = [];
-    let insideScenarioText = false;
+    const body = native ? { lines: document.getText().split(/\r\n|\r|\n/u), startLine: 0 } : getCompilerScenarioBody(document.getText());
+    const scanned = scanCompilerLines(body?.lines ?? []);
+    let insideScenarioText = native;
     let scenarioHeaderIndent = 0;
     let docStringDelimiter: string | null = null;
 
@@ -460,8 +525,9 @@ export function collectScenarioBracketParameterRanges(document: vscode.TextDocum
         }
 
         const trimmed = lineText.trim();
+        if (body && scanned[lineIndex - body.startLine]?.kind === 'comment') { continue; }
         const currentIndent = (lineText.match(/^[ \t]*/)?.[0].length) ?? 0;
-        if (!docStringDelimiter && currentIndent <= scenarioHeaderIndent && topLevelYamlKeyRegex.test(lineText)) {
+        if (!native && !docStringDelimiter && currentIndent <= scenarioHeaderIndent && topLevelYamlKeyRegex.test(lineText)) {
             insideScenarioText = false;
             const headerMatch = lineText.match(scenarioTextHeaderRegex);
             if (headerMatch) {
@@ -480,6 +546,11 @@ export function collectScenarioBracketParameterRanges(document: vscode.TextDocum
             if (docStringMatch?.[2] === docStringDelimiter) {
                 docStringDelimiter = null;
             }
+            else if (includeDocstrings) {
+                for (const span of collectRegexSpans(lineText, pattern)) {
+                    ranges.push(new vscode.Range(new vscode.Position(lineIndex, span.start), new vscode.Position(lineIndex, span.end)));
+                }
+            }
             continue;
         }
 
@@ -488,7 +559,7 @@ export function collectScenarioBracketParameterRanges(document: vscode.TextDocum
             continue;
         }
 
-        const spans = collectRegexSpans(lineText, bracketParameterRegex);
+        const spans = collectRegexSpans(lineText, pattern);
         for (const span of spans) {
             ranges.push(
                 new vscode.Range(

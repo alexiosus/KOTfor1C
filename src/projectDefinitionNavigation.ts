@@ -1,0 +1,244 @@
+import * as vscode from 'vscode';
+import type {
+    ProjectDefinition,
+    ProjectDefinitionLocation,
+    ProjectDefinitionMatch,
+    ProjectDefinitionResolution
+} from './projectDefinition';
+import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
+import { getFeatureNestedScenarioContextAtPosition } from './featureNestedScenarioUtils';
+
+function navigableLocation(definition: ProjectDefinition): ProjectDefinitionLocation | undefined {
+    return definition.implementationLocation ?? definition.definitionLocation;
+}
+
+function capturedLocation(value: unknown): ProjectDefinitionLocation | undefined {
+    if (!value || typeof value !== 'object') {
+        return undefined;
+    }
+    const candidate = value as {
+        uri?: unknown;
+        range?: {
+            start?: { line?: unknown; character?: unknown };
+            end?: { line?: unknown; character?: unknown };
+        };
+    };
+    const positions = [candidate.range?.start, candidate.range?.end];
+    if (
+        typeof candidate.uri !== 'string'
+        || candidate.uri.trim().length === 0
+        || positions.some(position =>
+            !position
+            || !Number.isInteger(position.line)
+            || !Number.isInteger(position.character)
+            || Number(position.line) < 0
+            || Number(position.character) < 0
+        )
+    ) {
+        return undefined;
+    }
+    return value as ProjectDefinitionLocation;
+}
+
+function toRange(location: ProjectDefinitionLocation): vscode.Range {
+    return new vscode.Range(
+        new vscode.Position(location.range.start.line, location.range.start.character),
+        new vscode.Position(location.range.end.line, location.range.end.character)
+    );
+}
+
+async function toLocationLink(match: ProjectDefinitionMatch, line: number): Promise<vscode.LocationLink | null> {
+    let location = navigableLocation(match.definition);
+    if (!location) {
+        return null;
+    }
+    if (/(?:^|\/)meta\.yaml$/u.test(location.uri)) {
+        location = await (await import('./spprScenarioFiles.js')).resolveScenarioScriptLocation(location);
+    }
+    const targetRange = toRange(location);
+    return {
+        originSelectionRange: new vscode.Range(
+            line,
+            match.invocationRange.start,
+            line,
+            match.invocationRange.end
+        ),
+        targetUri: vscode.Uri.parse(location.uri),
+        targetRange,
+        targetSelectionRange: targetRange
+    };
+}
+
+async function openLocation(location: ProjectDefinitionLocation): Promise<boolean> {
+    try {
+        if (/(?:^|\/)meta\.yaml$/u.test(location.uri)) {
+            location = await (await import('./spprScenarioFiles.js')).resolveScenarioScriptLocation(location);
+        }
+        const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(location.uri));
+        const editor = await vscode.window.showTextDocument(document, {
+            preview: false,
+            preserveFocus: false
+        });
+        const range = toRange(location);
+        editor.selection = new vscode.Selection(range.start, range.end);
+        editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+        return true;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(vscode.l10n.t('Failed to open definition: {0}', message));
+        return false;
+    }
+}
+
+export class ProjectDefinitionProvider implements vscode.DefinitionProvider {
+    constructor(
+        private readonly resolver: ProjectDefinitionResolver,
+        private readonly resolveCompiledSource?: (
+            document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken
+        ) => Promise<vscode.Location | null>
+    ) {}
+
+    async provideDefinition(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        token: vscode.CancellationToken
+    ): Promise<vscode.LocationLink[]> {
+        if (token.isCancellationRequested) {
+            return [];
+        }
+        const invocation = document.lineAt(position.line).text;
+        const resolution = await this.resolver.resolve(document.uri, invocation);
+        if (token.isCancellationRequested) {
+            return [];
+        }
+
+        const matches = resolution.kind === 'missing' ? []
+            : resolution.kind === 'unique' ? [resolution.match] : resolution.matches;
+        const links = await Promise.all(matches.map(match => toLocationLink(match, position.line)));
+        if (token.isCancellationRequested) {
+            return [];
+        }
+        const navigable = links.filter((link): link is vscode.LocationLink => link !== null);
+        const lineRange = new vscode.Range(position.line, 0, position.line, invocation.length);
+        if (navigable.length > 0) {
+            return navigable.map(link => {
+                const origin = link.originSelectionRange;
+                return origin && position.character >= origin.start.character && position.character <= origin.end.character
+                    ? link : { ...link, originSelectionRange: lineRange };
+            });
+        }
+        if (document.uri.scheme !== 'file' || !/\.feature$/iu.test(document.uri.fsPath)) {
+            return [];
+        }
+        const source = !document.isDirty ? await this.resolveCompiledSource?.(document, position, token) : null;
+        if (token.isCancellationRequested) {
+            return [];
+        }
+        if (source) {
+            return [{ originSelectionRange: lineRange, targetUri: source.uri, targetRange: source.range, targetSelectionRange: source.range }];
+        }
+        const enclosing = getFeatureNestedScenarioContextAtPosition(document, position);
+        if (!enclosing || enclosing.scenarioLine === position.line) {
+            return [];
+        }
+        const enclosingResolution = await this.resolver.resolve(document.uri, document.lineAt(enclosing.scenarioLine).text);
+        if (token.isCancellationRequested || enclosingResolution.kind === 'missing') {
+            return [];
+        }
+        const enclosingMatches = enclosingResolution.kind === 'unique' ? [enclosingResolution.match] : enclosingResolution.matches;
+        const enclosingLinks = await Promise.all(enclosingMatches
+            .filter(match => match.definition.kind === 'nestedScenario' || match.definition.kind === 'exportScenario')
+            .map(match => toLocationLink(match, position.line)));
+        return token.isCancellationRequested ? [] : enclosingLinks
+            .filter((link): link is vscode.LocationLink => link !== null)
+            .map(link => ({ ...link, originSelectionRange: lineRange }));
+    }
+}
+
+export async function openProjectDefinitionHandler(
+    definitionId: string,
+    resourceUri: vscode.Uri | string | undefined,
+    resolver: ProjectDefinitionResolver,
+    capturedLocationValue?: unknown
+): Promise<boolean> {
+    const resource = typeof resourceUri === 'string'
+        ? vscode.Uri.parse(resourceUri)
+        : resourceUri;
+    const definition = (await resolver.getView(resource)).byId.get(definitionId);
+    if (definition) {
+        const location = navigableLocation(definition);
+        if (location) {
+            return openLocation(location);
+        }
+        vscode.window.showInformationMessage(vscode.l10n.t('This definition has no project source location.'));
+        return false;
+    }
+
+    const location = capturedLocation(capturedLocationValue);
+    if (!location) {
+        vscode.window.showInformationMessage(vscode.l10n.t('Project definition is no longer available.'));
+        return false;
+    }
+    return openLocation(location);
+}
+
+export async function pickProjectDefinition(
+    definitions: readonly ProjectDefinition[],
+    resourceUri: vscode.Uri | string | undefined,
+    resolver: ProjectDefinitionResolver,
+    title = vscode.l10n.t('Choose project definition')
+): Promise<boolean> {
+    if (definitions.length === 0) {
+        return false;
+    }
+    if (definitions.length === 1) {
+        return openProjectDefinitionHandler(definitions[0].id, resourceUri, resolver);
+    }
+
+    const picked = await vscode.window.showQuickPick(
+        definitions.map(definition => ({
+            label: definition.template,
+            description: definition.sourceLabel,
+            detail: navigableLocation(definition)?.uri,
+            definitionId: definition.id
+        })),
+        { title, ignoreFocusOut: true }
+    );
+    if (!picked) {
+        return false;
+    }
+    return openProjectDefinitionHandler(picked.definitionId, resourceUri, resolver);
+}
+
+function scenarioDefinitions(
+    resolution: ProjectDefinitionResolution
+): readonly ProjectDefinition[] {
+    if (resolution.kind === 'missing') {
+        return [];
+    }
+    const matches = resolution.kind === 'unique' ? [resolution.match] : resolution.matches;
+    return matches
+        .map(match => match.definition)
+        .filter(definition =>
+            definition.kind === 'nestedScenario' || definition.kind === 'exportScenario'
+        );
+}
+
+export async function openScenarioDefinitionForInvocation(
+    invocation: string,
+    resourceUri: vscode.Uri | undefined,
+    resolver: ProjectDefinitionResolver,
+    options: {
+        readonly title?: string;
+        readonly missingMessage?: string;
+    } = {}
+): Promise<boolean> {
+    const definitions = scenarioDefinitions(await resolver.resolve(resourceUri, invocation));
+    if (definitions.length === 0) {
+        if (options.missingMessage) {
+            vscode.window.showInformationMessage(options.missingMessage);
+        }
+        return false;
+    }
+    return pickProjectDefinition(definitions, resourceUri, resolver, options.title);
+}

@@ -11,6 +11,8 @@ import { normalizeGeneratedKotDescription, upsertKotScenarioDescription } from '
 import { migrateLegacyPhaseSwitcherMetadata, parsePhaseSwitcherMetadata } from './phaseSwitcherMetadata';
 import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { isScenarioYamlFile } from './yamlValidator';
+import { persistProjectMetadata, projectedProjectScenario } from './projectLibraryIntegration';
+import { readScenarioSource } from './spprScenarioFiles';
 
 interface ScenarioAiSettings extends AiConnectionSettings {
     maxLineLength: number;
@@ -721,6 +723,7 @@ function buildScenarioAnalysisContext(
 ): ScenarioAnalysisContext {
     const declaredParameters = parseScenarioParameterDefaults(documentText);
     const phaseSwitcherMetadata = parsePhaseSwitcherMetadata(documentText);
+    const projected = projectedProjectScenario({ uri: documentUri, getText: () => documentText });
 
     return {
         documentText,
@@ -735,8 +738,8 @@ function buildScenarioAnalysisContext(
         scenarioBody: extractTopLevelSection(documentText, 'ТекстСценария'),
         structureHints: extractScenarioStructureHints(extractTopLevelSection(documentText, 'ТекстСценария'), 12),
         reportHints: extractScenarioReportHints(extractTopLevelSection(documentText, 'ТекстСценария'), 12),
-        isStandaloneMainScenario: phaseSwitcherMetadata.hasTab,
-        phaseSwitcherTabName: phaseSwitcherMetadata.tabName
+        isStandaloneMainScenario: projected ? !!projected.tabName?.trim() : phaseSwitcherMetadata.hasTab,
+        phaseSwitcherTabName: projected?.tabName ?? phaseSwitcherMetadata.tabName
     };
 }
 
@@ -4310,9 +4313,8 @@ function buildScenarioAnalysisPrompt(
         extractTopLevelSection(documentText, 'ТекстСценария'),
         10
     );
-    const hasDeclaredOrUsedParameters = declaredParameters.size > 0 || usedPlaceholderLines.length > 0;
-    const isStandaloneMainScenario = phaseSwitcherMetadata.hasTab;
-    const isParameterizedScenario = !isStandaloneMainScenario && hasDeclaredOrUsedParameters;
+    const projected = projectedProjectScenario({ uri: documentUri, getText: () => documentText });
+    const isStandaloneMainScenario = projected ? !!projected.tabName?.trim() : phaseSwitcherMetadata.hasTab;
 
     return [
         'Проанализируй текущий YAML-сценарий KOT для 1С и составь описание для блока KOTМетаданные.Описание.',
@@ -4426,11 +4428,11 @@ async function requestScenarioDescriptionFromAi(
     return buildFallbackScenarioDescription(rawResponseText, settings.outputLanguage);
 }
 
-async function generateScenarioDescription(document: vscode.TextDocument): Promise<string> {
+async function generateScenarioDescription(document: vscode.TextDocument, sourceText?: string): Promise<string> {
     const settings = getScenarioAiSettings(document.uri);
     ensureAiConnectionSettingsComplete(settings);
     const endpoint = buildAiEndpoint(settings.baseUrl, settings.apiFormat, settings.apiVersion || undefined);
-    const documentText = document.getText();
+    const documentText = sourceText ?? document.getText();
     const analysisContext = buildScenarioAnalysisContext(documentText, document.uri);
 
     try {
@@ -4513,20 +4515,32 @@ export async function handleGenerateScenarioDescriptionWithAi(editor: vscode.Tex
     const openSettings = vscode.l10n.t('Open settings');
 
     try {
+        const nativeSource = /(?:^|[\\/])meta\.yaml$/iu.test(document.uri.fsPath) ? await readScenarioSource(document.uri) : undefined;
         const generatedDescription = await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: vscode.l10n.t('Generating scenario description with AI...'),
             cancellable: false
-        }, () => generateScenarioDescription(document));
+        }, () => generateScenarioDescription(document, nativeSource));
 
         const currentDocument = vscode.workspace.textDocuments.find(
             textDocument => textDocument.uri.toString() === document.uri.toString()
         ) ?? await vscode.workspace.openTextDocument(document.uri);
 
-        if (currentDocument.version !== initialVersion) {
+        if (currentDocument.version !== initialVersion || nativeSource !== undefined && await readScenarioSource(document.uri) !== nativeSource) {
             vscode.window.showWarningMessage(vscode.l10n.t(
                 'The scenario file changed while AI description was being generated. Nothing was applied.'
             ));
+            return;
+        }
+
+        const normalizedDescription = normalizeGeneratedKotDescription(generatedDescription);
+        if (projectedProjectScenario(currentDocument)?.scenarioDescription === normalizedDescription) {
+            vscode.window.showInformationMessage(vscode.l10n.t('AI description is already up to date.'));
+            return;
+        }
+        if (await persistProjectMetadata(currentDocument, { description: normalizedDescription })) {
+            await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcher', { refreshCache: true });
+            vscode.window.showInformationMessage(vscode.l10n.t('Scenario description was generated with AI.'));
             return;
         }
 

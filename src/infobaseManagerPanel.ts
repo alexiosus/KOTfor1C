@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import {
     addInfobaseToLauncherInteractive,
-    collectManagedInfobases,
     configureInfobaseStartupParametersInteractive,
     copyInfobaseInteractive,
     createInfobaseInteractive,
@@ -22,6 +21,9 @@ import {
     showInfobaseLogsInteractive,
     updateInfobaseConfigurationInteractive
 } from './infobaseManager';
+import type { ManagedInfobaseService } from './managedInfobaseService';
+import { VanessaInfobaseClientError, type VanessaInfobaseClients, type VanessaInfobaseClientsView } from './vanessaInfobaseClients';
+import { managedInfobaseRuntimeTracker } from './infobaseRuntimeTracker';
 import { getTranslator } from './localization';
 import { normalizeInfobaseConnectionIdentity } from './oneCInfobaseConnection';
 import { type ConfiguredOneCPlatform, ensureOneCPlatformsCatalogInitialized } from './oneCPlatform';
@@ -33,13 +35,20 @@ const INFOBASE_MANAGER_MANUAL_ORDER_KEY = 'infobaseManager.manualOrder';
 const INFOBASE_MANAGER_SHOW_HIDDEN_KEY = 'infobaseManager.showHidden';
 
 interface InfobaseManagerWebviewState {
-    infobases: ManagedInfobaseRecord[];
+    vanessaClients: VanessaInfobaseClientsView | null;
+    clientFocusRequest: number;
+    infobases: Array<ManagedInfobaseRecord & { running: boolean; operation: string | null; runtimeModes: string[]; runtimeClients: string[] }>;
     platforms: ConfiguredOneCPlatform[];
     selectedInfobasePath: string | null;
     pendingAction: string | null;
     lastError: string | null;
     sortMode: InfobaseManagerSortMode;
     showHidden: boolean;
+}
+
+export interface InfobaseManagerClientBinding {
+    service: VanessaInfobaseClients;
+    handle(infobase: string, message: unknown): Promise<boolean>;
 }
 
 interface InfobaseManagerWebviewMessage {
@@ -81,27 +90,45 @@ export class InfobaseManagerPanel implements vscode.Disposable {
     private platforms: ConfiguredOneCPlatform[] = [];
     private selectedInfobasePath: string | null = null;
     private pendingAction: string | null = null;
+    private pendingInfobasePath: string | null = null;
     private lastError: string | null = null;
+    private clientPoll: ReturnType<typeof setInterval> | undefined;
+    private clientFocusRequest = 0;
+    private clientTranslate = (message: string) => message;
 
-    constructor(private readonly context: vscode.ExtensionContext) {
+    constructor(
+        private readonly context: vscode.ExtensionContext,
+        private readonly managedInfobaseService: ManagedInfobaseService,
+        private readonly clients?: InfobaseManagerClientBinding
+    ) {
         this.disposables.push(
+            managedInfobaseRuntimeTracker.onDidChange(() => { void this.postState(); }),
             vscode.workspace.onDidChangeConfiguration(event => {
                 if (event.affectsConfiguration('kotTestToolkit.platforms.catalog')) {
                     void this.refreshState();
                 }
+            }),
+            this.managedInfobaseService.onDidInvalidate(() => {
+                if (this.panel) {
+                    void this.refreshState();
+                }
             })
         );
+        if (clients) { this.disposables.push(clients.service.onDidChange(() => { void this.postState(); })); }
     }
 
     public dispose(): void {
+        this.stopClientPoll();
         this.panelDisposables.forEach(disposable => disposable.dispose());
         this.disposables.forEach(disposable => disposable.dispose());
         this.panel?.dispose();
         this.panel = null;
     }
 
-    public async open(preferredInfobasePath?: string | null): Promise<void> {
+    public async open(preferredInfobasePath?: string | null, focusClients = false): Promise<void> {
         const t = await getTranslator(this.context.extensionUri);
+        this.clientTranslate = t;
+        if (focusClients) { this.clientFocusRequest++; }
         if (preferredInfobasePath?.trim()) {
             this.selectedInfobasePath = preferredInfobasePath.trim();
         }
@@ -127,26 +154,41 @@ export class InfobaseManagerPanel implements vscode.Disposable {
         );
 
         this.panel.webview.html = await this.getWebviewHtml(this.panel.webview);
+        const receivingPanel = this.panel;
         this.panelDisposables = [
             this.panel.onDidDispose(() => {
+                this.stopClientPoll();
                 this.panelDisposables.forEach(disposable => disposable.dispose());
                 this.panelDisposables = [];
                 this.panel = null;
             }),
+            this.panel.onDidChangeViewState(() => this.updateClientPoll()),
             this.panel.webview.onDidReceiveMessage(message => {
-                void this.handleMessage(message as InfobaseManagerWebviewMessage);
+                void this.handleMessage(message as InfobaseManagerWebviewMessage, receivingPanel);
             })
         ];
 
         await this.refreshState();
+        this.updateClientPoll();
     }
 
-    private async refreshState(): Promise<void> {
-        const [infobases, platforms] = await Promise.all([
-            collectManagedInfobases(this.context),
+    private stopClientPoll(): void { clearInterval(this.clientPoll); this.clientPoll = undefined; }
+
+    private updateClientPoll(): void {
+        this.stopClientPoll();
+        if (!this.panel?.visible || !this.clients) { return; }
+        void this.clients.service.refresh();
+        this.clientPoll = setInterval(() => { void this.clients?.service.refresh(); }, 5000);
+    }
+
+    private async refreshState(forceInfobaseRefresh = false): Promise<void> {
+        const [snapshot, platforms] = await Promise.all([
+            forceInfobaseRefresh
+                ? this.managedInfobaseService.refresh()
+                : this.managedInfobaseService.ensureReady(),
             ensureOneCPlatformsCatalogInitialized()
         ]);
-        this.infobases = await this.sortInfobasesForDisplay(infobases);
+        this.infobases = await this.sortInfobasesForDisplay([...snapshot.infobases]);
         this.platforms = platforms;
         const visibleInfobases = this.getVisibleInfobases();
         if (this.selectedInfobasePath) {
@@ -176,8 +218,16 @@ export class InfobaseManagerPanel implements vscode.Disposable {
     }
 
     private buildState(): InfobaseManagerWebviewState {
+        const running = managedInfobaseRuntimeTracker.runningIdentities();
+        const clients = this.selectedInfobasePath && this.clients ? this.clients.service.stateFor(this.selectedInfobasePath) : null;
         return {
-            infobases: this.infobases,
+            vanessaClients: clients ? { ...clients, error: clients.error ? this.clientTranslate(clients.error) : null } : null,
+            clientFocusRequest: this.clientFocusRequest,
+            infobases: this.infobases.map(infobase => ({ ...infobase,
+                runtimeModes: [...(managedInfobaseRuntimeTracker.runningModes?.(infobase.infobasePath) ?? []), ...(this.clients?.service.stateFor(infobase.infobasePath).runtimeClients?.length ? ['vanessa'] : [])],
+                runtimeClients: this.clients?.service.stateFor(infobase.infobasePath).runtimeClients?.map(row => row.name) ?? [],
+                running: running.has(this.normalizePathForCompare(infobase.infobasePath)),
+                operation: this.pendingInfobasePath && this.normalizePathForCompare(this.pendingInfobasePath) === this.normalizePathForCompare(infobase.infobasePath) ? this.pendingAction : null })),
             platforms: this.platforms,
             selectedInfobasePath: this.selectedInfobasePath,
             pendingAction: this.pendingAction,
@@ -344,9 +394,11 @@ export class InfobaseManagerPanel implements vscode.Disposable {
 
     private async executePanelAction(
         pendingActionLabel: string,
-        action: () => Promise<void>
+        action: () => Promise<void>,
+        infobasePath: string | null = this.selectedInfobasePath
     ): Promise<void> {
         this.pendingAction = pendingActionLabel;
+        this.pendingInfobasePath = infobasePath;
         this.lastError = null;
         await this.postState();
 
@@ -358,17 +410,48 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             vscode.window.showErrorMessage(message);
         } finally {
             this.pendingAction = null;
-            await this.refreshState();
+            this.pendingInfobasePath = null;
+            await this.refreshState(true);
         }
     }
 
-    private async handleMessage(message: InfobaseManagerWebviewMessage): Promise<void> {
+    private async handleMessage(message: InfobaseManagerWebviewMessage, originatingPanel = this.panel): Promise<void> {
         const t = await getTranslator(this.context.extensionUri);
+        if (typeof message?.command === 'string' && message.command.startsWith('client')) {
+            if (originatingPanel !== this.panel) { return; }
+            let failed = false;
+            try {
+                const record = typeof message.infobasePath === 'string' && message.infobasePath.trim() && message.infobasePath.length <= 8192
+                    ? this.findInfobaseRecord(message.infobasePath) : null;
+                if (!record || !this.clients) { throw new VanessaInfobaseClientError('Select an infobase first.'); }
+                this.lastError = null;
+                if (message.command === 'clientEdit') {
+                    const packet = message as unknown as Record<string, unknown>;
+                    if (typeof packet.clientId !== 'string' || typeof packet.requestId !== 'string') { throw new VanessaInfobaseClientError('The saved client action is invalid. Refresh the list.'); }
+                    const draft = await this.clients.service.editorFor(record.infobasePath, packet.clientId);
+                    if (this.panel === originatingPanel) { await originatingPanel?.webview.postMessage({ command: 'clientEditor', infobasePath: record.infobasePath,
+                        clientId: packet.clientId, requestId: packet.requestId, draft }); }
+                } else if (message.command === 'clientConnectionSettings') {
+                    await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.connectionSettings');
+                } else { await this.clients.handle(record.infobasePath, message); }
+            } catch (error) {
+                failed = true;
+                this.lastError = t(error instanceof VanessaInfobaseClientError ? error.message : 'The saved client action could not be completed. Refresh the list.');
+            } finally {
+                await this.postState();
+                if (message.command === 'clientSave' && this.panel === originatingPanel) {
+                    const packet = message as unknown as Record<string, unknown>;
+                    await this.panel?.webview.postMessage({ command: 'clientSaveResult', infobasePath: message.infobasePath,
+                        requestId: packet.requestId, success: !failed });
+                }
+            }
+            return;
+        }
         switch (message.command) {
             case 'refresh':
                 await this.executePanelAction(t('Refreshing infobases...'), async () => {
                     // State refresh happens in finally.
-                });
+                }, null);
                 return;
             case 'manageEtalonBases':
                 await vscode.commands.executeCommand('kotTestToolkit.manageEtalonBases');
@@ -383,7 +466,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                     if (createdInfobasePath?.trim()) {
                         this.selectedInfobasePath = createdInfobasePath.trim();
                     }
-                });
+                }, null);
                 return;
             case 'setSortMode': {
                 const nextSortMode = message.sortMode === 'alphabetical' || message.sortMode === 'lastOpened' || message.sortMode === 'manual'
@@ -464,6 +547,9 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                     });
                 });
                 return;
+            case 'startVanessa':
+                await vscode.commands.executeCommand('kotTestToolkit.openVanessaForInfobase', selectedInfobase.infobasePath);
+                return;
             case 'startFormExplorer':
                 await this.executePanelAction(t('Opening Form Explorer for infobase...'), async () => {
                     await vscode.commands.executeCommand(
@@ -480,6 +566,11 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                     await restoreInfobaseFromDtInteractive(this.context, selectedInfobase);
                 });
                 return;
+            case 'restoreFromTemplate':
+                await this.executePanelAction(t('Restoring infobase from installed template...'), async () => {
+                    await restoreInfobaseFromDtInteractive(this.context, selectedInfobase, 'template');
+                });
+                return;
             case 'exportDt':
                 await this.executePanelAction(t('Exporting infobase to DT...'), async () => {
                     await exportInfobaseToDtInteractive(this.context, selectedInfobase.infobasePath);
@@ -493,6 +584,11 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             case 'updateConfig':
                 await this.executePanelAction(t('Updating infobase configuration...'), async () => {
                     await updateInfobaseConfigurationInteractive(this.context, selectedInfobase);
+                });
+                return;
+            case 'updateFromTemplate':
+                await this.executePanelAction(t('Updating infobase configuration...'), async () => {
+                    await updateInfobaseConfigurationInteractive(this.context, selectedInfobase, 'template');
                 });
                 return;
             case 'configureLaunchKeys':
@@ -567,15 +663,35 @@ export class InfobaseManagerPanel implements vscode.Disposable {
         const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'codicon.css'));
         const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'infobaseManager.css'));
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'infobaseManager.js'));
+        const clientsScriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'infobaseVanessaClients.js'));
+        const textScriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'kotWebviewText.js'));
+        const splitScriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'kotWebviewSplit.js'));
 
         const loc = {
+            hidden: t('Hidden'),
+            vanessaClients: {
+                title: t('Vanessa test clients'), connectManager: t('Connect Vanessa'), settings: t('Connection settings'), refresh: t('Refresh'),
+                hint: t('Select saved users to add or connect them in the current Vanessa session.'), all: t('All users'), new: t('Add user'),
+                liveOnly: t('Vanessa only'), saveToKot: t('Save to KOT'), outdated: t('Changes not applied'), updateConnect: t('Apply and connect'), passwordLabel: t('Password'), keysLabel: t('Launch keys'), emptyShort: t('No saved test clients.'),
+                working: t('Updating clients…'), loading: t('Reading clients…'), ready: t('Vanessa connected'), detached: t('Vanessa not connected'),
+                add: t('Add to Vanessa'), connect: t('Connect'), disconnect: t('Disconnect'), select: t('Select client'),
+                empty: t('No saved users for this infobase. Add a user or leave its name empty for the default user.'),
+                defaultUser: t('Default user'), local: t('Saved locally'), added: t('Added to Vanessa'), connected: t('Connected'),
+                conflict: t('Profile conflict'), unsupported: t('Unsupported profile'), unknown: t('Not checked'), active: t('Active'),
+                edit: t('Edit client'), password: t('Set password'), keys: t('Edit launch keys'), replace: t('Replace Vanessa profile'), remove: t('Remove saved client'),
+                username: t('Infobase user (optional)'), name: t('Client name'), type: t('Client type'), thin: t('Thin'), thick: t('Thick'),
+                details: t('Connection details'), synonym: t('Synonym'), computer: t('Computer'), port: t('Saved port'), save: t('Save'), cancel: t('Cancel'),
+                portNote: t('MCP cannot apply or verify saved client ports. The displayed ports are local settings; managed launches can apply the complete set.')
+            },
+            enterpriseMode: t('Enterprise'), designerMode: t('Designer'), vanessaMode: t('Vanessa'),
             title: t('KOT Infobase Manager'),
             infobases: t('Infobases'),
+            resizePanels: t('Resize panels'),
             status: t('Status'),
             refresh: t('Refresh'),
             createInfobase: t('Create infobase'),
             addInfobasePath: t('Add path'),
-            manageEtalonBases: t('Etalon bases'),
+            manageEtalonBases: t('Reference infobases'),
             searchPlaceholder: t('Search bases'),
             sortLabel: t('Sort'),
             sortAlphabetical: t('Alphabetical'),
@@ -607,6 +723,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             openDesigner: t('Open in Designer'),
             openWithFormExplorer: t('Open with Form Explorer'),
             restoreDt: t('Restore from DT'),
+            restoreFromTemplate: t('Restore from installed template'),
             exportDt: t('Export DT'),
             saveCf: t('Save CF'),
             updateConfig: t('Update configuration'),
@@ -614,7 +731,13 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             editBase: t('Edit base'),
             launchPlatform: t('Platform'),
             defaultLabel: t('Default'),
-            moreActions: t('More actions'),
+            listActions: t('List and launcher'),
+            actionsLaunch: t('Launch'),
+            actionsData: t('Infobase data'),
+            actionsConfiguration: t('Configuration'),
+            updateFromTemplate: t('Update from installed template'),
+            runningFromKot: t('Running from KOT'),
+            actionsManagement: t('Management'),
             copyBase: t('Copy infobase'),
             revealFolder: t('Open folder'),
             showLogs: t('Show logs'),
@@ -645,8 +768,12 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             openMenu: t('Open menu')
         };
 
-        const initialStateJson = JSON.stringify(this.buildState());
-        const locJson = JSON.stringify(loc);
+        const category = (key: string, title: string, common: string[][], other: string[][]) => {
+            const buttons = (items: string[][], cls: string) => items.map(([command, icon, label]) => `<button class="${cls}" type="button" data-command="${command}" data-requires-selection="true"><span class="codicon codicon-${icon}" aria-hidden="true"></span><span>${escapeHtml(label)}</span></button>`).join('');
+            return `<section class="action-category" data-category="${key}"><h3 class="action-category-title">${escapeHtml(title)}</h3><div class="action-category-buttons">${buttons(common, 'toolbar-btn')}<details class="action-category-menu"><summary class="toolbar-btn" aria-label="${escapeHtml(t('More actions'))}" title="${escapeHtml(t('More actions'))}"><span class="codicon codicon-ellipsis" aria-hidden="true"></span></summary><div class="action-category-popover" role="menu">${buttons(other, 'menu-item')}</div></details></div></section>`;
+        };
+        const initialStateJson = JSON.stringify(this.buildState()).replace(/</gu, '\\u003c');
+        const locJson = JSON.stringify(loc).replace(/</gu, '\\u003c');
 
         return `<!DOCTYPE html>
 <html lang="en">
@@ -669,18 +796,6 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                     <span class="meta-chip-label">${escapeHtml(loc.status)}</span>
                     <span id="statusValue" class="meta-chip-value">${escapeHtml(loc.ready)}</span>
                 </div>
-                <button id="refreshBtn" class="toolbar-btn" type="button">
-                    <span class="codicon codicon-refresh" aria-hidden="true"></span>
-                    <span>${escapeHtml(loc.refresh)}</span>
-                </button>
-                <button id="createBtn" class="toolbar-btn primary" type="button">
-                    <span class="codicon codicon-add" aria-hidden="true"></span>
-                    <span>${escapeHtml(loc.createInfobase)}</span>
-                </button>
-                <button id="addManualBtn" class="toolbar-btn" type="button">
-                    <span class="codicon codicon-folder-opened" aria-hidden="true"></span>
-                    <span>${escapeHtml(loc.addInfobasePath)}</span>
-                </button>
                 <button id="manageEtalonBasesBtn" class="toolbar-btn" type="button">
                     <span class="codicon codicon-database" aria-hidden="true"></span>
                     <span>${escapeHtml(loc.manageEtalonBases)}</span>
@@ -688,11 +803,22 @@ export class InfobaseManagerPanel implements vscode.Disposable {
             </div>
         </header>
 
-        <main class="workspace manager-workspace">
+        <main class="workspace manager-workspace" data-kot-split="before">
             <aside class="panel sidebar-panel">
                 <div class="sidebar-section-head">
                     <p class="section-label">${escapeHtml(loc.infobases)}</p>
                     <span id="infobaseCountValue" class="count-pill">0</span>
+                    <div class="library-heading-actions">
+                    <button id="refreshBtn" class="toolbar-btn icon-only" type="button" title="${escapeHtml(loc.refresh)}" aria-label="${escapeHtml(loc.refresh)}">
+                        <span class="codicon codicon-refresh" aria-hidden="true"></span>
+                    </button>
+                    <button id="createBtn" class="toolbar-btn icon-only" type="button" title="${escapeHtml(loc.createInfobase)}" aria-label="${escapeHtml(loc.createInfobase)}">
+                        <span class="codicon codicon-add" aria-hidden="true"></span>
+                    </button>
+                    <button id="addManualBtn" class="toolbar-btn icon-only" type="button" title="${escapeHtml(loc.addInfobasePath)}" aria-label="${escapeHtml(loc.addInfobasePath)}">
+                        <span class="codicon codicon-folder-opened" aria-hidden="true"></span>
+                    </button>
+                    </div>
                 </div>
                 <div class="sidebar-controls">
                     <div class="search-row">
@@ -731,6 +857,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                 <div id="infobaseList" class="infobase-list"></div>
             </aside>
 
+            <div class="kot-pane-resizer" role="separator" aria-orientation="vertical" aria-label="${escapeHtml(loc.resizePanels)}" tabindex="0"></div>
             <section class="panel content-panel">
                 <div id="emptyState" class="empty-state hidden">
                     <strong>${escapeHtml(loc.noSelection)}</strong>
@@ -743,100 +870,77 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                             <h2 id="infobaseTitle"></h2>
                             <p id="infobasePath" class="details-path"></p>
                         </div>
-                        <div class="menu-shell details-hero-platform-shell">
-                            <button
-                                id="launchPlatformBtn"
-                                class="toolbar-btn platform-selector-btn"
-                                type="button"
-                                aria-haspopup="menu"
-                                aria-expanded="false"
-                                aria-label="${escapeHtml(loc.launchPlatform)}"
-                                title="${escapeHtml(loc.launchPlatform)}"
-                                data-requires-selection="true"
-                            >
-                                <span class="codicon codicon-versions" aria-hidden="true"></span>
-                                <span id="launchPlatformLabel" class="platform-selector-label">${escapeHtml(loc.launchPlatform)}</span>
-                                <span class="codicon codicon-chevron-down" aria-hidden="true"></span>
-                            </button>
-                            <div id="launchPlatformMenu" class="menu-popover platform-menu" role="menu" aria-label="${escapeHtml(loc.launchPlatform)}"></div>
+                        <div class="details-hero-controls">
+                            <div class="details-status">
+                                <div id="stateBadge" class="state-pill compact"></div>
+                                <span id="activityBadge" class="state-pill compact" hidden></span>
+                                <span id="launcherStatus" class="launcher-status"></span>
+                            </div>
+                            <div class="menu-shell details-hero-platform-shell">
+                                <button
+                                    id="launchPlatformBtn"
+                                    class="toolbar-btn platform-selector-btn"
+                                    type="button"
+                                    aria-haspopup="menu"
+                                    aria-expanded="false"
+                                    aria-label="${escapeHtml(loc.launchPlatform)}"
+                                    title="${escapeHtml(loc.launchPlatform)}"
+                                    data-requires-selection="true"
+                                >
+                                    <span class="codicon codicon-versions" aria-hidden="true"></span>
+                                    <span id="launchPlatformLabel" class="platform-selector-label">${escapeHtml(loc.launchPlatform)}</span>
+                                    <span class="codicon codicon-chevron-down" aria-hidden="true"></span>
+                                </button>
+                                <div id="launchPlatformMenu" class="menu-popover platform-menu" role="menu" aria-label="${escapeHtml(loc.launchPlatform)}"></div>
+                            </div>
                         </div>
-                        <div id="stateBadge" class="state-pill compact"></div>
                     </div>
 
                     <div class="action-grid">
-                        <button class="toolbar-btn" type="button" data-command="openEnterprise" data-requires-selection="true">
-                            <span class="codicon codicon-play" aria-hidden="true"></span>
-                            <span>${escapeHtml(loc.openEnterprise)}</span>
-                        </button>
-                        <button class="toolbar-btn" type="button" data-command="openDesigner" data-requires-selection="true">
-                            <span class="codicon codicon-tools" aria-hidden="true"></span>
-                            <span>${escapeHtml(loc.openDesigner)}</span>
-                        </button>
-                        <button class="toolbar-btn" type="button" data-command="startFormExplorer" data-requires-selection="true">
-                            <span class="codicon codicon-telescope" aria-hidden="true"></span>
-                            <span>${escapeHtml(loc.openWithFormExplorer)}</span>
-                        </button>
-                        <button class="toolbar-btn" type="button" data-command="restoreDt" data-requires-selection="true">
-                            <span class="codicon codicon-cloud-download" aria-hidden="true"></span>
-                            <span>${escapeHtml(loc.restoreDt)}</span>
-                        </button>
-                        <button class="toolbar-btn" type="button" data-command="exportDt" data-requires-selection="true">
-                            <span class="codicon codicon-cloud-upload" aria-hidden="true"></span>
-                            <span>${escapeHtml(loc.exportDt)}</span>
-                        </button>
-                        <button class="toolbar-btn" type="button" data-command="updateConfig" data-requires-selection="true">
-                            <span class="codicon codicon-repo-sync" aria-hidden="true"></span>
-                            <span>${escapeHtml(loc.updateConfig)}</span>
-                        </button>
-                        <button class="toolbar-btn" type="button" data-command="recreate" data-requires-selection="true">
-                            <span class="codicon codicon-discard" aria-hidden="true"></span>
-                            <span>${escapeHtml(loc.recreate)}</span>
-                        </button>
-                        <button class="toolbar-btn" type="button" data-command="editBase" data-requires-selection="true">
-                            <span class="codicon codicon-edit" aria-hidden="true"></span>
-                            <span>${escapeHtml(loc.editBase)}</span>
-                        </button>
-                        <div class="menu-shell">
-                            <button id="moreActionsBtn" class="toolbar-btn more-actions-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeHtml(loc.openMenu)}">
-                                <span class="codicon codicon-ellipsis" aria-hidden="true"></span>
-                                <span>${escapeHtml(loc.moreActions)}</span>
-                            </button>
-                            <div id="moreActionsMenu" class="menu-popover" role="menu" aria-label="${escapeHtml(loc.moreActions)}">
-                                <button class="menu-item" type="button" data-command="copyBase" data-requires-selection="true">
-                                    <span class="codicon codicon-copy" aria-hidden="true"></span>
-                                    <span>${escapeHtml(loc.copyBase)}</span>
+                        ${category('launch', loc.actionsLaunch, [['openEnterprise', 'play', loc.openEnterprise], ['startVanessa', 'plug', t('Open with Vanessa')]], [['openDesigner', 'tools', loc.openDesigner], ['startFormExplorer', 'telescope', loc.openWithFormExplorer]])}
+                        ${category('data', loc.actionsData, [['restoreDt', 'cloud-download', loc.restoreDt], ['exportDt', 'cloud-upload', t('Backup to DT')]], [['restoreFromTemplate', 'package', loc.restoreFromTemplate], ['copyBase', 'copy', loc.copyBase], ['recreate', 'discard', loc.recreate]])}
+                        ${category('configuration', loc.actionsConfiguration, [['updateConfig', 'settings-gear', loc.updateConfig], ['saveCf', 'save', t('Backup to CF')]], [['updateFromTemplate', 'package', loc.updateFromTemplate]])}
+                        <section class="action-category" data-category="management" aria-labelledby="actionsManagementTitle">
+                            <h3 id="actionsManagementTitle" class="action-category-title">${escapeHtml(loc.actionsManagement)}</h3>
+                            <div class="action-category-buttons">
+                                <button class="toolbar-btn" type="button" data-command="editBase" data-requires-selection="true">
+                                    <span class="codicon codicon-edit" aria-hidden="true"></span>
+                                    <span>${escapeHtml(loc.editBase)}</span>
                                 </button>
-                                <button class="menu-item" type="button" data-command="saveCf" data-requires-selection="true">
-                                    <span class="codicon codicon-save" aria-hidden="true"></span>
-                                    <span>${escapeHtml(loc.saveCf)}</span>
-                                </button>
-                                <button class="menu-item" type="button" data-command="revealFolder" data-requires-selection="true">
+                                <button class="toolbar-btn" type="button" data-command="revealFolder" data-requires-selection="true">
                                     <span class="codicon codicon-folder-opened" aria-hidden="true"></span>
                                     <span>${escapeHtml(loc.revealFolder)}</span>
                                 </button>
-                                <button class="menu-item" type="button" data-command="showLogs" data-requires-selection="true">
+                                <button class="toolbar-btn" type="button" data-command="showLogs" data-requires-selection="true">
                                     <span class="codicon codicon-output" aria-hidden="true"></span>
                                     <span>${escapeHtml(loc.showLogs)}</span>
                                 </button>
-                                <div class="dropdown-separator menu-separator" role="separator"></div>
-                                <button id="addToLauncherAction" class="menu-item" type="button" data-command="addToLauncher" data-requires-selection="true">
-                                    <span class="codicon codicon-add" aria-hidden="true"></span>
-                                    <span>${escapeHtml(loc.addToLauncher)}</span>
-                                </button>
-                                <button id="removeFromLauncherAction" class="menu-item" type="button" data-command="removeFromLauncher" data-requires-selection="true">
-                                    <span class="codicon codicon-remove" aria-hidden="true"></span>
-                                    <span>${escapeHtml(loc.removeFromLauncher)}</span>
-                                </button>
-                                <button id="forgetManualAction" class="menu-item hidden" type="button" data-command="forgetManual" data-requires-selection="true">
-                                    <span class="codicon codicon-close" aria-hidden="true"></span>
-                                    <span>${escapeHtml(loc.forgetManual)}</span>
-                                </button>
-                                <button id="toggleHiddenAction" class="menu-item" type="button" data-command="toggleHidden" data-requires-selection="true">
-                                    <span class="codicon codicon-eye-closed" aria-hidden="true"></span>
-                                    <span id="toggleHiddenActionLabel">${escapeHtml(loc.hideInfobase)}</span>
-                                </button>
+                                <div class="menu-shell">
+                                    <button id="moreActionsBtn" class="toolbar-btn more-actions-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeHtml(loc.listActions)}">
+                                        <span class="codicon codicon-ellipsis" aria-hidden="true"></span>
+                                        <span>${escapeHtml(loc.listActions)}</span>
+                                    </button>
+                                    <div id="moreActionsMenu" class="menu-popover" role="menu" aria-label="${escapeHtml(loc.listActions)}">
+                                        <button id="addToLauncherAction" class="menu-item" type="button" data-command="addToLauncher" data-requires-selection="true">
+                                            <span class="codicon codicon-add" aria-hidden="true"></span>
+                                            <span>${escapeHtml(loc.addToLauncher)}</span>
+                                        </button>
+                                        <button id="removeFromLauncherAction" class="menu-item" type="button" data-command="removeFromLauncher" data-requires-selection="true">
+                                            <span class="codicon codicon-remove" aria-hidden="true"></span>
+                                            <span>${escapeHtml(loc.removeFromLauncher)}</span>
+                                        </button>
+                                        <button id="forgetManualAction" class="menu-item hidden" type="button" data-command="forgetManual" data-requires-selection="true">
+                                            <span class="codicon codicon-close" aria-hidden="true"></span>
+                                            <span>${escapeHtml(loc.forgetManual)}</span>
+                                        </button>
+                                        <button id="toggleHiddenAction" class="menu-item" type="button" data-command="toggleHidden" data-requires-selection="true">
+                                            <span class="codicon codicon-eye-closed" aria-hidden="true"></span>
+                                            <span id="toggleHiddenActionLabel">${escapeHtml(loc.hideInfobase)}</span>
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
+                        </section>
                     </div>
 
                     <div class="chip-row">
@@ -854,6 +958,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                         </button>
                     </div>
 
+                    <section id="vanessaClients" class="section-card v-clients hidden"></section>
                     <section class="section-card is-collapsible" data-section-key="technical">
                         <div class="section-toggle-row">
                             <button id="technicalToggle" class="section-toggle" type="button" aria-expanded="false">
@@ -908,6 +1013,9 @@ export class InfobaseManagerPanel implements vscode.Disposable {
         window.__initialInfobaseManagerState = ${initialStateJson};
         window.__infobaseManagerLoc = ${locJson};
     </script>
+    <script nonce="${nonce}" src="${textScriptUri}"></script>
+    <script nonce="${nonce}" src="${splitScriptUri}"></script>
+    <script nonce="${nonce}" src="${clientsScriptUri}"></script>
     <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

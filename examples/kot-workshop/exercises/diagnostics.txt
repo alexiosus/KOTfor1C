@@ -1,0 +1,7 @@
+Это строки для упражнения, а не отдельный тест. Вставляйте по одной в копию учебного сценария и отменяйте правку после проверки.
+
+And I prepare workshop customer
+    UnknownParameter = "Нет такого параметра"
+
+And I prepare workshop customer
+    Customer = [MissingParameter]

@@ -1,0 +1,14 @@
+{
+    "kotTestToolkit.catalogs.systemFunctions": {
+        "Drive automation testing": "98999f57-13dc-11e8-aed1-005056a5c4e8"
+    },
+    "kotTestToolkit.catalogs.projects": [
+        "Drive"
+    ],
+    "kotTestToolkit.catalogs.reportLevel1": [
+        "Drive"
+    ],
+    "kotTestToolkit.catalogs.reportLevel2": [
+        "Demo"
+    ]
+}

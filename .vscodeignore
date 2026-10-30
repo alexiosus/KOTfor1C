@@ -1,17 +1,54 @@
 .vscode/**
 .vscode-test/**
+.agents/**
+.claude/**
+.codex/**
+.github/**
+.kot_ai_knowledge_test/**
+.superpowers/**
 src/**
 node_modules/**
 *.tsbuildinfo
 **/*.map
 out/test/**
+out/tools/**
+test/**
+artifacts/**
+tools/cleanTestOutput.cjs
+tools/step-catalog/**
+tsconfig.tools.json
+test/fixtures/step-catalog/**
+eslint.config.mjs
+tsconfig.json
 .git/**
 .gitignore
 *.vsix
 **/.DS_Store
-docs/**/*.png
-docs/**/*.jpg
-docs/**/*.jpeg
-docs/**/*.gif
-docs/**/*.webp
-docs/**/*.svg
+**/Thumbs.db
+**/._*
+docs/superpowers/**
+docs/qa/**
+docs/.kot/**
+docs/assets/archive/**
+
+.kot/**
+tools/checkTestNumbering.cjs
+tools/updateVanessaParameterCatalog.cjs
+out/**
+!out/extension.js
+
+# Design-only preview stays in the repository; the installed page lives in media/.
+docs/ux/**
+# The first-run wizard copies the workshop sources. A blanket !examples/.../**
+# would re-include every ignored dependency and output in vsce.
+# Workshop dependencies and outputs belong to the user's local environment.
+examples/kot-workshop/.vscode/kot-runtime/**
+examples/kot-workshop/tools/**
+examples/kot-workshop/build/**
+examples/kot-workshop/libraries/step_definitions/**
+examples/kot-workshop/libraries/step_definitions-src/**
+examples/kot-workshop/libraries/user-steps/*.kot-import.json
+
+# Documentation references/checks run from the repository.
+tools/generateDocumentationReference.cjs
+tools/checkDocumentation.cjs

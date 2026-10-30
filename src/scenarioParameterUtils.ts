@@ -1,5 +1,4 @@
-const PARAM_SECTION_REGEX = /ПараметрыСценария:\s*([\s\S]*?)(?=\n(?![ \t])[А-Яа-яЁёA-Za-z]+:|\n*$)/;
-const PARAM_BLOCK_REGEX = /^[ \t]*-[ \t]*ПараметрыСценария\d*:[ \t]*$/gm;
+import { ScenarioYamlDocument } from './scenarioYamlDocument';
 const PARAM_IDENTIFIER_REGEX = /^[A-Za-zА-Яа-яЁё0-9_-]+$/;
 const BRACKET_PARAM_REGEX = /^\[[A-Za-zА-Яа-яЁё0-9_-]+\]$/;
 
@@ -10,6 +9,9 @@ export interface ScenarioParameterOffsetRange {
 
 export interface ScenarioParameterDefinition {
     name: string;
+    type: 'scalar' | 'table';
+    outgoing: boolean;
+    value: string;
     rawDefaultValue: string | null;
     normalizedDefaultValue: string;
     valueRange: ScenarioParameterOffsetRange | null;
@@ -28,27 +30,6 @@ function unwrapQuotedValue(value: string): string {
         return trimmed.slice(1, -1);
     }
     return trimmed;
-}
-
-function extractRawFieldValue(blockContent: string, fieldName: string): string | null {
-    const escapedFieldName = fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const fieldRegex = new RegExp(`^\\s*${escapedFieldName}:\\s*(.+?)\\s*$`, 'm');
-    const match = blockContent.match(fieldRegex);
-    return match?.[1]?.trim() ?? null;
-}
-
-function getScenarioParametersSectionInfo(documentText: string): { content: string; startOffset: number } | null {
-    const match = PARAM_SECTION_REGEX.exec(documentText);
-    if (!match || typeof match.index !== 'number') {
-        return null;
-    }
-
-    const content = match[1] ?? '';
-    const fullMatch = match[0] ?? '';
-    return {
-        content,
-        startOffset: match.index + fullMatch.length - content.length
-    };
 }
 
 function extractFieldValueInfo(
@@ -103,6 +84,9 @@ export function extractScenarioParameterNameFromText(value: string): string {
 }
 
 export function normalizeScenarioCallParameterValue(rawValue: string | undefined, fallbackName: string): string {
+    // Preserve newlines (including the block scalar's trailing newline) in the
+    // catalog. Insertion leaves these defaults implicit or uses a local reference.
+    if (/[\r\n]/u.test(rawValue ?? '')) { return `"${escapeDoubleQuotes(rawValue!)}"`; }
     const trimmed = (rawValue ?? '').trim();
     if (!trimmed) {
         return `"${escapeDoubleQuotes(fallbackName)}"`;
@@ -115,25 +99,13 @@ export function normalizeScenarioCallParameterValue(rawValue: string | undefined
     return `"${escapeDoubleQuotes(unwrapQuotedValue(trimmed))}"`;
 }
 
-export function parseScenarioParameterDefinitions(documentText: string): Map<string, ScenarioParameterDefinition> {
+export function parseScenarioParameterDefinitions(documentText: string, section = 'ПараметрыСценария'): Map<string, ScenarioParameterDefinition> {
     const definitions = new Map<string, ScenarioParameterDefinition>();
-    const sectionInfo = getScenarioParametersSectionInfo(documentText);
-    if (!sectionInfo) {
-        return definitions;
-    }
-
-    const sectionContent = sectionInfo.content;
-    const blockRegex = new RegExp(PARAM_BLOCK_REGEX.source, PARAM_BLOCK_REGEX.flags);
-    const blockMatches = Array.from(sectionContent.matchAll(blockRegex));
-
-    blockMatches.forEach((match, index) => {
-        const blockStartOffset = (match.index ?? 0) + match[0].length;
-        const blockEndOffset = index + 1 < blockMatches.length
-            ? (blockMatches[index + 1].index ?? sectionContent.length)
-            : sectionContent.length;
-        const blockContent = sectionContent.substring(blockStartOffset, blockEndOffset);
-        const rawName = extractRawFieldValue(blockContent, 'Имя');
-        if (!rawName) {
+    const yaml = ScenarioYamlDocument.parse(documentText);
+    const valueFields = yaml.findRecordFields(section, 'Значение');
+    yaml.readRecords(section).forEach(record => {
+        const rawName = record.fields.get('Имя');
+        if (typeof rawName !== 'string' || !rawName) {
             return;
         }
 
@@ -142,15 +114,31 @@ export function parseScenarioParameterDefinitions(documentText: string): Map<str
             return;
         }
 
+        const blockContent = documentText.slice(record.range.start, record.range.end);
         const rawValueInfo = extractFieldValueInfo(blockContent, 'Значение');
+        const type = record.fields.get('ТипПараметра') === 'Таблица' ? 'table' : 'scalar';
+        const decoded = record.fields.get('Значение');
+        // Invalid YAML escapes such as \; are accepted by the legacy compiler;
+        // its adapter returns the original quoted token in that case.
+        const value = typeof decoded === 'string'
+            ? decoded === rawValueInfo?.value ? unwrapQuotedValue(decoded) : decoded
+            : decoded === null || decoded === undefined ? '' : String(decoded);
+        const isBlock = /^[|>][\d+-]*(?:\s+#.*)?$/u.test(rawValueInfo?.value ?? '');
+        const valueField = valueFields.find(field => field.pairRange.start >= record.range.start && field.pairRange.start < record.range.end);
+        let blockEnd = valueField?.blockScalarContentRange?.end ?? record.range.end;
+        // Leave the field separator in place if a block scalar is replaced by a scalar.
+        if (documentText[blockEnd - 1] === '\n') { blockEnd -= documentText[blockEnd - 2] === '\r' ? 2 : 1; }
         definitions.set(parameterName, {
             name: parameterName,
-            rawDefaultValue: rawValueInfo?.value ?? null,
-            normalizedDefaultValue: normalizeScenarioCallParameterValue(rawValueInfo?.value, parameterName),
+            type,
+            outgoing: /^(?:да|yes|true)$/iu.test(String(record.fields.get('ИсходящийПараметр') ?? '')),
+            value,
+            rawDefaultValue: isBlock ? value : rawValueInfo?.value ?? null,
+            normalizedDefaultValue: type === 'table' ? value.trimEnd() : normalizeScenarioCallParameterValue(isBlock ? value : rawValueInfo?.value, parameterName),
             valueRange: rawValueInfo
                 ? {
-                    startOffset: sectionInfo.startOffset + blockStartOffset + rawValueInfo.valueRange.startOffset,
-                    endOffset: sectionInfo.startOffset + blockStartOffset + rawValueInfo.valueRange.endOffset
+                    startOffset: record.range.start + rawValueInfo.valueRange.startOffset,
+                    endOffset: isBlock ? blockEnd : record.range.start + rawValueInfo.valueRange.endOffset
                 }
                 : null
         });
@@ -159,10 +147,75 @@ export function parseScenarioParameterDefinitions(documentText: string): Map<str
     return definitions;
 }
 
+/** YAML block defaults need literal rows; scalar defaults need YAML escaping. */
+export function renderScenarioParameterDefault(value: string, type: string): string {
+    if (type === 'Таблица') {
+        return `|\n${value.trimEnd().split(/\r\n|\r|\n/u).map(line => `        ${line}`).join('\n')}`;
+    }
+    if (/[\r\n]/u.test(value)) {
+        const normalized = value.replace(/\r\n|\r/gu, '\n');
+        const rows = normalized.split('\n');
+        if (normalized.endsWith('\n')) { rows.pop(); }
+        // The external reader recognizes only the exact | marker. Existing
+        // defaults are preserved from source during refill instead of rendered.
+        return `|\n${rows.map(line => `        ${line}`).join('\n')}`;
+    }
+    return JSON.stringify(value);
+}
+
+export function splitCompilerParameterVariants(value: string): string[] {
+    const values = [''];
+    for (let index = 0; index < value.length; index++) {
+        if (value[index] === '\\' && value[index + 1] === ';') { values[values.length - 1] += ';'; index++; }
+        else if (value[index] === ';') { values.push(''); }
+        else { values[values.length - 1] += value[index]; }
+    }
+    return values;
+}
+
+export function buildScenarioVariantPreview(documentText: string, limit = 8, settingsText?: string): {
+    count: string; samples: Record<string, string>[]; truncated: boolean;
+} {
+    const definitions = settingsText ? parseScenarioParameterDefinitions(settingsText, 'ПараметрыТеста') : new Map<string, ScenarioParameterDefinition>();
+    for (const [name, parameter] of parseScenarioParameterDefinitions(documentText)) {
+        if (!definitions.has(name)) { definitions.set(name, parameter); }
+    }
+    const parameters = [...definitions.values()];
+    const alternatives = parameters.map(parameter => parameter.type === 'table'
+        ? [parameter.value] : splitCompilerParameterVariants(compilerScalarDefault(parameter)));
+    const count = alternatives.reduce((total, values) => total * BigInt(values.length), 1n);
+    const sampleCount = Number(count < BigInt(Math.max(0, limit)) ? count : BigInt(Math.max(0, limit)));
+    const samples = Array.from({ length: sampleCount }, (_, index) => {
+        let cursor = BigInt(index);
+        const sample: Record<string, string> = {};
+        for (let column = parameters.length - 1; column >= 0; column--) {
+            sample[parameters[column].name] = alternatives[column][Number(cursor % BigInt(alternatives[column].length))];
+            cursor /= BigInt(alternatives[column].length);
+        }
+        return sample;
+    });
+    return { count: count.toString(), samples, truncated: count > BigInt(sampleCount) };
+}
+
+function compilerScalarDefault(parameter: ScenarioParameterDefinition): string {
+    const raw = parameter.rawDefaultValue?.trim();
+    if (raw && isQuotedValue(raw)) {
+        // ВернутьСпецСимволыYaml decodes these two escapes only; YAML's
+        // \n, \t, Unicode escapes and doubled single quotes remain literal.
+        return raw.slice(1, -1).replace(/\\"/gu, '"').replace(/\\\\/gu, '\\');
+    }
+    return parameter.value;
+}
+
 export function parseScenarioParameterDefaults(documentText: string): Map<string, string> {
     const defaults = new Map<string, string>();
     parseScenarioParameterDefinitions(documentText).forEach((definition, name) => {
         defaults.set(name, definition.normalizedDefaultValue);
     });
     return defaults;
+}
+
+/** The compiler cannot encode physical newlines in an inline scalar assignment. */
+export function isMultilineScalarDefault(value: string | undefined, type?: 'scalar' | 'table'): boolean {
+    return type !== 'table' && /[\r\n]/u.test(value ?? '');
 }

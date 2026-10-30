@@ -1,4 +1,4 @@
-<!-- HTML Template for Build Scenario Parameters Manager -->
+<!-- HTML Template for Compilation and run parameters -->
 <!DOCTYPE html>
 <html lang="${localeHtmlLang}">
 <head>
@@ -13,7 +13,10 @@
     data-param-name-placeholder="${loc.parameterNamePlaceholder}"
     data-param-value-placeholder="${loc.parameterValuePlaceholder}"
     data-remove-parameter="${loc.removeParameter}"
-    data-override-title="${loc.overrideExistingValue}"
+    data-variable-name-placeholder="${loc.variableNamePlaceholder}"
+    data-variable-value-placeholder="${loc.variableValuePlaceholder}"
+    data-remove-variable="${loc.removeVariable}"
+    data-override-title="${loc.priorityDescription}"
     data-fixed-build-parameter-hint="${loc.fixedBuildParameterHint}"
     data-reset-build-parameter-value="${loc.resetBuildParameterValue}"
     data-generic-build-parameter-description="${loc.genericBuildParameterDescription}"
@@ -32,6 +35,13 @@
     data-saved="${loc.saved}"
     data-saved-with-issues="${loc.savedWithIssues}"
     data-autosave-error="${loc.autosaveError}"
+    data-custom-vanessa-parameter-description="${loc.customVanessaParameterDescription}"
+    data-expected-boolean="${loc.expectedBoolean}"
+    data-expected-number="${loc.expectedNumber}"
+    data-expected-array="${loc.expectedArray}"
+    data-expected-object="${loc.expectedObject}"
+    data-expected-string="${loc.expectedString}"
+    data-unsupported-vanessa-parameter="${loc.unsupportedVanessaParameter}"
     data-updated-at="${loc.updatedAt}"
     data-never-saved="${loc.neverSaved}"
     data-select-profile="${loc.selectProfile}"
@@ -44,6 +54,7 @@
             <div class="topbar-title-wrap">
                 <div class="topbar-copy">
                     <h1 class="topbar-title">${loc.title}</h1>
+                    <p class="path-hint">${loc.projectProfiles}</p>
                 </div>
             </div>
             <div class="toolbar parameters-toolbar">
@@ -155,10 +166,12 @@
             </button>
         </div>
 
+        <div class="parameters-workspace has-build-inspector" data-kot-split="after">
         <div class="tab-panels">
             <section id="buildTabPanel" class="tab-panel active" role="tabpanel" aria-labelledby="buildTabBtn">
                 <div class="section-summary-text">
                     <span class="section-description tab-note">${loc.buildSectionDescription}</span>
+                    <span id="modelDbSettingsStatus" class="tab-note" role="status" hidden></span>
                 </div>
                 <div class="section-content">
                     <div class="section-toolbar">
@@ -232,6 +245,7 @@
             <section id="additionalTabPanel" class="tab-panel" role="tabpanel" aria-labelledby="additionalTabBtn" hidden>
                 <div class="section-summary-text">
                     <span class="section-description tab-note">${loc.additionalSectionDescription}</span>
+                    <span id="parameterCatalogStatus" class="parameter-catalog-status"></span>
                 </div>
                 <div class="section-content">
                     <div class="section-toolbar">
@@ -265,7 +279,7 @@
                                 <tr>
                                     <th>${loc.parameter}</th>
                                     <th>${loc.value}</th>
-                                    <th class="priority-header">${loc.priority}</th>
+                                    <th class="priority-header"><span class="priority-heading"><span>${loc.priority}</span><button type="button" class="priority-hint" aria-label="${loc.priority}" aria-describedby="priorityTooltip"><span class="codicon codicon-info" aria-hidden="true"></span></button></span></th>
                                     <th class="actions-header">${loc.actions}</th>
                                 </tr>
                             </thead>
@@ -311,9 +325,9 @@
                         <table id="globalVarsTable">
                             <thead>
                                 <tr>
-                                    <th>${loc.parameter}</th>
+                                    <th>${loc.variable}</th>
                                     <th>${loc.value}</th>
-                                    <th class="priority-header">${loc.priority}</th>
+                                    <th class="priority-header"><span class="priority-heading"><span>${loc.priority}</span><button type="button" class="priority-hint" aria-label="${loc.priority}" aria-describedby="priorityTooltip"><span class="codicon codicon-info" aria-hidden="true"></span></button></span></th>
                                     <th class="actions-header">${loc.actions}</th>
                                 </tr>
                             </thead>
@@ -325,8 +339,17 @@
                 </div>
             </section>
         </div>
+        <div class="kot-pane-resizer" role="separator" aria-orientation="vertical" aria-label="${loc.resizePanels}" tabindex="0"></div>
+        <aside id="parameterInspector" class="parameter-inspector" aria-live="polite">
+            <h2 id="parameterInspectorTitle">${loc.parameter}</h2>
+            <p id="parameterInspectorMeta" class="parameter-inspector-meta"></p>
+            <p id="parameterInspectorDescription">${loc.buildSectionDescription}</p>
+        </aside>
+        </div>
         </section>
     </div>
+
+    <div id="priorityTooltip" class="priority-tooltip" role="tooltip" hidden>${loc.priorityDescription}</div>
 
     <script type="application/javascript" nonce="${nonce}">
         window.__buildParameters = ${buildParametersJson};
@@ -336,6 +359,8 @@
         window.__activeProfileId = ${activeProfileIdJson};
         window.__defaultBuildParameters = ${defaultBuildParametersJson};
         window.__buildParameterDefinitions = ${buildParameterDefinitionsJson};
+        window.__vanessaParameterDefinitions = ${vanessaParameterDefinitionsJson};
+        window.__vanessaCatalogStatus = ${vanessaCatalogStatusJson};
         window.__fixedBuildParameterKeys = ${fixedBuildParameterKeysJson};
     </script>
     <script type="application/javascript" nonce="${nonce}" src="${scriptUri}"></script>

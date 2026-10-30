@@ -1,13 +1,28 @@
 import * as vscode from 'vscode';
+import { projectedProjectScenario } from './projectLibraryIntegration';
+import { collectCompilerParameterReferences, getCompilerScenarioBody, scanCompilerLines, validateCompilerBlocks, parseCompilerParameterBinding, type CompilerParameterBinding } from './scenarioCompilerSyntax';
 import * as path from 'path';
-import { DriveHoverProvider } from './hoverProvider';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { TestInfo } from './types';
-import { isScenarioYamlFile } from './yamlValidator';
-import { parseScenarioParameterDefaults } from './scenarioParameterUtils';
+import { collectCompilerFormatDiagnostics, collectYamlIndentationTabs, isCompilerYamlFile, isScenarioYamlFile } from './yamlValidator';
+import { isMultilineScalarDefault, parseScenarioParameterDefaults } from './scenarioParameterUtils';
 import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
 import { parseBlockKeyword } from './blockKeywordParser';
 import { getScenarioScanRootPath } from './scenarioScanRoot';
+import { resolveScenarioByName, type ScenarioCatalog } from './scenarioCatalog';
+import {
+    createDocumentValidationCancellation,
+    getScenarioValidationOptions,
+    type ScenarioValidationOptions as ValidationOptions
+} from './scenarioValidationPolicy';
+import { calculateLevenshteinSimilarity } from './stringSimilarity';
+import type {
+    ProjectDefinition,
+    ProjectDefinitionKind,
+    ProjectDefinitionView
+} from './projectDefinition';
+import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
+import { validateGherkinSyntax } from './exportScenarioParser';
 
 const DIAGNOSTIC_SOURCE = 'KOT for 1C';
 const CODE_UNCLOSED_IF = 'kotTestToolkit.unclosedIf';
@@ -16,51 +31,26 @@ const CODE_UNCLOSED_TRY = 'kotTestToolkit.unclosedTry';
 const CODE_UNCLOSED_QUOTE = 'kotTestToolkit.unclosedQuote';
 const CODE_UNKNOWN_STEP = 'kotTestToolkit.unknownStep';
 const CODE_UNKNOWN_SCENARIO = 'kotTestToolkit.unknownScenario';
+const CODE_AMBIGUOUS_DEFINITION = 'kotTestToolkit.ambiguousDefinition';
 const CODE_EXTRA_SCENARIO_PARAM = 'kotTestToolkit.extraScenarioParameter';
 const CODE_MISSING_SCENARIO_PARAM = 'kotTestToolkit.missingScenarioParameter';
 const CODE_MISSING_QUOTES = 'kotTestToolkit.missingQuotes';
 const CODE_INCOMPLETE_BLOCK = 'kotTestToolkit.incompleteBlock';
 const CODE_DEFAULT_DESCRIPTION = 'kotTestToolkit.defaultDescription';
 const CODE_DUPLICATE_SCENARIO_CODE = 'kotTestToolkit.duplicateScenarioCode';
+const CODE_GHERKIN_SYNTAX = 'kotTestToolkit.gherkinSyntax';
+const CODE_YAML_INDENTATION_TAB = 'kotTestToolkit.yamlIndentationTab';
 const LOCAL_DEPENDENCY_SCAN_MAX_FILES = 120;
-
-interface ValidationOptions {
-    includeSuggestions: boolean;
-    includeStepChecks: boolean;
-    includeStepSuggestions?: boolean;
-    includeScenarioSuggestions?: boolean;
-}
 
 interface WorkspaceDiagnosticsScanOptions {
     refreshCache?: boolean;
 }
 
-const FULL_VALIDATION_OPTIONS: ValidationOptions = {
-    includeSuggestions: true,
-    includeStepChecks: true
-};
-
-const GLOBAL_VALIDATION_OPTIONS: ValidationOptions = {
-    includeSuggestions: false,
-    includeStepChecks: true
-};
-
-const CHANGE_VALIDATION_OPTIONS: ValidationOptions = {
-    includeSuggestions: true,
-    includeStepChecks: true
-};
-
-const SAVE_VALIDATION_OPTIONS: ValidationOptions = {
-    includeSuggestions: false,
-    includeStepChecks: true,
-    includeStepSuggestions: true,
-    includeScenarioSuggestions: true
-};
-
-const RELATED_VALIDATION_OPTIONS: ValidationOptions = {
-    includeSuggestions: false,
-    includeStepChecks: false
-};
+const FULL_VALIDATION_OPTIONS = getScenarioValidationOptions('full');
+const GLOBAL_VALIDATION_OPTIONS = getScenarioValidationOptions('global');
+const CHANGE_VALIDATION_OPTIONS = getScenarioValidationOptions('change');
+const SAVE_VALIDATION_OPTIONS = getScenarioValidationOptions('save');
+const RELATED_VALIDATION_OPTIONS = getScenarioValidationOptions('related');
 
 const GLOBAL_SCAN_YIELD_EVERY = 20;
 const LOCAL_DEPENDENCY_SCAN_YIELD_EVERY = 10;
@@ -74,6 +64,7 @@ interface ScenarioCallParameter {
     line: number;
     name: string;
     value: string;
+    kind?: CompilerParameterBinding['kind'];
 }
 
 interface ScenarioCallBlock {
@@ -92,6 +83,7 @@ interface DiagnosticMessages {
     fixAll: string;
     unknownStep: string;
     unknownScenario: string;
+    ambiguousDefinition: string;
     maybeDidYouMeanHeader: string;
     extraScenarioParameter: string;
     missingScenarioParameters: string;
@@ -114,6 +106,7 @@ function buildMessages(): DiagnosticMessages {
         fixAll: vscode.l10n.t('KOT - Fix scenario issues'),
         unknownStep: vscode.l10n.t('Unknown Gherkin step.'),
         unknownScenario: vscode.l10n.t('Unknown nested scenario call.'),
+        ambiguousDefinition: vscode.l10n.t('Call resolves to multiple project definitions:'),
         maybeDidYouMeanHeader: vscode.l10n.t('Maybe you meant:'),
         extraScenarioParameter: vscode.l10n.t('Extra parameter for called scenario: {0}.'),
         missingScenarioParameters: vscode.l10n.t('Missing parameters for called scenario:'),
@@ -157,39 +150,24 @@ function createDiagnostic(
 }
 
 function getScenarioBodyRange(document: vscode.TextDocument): ScenarioBodyRange | null {
-    let startLine = -1;
-    for (let i = 0; i < document.lineCount; i++) {
-        if (/^\s*ТекстСценария:\s*\|?\s*$/.test(document.lineAt(i).text)) {
-            startLine = i + 1;
-            break;
-        }
-    }
-    if (startLine === -1) {
-        return null;
-    }
+    const compilerBody = getCompilerScenarioBody(document.getText());
+    return compilerBody?.lines.length
+        ? { startLine: compilerBody.startLine, endLine: compilerBody.startLine + compilerBody.lines.length - 1 }
+        : null;
+}
 
-    let endLine = document.lineCount - 1;
-    for (let i = startLine; i < document.lineCount; i++) {
-        const text = document.lineAt(i).text;
-        if (/^(?!\s|#)[А-Яа-яЁёA-Za-z0-9_]+:\s*/.test(text)) {
-            endLine = i - 1;
-            break;
-        }
-    }
-
-    if (endLine < startLine) {
-        endLine = startLine;
-    }
-    return { startLine, endLine };
+export function isGherkinFeatureDocument(document: Pick<vscode.TextDocument, 'fileName'>): boolean {
+    return document.fileName.toLocaleLowerCase().endsWith('.feature');
 }
 
 function parseScenarioCallBlocks(document: vscode.TextDocument, bodyRange: ScenarioBodyRange): ScenarioCallBlock[] {
     const blocks: ScenarioCallBlock[] = [];
-    const callRegex = /^(\s*)(And|И|Допустим)\s+(.+)$/i;
-    const assignmentRegex = /^(\s*)([A-Za-zА-Яа-яЁё0-9_-]+)\s*=\s*(.*)$/;
+    const callRegex = /^(\s*)(Given|When|Then|And|But|If|ElseIf|Else|И|Когда|Тогда|Затем|Дано|Допустим|Если|ИначеЕсли|Иначе|Пусть|То|К тому же|Также|Но|А)\s+(.+)$/i;
+    const scanned = scanCompilerLines(Array.from({ length: bodyRange.endLine - bodyRange.startLine + 1 }, (_, line) => document.lineAt(line + bodyRange.startLine).text));
 
     for (let i = bodyRange.startLine; i <= bodyRange.endLine; i++) {
         const text = document.lineAt(i).text;
+        if (scanned[i - bodyRange.startLine].kind !== 'code' || scanned[i - bodyRange.startLine].block) { continue; }
         const callMatch = text.match(callRegex);
         if (!callMatch) {
             continue;
@@ -211,20 +189,11 @@ function parseScenarioCallBlocks(document: vscode.TextDocument, bodyRange: Scena
         while (j <= bodyRange.endLine) {
             const nextLine = document.lineAt(j).text;
             const trimmed = nextLine.trim();
-            if (!trimmed || trimmed.startsWith('#')) {
-                break;
-            }
-
-            const assignmentMatch = nextLine.match(assignmentRegex);
-            if (!assignmentMatch) {
-                break;
-            }
-
-            block.parameters.push({
-                line: j,
-                name: assignmentMatch[2],
-                value: assignmentMatch[3]
-            });
+            if (!trimmed || scanned[j - bodyRange.startLine].kind === 'comment') { j++; continue; }
+            if (scanned[j - bodyRange.startLine].kind === 'table' && block.parameters.at(-1)?.kind === 'table') { j++; continue; }
+            const binding = parseCompilerParameterBinding(nextLine);
+            if (!binding) { break; }
+            block.parameters.push({ line: j, ...binding });
             j++;
         }
 
@@ -241,7 +210,7 @@ function getScenarioCallBlockByLine(
     document: vscode.TextDocument,
     line: number
 ): ScenarioCallBlock | null {
-    const bodyRange = getScenarioBodyRange(document);
+    const bodyRange = isGherkinFeatureDocument(document) ? { startLine: 0, endLine: document.lineCount - 1 } : getScenarioBodyRange(document);
     if (!bodyRange) {
         return null;
     }
@@ -405,20 +374,9 @@ function parseUsedParametersFromScenarioText(
     document: vscode.TextDocument,
     bodyRange: ScenarioBodyRange
 ): Set<string> {
-    const used = new Set<string>();
-
-    const regex = /(?<!\\)\[([A-Za-zА-Яа-яЁё0-9_-]+)(?<!\\)\]/g;
-    for (let i = bodyRange.startLine; i <= bodyRange.endLine; i++) {
-        const text = document.lineAt(i).text;
-        let match: RegExpExecArray | null;
-        while ((match = regex.exec(text)) !== null) {
-            const name = match[1].trim();
-            if (name) {
-                used.add(name);
-            }
-        }
-    }
-    return used;
+    return new Set(collectCompilerParameterReferences(Array.from(
+        { length: bodyRange.endLine - bodyRange.startLine + 1 }, (_, line) => document.lineAt(line + bodyRange.startLine).text
+    )));
 }
 
 function getScenarioCallNames(blocks: ScenarioCallBlock[]): Set<string> {
@@ -432,8 +390,10 @@ function buildMissingParameterInsertion(
     callBlock: ScenarioCallBlock,
     missingParameters: string[],
     calledScenarioDefaults: Record<string, string> | undefined,
-    localScenarioParameterDefaults: Map<string, string>
+    localScenarioParameterDefaults: Map<string, string>,
+    parameterTypes?: Record<string, 'scalar' | 'table'>
 ): MissingParameterInsertion | null {
+    missingParameters = missingParameters.filter(name => !isMultilineScalarDefault(calledScenarioDefaults?.[name], parameterTypes?.[name]));
     if (!missingParameters.length) {
         return null;
     }
@@ -455,14 +415,20 @@ function buildMissingParameterInsertion(
     const lines = missingParameters.map(paramName => {
         const defaultValue =
             calledScenarioDefaults?.[paramName] ??
+            (isMultilineScalarDefault(localScenarioParameterDefaults.get(paramName)) ? `[${paramName}]` : undefined) ??
             localScenarioParameterDefaults.get(paramName) ??
             `"${paramName}"`;
-        return `${existingParamIndent}${paramName.padEnd(maxNameLength, ' ')} = ${defaultValue}`;
+        return parameterTypes?.[paramName] === 'table'
+            ? `${existingParamIndent}${paramName.padEnd(maxNameLength, ' ')} =\n${defaultValue.trimEnd().split(/\r\n|\r|\n/u).map(row => `${existingParamIndent}    ${row}`).join('\n')}`
+            : `${existingParamIndent}${paramName.padEnd(maxNameLength, ' ')} = ${defaultValue}`;
     });
 
-    const insertionLine = callBlock.parameters.length > 0
+    let insertionLine = callBlock.parameters.length > 0
         ? callBlock.parameters[callBlock.parameters.length - 1].line
         : callBlock.line;
+    if (callBlock.parameters.at(-1)?.kind === 'table') {
+        while (insertionLine + 1 < document.lineCount && /^\s*\|/u.test(document.lineAt(insertionLine + 1).text)) { insertionLine++; }
+    }
 
     const insertionPosition = document.lineAt(insertionLine).range.end;
 
@@ -472,45 +438,67 @@ function buildMissingParameterInsertion(
     };
 }
 
-function levenshteinDistance(a: string, b: string): number {
-    const rows = a.length + 1;
-    const cols = b.length + 1;
-    const matrix: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
-    for (let i = 0; i < rows; i++) {
-        matrix[i][0] = i;
-    }
-    for (let j = 0; j < cols; j++) {
-        matrix[0][j] = j;
-    }
-    for (let i = 1; i < rows; i++) {
-        for (let j = 1; j < cols; j++) {
-            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-            matrix[i][j] = Math.min(
-                matrix[i - 1][j] + 1,
-                matrix[i][j - 1] + 1,
-                matrix[i - 1][j - 1] + cost
-            );
-        }
-    }
-    return matrix[a.length][b.length];
+const SUGGESTION_YIELD_EVERY = 64;
+const GHERKIN_SUGGESTION_PREFIX = /^(?:\s*)(?:\*\s*)?(?:К\s+тому\s+же|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Но|И|If|Дано|Do|Цикл)\s+/iu;
+
+function normalizeSuggestionText(value: string): string {
+    return value
+        .replace(GHERKIN_SUGGESTION_PREFIX, '')
+        .trim()
+        .toLocaleLowerCase();
 }
 
-function findClosestStrings(input: string, candidates: string[], max: number): string[] {
-    const normalizedInput = input.trim().toLowerCase();
+async function findClosestDefinitions(
+    definitionResolver: ProjectDefinitionResolver,
+    resource: vscode.Uri,
+    input: string,
+    max: number,
+    shouldCancel: () => boolean,
+    includeKind: (kind: ProjectDefinitionKind) => boolean,
+    currentView?: ProjectDefinitionView
+): Promise<string[]> {
+    if (shouldCancel()) {
+        return [];
+    }
+
+    const normalizedInput = normalizeSuggestionText(input);
     if (!normalizedInput) {
         return [];
     }
 
-    return candidates
-        .map(candidate => {
-            const normalizedCandidate = candidate.toLowerCase();
-            const distance = levenshteinDistance(normalizedInput, normalizedCandidate);
-            const maxLen = Math.max(normalizedInput.length, normalizedCandidate.length);
-            const score = maxLen === 0 ? 0 : 1 - distance / maxLen;
-            return { candidate, score };
-        })
-        .filter(item => item.score >= 0.3)
-        .sort((a, b) => b.score - a.score)
+    const view = currentView ?? await definitionResolver.getView(resource);
+    if (shouldCancel()) {
+        return [];
+    }
+
+    const bestByTemplate = new Map<string, { candidate: string; score: number }>();
+    for (let index = 0; index < view.all.length; index++) {
+        if (shouldCancel()) {
+            return [];
+        }
+        const definition = view.all[index];
+        if (!includeKind(definition.kind)) {
+            continue;
+        }
+        const normalizedCandidate = normalizeSuggestionText(definition.template);
+        const score = calculateLevenshteinSimilarity(normalizedInput, normalizedCandidate);
+        if (score >= 0.3) {
+            const current = bestByTemplate.get(definition.template);
+            if (!current || score > current.score) {
+                bestByTemplate.set(definition.template, { candidate: definition.template, score });
+            }
+        }
+        if ((index + 1) % SUGGESTION_YIELD_EVERY === 0) {
+            await new Promise<void>(resolve => setImmediate(resolve));
+        }
+    }
+
+    if (shouldCancel()) {
+        return [];
+    }
+    return Array.from(bestByTemplate.values())
+        .sort((left, right) => right.score - left.score
+            || left.candidate.localeCompare(right.candidate, undefined, { sensitivity: 'base' }))
         .slice(0, Math.max(1, max))
         .map(item => item.candidate);
 }
@@ -521,9 +509,7 @@ function getStringSimilarity(input: string, candidate: string): number {
     if (!normalizedInput || !normalizedCandidate) {
         return 0;
     }
-    const distance = levenshteinDistance(normalizedInput, normalizedCandidate);
-    const maxLen = Math.max(normalizedInput.length, normalizedCandidate.length);
-    return maxLen === 0 ? 0 : 1 - distance / maxLen;
+    return calculateLevenshteinSimilarity(normalizedInput, normalizedCandidate);
 }
 
 function containsQuotedPlaceholderTemplate(text: string): boolean {
@@ -662,7 +648,7 @@ function applyStepSuggestionWithOriginalValues(originalLine: string, suggestion:
     let literalIndex = 0;
     let numericIndex = 0;
 
-    return suggestion.replace(/"%\d+\s+[^"]*"|'%\d+\s+[^']*'/g, (placeholder) => {
+    const replacement = suggestion.replace(/"%\d+\s+[^"]*"|'%\d+\s+[^']*'/g, (placeholder) => {
         if (literalIndex < literals.length) {
             return literals[literalIndex++];
         }
@@ -673,6 +659,10 @@ function applyStepSuggestionWithOriginalValues(originalLine: string, suggestion:
         }
         return placeholder;
     });
+    const loopOpening = /^\s*(Do|Цикл)\s+/iu.exec(originalLine)?.[1];
+    return loopOpening
+        ? `${loopOpening} ${replacement.replace(GHERKIN_SUGGESTION_PREFIX, '')}`
+        : replacement;
 }
 
 function formatSuggestionListSuffix(messages: DiagnosticMessages, suggestions: string[]): string {
@@ -687,6 +677,42 @@ function formatMultilineListMessage(header: string, items: string[]): string {
         return header;
     }
     return `${header}\n- ${items.join('\n- ')}\n`;
+}
+
+function definitionLocation(definition: ProjectDefinition): ProjectDefinition['definitionLocation'] | undefined {
+    return definition.definitionLocation ?? definition.implementationLocation;
+}
+
+function createAmbiguousDefinitionDiagnostic(
+    document: vscode.TextDocument,
+    line: number,
+    message: string,
+    definitions: readonly ProjectDefinition[]
+): vscode.Diagnostic {
+    const diagnostic = createDiagnostic(
+        document,
+        line,
+        formatMultilineListMessage(message, definitions.map(definition => definition.sourceLabel)),
+        vscode.DiagnosticSeverity.Error,
+        CODE_AMBIGUOUS_DEFINITION
+    );
+    diagnostic.relatedInformation = definitions.flatMap(definition => {
+        const location = definitionLocation(definition);
+        if (!location) {
+            return [];
+        }
+        return [new vscode.DiagnosticRelatedInformation(
+            new vscode.Location(
+                vscode.Uri.parse(location.uri),
+                new vscode.Range(
+                    new vscode.Position(location.range.start.line, location.range.start.character),
+                    new vscode.Position(location.range.end.line, location.range.end.character)
+                )
+            ),
+            definition.sourceLabel
+        )];
+    });
+    return diagnostic;
 }
 
 function normalizeScenarioCode(value: string | undefined): string {
@@ -708,16 +734,22 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     private readonly subscriptions: vscode.Disposable[] = [];
     private readonly validationTimers = new Map<string, NodeJS.Timeout>();
     private readonly relatedValidationTimers = new Map<string, NodeJS.Timeout>();
-    private dependencyGraphSource: Map<string, TestInfo> | null = null;
+    private readonly rawDiagnosticsByUri = new Map<string, {
+        uri: vscode.Uri;
+        diagnostics: readonly vscode.Diagnostic[];
+        resourceUri?: vscode.Uri;
+    }>();
+    private disposed = false;
+    private dependencyGraphSource: ScenarioCatalog | null = null;
     private readonly scenarioNameByUri = new Map<string, string>();
-    private readonly scenarioUriByName = new Map<string, vscode.Uri>();
+    private readonly scenarioUrisByName = new Map<string, vscode.Uri[]>();
     private readonly callersByCalleeName = new Map<string, Set<string>>();
     private workspaceScanPromise: Promise<void> | null = null;
     private readonly messages = buildMessages();
 
     constructor(
         private readonly phaseSwitcherProvider: PhaseSwitcherProvider,
-        private readonly hoverProvider: DriveHoverProvider
+        private readonly definitionResolver: ProjectDefinitionResolver
     ) {
         this.subscriptions.push(
             vscode.workspace.onDidOpenTextDocument(document => {
@@ -727,7 +759,9 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 }
                 this.scheduleValidation(document, 120, SAVE_VALIDATION_OPTIONS);
             }),
-            vscode.workspace.onDidChangeTextDocument(event => this.scheduleValidation(event.document, 450, CHANGE_VALIDATION_OPTIONS)),
+            vscode.workspace.onDidChangeTextDocument(event => {
+                this.scheduleValidation(event.document, 450, CHANGE_VALIDATION_OPTIONS);
+            }),
             vscode.workspace.onDidSaveTextDocument(document => {
                 this.scheduleValidation(document, 50, SAVE_VALIDATION_OPTIONS);
                 this.scheduleRelatedValidation(document);
@@ -743,20 +777,33 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             vscode.workspace.onDidDeleteFiles(event => {
                 this.resetDependencyGraph();
                 event.files.forEach(uri => {
-                    this.diagnostics.delete(uri);
+                    this.deleteDiagnostics(uri);
                     this.duplicateCodeDiagnostics.delete(uri);
                 });
             }),
             vscode.workspace.onDidRenameFiles(event => {
                 this.resetDependencyGraph();
                 event.files.forEach(({ oldUri }) => {
-                    this.diagnostics.delete(oldUri);
+                    this.deleteDiagnostics(oldUri);
                     this.duplicateCodeDiagnostics.delete(oldUri);
                 });
             }),
-            this.phaseSwitcherProvider.onDidUpdateTestCache(() => {
+            vscode.workspace.onDidChangeConfiguration(event => {
+                if (!event.affectsConfiguration('kotTestToolkit.diagnostics.ignoredCodes')) {
+                    return;
+                }
+                this.republishDiagnostics();
+                this.rebuildDuplicateScenarioCodeDiagnosticsFromCache();
+            }),
+            this.phaseSwitcherProvider.onDidUpdateScenarioCatalog(() => {
                 this.resetDependencyGraph();
                 this.rebuildDuplicateScenarioCodeDiagnosticsFromCache();
+                const activeDocument = vscode.window.activeTextEditor?.document;
+                if (activeDocument) {
+                    this.scheduleValidation(activeDocument, 150, CHANGE_VALIDATION_OPTIONS);
+                }
+            }),
+            this.definitionResolver.onDidChangeView(() => {
                 const activeDocument = vscode.window.activeTextEditor?.document;
                 if (activeDocument) {
                     this.scheduleValidation(activeDocument, 150, CHANGE_VALIDATION_OPTIONS);
@@ -787,6 +834,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     }
 
     public dispose(): void {
+        this.disposed = true;
         for (const timer of this.validationTimers.values()) {
             clearTimeout(timer);
         }
@@ -795,6 +843,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             clearTimeout(timer);
         }
         this.relatedValidationTimers.clear();
+        this.rawDiagnosticsByUri.clear();
         this.resetDependencyGraph();
         this.diagnostics.dispose();
         this.duplicateCodeDiagnostics.dispose();
@@ -806,14 +855,49 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     public async provideCodeActions(
         document: vscode.TextDocument,
         range: vscode.Range,
-        context: vscode.CodeActionContext
+        context: vscode.CodeActionContext,
+        token: vscode.CancellationToken
     ): Promise<vscode.CodeAction[]> {
-        if (!isScenarioYamlFile(document)) {
+        const featureDocument = isGherkinFeatureDocument(document);
+        const scenarioDocument = isScenarioYamlFile(document);
+        if (!scenarioDocument && !isCompilerYamlFile(document) && !featureDocument) {
             return [];
         }
 
+        const shouldCancel = createDocumentValidationCancellation(document, token);
+
         const actions: vscode.CodeAction[] = [];
-        const localScenarioParameterDefaults = parseScenarioParameterDefaults(document.getText());
+        const tabDiagnostics = context.diagnostics.filter(diagnostic =>
+            diagnostic.source === DIAGNOSTIC_SOURCE && diagnostic.code === CODE_YAML_INDENTATION_TAB);
+        if (!featureDocument && tabDiagnostics.length > 0) {
+            const issues = collectYamlIndentationTabs(document.getText());
+            const addTabFix = (title: string, selected: typeof issues, preferred: boolean): void => {
+                if (selected.length === 0) { return; }
+                const action = new vscode.CodeAction(title, vscode.CodeActionKind.QuickFix);
+                action.edit = new vscode.WorkspaceEdit();
+                for (const issue of selected) {
+                    action.edit.replace(document.uri, new vscode.Range(issue.line, 0, issue.line, issue.indentationLength), issue.replacement);
+                }
+                action.diagnostics = tabDiagnostics.filter(diagnostic => selected.some(issue => issue.line === diagnostic.range.start.line));
+                action.isPreferred = preferred;
+                actions.push(action);
+            };
+            const diagnosticLines = new Set(tabDiagnostics.map(diagnostic => diagnostic.range.start.line));
+            for (const issue of issues.filter(issue => diagnosticLines.has(issue.line))) {
+                addTabFix(vscode.l10n.t('Replace YAML indentation tabs with spaces'), [issue], true);
+            }
+            if (issues.length > 1) {
+                addTabFix(vscode.l10n.t('Replace all YAML indentation tabs with spaces'), issues, false);
+            }
+        }
+        if (!scenarioDocument && !featureDocument) {
+            return shouldCancel() ? [] : actions;
+        }
+        const nativeMetadata = featureDocument && /(?:^|[\\/])scen\.feature$/u.test(document.fileName)
+            ? await (await import('./spprScenarioFiles.js')).readNativeScenarioMetadata(document.uri) : undefined;
+        if (shouldCancel()) { return []; }
+        const localScenarioParameterDefaults = featureDocument && !nativeMetadata
+            ? new Map<string, string>() : parseScenarioParameterDefaults(nativeMetadata?.text ?? document.getText());
         const scenarioLanguage = getScenarioLanguageForDocument(document);
         const scenarioCallKeyword = getScenarioCallKeyword(scenarioLanguage);
         const hasFixableDiagnostic = context.diagnostics.some(diagnostic =>
@@ -833,7 +917,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             ].includes(diagnostic.code)
         );
 
-        if (hasFixableDiagnostic) {
+        if (hasFixableDiagnostic && !featureDocument) {
             const fixAllAction = new vscode.CodeAction(this.messages.fixAll, vscode.CodeActionKind.QuickFix);
             fixAllAction.command = {
                 command: 'kotTestToolkit.fixScenarioIssues',
@@ -844,13 +928,70 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         }
 
         for (const diagnostic of context.diagnostics) {
+            if (shouldCancel()) {
+                return [];
+            }
             if (diagnostic.source !== DIAGNOSTIC_SOURCE || typeof diagnostic.code !== 'string') {
                 continue;
             }
 
+            if (diagnostic.code === CODE_UNKNOWN_STEP || diagnostic.code === CODE_UNKNOWN_SCENARIO) {
+                const invocation = document.lineAt(diagnostic.range.start.line).text.trim();
+                const seed = {
+                    invocation,
+                    language: scenarioLanguage,
+                    documentUri: document.uri.toString(),
+                    range: {
+                        start: {
+                            line: diagnostic.range.start.line,
+                            character: diagnostic.range.start.character
+                        },
+                        end: {
+                            line: diagnostic.range.end.line,
+                            character: diagnostic.range.end.character
+                        }
+                    }
+                };
+                const exportAction = new vscode.CodeAction(
+                    vscode.l10n.t('Create export scenario from this invocation'),
+                    vscode.CodeActionKind.QuickFix
+                );
+                exportAction.command = {
+                    command: 'kotTestToolkit.createExportScenario',
+                    title: exportAction.title,
+                    arguments: [seed]
+                };
+                exportAction.diagnostics = [diagnostic];
+                exportAction.isPreferred = diagnostic.code === CODE_UNKNOWN_SCENARIO;
+                actions.push(exportAction);
+
+                const userStepAction = new vscode.CodeAction(
+                    vscode.l10n.t('Create user step from this invocation'),
+                    vscode.CodeActionKind.QuickFix
+                );
+                userStepAction.command = {
+                    command: 'kotTestToolkit.createUserStep',
+                    title: userStepAction.title,
+                    arguments: [seed]
+                };
+                userStepAction.diagnostics = [diagnostic];
+                userStepAction.isPreferred = diagnostic.code === CODE_UNKNOWN_STEP;
+                actions.push(userStepAction);
+            }
+
             if (diagnostic.code === CODE_UNKNOWN_STEP) {
                 const lineText = document.lineAt(diagnostic.range.start.line).text.trim();
-                const suggestions = await this.hoverProvider.getStepSuggestions(lineText, 3);
+                const suggestions = await findClosestDefinitions(
+                    this.definitionResolver,
+                    document.uri,
+                    lineText,
+                    3,
+                    shouldCancel,
+                    kind => kind !== 'nestedScenario'
+                );
+                if (shouldCancel()) {
+                    return [];
+                }
                 const indent = document.lineAt(diagnostic.range.start.line).text.match(/^\s*/)?.[0] || '';
                 const replacementVariants = new Set<string>();
                 for (const suggestion of suggestions) {
@@ -882,8 +1023,17 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 }
                 const indent = match[1];
                 const unknownName = match[3].trim();
-                const cache = this.phaseSwitcherProvider.getTestCache();
-                const suggestions = findClosestStrings(unknownName, Array.from((cache || new Map<string, TestInfo>()).keys()), 3);
+                const suggestions = await findClosestDefinitions(
+                    this.definitionResolver,
+                    document.uri,
+                    unknownName,
+                    3,
+                    shouldCancel,
+                    kind => kind === 'nestedScenario'
+                );
+                if (shouldCancel()) {
+                    return [];
+                }
                 for (const suggestion of suggestions) {
                     const action = new vscode.CodeAction(
                         vscode.l10n.t('Replace with: {0}', suggestion),
@@ -906,8 +1056,10 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     continue;
                 }
 
-                const scenarioInfo = this.phaseSwitcherProvider.getTestCache()?.get(callBlock.name);
-                if (!scenarioInfo || !scenarioInfo.parameters || scenarioInfo.parameters.length === 0) {
+                const catalog = this.phaseSwitcherProvider.getScenarioCatalog();
+                const resolution = catalog ? resolveScenarioByName(catalog, callBlock.name) : null;
+                const scenarioInfo = resolution?.kind === 'unique' ? resolution.scenario : null;
+                if (!scenarioInfo?.parameters || scenarioInfo.parameters.length === 0) {
                     continue;
                 }
 
@@ -923,7 +1075,8 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     callBlock,
                     missingParams,
                     scenarioInfo.parameterDefaults,
-                    localScenarioParameterDefaults
+                    localScenarioParameterDefaults,
+                    scenarioInfo.parameterTypes
                 );
                 if (!insertion) {
                     continue;
@@ -944,7 +1097,8 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                         callBlock,
                         [missingParam],
                         scenarioInfo.parameterDefaults,
-                        localScenarioParameterDefaults
+                        localScenarioParameterDefaults,
+                        scenarioInfo.parameterTypes
                     );
                     if (!singleInsertion) {
                         continue;
@@ -962,7 +1116,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             }
         }
 
-        return actions;
+        return shouldCancel() ? [] : actions;
     }
 
     private scheduleValidation(
@@ -973,6 +1127,11 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         if (!document || document.isUntitled) {
             return;
         }
+        if (/(?:^|[\\/])meta\.yaml$/u.test(document.fileName)) {
+            const scriptUri = vscode.Uri.joinPath(document.uri, '..', 'scen.feature').toString();
+            const script = (vscode.workspace.textDocuments ?? []).find(item => !item.isClosed && item.uri.toString() === scriptUri);
+            if (script) { this.scheduleValidation(script, delayMs, options); }
+        }
         const key = document.uri.toString();
         const existing = this.validationTimers.get(key);
         if (existing) {
@@ -980,7 +1139,11 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         }
         const timer = setTimeout(() => {
             this.validationTimers.delete(key);
-            this.validateDocument(document, options).catch(error => {
+            this.validateDocument(
+                document,
+                options,
+                createDocumentValidationCancellation(document)
+            ).catch(error => {
                 console.error('[ScenarioDiagnostics] Validation failed:', error);
             });
         }, delayMs);
@@ -1015,15 +1178,60 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         return config.get<boolean>('editor.checkRelatedParentScenarios', true);
     }
 
+    private getIgnoredDiagnosticCodes(uri: vscode.Uri): ReadonlySet<string> {
+        const configured = vscode.workspace
+            .getConfiguration('kotTestToolkit', uri)
+            .get<unknown[]>('diagnostics.ignoredCodes', []);
+        if (!Array.isArray(configured)) {
+            return new Set();
+        }
+        return new Set(configured.flatMap(value => {
+            if (typeof value !== 'string') {
+                return [];
+            }
+            const code = value.trim();
+            return code ? [code] : [];
+        }));
+    }
+
+    private filterIgnoredDiagnostics(
+        uri: vscode.Uri,
+        diagnostics: readonly vscode.Diagnostic[]
+    ): vscode.Diagnostic[] {
+        const ignoredCodes = this.getIgnoredDiagnosticCodes(uri);
+        if (ignoredCodes.size === 0) {
+            return [...diagnostics];
+        }
+        return diagnostics.filter(diagnostic =>
+            typeof diagnostic.code !== 'string' || !ignoredCodes.has(diagnostic.code)
+        );
+    }
+
+    private publishDiagnostics(uri: vscode.Uri, diagnostics: readonly vscode.Diagnostic[], resourceUri = uri): void {
+        this.rawDiagnosticsByUri.set(uri.toString(), { uri, diagnostics: [...diagnostics], resourceUri });
+        this.diagnostics.set(uri, this.filterIgnoredDiagnostics(resourceUri, diagnostics));
+    }
+
+    private deleteDiagnostics(uri: vscode.Uri): void {
+        this.rawDiagnosticsByUri.delete(uri.toString());
+        this.diagnostics.delete(uri);
+    }
+
+    private republishDiagnostics(): void {
+        for (const { uri, diagnostics, resourceUri } of this.rawDiagnosticsByUri.values()) {
+            this.diagnostics.set(uri, this.filterIgnoredDiagnostics(resourceUri ?? uri, diagnostics));
+        }
+    }
+
     private rebuildDuplicateScenarioCodeDiagnosticsFromCache(): void {
-        const cache = this.phaseSwitcherProvider.getTestCache();
+        const catalog = this.phaseSwitcherProvider.getScenarioCatalog();
         this.duplicateCodeDiagnostics.clear();
-        if (!cache || cache.size === 0) {
+        if (!catalog || catalog.all.length === 0) {
             return;
         }
 
         const scenariosByCode = new Map<string, TestInfo[]>();
-        for (const testInfo of cache.values()) {
+        for (const testInfo of catalog.all) {
             const scenarioCode = normalizeScenarioCode(testInfo.scenarioCode);
             if (shouldIgnoreScenarioCodeForDuplicateCheck(scenarioCode)) {
                 continue;
@@ -1043,7 +1251,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             for (const scenario of scenarios) {
                 const others = scenarios
                     .filter(item => item.yamlFileUri.toString() !== scenario.yamlFileUri.toString())
-                    .map(item => item.name)
+                    .map(item => `${item.name} — ${item.relativePath || item.yamlFileUri.fsPath}`)
                     .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
 
                 if (others.length === 0) {
@@ -1075,41 +1283,46 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         }
 
         for (const { uri, diagnostics } of diagnosticsByUri.values()) {
-            this.duplicateCodeDiagnostics.set(uri, diagnostics);
+            const visibleDiagnostics = this.filterIgnoredDiagnostics(uri, diagnostics);
+            if (visibleDiagnostics.length > 0) {
+                this.duplicateCodeDiagnostics.set(uri, visibleDiagnostics);
+            }
         }
     }
 
     private resetDependencyGraph(): void {
         this.dependencyGraphSource = null;
         this.scenarioNameByUri.clear();
-        this.scenarioUriByName.clear();
+        this.scenarioUrisByName.clear();
         this.callersByCalleeName.clear();
     }
 
     private rebuildDependencyGraphFromCacheIfNeeded(): void {
-        const cache = this.phaseSwitcherProvider.getTestCache();
-        if (cache === this.dependencyGraphSource) {
+        const catalog = this.phaseSwitcherProvider.getScenarioCatalog();
+        if (catalog === this.dependencyGraphSource) {
             return;
         }
 
         this.resetDependencyGraph();
-        this.dependencyGraphSource = cache;
-        if (!cache) {
+        this.dependencyGraphSource = catalog;
+        if (!catalog) {
             return;
         }
 
-        for (const [scenarioName, testInfo] of cache) {
-            const normalizedName = scenarioName.trim();
+        for (const testInfo of catalog.all) {
+            const normalizedName = testInfo.name.trim();
             if (!normalizedName) {
                 continue;
             }
 
-            this.scenarioUriByName.set(normalizedName, testInfo.yamlFileUri);
             this.scenarioNameByUri.set(testInfo.yamlFileUri.toString(), normalizedName);
+            const uris = this.scenarioUrisByName.get(normalizedName) || [];
+            uris.push(testInfo.yamlFileUri);
+            this.scenarioUrisByName.set(normalizedName, uris);
         }
 
-        for (const [scenarioName, testInfo] of cache) {
-            const callerName = scenarioName.trim();
+        for (const testInfo of catalog.all) {
+            const callerName = testInfo.name.trim();
             if (!callerName) {
                 continue;
             }
@@ -1118,6 +1331,10 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             for (const calledNameRaw of calledNames) {
                 const calledName = calledNameRaw.trim();
                 if (!calledName) {
+                    continue;
+                }
+
+                if (resolveScenarioByName(catalog, calledName).kind !== 'unique') {
                     continue;
                 }
 
@@ -1160,24 +1377,24 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             }
 
             for (const callerName of callerNames) {
+                if (relatedUris.size >= maxFiles) {
+                    break;
+                }
                 if (!visitedScenarioNames.has(callerName)) {
                     visitedScenarioNames.add(callerName);
                     queue.push(callerName);
                 }
 
-                const callerUri = this.scenarioUriByName.get(callerName);
-                if (!callerUri) {
-                    continue;
-                }
+                for (const callerUri of this.scenarioUrisByName.get(callerName) || []) {
+                    const callerUriKey = callerUri.toString();
+                    if (callerUriKey === sourceUriKey) {
+                        continue;
+                    }
 
-                const callerUriKey = callerUri.toString();
-                if (callerUriKey === sourceUriKey) {
-                    continue;
-                }
-
-                relatedUris.set(callerUriKey, callerUri);
-                if (relatedUris.size >= maxFiles) {
-                    break;
+                    relatedUris.set(callerUriKey, callerUri);
+                    if (relatedUris.size >= maxFiles) {
+                        break;
+                    }
                 }
             }
         }
@@ -1196,7 +1413,11 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             const uri = relatedUris[index];
             try {
                 const document = await vscode.workspace.openTextDocument(uri);
-                await this.validateDocument(document, options);
+                await this.validateDocument(
+                    document,
+                    options,
+                    createDocumentValidationCancellation(document)
+                );
             } catch (error) {
                 console.error(`[ScenarioDiagnostics] Failed to validate related scenario ${uri.fsPath}:`, error);
             }
@@ -1214,17 +1435,21 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         }
 
         const scopeUriSet = new Set(workspaceScenarioUris.map(uri => uri.toString()));
-        this.diagnostics.forEach((uri, _diagnostics) => {
+        for (const { uri } of this.rawDiagnosticsByUri.values()) {
             if (uri.scheme === 'file' && !scopeUriSet.has(uri.toString())) {
-                this.diagnostics.delete(uri);
+                this.deleteDiagnostics(uri);
             }
-        });
+        }
 
         for (let index = 0; index < workspaceScenarioUris.length; index++) {
             const uri = workspaceScenarioUris[index];
             try {
                 const document = await vscode.workspace.openTextDocument(uri);
-                await this.validateDocument(document, GLOBAL_VALIDATION_OPTIONS);
+                await this.validateDocument(
+                    document,
+                    GLOBAL_VALIDATION_OPTIONS,
+                    createDocumentValidationCancellation(document)
+                );
             } catch (error) {
                 console.error(`[ScenarioDiagnostics] Failed to validate ${uri.fsPath}:`, error);
             }
@@ -1236,18 +1461,19 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
     }
 
     private async getWorkspaceScenarioUris(refreshCache: boolean): Promise<vscode.Uri[]> {
+        let catalog: ScenarioCatalog | null = null;
         try {
             if (refreshCache) {
-                await this.phaseSwitcherProvider.ensureFreshTestCache();
+                catalog = await this.phaseSwitcherProvider.ensureFreshScenarioCatalog();
             } else {
-                await this.phaseSwitcherProvider.initializeTestCache();
+                catalog = this.phaseSwitcherProvider.getScenarioCatalog()
+                    || await this.phaseSwitcherProvider.ensureFreshScenarioCatalog();
             }
         } catch (error) {
             console.error('[ScenarioDiagnostics] Failed to prepare scenario cache for workspace scan:', error);
         }
 
-        const cache = this.phaseSwitcherProvider.getTestCache();
-        const cachedUris = cache ? Array.from(cache.values()).map(testInfo => testInfo.yamlFileUri) : [];
+        const cachedUris = catalog?.all.map(testInfo => testInfo.yamlFileUri) || [];
         if (cachedUris.length > 0) {
             return this.mergeWithOpenScenarioDocuments(cachedUris);
         }
@@ -1281,7 +1507,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         for (const uri of candidateUris) {
             try {
                 const document = await vscode.workspace.openTextDocument(uri);
-                if (isScenarioYamlFile(document)) {
+                if (isCompilerYamlFile(document)) {
                     scenarioUris.push(uri);
                 }
             } catch (error) {
@@ -1301,7 +1527,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             if (document.isUntitled || document.uri.scheme !== 'file') {
                 continue;
             }
-            if (isScenarioYamlFile(document)) {
+            if (isCompilerYamlFile(document)) {
                 uniqueUris.set(document.uri.toString(), document.uri);
             }
         }
@@ -1313,73 +1539,92 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
 
     private async validateDocument(
         document: vscode.TextDocument,
-        options: ValidationOptions = FULL_VALIDATION_OPTIONS
+        options: ValidationOptions = FULL_VALIDATION_OPTIONS,
+        shouldCancel: () => boolean = () => false,
+        native?: { metadata: string; syntaxDiagnostics: readonly vscode.Diagnostic[] }
     ): Promise<void> {
-        if (!isScenarioYamlFile(document)) {
-            this.diagnostics.delete(document.uri);
+        if (shouldCancel()) {
+            return;
+        }
+        if (isGherkinFeatureDocument(document) && !native) {
+            await this.validateFeatureDocument(document, options, shouldCancel);
+            return;
+        }
+        const scenarioDocument = !!native || isScenarioYamlFile(document);
+        const compilerDocument = !native && isCompilerYamlFile(document);
+        if (!scenarioDocument && !compilerDocument) {
+            this.deleteDiagnostics(document.uri);
             return;
         }
 
-        const bodyRange = getScenarioBodyRange(document);
+        const diagnostics = (compilerDocument ? collectYamlIndentationTabs(document.getText()) : []).map(issue => {
+            const diagnostic = new vscode.Diagnostic(
+                new vscode.Range(issue.line, issue.startCharacter, issue.line, issue.endCharacter),
+                vscode.l10n.t('Tabs cannot be used for YAML indentation. Use spaces.'),
+                vscode.DiagnosticSeverity.Error
+            );
+            diagnostic.source = DIAGNOSTIC_SOURCE;
+            diagnostic.code = CODE_YAML_INDENTATION_TAB;
+            return diagnostic;
+        });
+        if (native) { diagnostics.push(...native.syntaxDiagnostics); }
+        if (compilerDocument) { diagnostics.push(...collectCompilerFormatDiagnostics(document)); }
+        const bodyRange = native ? { startLine: 0, endLine: document.lineCount - 1 } : scenarioDocument ? getScenarioBodyRange(document) : null;
         if (!bodyRange) {
-            this.diagnostics.delete(document.uri);
+            this.publishDiagnostics(document.uri, diagnostics);
             return;
         }
+        if (diagnostics.length > 0) { this.publishDiagnostics(document.uri, diagnostics); }
 
-        const diagnostics: vscode.Diagnostic[] = [];
-        const documentText = document.getText();
+        const documentText = native?.metadata ?? document.getText();
         const configuredLanguage = getScenarioLanguageForDocument(document);
-        const testCache = this.phaseSwitcherProvider.getTestCache() || new Map<string, TestInfo>();
-        const hasScenarioCache = testCache.size > 0;
+        let scenarioCatalog: ScenarioCatalog | null = null;
+        try {
+            scenarioCatalog = await this.phaseSwitcherProvider.ensureFreshScenarioCatalog();
+        } catch (error) {
+            console.error('[ScenarioDiagnostics] Failed to load scenario catalog for validation:', error);
+        }
+        if (shouldCancel()) {
+            return;
+        }
+        let definitionView: ProjectDefinitionView;
+        try {
+            definitionView = await this.definitionResolver.getView(document.uri);
+        } catch (error) {
+            console.error('[ScenarioDiagnostics] Failed to load project definitions for validation:', error);
+            return;
+        }
+        if (shouldCancel()) {
+            return;
+        }
+        const hasScenarioCache = (scenarioCatalog?.byName.size || 0) > 0;
         const scenarioCallBlocks = parseScenarioCallBlocks(document, bodyRange);
         const validatedScenarioCallBlocks: ScenarioCallBlock[] = [];
         const scenarioCallLineSet = new Set<number>();
         const scenarioParamLineSet = new Set<number>();
 
-        if (options.includeStepChecks) {
-            await this.hoverProvider.ensureStepDefinitionsLoaded();
+        const bodyLines = Array.from({ length: bodyRange.endLine - bodyRange.startLine + 1 },
+            (_, index) => document.lineAt(bodyRange.startLine + index).text);
+        const compilerLines = scanCompilerLines(bodyLines);
+        for (const issue of validateCompilerBlocks(bodyLines, compilerLines)) {
+            const code = issue.kind === 'unclosed'
+                ? issue.family === 'loop' ? CODE_UNCLOSED_DO : issue.family === 'try' ? CODE_UNCLOSED_TRY : CODE_UNCLOSED_IF
+                : 'kotTestToolkit.compilerSyntax';
+            const message = issue.kind === 'unclosed'
+                ? issue.family === 'loop' ? this.messages.unmatchedDo : issue.family === 'try' ? this.messages.unmatchedTry : this.messages.unmatchedIf
+                : issue.kind === 'comment' ? vscode.l10n.t('Unclosed block comment.')
+                    : issue.kind === 'docString' ? vscode.l10n.t('Unclosed multiline string.')
+                        : issue.kind === 'binding' ? vscode.l10n.t('Invalid return declaration: use Return Name as Alias or Возврат Имя как Псевдоним.')
+                    : issue.kind === 'expression' ? vscode.l10n.t('Invalid preprocessor condition: check Then, quotes and parentheses.')
+                        : vscode.l10n.t('Unexpected block delimiter: check nesting, branch order and delimiter language.');
+            diagnostics.push(createDiagnostic(document, bodyRange.startLine + issue.line, message, vscode.DiagnosticSeverity.Error, code));
         }
-
-        // If/EndIf, Do/EndDo, Try/EndTry + quotes checks
-        const ifStack: number[] = [];
-        const doStack: number[] = [];
-        const tryStack: number[] = [];
         for (let line = bodyRange.startLine; line <= bodyRange.endLine; line++) {
+            if (shouldCancel()) {
+                return;
+            }
             const text = document.lineAt(line).text;
-            const blockKeyword = parseBlockKeyword(text);
-
-            if (blockKeyword === 'EndIf') {
-                if (ifStack.length === 0) {
-                    diagnostics.push(createDiagnostic(document, line, this.messages.extraEndIf, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_IF));
-                } else {
-                    ifStack.pop();
-                }
-            }
-            if (blockKeyword === 'If') {
-                ifStack.push(line);
-            }
-
-            if (blockKeyword === 'EndDo') {
-                if (doStack.length === 0) {
-                    diagnostics.push(createDiagnostic(document, line, this.messages.extraEndDo, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_DO));
-                } else {
-                    doStack.pop();
-                }
-            }
-            if (blockKeyword === 'Do') {
-                doStack.push(line);
-            }
-
-            if (blockKeyword === 'EndTry') {
-                if (tryStack.length === 0) {
-                    diagnostics.push(createDiagnostic(document, line, this.messages.extraEndTry, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_TRY));
-                } else {
-                    tryStack.pop();
-                }
-            }
-            if (blockKeyword === 'Try') {
-                tryStack.push(line);
-            }
+            if (compilerLines[line - bodyRange.startLine].kind !== 'code') { continue; }
 
             const quotes = text.match(/(?<!\\)"/g);
             if (quotes && quotes.length % 2 !== 0) {
@@ -1387,66 +1632,111 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             }
         }
 
-        ifStack.forEach(line => {
-            diagnostics.push(createDiagnostic(document, line, this.messages.unmatchedIf, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_IF));
-        });
-        doStack.forEach(line => {
-            diagnostics.push(createDiagnostic(document, line, this.messages.unmatchedDo, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_DO));
-        });
-        tryStack.forEach(line => {
-            diagnostics.push(createDiagnostic(document, line, this.messages.unmatchedTry, vscode.DiagnosticSeverity.Error, CODE_UNCLOSED_TRY));
-        });
-
         // Scenario calls checks
         for (const block of scenarioCallBlocks) {
-            const scenarioInfo = testCache.get(block.name);
             const lineText = document.lineAt(block.line).text.trim();
+            const definitionResolution = await this.definitionResolver.resolve(
+                document.uri,
+                lineText,
+                definitionView
+            );
+            if (shouldCancel()) {
+                return;
+            }
+
+            if (definitionResolution.kind === 'ambiguous') {
+                scenarioCallLineSet.add(block.line);
+                block.parameters.forEach(param => scenarioParamLineSet.add(param.line));
+                const definitions = definitionResolution.matches.map(match => match.definition);
+                if (definitions.some(definition => definition.kind === 'nestedScenario')) {
+                    validatedScenarioCallBlocks.push(block);
+                }
+                diagnostics.push(createAmbiguousDefinitionDiagnostic(
+                    document,
+                    block.line,
+                    this.messages.ambiguousDefinition,
+                    definitions
+                ));
+                continue;
+            }
+
+            if (definitionResolution.kind === 'unique') {
+                scenarioCallLineSet.add(block.line);
+                if (definitionResolution.match.definition.kind !== 'nestedScenario') {
+                    continue;
+                }
+            }
+
+            const scenarioResolution = definitionResolution.kind === 'unique' && scenarioCatalog
+                ? resolveScenarioByName(scenarioCatalog, block.name)
+                : null;
+            const scenarioInfo = scenarioResolution?.kind === 'unique'
+                ? scenarioResolution.scenario
+                : undefined;
             const includeScenarioSuggestions = options.includeScenarioSuggestions ?? options.includeSuggestions;
-            const scenarioSuggestions = (!scenarioInfo && hasScenarioCache && includeScenarioSuggestions)
-                ? findClosestStrings(block.name, Array.from(testCache.keys()), 3)
+            const includeStepSuggestions = options.includeStepSuggestions ?? options.includeSuggestions;
+            const scenarioSuggestions = (definitionResolution.kind === 'missing' && includeScenarioSuggestions)
+                ? await findClosestDefinitions(
+                    this.definitionResolver,
+                    document.uri,
+                    block.name,
+                    3,
+                    shouldCancel,
+                    kind => kind === 'nestedScenario',
+                    definitionView
+                )
                 : [];
+            if (shouldCancel()) {
+                return;
+            }
             const hasStrongScenarioNameMatch = scenarioSuggestions.length > 0
                 && getStringSimilarity(block.name, scenarioSuggestions[0]) >= 0.85;
 
             // Disambiguate step-like "And ..." lines to avoid false "unknown nested scenario" diagnostics.
-            if (!scenarioInfo && block.parameters.length === 0 && !hasStrongScenarioNameMatch) {
+            if (definitionResolution.kind === 'missing'
+                && block.parameters.length === 0
+                && !hasStrongScenarioNameMatch) {
                 const stepLikeSyntax = looksLikePotentialGherkinStep(block.name);
-
-                if (options.includeStepChecks || stepLikeSyntax) {
-                    const isKnownStep = await this.hoverProvider.isKnownStepLine(lineText);
-                    if (isKnownStep) {
-                        continue;
-                    }
+                const stepHints = includeStepSuggestions
+                    ? await findClosestDefinitions(
+                        this.definitionResolver,
+                        document.uri,
+                        lineText,
+                        3,
+                        shouldCancel,
+                        kind => kind !== 'nestedScenario',
+                        definitionView
+                    )
+                    : [];
+                if (shouldCancel()) {
+                    return;
                 }
+                if (stepLikeSyntax || stepHints.length > 0) {
+                    scenarioCallLineSet.add(block.line);
+                    if (options.includeStepChecks) {
+                        const likelyMissingQuotes = looksLikeMissingQuotes(lineText, stepHints);
+                        const suggestions = stepHints.map(suggestion => applyStepSuggestionWithOriginalValues(lineText, suggestion));
+                        const suffix = formatSuggestionListSuffix(this.messages, suggestions);
 
-                if (options.includeStepChecks) {
-                    const stepHints = await this.hoverProvider.getStepSuggestions(lineText, 1);
-                    if (stepHints.length > 0) {
-                        continue;
+                        diagnostics.push(createDiagnostic(
+                            document,
+                            block.line,
+                            likelyMissingQuotes
+                                ? `${this.messages.missingQuotesLikely}${suffix}`
+                                : `${this.messages.unknownStep}${suffix}`,
+                            likelyMissingQuotes ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error,
+                            likelyMissingQuotes ? CODE_MISSING_QUOTES : CODE_UNKNOWN_STEP
+                        ));
                     }
-                } else if (stepLikeSyntax) {
-                    // Lightweight pass without full step validation:
-                    // if it looks like a step and isn't known, emit step diagnostic instead of unknown scenario.
-                    const stepHints = await this.hoverProvider.getStepSuggestions(lineText, 3);
-                    const likelyMissingQuotes = looksLikeMissingQuotes(lineText, stepHints);
-                    const suggestions = stepHints.map(suggestion => applyStepSuggestionWithOriginalValues(lineText, suggestion));
-                    const suffix = formatSuggestionListSuffix(this.messages, suggestions);
-
-                    diagnostics.push(createDiagnostic(
-                        document,
-                        block.line,
-                        likelyMissingQuotes
-                            ? `${this.messages.missingQuotesLikely}${suffix}`
-                            : `${this.messages.unknownStep}${suffix}`,
-                        likelyMissingQuotes ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error,
-                        CODE_UNKNOWN_STEP
-                    ));
                     continue;
                 }
             }
 
             const likelyStepPrefix = /^(Я|I|When|Then|Given|Если|Когда|Тогда|Но)\b/i.test(block.name);
-            const isScenarioCall = !!scenarioInfo || block.parameters.length > 0 || !likelyStepPrefix || hasStrongScenarioNameMatch;
+            const isScenarioCall = definitionResolution.kind === 'unique'
+                || block.parameters.length > 0
+                || !likelyStepPrefix
+                || hasStrongScenarioNameMatch;
             if (!isScenarioCall) {
                 continue;
             }
@@ -1455,23 +1745,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             scenarioCallLineSet.add(block.line);
             block.parameters.forEach(param => scenarioParamLineSet.add(param.line));
 
-            if (!scenarioInfo) {
-                if (!hasScenarioCache) {
-                    for (const param of block.parameters) {
-                        const trimmedValue = param.value.trim();
-                        if (trimmedValue.length > 0 && !isValidScenarioParameterValue(trimmedValue)) {
-                            diagnostics.push(createDiagnostic(
-                                document,
-                                param.line,
-                                this.messages.paramValueShouldBeQuoted,
-                                vscode.DiagnosticSeverity.Warning,
-                                CODE_MISSING_QUOTES
-                            ));
-                        }
-                    }
-                    continue;
-                }
-
+            if (!scenarioInfo && definitionResolution.kind !== 'unique') {
                 const suffix = formatSuggestionListSuffix(this.messages, scenarioSuggestions);
                 diagnostics.push(createDiagnostic(
                     document,
@@ -1483,7 +1757,9 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 continue;
             }
 
-            const expectedParams = new Set((scenarioInfo.parameters || []).map(item => item.trim()).filter(Boolean));
+            const expectedParams = new Set((scenarioInfo?.parameters
+                ?? (definitionResolution.kind === 'unique' ? definitionResolution.match.definition.parameters.map(item => item.name) : []))
+                .map(item => item.trim()).filter(Boolean));
             const actualParams = new Set(block.parameters.map(param => param.name));
 
             for (const param of block.parameters) {
@@ -1498,7 +1774,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                 }
 
                 const trimmedValue = param.value.trim();
-                if (trimmedValue.length > 0 && !isValidScenarioParameterValue(trimmedValue)) {
+                if (param.kind === 'input' && trimmedValue.length > 0 && !isValidScenarioParameterValue(trimmedValue)) {
                     diagnostics.push(createDiagnostic(
                         document,
                         param.line,
@@ -1510,7 +1786,13 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             }
 
             if (expectedParams.size > 0) {
-                const missing = Array.from(expectedParams).filter(paramName => !actualParams.has(paramName));
+                const missing = Array.from(expectedParams).filter(paramName => {
+                    if (actualParams.has(paramName)) { return false; }
+                    const definitionParameter = definitionResolution.kind === 'unique'
+                        ? definitionResolution.match.definition.parameters.find(parameter => parameter.name === paramName) : undefined;
+                    return !isMultilineScalarDefault(scenarioInfo?.parameterDefaults?.[paramName] ?? definitionParameter?.defaultValue,
+                        scenarioInfo?.parameterTypes?.[paramName] ?? definitionParameter?.type);
+                });
                 if (missing.length > 0) {
                     diagnostics.push(createDiagnostic(
                         document,
@@ -1524,14 +1806,27 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
         }
 
         // Unknown steps checks
+        for (let index = 0; index < bodyLines.length; index++) {
+            const line = bodyRange.startLine + index;
+            if (compilerLines[index].kind === 'code' && parseCompilerParameterBinding(bodyLines[index])
+                && !scenarioParamLineSet.has(line)) {
+                diagnostics.push(createDiagnostic(document, line,
+                    vscode.l10n.t('Parameter assignment or return must follow a nested scenario invocation.'),
+                    vscode.DiagnosticSeverity.Error, 'kotTestToolkit.compilerSyntax'));
+            }
+        }
         if (options.includeStepChecks) {
-            const gherkinStepRegex = /^\s*(And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\b/i;
+            const gherkinStepRegex = /^\s*(And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим|Do|Цикл)(?=\s|$)/i;
             for (let line = bodyRange.startLine; line <= bodyRange.endLine; line++) {
+                if (shouldCancel()) {
+                    return;
+                }
                 if (scenarioCallLineSet.has(line) || scenarioParamLineSet.has(line)) {
                     continue;
                 }
 
                 const rawText = document.lineAt(line).text;
+                if (compilerLines[line - bodyRange.startLine].kind !== 'code') { continue; }
                 const trimmed = rawText.trim();
                 if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('|') || trimmed.startsWith('"""')) {
                     continue;
@@ -1540,16 +1835,43 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                     continue;
                 }
 
-                const isKnown = await this.hoverProvider.isKnownStepLine(trimmed);
-                if (isKnown) {
+                const definitionResolution = await this.definitionResolver.resolve(
+                    document.uri,
+                    trimmed,
+                    definitionView
+                );
+                if (shouldCancel()) {
+                    return;
+                }
+                if (definitionResolution.kind === 'unique') {
+                    continue;
+                }
+                if (definitionResolution.kind === 'ambiguous') {
+                    diagnostics.push(createAmbiguousDefinitionDiagnostic(
+                        document,
+                        line,
+                        this.messages.ambiguousDefinition,
+                        definitionResolution.matches.map(match => match.definition)
+                    ));
                     continue;
                 }
 
-                const includeStepSuggestions = options.includeStepSuggestions ?? options.includeSuggestions;
-                const rawSuggestions = includeStepSuggestions
-                    ? await this.hoverProvider.getStepSuggestions(trimmed, 3)
+                const shouldIncludeStepSuggestions = options.includeStepSuggestions ?? options.includeSuggestions;
+                const rawSuggestions = shouldIncludeStepSuggestions
+                    ? await findClosestDefinitions(
+                        this.definitionResolver,
+                        document.uri,
+                        trimmed,
+                        3,
+                        shouldCancel,
+                        kind => kind !== 'nestedScenario',
+                        definitionView
+                    )
                     : [];
-                const likelyMissingQuotes = includeStepSuggestions && looksLikeMissingQuotes(trimmed, rawSuggestions);
+                if (shouldCancel()) {
+                    return;
+                }
+                const likelyMissingQuotes = shouldIncludeStepSuggestions && looksLikeMissingQuotes(trimmed, rawSuggestions);
                 const suggestions = rawSuggestions.map(suggestion => applyStepSuggestionWithOriginalValues(trimmed, suggestion));
                 const suffix = formatSuggestionListSuffix(this.messages, suggestions);
 
@@ -1560,7 +1882,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
                         ? `${this.messages.missingQuotesLikely}${suffix}`
                         : `${this.messages.unknownStep}${suffix}`,
                     likelyMissingQuotes ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error,
-                    CODE_UNKNOWN_STEP
+                    likelyMissingQuotes ? CODE_MISSING_QUOTES : CODE_UNKNOWN_STEP
                 ));
             }
         }
@@ -1594,8 +1916,8 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             ));
         }
 
-        const kotDescriptionState = getKotDescriptionState(document);
-        if (kotDescriptionState && kotDescriptionState.isDefault) {
+        const kotDescriptionState = native ? null : getKotDescriptionState(document);
+        if (kotDescriptionState && kotDescriptionState.isDefault && !projectedProjectScenario(document)?.scenarioDescription?.trim()) {
             diagnostics.push(createDiagnostic(
                 document,
                 kotDescriptionState.line,
@@ -1605,6 +1927,142 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             ));
         }
 
-        this.diagnostics.set(document.uri, diagnostics);
+        if (!shouldCancel()) {
+            this.publishDiagnostics(document.uri, diagnostics);
+        }
+    }
+
+    private async validateFeatureDocument(
+        document: vscode.TextDocument,
+        options: ValidationOptions,
+        shouldCancel: () => boolean
+    ): Promise<void> {
+        const source = document.getText();
+        const nativeMetadata = /(?:^|[\\/])scen\.feature$/u.test(document.fileName)
+            ? await (await import('./spprScenarioFiles.js')).readNativeScenarioMetadata(document.uri) : undefined;
+        if (shouldCancel()) { return; }
+        const diagnostics: vscode.Diagnostic[] = validateGherkinSyntax(
+            source,
+            document.uri.toString(),
+            !!nativeMetadata
+        )
+            .map(warning => {
+                const startLine = Math.min(
+                    Math.max(0, warning.range?.start.line ?? 0),
+                    Math.max(0, document.lineCount - 1)
+                );
+                const lineText = document.lineAt(startLine).text;
+                const startCharacter = Math.min(
+                    Math.max(0, warning.range?.start.character ?? 0),
+                    lineText.length
+                );
+                const endCharacter = Math.min(
+                    Math.max(startCharacter, warning.range?.end.character ?? lineText.length),
+                    lineText.length
+                );
+                const diagnostic = new vscode.Diagnostic(
+                    new vscode.Range(startLine, startCharacter, startLine, endCharacter),
+                    warning.message,
+                    vscode.DiagnosticSeverity.Error
+                );
+                diagnostic.source = DIAGNOSTIC_SOURCE;
+                diagnostic.code = CODE_GHERKIN_SYNTAX;
+                return diagnostic;
+            });
+
+        if (nativeMetadata) {
+            await this.validateDocument(document, options, shouldCancel, { metadata: nativeMetadata.text, syntaxDiagnostics: diagnostics });
+            return;
+        }
+
+        if (!options.includeStepChecks || shouldCancel()) {
+            if (!shouldCancel()) {
+                this.publishDiagnostics(document.uri, diagnostics);
+            }
+            return;
+        }
+
+        let definitionView: ProjectDefinitionView;
+        try {
+            definitionView = await this.definitionResolver.getView(document.uri);
+        } catch (error) {
+            console.error('[ScenarioDiagnostics] Failed to load project definitions for Feature validation:', error);
+            return;
+        }
+        if (shouldCancel()) {
+            return;
+        }
+
+        const gherkinStepRegex = /^\s*(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим|Дано)\s+/iu;
+        let docStringDelimiter: '"""' | '```' | null = null;
+        for (let line = 0; line < document.lineCount; line++) {
+            if (shouldCancel()) {
+                return;
+            }
+            const trimmed = document.lineAt(line).text.trim();
+            if (docStringDelimiter) {
+                if (trimmed.startsWith(docStringDelimiter)) {
+                    docStringDelimiter = null;
+                }
+                continue;
+            }
+            if (trimmed.startsWith('"""') || trimmed.startsWith('```')) {
+                docStringDelimiter = trimmed.startsWith('"""') ? '"""' : '```';
+                continue;
+            }
+            if (!gherkinStepRegex.test(trimmed)) {
+                continue;
+            }
+
+            const resolution = await this.definitionResolver.resolve(document.uri, trimmed, definitionView);
+            if (shouldCancel()) {
+                return;
+            }
+            if (resolution.kind === 'unique') {
+                continue;
+            }
+            if (resolution.kind === 'ambiguous') {
+                diagnostics.push(createAmbiguousDefinitionDiagnostic(
+                    document,
+                    line,
+                    this.messages.ambiguousDefinition,
+                    resolution.matches.map(match => match.definition)
+                ));
+                continue;
+            }
+
+            const includeSuggestions = options.includeStepSuggestions ?? options.includeSuggestions;
+            const rawSuggestions = includeSuggestions
+                ? await findClosestDefinitions(
+                    this.definitionResolver,
+                    document.uri,
+                    trimmed,
+                    3,
+                    shouldCancel,
+                    kind => kind !== 'nestedScenario',
+                    definitionView
+                )
+                : [];
+            if (shouldCancel()) {
+                return;
+            }
+            const likelyMissingQuotes = includeSuggestions && looksLikeMissingQuotes(trimmed, rawSuggestions);
+            const suggestions = rawSuggestions.map(suggestion =>
+                applyStepSuggestionWithOriginalValues(trimmed, suggestion)
+            );
+            diagnostics.push(createDiagnostic(
+                document,
+                line,
+                likelyMissingQuotes
+                    ? `${this.messages.missingQuotesLikely}${formatSuggestionListSuffix(this.messages, suggestions)}`
+                    : `${this.messages.unknownStep}${formatSuggestionListSuffix(this.messages, suggestions)}`,
+                likelyMissingQuotes ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error,
+                likelyMissingQuotes ? CODE_MISSING_QUOTES : CODE_UNKNOWN_STEP
+            ));
+        }
+
+        if (!shouldCancel()) {
+            this.publishDiagnostics(document.uri, diagnostics);
+        }
     }
 }

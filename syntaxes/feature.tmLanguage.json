@@ -1,0 +1,115 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "KOT Gherkin Feature",
+  "scopeName": "source.feature.kot",
+  "patterns": [
+    { "include": "#docstrings" },
+    { "include": "#comments" },
+    { "include": "#tags" },
+    { "include": "#declarations" },
+    { "include": "#steps" },
+    { "include": "#tables" },
+    { "include": "#placeholders" },
+    { "include": "#strings" },
+    { "include": "#numbers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.feature",
+          "match": "^\\s*#.*$"
+        }
+      ]
+    },
+    "tags": {
+      "patterns": [
+        {
+          "name": "entity.name.tag.feature",
+          "match": "@[^\\s@]+"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "name": "meta.feature",
+          "match": "^\\s*(Feature|Functionality|Business Need|Ability|Variables|Hyperlinks|Links|Переменные|Гиперссылки|Ссылки|Rule|Background|Scenario Outline|Scenario Template|Scenario|Examples|Scenarios|Функциональность|Функционал|Правило|Контекст|Предыстория|Структура сценария|Шаблон сценария|Сценарий|Примеры)\\s*(:)",
+          "captures": {
+            "1": { "name": "keyword.control.feature" },
+            "2": { "name": "punctuation.separator.feature" }
+          }
+        }
+      ]
+    },
+    "steps": {
+      "patterns": [
+        {
+          "match": "^([ \\t]*)(\\*\\s*)?(Given|When|Then|And|But|If|Дано|Допустим|Когда|Тогда|И|Но|К тому же|Если)(?=\\s)",
+          "captures": {
+            "2": { "name": "keyword.other.feature" },
+            "3": { "name": "keyword.other.feature" }
+          }
+        }
+      ]
+    },
+    "docstrings": {
+      "patterns": [
+        {
+          "name": "string.quoted.multi.feature",
+          "begin": "^\\s*(\"\"\"|```)(?:[^\\r\\n]*)?$",
+          "beginCaptures": { "1": { "name": "punctuation.definition.string.begin.feature" } },
+          "end": "^\\s*(\"\"\"|```)\\s*$",
+          "endCaptures": { "1": { "name": "punctuation.definition.string.end.feature" } }
+        }
+      ]
+    },
+    "tables": {
+      "patterns": [
+        {
+          "name": "meta.table.feature",
+          "match": "^\\s*\\|.*\\|\\s*$",
+          "captures": {
+            "0": { "name": "string.unquoted.table.feature" }
+          }
+        }
+      ]
+    },
+    "placeholders": {
+      "patterns": [
+        {
+          "name": "variable.other.placeholder.feature",
+          "match": "<[^>\\r\\n]+>|\\[[^]\\r\\n]+\\]"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.feature",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.feature", "match": "\\\\." }
+          ]
+        },
+        {
+          "name": "string.quoted.single.feature",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            { "name": "constant.character.escape.feature", "match": "\\\\." }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.feature",
+          "match": "(?<![\\p{L}\\p{N}_])-?\\d+(?:[.,]\\d+)?(?![\\p{L}\\p{N}_])"
+        }
+      ]
+    }
+  }
+}

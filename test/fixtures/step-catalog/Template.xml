@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document xmlns="http://v8.1c.ru/8.2/data/spreadsheet"
+    xmlns:v8="http://v8.1c.ru/8.1/data/core">
+  <rowsItem>
+    <index>0</index>
+    <row>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Шаг оригинал</v8:content></v8:item><v8:item><v8:lang>en</v8:lang><v8:content>Step original</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Описание</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Перевод шага</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Перевод описания</v8:content></v8:item></tl></c></c>
+    </row>
+  </rowsItem>
+  <rowsItem>
+    <index>1</index>
+    <row>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Сценарий:</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Специальный текст</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Scenario:</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Special text</v8:content></v8:item></tl></c></c>
+    </row>
+  </rowsItem>
+  <rowsItem>
+    <index>2</index>
+    <row>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Файлы</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Категория шагов</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Files</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Steps category</v8:content></v8:item></tl></c></c>
+    </row>
+  </rowsItem>
+  <rowsItem>
+    <index>3</index>
+    <row>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>&#1048; поле &lt;Имя&gt; равно &quot;Значение&quot;</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Проверяет значение &amp; заголовок</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>And field &lt;Name&gt; equals &quot;Value&quot;</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Checks value &amp; title</v8:content></v8:item></tl></c></c>
+    </row>
+  </rowsItem>
+  <rowsItem>
+    <index>4</index>
+    <row>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>И только русский шаг</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content>Описание
+в две строки</v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content></v8:content></v8:item></tl></c></c>
+      <c><c><tl><v8:item><v8:lang>ru</v8:lang><v8:content></v8:content></v8:item></tl></c></c>
+    </row>
+  </rowsItem>
+</document>

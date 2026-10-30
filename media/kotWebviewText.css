@@ -1,0 +1,22 @@
+.kot-text-clip { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: clip; }
+.kot-text-track { display: inline-block; min-width: max-content; transition: transform .2s ease; }
+button > .kot-button-caption, .menu-item > .kot-text-clip { min-width: 0; flex: 0 1 auto; max-width: 100%; }
+.kot-text-overflow.kot-text-more-right { mask-image: linear-gradient(to right, #000, #000 calc(100% - 18px), transparent); }
+.kot-text-overflow.kot-text-scrolled { mask-image: linear-gradient(to right, transparent, #000 14px, #000); }
+.kot-text-overflow.kot-text-scrolled.kot-text-more-right { mask-image: linear-gradient(to right, transparent, #000 14px, #000 calc(100% - 18px), transparent); }
+.kot-text-overflow:hover > .kot-text-track,
+.infobase-item:hover .kot-text-overflow > .kot-text-track,
+.outline-row:hover .kot-text-overflow > .kot-text-track,
+button:hover .kot-text-overflow > .kot-text-track,
+.kot-control:hover .kot-text-overflow > .kot-text-track {
+    transform: translateX(calc(-1 * var(--kot-text-distance, 0px)));
+    transition: transform var(--kot-text-duration, 1.2s) ease-in-out 350ms;
+}
+.kot-control { display: block; position: relative; min-width: 0; flex: 1; }
+.kot-control-preview { position: absolute; inset: 1px 7px; display: flex; align-items: center; color: var(--vscode-input-foreground); background: var(--vscode-input-background); pointer-events: none; opacity: 0; }
+.kot-control-preview.kot-text-overflow { opacity: 1; }
+.kot-control.is-readonly .kot-control-preview { background: var(--vscode-editor-background); color: var(--vscode-descriptionForeground); }
+.kot-control.is-disabled .kot-control-preview.kot-text-overflow { opacity: .45; }
+.kot-control:focus-within .kot-control-preview { opacity: 0; }
+select.param-bool-select { min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+@media (prefers-reduced-motion: reduce) { .kot-text-track { transition: none !important; transform: none !important; } }

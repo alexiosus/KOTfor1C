@@ -1,0 +1,7 @@
+version: 2
+identity:
+    kind: feature
+metadata:
+    groupId: 1b66a103-a846-5d6f-b2cc-af627691cf2c
+    order: 0
+    description: "01-first-steps.feature"

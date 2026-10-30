@@ -1,11 +1,13 @@
+import { permitsNativeScenario, projectFormat, projectFormatRoot, assertProjectFormatUnchanged, assertProjectFormat3 } from './projectFormat';
 ﻿import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'node:fs/promises';
 import { getTranslator } from './localization';
 import { v4 as uuidv4 } from 'uuid';
 import { YamlParametersManager } from './yamlParametersManager';
-import { scanWorkspaceForTests } from './workspaceScanner';
+import { scanWorkspaceForScenarioCatalog } from './workspaceScanner';
 import { applyPreferredStepKeyword, getConfiguredScenarioLanguage, ScenarioLanguage } from './gherkinLanguage';
-import { isScenarioYamlFile, isTestSettingsYamlFile } from './yamlValidator';
+import { isScenarioYamlFile, isTestSettingsYamlFile, isProcessTestSettingsYamlFile } from './yamlValidator';
 import { getScenarioScanRootPath } from './scenarioScanRoot';
 import {
     canUseEtalonBaseDtFileAsDefaultUri,
@@ -25,6 +27,13 @@ import {
     parseYamlSectionFieldValues
 } from './yamlHeaderFields';
 import { isScenarioYamlUri } from './yamlValidator';
+import { validateScenarioCategoryValue } from './scenarioCategory';
+import { resolveMainScenarioGroupSeed } from './scenarioCreationSeed';
+import { projectLibraryEnvironment, registerCreatedProjectScenario } from './projectLibraryIntegration';
+import { loadProjectLibraryGroups, resolveProjectLibraryRoot } from './projectLibraryMetadata';
+import { promptForNewTestCode } from './testNumbering';
+import { promptForCreationProperty, applyCreationResponsible } from './scenarioCreationProperties';
+import { splitLegacySpprScenario, type SpprScenarioFormat } from './spprScenarioFormat';
 
 type ScenarioIndex = {
     names: Set<string>;
@@ -54,6 +63,7 @@ type NewScenarioDefaults = {
 };
 
 type ScenarioHeaderValues = {
+    responsible?: string;
     project: string;
     systemFunctionName: string;
     systemFunctionUid: string;
@@ -68,6 +78,17 @@ type PromptForSystemFunctionOptions = {
     placeHolder?: string;
 };
 
+export interface CreateNestedScenarioOptions {
+    readonly existingCategories?: readonly string[];
+    readonly format?: SpprScenarioFormat;
+}
+
+type ScenarioCategoryQuickPickItem = vscode.QuickPickItem & (
+    | { entryKind: 'category'; category: string }
+    | { entryKind: 'create' }
+    | { entryKind: 'none' }
+);
+
 type SelectedEtalonBaseValues = {
     baseName: string;
     baseId: string;
@@ -80,6 +101,46 @@ type ResolvedEtalonBasesState = {
     resolvedPath: string;
     bases: EtalonBaseDefinition[];
 };
+
+type SystemFunctionQuickPickItem = vscode.QuickPickItem & (
+    | { entryKind: 'systemFunction'; uid: string }
+    | { entryKind: 'add' }
+);
+
+type EtalonProfileQuickPickItem = vscode.QuickPickItem & (
+    | { entryKind: 'profile'; profileName: string }
+    | { entryKind: 'add' }
+);
+
+type EtalonBaseQuickPickItem = vscode.QuickPickItem & (
+    | { entryKind: 'base'; databaseId: string }
+    | { entryKind: 'add' }
+    | { entryKind: 'import' }
+    | { entryKind: 'export' }
+    | { entryKind: 'openCurrent' }
+);
+
+async function promptForScenarioFormat(config: vscode.WorkspaceConfiguration, seed?: unknown, resource?: vscode.Uri): Promise<SpprScenarioFormat | undefined> {
+    if (resource && !permitsNativeScenario(resource.fsPath)) { return 'legacy'; }
+    const explicit = seed && typeof seed === 'object' ? (seed as { format?: unknown }).format : undefined;
+    if (explicit === 'legacy' || explicit === 'native') { return explicit; }
+    const preferred = config.get<string>('newScenarioDefaults.format', 'native');
+    const items = [
+        { label: 'scen.yaml', description: vscode.l10n.t('SPPR metadata and script in one YAML file'), value: 'legacy' as const },
+        { label: 'meta.yaml + scen.feature', description: vscode.l10n.t('SPPR metadata and original script in separate files'), value: 'native' as const }
+    ];
+    if (preferred === 'native') { items.reverse(); }
+    return (await vscode.window.showQuickPick(items, { title: vscode.l10n.t('SPPR scenario file format'), ignoreFocusOut: true }))?.value;
+}
+
+async function writeCreatedScenario(uri: vscode.Uri, legacySource: string, format: SpprScenarioFormat): Promise<string> {
+    if(format==='native'){assertProjectFormat3(projectFormatRoot(uri.fsPath));}
+    const native = format === 'native' ? splitLegacySpprScenario(legacySource) : undefined;
+    const metadata = native?.metadata ?? legacySource;
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(metadata, 'utf8'));
+    if (native) { await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(uri, '..', 'scen.feature'), Buffer.from(native.script, 'utf8')); }
+    return metadata;
+}
 
 const SCENARIO_INDEX_CACHE_TTL_MS = 60_000;
 let scenarioIndexCache: ScenarioIndexCacheEntry | null = null;
@@ -103,7 +164,7 @@ const DEFAULT_NEW_SCENARIO_DEFAULTS: NewScenarioDefaults = {
 const DRIVE_MAIN_SCENARIO_BLOCK = [
     '    And I set "TestClientAlias_Placeholder" synonym to the current TestClient',
     '',
-    '    And I initialize TestClient connections',
+    '    And I refill TestClient connections table',
     '',
     '    And I save key parameters from pipeline and initialize main variables',
     '',
@@ -158,7 +219,7 @@ function normalizeGuid(value: string): string {
     return value.trim().toLowerCase();
 }
 
-function getConfiguredSystemFunctions(config: vscode.WorkspaceConfiguration): ConfiguredSystemFunction[] {
+export function getConfiguredSystemFunctions(config: vscode.WorkspaceConfiguration): ConfiguredSystemFunction[] {
     const configuredSystemFunctions = config.get<Array<{ name?: string; uid?: string }>>('newScenarioDefaults.systemFunctions') || [];
     const uniqueFunctionsByUid = new Map<string, ConfiguredSystemFunction>();
 
@@ -201,7 +262,7 @@ function getConfiguredSystemFunctions(config: vscode.WorkspaceConfiguration): Co
     }];
 }
 
-function getNewScenarioDefaults(config: vscode.WorkspaceConfiguration): NewScenarioDefaults {
+export function getNewScenarioDefaults(config: vscode.WorkspaceConfiguration): NewScenarioDefaults {
     const systemFunctions = getConfiguredSystemFunctions(config);
 
     return {
@@ -256,29 +317,15 @@ function applyManagedScenarioHeaderDefaults(
 }
 
 function getDefaultSystemFunction(defaults: NewScenarioDefaults): ConfiguredSystemFunction {
-    return defaults.systemFunctions[0]
-        || DEFAULT_SYSTEM_FUNCTION;
+    const first = defaults.systemFunctions[0];
+    if (!first) { throw new Error('Add a system function to the project catalog before creating a scenario.'); }
+    return first;
 }
 
-function getScenarioDefaultsConfigurationTarget(): vscode.ConfigurationTarget {
-    return vscode.workspace.workspaceFolders?.length
-        ? vscode.ConfigurationTarget.Workspace
-        : vscode.ConfigurationTarget.Global;
-}
-
-async function saveConfiguredSystemFunctions(systemFunctions: ConfiguredSystemFunction[]): Promise<void> {
-    const normalizedFunctions = systemFunctions.length > 0
-        ? systemFunctions
-        : [DEFAULT_SYSTEM_FUNCTION];
-
-    await vscode.workspace.getConfiguration('kotTestToolkit').update(
-        'newScenarioDefaults.systemFunctions',
-        normalizedFunctions.map(systemFunction => ({
-            name: systemFunction.name,
-            uid: systemFunction.uid
-        })),
-        getScenarioDefaultsConfigurationTarget()
-    );
+export async function getProjectScenarioDefaults(target: vscode.Uri): Promise<NewScenarioDefaults> {
+    const defaults = getNewScenarioDefaults(vscode.workspace.getConfiguration('kotTestToolkit', target));
+    const { loadProjectSystemFunctions } = await import('./projectSystemFunctions.js');
+    return { ...defaults, systemFunctions: await loadProjectSystemFunctions(target, defaults.systemFunctions) };
 }
 
 async function promptForRequiredString(
@@ -341,12 +388,7 @@ async function promptForMainScenarioGroup(
         .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
 
     if (normalizedGroups.length === 0) {
-        return vscode.window.showInputBox({
-            prompt: t('Enter group name'),
-            placeHolder: t('For example, "Sales tests 1" or "New Group"'),
-            ignoreFocusOut: true,
-            validateInput: value => value?.trim() ? null : t('Group name cannot be empty (required for display)')
-        }).then(result => result?.trim());
+        return '';
     }
 
     type GroupQuickPickItem = vscode.QuickPickItem & { groupName: string };
@@ -374,6 +416,10 @@ async function promptForMainScenarioGroup(
                     groupName: group
                 }));
 
+            if (!lowerInputValue || t('Ungrouped').toLocaleLowerCase().includes(lowerInputValue)) {
+                groupItems.unshift({ label: t('Ungrouped'), groupName: '' });
+            }
+
             const exactMatchExists = normalizedGroups.some(group => group.toLocaleLowerCase() === lowerInputValue);
             if (inputValue && !exactMatchExists) {
                 groupItems.unshift({
@@ -394,8 +440,8 @@ async function promptForMainScenarioGroup(
         quickPick.onDidChangeValue(updateItems);
         quickPick.onDidAccept(() => {
             const selectedItem = quickPick.selectedItems[0] || quickPick.activeItems[0];
-            const groupName = (selectedItem?.groupName || quickPick.value).trim();
-            if (!groupName) {
+            const groupName = (selectedItem?.groupName ?? quickPick.value).trim();
+            if (!groupName && !selectedItem) {
                 void vscode.window.showWarningMessage(t('Group name cannot be empty.'));
                 return;
             }
@@ -408,7 +454,7 @@ async function promptForMainScenarioGroup(
     });
 }
 
-async function promptForSystemFunctionName(
+export async function promptForSystemFunctionName(
     t: (message: string, ...args: string[]) => string,
     initialValue: string = ''
 ): Promise<string | undefined> {
@@ -464,9 +510,10 @@ function getWorkspaceRootPathOrThrow(t: (message: string, ...args: string[]) => 
 
 async function loadResolvedEtalonBasesState(
     context: vscode.ExtensionContext,
-    t: (message: string, ...args: string[]) => string
+    t: (message: string, ...args: string[]) => string,
+    owningWorkspaceRootPath?: string
 ): Promise<ResolvedEtalonBasesState> {
-    const workspaceRootPath = getWorkspaceRootPathOrThrow(t);
+    const workspaceRootPath = owningWorkspaceRootPath ?? getWorkspaceRootPathOrThrow(t);
     const yamlParametersManager = YamlParametersManager.getInstance(context);
     const parameters = await yamlParametersManager.loadParameters();
     const configuredPath = getConfiguredModelDbSettingsValue(parameters);
@@ -486,9 +533,9 @@ async function promptForEtalonBaseName(
     initialValue: string
 ): Promise<string | undefined> {
     return promptForRequiredString(
-        t('Enter etalon base name'),
+        t('Enter reference infobase name'),
         initialValue,
-        t('Etalon base name cannot be empty')
+        t('Reference infobase name cannot be empty')
     );
 }
 
@@ -497,9 +544,9 @@ async function promptForEtalonBaseId(
     initialValue: string
 ): Promise<string | undefined> {
     return promptForRequiredString(
-        t('Enter etalon base identifier'),
+        t('Enter reference infobase identifier'),
         initialValue,
-        t('Etalon base identifier cannot be empty')
+        t('Reference infobase identifier cannot be empty')
     );
 }
 
@@ -546,7 +593,7 @@ async function pickEtalonBase(
             base
         })),
         {
-            title: t('Etalon base'),
+            title: t('Reference infobase'),
             placeHolder,
             ignoreFocusOut: true
         }
@@ -593,18 +640,19 @@ async function pickEtalonBaseUserProfile(
     return undefined;
 }
 
-async function promptForSelectedEtalonBaseValues(
+export async function promptForSelectedEtalonBaseValues(
     t: (message: string, ...args: string[]) => string,
     context: vscode.ExtensionContext,
-    defaultUserProfile: string
+    defaultUserProfile: string,
+    owningWorkspaceRootPath?: string
 ): Promise<SelectedEtalonBaseValues | undefined> {
-    let etalonBasesState = await loadResolvedEtalonBasesState(context, t);
+    let etalonBasesState = await loadResolvedEtalonBasesState(context, t, owningWorkspaceRootPath);
     while (true) {
         if (etalonBasesState.bases.length > 0) {
             const selectedBase = await pickEtalonBase(
                 t,
                 etalonBasesState.bases,
-                t('Select etalon base for test.yaml')
+                t('Select reference infobase for test.yaml')
             );
             if (!selectedBase) {
                 return undefined;
@@ -614,7 +662,7 @@ async function promptForSelectedEtalonBaseValues(
                 t,
                 selectedBase,
                 defaultUserProfile,
-                t('Select user profile for etalon base "{0}"', selectedBase.name || selectedBase.databaseId)
+                t('Select user profile for reference infobase "{0}"', selectedBase.name || selectedBase.databaseId)
             );
             if (selectedProfileName === undefined) {
                 return undefined;
@@ -630,7 +678,7 @@ async function promptForSelectedEtalonBaseValues(
         const fallbackAction = await vscode.window.showQuickPick(
             [
                 {
-                    label: t('Manage etalon bases'),
+                    label: t('Manage reference infobases'),
                     detail: t('Create or import bases.yaml entries first.'),
                     action: 'manage' as const
                 },
@@ -641,8 +689,8 @@ async function promptForSelectedEtalonBaseValues(
                 }
             ],
             {
-                title: t('Etalon bases'),
-                placeHolder: t('ModelDBSettings file "{0}" does not contain etalon bases yet.', etalonBasesState.configuredPath || getDefaultModelDbSettingsValue()),
+                title: t('Reference infobases'),
+                placeHolder: t('ModelDBSettings file "{0}" does not contain reference infobases yet.', etalonBasesState.configuredPath || getDefaultModelDbSettingsValue()),
                 ignoreFocusOut: true
             }
         );
@@ -652,8 +700,8 @@ async function promptForSelectedEtalonBaseValues(
         }
 
         if (fallbackAction.action === 'manage') {
-            await handleManageEtalonBases(context);
-            etalonBasesState = await loadResolvedEtalonBasesState(context, t);
+            await handleManageEtalonBases(context, owningWorkspaceRootPath);
+            etalonBasesState = await loadResolvedEtalonBasesState(context, t, owningWorkspaceRootPath);
             continue;
         }
 
@@ -694,7 +742,7 @@ async function promptForEtalonBaseChoice(
             const selectedBase = await pickEtalonBase(
                 t,
                 etalonBasesState.bases,
-                t('Select etalon base for test.yaml'),
+                t('Select reference infobase for test.yaml'),
                 preferredBaseKey
             );
             if (!selectedBase) {
@@ -710,7 +758,7 @@ async function promptForEtalonBaseChoice(
         const fallbackAction = await vscode.window.showQuickPick(
             [
                 {
-                    label: t('Manage etalon bases'),
+                    label: t('Manage reference infobases'),
                     detail: t('Create or import bases.yaml entries first.'),
                     action: 'manage' as const
                 },
@@ -721,8 +769,8 @@ async function promptForEtalonBaseChoice(
                 }
             ],
             {
-                title: t('Etalon bases'),
-                placeHolder: t('ModelDBSettings file "{0}" does not contain etalon bases yet.', etalonBasesState.configuredPath || getDefaultModelDbSettingsValue()),
+                title: t('Reference infobases'),
+                placeHolder: t('ModelDBSettings file "{0}" does not contain reference infobases yet.', etalonBasesState.configuredPath || getDefaultModelDbSettingsValue()),
                 ignoreFocusOut: true
             }
         );
@@ -774,10 +822,9 @@ export async function handleChangeScenarioSystemFunctionFromEditor(context: vsco
         return;
     }
 
-    const config = vscode.workspace.getConfiguration('kotTestToolkit');
     const selectedSystemFunction = await promptForSystemFunction(
         t,
-        getNewScenarioDefaults(config),
+        await getProjectScenarioDefaults(document.uri),
         {
             forcePicker: true,
             placeHolder: t('Select system function for the scenario header')
@@ -859,13 +906,13 @@ async function selectScenarioForTestSettingsLink(
         return undefined;
     }
 
-    const discoveredTests = await scanWorkspaceForTests(workspaceFolder.uri);
-    if (!discoveredTests || discoveredTests.size === 0) {
+    const catalog = await scanWorkspaceForScenarioCatalog(workspaceFolder.uri);
+    if (catalog.all.length === 0) {
         vscode.window.showWarningMessage(t('No scenarios found in workspace.'));
         return undefined;
     }
 
-    const items = Array.from(discoveredTests.values())
+    const items = catalog.all
         .filter(item => !excludeUri || item.yamlFileUri.fsPath !== excludeUri.fsPath)
         .map(item => ({
             label: item.name,
@@ -876,8 +923,8 @@ async function selectScenarioForTestSettingsLink(
         .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }));
 
     const pickedItem = await vscode.window.showQuickPick(items, {
-        title: t('Select scenario for test settings'),
-        placeHolder: t('Choose the scenario linked to this test settings file'),
+        title: t('Select scenario for run settings'),
+        placeHolder: t('Choose the scenario linked to this run settings file'),
         ignoreFocusOut: true,
         matchOnDescription: true,
         matchOnDetail: true
@@ -909,30 +956,34 @@ async function selectScenarioForTestSettingsLink(
 }
 
 async function getActiveTestSettingsEditor(
-    context: vscode.ExtensionContext
-): Promise<{ t: (message: string, ...args: string[]) => string; editor: vscode.TextEditor; fieldLines: ReturnType<typeof findTestSettingsFieldLines>; }> {
+    context: vscode.ExtensionContext, target?: vscode.Uri, allowProcessSettings = false
+): Promise<{ t: (message: string, ...args: string[]) => string; editor: vscode.TextEditor; fieldLines: ReturnType<typeof findTestSettingsFieldLines>; version: number; source: string; }> {
     const t = await getTranslator(context.extensionUri);
-    const editor = vscode.window.activeTextEditor;
+    const active = vscode.window.activeTextEditor;
+    const editor = target && active?.document.uri.toString() !== target.toString()
+        ? await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(target), { preview: false }) : active;
     if (!editor) {
         throw new Error(t('No active editor.'));
     }
 
-    if (!isTestSettingsYamlFile(editor.document)) {
-        throw new Error(t('Open a test settings YAML file to use this command.'));
+    if (!isTestSettingsYamlFile(editor.document) && !(allowProcessSettings && isProcessTestSettingsYamlFile(editor.document))) {
+        throw new Error(t('Open a run settings YAML file to use this command.'));
     }
 
     return {
         t,
         editor,
-        fieldLines: findTestSettingsFieldLines(editor.document)
+        fieldLines: findTestSettingsFieldLines(editor.document), version: editor.document.version, source: editor.document.getText()
     };
 }
 
 async function applyTestSettingsFieldUpdates(
     editor: vscode.TextEditor,
     fieldLines: ReturnType<typeof findTestSettingsFieldLines>,
-    updates: Partial<Record<keyof ReturnType<typeof findTestSettingsFieldLines>, { fieldName: string; value: string }>>
+    updates: Partial<Record<keyof ReturnType<typeof findTestSettingsFieldLines>, { fieldName: string; value: string }>>,
+    expected?: { version: number; source: string }
 ): Promise<boolean> {
+    if (expected && (editor.document.version !== expected.version || editor.document.getText() !== expected.source)) { return false; }
     return editor.edit(editBuilder => {
         for (const [fieldKey, nextValue] of Object.entries(updates) as Array<[keyof typeof updates, { fieldName: string; value: string } | undefined]>) {
             if (!nextValue) {
@@ -953,19 +1004,19 @@ async function applyTestSettingsFieldUpdates(
     });
 }
 
-export async function handleChangeTestSettingsEtalonBaseFromEditor(context: vscode.ExtensionContext): Promise<void> {
+export async function handleChangeTestSettingsEtalonBaseFromEditor(context: vscode.ExtensionContext, target?: vscode.Uri): Promise<void> {
     let resolvedEditor: Awaited<ReturnType<typeof getActiveTestSettingsEditor>>;
     try {
-        resolvedEditor = await getActiveTestSettingsEditor(context);
+        resolvedEditor = await getActiveTestSettingsEditor(context, target, true);
     } catch (error) {
         const t = await getTranslator(context.extensionUri);
-        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open test settings editor context.'));
+        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open run settings editor context.'));
         return;
     }
 
     const { t, editor, fieldLines } = resolvedEditor;
     if (fieldLines.etalonBaseNameLine === null || fieldLines.modelDbIdLine === null) {
-        vscode.window.showWarningMessage(t('Etalon base fields were not found in ДанныеТеста.'));
+        vscode.window.showWarningMessage(t('Reference infobase fields were not found in ДанныеТеста.'));
         return;
     }
 
@@ -993,9 +1044,9 @@ export async function handleChangeTestSettingsEtalonBaseFromEditor(context: vsco
             fieldName: 'ИдентификаторБазы',
             value: selectedBase.baseId
         }
-    });
+    }, resolvedEditor);
     if (!updated) {
-        vscode.window.showWarningMessage(t('Failed to update etalon base fields.'));
+        vscode.window.showWarningMessage(t('Failed to update reference infobase fields.'));
     }
 }
 
@@ -1005,7 +1056,7 @@ export async function handleChangeTestSettingsScenarioFromEditor(context: vscode
         resolvedEditor = await getActiveTestSettingsEditor(context);
     } catch (error) {
         const t = await getTranslator(context.extensionUri);
-        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open test settings editor context.'));
+        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open run settings editor context.'));
         return;
     }
 
@@ -1040,7 +1091,7 @@ export async function handleChangeTestSettingsScenarioFromEditor(context: vscode
 
     const pickedAction = await vscode.window.showQuickPick(quickPickItems, {
         title: t('Change linked scenario'),
-        placeHolder: t('Choose how to update the scenario reference in this test settings file'),
+        placeHolder: t('Choose how to update the scenario reference in this run settings file'),
         ignoreFocusOut: true
     });
     if (!pickedAction) {
@@ -1088,20 +1139,20 @@ export async function handleChangeTestSettingsScenarioFromEditor(context: vscode
         }
     });
     if (!updated) {
-        vscode.window.showWarningMessage(t('Failed to update linked scenario fields in test settings.'));
+        vscode.window.showWarningMessage(t('Failed to update linked scenario fields in run settings.'));
         return;
     }
 
-    vscode.window.showInformationMessage(t('Test settings linked to scenario "{0}".', selectedScenario.name));
+    vscode.window.showInformationMessage(t('Run settings linked to scenario "{0}".', selectedScenario.name));
 }
 
-export async function handleChangeTestSettingsUserProfileFromEditor(context: vscode.ExtensionContext): Promise<void> {
+export async function handleChangeTestSettingsUserProfileFromEditor(context: vscode.ExtensionContext, target?: vscode.Uri): Promise<void> {
     let resolvedEditor: Awaited<ReturnType<typeof getActiveTestSettingsEditor>>;
     try {
-        resolvedEditor = await getActiveTestSettingsEditor(context);
+        resolvedEditor = await getActiveTestSettingsEditor(context, target, true);
     } catch (error) {
         const t = await getTranslator(context.extensionUri);
-        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open test settings editor context.'));
+        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open run settings editor context.'));
         return;
     }
 
@@ -1147,7 +1198,7 @@ export async function handleChangeTestSettingsUserProfileFromEditor(context: vsc
             t,
             selectedBase,
             defaultProfile,
-            t('Select user profile for test settings')
+            t('Select user profile for run settings')
         )
         : await promptForEtalonBaseUserProfile(t, defaultProfile);
     if (nextProfileName === undefined) {
@@ -1171,7 +1222,7 @@ export async function handleChangeTestSettingsUserProfileFromEditor(context: vsc
             fieldName: 'ПрофильПользователя',
             value: nextProfileName
         }
-    });
+    }, resolvedEditor);
     if (!updated) {
         vscode.window.showWarningMessage(t('Failed to update test user profile.'));
     }
@@ -1183,7 +1234,7 @@ export async function handleSyncTestSettingsFromScenario(context: vscode.Extensi
         resolvedEditor = await getActiveTestSettingsEditor(context);
     } catch (error) {
         const t = await getTranslator(context.extensionUri);
-        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open test settings editor context.'));
+        vscode.window.showWarningMessage(error instanceof Error ? error.message : t('Failed to open run settings editor context.'));
         return;
     }
 
@@ -1195,7 +1246,7 @@ export async function handleSyncTestSettingsFromScenario(context: vscode.Extensi
     try {
         scenarioText = Buffer.from(await vscode.workspace.fs.readFile(scenarioUri)).toString('utf-8');
     } catch (error) {
-        vscode.window.showErrorMessage(t('Failed to read sibling scenario YAML near test settings: {0}', String(error)));
+        vscode.window.showErrorMessage(t('Failed to read sibling scenario YAML near run settings: {0}', String(error)));
         return;
     }
 
@@ -1244,41 +1295,68 @@ export async function handleSyncTestSettingsFromScenario(context: vscode.Extensi
     }
 
     if (Object.keys(pendingUpdates).length === 0) {
-        vscode.window.showInformationMessage(t('Test settings are already synchronized with the sibling scenario YAML.'));
+        vscode.window.showInformationMessage(t('Run settings are already synchronized with the sibling scenario YAML.'));
         return;
     }
 
     const updated = await applyTestSettingsFieldUpdates(editor, fieldLines, pendingUpdates);
 
     if (!updated) {
-        vscode.window.showWarningMessage(t('Failed to synchronize test settings from the sibling scenario YAML.'));
+        vscode.window.showWarningMessage(t('Failed to synchronize run settings from the sibling scenario YAML.'));
         return;
     }
 
-    vscode.window.showInformationMessage(t('Test settings synchronized from the sibling scenario YAML.'));
+    vscode.window.showInformationMessage(t('Run settings synchronized from the sibling scenario YAML.'));
+}
+
+async function chooseSystemFunctionProject(t: (message: string, ...args: string[]) => string): Promise<vscode.Uri | undefined> {
+    const environment = projectLibraryEnvironment();
+    const active = vscode.window.activeTextEditor?.document.uri;
+    if (active?.scheme === 'file') {
+        try { resolveProjectLibraryRoot(active.fsPath, environment.workspaceRoots, environment.scanRoots); return active; }
+        catch { /* An unrelated editor does not identify the catalog project. */ }
+    }
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    const roots = [...new Set([...environment.workspaceRoots, ...environment.scanRoots].map(root =>
+        resolveProjectLibraryRoot(root, environment.workspaceRoots, environment.scanRoots)))];
+    if (roots.length === 1) { return vscode.Uri.file(roots[0]); }
+    if (!roots.length) { throw new Error(t('No workspace folder is open.')); }
+    const picked = await vscode.window.showQuickPick(roots.map(root => ({ label: folders.find(folder => path.resolve(folder.uri.fsPath) === path.resolve(root))?.name || path.basename(root),
+        description: root, uri: vscode.Uri.file(root) })),
+        { title: t('System functions'), placeHolder: t('Select project for system functions'), ignoreFocusOut: true });
+    return picked?.uri;
 }
 
 export async function handleManageSystemFunctions(context: vscode.ExtensionContext): Promise<void> {
     const t = await getTranslator(context.extensionUri);
-    const config = vscode.workspace.getConfiguration('kotTestToolkit');
-    let systemFunctions = [...getConfiguredSystemFunctions(config)];
+    const target = await chooseSystemFunctionProject(t);
+    if (!target) { return; }
+    const { projectSystemFunctionStore } = await import('./projectSystemFunctions.js');
+    const store = projectSystemFunctionStore(target);
+    let systemFunctions = [...(await getProjectScenarioDefaults(target)).systemFunctions];
+    let savedFunctions = [...systemFunctions];
+    const save = async () => {
+        await store.replaceSystemFunctions(systemFunctions, savedFunctions);
+        savedFunctions = [...systemFunctions];
+    };
 
     while (true) {
-        const pickedItem = await vscode.window.showQuickPick(
-            [
+        const items: SystemFunctionQuickPickItem[] = [
                 ...systemFunctions.map((systemFunction, index) => ({
                     label: systemFunction.name,
                     description: systemFunction.uid,
                     detail: index === 0 ? t('Default') : undefined,
-                    kind: 'systemFunction' as const,
+                    entryKind: 'systemFunction' as const,
                     uid: systemFunction.uid
                 })),
                 {
                     label: t('Add system function'),
                     detail: t('Create a new system function entry'),
-                    kind: 'add' as const
+                    entryKind: 'add' as const
                 }
-            ],
+            ];
+        const pickedItem = await vscode.window.showQuickPick<SystemFunctionQuickPickItem>(
+            items,
             {
                 placeHolder: t('Manage available system functions'),
                 title: t('System functions'),
@@ -1290,7 +1368,7 @@ export async function handleManageSystemFunctions(context: vscode.ExtensionConte
             return;
         }
 
-        if (pickedItem.kind === 'add') {
+        if (pickedItem.entryKind === 'add') {
             const name = await promptForSystemFunctionName(t);
             if (name === undefined) {
                 continue;
@@ -1299,7 +1377,7 @@ export async function handleManageSystemFunctions(context: vscode.ExtensionConte
             const uid = generateUniqueSystemFunctionUid(systemFunctions);
 
             systemFunctions = [...systemFunctions, { name, uid }];
-            await saveConfiguredSystemFunctions(systemFunctions);
+            await save();
             continue;
         }
 
@@ -1349,7 +1427,7 @@ export async function handleManageSystemFunctions(context: vscode.ExtensionConte
                     currentSystemFunction,
                     ...systemFunctions.filter((_, index) => index !== currentIndex)
                 ];
-                await saveConfiguredSystemFunctions(systemFunctions);
+                await save();
             }
             continue;
         }
@@ -1365,7 +1443,7 @@ export async function handleManageSystemFunctions(context: vscode.ExtensionConte
                     ? { ...systemFunction, name: updatedName }
                     : systemFunction
             );
-            await saveConfiguredSystemFunctions(systemFunctions);
+            await save();
             continue;
         }
 
@@ -1386,7 +1464,7 @@ export async function handleManageSystemFunctions(context: vscode.ExtensionConte
                     ? { ...systemFunction, uid: updatedUid }
                     : systemFunction
             );
-            await saveConfiguredSystemFunctions(systemFunctions);
+            await save();
             continue;
         }
 
@@ -1396,7 +1474,7 @@ export async function handleManageSystemFunctions(context: vscode.ExtensionConte
         }
 
         systemFunctions = systemFunctions.filter((_, index) => index !== currentIndex);
-        await saveConfiguredSystemFunctions(systemFunctions);
+        await save();
     }
 }
 
@@ -1419,12 +1497,12 @@ async function promptForEtalonBaseDtPath(
             },
             {
                 label: t('Clear DT path'),
-                detail: t('Keep the etalon base without a default DT file.'),
+                detail: t('Keep the reference infobase without a default DT file.'),
                 action: 'clear' as const
             }
         ],
         {
-            title: t('Etalon base DT file'),
+            title: t('Reference infobase DT file'),
             placeHolder: t('Choose how to set ПутьКФайлуВыгрузки'),
             ignoreFocusOut: true
         }
@@ -1468,7 +1546,7 @@ async function promptForEtalonBaseDtPath(
     return pickedFile[0].fsPath;
 }
 
-async function promptForEtalonBaseProfileValues(
+export async function promptForEtalonBaseProfileValues(
     t: (message: string, ...args: string[]) => string,
     initialProfile?: Partial<EtalonBaseUserProfile>
 ): Promise<EtalonBaseUserProfile | undefined> {
@@ -1517,21 +1595,22 @@ async function manageEtalonBaseProfiles(
     };
 
     while (true) {
-        const pickedItem = await vscode.window.showQuickPick(
-            [
+        const items: EtalonProfileQuickPickItem[] = [
                 ...nextBase.userProfiles.map(profile => ({
                     label: profile.profileName,
                     description: profile.login || undefined,
                     detail: profile.password ? t('Password is set') : t('Password is empty'),
-                    kind: 'profile' as const,
+                    entryKind: 'profile' as const,
                     profileName: profile.profileName
                 })),
                 {
                     label: t('Add user profile'),
-                    detail: t('Create a new profile for this etalon base.'),
-                    kind: 'add' as const
+                    detail: t('Create a new profile for this reference infobase.'),
+                    entryKind: 'add' as const
                 }
-            ],
+            ];
+        const pickedItem = await vscode.window.showQuickPick<EtalonProfileQuickPickItem>(
+            items,
             {
                 title: t('User profiles for "{0}"', base.name || base.databaseId),
                 placeHolder: t('Choose a profile to edit or add a new one'),
@@ -1543,7 +1622,7 @@ async function manageEtalonBaseProfiles(
             return nextBase;
         }
 
-        if (pickedItem.kind === 'add') {
+        if (pickedItem.entryKind === 'add') {
             const newProfile = await promptForEtalonBaseProfileValues(t);
             if (!newProfile) {
                 continue;
@@ -1571,7 +1650,7 @@ async function manageEtalonBaseProfiles(
                 },
                 {
                     label: t('Delete profile'),
-                    detail: t('Remove this profile from the etalon base.'),
+                    detail: t('Remove this profile from the reference infobase.'),
                     action: 'delete' as const
                 }
             ],
@@ -1609,7 +1688,7 @@ async function manageEtalonBaseProfiles(
     }
 }
 
-async function promptForEtalonBaseValues(
+export async function promptForEtalonBaseValues(
     t: (message: string, ...args: string[]) => string,
     workspaceRootPath: string,
     initialBase?: Partial<EtalonBaseDefinition>
@@ -1646,45 +1725,46 @@ async function openEtalonBasesDocument(filePath: string): Promise<void> {
     await vscode.window.showTextDocument(document, { preview: false });
 }
 
-export async function handleManageEtalonBases(context: vscode.ExtensionContext): Promise<void> {
+export async function handleManageEtalonBases(context: vscode.ExtensionContext, owningWorkspaceRootPath?: string): Promise<void> {
     const t = await getTranslator(context.extensionUri);
-    let etalonBasesState = await loadResolvedEtalonBasesState(context, t);
+    let etalonBasesState = await loadResolvedEtalonBasesState(context, t, owningWorkspaceRootPath);
 
     while (true) {
-        const pickedItem = await vscode.window.showQuickPick(
-            [
+        const items: EtalonBaseQuickPickItem[] = [
                 ...etalonBasesState.bases.map(base => ({
                     label: base.name || base.databaseId,
                     description: base.databaseId,
                     detail: base.dtFilePath
                         ? t('DT: {0} · Profiles: {1}', base.dtFilePath, String(base.userProfiles.length))
                         : t('Profiles: {0}', String(base.userProfiles.length)),
-                    kind: 'base' as const,
+                    entryKind: 'base' as const,
                     databaseId: base.databaseId
                 })),
                 {
-                    label: t('Add etalon base'),
-                    detail: t('Create a new etalon base entry in bases.yaml.'),
-                    kind: 'add' as const
+                    label: t('Add reference infobase'),
+                    detail: t('Create a new reference infobase entry in bases.yaml.'),
+                    entryKind: 'add' as const
                 },
                 {
                     label: t('Import bases.yaml from file'),
-                    detail: t('Load etalon bases from an external YAML file into the current ModelDBSettings path.'),
-                    kind: 'import' as const
+                    detail: t('Load reference infobases from an external YAML file into the current ModelDBSettings path.'),
+                    entryKind: 'import' as const
                 },
                 {
                     label: t('Export bases.yaml to file'),
-                    detail: t('Save the current etalon bases to an external YAML file.'),
-                    kind: 'export' as const
+                    detail: t('Save the current reference infobases to an external YAML file.'),
+                    entryKind: 'export' as const
                 },
                 {
                     label: t('Open current bases.yaml'),
                     detail: etalonBasesState.configuredPath || getDefaultModelDbSettingsValue(),
-                    kind: 'openCurrent' as const
+                    entryKind: 'openCurrent' as const
                 }
-            ],
+            ];
+        const pickedItem = await vscode.window.showQuickPick<EtalonBaseQuickPickItem>(
+            items,
             {
-                title: t('Etalon bases'),
+                title: t('Reference infobases'),
                 placeHolder: t('ModelDBSettings: {0}', etalonBasesState.configuredPath || getDefaultModelDbSettingsValue()),
                 ignoreFocusOut: true
             }
@@ -1694,7 +1774,7 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext):
             return;
         }
 
-        if (pickedItem.kind === 'add') {
+        if (pickedItem.entryKind === 'add') {
             const nextBase = await promptForEtalonBaseValues(t, etalonBasesState.workspaceRootPath);
             if (!nextBase) {
                 continue;
@@ -1713,7 +1793,7 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext):
             continue;
         }
 
-        if (pickedItem.kind === 'import') {
+        if (pickedItem.entryKind === 'import') {
             const selectedFile = await vscode.window.showOpenDialog({
                 canSelectFiles: true,
                 canSelectFolders: false,
@@ -1735,12 +1815,12 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext):
             };
             await saveEtalonBasesToFile(etalonBasesState.resolvedPath, etalonBasesState.bases);
             vscode.window.showInformationMessage(
-                t('Imported {0} etalon bases into {1}.', String(importedBases.length), etalonBasesState.configuredPath || getDefaultModelDbSettingsValue())
+                t('Imported {0} reference infobases into {1}.', String(importedBases.length), etalonBasesState.configuredPath || getDefaultModelDbSettingsValue())
             );
             continue;
         }
 
-        if (pickedItem.kind === 'export') {
+        if (pickedItem.entryKind === 'export') {
             const selectedTarget = await vscode.window.showSaveDialog({
                 title: t('Export bases.yaml'),
                 saveLabel: t('Export'),
@@ -1754,11 +1834,11 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext):
             }
 
             await saveEtalonBasesToFile(selectedTarget.fsPath, etalonBasesState.bases);
-            vscode.window.showInformationMessage(t('Exported etalon bases to {0}.', selectedTarget.fsPath));
+            vscode.window.showInformationMessage(t('Exported reference infobases to {0}.', selectedTarget.fsPath));
             continue;
         }
 
-        if (pickedItem.kind === 'openCurrent') {
+        if (pickedItem.entryKind === 'openCurrent') {
             await saveEtalonBasesToFile(etalonBasesState.resolvedPath, etalonBasesState.bases);
             await openEtalonBasesDocument(etalonBasesState.resolvedPath);
             continue;
@@ -1779,17 +1859,17 @@ export async function handleManageEtalonBases(context: vscode.ExtensionContext):
                 },
                 {
                     label: t('Manage user profiles'),
-                    detail: t('Add, edit or delete user profiles for this etalon base.'),
+                    detail: t('Add, edit or delete user profiles for this reference infobase.'),
                     action: 'profiles' as const
                 },
                 {
                     label: t('Delete'),
-                    detail: t('Remove this etalon base from bases.yaml.'),
+                    detail: t('Remove this reference infobase from bases.yaml.'),
                     action: 'delete' as const
                 }
             ],
             {
-                title: t('Etalon base "{0}"', currentBase.name || currentBase.databaseId),
+                title: t('Reference infobase "{0}"', currentBase.name || currentBase.databaseId),
                 ignoreFocusOut: true
             }
         );
@@ -1885,47 +1965,69 @@ async function promptForBooleanValue(
     return pickedValue?.value;
 }
 
+async function promptForScenarioCategory(
+    existingCategories: readonly string[],
+    t: (message: string, ...args: string[]) => string
+): Promise<string | undefined> {
+    const items: ScenarioCategoryQuickPickItem[] = [
+        ...existingCategories.map(category => ({
+            label: category,
+            entryKind: 'category' as const,
+            category
+        })),
+        {
+            label: `$(add) ${t('Create new category…')}`,
+            entryKind: 'create'
+        },
+        {
+            label: `$(circle-slash) ${t('No category')}`,
+            entryKind: 'none'
+        }
+    ];
+    const selected = await vscode.window.showQuickPick(items, {
+        title: t('Nested scenario category'),
+        placeHolder: t('Select an existing category, create a new one, or continue without a category'),
+        ignoreFocusOut: true
+    });
+    if (!selected) {
+        return undefined;
+    }
+    if (selected.entryKind === 'none') {
+        return '';
+    }
+    if (selected.entryKind === 'category') {
+        return selected.category;
+    }
+    const value = await vscode.window.showInputBox({
+        title: t('Nested scenario category'),
+        prompt: t('Enter a category for the nested scenario.'),
+        ignoreFocusOut: true,
+        validateInput: input => validateScenarioCategoryValue(input, t)
+    });
+    return value?.trim();
+}
+
 async function promptForScenarioHeaderValues(
     t: (message: string, ...args: string[]) => string,
     defaults: NewScenarioDefaults,
     systemFunction: ConfiguredSystemFunction,
     reportLevel2: string,
-    reportLevel2Prompt: string
+    reportLevel2Prompt: string,
+    target: vscode.Uri,
+    initialResponsible = ''
 ): Promise<ScenarioHeaderValues | undefined> {
     const baseValues = createScenarioHeaderValues(defaults, systemFunction, reportLevel2);
-    const pickedMode = await vscode.window.showQuickPick(
-        [
-            {
-                label: t('Use defaults'),
-                detail: t('Fill the remaining header fields from workspace defaults.'),
-                mode: 'defaults' as const
-            },
-            {
-                label: t('Fill manually'),
-                detail: t('Prompt for each remaining header field and prefill it from workspace defaults.'),
-                mode: 'manual' as const
-            }
-        ],
-        {
-            placeHolder: t('How should the remaining scenario header fields be filled?'),
-            title: t('Scenario header fields'),
-            ignoreFocusOut: true
-        }
-    );
-
-    if (!pickedMode) {
-        return undefined;
-    }
-
-    if (pickedMode.mode === 'defaults') {
-        return baseValues;
-    }
-
-    const project = await promptForRequiredString(
-        t('Enter project name'),
-        baseValues.project,
-        t('Project cannot be empty')
-    );
+    const responsible = await promptForCreationProperty(target, 'responsibles', 'Responsible', initialResponsible, t, true);
+    if (responsible === undefined) { return undefined; }
+    baseValues.responsible = responsible;
+    const mode = await vscode.window.showQuickPick([
+        { label: t('Use defaults'), mode: 'defaults',
+            detail: t('Project: {0}; report levels: {1} / {2}', baseValues.project, baseValues.reportLevel1, baseValues.reportLevel2) },
+        { label: t('Fill manually'), mode: 'manual', detail: t('Prompt for each remaining header field and prefill it from workspace defaults.') }
+    ], { title: t('Scenario header fields'), ignoreFocusOut: true });
+    if (!mode) { return undefined; }
+    if (mode.mode === 'defaults') { return baseValues; }
+    const project = await promptForCreationProperty(target, 'projects', 'Project', baseValues.project, t);
     if (project === undefined) {
         return undefined;
     }
@@ -1948,20 +2050,12 @@ async function promptForScenarioHeaderValues(
         return undefined;
     }
 
-    const reportLevel1 = await promptForRequiredString(
-        t('Enter report level 1'),
-        baseValues.reportLevel1,
-        t('Report level 1 cannot be empty')
-    );
+    const reportLevel1 = await promptForCreationProperty(target, 'reportLevel1', 'Report level 1', baseValues.reportLevel1, t);
     if (reportLevel1 === undefined) {
         return undefined;
     }
 
-    const reportLevel2Value = await promptForRequiredString(
-        reportLevel2Prompt,
-        baseValues.reportLevel2,
-        t('Report level 2 cannot be empty')
-    );
+    const reportLevel2Value = await promptForCreationProperty(target, 'reportLevel2', reportLevel2Prompt, baseValues.reportLevel2, t);
     if (reportLevel2Value === undefined) {
         return undefined;
     }
@@ -2050,6 +2144,8 @@ async function getKnownScenarioIndex(): Promise<ScenarioIndex> {
         return createEmptyScenarioIndex();
     }
 
+    const environment = projectLibraryEnvironment();
+    const sharedGroups = await loadProjectLibraryGroups(environment.workspaceRoots, environment.scanRoots);
     const workspaceRoot = workspaceRootUri.toString();
     const now = Date.now();
     if (
@@ -2057,24 +2153,24 @@ async function getKnownScenarioIndex(): Promise<ScenarioIndex> {
         scenarioIndexCache.workspaceRoot === workspaceRoot &&
         now - scenarioIndexCache.loadedAt < SCENARIO_INDEX_CACHE_TTL_MS
     ) {
+        scenarioIndexCache.index.mainScenarioGroups = new Set(sharedGroups
+            .filter(group => group.sections.some(section => section !== 'standalone')).map(group => group.name));
         return scenarioIndexCache.index;
     }
 
-    const discoveredTests = await scanWorkspaceForTests(workspaceRootUri);
+    const catalog = await scanWorkspaceForScenarioCatalog(workspaceRootUri);
     const index = createEmptyScenarioIndex();
-    if (discoveredTests) {
-        for (const [scenarioName, testInfo] of discoveredTests.entries()) {
-            index.names.add(normalizeScenarioName(scenarioName));
-            if (typeof testInfo?.name === 'string' && testInfo.name.trim().length > 0) {
-                index.names.add(normalizeScenarioName(testInfo.name));
-            }
-            if (typeof testInfo?.scenarioCode === 'string' && testInfo.scenarioCode.trim().length > 0) {
-                index.codes.add(normalizeScenarioCode(testInfo.scenarioCode));
-            }
-            if (typeof testInfo?.tabName === 'string' && testInfo.tabName.trim().length > 0) {
-                index.mainScenarioGroups.add(testInfo.tabName.trim());
-            }
+    for (const testInfo of catalog.all) {
+        index.names.add(normalizeScenarioName(testInfo.name));
+        if (typeof testInfo.scenarioCode === 'string' && testInfo.scenarioCode.trim().length > 0) {
+            index.codes.add(normalizeScenarioCode(testInfo.scenarioCode));
         }
+        if (typeof testInfo.tabName === 'string' && testInfo.tabName.trim().length > 0 && testInfo.tabName !== 'Ungrouped') {
+            index.mainScenarioGroups.add(testInfo.tabName.trim());
+        }
+    }
+    for (const group of sharedGroups) {
+        if (group.sections.some(section => section !== 'standalone')) { index.mainScenarioGroups.add(group.name); }
     }
 
     scenarioIndexCache = {
@@ -2170,12 +2266,15 @@ async function maybeAutoAddScenarioToFavorites(
  * Запрашивает имя, код, папку, создает папку с кодом, файл scen.yaml и папку files.
  * @param context Контекст расширения для доступа к ресурсам (шаблонам).
  */
-export async function handleCreateNestedScenario(context: vscode.ExtensionContext): Promise<void> {
+export async function handleCreateNestedScenario(
+    context: vscode.ExtensionContext,
+    options: CreateNestedScenarioOptions = {}
+): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     const config = vscode.workspace.getConfiguration('kotTestToolkit');
     const newScenarioDefaults = getNewScenarioDefaults(config);
     const newScenarioLanguage = getConfiguredScenarioLanguage(config);
-    const knownScenarioIndex = await getKnownScenarioIndex();
+    const knownScenarioIndex = createEmptyScenarioIndex();
     const knownScenarioNames = knownScenarioIndex.names;
     const knownScenarioCodes = knownScenarioIndex.codes;
     console.log("[Cmd:createNestedScenario] Starting...");
@@ -2213,30 +2312,12 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
     });
     // Если пользователь нажал Escape или не ввел имя
     if (name === undefined) { console.log("[Cmd:createNestedScenario] Cancelled at name input."); return; }
+    const discovered = await getKnownScenarioIndex();
+    discovered.names.forEach(value => knownScenarioNames.add(value));
+    discovered.codes.forEach(value => knownScenarioCodes.add(value));
     const trimmedName = name.trim();
     if (knownScenarioNames.has(normalizeScenarioName(trimmedName))) {
         vscode.window.showErrorMessage(t('Scenario name "{0}" already exists.', trimmedName));
-        return;
-    }
-
-    // 2. Запрос кода
-    const code = await vscode.window.showInputBox({
-        prompt: t('Enter scenario numeric code (digits only)'),
-        ignoreFocusOut: true,
-        validateInput: value => {
-            const trimmedValue = value?.trim();
-            if (!trimmedValue) return t('Code cannot be empty');
-            if (!/^\d+$/.test(trimmedValue)) return t('Code must contain digits only');
-            if (knownScenarioCodes.has(normalizeScenarioCode(trimmedValue))) {
-                return t('Scenario code "{0}" already exists.', trimmedValue);
-            }
-            return null;
-        }
-    });
-    if (code === undefined) { console.log("[Cmd:createNestedScenario] Cancelled at code input."); return; }
-    const trimmedCode = code.trim();
-    if (knownScenarioCodes.has(normalizeScenarioCode(trimmedCode))) {
-        vscode.window.showErrorMessage(t('Scenario code "{0}" already exists.', trimmedCode));
         return;
     }
 
@@ -2261,7 +2342,7 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
         canSelectFiles: false,
         canSelectFolders: true, // Разрешаем выбор только папок
         canSelectMany: false, // Только одну папку
-        openLabel: t('Create folder "{0}" here', trimmedCode),
+        openLabel: t('Select folder'),
         title: t('Select parent folder for nested scenario'),
         defaultUri: defaultDialogUri // Начинаем с пути по умолчанию
     });
@@ -2269,6 +2350,17 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
     if (!folderUris || folderUris.length === 0) { console.log("[Cmd:createNestedScenario] Cancelled at folder selection."); return; }
     const baseFolderUri = folderUris[0]; // Выбранная родительская папка
 
+    const workspaceRoot = getWorkspaceRootUri();
+    if (!workspaceRoot) { await vscode.window.showErrorMessage(t('No workspace folder is open.')); return; }
+    const code = await promptForNewTestCode(context, baseFolderUri, { prompt: 'Enter scenario numeric code (digits only)', numericOnly: true, existingCodes: [...knownScenarioCodes] });
+    if (!code) { return; }
+    const trimmedCode = code.code;
+    if (knownScenarioCodes.has(normalizeScenarioCode(trimmedCode))) {
+        vscode.window.showErrorMessage(t('Scenario code "{0}" already exists.', trimmedCode));
+        return;
+    }
+
+    newScenarioDefaults.systemFunctions = (await getProjectScenarioDefaults(baseFolderUri)).systemFunctions;
     const selectedSystemFunction = await promptForSystemFunction(t, newScenarioDefaults);
     if (!selectedSystemFunction) {
         console.log("[Cmd:createNestedScenario] Cancelled at system function selection.");
@@ -2280,57 +2372,74 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
         newScenarioDefaults,
         selectedSystemFunction,
         newScenarioDefaults.nestedReportLevel2,
-        t('Enter report level 2 for nested scenario')
+        t('Enter report level 2 for nested scenario'), baseFolderUri, code.author
     );
     if (!scenarioHeaderValues) {
         console.log("[Cmd:createNestedScenario] Cancelled at scenario header values prompt.");
         return;
     }
 
+    const scenarioCategory = await promptForScenarioCategory(
+        options.existingCategories ?? [],
+        t
+    );
+    if (scenarioCategory === undefined) {
+        console.log("[Cmd:createNestedScenario] Cancelled at category prompt.");
+        return;
+    }
+
+    const creationRoot = projectFormatRoot(baseFolderUri.fsPath);
+    const creationFormat = projectFormat(creationRoot);
+    const scenarioFormat = await promptForScenarioFormat(config, options, baseFolderUri);
+    if (!scenarioFormat) { return; }
+
     // 5. Создание папок и файла
     const newUid = uuidv4();
     const scenarioFolderUri = vscode.Uri.joinPath(baseFolderUri, trimmedCode); // Итоговая папка: parent/code
     const filesFolderUri = vscode.Uri.joinPath(scenarioFolderUri, 'files'); // Папка для файлов
     const templateUri = vscode.Uri.joinPath(context.extensionUri, 'res', 'scen.yaml'); // Шаблон
-    const targetFileUri = vscode.Uri.joinPath(scenarioFolderUri, 'scen.yaml'); // Итоговый файл: parent/code/scen.yaml
+    const targetFileUri = vscode.Uri.joinPath(scenarioFolderUri, scenarioFormat === 'native' ? 'meta.yaml' : 'scen.yaml'); // Итоговый файл: parent/code/scen.yaml
 
     console.log(`[Cmd:createNestedScenario] Target folder: ${scenarioFolderUri.fsPath}`);
     // console.log(`[Cmd:createNestedScenario] Template path: ${templateUri.fsPath}`);
 
     try {
-        // Создаем папку сценария (fs.createDirectory рекурсивна)
-        await vscode.workspace.fs.createDirectory(scenarioFolderUri);
-        // Создаем пустую папку files
-        await vscode.workspace.fs.createDirectory(filesFolderUri);
+        await code.claim(baseFolderUri, async () => {
+            assertProjectFormatUnchanged(creationRoot, creationFormat);
+            await fs.mkdir(scenarioFolderUri.fsPath);
+            // Создаем пустую папку files
+            await vscode.workspace.fs.createDirectory(filesFolderUri);
 
-        // Читаем шаблон
-        const templateBytes = await vscode.workspace.fs.readFile(templateUri);
-        const templateContent = Buffer.from(templateBytes).toString('utf-8');
+            // Читаем шаблон
+            const templateBytes = await vscode.workspace.fs.readFile(templateUri);
+            const templateContent = Buffer.from(templateBytes).toString('utf-8');
 
-        const templateWithDefaults = applyManagedScenarioHeaderDefaults(
-            templateContent,
-            scenarioHeaderValues
-        );
+            const templateWithDefaults = applyManagedScenarioHeaderDefaults(
+                templateContent,
+                scenarioHeaderValues
+            );
+            // Заменяем плейсхолдеры
+            const finalContent = applyCreationResponsible(applyScenarioLanguage(
+                applyTemplateReplacements(templateWithDefaults, {
+                    Name_Placeholder: escapeYamlDoubleQuotedString(trimmedName),
+                    Code_Placeholder: escapeYamlDoubleQuotedString(trimmedCode),
+                    UID_Placeholder: escapeYamlDoubleQuotedString(newUid)
+                }),
+                newScenarioLanguage
+            ), scenarioHeaderValues.responsible ?? '');
 
-        // Заменяем плейсхолдеры
-        const finalContent = applyScenarioLanguage(
-            applyTemplateReplacements(templateWithDefaults, {
-                Name_Placeholder: escapeYamlDoubleQuotedString(trimmedName),
-                Code_Placeholder: escapeYamlDoubleQuotedString(trimmedCode),
-                UID_Placeholder: escapeYamlDoubleQuotedString(newUid)
-            }),
-            newScenarioLanguage
-        );
-
-        // Записываем новый файл
-        await vscode.workspace.fs.writeFile(targetFileUri, Buffer.from(finalContent, 'utf-8'));
-        rememberScenarioInIndex(trimmedName, trimmedCode);
+            // Записываем новый файл
+            const storedContent = await writeCreatedScenario(targetFileUri, finalContent, scenarioFormat);
+            await registerCreatedProjectScenario(targetFileUri, storedContent, { category: scenarioCategory });
+            rememberScenarioInIndex(trimmedName, trimmedCode);
+        });
 
         console.log(`[Cmd:createNestedScenario] Success! Created: ${targetFileUri.fsPath}`);
         vscode.window.showInformationMessage(t('Nested scenario "{0}" ({1}) has been created successfully!', trimmedName, trimmedCode));
 
         // Открываем созданный файл в редакторе
-        const doc = await vscode.workspace.openTextDocument(targetFileUri);
+        const editorUri = scenarioFormat === 'native' ? vscode.Uri.joinPath(scenarioFolderUri, 'scen.feature') : targetFileUri;
+        const doc = await vscode.workspace.openTextDocument(editorUri);
         await vscode.window.showTextDocument(doc);
 
         // Обновляем Test Manager
@@ -2346,50 +2455,81 @@ export async function handleCreateNestedScenario(context: vscode.ExtensionContex
 
 /**
  * Обработчик команды создания главного сценария.
- * Запрашивает имя, папку, создает папку с именем, файл scen.yaml, папку test с файлом name.yaml и папку files.
+ * Запрашивает имя и код, создает папку по коду, scen.yaml, test/code.yaml и files.
  * @param context Контекст расширения для доступа к ресурсам (шаблонам).
  */
-export async function handleCreateMainScenario(context: vscode.ExtensionContext): Promise<void> {
+export async function handleCreateMainScenario(
+    context: vscode.ExtensionContext,
+    seed?: unknown
+): Promise<void> {
     const t = await getTranslator(context.extensionUri);
     const config = vscode.workspace.getConfiguration('kotTestToolkit');
     const newScenarioDefaults = getNewScenarioDefaults(config);
     const newScenarioLanguage = getConfiguredScenarioLanguage(config);
     const includeDriveBlock = config.get<boolean>('assembleScript.showDriveFeatures', false);
-    const knownScenarioIndex = await getKnownScenarioIndex();
+    const knownScenarioIndex = createEmptyScenarioIndex();
     const knownScenarioNames = knownScenarioIndex.names;
     const knownScenarioCodes = knownScenarioIndex.codes;
     const knownMainScenarioGroups = knownScenarioIndex.mainScenarioGroups;
     console.log("[Cmd:createMainScenario] Starting...");
     // 1. Запрос имени
     const name = await vscode.window.showInputBox({
-        prompt: t('Enter main scenario name (folder name)'),
+        prompt: t('Enter main scenario name'),
         ignoreFocusOut: true,
         validateInput: value => {
             const trimmedValue = value?.trim();
-            if (!trimmedValue) return t('Name cannot be empty');
-            if (/[/\\:*\?"<>|]/.test(trimmedValue)) return t('Name contains invalid characters');
+            if (!trimmedValue) {
+                return t('Name cannot be empty');
+            }
+            if (/[/\\:*\?"<>|]/.test(trimmedValue)) {
+                return t('Name contains invalid characters');
+            }
             if (knownScenarioNames.has(normalizeScenarioName(trimmedValue))) {
                 return t('Scenario name "{0}" already exists.', trimmedValue);
-            }
-            if (knownScenarioCodes.has(normalizeScenarioCode(trimmedValue))) {
-                return t('Scenario code "{0}" already exists.', trimmedValue);
             }
             return null;
         }
     });
     if (name === undefined) { console.log("[Cmd:createMainScenario] Cancelled at name input."); return; }
+    const discovered = await getKnownScenarioIndex();
+    discovered.names.forEach(value => knownScenarioNames.add(value));
+    discovered.codes.forEach(value => knownScenarioCodes.add(value));
+    discovered.mainScenarioGroups.forEach(value => knownMainScenarioGroups.add(value));
     const trimmedName = name.trim();
     if (knownScenarioNames.has(normalizeScenarioName(trimmedName))) {
         vscode.window.showErrorMessage(t('Scenario name "{0}" already exists.', trimmedName));
         return;
     }
-    if (knownScenarioCodes.has(normalizeScenarioCode(trimmedName))) {
-        vscode.window.showErrorMessage(t('Scenario code "{0}" already exists.', trimmedName));
+    // 2. Определение пути по умолчанию для диалога выбора папки
+    let defaultDialogUri: vscode.Uri | undefined;
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders?.length) {
+        defaultDialogUri = await getDefaultMainScenarioDirectory(config);
+    }
+
+    // 3. Запрос пути для создания (родительской папки)
+    const folderUris = await vscode.window.showOpenDialog({
+        canSelectFiles: false, canSelectFolders: true, canSelectMany: false,
+        openLabel: t('Select folder'),
+        title: t('Select parent folder for main scenario'),
+        defaultUri: defaultDialogUri
+    });
+    if (!folderUris || folderUris.length === 0) { console.log("[Cmd:createMainScenario] Cancelled at folder selection."); return; }
+    const baseFolderUri = folderUris[0];
+
+    const workspaceRoot = getWorkspaceRootUri();
+    if (!workspaceRoot) { await vscode.window.showErrorMessage(t('No workspace folder is open.')); return; }
+    const code = await promptForNewTestCode(context, baseFolderUri, { prompt: 'Enter main scenario code', initialValue: trimmedName, existingCodes: [...knownScenarioCodes] });
+    if (!code) { return; }
+    const trimmedCode = code.code;
+    if (knownScenarioCodes.has(normalizeScenarioCode(trimmedCode))) {
+        vscode.window.showErrorMessage(t('Scenario code "{0}" already exists.', trimmedCode));
         return;
     }
 
     // 2. Запрос имени вкладки/фазы
-    const tabName = await promptForMainScenarioGroup(t, knownMainScenarioGroups);
+    const tabName = resolveMainScenarioGroupSeed(seed)
+        ?? await promptForMainScenarioGroup(t, knownMainScenarioGroups);
     if (tabName === undefined) { console.log("[Cmd:createMainScenario] Cancelled at tab name input."); return; }
     const trimmedTabName = tabName.trim();
 
@@ -2405,34 +2545,7 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
     // Сохраняем как строку (или пустую строку) для замены плейсхолдера
     const orderForTemplate = orderStr?.trim() || ""; // Если пусто, плейсхолдер заменится на пустую строку
 
-    // 4. Запрос состояния по умолчанию (QuickPick)
-    const defaultStatePick = await vscode.window.showQuickPick(['true', 'false'], {
-        placeHolder: t('Default state in Test Manager (optional)'),
-        canPickMany: false,
-        ignoreFocusOut: true,
-        title: t('Checkbox enabled by default?')
-    });
-    // Если пользователь нажал Esc, defaultStatePick будет undefined. Считаем это как 'true'.
-    const defaultStateStr = defaultStatePick || 'true'; // Строка 'true' или 'false'
-
-
-    // 2. Определение пути по умолчанию для диалога выбора папки
-    let defaultDialogUri: vscode.Uri | undefined;
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (workspaceFolders?.length) {
-        defaultDialogUri = await getDefaultMainScenarioDirectory(config);
-    }
-
-    // 3. Запрос пути для создания (родительской папки)
-    const folderUris = await vscode.window.showOpenDialog({
-        canSelectFiles: false, canSelectFolders: true, canSelectMany: false,
-        openLabel: t('Create folder "{0}" here', trimmedName),
-        title: t('Select parent folder for main scenario'),
-        defaultUri: defaultDialogUri
-    });
-    if (!folderUris || folderUris.length === 0) { console.log("[Cmd:createMainScenario] Cancelled at folder selection."); return; }
-    const baseFolderUri = folderUris[0];
-
+    newScenarioDefaults.systemFunctions = (await getProjectScenarioDefaults(baseFolderUri)).systemFunctions;
     const selectedSystemFunction = await promptForSystemFunction(t, newScenarioDefaults);
     if (!selectedSystemFunction) {
         console.log("[Cmd:createMainScenario] Cancelled at system function selection.");
@@ -2444,7 +2557,7 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
         newScenarioDefaults,
         selectedSystemFunction,
         newScenarioDefaults.mainReportLevel2,
-        t('Enter report level 2 for main scenario')
+        t('Enter report level 2 for main scenario'), baseFolderUri, code.author
     );
     if (!scenarioHeaderValues) {
         console.log("[Cmd:createMainScenario] Cancelled at scenario header values prompt.");
@@ -2457,7 +2570,7 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
         scenarioHeaderValues.userProfile
     );
     if (!selectedEtalonBaseValues) {
-        console.log("[Cmd:createMainScenario] Cancelled at etalon base prompt.");
+        console.log("[Cmd:createMainScenario] Cancelled at reference infobase prompt.");
         return;
     }
     scenarioHeaderValues = {
@@ -2465,72 +2578,85 @@ export async function handleCreateMainScenario(context: vscode.ExtensionContext)
         userProfile: selectedEtalonBaseValues.userProfile
     };
 
+    const creationRoot = projectFormatRoot(baseFolderUri.fsPath);
+    const creationFormat = projectFormat(creationRoot);
+    const scenarioFormat = await promptForScenarioFormat(config, seed, baseFolderUri);
+    if (!scenarioFormat) { return; }
+
     // 4. Подготовка путей и UID
     const mainUid = uuidv4();
     const testRandomUid = uuidv4();
-    const scenarioFolderUri = vscode.Uri.joinPath(baseFolderUri, trimmedName); // parent/ScenarioName
-    const testFolderUri = vscode.Uri.joinPath(scenarioFolderUri, 'test'); // parent/ScenarioName/test
-    const filesFolderUri = vscode.Uri.joinPath(scenarioFolderUri, 'files'); // parent/ScenarioName/files
+    const scenarioFolderUri = vscode.Uri.joinPath(baseFolderUri, trimmedCode);
+    const testFolderUri = vscode.Uri.joinPath(scenarioFolderUri, 'test');
+    const filesFolderUri = vscode.Uri.joinPath(scenarioFolderUri, 'files');
     const testTemplateUri = vscode.Uri.joinPath(context.extensionUri, 'res', 'test.yaml'); // Шаблон теста
     const mainTemplateUri = vscode.Uri.joinPath(context.extensionUri, 'res', 'main.yaml'); // Шаблон основного файла
-    const testTargetFileUri = vscode.Uri.joinPath(testFolderUri, `${trimmedName}.yaml`);
-    const mainTargetFileUri = vscode.Uri.joinPath(scenarioFolderUri, 'scen.yaml');
+    const testTargetFileUri = vscode.Uri.joinPath(testFolderUri, `${trimmedCode}.yaml`);
+    const mainTargetFileUri = vscode.Uri.joinPath(scenarioFolderUri, scenarioFormat === 'native' ? 'meta.yaml' : 'scen.yaml');
 
     console.log(`[Cmd:createMainScenario] Target folder: ${scenarioFolderUri.fsPath}`);
     // console.log(`[Cmd:createMainScenario] Test template: ${testTemplateUri.fsPath}`);
     // console.log(`[Cmd:createMainScenario] Main template: ${mainTemplateUri.fsPath}`);
 
     try {
-        // Создаем папку сценария и вложенные папки test и files (рекурсивно)
-        await vscode.workspace.fs.createDirectory(testFolderUri);
-        await vscode.workspace.fs.createDirectory(filesFolderUri);
+        await code.claim(baseFolderUri, async () => {
+            assertProjectFormatUnchanged(creationRoot, creationFormat);
+            await fs.mkdir(scenarioFolderUri.fsPath);
+            // Создаем папку сценария и вложенные папки test и files (рекурсивно)
+            await vscode.workspace.fs.createDirectory(testFolderUri);
+            await vscode.workspace.fs.createDirectory(filesFolderUri);
 
-        // --- Создаем тестовый файл ---
-        const testTemplateBytes = await vscode.workspace.fs.readFile(testTemplateUri);
-        const testTemplateContent = Buffer.from(testTemplateBytes).toString('utf-8');
-        const testFinalContent = applyTemplateReplacements(testTemplateContent, {
-            Name_Placeholder: escapeYamlDoubleQuotedString(trimmedName),
-            UID_Placeholder: escapeYamlDoubleQuotedString(mainUid),
-            Random_UID: escapeYamlDoubleQuotedString(testRandomUid),
-            ModelDBName_Placeholder: escapeYamlDoubleQuotedString(selectedEtalonBaseValues.baseName),
-            ModelDBId_Placeholder: escapeYamlDoubleQuotedString(selectedEtalonBaseValues.baseId),
-            UserProfile_Placeholder: escapeYamlDoubleQuotedString(scenarioHeaderValues.userProfile)
+            // --- Создаем тестовый файл ---
+            const testTemplateBytes = await vscode.workspace.fs.readFile(testTemplateUri);
+            const testTemplateContent = Buffer.from(testTemplateBytes).toString('utf-8');
+            const testFinalContent = applyTemplateReplacements(testTemplateContent, {
+                Name_Placeholder: escapeYamlDoubleQuotedString(trimmedName),
+                Code_Placeholder: escapeYamlDoubleQuotedString(trimmedCode),
+                UID_Placeholder: escapeYamlDoubleQuotedString(mainUid),
+                Random_UID: escapeYamlDoubleQuotedString(testRandomUid),
+                ModelDBName_Placeholder: escapeYamlDoubleQuotedString(selectedEtalonBaseValues.baseName),
+                ModelDBId_Placeholder: escapeYamlDoubleQuotedString(selectedEtalonBaseValues.baseId),
+                UserProfile_Placeholder: escapeYamlDoubleQuotedString(scenarioHeaderValues.userProfile)
+            });
+            await vscode.workspace.fs.writeFile(testTargetFileUri, Buffer.from(testFinalContent, 'utf-8'));
+            console.log(`[Cmd:createMainScenario] Created test file: ${testTargetFileUri.fsPath} with reference infobase: ${selectedEtalonBaseValues.baseId}`);
+
+
+            // --- Создаем основной файл сценария ---
+            const mainTemplateBytes = await vscode.workspace.fs.readFile(mainTemplateUri);
+            const mainTemplateContent = Buffer.from(mainTemplateBytes).toString('utf-8');
+            const mainTemplateWithDefaults = applyManagedScenarioHeaderDefaults(
+                mainTemplateContent,
+                scenarioHeaderValues
+            );
+            const mainFinalContent = applyCreationResponsible(applyMainScenarioDriveBlock(
+                applyScenarioLanguage(
+                    applyTemplateReplacements(mainTemplateWithDefaults, {
+                        Name_Placeholder: escapeYamlDoubleQuotedString(trimmedName),
+                        Code_Placeholder: escapeYamlDoubleQuotedString(trimmedCode),
+                        UID_Placeholder: escapeYamlDoubleQuotedString(mainUid),
+                        Phase_Placeholder: escapeYamlDoubleQuotedString(trimmedTabName),
+                        Order_Placeholder: orderForTemplate
+                    }),
+                    newScenarioLanguage
+                ),
+                includeDriveBlock,
+                newScenarioLanguage,
+                scenarioHeaderValues.userProfile
+            ), scenarioHeaderValues.responsible ?? '');
+            const storedContent = await writeCreatedScenario(mainTargetFileUri, mainFinalContent, scenarioFormat);
+            await registerCreatedProjectScenario(mainTargetFileUri, storedContent, {
+                main: true, groupName: trimmedTabName,
+                ...(orderForTemplate ? { order: Number(orderForTemplate) } : {})
+            });
+            rememberScenarioInIndex(trimmedName, trimmedCode, trimmedTabName);
         });
-        await vscode.workspace.fs.writeFile(testTargetFileUri, Buffer.from(testFinalContent, 'utf-8'));
-        console.log(`[Cmd:createMainScenario] Created test file: ${testTargetFileUri.fsPath} with etalon base: ${selectedEtalonBaseValues.baseId}`);
-
-
-        // --- Создаем основной файл сценария ---
-        const mainTemplateBytes = await vscode.workspace.fs.readFile(mainTemplateUri);
-        const mainTemplateContent = Buffer.from(mainTemplateBytes).toString('utf-8');
-        const mainTemplateWithDefaults = applyManagedScenarioHeaderDefaults(
-            mainTemplateContent,
-            scenarioHeaderValues
-        );
-        // В главном шаблоне Code_Placeholder заменяется на имя сценария
-        const mainFinalContent = applyMainScenarioDriveBlock(
-            applyScenarioLanguage(
-                applyTemplateReplacements(mainTemplateWithDefaults, {
-                    Name_Placeholder: escapeYamlDoubleQuotedString(trimmedName),
-                    Code_Placeholder: escapeYamlDoubleQuotedString(trimmedName),
-                    UID_Placeholder: escapeYamlDoubleQuotedString(mainUid),
-                    Phase_Placeholder: escapeYamlDoubleQuotedString(trimmedTabName),
-                    Default_Placeholder: defaultStateStr,
-                    Order_Placeholder: orderForTemplate
-                }),
-                newScenarioLanguage
-            ),
-            includeDriveBlock,
-            newScenarioLanguage,
-            scenarioHeaderValues.userProfile
-        );
-        await vscode.workspace.fs.writeFile(mainTargetFileUri, Buffer.from(mainFinalContent, 'utf-8'));
-        rememberScenarioInIndex(trimmedName, trimmedName, trimmedTabName);
         console.log(`[Cmd:createMainScenario] Created main scenario file: ${mainTargetFileUri.fsPath}`);
 
         vscode.window.showInformationMessage(t('Main scenario "{0}" has been created successfully!', trimmedName));
         // Открываем основной созданный файл
-        const doc = await vscode.workspace.openTextDocument(mainTargetFileUri);
+        const editorUri = scenarioFormat === 'native' ? vscode.Uri.joinPath(scenarioFolderUri, 'scen.feature') : mainTargetFileUri;
+        const doc = await vscode.workspace.openTextDocument(editorUri);
         await vscode.window.showTextDocument(doc);
 
         // Обновляем Test Manager

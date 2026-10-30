@@ -1,8 +1,7 @@
-import * as vscode from 'vscode';
-import { parse } from 'node-html-parser';
-import { getStepsHtml } from './stepsFetcher';
 import { FormExplorerElementInfo, FormExplorerSnapshot } from './formExplorerTypes';
 import { ScenarioLanguage } from './gherkinLanguage';
+import type { BuiltInStepDefinition } from './stepCatalog';
+import type { StepCatalogProvider } from './stepCatalogService';
 
 type StepLanguage = ScenarioLanguage;
 type ElementKind = 'table' | 'field' | 'button' | 'decoration' | 'group' | 'itemAddition' | 'unknown';
@@ -93,7 +92,7 @@ const EN_STEP_TABLE_BECAME_EQUAL_BY_TEMPLATE = 'And "%1 TableName" table became 
 const EN_STEP_TABLE_CONTAINS_LINES = 'And "%1 TableName" table contains lines';
 const EN_STEP_TABLE_CONTAINS_LINES_BY_TEMPLATE = 'And "%1 TableName" table contains rows by template:';
 
-let cachedCatalogIndexPromise: Promise<Map<string, StepCatalogRow>> | null = null;
+let cachedCatalogIndex: { identity: string; index: Map<string, StepCatalogRow> } | null = null;
 
 function normalizeText(value: string): string {
     return value
@@ -462,30 +461,13 @@ function buildDisplayColumnDeduplicationKey(columnTitle: string): string {
     return key;
 }
 
-function parseCatalogRows(htmlContent: string): Map<string, StepCatalogRow> {
+function parseCatalogRows(steps: readonly BuiltInStepDefinition[]): Map<string, StepCatalogRow> {
     const index = new Map<string, StepCatalogRow>();
-    if (!htmlContent) {
-        return index;
-    }
-
-    const root = parse(htmlContent);
-    const rows = root.querySelectorAll('tr');
-
-    for (const row of rows) {
-        const rowClass = row.classNames;
-        if (!rowClass || !String(rowClass).startsWith('R')) {
-            continue;
-        }
-
-        const cells = row.querySelectorAll('td');
-        if (cells.length < 2) {
-            continue;
-        }
-
-        const ruTemplate = normalizeDisplayText(cells[0].textContent || '');
-        const ruDescription = normalizeDisplayText(cells[1].textContent || '');
-        const enTemplate = cells.length >= 4 ? normalizeDisplayText(cells[2].textContent || '') : '';
-        const enDescription = cells.length >= 4 ? normalizeDisplayText(cells[3].textContent || '') : '';
+    for (const step of steps) {
+        const ruTemplate = normalizeDisplayText(step.ru?.pattern || '');
+        const ruDescription = normalizeDisplayText(step.ru?.description || '');
+        const enTemplate = normalizeDisplayText(step.en?.pattern || '');
+        const enDescription = normalizeDisplayText(step.en?.description || '');
 
         if (!ruTemplate) {
             continue;
@@ -517,16 +499,15 @@ function parseCatalogRows(htmlContent: string): Map<string, StepCatalogRow> {
     return index;
 }
 
-async function getCatalogIndex(context: vscode.ExtensionContext): Promise<Map<string, StepCatalogRow>> {
-    if (!cachedCatalogIndexPromise) {
-        cachedCatalogIndexPromise = getStepsHtml(context)
-            .then(parseCatalogRows)
-            .catch(error => {
-                cachedCatalogIndexPromise = null;
-                throw error;
-            });
+async function getCatalogIndex(catalogProvider: StepCatalogProvider): Promise<Map<string, StepCatalogRow>> {
+    const catalog = await catalogProvider.getCatalog();
+    if (cachedCatalogIndex?.identity !== catalog.identity) {
+        cachedCatalogIndex = {
+            identity: catalog.identity,
+            index: parseCatalogRows(catalog.steps)
+        };
     }
-    return cachedCatalogIndexPromise;
+    return cachedCatalogIndex.index;
 }
 
 function detectElementKind(element: FormExplorerElementInfo): ElementKind {
@@ -1118,13 +1099,13 @@ function dedupeKey(templateText: string): string {
 }
 
 export async function suggestFormExplorerSteps(
-    context: vscode.ExtensionContext,
+    catalogProvider: StepCatalogProvider,
     snapshot: FormExplorerSnapshot,
     element: FormExplorerElementInfo,
     maxSuggestions: number = 12,
     preferredLanguage: StepLanguage = 'en'
 ): Promise<FormExplorerSuggestedStep[]> {
-    const catalog = await getCatalogIndex(context);
+    const catalog = await getCatalogIndex(catalogProvider);
     const elementContext = buildElementContext(snapshot, element);
     const intents = buildVanessaIntents(elementContext);
     const multilineSuggestions = buildVanessaMultilineSuggestions(elementContext, preferredLanguage);

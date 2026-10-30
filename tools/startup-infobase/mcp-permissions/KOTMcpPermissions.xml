@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" version="2.4">
+  <ExternalDataProcessor uuid="1cb25f89-a3f4-46a0-b863-0dcba8dfb443">
+    <InternalInfo>
+      <xr:ContainedObject><xr:ClassId>c3831ec8-d8d5-4f93-8a22-f9bfae07327f</xr:ClassId><xr:ObjectId>4be850c2-a2eb-44b3-a8a1-313704ecba04</xr:ObjectId></xr:ContainedObject>
+      <xr:GeneratedType name="ExternalDataProcessorObject.KOTMcpPermissions" category="Object"><xr:TypeId>e4bf8df8-263c-41fb-b033-ddd867c83a05</xr:TypeId><xr:ValueId>3d1dfe84-9528-4af7-95e0-e26aaaaad1ea</xr:ValueId></xr:GeneratedType>
+    </InternalInfo>
+    <Properties><Name>KOTMcpPermissions</Name><Synonym/><Comment/><DefaultForm>ExternalDataProcessor.KOTMcpPermissions.Form.Settings</DefaultForm><AuxiliaryForm/></Properties>
+    <ChildObjects><Form>Settings</Form></ChildObjects>
+  </ExternalDataProcessor>
+</MetaDataObject>

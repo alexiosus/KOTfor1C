@@ -1,0 +1,8 @@
+version: 2
+identity:
+    kind: scenario
+    uid: 7015c47b-f944-5822-928c-0ee30d0d115a
+metadata:
+    groupId: 2fb3720b-2692-51d9-b1ad-99ac40207abd
+    order: 2
+    description: "I prepare workshop customer"

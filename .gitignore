@@ -18,9 +18,19 @@ Thumbs.db
 !.vscode/launch.json
 !.vscode/extensions.json
 *.code-workspace
+!examples/kot-workshop/KOT-workshop.code-workspace
 /coverage
+/.kot/test-numbering.lock
+/.kot/test-numbering.yml.*.tmp
 /reports
 junit.xml
 .env
 .env.*
 !.env.example
+
+/.superpowers/
+
+# Local release packages and other generated artifacts.
+/artifacts/*
+!/artifacts/README.md
+/docs/.kot/

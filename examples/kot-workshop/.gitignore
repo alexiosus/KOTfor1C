@@ -1,0 +1,7 @@
+# Downloaded tools, local runtime and libraries built during exercises.
+/.vscode/kot-runtime/
+/tools/
+/build/
+/libraries/step_definitions/
+/libraries/step_definitions-src/
+/libraries/user-steps/*.kot-import.json

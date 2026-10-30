@@ -1,18 +1,21 @@
 :root {
-    --kot-bg:
-        radial-gradient(circle at top right, color-mix(in srgb, var(--vscode-focusBorder) 14%, transparent) 0, transparent 24%),
-        linear-gradient(180deg, color-mix(in srgb, var(--vscode-editor-background) 96%, var(--vscode-sideBar-background) 4%) 0%, var(--vscode-editor-background) 100%);
-    --kot-surface-0: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--vscode-sideBar-background) 8%);
-    --kot-surface-1: color-mix(in srgb, var(--vscode-editor-background) 86%, var(--vscode-sideBar-background) 14%);
-    --kot-surface-2: color-mix(in srgb, var(--vscode-editor-background) 78%, var(--vscode-list-hoverBackground) 22%);
-    --kot-button-bg: color-mix(in srgb, var(--vscode-editor-background) 83%, var(--vscode-sideBar-background) 17%);
-    --kot-border: color-mix(in srgb, var(--vscode-panel-border) 84%, transparent);
-    --kot-border-strong: color-mix(in srgb, var(--vscode-focusBorder) 62%, transparent);
+    color-scheme: light dark;
+    --kot-bg: var(--vscode-editor-background);
+    --kot-surface-0: var(--vscode-editor-background);
+    --kot-surface-1: var(--vscode-sideBar-background);
+    --kot-surface-2: var(--vscode-list-hoverBackground);
+    --kot-button-bg: var(--vscode-button-secondaryBackground);
+    --kot-border: var(--vscode-panel-border);
+    --kot-border-strong: var(--vscode-focusBorder);
     --kot-muted: var(--vscode-descriptionForeground);
     --kot-accent: var(--vscode-focusBorder);
     --kot-good: var(--vscode-testing-iconPassed);
     --kot-warning: var(--vscode-testing-iconQueued);
-    --kot-shadow: 0 12px 28px rgba(0, 0, 0, 0.12);
+    --kot-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.16));
+}
+
+* {
+    box-sizing: border-box;
 }
 
 html,
@@ -24,8 +27,9 @@ body {
     margin: 0;
     overflow: hidden;
     background: var(--kot-bg);
-    color: var(--vscode-editor-foreground);
-    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    color: var(--vscode-foreground);
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
 }
 
 button,
@@ -35,38 +39,59 @@ textarea {
     font: inherit;
 }
 
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+
+input::placeholder,
+textarea::placeholder {
+    color: var(--vscode-input-placeholderForeground);
+}
+
+input[type="checkbox"] {
+    accent-color: var(--vscode-checkbox-selectBackground, var(--kot-accent));
+}
+
 .app-shell {
     height: 100%;
     min-height: 0;
     box-sizing: border-box;
-    padding: 10px;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 0;
 }
 
 .topbar,
 .panel,
 .banner {
-    border: 1px solid var(--kot-border);
-    border-radius: 16px;
+    border: 0;
+    border-radius: 0;
     background: var(--kot-surface-0);
-    box-shadow: var(--kot-shadow);
 }
 
 .surface-card {
-    border: 1px solid var(--kot-border);
-    border-radius: 14px;
-    background: var(--kot-surface-1);
+    border: 0;
+    border-bottom: 1px solid var(--kot-border);
+    border-radius: 0;
+    background: var(--kot-surface-0);
 }
 
 .topbar {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 10px 14px;
+    gap: 6px 12px;
     align-items: center;
-    padding: 6px 10px;
+    padding: 8px;
     min-height: 44px;
+    border-bottom: 1px solid var(--kot-border);
+    background: var(--kot-surface-1);
 }
 
 .topbar-title-wrap {
@@ -82,9 +107,9 @@ textarea {
 
 .topbar-title {
     margin: 0;
-    font-size: 16px;
-    line-height: 1.1;
-    font-weight: 800;
+    font-size: var(--vscode-font-size);
+    line-height: 1.4;
+    font-weight: 600;
 }
 
 .topbar-description {
@@ -98,11 +123,9 @@ textarea {
 .section-label,
 .dropdown-section-title {
     color: var(--kot-muted);
-    font-size: 11px;
-    line-height: 1.2;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    font-weight: 700;
+    font-size: 12px;
+    line-height: 1.4;
+    font-weight: 600;
 }
 
 .section-label {
@@ -114,7 +137,7 @@ textarea {
     flex-wrap: wrap;
     align-items: center;
     justify-content: flex-end;
-    gap: 8px;
+    gap: 6px;
 }
 
 .toolbar-btn,
@@ -125,16 +148,16 @@ textarea {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    min-height: 32px;
-    padding: 7px 10px;
-    border-radius: 12px;
-    border: 1px solid var(--kot-border);
+    gap: 6px;
+    min-height: 28px;
+    padding: 4px 10px;
+    border-radius: 3px;
+    border: 1px solid var(--vscode-input-border, transparent);
     background: var(--kot-button-bg);
-    color: inherit;
+    color: var(--vscode-button-secondaryForeground);
     cursor: pointer;
     white-space: nowrap;
-    transition: transform 0.12s ease, border-color 0.12s ease, background-color 0.12s ease, opacity 0.12s ease;
+    transition: background-color 80ms ease;
 }
 
 .toolbar-btn:hover,
@@ -142,54 +165,54 @@ textarea {
 .toggle-btn:hover,
 .tab-btn:hover,
 .surface-button:hover {
-    border-color: var(--kot-border-strong);
-    background: var(--kot-surface-2);
+    background: var(--vscode-button-secondaryHoverBackground);
 }
 
 .toolbar-btn:disabled,
 .ghost-btn:disabled,
 .toggle-btn:disabled,
+.tab-btn:disabled,
 .surface-button:disabled {
-    opacity: 0.58;
+    opacity: 0.55;
     cursor: default;
     transform: none;
 }
 
 .toolbar-btn.primary {
-    border-color: color-mix(in srgb, var(--vscode-button-background) 70%, transparent);
-    background: color-mix(in srgb, var(--vscode-button-background) 82%, var(--vscode-textLink-foreground) 18%);
+    background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
 }
 
 .toolbar-btn.primary:hover {
-    background: color-mix(in srgb, var(--vscode-button-hoverBackground) 84%, var(--vscode-textLink-foreground) 16%);
+    background: var(--vscode-button-hoverBackground);
 }
 
 .icon-only {
-    min-width: 32px;
-    padding-inline: 8px;
+    min-width: 28px;
+    padding-inline: 6px;
 }
 
 .ghost-btn.small,
 .toolbar-btn.small {
     min-height: 28px;
-    padding: 5px 9px;
+    padding: 4px 8px;
 }
 
 .toggle-btn.is-active,
 .tab-btn.is-active,
 .tab-btn.active {
-    border-color: color-mix(in srgb, var(--kot-accent) 80%, transparent);
-    background: color-mix(in srgb, var(--kot-accent) 14%, var(--kot-surface-1) 86%);
+    border-color: var(--kot-accent);
+    color: var(--vscode-list-activeSelectionForeground);
+    background: var(--vscode-list-activeSelectionBackground);
 }
 
 .tab-strip {
     display: inline-flex;
     align-items: center;
     gap: 2px;
-    padding: 3px;
-    border: 1px solid var(--kot-border);
-    border-radius: 14px;
+    padding: 0;
+    border-bottom: 1px solid var(--kot-border);
+    border-radius: 0;
     background: var(--kot-surface-1);
 }
 
@@ -198,32 +221,33 @@ textarea {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 28px;
-    height: 28px;
-    padding: 0 9px;
-    border-radius: 999px;
-    border: 1px solid var(--kot-border);
-    background: var(--kot-surface-1);
-    font-size: 12px;
-    font-weight: 700;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 3px;
+    background: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
 }
 
 .surface-chip {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    padding: 7px 10px;
-    border-radius: 12px;
-    border: 1px solid var(--kot-border);
+    padding: 4px 8px;
+    border-radius: 3px;
+    border: 1px solid var(--vscode-input-border, transparent);
     background: var(--kot-surface-1);
 }
 
 .surface-select {
-    border: 1px solid var(--kot-border);
-    border-radius: 10px;
+    min-height: 28px;
+    border: 1px solid var(--vscode-dropdown-border, transparent);
+    border-radius: 3px;
     padding: 4px 8px;
-    background: color-mix(in srgb, var(--vscode-input-background) 84%, var(--kot-surface-1) 16%);
-    color: var(--vscode-input-foreground, var(--vscode-foreground));
+    background: var(--vscode-dropdown-background);
+    color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
 }
 
 .surface-select:focus {
@@ -239,7 +263,7 @@ textarea {
 .search-frame .codicon,
 .search-box .search-icon {
     position: absolute;
-    left: 12px;
+    left: 8px;
     top: 50%;
     transform: translateY(-50%);
     color: var(--kot-muted);
@@ -250,10 +274,11 @@ textarea {
 .surface-input {
     width: 100%;
     box-sizing: border-box;
-    padding: 8px 12px 8px 36px;
-    border-radius: 12px;
-    border: 1px solid var(--kot-border);
-    background: color-mix(in srgb, var(--vscode-input-background) 84%, var(--kot-surface-1) 16%);
+    min-height: 28px;
+    padding: 4px 8px 4px 28px;
+    border-radius: 3px;
+    border: 1px solid var(--vscode-input-border, transparent);
+    background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
 }
 
@@ -271,16 +296,20 @@ textarea {
 
 .menu-popover {
     position: absolute;
-    top: calc(100% + 8px);
+    top: calc(100% + 4px);
     right: 0;
     min-width: 220px;
     display: none;
     flex-direction: column;
-    gap: 4px;
-    padding: 6px;
-    border-radius: 12px;
-    border: 1px solid var(--kot-border);
-    background: var(--kot-surface-0);
+    gap: 0;
+    padding: 4px;
+    border-radius: 3px;
+    border: 1px solid var(--vscode-menu-border, var(--kot-border));
+    background: var(--vscode-menu-background, var(--kot-surface-0));
+    color: var(--vscode-menu-foreground, var(--vscode-foreground));
+    max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 64px);
+    overflow: auto;
     box-shadow: var(--kot-shadow);
     z-index: 1000;
 }
@@ -295,10 +324,10 @@ textarea {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    min-height: 32px;
-    padding: 7px 10px;
+    min-height: 28px;
+    padding: 4px 8px;
     border: 1px solid transparent;
-    border-radius: 10px;
+    border-radius: 3px;
     background: transparent;
     color: inherit;
     text-decoration: none;
@@ -307,8 +336,8 @@ textarea {
 }
 
 .menu-item:hover {
-    border-color: var(--kot-border-strong);
-    background: var(--kot-surface-1);
+    color: var(--vscode-menu-selectionForeground, var(--vscode-foreground));
+    background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
 }
 
 .menu-separator {
