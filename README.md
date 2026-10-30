@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/alexiosus/KOTfor1C/releases/latest"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/alexiosus/KOTfor1C?style=flat-square&amp;label=Release&amp;color=yellow"></a>
+  <a href="https://github.com/alexiosus/KOTfor1C/releases/latest"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/alexiosus/KOTfor1C?style=flat-square&amp;label=Release&amp;color=yellow&amp;cacheSeconds=300"></a>
   <a href="docs/SETUP.md"><img alt="VS Code 1.106 и новее" src="https://img.shields.io/badge/VS_Code-1.106%2B-007ACC?style=flat-square"></a>
   <a href="LICENSE"><img alt="Лицензия MIT" src="https://img.shields.io/github/license/alexiosus/KOTfor1C?style=flat-square"></a>
   <a href="https://github.com/alexiosus/KOTfor1C/releases"><img alt="Скачивания из GitHub Releases" src="https://img.shields.io/github/downloads/alexiosus/KOTfor1C/total?style=flat-square&amp;label=GitHub%20downloads&amp;color=yellow"></a>
