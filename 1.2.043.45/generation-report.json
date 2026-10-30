@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "vanessaVersion": "1.2.043.45",
+  "sourceRows": 1624,
+  "excludedSyntaxRows": 11,
+  "categoryCount": 407,
+  "stepCount": 1206,
+  "russianStepCount": 1206,
+  "englishStepCount": 1206,
+  "duplicateStepIds": [],
+  "duplicateRussianPatterns": [],
+  "duplicateEnglishPatterns": [
+    "And I close all client application windows",
+    "And I close all client application windows except \"%1 RequiredWindow\"",
+    "And I input \"%2 VariableName\" variable value in the field named \"%1 FieldName\"",
+    "And I save a random male name to \"%1 VariableName\" variable"
+  ],
+  "categorizedStepCount": 1206,
+  "uncategorizedStepCount": 0,
+  "unmatchedRegistrationCount": 48,
+  "conflictingCategoryMappings": [],
+  "untranslatableCategorySegments": [
+    "Выполнить команду",
+    "Данные списка",
+    "Контекст",
+    "Открыть произвольную навигационную ссылку",
+    "Открыть форму",
+    "Система отката",
+    "Установить значение списка"
+  ]
+}
