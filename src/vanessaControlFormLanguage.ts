@@ -1,6 +1,6 @@
 import type { BuiltInStepDefinition } from './stepCatalog';
 
-const keyword = /^(\s*(?:\*\s*)?(?:And|Given|When|Then|But|И|Допустим|Дано|Когда|Тогда|Но)\s+)(.*)$/iu;
+const keyword = /^(\s*(?:\*\s*)?(?:And|Given|When|Then|But|И|Допустим|Дано|Пусть|Когда|Если|Тогда|Затем|То|Но|А|Также|Иначе|К тому же)\s+)(.*)$/iu;
 const placeholder = /(["'])\s*%(\d+)\s+[^"']*?\1/gu;
 const strip = (text: string) => text.replace(keyword, '$2');
 const fold = (text: string) => text.replace(/\s+/gu, ' ').toLocaleLowerCase();
@@ -54,9 +54,9 @@ export function translateVanessaFormSteps(text: string, steps: readonly BuiltInS
         }
         if (candidates.size !== 1) { untranslated++; return line; }
         const keywords: Record<string, string> = language === 'en'
-            ? { 'и': 'And', 'допустим': 'Given', 'дано': 'Given', 'когда': 'When', 'тогда': 'Then', 'но': 'But' }
+            ? { 'и': 'And', 'к тому же': 'And', 'также': 'And', 'допустим': 'Given', 'дано': 'Given', 'пусть': 'Given', 'когда': 'When', 'если': 'When', 'тогда': 'Then', 'затем': 'Then', 'то': 'Then', 'но': 'But', 'а': 'But', 'иначе': 'But' }
             : { and: 'И', given: 'Дано', when: 'Когда', then: 'Тогда', but: 'Но' };
-        const prefix = invocation[1].replace(/(And|Given|When|Then|But|И|Допустим|Дано|Когда|Тогда|Но)(\s+)$/iu,
+        const prefix = invocation[1].replace(/(And|Given|When|Then|But|И|Допустим|Дано|Пусть|Когда|Если|Тогда|Затем|То|Но|А|Также|Иначе|К тому же)(\s+)$/iu,
             (_all, word: string, space: string) => (keywords[word.toLocaleLowerCase()] ?? word) + space);
         return prefix + candidates.values().next().value;
     }).join('\n');

@@ -1,7 +1,8 @@
 import { getVanessaFormTools, validateVanessaFormToolArguments, type VanessaFormToolDescriptor } from './vanessaControlFormTools';
-import { VanessaAuthoringError, VanessaRuntimeAuthoring } from './vanessaControlAuthoring';
+import { VanessaRuntimeSettings } from './vanessaControlSettings';
+import { VanessaAuthoringError, VanessaRuntimeAuthoring, parseVanessaRecordingStatus } from './vanessaControlAuthoring';
 import { assessVanessaControlCapabilities, normalizeVanessaControlEndpoint, parseVanessaControlReply, sameVanessaFeaturePath, VanessaEditorSourceMismatchError,
-    type VanessaControlCapabilities, type VanessaControlReply } from './vanessaControlProtocol';
+    readVanessaStructuredReply, type VanessaControlCapabilities, type VanessaControlReply } from './vanessaControlProtocol';
 import { VanessaControlTransportError, type VanessaControlProgress, type VanessaControlTransport } from './vanessaControlTransport';
 import { createHash } from 'node:crypto';
 import { VanessaBreakpointReconciler, VanessaBreakpointUnavailableError, VanessaBreakpointConfirmationError, type VanessaBreakpointPorts } from './vanessaControlBreakpoints';
@@ -13,6 +14,7 @@ import { VanessaDiagnosticError, VanessaRuntimeDiagnostics, type VanessaDiagnost
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { buildVanessaMxlStep, readMxlOpeningResult } from './mxlOpening';
 import { mapVanessaStepResults, type VanessaExecutionLine, type VanessaResultSourceMap } from './vanessaControlStepResults';
 
 export interface VanessaControlExecution {
@@ -39,7 +41,7 @@ export interface VanessaControlSnapshot {
     readonly observed?: Extract<VanessaControlReply, { kind: 'state' }>;
     readonly error?: 'connection' | 'request' | 'tool' | 'format';
     readonly execution?: VanessaControlExecution;
-    readonly request?: Readonly<{ tool: string; count: number }>;
+    readonly request?: Readonly<{ tool: string; count: number; background?: boolean }>;
     readonly breakpoints?: Readonly<{ filePath: string; lines: readonly number[]; ownedLines: readonly number[] }>;
 }
 
@@ -69,7 +71,7 @@ function commandFailureText(result: Awaited<ReturnType<VanessaControlTransport['
 
 /** Owns the connection, never the attached 1C process. Credentials stay in the transport. */
 export class VanessaControlSession {
-    private readonly requests = new Map<symbol, string>();
+    private readonly requests = new Map<symbol, { tool: string; background: boolean }>();
     private value: VanessaControlSnapshot = Object.freeze({ generation: 0, status: 'detached' });
     private wire?: VanessaControlTransport;
     private advertisedFormTools: readonly VanessaFormToolDescriptor[] = Object.freeze([]);
@@ -151,6 +153,15 @@ export class VanessaControlSession {
         await old?.dispose().catch(() => undefined);
     }
 
+    async openMxlFile(filePath: string, resultPath: string): Promise<void> {
+        this.require('mxlOpen');
+        await this.mutate(async generation => {
+            const result = await this.invoke('execute_step_from_text', { stepText: buildVanessaMxlStep(filePath, resultPath) }, generation);
+            if (result.isError) { throw new VanessaCommandRejectedError(safeFailureText(commandFailureText(result) ?? '1C could not open the MXL file.')); }
+            readMxlOpeningResult(await fs.readFile(resultPath, 'utf8').catch(() => '{"opened":false}'));
+        }, false);
+    }
+
     /** Explicit form actions use only this attachment's advertised schemas. Results stay local. */
     async runFormTool(name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> {
         const tool = this.advertisedFormTools.find(item => item.name === name);
@@ -168,7 +179,7 @@ export class VanessaControlSession {
         let result!: T;
         await this.mutate(async generation => {
             const current = () => this.value.generation === generation && (!isCurrent || isCurrent());
-            const clients = new VanessaRuntimeClients({ isCurrent: current, request: async (operation, fields = {}) => {
+            const clients = new VanessaRuntimeClients({ isCurrent: current, supportsPort: this.value.capabilities?.clientProfilePort?.supported, request: async (operation, fields = {}) => {
                 const capability = operation === 'list' ? 'clientProfilesRead' : operation === 'add' || operation === 'edit' ? 'clientProfilesWrite'
                     : operation === 'connect' ? 'clientConnect' : operation === 'disconnect' ? 'clientDisconnect' : 'clientClose';
                 this.require(capability);
@@ -181,6 +192,20 @@ export class VanessaControlSession {
             result = await work(clients);
             this.checkGeneration(generation);
         });
+        return result;
+    }
+
+    async withSettingsControl<T>(work: (settings: VanessaRuntimeSettings) => Promise<T>, isCurrent?: () => boolean): Promise<T> {
+        let result!: T;
+        await this.mutate(async generation => {
+            const settings = new VanessaRuntimeSettings(async (name, args) => {
+                this.checkGeneration(generation);
+                if (isCurrent && !isCurrent()) { throw new Error('Vanessa session changed.'); }
+                this.require(name === 'get_va_settings' ? 'settingsRead' : 'settingsWrite');
+                return this.invoke(name, args, generation);
+            });
+            result = await work(settings); this.checkGeneration(generation);
+        }, false);
         return result;
     }
 
@@ -210,7 +235,7 @@ export class VanessaControlSession {
                 if (connected.length !== 1) { throw new VanessaAuthoringError('Connect one test client before recording or reading form steps.'); }
                 return createHash('sha256').update(JSON.stringify([generation, connected[0]])).digest('hex');
             };
-            result = await work(new VanessaRuntimeAuthoring({ generation, isCurrent: current, client,
+            result = await work(new VanessaRuntimeAuthoring({ generation, isCurrent: current, client, supportsRecordingResult: this.value.capabilities?.recordingResult?.supported,
                 formIdentity: async () => {
                     this.require('formWindow'); const owner = await client();
                     const title = vanessaFormReplyText(await this.invoke('get_active_window_data', { type: 'window_caption' }, generation));
@@ -218,7 +243,7 @@ export class VanessaControlSession {
                     if (!title || !form || /[\r\n\u0000]/u.test(title + form)) { throw new VanessaAuthoringError('The current client form was not confirmed.'); }
                     return JSON.stringify([owner, title, form]);
                 }, request: (tool, args) => {
-                    this.require(tool === 'user_actions_recording' ? 'recording' : tool === 'get_vanessa_automation_state' ? 'state' : args.format === 'gherkin' ? 'formChecks' : 'formSuggestions');
+                    this.require(tool === 'get_form_element_steps' ? 'elementSteps' : tool === 'user_actions_recording' ? 'recording' : tool === 'get_vanessa_automation_state' ? 'state' : args.format === 'gherkin' ? 'formChecks' : 'formSuggestions');
                     return this.invoke(tool, args, generation);
                 } }));
             this.checkGeneration(generation);
@@ -259,6 +284,8 @@ export class VanessaControlSession {
         await this.mutate(async generation => {
             for (const capability of ['formTree', 'formWindow', 'clientProfilesRead'] as const) { this.require(capability); }
             const forms = new VanessaRuntimeForms({
+                supportsElementSteps: this.value.capabilities?.elementSteps?.supported,
+                supportsActiveElement: this.value.capabilities?.activeFormElement?.supported,
                 isCurrent: () => this.value.generation === generation && (!isCurrent || isCurrent()),
                 identity: async () => {
                     const profiles = parseVanessaClientProfiles(await this.invoke('manage_test_client_profiles', { action: 'get_list' }, generation));
@@ -277,7 +304,7 @@ export class VanessaControlSession {
                         const advertised = this.formTools.find(item => item.name === tool);
                         if (!advertised) { throw new VanessaFormControlError('This Vanessa session does not expose element activation through MCP.'); }
                         validateVanessaFormToolArguments(advertised, args);
-                    } else { this.require(tool === 'get_form_analysis' ? 'formTree' : tool === 'get_form_element_data' ? 'formElement' : tool === 'get_window_list_testclient' ? 'formWindows' : 'formActivateWindow'); }
+                    } else { this.require(tool === 'get_form_element_steps' ? 'elementSteps' : tool === 'get_active_form_element' ? 'activeFormElement' : tool === 'get_form_analysis' ? 'formTree' : tool === 'get_form_element_data' ? 'formElement' : tool === 'get_window_list_testclient' ? 'formWindows' : 'formActivateWindow'); }
                     return this.invoke(tool, { ...args }, generation);
                 }
             });
@@ -293,13 +320,21 @@ export class VanessaControlSession {
         const observedRun = this.runRequest?.executing ? this.runRequest : undefined;
         const operation = (async () => {
             try {
-                const result = await this.invoke('get_vanessa_automation_state', {}, generation);
-                const observed = parseVanessaControlReply('get_vanessa_automation_state', result);
+                const result = await this.invoke('get_vanessa_automation_state', this.value.capabilities?.stateJson?.supported ? { format: 'json' } : {}, generation);
+                let observed = parseVanessaControlReply('get_vanessa_automation_state', result);
+                if (observed.kind === 'state' && this.value.capabilities?.recordingResult?.supported) {
+                    try {
+                        const status = parseVanessaRecordingStatus(vanessaFormReplyText(await this.invoke('user_actions_recording', { action: 'status' }, generation)));
+                        observed = { ...observed, recording: status.recording };
+                    } catch { this.checkGeneration(generation); }
+                }
                 if (observed.kind === 'state') {
                     const text = result.content?.filter(item => item.type === 'text').map(item => 'text' in item ? item.text : '').join('\n').replace(/\r\n/gu, '\n') ?? '';
                     const scenario = /\n## Текущий сценарий\n([\s\S]*?)(?=\n## |$)/u.exec(text)?.[1] ?? '';
                     const names = [...scenario.matchAll(/^- name: (.+)$/gmu)];
-                    this.observedScenarioName = names.length === 1 ? names[0][1].trim() : undefined;
+                    const structured = readVanessaStructuredReply(result);
+                    const structuredScenario = structured?.currentScenario as { name?: unknown } | undefined;
+                    this.observedScenarioName = typeof structuredScenario?.name === 'string' ? structuredScenario.name : names.length === 1 ? names[0][1].trim() : undefined;
                     const execution = this.value.execution;
                     let confirmed = execution;
                     if (execution && observed.featurePath && sameVanessaFeaturePath(execution.filePath, observed.featurePath) && observed.lineNumber) {
@@ -689,7 +724,10 @@ export class VanessaControlSession {
     private async invoke(name: string, args: Record<string, unknown>, generation: number, operationSignal?: AbortSignal) {
         this.checkGeneration(generation);
         const signal = operationSignal ? AbortSignal.any([operationSignal, this.lifetime!.signal]) : this.lifetime?.signal;
-        const request = Symbol(); this.requests.set(request, name); this.publishRequests();
+        const background = name === 'get_vanessa_automation_state'
+            || name === 'manage_test_client_profiles' && args.action === 'get_list'
+            || name === 'user_actions_recording' && args.action === 'status';
+        const request = Symbol(); this.requests.set(request, { tool: name, background }); this.publishRequests();
         try {
         const result = await this.wire!.callTool(name, args, signal,
             ['run_scenario', 'execute_feature_step'].includes(name) ? progress => {
@@ -704,9 +742,11 @@ export class VanessaControlSession {
         } finally { this.requests.delete(request); if (this.value.generation === generation) { this.publishRequests(); } }
     }
     private publishRequests(): void {
-        const tools = [...this.requests.values()];
-        const tool = tools.find(value => ['get_form_analysis', 'user_actions_recording', 'execute_feature_step', 'run_scenario'].includes(value)) ?? tools[0];
-        this.set({ ...this.value, request: tool ? Object.freeze({ tool, count: tools.length }) : undefined });
+        const requests = [...this.requests.values()];
+        const foreground = requests.filter(request => !request.background);
+        const candidates = foreground.length ? foreground : requests;
+        const selected = candidates.find(request => ['get_form_analysis', 'user_actions_recording', 'execute_feature_step', 'run_scenario'].includes(request.tool)) ?? candidates[0];
+        this.set({ ...this.value, request: selected ? Object.freeze({ ...selected, count: requests.length }) : undefined });
     }
     private async invokeChecked(name: string, args: Record<string, unknown>, generation: number): Promise<void> {
         const result = await this.invoke(name, args, generation);
@@ -714,11 +754,13 @@ export class VanessaControlSession {
     }
     private async readResults(generation: number) {
         try {
-            const result = await this.invoke('get_test_results', {}, generation);
+            const result = await this.invoke('get_test_results', this.value.capabilities?.resultsJson?.supported ? { format: 'json' } : {}, generation);
             const parsed = parseVanessaControlReply('get_test_results', result);
             const text = result.content?.filter(item => item.type === 'text').map(item => 'text' in item ? item.text : '').join('\n').replace(/\r\n/gu, '\n') ?? '';
+            const structured = readVanessaStructuredReply(result);
+            const structuredError = structured?.error as { message?: unknown } | undefined;
             const message = parsed.kind === 'failureResult' || parsed.kind === 'runtimeResult' && parsed.status !== 'passed'
-                ? /^- Ошибка: ([^\r\n]+)$/mu.exec(text)?.[1] : undefined;
+                ? typeof structuredError?.message === 'string' ? structuredError.message : /^- Ошибка: ([^\r\n]+)$/mu.exec(text)?.[1] : undefined;
             const technical = parsed.kind === 'failureResult' ? /\n\n(Технические данные:\n[\s\S]*?)(?=\n## Шаги \()/u.exec(text)?.[1] : undefined;
             const scenarioName = technical ? /^        ИмяСценария: (.+)$/mu.exec(technical)?.[1].trim() : undefined;
             const failedSteps = parsed.kind === 'failureResult' || parsed.kind === 'runtimeResult' && parsed.status === 'failed'
@@ -730,7 +772,7 @@ export class VanessaControlSession {
             const execution = this.value.execution;
             const expanded = source?.resultMap && await source.resultMap.isCurrent() ? source.resultMap.steps : undefined;
             this.checkGeneration(generation);
-            const steps = source && execution ? mapVanessaStepResults(result, source.text, execution.mode === 'runFeature' ? 1 : execution.lineNumber, this.observedScenarioName, expanded)
+            const steps = source && execution ? mapVanessaStepResults(result, source.text, execution.mode === 'runFeature' ? 1 : execution.lineNumber, this.observedScenarioName, expanded, source.filePath)
                 .filter(step => execution.mode !== 'oneStep' || step.lineNumber === execution.lineNumber) : [];
             return { hash: createHash('sha256').update(JSON.stringify(result)).digest('hex'), parsed, message, presentation, steps };
         } catch {

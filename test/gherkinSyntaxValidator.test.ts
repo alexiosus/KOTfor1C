@@ -3,6 +3,12 @@ import test from 'node:test';
 import { collectGherkinSyntaxErrors } from '../src/gherkinSyntaxValidator.js';
 import { validateGherkinSyntax } from '../src/exportScenarioParser';
 
+test('Vanessa Затем alias parses without masking invalid structural syntax', () => {
+    const source = '# language: ru\nФункциональность: Стрелка\nСценарий: Рисование\n  Дано я рисую стрелку\n  Затем я рисую стрелку\n';
+    assert.deepEqual(collectGherkinSyntaxErrors(source), []);
+    assert.notDeepEqual(collectGherkinSyntaxErrors(source + '\n  Примеры\n    | A |\n'), []);
+});
+
 test('validates nested Vanessa Try and Except from a compiled BOM and CRLF feature', () => {
     const source = '\uFEFF' + [
         '# language: en',

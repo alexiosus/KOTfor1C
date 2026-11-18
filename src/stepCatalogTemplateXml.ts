@@ -11,6 +11,7 @@ import {
     parseBuiltInStepCatalog,
     parseStepCatalogIndex,
     sha256Hex,
+    sortStepCatalogDefinitions,
     StepCatalogIndex,
     StepTextVariant
 } from './stepCatalog';
@@ -253,11 +254,7 @@ export function generateBuiltInStepCatalog(
             validatePatternPlaceholders(step.en.pattern, 'en');
         }
     }
-    const steps = [...parsed.steps].sort((left, right) => {
-        return compareText(left.ru?.pattern || '', right.ru?.pattern || '')
-            || compareText(left.en?.pattern || '', right.en?.pattern || '')
-            || compareText(left.id, right.id);
-    });
+    const steps = sortStepCatalogDefinitions(parsed.steps);
     return parseBuiltInStepCatalog({
         schemaVersion: 1,
         vanessaVersion: options.version,

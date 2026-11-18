@@ -17,8 +17,11 @@ import * as compilerManifestStore from '../src/compilerBuildManifestStore';
 import * as compilerRuntime from '../src/compilerBuildRuntime';
 import * as artifactPaths from '../src/workspaceArtifactPath';
 import * as controlSourceMapping from '../src/vanessaControlSourceMapping';
+import { OneCInfobasePlatformError } from '../src/oneCInfobasePlatform';
+import { loadSharedStartupPlatform } from './helpers/sharedStartupPlatformFixture';
 
 function fixture(dependencies: Record<string, unknown> = {}) {
+    dependencies['./sharedStartupPlatform.js'] ??= loadSharedStartupPlatform(name => dependencies[name] ?? dependencies[name + '.js'] ?? (name.startsWith('node:') ? require(name) : {}));
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-compiler-ui-'));
     const uri = (file: string) => ({ scheme: 'file', fsPath: file, toString: () => `file://${file}` });
     const shown: { file: string; line?: number }[] = [];
@@ -137,20 +140,37 @@ test('opening an existing Windows report makes its links relative before showing
     } finally { f.dispose(); }
 });
 
-test('successful compiler entry point certifies final feature bytes only after settings restoration and rejects changed inputs', async () => {
-    for (const changed of [false, true]) {
+test('compiler entry point respects the service-IB platform, stops on uncertain versions and certifies only restored unchanged inputs', async () => {
+    for (const { platform, changed } of [
+        { platform: 'running', changed: false }, { platform: 'default', changed: true },
+        { platform: 'conflict', changed: false }, { platform: 'unavailable', changed: false }, { platform: 'cancelled', changed: false }
+    ]) {
         let buildParameters: Array<{ key: string; value: string }> = [];
         let executable = '';
+        let runningExecutable = ''; let serviceBase = '';
+        const preparedPlatforms: string[] = []; const executedPlatforms: string[] = []; const inspectedBases: string[] = [];
+        let defaultResolutions = 0;
         const manager = { loadActiveProfileSnapshot: async () => ({ id: 'default', name: 'Default', buildParameters,
             additionalVanessaParameters: [], globalVanessaVariables: [] }), validateCompilerBuildParameters: () => [],
             createYamlParametersFile: async (file: string, rows: Array<{ key: string; value: string }>) => {
                 await fs.promises.mkdir(path.dirname(file), { recursive: true }); await fs.promises.writeFile(file, JSON.stringify(Object.fromEntries(rows.map(row => [row.key, row.value]))));
             } };
         const f = fixture({ './yamlParametersManager.js': { YamlParametersManager: { getInstance: () => manager } },
-            './oneCPlatform.js': { resolveOneCPlatformForLaunch: async () => ({ clientExePath: executable }) } });
+            './oneCPlatform.js': { normalizeOneCClientExePath: (exe: string) => exe, resolveOneCPlatformForLaunch: async (_translate: unknown, options: { promptUser: boolean }) => {
+                defaultResolutions++; assert.equal(options.promptUser, false); return { clientExePath: executable };
+            } },
+            './startupInfobase.js': { getSharedStartupInfobasePaths: () => ({ infobaseDirectory: serviceBase }) },
+            './oneCInfobasePlatform': { OneCInfobasePlatformError, runningOneCInfobasePlatform: async (base: string) => {
+                inspectedBases.push(base);
+                if (platform === 'conflict' || platform === 'unavailable') { throw new OneCInfobasePlatformError(platform); }
+                if (platform === 'cancelled') { f.provider._buildCancellationRequested = true; }
+                return platform === 'running' ? runningExecutable : undefined;
+            } } });
         try {
             const sources = path.join(f.root, 'sources'); const output = path.join(f.root, 'features');
             fs.mkdirSync(sources); executable = path.join(f.root, 'compiler.epf'); fs.writeFileSync(executable, 'fixture compiler');
+            runningExecutable = path.join(f.root, 'running-client.exe'); fs.writeFileSync(runningExecutable, 'fixture running platform');
+            serviceBase = path.join(f.root, 'service-ib');
             buildParameters = [{ key: 'ScenarioFolder', value: sources }, { key: 'ProcessFolder', value: sources }, { key: 'FeatureFolder', value: output }];
             const info = { ...f.scenario('Main', 'main'), yamlFileUri: f.uri(path.join(sources, 'scen.yaml')) };
             const source = 'ТипФайла: "Сценарий"\nДанныеСценария:\n    UID: "main"\n    Имя: "Main"\n    Код: "Main"\nТекстСценария: |\n    And Delay 1\n';
@@ -170,7 +190,7 @@ test('successful compiler entry point certifies final feature bytes only after s
                 buildScenarioFilterDecision: () => ({}), applyScenarioFilterToBuildParameters: (value: unknown) => value,
                 getProjectPaths: () => ({ buildScenarioBddEpf: f.uri(executable) }),
                 resolveBuildRuntimeRootUri: () => f.uri(path.join(f.root, 'runtime')),
-                ensureSharedStartupInfobaseReady: async () => ({ infobaseDirectory: '/fixture-base', authentication: {} }),
+                ensureSharedStartupInfobaseReady: async (exe: string) => { preparedPlatforms.push(exe); return { infobaseDirectory: serviceBase, authentication: {} }; },
                 buildStartupParams: () => [], buildBuildScenarioBddArgs: (settings: string) => [settings],
                 clearScenarioRunArtifactsAndNotify() {}, rearmScenarioArtifactBuildRootWatcher() {},
                 updateScenarioBuildArtifacts: async () => {}, ensureUniqueVanessaRuntimePathsForArtifacts: async () => {}, ensureCombinedScenarioJsonArtifacts: async () => {}, sendRunArtifactsStateToWebview() {},
@@ -183,7 +203,8 @@ test('successful compiler entry point certifies final feature bytes only after s
                     assert.equal(await compilerManifestStore.readCompilerBuildManifest(output), undefined, 'no manifest before restoration');
                     await fs.promises.rename(temporary, disabled); events.push('restored'); return 0;
                 },
-                execute1CProcess: async (_exe: string, args: string[]) => {
+                execute1CProcess: async (exe: string, args: string[]) => {
+                    executedPlatforms.push(exe);
                     assert.equal(fs.existsSync(disabled), false);
                     const settings = JSON.parse(await fs.promises.readFile(args.at(-1)!, 'utf8'));
                     await fs.promises.writeFile(settings.ResultFile, '0');
@@ -194,6 +215,20 @@ test('successful compiler entry point certifies final feature bytes only after s
                 }
             });
             await f.provider._handleRunAssembleScriptTypeScript('1');
+            assert.deepEqual(inspectedBases, [serviceBase]);
+            if (platform === 'cancelled') {
+                assert.deepEqual(preparedPlatforms, []); assert.deepEqual(executedPlatforms, []); assert.deepEqual(events, []);
+                assert.ok(outputLines.some(text => text.includes('Build cancelled.')), outputLines.join('\n')); continue;
+            }
+            if (platform === 'conflict' || platform === 'unavailable') {
+                assert.deepEqual(preparedPlatforms, []); assert.deepEqual(executedPlatforms, []); assert.deepEqual(events, []);
+                assert.equal(defaultResolutions, 0); assert.equal(fs.existsSync(disabled), true);
+                assert.ok(f.notifications.some(text => platform === 'conflict' ? /Several 1C platforms/u.test(text) : /Could not determine the platform/u.test(text)), outputLines.join('\n'));
+                continue;
+            }
+            const expectedPlatform = platform === 'running' ? runningExecutable : executable;
+            assert.deepEqual(preparedPlatforms, [expectedPlatform]); assert.deepEqual(executedPlatforms, [expectedPlatform]);
+            assert.equal(defaultResolutions, platform === 'running' ? 0 : 1);
             assert.deepEqual(events, ['isolated', 'restored'], outputLines.join('\n'));
             assert.ok(outputLines.some(line => line.includes('completed successfully')), outputLines.join('\n'));
             const manifest = await compilerManifestStore.readCompilerBuildManifest(output);

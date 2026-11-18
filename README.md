@@ -12,7 +12,7 @@
   <a href="https://github.com/alexiosus/KOTfor1C/releases"><img alt="Скачивания из GitHub Releases" src="https://img.shields.io/github/downloads/alexiosus/KOTfor1C/total?style=flat-square&amp;label=GitHub%20downloads&amp;color=yellow"></a>
   <a href="https://marketplace.visualstudio.com/items?itemName=AlexeyEremeev.kot-test-toolkit"><img alt="Установить из Visual Studio Marketplace" src="https://img.shields.io/badge/Marketplace-Install-007ACC?style=flat-square"></a>
 <br><a href="https://infostart.ru/1c/articles/2834110/" title="История разработки KOT for 1C на Infostart">
-    <img src="https://infostart.ru/bitrix/templates/sandbox_empty/assets/tpl/abo/img/logo.svg" alt="Infostart — статья о KOT for 1C" height="20">
+    <img src="res/branding/infostart.png" alt="Infostart — статья о KOT for 1C" height="20">
 </a>
 </p>
 

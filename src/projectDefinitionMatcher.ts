@@ -7,7 +7,7 @@ import {
     type ProjectDefinitionView
 } from './projectDefinition';
 
-const GHERKIN_PREFIX = /^(?:\s*)(?:\*\s*)?(?:К\s+тому\s+же|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Но|И|If|Дано)\s+/iu;
+const GHERKIN_PREFIX = /^(?:\s*)(?:\*\s*)?(?:К\s+тому\s+же|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Затем|Пусть|То|Но|И|If|Дано|А|Также|Иначе)\s+/iu;
 const BRACKET_PARAMETER_NAME = /^[A-Za-zА-Яа-яЁё0-9_-]+$/u;
 const UNQUOTED_NUMERIC_LITERAL = /^[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)$/u;
 

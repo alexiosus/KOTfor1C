@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { parseVanessaClientProfiles, prepareVanessaClientProfile, VanessaRuntimeClients } from '../src/vanessaControlClients';
+import { parseVanessaClientProfiles, prepareVanessaClientProfile, VanessaRuntimeClients, VanessaClientControlError, formatVanessaClientError } from '../src/vanessaControlClients';
 import type { VanessaDebugClient } from '../src/vanessaDebugClients';
 
 const client: VanessaDebugClient = { id: 'own', name: 'KOT fixture', infobase: 'File="C:\\KOT fixture";Usr="embedded";Pwd="secret";',
@@ -25,6 +25,35 @@ test('profile lists retain live fields in memory, with strict counts, identities
         reply(list().content[0].text.replace('❌ не подключен', 'maybe')), list([{ connection: 'file|broken' }]),
         { ...list(), isError: true }, reply('Unknown formatter')]) {
         assert.throws(() => parseVanessaClientProfiles(invalid), /profile list/u);
+    }
+});
+
+test('live .47 profiles accept both Russian spellings of connected and disconnected', async () => {
+    const source = await fs.readFile(path.join(process.cwd(), 'test/fixtures/vanessa-control/1.2.043.47/clients-disconnected.live.ru.md'), 'utf8');
+    for (const [status, connected] of [['❌ не подключён', false], ['❌ не подключен', false], ['✅ подключён', true], ['✅ подключен', true]] as const) {
+        const profiles = parseVanessaClientProfiles(reply(source.replace('❌ не подключён', status)));
+        assert.equal(profiles.length, 1);
+        assert.equal(profiles[0].connected, connected, status);
+        assert.equal(profiles[0].port, 1538);
+        assert.equal(profiles[0].pid, 0);
+    }
+    for (const status of ['подключён', '✅ подключён?', '❌ не подключён (возможно)', '⏳ подключается']) {
+        assert.throws(() => parseVanessaClientProfiles(reply(source.replace('❌ не подключён', status))), /profile list/u);
+    }
+});
+
+test('profile tables tolerate reordered fields, added metadata and changed Markdown decoration', async () => {
+    const source = (await fs.readFile('test/fixtures/vanessa-control/1.2.043.47/clients-disconnected.live.ru.md', 'utf8')).replace(/\r\n/gu, '\n');
+    const changed = source.replace(/^(?:\|[^\n]+\|\n)+/mu, table => {
+        const rows = table.trim().split('\n');
+        return [rows[0], '| :--- | ---: |', ...rows.slice(2).reverse().map(row => row.replace(/^\| ([^|]+) \|/u, '|   $1   |')),
+            '| Версия клиента | 8.3.27 |', '| Источник профиля | Локальный |', ''].join('\n');
+    }) + '\n## Подсказка\nНовый поясняющий текст Vanessa.\n';
+    assert.notEqual(changed, source);
+    assert.deepEqual(parseVanessaClientProfiles(reply(changed)), parseVanessaClientProfiles(reply(source)));
+    for (const text of [source.replace('| PID |', '| Неизвестный PID |'), source.replace('| Статус |', '| Имя |'),
+        source.replace('| Порт | 1538 |', '| Порт | 65536 |'), source.replace('| PID | 0 |', '| PID | 0 |\n| PID | 1 |')]) {
+        assert.throws(() => parseVanessaClientProfiles(reply(text)), /profile list/u);
     }
 });
 
@@ -81,7 +110,33 @@ test('connect/disconnect/close confirm profile state instead of trusting success
         await runtime[action](client.name); assert.equal(writes, 1);
     }
     const unchanged = new VanessaRuntimeClients({ request: async operation => operation === 'list' ? list() : reply('connected successfully') });
-    await assert.rejects(unchanged.connect(client.name), /not confirmed/u);
+    await assert.rejects(unchanged.connect(client.name), error => error instanceof VanessaClientControlError && /did not connect/u.test(error.message) && error.details === 'connected successfully');
+});
+
+test('applying a profile verifies equivalent spaced authentication without reporting a false failure', async () => {
+    let applied = false;
+    const runtime = new VanessaRuntimeClients({ request: async operation => {
+        if (operation === 'list') { return applied ? list([{ extra: '/N "KOT" /P "test password" /NoSplash' }]) : reply(empty); }
+        applied = true; return reply('applied');
+    } });
+    await runtime.apply(client, true);
+});
+
+test('connection failures preserve the sanitized Vanessa response separately from the translated summary', async () => {
+    const license = 'Your license SMUA has expired. Pay extension fees, then refresh your license data.';
+    for (const failure of [reply(license), { ...reply('Ошибка подключения\n' + license + '\n/P"test password"\nRejected value: test password'), isError: true },
+        { ...reply(JSON.stringify({ error: { message: license }, password: 'test password' })), isError: true }]) {
+        const runtime = new VanessaRuntimeClients({ request: async operation => operation === 'list' ? list() : failure });
+        await assert.rejects(runtime.connect(client.name), error => {
+            assert.ok(error instanceof VanessaClientControlError);
+            assert.ok(error.details?.includes(license));
+            assert.ok(!error.details?.includes('test password'));
+            const formatted = formatVanessaClientError(error, () => 'Локализованная ошибка');
+            assert.ok(formatted.startsWith('Локализованная ошибка\n\n'));
+            assert.ok(formatted.includes(license));
+            return true;
+        });
+    }
 });
 
 test('catalog operations reject profiles replaced between preview and mutation', async () => {
@@ -96,16 +151,23 @@ test('catalog operations reject profiles replaced between preview and mutation',
     assert.equal(writes, 0);
 });
 
-test('close confirms the exact upstream completion reply and disconnected state, because Vanessa retains the old PID', async () => {
+test('close confirms its profile and status plus disconnected state, independently of help text', async () => {
     const closed = reply('# Клиент тестирования закрыт\n\n- Профиль: KOT fixture\n- Статус: закрыт успешно\n\n## Следующие шаги\n- Используйте `manage_test_client` с `action: connect` для повторного подключения');
-    for (const valid of [true, false]) {
+    for (const response of [closed, reply(closed.content[0].text.split('\n## ')[0]),
+        reply(closed.content[0].text.replace('## Следующие шаги', '## Новый раздел').replace('для повторного подключения', 'для открытия клиента'))]) {
         let connected = true;
         const runtime = new VanessaRuntimeClients({ request: async operation => {
             if (operation === 'list') { return reply(list([{ connected }]).content[0].text.replace('| PID | 0 |', '| PID | 314 |')); }
-            connected = false; return valid ? closed : reply('success');
+            connected = false; return response;
         } });
-        if (valid) { await runtime.close(client.name); }
-        else { await assert.rejects(runtime.close(client.name), /not confirmed/u); }
+        await runtime.close(client.name);
+    }
+    for (const response of [reply('success'), { ...closed, isError: true },
+        reply(closed.content[0].text.replace('Профиль: KOT fixture', 'Профиль: Other')),
+        reply(closed.content[0].text.replace('- Статус: закрыт успешно', '- Статус: закрыт успешно\n- Статус: ошибка')),
+        reply(closed.content[0].text.replace('- Профиль: KOT fixture', '- Профиль: KOT fixture\n- Профиль: Other'))]) {
+        const runtime = new VanessaRuntimeClients({ request: async operation => operation === 'list' ? list() : response });
+        await assert.rejects(runtime.close(client.name), /not confirmed/u);
     }
 });
 

@@ -25,7 +25,10 @@ export function withVanessaAuthoringLanguageDefault(value: JsonValue, language: 
 export function managedVanessaCommandParts(parts: readonly string[], port: number): string[] {
     if (!Number.isInteger(port) || port < 1 || port > 65535) { throw new Error('A valid Vanessa MCP port is required.'); }
     if (parts.some(part => /^StartFeaturePlayer(?:=|$)/iu.test(part))) { throw new Error('Managed debug must not start tests automatically.'); }
-    return [...parts, ...(parts.includes('UseEditor') ? [] : ['UseEditor']), 'runMcp', `mcpPort=${port}`];
+    // The first-run onboarding uses editor UI locators and can block tool calls
+    // with a modal error in both .45 and .47. /C suppresses it for this launch only.
+    return [...parts.filter(part => !/^DisableFirstRunHelper(?:=|$)/iu.test(part)),
+        ...(parts.includes('UseEditor') ? [] : ['UseEditor']), 'DisableFirstRunHelper', 'runMcp', `mcpPort=${port}`];
 }
 
 /** .45 registers MCP libraries before VanessaExt may have connected successfully. */

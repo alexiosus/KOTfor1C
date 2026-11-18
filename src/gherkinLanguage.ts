@@ -26,14 +26,14 @@ const CANONICAL_KEYWORDS_RU: Record<CanonicalStepKeyword, string> = {
 };
 
 const KEYWORD_TO_CANONICAL: Array<{ regex: RegExp; canonical: CanonicalStepKeyword }> = [
-    { regex: /^(?:and|и|к тому же)$/i, canonical: 'and' },
-    { regex: /^(?:given|допустим|дано)$/i, canonical: 'given' },
+    { regex: /^(?:and|и|к тому же|также)$/i, canonical: 'and' },
+    { regex: /^(?:given|допустим|дано|пусть)$/i, canonical: 'given' },
     { regex: /^(?:when|когда|если)$/i, canonical: 'when' },
-    { regex: /^(?:then|тогда)$/i, canonical: 'then' },
-    { regex: /^(?:but|но)$/i, canonical: 'but' }
+    { regex: /^(?:then|тогда|затем|то)$/i, canonical: 'then' },
+    { regex: /^(?:but|но|а|иначе)$/i, canonical: 'but' }
 ];
 
-const STEP_KEYWORD_REGEX = /^(\s*)(And|Then|When|Given|But|Но|Тогда|Когда|Если|И|К тому же|Допустим|Дано)\s+(.*)$/i;
+const STEP_KEYWORD_REGEX = /^(\s*)(And|Then|When|Given|But|Но|Тогда|Затем|То|Когда|Если|И|А|К тому же|Также|Иначе|Допустим|Дано|Пусть)\s+(.*)$/i;
 
 function toConfiguredLanguage(value: string | undefined): ScenarioLanguage {
     return value === 'ru' ? 'ru' : 'en';

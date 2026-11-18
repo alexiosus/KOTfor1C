@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 import vm from 'node:vm';
 import test from 'node:test';
 import * as activeProfiles from '../src/activeYamlParametersProfile';
 import * as defaults from '../src/yamlParameterDefaults';
 import * as compilerParameters from '../src/compilerBuildParameters';
 import * as compilerValueValidation from '../src/compilerBuildValueValidation';
+import * as parameterPaths from '../src/yamlParameterPaths';
 import * as libraries from '../src/projectLibraryRoots';
 
 function harness(empty = false) {
@@ -24,7 +26,7 @@ function harness(empty = false) {
         './appContext': { getExtensionUri: () => ({ fsPath: '/extension' }) },
         './scenarioScanRoot': { getScenarioScanRootPath: () => 'tests/' },
         './etalonBases': { getDefaultModelDbSettingsValue: () => 'model.yaml' }, './yamlParameterDefaults': defaults,
-        './compilerBuildParameters': compilerParameters, './compilerBuildValueValidation': compilerValueValidation,
+        './compilerBuildParameters': compilerParameters, './compilerBuildValueValidation': compilerValueValidation, './yamlParameterPaths': parameterPaths,
         './activeYamlParametersProfile': activeProfiles, './projectLibraryRoots.js': libraries
     };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/yamlParametersManager.ts', 'utf8'), {
@@ -38,7 +40,7 @@ test('export conversion persists effective library settings and notifies only af
     const h = harness(); const before = await h.manager.loadActiveProfileSnapshot();
     assert.equal(await h.manager.withProjectLibraryFolder('one', '/repo', '/repo/exports', async () => {
         const profile = await h.manager.loadActiveProfileSnapshot();
-        assert.deepEqual(libraries.resolveProjectLibraryConfiguration({ workspaceFolderPath: '/repo', profileId: profile.id, ...profile }).libraryRootPaths, ['/repo/exports']);
+        assert.deepEqual(libraries.resolveProjectLibraryConfiguration({ workspaceFolderPath: '/repo', profileId: profile.id, ...profile }).libraryRootPaths, [path.resolve('/repo/exports')]);
         assert.equal(h.events.length, 0); return 'converted';
     }), 'converted');
     assert.equal(h.events.length, 1);

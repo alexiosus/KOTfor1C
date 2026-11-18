@@ -1,7 +1,8 @@
 export type VanessaControlCapability = 'state' | 'editor' | 'editorContent' | 'openFeature' | 'loadFeature' | 'selectStep' | 'runFromLine' | 'runFeature' | 'runAll' | 'runCurrent' | 'oneStep' | 'stop' | 'results' | 'breakpoints'
     | 'clientProfilesRead' | 'clientProfilesWrite' | 'clientConnect' | 'clientDisconnect' | 'clientClose'
     | 'variablesRead' | 'variablesWrite' | 'formTree' | 'formWindow' | 'formElement' | 'formWindows' | 'formActivateWindow' | 'recording' | 'formChecks' | 'formSuggestions'
-    | 'environment' | 'runtimeSyntax' | 'runtimeSearch' | 'managerLog' | 'clientLog' | 'screenshotWindows' | 'screenshot';
+    | 'environment' | 'runtimeSyntax' | 'runtimeSearch' | 'managerLog' | 'clientLog' | 'screenshotWindows' | 'screenshot'
+    | 'stateJson' | 'resultsJson' | 'elementSteps' | 'activeFormElement' | 'recordingResult' | 'clientProfilePort' | 'settingsRead' | 'settingsWrite' | 'mxlOpen';
 export interface VanessaControlCapabilityStatus { readonly supported: boolean; readonly reason?: 'missingTool' | 'incompatibleSchema' }
 export type VanessaControlCapabilities = Readonly<Record<VanessaControlCapability, VanessaControlCapabilityStatus>>;
 export type VanessaControlReply =
@@ -31,10 +32,58 @@ function object(value: unknown): Record<string, unknown> | undefined {
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
+/** VA .47 JSON is opt-in; unsupported or incomplete replies never establish success. */
+export function readVanessaStructuredReply(value: unknown): Record<string, unknown> | undefined {
+    const reply = object(value);
+    if (reply?.isError || !Array.isArray(reply?.content) || reply.content.length !== 1) { return; }
+    const block = object(reply.content[0]);
+    if (block?.type !== 'text' || typeof block.text !== 'string' || block.text.length > 1_000_000) { return; }
+    try {
+        const data = object(JSON.parse(block.text));
+        return data?.schemaVersion === '1.1' && typeof data.ok === 'boolean' ? data : undefined;
+    } catch { return; }
+}
+
+function parseVanessaStructuredReply(tool: string, text: string): VanessaControlReply {
+    const data = readVanessaStructuredReply({ content: [{ type: 'text', text }] });
+    if (!data || data.ok !== true || typeof data.isRunning !== 'boolean') { return { kind: 'unknown' }; }
+    const statuses: Record<string, VanessaStepStatus> = { running: 'running', success: 'passed', failed: 'failed', broken: 'stopped', pending: 'pending' };
+    if (tool === 'get_vanessa_automation_state') {
+        const feature = object(data.currentFeature); const step = object(data.currentStep);
+        const line = step?.lineNumber;
+        return { kind: 'state', state: data.isRunning ? 'running' : 'idle',
+            ...(typeof feature?.fullPath === 'string' && /\.feature$/iu.test(feature.fullPath) ? { featurePath: feature.fullPath } : {}),
+            ...(typeof line === 'number' && Number.isSafeInteger(line) && line > 0 ? { lineNumber: line } : {}),
+            ...(typeof step?.status === 'string' && statuses[step.status] ? { stepStatus: statuses[step.status] } : {}) };
+    }
+    if (data.isRunning || data.isComplete !== true || !Array.isArray(data.steps) || !data.steps.length) { return { kind: 'unknown' }; }
+    const rows = data.steps.map(object);
+    if (rows.some(row => !row || typeof row.status !== 'string' || !['success', 'failed', 'broken', 'pending', 'skipped'].includes(row.status))) { return { kind: 'unknown' }; }
+    const failed = object(data.failedStep);
+    if (['failed', 'broken'].includes(String(data.status)) && typeof data.featurePath === 'string' && /\.feature$/iu.test(data.featurePath) &&
+        typeof failed?.lineNumber === 'number' && Number.isSafeInteger(failed.lineNumber) && failed.lineNumber > 0) {
+        return { kind: 'failureResult', featurePath: data.featurePath, lineNumber: failed.lineNumber };
+    }
+    if (data.status === 'success' && rows.every(row => row!.status === 'success')) { return { kind: 'runtimeResult', status: 'passed' }; }
+    const message = object(data.error)?.message;
+    if (['failed', 'broken', 'pending'].includes(String(data.status))) {
+        return { kind: 'runtimeResult', status: data.status === 'pending' ? 'pending' : 'failed', ...(typeof message === 'string' && message ? { message } : {}) };
+    }
+    return { kind: 'unknown' };
+}
+
 /** Validate the actual tools/list contract, including new mandatory arguments we cannot supply. */
 export function assessVanessaControlCapabilities(tools: readonly unknown[]): VanessaControlCapabilities {
     const contracts: Record<VanessaControlCapability, { tool: string; fields: Record<string, string>; literals?: Record<string, readonly unknown[]> }> = {
         state: { tool: 'get_vanessa_automation_state', fields: {} },
+        stateJson: { tool: 'get_vanessa_automation_state', fields: { format: 'string' }, literals: { format: ['json'] } },
+        resultsJson: { tool: 'get_test_results', fields: { format: 'string' }, literals: { format: ['json'] } },
+        elementSteps: { tool: 'get_form_element_steps', fields: { element_name: 'string', mode: 'string', table_name: 'string', table_scope: 'string' }, literals: { mode: ['suggestions', 'checks'], table_scope: ['current', 'all'] } },
+        activeFormElement: { tool: 'get_active_form_element', fields: {} },
+        recordingResult: { tool: 'user_actions_recording', fields: { action: 'string', capture_id: 'number' }, literals: { action: ['status', 'get_result'] } },
+        clientProfilePort: { tool: 'manage_test_client_profiles', fields: { action: 'string', name: 'string', port: 'integer' }, literals: { action: ['add', 'edit', 'get_list'] } },
+        settingsRead: { tool: 'get_va_settings', fields: { action: 'string', key: 'string', query: 'string', limit: 'integer', format: 'string' }, literals: { action: ['list', 'get'], format: ['json'] } },
+        settingsWrite: { tool: 'manage_va_settings', fields: { action: 'string', key: 'string', value: 'string', parameters_json: 'string', base_path: 'string', dry_run: 'boolean', expected_revision: 'integer', expected_current_value: 'string', format: 'string' }, literals: { action: ['set', 'apply'], format: ['json'] } },
         editor: { tool: 'get_editor_state', fields: { includeContent: 'boolean' }, literals: { includeContent: [false] } },
         editorContent: { tool: 'get_editor_state', fields: { includeContent: 'boolean' }, literals: { includeContent: [true] } },
         openFeature: { tool: 'open_feature_file', fields: { filePath: 'string' } },
@@ -45,6 +94,7 @@ export function assessVanessaControlCapabilities(tools: readonly unknown[]): Van
         runAll: { tool: 'run_scenario', fields: { mode: 'string' }, literals: { mode: ['all'] } },
         runCurrent: { tool: 'run_scenario', fields: { mode: 'string' }, literals: { mode: ['fromCurrentStep'] } },
         oneStep: { tool: 'execute_feature_step', fields: { filePath: 'string', lineNumber: 'integer' } },
+        mxlOpen: { tool: 'execute_step_from_text', fields: { stepText: 'string' } },
         stop: { tool: 'stop_scenario', fields: {} },
         results: { tool: 'get_test_results', fields: { scenarioId: 'string' } },
         breakpoints: { tool: 'manage_breakpoints', fields: { action: 'string', line: 'number' }, literals: { action: ['list', 'toggle'] } },
@@ -116,6 +166,9 @@ export function parseVanessaControlReply(tool: string, value: unknown): VanessaC
         return { kind: 'unknown' };
     }
     const text = result.content.map(item => object(item)!.text as string).join('\n').replace(/\r\n/gu, '\n').trim();
+    if (text.startsWith('{') && ['get_vanessa_automation_state', 'get_test_results'].includes(tool)) {
+        return parseVanessaStructuredReply(tool, text);
+    }
     if (tool === 'execute_feature_step' && text === 'Шаг в строке фича файла успешно выполнен') {
         return { kind: 'stepResult', status: 'passed' };
     }
@@ -174,18 +227,19 @@ export function parseVanessaControlReply(tool: string, value: unknown): VanessaC
     if (tool === 'get_vanessa_automation_state' && text.startsWith('# Состояние Vanessa Automation\n')) {
         const initial = text.split('\n## ')[0];
         const flags = [...initial.matchAll(/^- Выполнение сценариев: (да|нет)$/gmu)];
-        const client = [...initial.matchAll(/^- Клиент тестирования подключен: (да|нет)$/gmu)];
+        const client = [...initial.matchAll(/^- Клиент тестирования подключ[её]н: (да|нет)$/gmu)];
         const recording = [...initial.matchAll(/^- Включена запись действий пользователя: (да|нет)$/gmu)];
         // .45 writes the scenario result verbatim, including Markdown headings from
         // its error/window details. Only the outer state section names are structural.
+        const stateText = text.replace(/^## (Текущая фича|Текущий сценарий|Текущий шаг) \(по данным прогона\)$/gmu, '## $1');
         const sections = ['Текущая фича', 'Текущий сценарий', 'Текущий шаг'];
-        const headings = [...text.matchAll(/^## (.+)$/gmu)].map(match => match[1]).filter(heading => sections.includes(heading));
+        const headings = [...stateText.matchAll(/^## (.+)$/gmu)].map(match => match[1]).filter(heading => sections.includes(heading));
         if (flags.length !== 1 || client.length !== 1 ||
             sections.some((heading, index) => headings.indexOf(heading) !== index || headings.lastIndexOf(heading) !== index)) {
             return { kind: 'unknown' };
         }
-        const feature = /(?:^|\n)## Текущая фича\n([\s\S]*?)(?=\n## |$)/u.exec(text)?.[1] ?? '';
-        const step = /(?:^|\n)## Текущий шаг\n([\s\S]*?)(?=\n## |$)/u.exec(text)?.[1] ?? '';
+        const feature = /(?:^|\n)## Текущая фича\n([\s\S]*?)(?=\n## |$)/u.exec(stateText)?.[1] ?? '';
+        const step = /(?:^|\n)## Текущий шаг\n([\s\S]*?)(?=\n## |$)/u.exec(stateText)?.[1] ?? '';
         const featurePath = /^- fullPath: (.+)$/mu.exec(feature)?.[1];
         const line = /^- lineNumber: ([1-9]\d*)$/mu.exec(step)?.[1];
         const lineNumber = line ? Number(line) : undefined;
@@ -197,15 +251,19 @@ export function parseVanessaControlReply(tool: string, value: unknown): VanessaC
             ...(lineNumber && Number.isSafeInteger(lineNumber) ? { lineNumber } : {}), ...(stepStatus ? { stepStatus } : {}) };
     }
     if (tool === 'manage_breakpoints' && text.startsWith('# Точки останова\n')) {
-        const section = text.split('\n## ')[0];
-        const empty = '# Точки останова\n\nТочек останова нет.';
+        const section = text.split('\n## ')[0].trim();
+        const paragraphs = section.split('\n\n');
         const hints = ['Загрузите фичи (`load_features`) и откройте сценарий для работы с точками останова.',
             'Редактор не доступен. Загрузите фичи (`load_features`) для инициализации.'];
         // .45 emits this hint even with open Monaco tabs; set/list/remove was verified live.
         // The caller must still verify the active saved file before and after every read.
-        const emptyWithAdvisory = empty + '\n\nФайлы не открыты. Загрузите фичи (`load_features`) и откройте сценарий.';
-        if ([empty, emptyWithAdvisory].includes(section.trim())) { return { kind: 'breakpoints', lines: [] }; }
-        if (hints.some(hint => section.trim() === `${empty}\n\n${hint}`)) { return { kind: 'breakpointsUnavailable' }; }
+        if (paragraphs[1] === 'Нет данных из редактора (обновятся при следующем обращении к редактору).') { return { kind: 'breakpointsUnavailable' }; }
+        if (['Точек останова нет.', 'Точек останова нет (по данным редактора).'].includes(paragraphs[1])) {
+            const advisory = paragraphs.slice(2).join('\n\n');
+            if (/^Количество:|^- \d+$/mu.test(advisory)) { return { kind: 'unknown' }; }
+            if (hints.some(hint => paragraphs.includes(hint))) { return { kind: 'breakpointsUnavailable' }; }
+            return { kind: 'breakpoints', lines: [] };
+        }
         const count = /^Количество: ([1-9]\d*)$/mu.exec(section)?.[1];
         const lines = [...section.matchAll(/^- ([1-9]\d*)$/gmu)].map(match => Number(match[1]));
         if (count && lines.length === Number(count) && lines.every(Number.isSafeInteger) && new Set(lines).size === lines.length) {

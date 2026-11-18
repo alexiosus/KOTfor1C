@@ -19,6 +19,7 @@ import { renderFeatureTemplate } from '../src/featureTemplate';
 
 class MarkdownString {
     public value = '';
+    public constructor(value = '') { this.value = value; }
     public appendMarkdown(value: string): this { this.value += value; return this; }
     public appendCodeblock(value: string): this { this.value += value; return this; }
 }
@@ -71,9 +72,15 @@ const languageModule = loadModule('gherkinLanguage.ts', {
 });
 let liveFormSnapshot: any = null;
 let snapshotReads = 0;
+let elementReads: string[] = [];
+let liveElementSnapshot: any;
 const completionModule = loadModule('completionProvider.ts', {
     './projectDefinition': { isUserStepAvailable },
-    './formExplorerLiveSnapshot': { loadLiveFormExplorerSnapshot: async () => { snapshotReads++; return liveFormSnapshot; } },
+    './formExplorerLiveSnapshot': { loadLiveFormExplorerSnapshot: async () => { snapshotReads++; return liveFormSnapshot; },
+        loadLiveFormExplorerElement: async (expected: any, path: string, isCurrent: () => boolean) => {
+            if (expected.source?.adapter !== 'MCP') { return expected; }
+            elementReads.push(path); return isCurrent() ? liveElementSnapshot : undefined;
+        } },
     vscode: host,
     './gherkinLanguage': languageModule,
     './blockKeywordParser': blockKeywordParser,
@@ -447,6 +454,67 @@ const formSnapshot = { snapshot: { form: { title: 'Primary chart of accounts' },
     { path: 'Description', name: 'Description', title: 'Description', kind: 'InputField', valuePreview: 'Revenue', children: [] },
     { path: 'Unrelated', name: 'Unrelated', title: 'Unrelated', kind: 'InputField', valuePreview: 'Irrelevant', children: [] },
     { path: 'FormCreate', name: 'FormCreate', title: 'Create', kind: 'Button', children: [] }], tables: [{ name: 'Items', tableData: { columns: ['Quantity'], rows: [['10']] } }], attributes: [] } };
+
+test('live field suggestions resolve only the selected value without changing its label, ordering or insertion', async () => {
+    const snapshot = { ...formSnapshot.snapshot, source: { adapter: 'MCP' }, elements: formSnapshot.snapshot.elements.map(row => ({ ...row, valuePreview: undefined })) };
+    liveFormSnapshot = { snapshot }; elementReads = [];
+    liveElementSnapshot = { ...snapshot, elements: snapshot.elements.map(row => ({ ...row, valuePreview: row.path === 'Description' ? 'Christopher Montana' : undefined })) };
+    try {
+        const provider = createProvider('en');
+        const target = argumentTarget('Then form element named "Description|" became equal to "" by template');
+        const items = await complete(provider, target.source, target.position);
+        assert.deepEqual(elementReads, [], 'building the list never reads values for every field');
+        const item = items.find(item => typeof item.label !== 'string' && item.label.label === 'Description')!;
+        assert.ok(item); assert.equal((item.label as any).description, undefined);
+        const label = item.label, insertText = item.insertText, range = item.range, sortText = item.sortText;
+        await provider.resolveCompletionItem(item, { isCancellationRequested: false } as vscode.CancellationToken);
+        assert.deepEqual(elementReads, ['Description']);
+        assert.equal(item.detail, 'Form field', 'the card heading must not duplicate the value');
+        assert.match((item.documentation as MarkdownString).value, /Christopher Montana/u);
+        assert.equal(item.label, label); assert.equal(item.insertText, insertText); assert.equal(item.range, range); assert.equal(item.sortText, sortText);
+        await provider.resolveCompletionItem(item, { isCancellationRequested: true } as vscode.CancellationToken);
+        assert.equal(elementReads.length, 1, 'canceled selection never requests another field value');
+        liveElementSnapshot.elements[0].valuePreview = '';
+        await provider.resolveCompletionItem(item, { isCancellationRequested: false } as vscode.CancellationToken);
+        assert.match((item.documentation as MarkdownString).value, /Empty value/u);
+    } finally { liveFormSnapshot = null; liveElementSnapshot = undefined; }
+});
+
+test('cached field values stay in the documentation and are not duplicated in the suggestion row or heading', async () => {
+    const snapshot = { ...formSnapshot.snapshot, source: { adapter: 'MCP' } };
+    liveFormSnapshot = { snapshot }; elementReads = [];
+    liveElementSnapshot = { ...snapshot, elements: snapshot.elements.map(row => ({ ...row, valuePreview: row.path === 'Description' ? 'New\nvalue' : row.valuePreview })) };
+    try {
+        const provider = createProvider('en');
+        const target = argumentTarget('Then form element named "|" became equal to "" by template');
+        const items = await complete(provider, target.source, target.position);
+        const item = items.find(item => typeof item.label !== 'string' && item.label.label === 'Description')!;
+        assert.ok(item); assert.equal((item.label as any).description, undefined);
+        assert.equal(item.detail, 'Form field');
+        assert.match((item.documentation as MarkdownString).value, /Revenue/u);
+        await provider.resolveCompletionItem(item, { isCancellationRequested: false } as vscode.CancellationToken);
+        assert.equal((item.label as any).description, undefined);
+        assert.equal(item.detail, 'Form field');
+        assert.match((item.documentation as MarkdownString).value, /New\nvalue/u);
+        assert.doesNotMatch((item.documentation as MarkdownString).value, /Revenue/u);
+        assert.equal((item.documentation as MarkdownString).value.split('New\nvalue').length, 2, 'the value appears only once');
+    } finally { liveFormSnapshot = null; liveElementSnapshot = undefined; }
+});
+
+test('the value argument reads only its referenced live field and suggests its current value', async () => {
+    const snapshot = { ...formSnapshot.snapshot, source: { adapter: 'MCP' } };
+    liveFormSnapshot = { snapshot }; elementReads = [];
+    liveElementSnapshot = { ...snapshot, elements: snapshot.elements.map(row => ({ ...row, valuePreview: row.path === 'Description' ? 'Current value' : row.valuePreview })) };
+    try {
+        const target = argumentTarget('And I input "|" text in the field named "Description"');
+        const items = await complete(createProvider('en'), target.source, target.position);
+        assert.deepEqual(elementReads, ['Description']);
+        assert.ok(items.some(item => typeof item.label === 'string' ? item.label === 'Current value' : item.label.label === 'Current value'));
+        assert.ok(!items.some(item => typeof item.label === 'string' ? item.label === 'Revenue' : item.label.label === 'Revenue'));
+        liveElementSnapshot = undefined;
+        assert.equal((await complete(createProvider('en'), target.source, target.position)).length, 0, 'a rejected live read must not suggest a previous client value');
+    } finally { liveFormSnapshot = null; liveElementSnapshot = undefined; }
+});
 
 test('quoted argument completion never falls through to step suggestions, including final or unclosed arguments', async () => {
     for (const kind of ['feature', 'yaml'] as const) {

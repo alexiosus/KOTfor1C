@@ -31,7 +31,7 @@
 .v-client-fields input, .v-client-fields select { box-sizing: border-box; width: 100%; min-width: 0; padding: 6px 8px; font: inherit; border: 1px solid var(--vscode-input-border, var(--ib-border)); border-radius: 3px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
 .v-client-fields input:focus, .v-client-fields select:focus { outline: 1px solid var(--vscode-focusBorder); }
 .v-client-form summary { cursor: pointer; color: var(--ib-muted); margin-bottom: 8px; }
-.v-client-error { color: var(--ib-danger); line-height: 1.5; }
+.v-client-error { color: var(--ib-danger); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 800px) {
  .v-client-row { grid-template-columns: minmax(110px, 1fr) minmax(110px, .8fr); }
  .v-client-actions { grid-column: 1 / -1; }

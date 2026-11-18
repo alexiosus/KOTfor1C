@@ -5,7 +5,7 @@ import { findCompilerScenarioCall, getCompilerScenarioBody, parseCompilerParamet
 import { ScenarioLanguage, getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
 import { getBlockClosingKeyword, parseBlockKeyword } from './blockKeywordParser';
 import { normalizeMultilineStepInsertText } from './gherkinTableUtils';
-import { loadLiveFormExplorerSnapshot } from './formExplorerLiveSnapshot';
+import { loadLiveFormExplorerElement, loadLiveFormExplorerSnapshot } from './formExplorerLiveSnapshot';
 import {
     FormExplorerElementInfo,
     FormExplorerSnapshot,
@@ -36,7 +36,7 @@ const CONTROL_FLOW_COMPLETIONS = [
     { en: 'EndDo', ru: 'КонецЦикла', yamlOnly: true, descriptionEn: 'Close a loop in YAML scenario text.', descriptionRu: 'Закрыть цикл в тексте YAML-сценария.' }
 ] as const;
 const GHERKIN_KEYWORD_PREFIX_REGEX = /^(?:\*\s*)?(?:and|but|then|when|given|if|и|тогда|когда|если|допустим|дано|к тому же|но)\s+/i;
-const OPTIONAL_GHERKIN_PREFIX_FRAGMENT = String.raw`(?:(?:\*\s*)?(?:And|But|Then|When|Given|If|И|Тогда|Когда|Если|Допустим|Дано|К тому же|Но)\s+)?`;
+const OPTIONAL_GHERKIN_PREFIX_FRAGMENT = String.raw`(?:(?:\*\s*)?(?:And|But|Then|When|Given|If|И|Тогда|Затем|То|Когда|Если|Допустим|Дано|Пусть|К тому же|Также|Но|А|Иначе)\s+)?`;
 const VARIABLE_ASSIGNMENT_VERB_FRAGMENT = String.raw`(?:save|store|remember|read|create|determine|define|generate|wait|execute|put|retrieve|get|copy|запоминаю|сохраняю|читаю|создаю|определяю|генерирую|ожидаю|выполняю|вставляю|получаю|копирую)`;
 const OPTIONAL_TRAILING_ANNOTATION_FRAGMENT = String.raw`(?:\s+\([^)]*\))?\s*$`;
 const SEMANTIC_SYNONYM_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
@@ -55,9 +55,9 @@ const SEMANTIC_SYNONYM_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
     ['сохранить', 'запомнить', 'save', 'store', 'remember'],
     ['значение', 'параметр', 'value', 'parameter', 'argument']
 ];
-const SAVE_VARIABLE_STEP_REGEX_EN_VALUE_TO = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|Дано|К тому же|Но)\s+)?I\s+save\s+(.+?)\s+value\s+to\s+(?:"([^"]+)"|'([^']+)')\s+variable(?:\s+globally)?\s*$/i;
-const SAVE_VARIABLE_STEP_REGEX_RU_VALUE_TO = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|Дано|К тому же|Но)\s+)?Я\s+запоминаю\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s+значение\s+(.+?)\s*$/i;
-const EXECUTE_AND_PUT_TO_VARIABLE_REGEX = /^\s*(?:(?:\*\s*)?(?:And|Then|When|Given|But|И|Тогда|Когда|Если|Допустим|Дано|К тому же|Но)\s+)?(?:I\s+execute\s+code\s+and\s+put\s+to\s+varible|Я\s+выполняю\s+код\s+и\s+вставляю\s+в\s+переменную)\s+(?:"([^"]+)"|'([^']+)')\s+(?:"([^"]+)"|'([^']+)')\s*$/i;
+const SAVE_VARIABLE_STEP_REGEX_EN_VALUE_TO = new RegExp(String.raw`^\s*${OPTIONAL_GHERKIN_PREFIX_FRAGMENT}I\s+save\s+(.+?)\s+value\s+to\s+(?:"([^"]+)"|'([^']+)')\s+variable(?:\s+globally)?\s*$`, 'i');
+const SAVE_VARIABLE_STEP_REGEX_RU_VALUE_TO = new RegExp(String.raw`^\s*${OPTIONAL_GHERKIN_PREFIX_FRAGMENT}Я\s+запоминаю\s+в\s+переменную\s+(?:"([^"]+)"|'([^']+)')\s+значение\s+(.+?)\s*$`, 'i');
+const EXECUTE_AND_PUT_TO_VARIABLE_REGEX = new RegExp(String.raw`^\s*${OPTIONAL_GHERKIN_PREFIX_FRAGMENT}(?:I\s+execute\s+code\s+and\s+put\s+to\s+varible|Я\s+выполняю\s+код\s+и\s+вставляю\s+в\s+переменную)\s+(?:"([^"]+)"|'([^']+)')\s+(?:"([^"]+)"|'([^']+)')\s*$`, 'i');
 const VARIABLE_ASSIGNMENT_TO_THE_VARIABLE_REGEX = new RegExp(
     String.raw`^\s*${OPTIONAL_GHERKIN_PREFIX_FRAGMENT}.*\b${VARIABLE_ASSIGNMENT_VERB_FRAGMENT}\s+(.+?)\s+(?:to|into|in)\s+the\s+variable\s+(?:"([^"]+)"|'([^']+)')(?:\s+UI\s+Automation)?${OPTIONAL_TRAILING_ANNOTATION_FRAGMENT}`,
     'i'
@@ -126,6 +126,7 @@ interface FormExplorerElementCompletionCandidate {
     title: string;
     kind: string;
     valuePreview: string;
+    valueKnown: boolean;
     boundAttributePath: string;
 }
 
@@ -566,6 +567,7 @@ interface GherkinCompletionState {
 }
 
 export class DriveCompletionProvider implements vscode.CompletionItemProvider {
+    private readonly formDetails = new WeakMap<vscode.CompletionItem, { snapshot: FormExplorerSnapshot; path: string; documentation: string }>();
     private readonly preparedGherkinStates = new PreparedStepStateCache<GherkinCompletionState>();
     private scenarioDefaultsByDocument = new Map<string, { version: number; defaults: Map<string, string>; native?: boolean }>();
     private context: vscode.ExtensionContext;
@@ -584,6 +586,23 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             this.preparedGherkinStates.clear();
         }));
         console.log('[DriveCompletionProvider] Initialized with the unified project definition resolver.');
+    }
+
+    public async resolveCompletionItem(item: vscode.CompletionItem, token: vscode.CancellationToken): Promise<vscode.CompletionItem> {
+        const context = this.formDetails.get(item);
+        if (!context || token.isCancellationRequested) { return item; }
+        try {
+            const snapshot = await loadLiveFormExplorerElement(context.snapshot, context.path, () => !token.isCancellationRequested);
+            if (token.isCancellationRequested) { return item; }
+            if (!snapshot) { item.documentation = new vscode.MarkdownString(context.documentation); return item; }
+            const element = this.collectFormExplorerElementCompletionCandidates(snapshot).find(candidate => candidate.path === context.path);
+            if (!element?.valueKnown) { return item; }
+            const documentation = new vscode.MarkdownString();
+            documentation.appendMarkdown(context.documentation);
+            this.appendVariableValueMarkdown(documentation, vscode.l10n.t('Value'), element.valuePreview || vscode.l10n.t('Empty value'));
+            item.documentation = documentation;
+        } catch { /* Optional live details never prevent completion or alter the inserted field name. */ }
+        return item;
     }
 
     private buildGherkinCompletionState(
@@ -777,7 +796,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             const formExplorerQuotedCompletionList = await this.buildFormExplorerQuotedArgumentCompletionList(
                 lineText,
                 position,
-                quotedTextCompletionContext
+                quotedTextCompletionContext,
+                token
             );
             if (formExplorerQuotedCompletionList) {
                 return formExplorerQuotedCompletionList;
@@ -848,7 +868,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             const itemFullText = typeof baseItem.label === 'string' ? baseItem.label : baseItem.label.label; // Полный текст элемента автодополнения
 
             // Извлекаем ключевое слово из самого шага Gherkin, если оно там есть
-            const itemStartPatternGherkin = /^(And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим|Дано)\s+/i;
+            const itemStartPatternGherkin = /^(And|But|Then|When|Given|If|Но|Тогда|Затем|То|Когда|Если|И|К тому же|Также|Допустим|Дано|Пусть|А|Иначе)\s+/i;
             const itemKeywordMatch = itemFullText.match(itemStartPatternGherkin);
             const itemKeywordFromStep = itemKeywordMatch ? itemKeywordMatch[0].trim().toLowerCase() : ''; // Ключевое слово из элемента
             const itemTextAfterKeywordInItem = itemKeywordMatch ? itemFullText.substring(itemKeywordMatch[0].length) : itemFullText; // Текст элемента после ключевого слова
@@ -1043,7 +1063,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     name: (element.name || '').trim(),
                     title: (element.title || element.synonym || '').trim(),
                     kind: (element.kind || element.type || '').trim(),
-                    valuePreview: (element.valuePreview || '').trim(),
+                    valuePreview: element.valuePreview || '',
+                    valueKnown: typeof element.valuePreview === 'string',
                     boundAttributePath: (element.boundAttributePath || '').trim()
                 });
                 appendCandidates(element.children || []);
@@ -1524,7 +1545,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         context: QuotedTextCompletionContext,
         candidates: FormExplorerElementCompletionCandidate[],
         preferTechnicalName: boolean,
-        detailLabel: string
+        detailLabel: string,
+        snapshot: FormExplorerSnapshot
     ): vscode.CompletionList | null {
         const typedPrefixLower = context.typedPrefix.toLocaleLowerCase();
         const filteredCandidates = candidates
@@ -1565,8 +1587,7 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
         const completionList = new vscode.CompletionList<vscode.CompletionItem>([], false);
         filteredCandidates.forEach(candidate => {
             const completionItem = new vscode.CompletionItem({
-                label: candidate.insertedValue,
-                description: buildVariableValuePreview(candidate.candidate.valuePreview || '')
+                label: candidate.insertedValue
             }, vscode.CompletionItemKind.Field);
             completionItem.detail = `${detailLabel}${candidate.candidate.name && candidate.candidate.name !== candidate.insertedValue ? ` • ${candidate.candidate.name}` : ''}`;
             completionItem.insertText = candidate.insertedValue;
@@ -1600,8 +1621,11 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             if (candidate.candidate.boundAttributePath) {
                 documentation.appendMarkdown(`**${vscode.l10n.t('Bound attribute')}:** \`${candidate.candidate.boundAttributePath}\`\n\n`);
             }
-            if (candidate.candidate.valuePreview) {
-                this.appendVariableValueMarkdown(documentation, vscode.l10n.t('Value'), candidate.candidate.valuePreview);
+            if (snapshot.source?.adapter === 'MCP' && this.isFieldLikeFormExplorerCandidate(candidate.candidate)) {
+                this.formDetails.set(completionItem, { snapshot, path: candidate.candidate.path, documentation: documentation.value });
+            }
+            if (candidate.candidate.valueKnown) {
+                this.appendVariableValueMarkdown(documentation, vscode.l10n.t('Value'), candidate.candidate.valuePreview || vscode.l10n.t('Empty value'));
             }
             completionItem.documentation = documentation;
             completionList.items.push(completionItem);
@@ -1675,7 +1699,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
     private async buildFormExplorerQuotedArgumentCompletionList(
         lineText: string,
         position: vscode.Position,
-        context: QuotedTextCompletionContext
+        context: QuotedTextCompletionContext,
+        token: vscode.CancellationToken
     ): Promise<vscode.CompletionList | null> {
         const { beforeQuote, afterQuote, combined } = this.getFormExplorerQuotedArgumentSurroundings(lineText, context);
         if (!this.isFormExplorerRelevantQuotedContext(beforeQuote, afterQuote) || this.isFormExplorerVariableNameSlot(beforeQuote)) {
@@ -1769,10 +1794,13 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
             }
 
             if (referencedElementCandidate) {
+                const inspected = await loadLiveFormExplorerElement(snapshot, referencedElementCandidate.path, () => !token.isCancellationRequested);
+                if (token.isCancellationRequested || snapshot.source?.adapter === 'MCP' && !inspected) { return null; }
+                const currentElement = inspected && this.collectFormExplorerElementCompletionCandidates(inspected).find(candidate => candidate.path === referencedElementCandidate.path);
                 const elementValueCompletionList = this.buildFormExplorerSimpleValueCompletionList(
                     position,
                     context,
-                    this.buildFormExplorerElementValueCandidates(snapshot, referencedElementCandidate),
+                    this.buildFormExplorerElementValueCandidates(inspected ?? snapshot, currentElement ?? referencedElementCandidate),
                     vscode.l10n.t('Current form value'),
                     vscode.CompletionItemKind.Value
                 );
@@ -1805,7 +1833,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                 context,
                 elementCandidates.filter(candidate => this.isButtonLikeFormExplorerCandidate(candidate)),
                 preferTechnicalName,
-                vscode.l10n.t('Form button')
+                vscode.l10n.t('Form button'),
+                snapshot
             );
         }
 
@@ -1832,7 +1861,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     otherValueReferenceValues
                 ),
                 preferTechnicalName,
-                vscode.l10n.t('Form field')
+                vscode.l10n.t('Form field'),
+                snapshot
             );
         }
 
@@ -1846,7 +1876,8 @@ export class DriveCompletionProvider implements vscode.CompletionItemProvider {
                     otherValueReferenceValues
                 ),
                 preferTechnicalName,
-                vscode.l10n.t('Form element')
+                vscode.l10n.t('Form element'),
+                snapshot
             );
         }
 

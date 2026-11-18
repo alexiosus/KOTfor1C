@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
 import { parseVanessaFormTree, parseVanessaFormElement, VanessaRuntimeForms } from '../src/vanessaControlForms';
+import { VanessaFormStepCache } from '../src/vanessaControlFormSteps';
 
 const reply = (text: string) => ({ content: [{ type: 'text', text }] });
 // First-party names through the exact noncompact .45 formatter, not a live business snapshot.
@@ -17,6 +18,34 @@ const tree = '# Анализ текущей формы\n\n## Элементы ф
 ].join('\n') + '\n```\n';
 const details = '# Данные элемента формы\n\n## Основная информация\n- Имя: Description\n- Заголовок: Description\n- Вид: Поле ввода\n- Тип: Строка\n\n## Значение элемента формы\n- Значение: own value\n- Представление: own value\n\n## Состояние\n- Доступность: Да\n- Видимость: Да\n- ТолькоПросмотр: Нет';
 const binding = { client: 'own-client-fingerprint', windowTitle: 'Own window', formName: 'ОбщаяФорма.Own.Form' };
+
+test('VA .47 observes focus changes inside the same form without rebuilding its tree', async () => {
+    let name: string | null = 'Description'; let trees = 0;
+    const forms = new VanessaRuntimeForms({ supportsActiveElement: true, identity: async () => binding, request: async tool => {
+        if (tool === 'get_form_analysis') { trees++; return reply(tree); }
+        return reply('# Активный элемент формы\n\n```json\n' + JSON.stringify({ state: name ? 'focused' : 'no_focus',
+            window: binding.windowTitle, form: { name: binding.formName }, element: { name }, table: null, column: null }) + '\n```');
+    } });
+    const first = await forms.read(); assert.equal(first.form.activeElementPath, 'Form.Main.Description');
+    name = 'Save'; const next = await forms.refresh(first); assert.equal(next.form.activeElementPath, 'Form.Save');
+    name = null; assert.equal((await forms.refresh(next)).form.activeElementPath, undefined);
+    assert.equal(trees, 1);
+});
+
+test('VA .47 retrieves native element suggestions without activation or another full form analysis', async () => {
+    const calls: { tool: string; args: Readonly<Record<string, unknown>> }[] = [];
+    const forms = new VanessaRuntimeForms({ supportsElementSteps: true, identity: async () => binding, request: async (tool, args) => {
+        calls.push({ tool, args });
+        if (tool === 'get_form_element_data') { return reply(details); }
+        if (tool === 'get_form_element_steps') { return reply('# Шаги элемента формы\n\n## Шаги\n```gherkin\nAnd I enter "Value"\n```\n'); }
+        throw new Error('Unexpected full analysis or focus mutation');
+    } });
+    const snapshot = parseVanessaFormTree(reply(tree), binding, '2026-10-19T00:00:00Z');
+    const result = await forms.steps(snapshot, 'Form.Main.Description', new VanessaFormStepCache(), 'en');
+    assert.equal(result.text, 'And I enter "Value"');
+    assert.equal(calls.some(row => row.tool === 'get_form_analysis' || row.tool === 'manage_form_elements'), false);
+    assert.deepEqual(calls.find(row => row.tool === 'get_form_element_steps')?.args, { element_name: 'Description', mode: 'suggestions' });
+});
 
 test('noncompact tree preserves hierarchy, hidden fields and table columns without inventing values or states', () => {
     const form = parseVanessaFormTree(reply(tree), binding, '2026-10-19T00:00:00Z');

@@ -29,7 +29,7 @@ tsconfig.json
 docs/superpowers/**
 docs/qa/**
 docs/.kot/**
-docs/assets/archive/**
+docs/assets/**
 
 .kot/**
 tools/checkTestNumbering.cjs

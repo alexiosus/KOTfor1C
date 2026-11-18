@@ -491,6 +491,20 @@
             "default": true,
             "description": "%config.checkRelatedParentScenarios.description%",
             "order": 5
+          },
+          "kotTestToolkit.steps.catalogMode": {
+            "type": "string",
+            "enum": ["online", "offline"],
+            "enumDescriptions": ["%config.steps.catalogMode.online%", "%config.steps.catalogMode.offline%"],
+            "default": "online",
+            "scope": "resource",
+            "description": "%config.steps.catalogMode.description%"
+          },
+          "kotTestToolkit.steps.localCatalogPath": {
+            "type": "string",
+            "default": "",
+            "scope": "machine-overridable",
+            "description": "%config.steps.localCatalogPath.description%"
           }
         }
       },
@@ -874,6 +888,15 @@
             "description": "%config.fileWorkshopExe.description%",
             "order": 2
           },
+          "kotTestToolkit.files.mxlOpeningMode": {
+            "type": "string",
+            "enum": ["fileWorkshop", "platform"],
+            "default": "fileWorkshop",
+            "enumDescriptions": ["%config.mxlOpeningMode.fileWorkshop%", "%config.mxlOpeningMode.platform%"],
+            "description": "%config.mxlOpeningMode.description%",
+            "scope": "resource",
+            "order": 2.1
+          },
           "kotTestToolkit.paths.firstLaunchFolder": {
             "type": "string",
             "default": "",
@@ -1034,8 +1057,8 @@
         "category": "%cmd.category%"
       },
       {
-        "command": "kotTestToolkit.openMxlFile",
-        "title": "%cmd.openMxlFile.title%",
+        "command": "kotTestToolkit.openFile",
+        "title": "%cmd.openFile.title%",
         "category": "%cmd.category%"
       },
       {
@@ -1385,8 +1408,8 @@
         "title": "%menu.openCurrentScenarioFilesFolder.title%"
       },
       {
-        "command": "kotTestToolkit.editorMenu.openMxlFile",
-        "title": "%menu.openMxlFile.title%"
+        "command": "kotTestToolkit.editorMenu.openFile",
+        "title": "%menu.openFile.title%"
       },
       {
         "command": "kotTestToolkit.editorMenu.revealFileInExplorer",
@@ -1789,6 +1812,26 @@
         "command": "kotTestToolkit.resolveMetadataConflicts",
         "title": "%command.resolveMetadataConflicts.title%",
         "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.generateLocalStepCatalog",
+        "title": "%cmd.generateLocalStepCatalog.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.exportSpprCompiler",
+        "title": "%cmd.exportSpprCompiler.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.settings",
+        "title": "%cmd.vanessaControl.settings.title%",
+        "category": "KOT"
+      },
+      {
+        "command": "kotTestToolkit.vanessaControl.elementChecks",
+        "title": "%cmd.vanessaControl.elementChecks.title%",
+        "category": "KOT"
       }
     ],
     "submenus": [
@@ -1986,6 +2029,11 @@
           "command": "kotTestToolkit.openStepLibrary",
           "when": "view == kotTestToolkit.stepLibrarySidebarView",
           "group": "navigation@5"
+        },
+        {
+          "command": "kotTestToolkit.generateLocalStepCatalog",
+          "when": "view == kotTestToolkit.stepLibrarySidebarView",
+          "group": "2_catalogs@1"
         },
         {
           "command": "kotTestToolkit.createInfobase",
@@ -2220,6 +2268,14 @@
           "group": "1_maintenance@4"
         },
         {
+          "command": "kotTestToolkit.generateLocalStepCatalog",
+          "group": "1_maintenance@5"
+        },
+        {
+          "command": "kotTestToolkit.exportSpprCompiler",
+          "group": "1_maintenance@6"
+        },
+        {
           "command": "kotTestToolkit.convertScenarioFormatsBatch",
           "when": "workspaceFolderCount > 0",
           "group": "2_conversion@1"
@@ -2312,22 +2368,22 @@
       "kotTestToolkit.editorContext.workWithFiles": [
         {
           "command": "kotTestToolkit.editorMenu.openCurrentScenarioFilesFolder",
-          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml)",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature)",
           "group": "00_workWithFiles@0"
         },
         {
-          "command": "kotTestToolkit.editorMenu.openMxlFile",
-          "when": "editorTextFocus && editorHasSelection && (resourceExtname == .yaml || resourceExtname == .yml)",
+          "command": "kotTestToolkit.editorMenu.openFile",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature)",
           "group": "00_workWithFiles@1"
         },
         {
           "command": "kotTestToolkit.editorMenu.revealFileInExplorer",
-          "when": "editorTextFocus && editorHasSelection && (resourceExtname == .yaml || resourceExtname == .yml)",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature)",
           "group": "00_workWithFiles@2"
         },
         {
           "command": "kotTestToolkit.editorMenu.revealFileInOS",
-          "when": "editorTextFocus && editorHasSelection && (resourceExtname == .yaml || resourceExtname == .yml)",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature)",
           "group": "00_workWithFiles@3"
         }
       ],
@@ -2560,7 +2616,7 @@
           "when": "false"
         },
         {
-          "command": "kotTestToolkit.editorMenu.openMxlFile",
+          "command": "kotTestToolkit.editorMenu.openFile",
           "when": "false"
         },
         {
@@ -2767,7 +2823,7 @@
         },
         {
           "submenu": "kotTestToolkit.editorContext.workWithFiles",
-          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml)",
+          "when": "editorTextFocus && (resourceExtname == .yaml || resourceExtname == .yml || resourceExtname == .feature)",
           "group": "03_files@0"
         },
         {

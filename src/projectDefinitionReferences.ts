@@ -14,7 +14,7 @@ import type {
 } from './projectDefinition';
 import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 
-const CALLABLE_LINE = /^\s*(?:\*\s*)?(?:К\s+тому\s+же|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Но|И|If|Дано|Do|Цикл)\s+.+/iu;
+const CALLABLE_LINE = /^\s*(?:\*\s*)?(?:К\s+тому\s+же|Затем|Пусть|То|А|Также|Иначе|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Но|И|If|Дано|Do|Цикл)\s+.+/iu;
 const IGNORED_DIRECTORIES = new Set(['.git', '.svn', 'node_modules']);
 
 export interface ProjectDefinitionReferenceSearchRoot {

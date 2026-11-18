@@ -9,7 +9,7 @@ export const workspaceActions: Readonly<Record<string, string>> = {
 export interface KotWorkspaceRequest {
     id: string; type: string; folder?: string; scope?: SettingsScope; key?: string; action?: string; value?: unknown; data?: unknown;
 }
-const types = new Set(['ready', 'settings', 'applySettings', 'pickPath', 'scan', 'checkRuntime', 'reviewSetup', 'applySetup', 'cancel', 'openNative', 'action', 'openExample', 'openWorkshop', 'progress', 'loadProgress', 'draft', 'chooseFolder', 'openProjectWindow', 'retryExecution']);
+const types = new Set(['ready', 'settings', 'applySettings', 'pickPath', 'suggestVanessaLibrary', 'downloadVanessa', 'cancelVanessaDownload', 'exportSpprCompiler', 'scan', 'checkRuntime', 'reviewSetup', 'applySetup', 'cancel', 'openNative', 'openRepository', 'openChangelog', 'openFileWorkshopDownload', 'action', 'openExample', 'openWorkshop', 'progress', 'loadProgress', 'draft', 'chooseFolder', 'openProjectWindow', 'retryExecution']);
 /** Validate messages at the extension boundary; never pass arbitrary commands or resource URIs through. */
 export function parseKotWorkspaceRequest(message: unknown, folders: readonly string[]): KotWorkspaceRequest {
     if (!message || typeof message !== 'object' || Array.isArray(message)) { throw new Error('Invalid KOT request'); }

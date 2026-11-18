@@ -162,6 +162,9 @@ const loadStartupInfobase = createDeferredLoader(
 const loadOneCPlatform = createDeferredLoader(
     () => import('./oneCPlatform.js')
 );
+const loadSharedStartupPlatform = createDeferredLoader(
+    () => import('./sharedStartupPlatform.js')
+);
 
 // --- Вспомогательная функция для Nonce ---
 function getNonce(): string {
@@ -6846,10 +6849,8 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const debugClients: VanessaDebugClientSelection | null = mcpPort === undefined
             ? await this.resolveVanessaDebugClientsForLaunch() : { mode: 'scenario', clients: [] };
         if (!debugClients) { return false; }
-        const { resolveOneCPlatformForLaunch } = await loadOneCPlatform();
-        const selectedPlatform = await resolveOneCPlatformForLaunch(this.t.bind(this), {
-            placeHolder: this.t('Select 1C platform for Vanessa launch'), promptUser: background ? false : undefined
-        });
+        const { resolveSharedStartupPlatform } = await loadSharedStartupPlatform();
+        const selectedPlatform = await resolveSharedStartupPlatform(this.t.bind(this));
         if (!selectedPlatform) {
             return false;
         }
@@ -8570,15 +8571,15 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 await this.verifyCompilerBuildPreflight(effectiveBuildParameters, selectionSnapshot.enabledKeys, catalog, workspaceRootPath, outputChannel, controlInputsBefore?.sources);
                 ensureBuildNotCancelled();
 
-                const { resolveOneCPlatformForLaunch } = await loadOneCPlatform();
-                const selectedPlatform = await resolveOneCPlatformForLaunch(this.t.bind(this), { promptUser: false });
-                if (!selectedPlatform) { sendStatus(this.t('Build error.'), true, 'assemble'); return; }
-                if (!fs.existsSync(selectedPlatform.clientExePath)) {
+                const { resolveSharedStartupPlatform } = await loadSharedStartupPlatform();
+                const oneCExePath = (await resolveSharedStartupPlatform(this.t.bind(this)))?.clientExePath;
+                ensureBuildNotCancelled();
+                if (!oneCExePath) { sendStatus(this.t('Build error.'), true, 'assemble'); return; }
+                if (!fs.existsSync(oneCExePath)) {
                     sendStatus(this.t('Build error.'), true, 'assemble');
-                    vscode.window.showErrorMessage(this.t('1C:Enterprise client file not found at path: {0}', selectedPlatform.clientExePath));
+                    vscode.window.showErrorMessage(this.t('1C:Enterprise client file not found at path: {0}', oneCExePath));
                     return;
                 }
-                const oneCExePath = selectedPlatform.clientExePath;
                 const startupInfobase = await this.ensureSharedStartupInfobaseReady(oneCExePath,
                     this.t('Preparing shared startup infobase for test assembly...'), false);
                 if (!startupInfobase) { sendStatus(this.t('Build error.'), true, 'assemble'); return; }
@@ -12069,10 +12070,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const workspaceRootPath = workspaceFolder.uri.fsPath;
         const debugClients = manualDebug ? await this.resolveVanessaDebugClientsForLaunch() : undefined;
         if (manualDebug && !debugClients) { return 'aborted'; }
-        const { resolveOneCDesignerExePath, resolveOneCPlatformForLaunch } = await loadOneCPlatform();
-        const selectedPlatform = await resolveOneCPlatformForLaunch(this.t.bind(this), {
-            placeHolder: this.t('Select 1C platform for Vanessa launch')
-        });
+        const { resolveOneCDesignerExePath } = await loadOneCPlatform();
+        const { resolveSharedStartupPlatform } = await loadSharedStartupPlatform();
+        const selectedPlatform = await resolveSharedStartupPlatform(this.t.bind(this));
         if (!selectedPlatform) {
             return 'aborted';
         }

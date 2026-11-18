@@ -17,10 +17,15 @@ import { extractVanessaVersionFromChangelog } from './vanessaVersion';
 import { YamlParametersManager } from './yamlParametersManager';
 import { detectInstalledOneCPlatforms, getConfiguredOneCPlatforms, saveConfiguredOneCPlatforms } from './oneCPlatform';
 import type { ProjectFileProgress } from './projectLibraryStore';
+import type { StepCatalogService } from './stepCatalogService';
+import type { LocalStepCatalogProgress } from './localStepCatalog';
 
 interface SetupDraft {
     route: 'new' | 'sppr' | 'vanessa' | 'legacy'; mode: 'sppr' | 'vanessa'; language: 'en' | 'ru'; format: 'native' | 'legacy';
     transition?: boolean; sources: string; libraries: string; run: boolean; platform: string; vanessa: string; compiler: string; profileId: string;
+    catalogMode?: 'online' | 'offline';
+    skipRuntimeCheck?: boolean;
+    mxlOpeningMode?: 'fileWorkshop' | 'platform'; fileWorkshop?: string;
 }
 interface SetupReview {
     id: string; folder: string; draft: SetupDraft; projectFormat?: ProjectFormat; inspection: SetupInspection; files: SetupFile[];
@@ -39,23 +44,38 @@ export class KotWorkspacePanel implements vscode.Disposable {
     private review?: SetupReview;
     private prepareExecution?: () => Promise<boolean>;
     bindExecution(prepare: () => Promise<boolean>): void { this.prepareExecution = prepare; }
+    private stepCatalogs?: Pick<StepCatalogService, 'getPreparationState' | 'onDidChangePreparation'>;
+    bindStepCatalogs(service: NonNullable<KotWorkspacePanel['stepCatalogs']>): void {
+        this.stepCatalogs = service;
+        this.subscriptions.push(service.onDidChangePreparation(event => {
+            const folder = event.workspaceFolderUri.toString();
+            void this.panel?.webview.postMessage({ type: 'catalogProgress', folder, catalog: this.catalogSettings()[folder] });
+        }));
+    }
     private cancelled = false;
     private applying = false;
     private preparingExecution = false;
+    private vanessaDownload?: { id: string; controller: AbortController };
     private drafts: SettingsChange[] = [];
     private readonly subscriptions: vscode.Disposable[] = [];
     constructor(private readonly context: vscode.ExtensionContext) {
         this.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
-            if (this.panel && !this.applying && event.affectsConfiguration('kotTestToolkit')) { void this.panel.webview.postMessage({ type: 'configurationChanged' }); }
+            if (this.panel && !this.applying && event.affectsConfiguration('kotTestToolkit')) { void this.panel.webview.postMessage({ type: 'configurationChanged', catalogSettings: this.catalogSettings() }); }
         }), vscode.workspace.onDidChangeWorkspaceFolders(() => { KotWorkspacePanel.initialize(this.context); if (this.panel) { void this.sendBoot(); } }));
     }
-    dispose(): void { this.cancelled = true; this.panel?.dispose(); this.subscriptions.forEach(item => item.dispose()); }
+    dispose(): void { this.cancelled = true; this.vanessaDownload?.controller.abort(); this.panel?.dispose(); this.subscriptions.forEach(item => item.dispose()); }
     private t(message: string): string { return this.model?.strings[message] ?? message; }
     private folder(identity = this.selectedFolder): vscode.WorkspaceFolder {
         const folder = vscode.workspace.workspaceFolders?.find(item => item.uri.toString() === identity && item.uri.scheme === 'file');
         if (!folder) { throw new Error(this.t('Open a local project folder first.')); } return folder;
     }
     private assertTrusted(): void { if (!vscode.workspace.isTrusted) { throw new Error(this.t('Trust the workspace before applying project changes.')); } }
+    private catalogSettings(): Record<string, { mode: string; vanessa: string; progress?: LocalStepCatalogProgress }> {
+        return Object.fromEntries((vscode.workspace.workspaceFolders ?? []).map(folder => {
+            const config = vscode.workspace.getConfiguration('kotTestToolkit', folder.uri);
+            return [folder.uri.toString(), { mode: config.get<string>('steps.catalogMode', 'online'), vanessa: config.get<string>('runVanessa.vanessaEpfPath', 'tools/vanessa/vanessa-automation.epf'), progress: this.stepCatalogs?.getPreparationState(folder.uri) }];
+        }));
+    }
     async open(view: 'settings' | 'setup' = 'settings'): Promise<void> {
         this.view = view;
         const override = vscode.workspace.getConfiguration('kotTestToolkit.localization').get<string>('languageOverride', 'System');
@@ -70,10 +90,10 @@ export class KotWorkspacePanel implements vscode.Disposable {
         const panel = this.panel;
         const nonce = randomUUID().replace(/-/gu, '');
         const asset = (file: string) => panel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, file)).toString();
-        panel.webview.html = `<!doctype html><html lang="${russian ? 'ru' : 'en'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${panel.webview.cspSource}; style-src ${panel.webview.cspSource}; font-src ${panel.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${asset('media/kotWorkspace.css')}"></head><body><div class="workbench"><aside class="navigation"><button id="brand" class="brand"><span class="brand-icon" aria-hidden="true"></span><strong>KOT for 1C</strong></button><nav id="navigation" aria-label="KOT"></nav><div id="section-navigation"></div><select id="section-select" hidden></select></aside><main id="content" tabindex="-1"><p>…</p></main></div><div id="notice" role="status" aria-live="polite"></div><script nonce="${nonce}" src="${asset('media/kotWorkspace.js')}"></script></body></html>`;
+        panel.webview.html = `<!doctype html><html lang="${russian ? 'ru' : 'en'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${panel.webview.cspSource}; style-src ${panel.webview.cspSource}; font-src ${panel.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${asset('media/kotWorkspace.css')}"></head><body><div class="workbench"><aside class="navigation"><button id="brand" class="brand"><span class="brand-icon" aria-hidden="true"></span><strong>KOT for 1C</strong></button><nav id="navigation" aria-label="KOT"></nav><div id="section-navigation"></div><select id="section-select" hidden></select><div id="navigation-actions" class="navigation-actions"></div></aside><main id="content" tabindex="-1"><p>…</p></main></div><div id="notice" role="status" aria-live="polite"></div><script nonce="${nonce}" src="${asset('media/kotWorkspace.js')}"></script></body></html>`;
         const receive = panel.webview.onDidReceiveMessage(message => { void this.receive(message, panel); });
         const close = panel.onDidDispose(() => {
-            receive.dispose(); close.dispose(); this.panel = undefined; this.cancelled = true;
+            receive.dispose(); close.dispose(); this.panel = undefined; this.cancelled = true; this.vanessaDownload?.controller.abort();
             if (this.drafts.length) { void this.handleCloseDraft(); }
         });
     }
@@ -100,7 +120,10 @@ export class KotWorkspacePanel implements vscode.Disposable {
         const activeProfile = await manager.loadActiveProfileSnapshot();
         await this.panel.webview.postMessage({ type: 'boot', model: this.model, view: this.view, folders, folder: this.selectedFolder,
             scope: this.selectedFolder ? 'folder' : 'user', trusted: vscode.workspace.isTrusted, platform: process.platform, primaryFolder: folders[0]?.id,
-            profiles, profilePaths: { sources: getCompilerBuildParameterValue(activeProfile.buildParameters, 'TestFolder', 'ScenarioFolder'), libraries: getCompilerBuildParameterValue(activeProfile.buildParameters, 'Libraries', 'VanessaLibraries') }, progress: this.context.workspaceState.get(progressKey(this.selectedFolder)), drafts: this.drafts,
+            profiles, catalogSettings: this.catalogSettings(), fileSettings: Object.fromEntries(folders.map(folder => {
+                const config = vscode.workspace.getConfiguration('kotTestToolkit', vscode.Uri.parse(folder.id));
+                return [folder.id, { mode: config.get('files.mxlOpeningMode', 'fileWorkshop'), fileWorkshop: config.get('paths.fileWorkshopExe', '') }];
+            })), profilePaths: { sources: getCompilerBuildParameterValue(activeProfile.buildParameters, 'TestFolder', 'ScenarioFolder'), libraries: getCompilerBuildParameterValue(activeProfile.buildParameters, 'Libraries', 'VanessaLibraries') }, progress: this.context.workspaceState.get(progressKey(this.selectedFolder)), drafts: this.drafts,
             pendingSetup: this.selectedFolder ? isProjectSetupPending(this.folder().uri.fsPath) : false });
     }
     private async receive(raw: unknown, panel: vscode.WebviewPanel): Promise<void> {
@@ -137,10 +160,32 @@ export class KotWorkspacePanel implements vscode.Disposable {
                 await vscode.commands.executeCommand('workbench.action.openSettings', request.key ? `@id:${request.key}` : '@ext:AlexeyEremeev.kot-test-toolkit'); return;
             }
             case 'chooseFolder': await vscode.commands.executeCommand('vscode.openFolder'); return;
+            case 'openRepository': await vscode.env.openExternal(vscode.Uri.parse('https://github.com/alexiosus/KOTfor1C')); return;
+            case 'openFileWorkshopDownload': await vscode.env.openExternal(vscode.Uri.parse('https://v8.1c.ru/static/1s-predpriyatie-rabota-s-faylami/')); return;
+            case 'openChangelog': {
+                // VSIX packaging normalizes this filename to lowercase.
+                for (const filename of ['CHANGELOG.md', 'changelog.md']) {
+                    const uri = vscode.Uri.joinPath(this.context.extensionUri, filename);
+                    try { await vscode.workspace.fs.stat(uri); } catch { continue; }
+                    await vscode.commands.executeCommand('markdown.showPreview', uri); return;
+                }
+                throw new Error(this.t('The installed extension changelog could not be found.'));
+            }
             case 'openProjectWindow': await vscode.commands.executeCommand('vscode.openFolder', this.folder(identity).uri, true); return;
             case 'loadProgress': return this.context.workspaceState.get(progressKey(identity));
             case 'retryExecution': return this.retryExecution(identity);
             case 'pickPath': return this.pickPath(request);
+            case 'suggestVanessaLibrary': return this.suggestVanessaLibrary(request);
+            case 'downloadVanessa': return this.downloadVanessa(request);
+            case 'exportSpprCompiler': {
+                this.assertTrusted();
+                if (typeof request.value !== 'string' || request.value.length > 4096 || request.value.includes('\0')) { throw new Error('Invalid compiler path'); }
+                const { exportSpprCompilerFromInfobase } = await import('./spprCompilerExportCommands.js');
+                return exportSpprCompilerFromInfobase(this.context, this.folder(identity), request.value);
+            }
+            case 'cancelVanessaDownload':
+                if (request.value === this.vanessaDownload?.id) { this.vanessaDownload?.controller.abort(); }
+                return;
             case 'scan': {
                 this.cancelled = false; const inspection = await inspectSetupProject(this.folder(identity).uri.fsPath, { cancelled: () => this.cancelled });
                 return { ...inspection, roots: { sppr: suggestSetupRoots(inspection, 'sppr'), vanessa: suggestSetupRoots(inspection, 'vanessa') } };
@@ -149,7 +194,10 @@ export class KotWorkspacePanel implements vscode.Disposable {
             case 'reviewSetup': return this.reviewSetup(this.setupDraft(request.data), identity);
             case 'applySetup': return this.applySetup(String(request.value ?? ''), request.id);
             case 'cancel': this.cancelled = true; return;
-            case 'action': if (['functions', 'numbering', 'parameters'].includes(request.action!)) { this.assertTrusted(); } await vscode.commands.executeCommand(workspaceActions[request.action!]); return;
+            case 'action': {
+                if (['functions', 'numbering', 'parameters'].includes(request.action!)) { this.assertTrusted(); }
+                await vscode.commands.executeCommand(workspaceActions[request.action!]); return;
+            }
             case 'openExample': return this.openExample(identity);
             case 'openWorkshop': return this.openWorkshop();
             case 'progress': {
@@ -167,7 +215,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
         const setupPaths: Record<string, { pathKind: string; pathPolicy: 'relative' | 'absolute' | 'project' }> = {
             'setup.sources': { pathKind: 'directory', pathPolicy: 'project' }, 'setup.libraries': { pathKind: 'directory', pathPolicy: 'relative' },
             'setup.platform': { pathKind: 'exe', pathPolicy: 'absolute' }, 'setup.vanessa': { pathKind: 'epf', pathPolicy: 'relative' },
-            'setup.compiler': { pathKind: 'epf', pathPolicy: 'project' }
+            'setup.compiler': { pathKind: 'epf', pathPolicy: 'project' }, 'setup.fileWorkshop': { pathKind: 'exe', pathPolicy: 'absolute' }
         };
         const picker = definition?.pathKind ? definition : setupPaths[request.key ?? ''];
         if (!picker) { throw new Error('Unknown path setting'); }
@@ -177,12 +225,83 @@ export class KotWorkspacePanel implements vscode.Disposable {
             canSelectMany: false, openLabel: this.t('Select'), filters: directory ? undefined : { [extension.toUpperCase()]: [extension] } });
         return selected?.[0] ? portableSettingPath(folder.uri.fsPath, selected[0].fsPath, picker.pathPolicy ?? 'relative', request.scope ?? 'folder') : undefined;
     }
+    private async suggestVanessaLibrary(request: KotWorkspaceRequest): Promise<string | undefined> {
+        if (typeof request.value !== 'string' || request.value.length > 4096 || request.value.includes('\0')) { throw new Error('Invalid setup path'); }
+        if (!request.value.trim() || path.extname(request.value).toLowerCase() !== '.epf') { return; }
+        const root = await fs.realpath(this.folder(request.folder).uri.fsPath);
+        const epf = await fs.realpath(path.resolve(root, request.value)).catch(() => undefined);
+        if (!epf || !await fs.stat(epf).then(stat => stat.isFile(), () => false)) { return; }
+        const directory = path.dirname(epf);
+        const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
+        const features = entries.find(entry => entry.isDirectory() && entry.name.toLowerCase() === 'features');
+        return features ? portableSettingPath(root, path.join(directory, features.name), 'relative', 'folder') : undefined;
+    }
+    private async downloadVanessa(request: KotWorkspaceRequest): Promise<{ path: string; version: string } | undefined> {
+        this.assertTrusted();
+        const folder = this.folder(request.folder);
+        if (this.vanessaDownload) { throw new Error(this.t('A Vanessa download is already in progress.')); }
+        const job = { id: request.id, controller: new AbortController() }; this.vanessaDownload = job;
+        const pickerCancellation = new vscode.CancellationTokenSource();
+        const cancelPicker = () => pickerCancellation.cancel();
+        job.controller.signal.addEventListener('abort', cancelPicker, { once: true });
+        let lastProgress = 0;
+        const showProgress = (label: string, completed?: number, total?: number) => {
+            if (!vscode.workspace.isTrusted || !vscode.workspace.workspaceFolders?.some(item => item.uri.toString() === folder.uri.toString())) { job.controller.abort(); }
+            job.controller.signal.throwIfAborted();
+            if (this.vanessaDownload === job) { void this.panel?.webview.postMessage({ type: 'vanessaDownloadProgress', id: request.id,
+                folder: folder.uri.toString(), label, completed, total }); }
+        };
+        try {
+            const { listVanessaReleasePage, installVanessaRelease } = await import('./vanessaReleaseDownload.js');
+            return await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, cancellable: true,
+                title: this.t('Download Vanessa Automation') }, async (progress, cancellation) => {
+                const cancelled = cancellation.onCancellationRequested(() => job.controller.abort());
+                if (cancellation.isCancellationRequested) { job.controller.abort(); }
+                try {
+                    const releases: Awaited<ReturnType<typeof listVanessaReleasePage>>['releases'] = [];
+                    for (let page = 1; page <= 20; page++) {
+                        const loading = this.t('Loading official Vanessa releases…'); showProgress(loading); progress.report({ message: loading });
+                        const loaded = await listVanessaReleasePage(page, job.controller.signal); releases.push(...loaded.releases);
+                        if (!releases.length && !loaded.more) { throw new Error(this.t('No full Vanessa distributions were found in the official releases.')); }
+                        const chosen = await vscode.window.showQuickPick([
+                            ...releases.map(release => ({ label: release.version, description: `${(release.size / 1024 / 1024).toFixed(1)} MB`, release })),
+                            ...(loaded.more ? [{ label: this.t('Load older releases…'), release: undefined }] : [])
+                        ], { title: this.t('Choose a Vanessa Automation version'), placeHolder: this.t('Full distributions from Pr-Mex/vanessa-automation'), ignoreFocusOut: true }, pickerCancellation.token);
+                        if (!chosen) { return; }
+                        if (!chosen.release) { continue; }
+                        job.controller.signal.throwIfAborted();
+                        const projectRoot = await fs.realpath(folder.uri.fsPath);
+                        const epf = await installVanessaRelease(projectRoot, chosen.release, { signal: job.controller.signal, progress: value => {
+                            const now = Date.now();
+                            if (value.phase === 'download' && now - lastProgress < 150 && value.completed !== value.total) { return; }
+                            lastProgress = now;
+                            const label = this.t(value.phase === 'download' ? 'Downloading Vanessa Automation…' : value.phase === 'extract' ? 'Extracting the Vanessa distribution…'
+                                : value.phase === 'license' ? 'Saving the Vanessa license…' : 'Verifying the Vanessa download…');
+                            showProgress(label, value.completed, value.total);
+                            progress.report({ message: value.total ? `${label} ${Math.floor((value.completed ?? 0) / value.total * 100)}%` : label });
+                        } });
+                        return { path: portableSettingPath(projectRoot, epf, 'relative', 'folder'), version: chosen.release.version };
+                    }
+                } finally { cancelled.dispose(); }
+            });
+        } catch (error) {
+            if (job.controller.signal.aborted) { return; }
+            throw new Error(`${this.t('Could not download Vanessa. You can select an existing distribution with Browse.')} ${this.t(error instanceof Error ? error.message : String(error))}`);
+        } finally {
+            job.controller.signal.removeEventListener('abort', cancelPicker); pickerCancellation.dispose();
+            if (this.vanessaDownload === job) { this.vanessaDownload = undefined; }
+        }
+    }
     private setupDraft(value: unknown): SetupDraft {
         if (!value || typeof value !== 'object' || Array.isArray(value)) { throw new Error('Invalid setup draft'); }
         const draft = value as SetupDraft;
         if (draft.transition !== undefined && typeof draft.transition !== 'boolean' || !['new', 'sppr', 'vanessa', 'legacy'].includes(draft.route) || !['sppr', 'vanessa'].includes(draft.mode) || !['en', 'ru'].includes(draft.language) || !['native', 'legacy'].includes(draft.format) || typeof draft.run !== 'boolean') { throw new Error('Invalid setup draft'); }
         for (const key of ['sources', 'libraries', 'platform', 'vanessa', 'compiler', 'profileId'] as const) { if (typeof draft[key] !== 'string' || draft[key].length > 4096 || draft[key].includes('\0')) { throw new Error('Invalid setup path'); } }
-        return { ...draft };
+        if (draft.catalogMode !== undefined && !['online', 'offline'].includes(draft.catalogMode)) { throw new Error('Invalid catalog mode'); }
+        if (draft.skipRuntimeCheck !== undefined && typeof draft.skipRuntimeCheck !== 'boolean') { throw new Error('Invalid runtime check option'); }
+        if (draft.mxlOpeningMode !== undefined && !['fileWorkshop', 'platform'].includes(draft.mxlOpeningMode)) { throw new Error('Invalid MXL opening mode'); }
+        if (draft.fileWorkshop !== undefined && (typeof draft.fileWorkshop !== 'string' || draft.fileWorkshop.length > 4096 || draft.fileWorkshop.includes('\0'))) { throw new Error('Invalid setup path'); }
+        return { ...draft, catalogMode: draft.catalogMode ?? vscode.workspace.getConfiguration('kotTestToolkit', this.folder().uri).get<'online' | 'offline'>('steps.catalogMode', 'online') };
     }
     private async checkRuntime(draft: SetupDraft, identity: string): Promise<unknown> {
         const root = this.folder(identity).uri.fsPath;
@@ -210,7 +329,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
         if (inspection.truncated) { throw new Error(this.t('Project inspection reached its limit. Choose a smaller project folder before applying setup.')); }
         if (draft.route === 'new' && (inspection.sppr.length || inspection.features.length || inspection.processes.length)) { throw new Error(this.t('This folder already has tests. Choose an existing-project route.')); }
         if (draft.route !== 'new' && draft.profileId === 'new') { validateSetupSourceRoot(inspection, draft.mode, draft.sources); }
-        if (draft.run) {
+        if (draft.run && !draft.skipRuntimeCheck) {
             const runtime = await this.checkRuntime(draft, identity) as { checks: Array<{ ok: boolean }> };
             if (!draft.platform) { draft.platform = (runtime as unknown as { platforms: Array<{ clientExePath: string }> }).platforms[0]?.clientExePath ?? ''; }
             if (runtime.checks.some(check => !check.ok)) { throw new Error(this.t('Complete the environment checks or continue with the editor.')); }
@@ -226,14 +345,17 @@ export class KotWorkspacePanel implements vscode.Disposable {
         const target = (key: string): SettingsScope => !vscode.workspace.workspaceFile && vscode.workspace.workspaceFolders?.length === 1 || this.model!.settings.find(item => item.key === key)?.configScope === 'resource' ? 'folder' : 'workspace';
         stage('kotTestToolkit.editor.newScenarioLanguage', draft.language, target('kotTestToolkit.editor.newScenarioLanguage'));
         if (draft.mode === 'sppr') { stage('kotTestToolkit.newScenarioDefaults.format', draft.format, target('kotTestToolkit.newScenarioDefaults.format')); }
-        if (draft.run) {
+        if (draft.run || draft.catalogMode === 'offline' || draft.vanessa.trim()) {
             stage('kotTestToolkit.runVanessa.vanessaEpfPath', draft.vanessa, target('kotTestToolkit.runVanessa.vanessaEpfPath'));
-            if (draft.mode === 'sppr') { stage('kotTestToolkit.paths.buildScenarioBddEpf', draft.compiler, target('kotTestToolkit.paths.buildScenarioBddEpf')); }
+            if (draft.run && draft.mode === 'sppr') { stage('kotTestToolkit.paths.buildScenarioBddEpf', draft.compiler, target('kotTestToolkit.paths.buildScenarioBddEpf')); }
         }
+        stage('kotTestToolkit.steps.catalogMode', draft.catalogMode ?? 'online', target('kotTestToolkit.steps.catalogMode'));
+        if (draft.mxlOpeningMode !== undefined) { stage('kotTestToolkit.files.mxlOpeningMode', draft.mxlOpeningMode, target('kotTestToolkit.files.mxlOpeningMode')); }
+        if (draft.mxlOpeningMode === 'fileWorkshop' && draft.fileWorkshop?.trim()) { stage('kotTestToolkit.paths.fileWorkshopExe', draft.fileWorkshop.trim(), 'user'); }
         const manager = YamlParametersManager.getInstance(this.context); const profile = await manager.loadActiveProfileSnapshot();
         this.review = { id: randomUUID(), folder: identity, draft, projectFormat: format, inspection, files, settings: changes, profileToken: fingerprint(profile), filesApplied: false, profileApplied: false, settingsApplied: false, platformsToken: fingerprint(getConfiguredOneCPlatforms()), platformApplied: false };
-        return { id: this.review.id, files: files.map(file => file.path), settings: [...changes.map(change => ({ key: change.key, value: change.value, scope: change.scope })), ...(draft.run ? [{ key: 'kotTestToolkit.platforms.catalog', value: draft.platform, scope: 'workspace' }] : [])],
-            migrate: draft.transition === true ? inspection.metadata : [], migrateLegacy: format.kind !== 'v3' && (draft.route === 'new' || draft.transition === true), transition: format.kind !== 'v3' && (draft.route === 'new' || draft.transition === true), profile: draft.profileId === 'new' ? this.t('Create a separate profile; existing profiles remain unchanged.') : this.t('Use the selected existing profile without editing it.'), run: draft.run };
+        return { id: this.review.id, files: files.map(file => file.path), settings: [...changes.map(change => ({ key: change.key, value: change.value, scope: change.scope })), ...(draft.run && draft.platform.trim() ? [{ key: 'kotTestToolkit.platforms.catalog', value: draft.platform, scope: 'workspace' }] : [])],
+            migrate: draft.transition === true ? inspection.metadata : [], migrateLegacy: format.kind !== 'v3' && (draft.route === 'new' || draft.transition === true), transition: format.kind !== 'v3' && (draft.route === 'new' || draft.transition === true), profile: draft.profileId === 'new' ? this.t('Create a separate profile; existing profiles remain unchanged.') : this.t('Use the selected existing profile without editing it.'), run: draft.run, skipRuntimeCheck: draft.skipRuntimeCheck === true };
     }
     private async applySetup(id: string, requestId: string): Promise<unknown> {
         this.assertTrusted(); const review = this.review;
@@ -272,7 +394,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
                     } else { await manager.setActiveProfile(review.draft.profileId); }
                     review.profileApplied = true;
                 }
-                if (review.draft.run && !review.platformApplied) {
+                if (review.draft.run && review.draft.platform?.trim() && !review.platformApplied) {
                     report({ label: 'Saving the 1C platform…' });
                     const platforms = getConfiguredOneCPlatforms();
                     if (fingerprint(platforms) !== review.platformsToken) { throw new Error(this.t('The platform catalog changed. Review setup again.')); }

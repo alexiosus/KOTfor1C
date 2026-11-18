@@ -14,6 +14,8 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
     const state = new Map<string, unknown>(); const prompts: unknown[][] = []; const errors: string[] = [];
     const contexts = new Map<string, unknown>();
     const tracked: Array<{ file: string; log?: string }> = [];
+    const progressTitles: string[] = [];
+    const timers: Array<{ callback(): void; delay: number; active: boolean; unref(): void }> = [];
     const listeners: Array<(snapshot: unknown) => void> = [];
     const subscriptions: Array<{ dispose(): void }> = []; let launches = 0; let trusted = startupOptions.trusted !== false; let informationPrompts = 0;
     const status: any = { show() {}, hide() {}, dispose() {} };
@@ -43,7 +45,8 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlConnection.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText,
     { module, exports: module.exports, AbortController, URL, Error,
-        setTimeout: (callback: () => void) => { initial = callback; return { unref() {} }; }, clearTimeout() {},
+        setTimeout: (callback: () => void, delay: number) => { if (delay === 500) { initial = callback; } const timer = { callback, delay, active: true, unref() {} }; timers.push(timer); return timer; },
+        clearTimeout: (timer?: { active: boolean }) => { if (timer) { timer.active = false; } },
         setInterval: () => ({ unref() {} }), clearInterval() {},
         require: (name: string) => {
             if (name === 'vscode') { return { l10n: { t: (text: string, ...args: unknown[]) => text.replace(/\{(\d+)\}/gu, (_token, index) => String(args[Number(index)])) }, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 1 },
@@ -52,7 +55,7 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
                     showQuickPick: async (items: unknown[]) => { prompts.push(items); return items[1]; },
                     showInputBox: async () => { throw new Error('Unexpected endpoint input'); }, showErrorMessage: (error: string) => errors.push(error),
                     showInformationMessage: async (_message: string, _options: unknown, current: string) => { informationPrompts++; return startupOptions.useCurrent ? current : undefined; },
-                    withProgress: async (_options: unknown, work: (progress: unknown, token: unknown) => Promise<unknown>) => work({}, { onCancellationRequested: noop, isCancellationRequested: false }) },
+                    withProgress: async (options: { title: string }, work: (progress: unknown, token: unknown) => Promise<unknown>) => { progressTitles.push(options.title); return work({}, { onCancellationRequested: noop, isCancellationRequested: false }); } },
                 commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return noop(); },
                     executeCommand: async (command: string, key: string, value: unknown) => { if (command === 'setContext') { contexts.set(key, value); } } } }; }
             if (name === './vanessaControlSession') { return { VanessaControlSession: Session }; }
@@ -70,7 +73,9 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
     { managedRunLog: (port: number) => port === 8888 ? '/own/manager.log' : undefined,
         attachedRunLog: async () => startupOptions.recoveredLog, trackRun: (file: string, log?: string) => { tracked.push({ file, log }); return async () => {}; },
         launch: async () => { launches++; return true; }, canAutoStart: () => startupOptions.canAutoStart !== false });
-    return { ...control, prompts, inspected, attached, errors, state, contexts, commands, status, tracked, notify: (snapshot: unknown) => { for (const listener of listeners) { listener(snapshot); } }, setPorts: (value: typeof resolvePorts) => { resolvePorts = value; },
+    return { ...control, prompts, inspected, attached, errors, state, contexts, commands, status, tracked, progressTitles,
+        expireHealthCheck: () => { const timer = timers.find(timer => timer.active && timer.delay === 3_000); assert.ok(timer); timer.callback(); },
+        notify: (snapshot: unknown) => { for (const listener of listeners) { listener(snapshot); } }, setPorts: (value: typeof resolvePorts) => { resolvePorts = value; },
         launches: () => launches, informationPrompts: () => informationPrompts, trust: (value: boolean) => { trusted = value; },
         dispose: () => { for (const disposable of subscriptions) { disposable.dispose(); } },
         startup: async () => { initial(); for (let n = 0; n < 20; n++) { await new Promise<void>(resolve => setImmediate(resolve)); } } };
@@ -107,6 +112,34 @@ test('explicit Connect starts a managed session when discovery finds none withou
     await h.commands.get('kotTestToolkit.vanessaControl.connect')!();
     assert.equal(h.launches(), 1); assert.equal(h.informationPrompts(), 0);
     assert.deepEqual(h.attached, ['http://127.0.0.1:8888/mcp']); assert.deepEqual(h.errors, []);
+});
+
+test('explicit Connect shows progress immediately and recovers from a closed session with a stuck state poll', async () => {
+    const live = ['http://127.0.0.1:6000/mcp']; const h = harness(live);
+    await h.ensureConnected();
+    // The UI still has the last successful Ready snapshot after the manager closes.
+    h.session.refreshState = () => new Promise(() => {});
+    live.length = 0;
+    const first = h.commands.get('kotTestToolkit.vanessaControl.connect')!();
+    const repeated = h.commands.get('kotTestToolkit.vanessaControl.connect')!();
+    assert.deepEqual(h.progressTitles, ['Connecting to Vanessa…']);
+    h.expireHealthCheck();
+    await Promise.all([first, repeated]);
+    assert.equal(h.launches(), 1);
+    assert.deepEqual(h.attached, ['http://127.0.0.1:6000/mcp', 'http://127.0.0.1:8888/mcp']);
+    assert.deepEqual(h.errors, []);
+});
+
+test('a delayed connection check cannot detach a newer attachment or interrupt a running operation', async () => {
+    const h = harness(['http://127.0.0.1:6000/mcp']); await h.ensureConnected();
+    h.session.refreshState = () => new Promise(() => {});
+    const pending = h.ensureConnected();
+    await h.session.attach({}, 'http://127.0.0.1:7000/mcp');
+    h.expireHealthCheck(); assert.equal(await pending, false);
+    assert.equal(h.session.snapshot.status, 'ready'); assert.equal(h.attached.length, 2);
+    h.session.snapshot.status = 'running'; (h.session as any).busy = true;
+    assert.equal(await h.ensureConnected(), true);
+    assert.equal(h.launches(), 0); assert.equal(h.attached.length, 2);
 });
 
 test('startup launching is opt-in, checks readiness and trust, and discovers even when auto-attach is disabled', async () => {
@@ -172,10 +205,16 @@ test('an unavailable session that recovers after refresh is reused without scann
 test('automatic state polling keeps Ready stable while explicit long requests display progress', async () => {
     const h = harness(['http://127.0.0.1:6000/mcp']); await h.ensureConnected();
     const ready = h.status.text;
-    h.notify({ ...h.session.snapshot, request: { tool: 'get_vanessa_automation_state', count: 1 } });
-    assert.equal(h.status.text, ready);
-    h.notify({ ...h.session.snapshot, request: { tool: 'get_form_analysis', count: 1 } });
-    assert.match(h.status.text, /loading~spin/u); assert.match(h.status.text, /Reading form/u);
+    for (const tool of ['get_vanessa_automation_state', 'manage_test_client_profiles', 'user_actions_recording']) {
+        h.notify({ ...h.session.snapshot, request: { tool, count: 1, background: true } });
+        assert.equal(h.status.text, ready, tool);
+    }
+    for (const [tool, message] of [['get_form_analysis', 'Reading form'], ['manage_test_client_profiles', 'Reading or updating clients'], ['user_actions_recording', 'Updating recording']]) {
+        h.notify({ ...h.session.snapshot, request: { tool, count: 1, background: false } });
+        assert.match(h.status.text, /loading~spin/u); assert.ok(h.status.text.includes(message), tool);
+    }
+    h.notify({ ...h.session.snapshot, status: 'unknown', error: 'request', request: { tool: 'user_actions_recording', count: 1, background: true } });
+    assert.match(h.status.text, /State unavailable/u, 'background checks must not conceal a lost connection');
     h.notify(h.session.snapshot); assert.equal(h.status.text, ready);
 });
 

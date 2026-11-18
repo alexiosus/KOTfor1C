@@ -21,7 +21,7 @@ interface RankedStepSuggestion extends PreparedStepSuggestion {
     score: number;
 }
 
-const GHERKIN_KEYWORDS = /^(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+const GHERKIN_KEYWORDS = /^(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Затем|Пусть|То|А|Также|Иначе|Дано|Допустим)\s+/i;
 
 export function normalizeStepSuggestionText(text: string): string {
     return text

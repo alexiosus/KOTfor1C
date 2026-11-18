@@ -34,6 +34,7 @@ import {
     resolveOneCPlatformForLaunch
 } from './oneCPlatform';
 import { getSharedStartupInfobasePaths } from './startupInfobase';
+import { resolveSharedStartupPlatform } from './sharedStartupPlatform';
 import { formatProcessCommandForDisplay } from './processCommandDisplay';
 import { buildDestructiveInfobaseImportConfirmation } from './infobaseDestructiveConfirmation';
 
@@ -1582,7 +1583,7 @@ function appendInfobaseAuthenticationArgs(args: string[], authentication: Infoba
     ];
 }
 
-function isInfobaseAuthenticationError(message: string): boolean {
+export function isInfobaseAuthenticationError(message: string): boolean {
     const normalized = (message || '').toLowerCase();
     return normalized.includes('not authenticated')
         || normalized.includes('is not authenticated')
@@ -1700,10 +1701,19 @@ async function resolveConfiguredOneCClientExePath(
     return configuredClientPath;
 }
 
-function getManagedInfobaseConfiguredPlatformClientExePath(
+function isSharedStartupInfobase(infobasePath: string): boolean {
+    const startupPaths = getSharedStartupInfobasePaths();
+    const fileInfobasePath = getFileInfobasePath(infobasePath);
+    return !!startupPaths && !!fileInfobasePath
+        && normalizePathForCompare(fileInfobasePath) === normalizePathForCompare(startupPaths.infobaseDirectory);
+}
+
+async function getManagedInfobaseConfiguredPlatformClientExePath(
     context: vscode.ExtensionContext,
-    infobasePath: string
-): string | null {
+    infobasePath: string,
+    t: Translator
+): Promise<string | null> {
+    if (isSharedStartupInfobase(infobasePath)) { return (await resolveSharedStartupPlatform(t))?.clientExePath ?? null; }
     return getManagedInfobasePreferredPlatformClientExePath(context, infobasePath);
 }
 
@@ -2150,7 +2160,7 @@ export async function exportInfobaseToDtInteractive(
     assertNonWebInfobaseReference(t, infobasePath, t('Export DT'));
     const designerExePath = await resolveConfiguredOneCDesignerExePath(
         t,
-        getManagedInfobaseConfiguredPlatformClientExePath(context, infobasePath)
+        await getManagedInfobaseConfiguredPlatformClientExePath(context, infobasePath, t)
     );
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
@@ -2218,7 +2228,7 @@ export async function exportInfobaseConfigurationToCfInteractive(
     assertNonWebInfobaseReference(t, infobasePath, t('Save CF'));
     const designerExePath = await resolveConfiguredOneCDesignerExePath(
         t,
-        getManagedInfobaseConfiguredPlatformClientExePath(context, infobasePath)
+        await getManagedInfobaseConfiguredPlatformClientExePath(context, infobasePath, t)
     );
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
@@ -2326,7 +2336,7 @@ export async function recreateInfobaseInteractive(
 
     const designerExePath = await resolveConfiguredOneCDesignerExePath(
         t,
-        getManagedInfobaseConfiguredPlatformClientExePath(context, infobase.infobasePath)
+        await getManagedInfobaseConfiguredPlatformClientExePath(context, infobase.infobasePath, t)
     );
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
@@ -2419,7 +2429,7 @@ export async function restoreInfobaseFromDtInteractive(
     await assertInfobaseNotBusy(infobase.infobasePath, t);
     const designerExePath = await resolveConfiguredOneCDesignerExePath(
         t,
-        getManagedInfobaseConfiguredPlatformClientExePath(context, infobase.infobasePath)
+        await getManagedInfobaseConfiguredPlatformClientExePath(context, infobase.infobasePath, t)
     );
     const workspaceRootPath = getWorkspaceRootPath() || process.cwd();
     const output = getInfobaseManagerOutputChannel();
@@ -2577,7 +2587,7 @@ export async function updateInfobaseConfigurationInteractive(
     await assertInfobaseNotBusy(infobase.infobasePath, t);
     const designerExePath = await resolveConfiguredOneCDesignerExePath(
         t,
-        getManagedInfobaseConfiguredPlatformClientExePath(context, infobase.infobasePath)
+        await getManagedInfobaseConfiguredPlatformClientExePath(context, infobase.infobasePath, t)
     );
     const output = getInfobaseManagerOutputChannel();
     const logsDirectory = path.join(workspaceRootPath, '.vscode', 'kot-runtime', 'infobase-manager', 'logs');
@@ -3062,6 +3072,10 @@ async function resolveManagedInfobaseLaunchPlatform(
     placeHolder: string,
     options?: ManagedInfobaseLaunchOptions
 ): Promise<{ platform: ConfiguredOneCPlatform; persistSelection: boolean } | null> {
+    if (isSharedStartupInfobase(infobasePath)) {
+        const platform = await resolveSharedStartupPlatform(t);
+        return platform ? { platform, persistSelection: false } : null;
+    }
     const configuredPlatforms = await ensureOneCPlatformsCatalogInitialized();
     const explicitClientPath = normalizePreferredPlatformClientExePath(options?.preferredOneCClientExePath || null);
     if (explicitClientPath) {

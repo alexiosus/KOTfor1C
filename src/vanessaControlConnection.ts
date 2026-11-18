@@ -33,6 +33,7 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
     let discoveryCancellation: AbortController | undefined;
     let discovery: Promise<readonly string[]> | undefined;
     let automaticAttachment: Promise<void> | undefined;
+    let connectionAttempt: Promise<boolean> | undefined;
     let activationAttempted = false;
     const trusted = () => vscode.workspace.isTrusted !== false;
     const labels: Record<VanessaControlSnapshot['status'], string> = {
@@ -49,7 +50,7 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
             open_feature_file: vscode.l10n.t('Opening feature…')
         };
         // Idle polling is continuous housekeeping, not an operation the user is waiting for.
-        const active = snapshot.request && snapshot.request.tool !== 'get_vanessa_automation_state' ? snapshot.request : undefined;
+        const active = snapshot.request && !snapshot.request.background && snapshot.request.tool !== 'get_vanessa_automation_state' ? snapshot.request : undefined;
         const label = vscode.l10n.t('Vanessa: {0}', active ? requests[active.tool] ?? vscode.l10n.t('Request in progress…') : labels[snapshot.status]);
         status.text = `${active ? '$(loading~spin)' : '$(plug)'} ${label}`;
         status.tooltip = vscode.l10n.t('Vanessa MCP connection and controls');
@@ -104,12 +105,22 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
     const autoStartEnabled = () => vscode.workspace.getConfiguration('kotTestToolkit.vanessaControl').get<boolean>('autoStart', false);
     const autoConnect = async (interactive: boolean): Promise<'attached' | 'none' | 'cancelled'> => {
         if (session.snapshot.capabilities) {
-            if (session.snapshot.status !== 'unknown') { return 'attached'; }
+            if (session.snapshot.status !== 'unknown' && (!interactive || session.busy)) { return 'attached'; }
             if (session.busy || launching || disposed) { return 'cancelled'; }
             const previous = session.snapshot.generation;
-            await session.refreshState().catch(() => undefined);
+            // A closed manager can leave a background POST pending. An explicit
+            // Connect must not wait for its normal (30 second) request timeout.
+            let deadline: ReturnType<typeof setTimeout> | undefined;
+            let refreshed: boolean;
+            try {
+                refreshed = await Promise.race([
+                    session.refreshState().then(() => true, () => false),
+                    new Promise<boolean>(resolve => { deadline = setTimeout(() => resolve(false), 3_000); deadline.unref(); })
+                ]);
+            } finally { clearTimeout(deadline); }
             if (disposed || session.snapshot.generation !== previous) { return 'cancelled'; }
-            if (session.snapshot.status !== 'unknown') { return 'attached'; }
+            if (session.busy) { return 'cancelled'; }
+            if (refreshed && session.snapshot.status !== 'unknown') { return 'attached'; }
             const closing = session.detach(); const detachedGeneration = session.snapshot.generation;
             await closing;
             if (disposed || session.snapshot.generation !== detachedGeneration) { return 'cancelled'; }
@@ -202,6 +213,14 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
         if (selected === enter) { await attachPicker(); return !!session.snapshot.capabilities; }
         return false;
     };
+    const connect = (): Promise<boolean> => {
+        if (!connectionAttempt) {
+            connectionAttempt = Promise.resolve(vscode.window.withProgress({ location: vscode.ProgressLocation.Notification,
+                title: vscode.l10n.t('Connecting to Vanessa…') }, () => ensureConnected(true)))
+                .finally(() => { connectionAttempt = undefined; });
+        }
+        return connectionAttempt;
+    };
     const managed = new VanessaManagedRun({ start: startConfigured,
         currentGeneration: () => !disposed && !session.busy && session.snapshot.status === 'ready' && session.snapshot.capabilities ? session.snapshot.generation : undefined,
         chooseSession: async () => {
@@ -254,6 +273,7 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
             ...(!connectionOnly ? [
             { label: vscode.l10n.t('Test clients and saved connections…'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.clients') },
             { label: vscode.l10n.t('Vanessa variables…'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.variables') },
+            ...(snapshot.capabilities?.settingsRead?.supported ? [{ label: vscode.l10n.t('Vanessa session settings…'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.settings') }] : []),
             { label: vscode.l10n.t('Diagnostics…'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.diagnostics') },
             { label: vscode.l10n.t('Search runtime steps…'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.searchRuntimeSteps') },
             { label: vscode.l10n.t('Check feature syntax in Vanessa'), action: () => vscode.commands.executeCommand('kotTestToolkit.vanessaControl.checkRuntimeSyntax') },
@@ -289,7 +309,7 @@ export function registerVanessaControl(context: vscode.ExtensionContext, options
         await picked?.action();
     };
     context.subscriptions.push(status, session.onDidChange(changed),
-        vscode.commands.registerCommand('kotTestToolkit.vanessaControl.connect', () => report(() => ensureConnected(true))),
+        vscode.commands.registerCommand('kotTestToolkit.vanessaControl.connect', () => report(connect)),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.connectionSettings', () => report(() => menu(true))),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl', () => report(menu)),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.attach', () => report(attachPicker)),

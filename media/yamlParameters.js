@@ -41,6 +41,7 @@
     const launchInfobaseBuildParameterOptions = ['LaunchDBFolder', 'TestClientDBPath', 'InfobasePath', 'TestClientDB'];
     const buildState = window.KotYamlBuildParameterState;
     const uiLoc = {
+        browse: document.body.dataset.browse || 'Browse…',
         paramNamePlaceholder: document.body.dataset.paramNamePlaceholder || 'Parameter name',
         paramValuePlaceholder: document.body.dataset.paramValuePlaceholder || 'Parameter value',
         removeParameter: document.body.dataset.removeParameter || 'Remove parameter',
@@ -128,7 +129,7 @@
     document.addEventListener('click', event => { if (!priorityTrigger(event.target)) { hidePriorityTooltip(); } });
     window.addEventListener('resize', hidePriorityTooltip);
     window.addEventListener('scroll', hidePriorityTooltip, true);
-    let activeTab = 'build';
+    let activeTab = window.__initialTab === 'additional' ? 'additional' : 'build';
     let modelDbRequestId = 0;
     let modelDbStatusTimer;
     function requestModelDbStatus() {
@@ -372,6 +373,37 @@
         return buildState.normalize(params, defaultBuildParameters);
     }
 
+    function pathValueHtml(html, field) {
+        if (!field) { return html; }
+        return `<div class="param-path-value">${html}<button type="button" class="browse-path-btn" title="${escapeHtml(uiLoc.browse)}" aria-label="${escapeHtml(uiLoc.browse)}"><span class="codicon codicon-folder-opened" aria-hidden="true"></span></button></div>`;
+    }
+
+    const pendingPathRequests = new Map();
+    let nextPathRequest = 0;
+    function requestParameterPath(button) {
+        const row = button.closest('tr');
+        const field = row?.querySelector('.param-value');
+        const key = row?.querySelector('.param-key')?.value;
+        const section = ({ buildParametersTableBody: 'build', additionalParametersTableBody: 'additional', globalVarsTableBody: 'globalVars' })[row?.closest('tbody')?.id];
+        if (!field || field.readOnly || !section) { return; }
+        const requestId = ++nextPathRequest;
+        pendingPathRequests.set(requestId, { button, field, row, key, value: field.value, profile: activeProfileId });
+        button.disabled = true;
+        vscode.postMessage({ command: 'pickParameterPath', requestId, section, key, value: field.value });
+    }
+
+    function acceptParameterPath(message) {
+        const pending = pendingPathRequests.get(message.requestId);
+        if (!pending) { return; }
+        pendingPathRequests.delete(message.requestId);
+        const { button, field, row, key, value, profile } = pending;
+        button.disabled = false;
+        if (typeof message.value !== 'string' || !field.isConnected || profile !== activeProfileId
+            || row.querySelector('.param-key')?.value !== key || field.value !== value) { return; }
+        field.value = message.value;
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
     function buildRowHtml(param, index) {
         const definition = getBuildParameterDefinition(param.key);
         const policy = buildState.rowPolicy(param.key, buildParameterDefinitions);
@@ -426,7 +458,7 @@
                     </div>
                 </td>
                 <td>
-                    ${valueHtml}
+                    ${pathValueHtml(valueHtml, !policy.readOnly && !/(?:file|srvr)\s*=/i.test(rawValue) ? definition?.pathField : null)}
                 </td>
                 <td>
                     ${removeButtonHtml}
@@ -483,7 +515,7 @@
             html = `<input ${attrs} type="${kind === 'number' && (!rawValue || !error) ? 'number' : 'text'}" ${kind === 'number' ? 'step="any" inputmode="decimal"' : ''} value="${escapeHtml(rawValue)}" placeholder="${escapeHtml(typed ? uiLoc.paramValuePlaceholder : uiLoc.variableValuePlaceholder)}">`;
         }
         const unsupported = typed && getAdditionalParameterDefinition(param.key)?.availability === 'unsupported';
-        return `${html}<div class="param-value-error" role="status" ${error ? '' : 'hidden'}>${escapeHtml(error)}</div>
+        return `${pathValueHtml(html, typed ? getAdditionalParameterDefinition(param.key)?.pathField : { kind: 'choice' })}<div class="param-value-error" role="status" ${error ? '' : 'hidden'}>${escapeHtml(error)}</div>
             <div class="param-compatibility-warning" role="status" ${unsupported ? '' : 'hidden'}>${escapeHtml(uiLoc.unsupportedVanessaParameter)}</div>`;
     }
 
@@ -943,7 +975,7 @@
                 <input type="text" class="param-key" value="" placeholder="${escapeHtml(uiLoc.variableNamePlaceholder)}">
             </td>
             <td>
-                <input type="text" class="param-value" value="" placeholder="${escapeHtml(uiLoc.variableValuePlaceholder)}">
+                ${additionalValueHtml({ key: '', value: '' }, false)}
             </td>
             <td class="param-priority-cell">
                 <input type="checkbox" class="param-override" title="${escapeHtml(uiLoc.overrideTitle)}">
@@ -1320,6 +1352,16 @@
         vscode.postMessage({ command: 'selectAdditionalParameter', keys: getAdditionalParametersFromTable().map(row => row.key) });
     });
 
+    document.getElementById('vanessaSessionSettingsBtn')?.addEventListener('click', event => {
+        const invalid = document.getElementById('additionalParametersTable')?.querySelector('[aria-invalid="true"]');
+        if (invalid) { invalid.focus(); return; }
+        const state = getCurrentState();
+        const profile = state.profiles.find(profile => profile.id === state.activeProfileId);
+        event.currentTarget.disabled = true;
+        vscode.postMessage({ command: 'openVanessaSessionSettings', profileName: profile?.name || '',
+            additionalVanessaParameters: profile?.additionalVanessaParameters || [] });
+    });
+
     document.getElementById('addGlobalVarRowBtn').addEventListener('click', () => {
         log('Add GlobalVar parameter button clicked.');
         appendGlobalVarRow();
@@ -1367,10 +1409,9 @@
 
     document.getElementById('createAdditionalFileBtn').addEventListener('click', (e) => {
         e.preventDefault();
-        const state = getCurrentState();
         vscode.postMessage({
             command: 'createAdditionalJsonFile',
-            additionalVanessaParameters: state.additionalVanessaParameters
+            additionalVanessaParameters: getAdditionalParametersFromTable()
         });
         document.getElementById('moreActionsBtn')?.closest('.dropdown-container')?.classList.remove('show');
     });
@@ -1448,9 +1489,25 @@
         });
     }
 
+    document.addEventListener('click', event => {
+        const button = event.target.closest('.browse-path-btn');
+        if (button && !button.disabled) { requestParameterPath(button); }
+    });
+
     window.addEventListener('message', event => {
         const message = event.data;
         switch (message.command) {
+            case 'parameterPathPicked':
+                acceptParameterPath(message);
+                break;
+            case 'selectTab':
+                setActiveTab(message.tab);
+                break;
+            case 'vanessaSessionSettingsClosed': {
+                const button = document.getElementById('vanessaSessionSettingsBtn');
+                if (button) { button.disabled = false; }
+                break;
+            }
             case 'refreshModelDbSettings':
                 requestModelDbStatus();
                 break;

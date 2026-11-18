@@ -29,7 +29,7 @@ const topLevelYamlKeyRegex = /^\s*[А-Яа-яЁёA-Za-z][А-Яа-яЁёA-Za-z0-9
 const commentLineRegex = /^(\s*)#.*$/;
 const featureKeywordRegex = /^(\s*)(Feature|Функционал|Функция|Функциональность|Свойство)\s*:(.*)$/i;
 const scenarioElementRegex = /^(\s*)(Rule|Правило|Background|Контекст|Scenario Outline|Scenario Template|Scenario|Сценарий|Examples|Примеры|Example|Пример|Scenarios|Сценарии)\s*:(.*)$/i;
-const stepKeywordRegex = /^(\s*)(\*\s*)?(#Если|#ИначеЕсли|#Иначе|#КонецЕсли|Return|Возврат|And|Then|When|Given|But|If|ElseIf|Else|EndIf|Do|EndDo|Try|Except|EndTry|Но|Тогда|Когда|Если|ИначеЕсли|Иначе|КонецЕсли|Цикл|КонецЦикла|Попытка|Исключение|КонецПопытки|И|К тому же|Допустим|Дано)(?=\s|$)/i;
+const stepKeywordRegex = /^(\s*)(\*\s*)?(#Если|#ИначеЕсли|#Иначе|#КонецЕсли|Return|Возврат|And|Then|When|Given|But|If|ElseIf|Else|EndIf|Do|EndDo|Try|Except|EndTry|Но|Тогда|Когда|Если|ИначеЕсли|Иначе|КонецЕсли|Цикл|КонецЦикла|Попытка|Исключение|КонецПопытки|И|К тому же|Также|Затем|Пусть|То|А|Допустим|Дано)(?=\s|$)/i;
 const nestedParamAssignmentRegex = /^(\s*)([A-Za-zА-Яа-яЁё0-9_-]+)(\s*)=(?=\s|$)/;
 const tagRegex = /@[^\s@|#]+/g;
 const placeholderRegex = /<[^<>\s]+>/g;

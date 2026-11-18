@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\r\n\"schemaVersion\": \"1.1\",\r\n\"mcpVersion\": \"1.74\",\r\n\"vaVersion\": \"ver 1.2.043.47\",\r\n\"runId\": \"\",\r\n\"isRunning\": false,\r\n\"ok\": true,\r\n\"stateAvailable\": true,\r\n\"stateReason\": \"\",\r\n\"testClientConnected\": false,\r\n\"testClientProfile\": \"\",\r\n\"featureDirectory\": \"\",\r\n\"projectDirectory\": \"\",\r\n\"currentFeature\": {\r\n\"name\": \"\",\r\n\"fullPath\": \"\",\r\n\"language\": \"ru\",\r\n\"tags\": []\r\n},\r\n\"currentScenario\": {\r\n\"name\": \"\",\r\n\"index\": \"\",\r\n\"retryNumber\": \"\",\r\n\"tags\": [],\r\n\"scenarioId\": \"\",\r\n\"treeRowId\": \"\",\r\n\"scenarioName\": \"\",\r\n\"featureName\": \"\",\r\n\"featurePath\": \"\",\r\n\"status\": \"\",\r\n\"statusRaw\": \"\",\r\n\"resultKind\": \"scenario\",\r\n\"isComplete\": false,\r\n\"startedAt\": \"\",\r\n\"finishedAt\": \"\",\r\n\"durationMs\": \"\",\r\n\"error\": {\r\n\"message\": \"\"\r\n},\r\n\"failedStep\": \"\",\r\n\"counters\": {\r\n\"total\": 0,\r\n\"success\": 0,\r\n\"failed\": 0,\r\n\"broken\": 0,\r\n\"pending\": 0,\r\n\"running\": 0,\r\n\"skipped\": 0,\r\n\"other\": 0\r\n}\r\n},\r\n\"currentStep\": {\r\n\"name\": \"\",\r\n\"lineNumber\": \"\",\r\n\"id\": \"\",\r\n\"status\": \"\",\r\n\"statusRaw\": \"\"\r\n}\r\n}"
+    }
+  ]
+}

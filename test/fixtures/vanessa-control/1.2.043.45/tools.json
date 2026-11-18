@@ -618,6 +618,20 @@
         "required": [],
         "additionalProperties": false
       }
+    },
+    {
+      "name": "execute_step_from_text",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "stepText": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "stepText"
+        ]
+      }
     }
   ]
 }

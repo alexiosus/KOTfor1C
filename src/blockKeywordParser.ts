@@ -12,7 +12,7 @@ export type BlockKeyword =
 
 export type BlockKeywordLanguage = 'en' | 'ru';
 
-const OPTIONAL_GHERKIN_PREFIX_REGEX = /^(?:\*\s*)?(?:And|But|Then|When|Given|И|Тогда|Когда|К тому же|Допустим|Дано|Но)\s+/i;
+const OPTIONAL_GHERKIN_PREFIX_REGEX = /^(?:\*\s*)?(?:And|But|Then|When|Given|И|Тогда|Затем|То|Когда|Если|К тому же|Также|Допустим|Дано|Пусть|Но|А|Иначе)\s+/i;
 const PREPROCESSOR_KEYWORD_REGEX = /^#(?:если|иначеесли|иначе|конецесли)(?:\s|$)/i;
 const IF_OPEN_REGEXES = [
     /^if\b.+\bthen$/i,

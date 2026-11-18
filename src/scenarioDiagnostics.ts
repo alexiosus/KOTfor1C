@@ -162,7 +162,7 @@ export function isGherkinFeatureDocument(document: Pick<vscode.TextDocument, 'fi
 
 function parseScenarioCallBlocks(document: vscode.TextDocument, bodyRange: ScenarioBodyRange): ScenarioCallBlock[] {
     const blocks: ScenarioCallBlock[] = [];
-    const callRegex = /^(\s*)(Given|When|Then|And|But|If|ElseIf|Else|И|Когда|Тогда|Затем|Дано|Допустим|Если|ИначеЕсли|Иначе|Пусть|То|К тому же|Также|Но|А)\s+(.+)$/i;
+    const callRegex = /^(\s*)(Given|When|Then|And|But|If|ElseIf|Else|И|Когда|Тогда|Затем|Дано|Пусть|То|А|Допустим|Если|ИначеЕсли|Иначе|К тому же|Также|Но)\s+(.+)$/i;
     const scanned = scanCompilerLines(Array.from({ length: bodyRange.endLine - bodyRange.startLine + 1 }, (_, line) => document.lineAt(line + bodyRange.startLine).text));
 
     for (let i = bodyRange.startLine; i <= bodyRange.endLine; i++) {
@@ -439,7 +439,7 @@ function buildMissingParameterInsertion(
 }
 
 const SUGGESTION_YIELD_EVERY = 64;
-const GHERKIN_SUGGESTION_PREFIX = /^(?:\s*)(?:\*\s*)?(?:К\s+тому\s+же|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Но|И|If|Дано|Do|Цикл)\s+/iu;
+const GHERKIN_SUGGESTION_PREFIX = /^(?:\s*)(?:\*\s*)?(?:К\s+тому\s+же|Затем|Пусть|То|А|Также|Иначе|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Но|И|If|Дано|Do|Цикл)\s+/iu;
 
 function normalizeSuggestionText(value: string): string {
     return value
@@ -636,7 +636,7 @@ function extractQuotedLiterals(line: string): string[] {
 
 function extractNumericCandidates(line: string): string[] {
     const sanitized = line
-        .replace(/^\s*(And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i, '')
+        .replace(/^\s*(And|But|Then|When|Given|If|Но|Тогда|Затем|То|Когда|Если|И|К тому же|Также|Допустим|Дано|Пусть|А|Иначе)\s+/i, '')
         .replace(/"[^"]*"|'[^']*'|\[[^\]]+\]/g, ' ');
     const candidates = sanitized.match(/\b\d+(?:[.,]\d+)?\b/g);
     return candidates ? [...candidates] : [];
@@ -1816,7 +1816,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             }
         }
         if (options.includeStepChecks) {
-            const gherkinStepRegex = /^\s*(And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим|Do|Цикл)(?=\s|$)/i;
+            const gherkinStepRegex = /^\s*(And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Затем|Пусть|То|А|Также|Иначе|Дано|Допустим|Do|Цикл)(?=\s|$)/i;
             for (let line = bodyRange.startLine; line <= bodyRange.endLine; line++) {
                 if (shouldCancel()) {
                     return;
@@ -1993,7 +1993,7 @@ export class ScenarioDiagnosticsProvider implements vscode.CodeActionProvider, v
             return;
         }
 
-        const gherkinStepRegex = /^\s*(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим|Дано)\s+/iu;
+        const gherkinStepRegex = /^\s*(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Затем|Пусть|То|А|Также|Иначе|Допустим|Дано)\s+/iu;
         let docStringDelimiter: '"""' | '```' | null = null;
         for (let line = 0; line < document.lineCount; line++) {
             if (shouldCancel()) {

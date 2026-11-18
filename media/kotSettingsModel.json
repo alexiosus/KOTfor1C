@@ -384,6 +384,27 @@
       "labelEn": "Step catalog source"
     },
     {
+      "key": "kotTestToolkit.steps.catalogMode",
+      "label": "Режим каталога шагов",
+      "labelEn": "Step catalog mode",
+      "section": "editor",
+      "advanced": false,
+      "preferredScope": "folder",
+      "optionLabels": ["Онлайн", "Офлайн"],
+      "hint": "В офлайн-режиме недостающий каталог создаётся автоматически из указанной поставки Vanessa, без обращения в интернет."
+    },
+    {
+      "key": "kotTestToolkit.steps.localCatalogPath",
+      "label": "Локальный каталог шагов Vanessa",
+      "labelEn": "Local Vanessa step catalog",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "folder",
+      "pathKind": "json",
+      "pathPolicy": "relative",
+      "hint": "Необязательный путь к готовому JSON для офлайн-режима. Оставьте пустым, чтобы KOT автоматически создавал и использовал каталог из выбранной поставки Vanessa."
+    },
+    {
       "key": "kotTestToolkit.diagnostics.ignoredCodes",
       "label": "Отключённые проверки",
       "section": "editor",
@@ -487,7 +508,7 @@
       "section": "build",
       "advanced": false,
       "preferredScope": "folder",
-      "hint": "В Конфигураторе СППР сохраните обработку СборкаТекстовСценариев в отдельный файл .epf. Положите её в build проекта и выберите здесь. Компилятор нужен для сценариев и процессов СППР.",
+      "hint": "Компилятор нужен для сборки сценариев и процессов СППР. Выберите готовый файл .epf или выгрузите обработку СборкаТекстовСценариев из вашей базы СППР кнопкой ниже.",
       "pathKind": "epf",
       "pathPolicy": "project",
       "labelEn": "SPPR compiler processing"
@@ -863,6 +884,16 @@
       "pathKind": "directory",
       "pathPolicy": "relative",
       "labelEn": "KOT runtime folder"
+    },
+    {
+      "key": "kotTestToolkit.files.mxlOpeningMode",
+      "label": "Открытие файлов MXL",
+      "labelEn": "Open MXL files with",
+      "section": "advanced",
+      "advanced": false,
+      "optionLabels": ["1С:Предприятие — работа с файлами", "Платформа 1С"],
+      "optionLabelsEn": ["1C:Enterprise — File Workshop", "1C platform"],
+      "hint": "Выберите программу для открытия MXL из сценариев, Библиотеки и проводника VS Code. При поддержке API используется подключённая Vanessa, иначе — служебная база KOT."
     },
     {
       "key": "kotTestToolkit.paths.fileWorkshopExe",

@@ -26,6 +26,22 @@ test('editor loads its first form through the completion source while Form Explo
     registration.dispose();
 });
 
+test('lazy editor values stay with their source and never read a disk snapshot when MCP details become unavailable', async () => {
+    let reads = 0; let finish!: (value: FormExplorerSnapshot) => void;
+    const live = load('src/formExplorerLiveSnapshot.ts', {
+        vscode: { workspace: { getConfiguration: () => ({ get: () => 'auto' }) } }, './formExplorerPaths': {},
+        './formExplorerEnrichment': {}, './formExplorerTypes': {} });
+    const registration = live.registerFormExplorerMcpSource({ available: true, cached: () => form,
+        completionElement: async () => { reads++; return new Promise(resolve => { finish = resolve; }); } });
+    const reading = live.loadLiveFormExplorerElement(form, 'Form.Name', () => true);
+    const replacement = live.registerFormExplorerMcpSource({ available: true, cached: () => ({ ...form, notes: ['Another client'] }) });
+    finish(form); assert.equal(await reading, undefined); assert.equal(reads, 1);
+    assert.equal(await live.loadLiveFormExplorerElement(form, 'Form.Name', () => false), undefined);
+    registration.dispose(); replacement.dispose();
+    const file = { ...form, source: { adapter: 'snapshot' } };
+    assert.equal(await live.loadLiveFormExplorerElement(file, 'Form.Name', () => true), file);
+});
+
 test('editor uses the shared live MCP cache and never falls back to another client snapshot on an MCP error', async () => {
     let mode = 'auto'; let snapshot: FormExplorerSnapshot | undefined = form; let available = true; let reads = 0;
     const live = load('src/formExplorerLiveSnapshot.ts', {

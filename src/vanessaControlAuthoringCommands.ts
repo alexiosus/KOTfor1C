@@ -97,6 +97,7 @@ export function registerVanessaAuthoringCommands(context: vscode.ExtensionContex
             const observedChanged = lastObserved !== session.snapshot.observed; lastObserved = session.snapshot.observed;
             if (generation !== session.snapshot.generation) { capture = undefined; uncertain = false; generation = session.snapshot.generation; }
             else if (!working && capture && observedChanged && session.snapshot.observed?.recording === false) {
+                if (session.snapshot.capabilities?.recordingResult?.supported) { void stopCapture(); render(); return; }
                 // An external Stop is already confirmed. Another RPC could stop
                 // a newer recording started since this observation.
                 capture = undefined; uncertain = false;
@@ -123,6 +124,12 @@ export function registerVanessaAuthoringCommands(context: vscode.ExtensionContex
         })),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.recording.stop', stopCapture),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.formChecks', () => generate('checks')),
+        vscode.commands.registerCommand('kotTestToolkit.vanessaControl.elementChecks', (elementName?: string, tableName?: string) => report('Reading Vanessa steps…', async () => {
+            if (!await ensureConnected() || !session.snapshot.capabilities?.elementSteps?.supported) { return; }
+            const text = await session.withAuthoringControl(authoring => authoring.elementSteps('checks', elementName, tableName));
+            const previous = pending; pending = undefined; retain(previous); pending = text;
+            results.clear(); results.append(text); results.show(true);
+        })),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.formSuggestions', () => generate('suggestions')),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.recording.insertHere', () => report('Vanessa: inserting steps…', insert)),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.recording.copy', async () => { const text = pending ?? retained.at(-1); if (text) { await vscode.env.clipboard.writeText(text); } }));

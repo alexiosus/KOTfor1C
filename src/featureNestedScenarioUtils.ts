@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-const FEATURE_NESTED_SCENARIO_CALL_REGEX = /^(\s*\*(?:And|But|Then|When|Given|И|Но|Тогда|Когда|Допустим|Если)\s+)(.+?)\s*$/i;
+const FEATURE_NESTED_SCENARIO_CALL_REGEX = /^(\s*\*(?:And|But|Then|When|Given|И|Но|Тогда|Затем|То|Когда|Допустим|Дано|Пусть|Если|А|Также|Иначе|К тому же)\s+)(.+?)\s*$/i;
 
 interface FeatureNestedScenarioStackEntry {
     scenarioName: string;

@@ -64,6 +64,7 @@ interface FormExplorerWebviewState {
     suggestedStepsForPath: string | null;
     suggestedStepsError: string | null;
     nativeStepsAvailable: boolean;
+    elementChecksAvailable: boolean;
     nativeSteps: NativeStepsState;
     pendingOperation: PendingOperationKind | null;
 }
@@ -410,6 +411,12 @@ export class FormExplorerPanel implements vscode.Disposable {
             }
             case 'formChecks':
                 if (this.usesMcp()) { await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.formChecks'); } break;
+            case 'elementChecks': {
+                const name = this.latestSnapshot && this.selectedElementPath ? this.findElementByPath(this.latestSnapshot.elements, this.selectedElementPath)?.name : undefined;
+                const table = this.latestSnapshot && this.selectedElementPath ? formStepTarget(this.latestSnapshot, this.selectedElementPath)?.table?.name : undefined;
+                if (this.usesMcp() && this.mcpSource?.elementChecksAvailable && name) { await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.elementChecks', name, table); }
+                break;
+            }
             case 'openSourceLocation':
                 await this.openSourceLocation(message.source);
                 break;
@@ -1592,6 +1599,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             suggestedStepsForPath: this.suggestedStepsForPath,
             suggestedStepsError: this.suggestedStepsError,
             nativeStepsAvailable: this.usesMcp() && !!this.latestSnapshot && !!this.readNativeSteps,
+            elementChecksAvailable: this.usesMcp() && !!this.mcpSource?.elementChecksAvailable,
             nativeSteps: this.nativeSteps,
             pendingOperation: this.pendingOperation?.kind || null
         };
@@ -1720,6 +1728,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             readingNativeSteps: t('Reading Vanessa steps…'),
             nativeStepsUnavailable: t('Select a visible field, button or table column to read Vanessa steps.'),
             nativeFormChecks: t('Insert full form checks'),
+            nativeElementChecks: t('Get checks for this element'),
             suggestedStepsDescription: t('Recommended steps for the selected element from the connected Gherkin steps library.'),
             noSuggestedSteps: t('No suitable steps found for the selected element.'),
             suggestedStepsLoading: t('Preparing step suggestions...'),

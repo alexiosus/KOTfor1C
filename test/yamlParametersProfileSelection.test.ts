@@ -7,6 +7,7 @@ import * as activeProfiles from '../src/activeYamlParametersProfile';
 import * as defaults from '../src/yamlParameterDefaults';
 import * as compilerParameters from '../src/compilerBuildParameters';
 import * as compilerValueValidation from '../src/compilerBuildValueValidation';
+import * as parameterPaths from '../src/yamlParameterPaths';
 import * as vanessaCatalog from '../src/vanessaParameterCatalog';
 
 test('retrieves a frozen selected profile without changing active selection, secrets or scan root', async () => {
@@ -30,6 +31,7 @@ test('retrieves a frozen selected profile without changing active selection, sec
             if (specifier === './yamlParameterDefaults') { return defaults; }
             if (specifier === './compilerBuildParameters') { return compilerParameters; }
             if (specifier === './compilerBuildValueValidation') { return compilerValueValidation; }
+            if (specifier === './yamlParameterPaths') { return parameterPaths; }
             if (specifier === './activeYamlParametersProfile') { return activeProfiles; }
             if (specifier === './vanessaParameterCatalog.js') { return vanessaCatalog; }
             return require(specifier);
@@ -80,6 +82,7 @@ test('profile picker opens immediately and selected tables update before the art
             if (specifier === './yamlParameterDefaults') { return defaults; }
             if (specifier === './compilerBuildParameters') { return compilerParameters; }
             if (specifier === './compilerBuildValueValidation') { return compilerValueValidation; }
+            if (specifier === './yamlParameterPaths') { return parameterPaths; }
             if (specifier === './activeYamlParametersProfile') { return activeProfiles; }
             if (specifier === './vanessaParameterCatalog.js') { return vanessaCatalog; }
             return require(specifier);
@@ -140,6 +143,7 @@ test('a profile selection cannot be overwritten by an earlier autosave finishing
             if (specifier === './yamlParameterDefaults') { return defaults; }
             if (specifier === './compilerBuildParameters') { return compilerParameters; }
             if (specifier === './compilerBuildValueValidation') { return compilerValueValidation; }
+            if (specifier === './yamlParameterPaths') { return parameterPaths; }
             if (specifier === './activeYamlParametersProfile') { return activeProfiles; }
             return require(specifier);
         }
@@ -161,7 +165,7 @@ test('concurrent setup profile creation retains both new profiles and all existi
     const dependencies: Record<string, unknown> = { './appContext': { getExtensionUri: () => ({ fsPath: '/extension' }) },
         './scenarioScanRoot': { updateScenarioScanRoot: async () => undefined, updateProcessScanRoot: async () => undefined, getScenarioScanRootPath: () => 'tests/' },
         './etalonBases': { getDefaultModelDbSettingsValue: () => 'model.yaml' }, './yamlParameterDefaults': defaults,
-        './compilerBuildParameters': compilerParameters, './compilerBuildValueValidation': compilerValueValidation, './activeYamlParametersProfile': activeProfiles };
+        './compilerBuildParameters': compilerParameters, './compilerBuildValueValidation': compilerValueValidation, './yamlParameterPaths': parameterPaths, './activeYamlParametersProfile': activeProfiles };
     vm.runInNewContext(compiled, { module: moduleObject, exports: moduleObject.exports, console, Buffer,
         require: (specifier: string) => specifier === 'vscode' ? { EventEmitter: class { event = () => ({ dispose() {} }); fire() {} },
             workspace: { getConfiguration: () => ({ get: (_: string, fallback?: unknown) => fallback }) }, commands: { executeCommand: async () => undefined } } : dependencies[specifier] ?? require(specifier) });

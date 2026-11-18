@@ -2,7 +2,8 @@
 const formToolNames = new Set([
     'get_form_analysis', 'get_form_element_data', 'find_form_elements', 'manage_form_elements', 'execute_form_actions',
     'user_actions_recording', 'save_table_document_to_file', 'get_active_window_data', 'get_window_list_testclient',
-    'window_management', 'manage_command_interface', 'get_object_attributes', 'get_table_data'
+    'window_management', 'manage_command_interface', 'get_object_attributes', 'get_table_data',
+    'get_form_element_steps', 'get_active_form_element'
 ]);
 
 export interface VanessaFormToolSchema {

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { VanessaDebugClientStore } from './vanessaDebugClients';
-import { VanessaClientControlError } from './vanessaControlClients';
+import { VanessaClientControlError, formatVanessaClientError } from './vanessaControlClients';
 import { manageVanessaClients, type VanessaClientManagerPorts } from './vanessaControlClientWorkflow';
 import type { VanessaControlSession } from './vanessaControlSession';
 
@@ -15,7 +15,7 @@ export function registerVanessaClientCommands(
         snapshot: () => {
             const snapshot = session.snapshot; const caps = snapshot.capabilities;
             return { generation: snapshot.generation, ready: snapshot.status === 'ready',
-                read: !!caps?.clientProfilesRead.supported, write: !!caps?.clientProfilesWrite.supported,
+                port: !!caps?.clientProfilePort?.supported, read: !!caps?.clientProfilesRead.supported, write: !!caps?.clientProfilesWrite.supported,
                 connect: !!caps?.clientConnect.supported, disconnect: !!caps?.clientDisconnect.supported, close: !!caps?.clientClose.supported };
         },
         configureSaved,
@@ -52,7 +52,7 @@ export function registerVanessaClientCommands(
         catch (error) {
             // Session/adapter errors are fixed local messages; never display raw client/tool/secure-storage payloads.
             const message = error instanceof VanessaClientControlError || error instanceof Error ? error.message : 'The Vanessa client operation was not confirmed.';
-            void vscode.window.showErrorMessage(vscode.l10n.t(message));
+            void vscode.window.showErrorMessage(error instanceof VanessaClientControlError ? formatVanessaClientError(error, value => vscode.l10n.t(value)) : vscode.l10n.t(message));
         } finally { open = false; }
     }));
 }

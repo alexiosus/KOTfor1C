@@ -8,6 +8,7 @@ import { getDefaultModelDbSettingsValue } from './etalonBases';
 import { applyCompilerProfileDefaults, getDefaultAdditionalVanessaParameters } from './yamlParameterDefaults';
 import type { AdditionalParameterValueKind } from './vanessaLaunchJson';
 import { collectCompilerBuildValueIssues, getCompilerBuildValueHint, type CompilerBuildValueHint } from './compilerBuildValueValidation';
+import { formatPickedParameterPath, getBuildParameterPathField, getParameterPathField, mergePickedParameterPaths, type ParameterPathField } from './yamlParameterPaths';
 import {
     compilerCreatesLaunchJson,
     getCompilerBuildParameterValue,
@@ -68,6 +69,7 @@ interface BuildParameterDefinition extends Partial<CompilerBuildValueHint> {
     key: string;
     description: string;
     fixed?: boolean;
+    pathField?: ParameterPathField;
 }
 
 interface YamlParametersProfile {
@@ -108,6 +110,7 @@ export class YamlParametersManager {
     private readonly storageKey: string;
     private readonly projectRoot: string | undefined;
     private projectSeed: Promise<string | undefined> | undefined;
+    private parametersPanel: vscode.WebviewPanel | undefined;
     private readonly activeProfileChangeEmitter = new vscode.EventEmitter<ActiveYamlParametersProfileChangeEvent>();
     public readonly onDidChangeActiveProfile = this.activeProfileChangeEmitter.event;
 
@@ -447,6 +450,7 @@ export class YamlParametersManager {
         definitions.forEach(definition => {
             const hint = getCompilerBuildValueHint(definition.key);
             if (hint) { Object.assign(definition, hint); }
+            definition.pathField = getBuildParameterPathField(definition.key);
         });
 
         return definitions;
@@ -471,6 +475,45 @@ export class YamlParametersManager {
             return null;
         }
         return workspaceFolders[0].uri.fsPath;
+    }
+
+    private async pickParameterPath(message: { section: string; key: string; value: string }): Promise<string | undefined> {
+        if (typeof message.key !== 'string' || typeof message.value !== 'string') { return; }
+        const field = getParameterPathField(message.section, message.key, message.value);
+        if (!field) { return; }
+        const root = this.getWorkspaceRootPath();
+        let kind = field.kind;
+        if (kind === 'choice') {
+            const choice = await vscode.window.showQuickPick([
+                { label: this.t('File…'), pathKind: 'file' as const },
+                { label: this.t('Folder…'), pathKind: 'folder' as const }
+            ], { title: this.t('Browse…') });
+            if (!choice) { return; }
+            kind = choice.pathKind;
+        }
+        // Validate arrays before opening a picker; never replace a malformed draft.
+        mergePickedParameterPaths(message.value, [], field);
+        let initial = message.value;
+        if (field.multiple === 'json') { initial = (JSON.parse(initial || '[]') as string[])[0] ?? ''; }
+        if (field.multiple === 'pipe') { initial = initial.split('|')[0]; }
+        let initialPath = initial && !initial.includes('$') ? path.resolve(root || '', initial) : root;
+        if (field.save) {
+            const uri = await vscode.window.showSaveDialog({ title: this.t('Browse…'), saveLabel: this.t('Select'),
+                defaultUri: initialPath ? vscode.Uri.file(initialPath) : undefined });
+            return uri ? formatPickedParameterPath(uri.fsPath, root, field) : undefined;
+        }
+        while (initialPath && !fs.existsSync(initialPath)) {
+            const parent = path.dirname(initialPath);
+            if (parent === initialPath) { initialPath = root; break; }
+            initialPath = parent;
+        }
+        const uris = await vscode.window.showOpenDialog({
+            title: this.t('Browse…'), openLabel: this.t('Select'),
+            canSelectFiles: kind === 'file', canSelectFolders: kind === 'folder', canSelectMany: Boolean(field.multiple),
+            defaultUri: initialPath ? vscode.Uri.file(initialPath) : undefined
+        });
+        if (!uris?.length) { return; }
+        return mergePickedParameterPaths(message.value, uris.map(uri => formatPickedParameterPath(uri.fsPath, root, field)), field);
     }
 
     private isSameOrNestedPath(candidatePath: string, basePath: string): boolean {
@@ -1232,7 +1275,11 @@ export class YamlParametersManager {
     /**
      * Открывает панель управления YAML параметрами
      */
-    public async openYamlParametersPanel(): Promise<void> {
+    public async openYamlParametersPanel(initialTab: 'build' | 'additional' = 'build'): Promise<void> {
+        if (this.parametersPanel) {
+            this.parametersPanel.reveal();
+            await this.parametersPanel.webview.postMessage({ command: 'selectTab', tab: initialTab }); return;
+        }
         await this.loadLocalizationBundleIfNeeded();
 
         const panel = vscode.window.createWebviewPanel(
@@ -1247,6 +1294,8 @@ export class YamlParametersManager {
                 ]
             }
         );
+        this.parametersPanel = panel;
+        panel.onDidDispose(() => { if (this.parametersPanel === panel) { this.parametersPanel = undefined; } });
 
         const state = await this.loadParametersState();
         const activeProfile = this.getActiveProfileFromState(state);
@@ -1256,7 +1305,8 @@ export class YamlParametersManager {
             activeProfile.additionalVanessaParameters,
             activeProfile.globalVanessaVariables,
             state.activeProfileId,
-            state.profiles
+            state.profiles,
+            initialTab
         );
         panel.webview.html = html;
 
@@ -1277,6 +1327,28 @@ export class YamlParametersManager {
         panel.webview.onDidReceiveMessage(
             async (message) => {
                 switch (message.command) {
+                    case 'pickParameterPath': {
+                        let value: string | undefined;
+                        try { value = await this.pickParameterPath(message); }
+                        catch { void vscode.window.showErrorMessage(this.t('Could not select the parameter path. Check the current value and try again.')); }
+                        finally { await panel.webview.postMessage({ command: 'parameterPathPicked', requestId: message.requestId, value }); }
+                        break;
+                    }
+                    case 'openVanessaSessionSettings': {
+                        try {
+                            const root = this.getWorkspaceRootPath();
+                            const parameters = this.normalizeAdditionalVanessaParameters(message.additionalVanessaParameters);
+                            const { applyAdditionalVanessaParameters } = await import('./vanessaLaunchJson.js');
+                            const payload = applyAdditionalVanessaParameters({}, parameters.map(parameter => ({ ...parameter, overrideExisting: true }))).value;
+                            await vscode.commands.executeCommand('kotTestToolkit.vanessaControl.settings', root ? {
+                                profileName: typeof message.profileName === 'string' ? message.profileName : '',
+                                parameters: JSON.stringify(payload, null, 2), basePath: root
+                            } : undefined);
+                        } catch {
+                            void vscode.window.showErrorMessage(this.t('The Vanessa settings operation was not confirmed. Refresh the connection and review the active settings.'));
+                        } finally { await panel.webview.postMessage({ command: 'vanessaSessionSettingsClosed' }); }
+                        break;
+                    }
                     case 'inspectModelDbSettings': {
                         const parameters = this.normalizeParameters(message.parameters);
                         const root = this.getWorkspaceRootPath();
@@ -1962,7 +2034,8 @@ export class YamlParametersManager {
         additionalVanessaParameters: AdditionalVanessaParameter[],
         globalVanessaVariables: GlobalVanessaVariable[],
         activeProfileId: string,
-        profiles: YamlParametersProfile[]
+        profiles: YamlParametersProfile[],
+        initialTab: 'build' | 'additional' = 'build'
     ): Promise<string> {
         try {
             // URIs для ресурсов
@@ -2012,6 +2085,9 @@ export class YamlParametersManager {
                 sectionsHint: this.t('• SPPR tab: parameters for СборкаТекстовСценариев. Processing uses them to build yaml_parameters.json and Vanessa settings JSON, but not all VAParams keys are supported.\n• Additional tab: Vanessa Automation settings, using the same keys as VAParams.json. Import settings exported from Vanessa here; KOT merges them into the launch JSON.\n• Global variables tab: initial global variable values ($$Name$$), added to GlobalVars in the launch JSON. Current values are in Vanessa variables.\n• VAParams: runtime JSON settings for Vanessa Automation scenario launch.\n• Priority: if the same key exists in SPPR and Additional tabs, SPPR value wins by default. To override it, enable \"Override existing value\" in Additional tab.'),
                 addBuildParameter: this.t('Add build parameter'),
                 addAdditionalParameter: this.t('Add additional parameter'),
+                runningVanessa: this.t('Running Vanessa…'),
+                browse: this.t('Browse…'),
+                runningVanessaHint: this.t('View or edit session settings, apply these additional parameters, or apply a VAParams JSON file.'),
                 addGlobalVariable: this.t('Add global variable'),
                 resetDefaults: this.t('Reset build defaults'),
                 openGeneratedYamlParameters: this.t('Preview SPPR JSON'),
@@ -2121,7 +2197,7 @@ export class YamlParametersManager {
                 fixedBuildParameterKeysJson: this.getFixedBuildParameterKeys(),
                 buildParametersJson: buildParameters, additionalParametersJson: additionalVanessaParameters,
                 globalVanessaVariablesJson: globalVanessaVariables, defaultBuildParametersJson: this.getDefaultParameters(),
-                profilesJson: profiles, activeProfileIdJson: activeProfileId
+                profilesJson: profiles, activeProfileIdJson: activeProfileId, initialTabJson: initialTab
             };
             for (const [key, value] of Object.entries(scriptData)) {
                 htmlContent = htmlContent.replace(`\${${key}}`, () => JSON.stringify(value).replace(/</g, '\\u003c'));

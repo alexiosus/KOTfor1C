@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { localStepCatalogNeedsUpgrade, resolveLocalStepCatalog, type LocalStepCatalogProgress } from './localStepCatalog';
 import type * as vscode from 'vscode';
 import {
     executableStepDefinitions,
@@ -505,6 +506,14 @@ class VscodeStepCatalogStorage implements StepCatalogStorage {
 }
 
 export class StepCatalogService implements StepCatalogProvider, vscode.Disposable {
+    private readonly localCatalogs = new Map<string, { text: string; catalog: ResolvedStepCatalog }>();
+    private readonly offlineJobs = new Map<string, Promise<string>>();
+    private readonly offlineFiles = new Map<string, string>();
+    private readonly offlineFailures = new Set<string>();
+    private readonly preparation = new Map<string, LocalStepCatalogProgress>();
+    private readonly preparationEmitter: vscode.EventEmitter<{ workspaceFolderUri: vscode.Uri; progress: LocalStepCatalogProgress | undefined }>;
+    public readonly onDidChangePreparation: vscode.Event<{ workspaceFolderUri: vscode.Uri; progress: LocalStepCatalogProgress | undefined }>;
+    private refreshTimer?: ReturnType<typeof setTimeout>;
     public readonly onDidChangeCatalog: vscode.Event<StepCatalogChangeEvent>;
     private readonly coordinator: WorkspaceStepCatalogCoordinator;
     private readonly emitter: vscode.EventEmitter<StepCatalogChangeEvent>;
@@ -512,7 +521,8 @@ export class StepCatalogService implements StepCatalogProvider, vscode.Disposabl
 
     public constructor(
         context: vscode.ExtensionContext,
-        private readonly vscodeApi: VscodeApi
+        private readonly vscodeApi: VscodeApi,
+        private readonly generateOfflineCatalog?: (resource: vscode.Uri, report?: (value: LocalStepCatalogProgress) => void) => Promise<string>
     ) {
         const storage = new VscodeStepCatalogStorage(vscodeApi, context.globalStorageUri);
         const client = new VersionedStepCatalogClient(storage, { get: fetchHttpsBytes });
@@ -520,6 +530,8 @@ export class StepCatalogService implements StepCatalogProvider, vscode.Disposabl
 
         this.emitter = new vscodeApi.EventEmitter<StepCatalogChangeEvent>();
         this.onDidChangeCatalog = this.emitter.event;
+        this.preparationEmitter = new vscodeApi.EventEmitter();
+        this.onDidChangePreparation = this.preparationEmitter.event;
         this.coordinator = new WorkspaceStepCatalogCoordinator({
             pathOperations: path,
             getWorkspaceFolder: documentUri => {
@@ -588,29 +600,118 @@ export class StepCatalogService implements StepCatalogProvider, vscode.Disposabl
         this.disposables.push(vscodeApi.workspace.onDidChangeConfiguration(event => {
             if ([
                 'kotTestToolkit.steps.vanessaVersion',
+                'kotTestToolkit.steps.localCatalogPath',
+                'kotTestToolkit.steps.catalogMode',
                 'kotTestToolkit.steps.catalogIndexUrl',
+                'kotTestToolkit.platforms.catalog',
                 'kotTestToolkit.runVanessa.vanessaEpfPath'
             ].some(section => event.affectsConfiguration(section))) {
                 this.coordinator.invalidateConfiguration();
+                this.offlineFailures.clear();
+                this.offlineFiles.clear();
+                for (const folder of vscodeApi.workspace.workspaceFolders ?? []) {
+                    this.preparation.delete(folder.uri.toString());
+                    this.preparationEmitter.fire({ workspaceFolderUri: folder.uri, progress: undefined });
+                }
+                if (this.refreshTimer) { clearTimeout(this.refreshTimer); }
+                this.refreshTimer = setTimeout(() => {
+                    this.refreshTimer = undefined;
+                    for (const folder of vscodeApi.workspace.workspaceFolders ?? []) { void this.refresh(folder.uri).catch(error => console.warn('[StepCatalogService] Refresh failed.', error)); }
+                }, 250);
             }
         }));
         this.disposables.push(vscodeApi.workspace.onDidChangeWorkspaceFolders(() => {
             this.coordinator.invalidateConfiguration();
         }));
+        for (const folder of vscodeApi.workspace.workspaceFolders ?? []) {
+            if (vscodeApi.workspace.getConfiguration('kotTestToolkit', folder.uri).get<string>('steps.catalogMode', 'online') === 'offline') {
+                void this.refresh(folder.uri).catch(error => console.warn('[StepCatalogService] Offline catalog startup failed.', error));
+            }
+        }
     }
 
-    public getCatalog(documentUri?: vscode.Uri): Promise<ResolvedStepCatalog> {
-        return this.coordinator.getCatalog(documentUri?.toString());
+    private catalogResource(documentUri?: vscode.Uri): vscode.Uri | undefined {
+        const resource = documentUri ?? this.vscodeApi.window.activeTextEditor?.document.uri ?? this.vscodeApi.workspace.workspaceFolders?.[0]?.uri;
+        // Project definitions can supply a serialized folder URI. Restore it before calling VS Code APIs.
+        return resource ? this.vscodeApi.Uri.parse(resource.toString()) : undefined;
     }
 
-    public refresh(documentUri?: vscode.Uri): Promise<readonly ResolvedStepCatalog[]> {
+    public getPreparationState(folder: vscode.Uri): LocalStepCatalogProgress | undefined {
+        return this.preparation.get(folder.toString());
+    }
+
+    private reportPreparation(folder: vscode.Uri, progress: LocalStepCatalogProgress): void {
+        if (this.vscodeApi.workspace.getConfiguration('kotTestToolkit', folder).get<string>('steps.catalogMode', 'online') !== 'offline') { return; }
+        if (JSON.stringify(this.preparation.get(folder.toString())) === JSON.stringify(progress)) { return; }
+        this.preparation.set(folder.toString(), progress);
+        this.preparationEmitter.fire({ workspaceFolderUri: folder, progress });
+    }
+
+    public async getCatalog(documentUri?: vscode.Uri): Promise<ResolvedStepCatalog> {
+        const resource = this.catalogResource(documentUri);
+        const configuration = this.vscodeApi.workspace.getConfiguration('kotTestToolkit', resource);
+        const local = configuration.get<string>('steps.localCatalogPath', '').trim();
+        if (configuration.get<string>('steps.catalogMode', 'online') !== 'offline') { return this.coordinator.getCatalog(documentUri?.toString()); }
+        const folder = resource ? this.vscodeApi.workspace.getWorkspaceFolder(resource) : undefined;
+        if (!folder) { return resolveUnavailableCatalog(); }
+        const generationKey = JSON.stringify([folder.uri.toString(), local, configuration.get('steps.vanessaVersion', ''), configuration.get('runVanessa.vanessaEpfPath', '')]);
+        try {
+            const resolvedFile = local ? path.resolve(folder.uri.fsPath, local) : this.offlineFiles.get(generationKey);
+            let file = resolvedFile ? this.vscodeApi.Uri.file(resolvedFile) : undefined;
+            let text = file && await this.vscodeApi.workspace.fs.stat(file).then(() => true, () => false)
+                ? new TextDecoder('utf-8', { fatal: true }).decode(await this.vscodeApi.workspace.fs.readFile(file)) : undefined;
+            if (text === undefined || localStepCatalogNeedsUpgrade(text)) {
+                if (!this.generateOfflineCatalog || this.offlineFailures.has(generationKey)) { return resolveUnavailableCatalog(); }
+                let job = this.offlineJobs.get(generationKey);
+                if (!job) {
+                    this.reportPreparation(folder.uri, { phase: 'preparing' });
+                    job = this.generateOfflineCatalog(folder.uri, value => this.reportPreparation(folder.uri, value)).catch(error => {
+                        this.offlineFailures.add(generationKey);
+                        const message = this.vscodeApi.l10n?.t('Could not prepare the offline step catalog: {0}', error instanceof Error ? error.message : String(error));
+                        if (message) { void this.vscodeApi.window.showErrorMessage(message); }
+                        throw error;
+                    }).finally(() => this.offlineJobs.delete(generationKey));
+                    this.offlineJobs.set(generationKey, job);
+                }
+                file = this.vscodeApi.Uri.file(await job);
+                this.offlineFiles.set(generationKey, file.fsPath);
+                text = undefined;
+            }
+            if (this.vscodeApi.workspace.getConfiguration('kotTestToolkit', resource).get<string>('steps.catalogMode', 'online') !== 'offline') { return resolveUnavailableCatalog(); }
+            text ??= new TextDecoder('utf-8', { fatal: true }).decode(await this.vscodeApi.workspace.fs.readFile(file!));
+            const version = normalizeVanessaVersion(configuration.get<string>('steps.vanessaVersion', '')) ?? undefined;
+            const key = `${file!.toString()}\0${version ?? ''}`;
+            const cached = this.localCatalogs.get(key);
+            if (cached?.text === text) { this.reportPreparation(folder.uri, { phase: 'ready', stepCount: cached.catalog.steps.length }); return cached.catalog; }
+            const catalog = resolveLocalStepCatalog(text, version);
+            if (this.localCatalogs.size >= 16) { this.localCatalogs.clear(); }
+            this.localCatalogs.set(key, { text, catalog });
+            this.reportPreparation(folder.uri, { phase: 'ready', stepCount: catalog.steps.length });
+            return catalog;
+        } catch (error) {
+            this.reportPreparation(folder.uri, { phase: 'error', error: error instanceof Error ? error.message : String(error) });
+            console.warn('[StepCatalogService] Local catalog unavailable.', error);
+            return resolveUnavailableCatalog();
+        }
+    }
+
+    public async refresh(documentUri?: vscode.Uri): Promise<readonly ResolvedStepCatalog[]> {
+        const resource = this.catalogResource(documentUri);
+        if (this.vscodeApi.workspace.getConfiguration('kotTestToolkit', resource).get<string>('steps.catalogMode', 'online') === 'offline') {
+            this.offlineFailures.clear();
+            const catalog = await this.getCatalog(resource);
+            this.emitter.fire({ workspaceFolderUri: resource ? this.vscodeApi.workspace.getWorkspaceFolder(resource)?.uri : undefined, newIdentity: catalog.identity });
+            return [catalog];
+        }
         return this.coordinator.refresh(documentUri?.toString());
     }
 
     public dispose(): void {
+        if (this.refreshTimer) { clearTimeout(this.refreshTimer); }
         for (const disposable of this.disposables) {
             disposable.dispose();
         }
         this.emitter.dispose();
+        this.preparationEmitter.dispose();
     }
 }

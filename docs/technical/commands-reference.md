@@ -49,7 +49,7 @@
 | KOT - Заполнить секцию ВложенныеСценарии | `kotTestToolkit.checkAndFillNestedScenarios` |
 | KOT - Заполнить секцию ПараметрыСценария | `kotTestToolkit.checkAndFillScriptParameters` |
 | KOT - Открыть MXL файл в редакторе | `kotTestToolkit.openMxlFileFromExplorer` |
-| KOT - Открыть MXL файл в редакторе | `kotTestToolkit.openMxlFile` |
+| KOT - Открыть файл | `kotTestToolkit.openFile` |
 | KOT - Показать файл в проводнике VS Code | `kotTestToolkit.revealFileInExplorer` |
 | KOT - Показать файл в системном проводнике | `kotTestToolkit.revealFileInOS` |
 | KOT - Открыть папку files текущего сценария | `kotTestToolkit.openCurrentScenarioFilesFolder` |
@@ -120,7 +120,7 @@
 | Изменить группу сценария | `kotTestToolkit.changeScenarioGroup` |
 | KOT - Переключить кнопки действий в редакторе | `kotTestToolkit.toggleEditorActionButtons` |
 | Открыть папку files текущего сценария | `kotTestToolkit.editorMenu.openCurrentScenarioFilesFolder` |
-| Открыть MXL файл в редакторе | `kotTestToolkit.editorMenu.openMxlFile` |
+| Открыть файл | `kotTestToolkit.editorMenu.openFile` |
 | Показать файл в проводнике VS Code | `kotTestToolkit.editorMenu.revealFileInExplorer` |
 | Показать файл в системном проводнике | `kotTestToolkit.editorMenu.revealFileInOS` |
 | Создать вложенный сценарий | `kotTestToolkit.editorMenu.createNestedScenario` |
@@ -200,3 +200,7 @@
 | Преобразования… | `kotTestToolkit.editorMenu.convertScenario` |
 | Настроить проект | `kotTestToolkit.startSetup` |
 | Разрешить конфликты метаданных KOT… | `kotTestToolkit.resolveMetadataConflicts` |
+| Сгенерировать локальный каталог шагов Vanessa | `kotTestToolkit.generateLocalStepCatalog` |
+| Выгрузить компилятор из СППР… | `kotTestToolkit.exportSpprCompiler` |
+| Настройки сеанса Vanessa | `kotTestToolkit.vanessaControl.settings` |
+| Получить проверки текущего элемента Vanessa | `kotTestToolkit.vanessaControl.elementChecks` |

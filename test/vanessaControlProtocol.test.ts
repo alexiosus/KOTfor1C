@@ -34,6 +34,17 @@ test('live state exposes recording independently from test execution', () => {
     assert.equal(recording.kind === 'state' && (recording as any).recording, true);
 });
 
+test('.47 Markdown state accepts run headings and ё without changing feature paths', () => {
+    const text = fixture('state-running.ru.md').replace('подключен:', 'подключён:')
+        .replace(/^## (Текущая фича|Текущий сценарий|Текущий шаг)$/gmu, '## $1 (по данным прогона)');
+    assert.deepEqual(parseVanessaControlReply('get_vanessa_automation_state', reply(text)),
+        parseVanessaControlReply('get_vanessa_automation_state', reply(fixture('state-running.ru.md'))));
+    for (const extra of ['\n## Текущий шаг', '\n## Текущий шаг (по данным прогона)']) {
+        assert.equal(parseVanessaControlReply('get_vanessa_automation_state', reply(text + extra)).kind, 'unknown');
+    }
+    assert.equal(parseVanessaControlReply('get_vanessa_automation_state', reply(text.replace('подключён:', 'подключен: нет\n- Клиент тестирования подключён:'))).kind, 'unknown');
+});
+
 test('a failed scenario can contain Markdown headings without hiding the authoritative idle state', () => {
     const text = fixture('state-unknown-step.live.ru.md').replace('- result: ', '- result: Failure\n## В окне есть сообщения пользователю:\n');
     assert.deepEqual(parseVanessaControlReply('get_vanessa_automation_state', reply(text)), {
@@ -82,7 +93,8 @@ test('client capabilities distinguish read, write, connection and close schemas;
 
 test('the verified live .45 endpoint exposes the control tools and an idle state', () => {
     const live = assessVanessaControlCapabilities(JSON.parse(fixture('tools.live.json')).tools);
-    assert.ok(Object.values(live).every(capability => capability.supported));
+    assert.deepEqual(Object.entries(live).filter(([, capability]) => !capability.supported).map(([name]) => name).sort(),
+        ['stateJson', 'resultsJson', 'elementSteps', 'activeFormElement', 'recordingResult', 'clientProfilePort', 'settingsRead', 'settingsWrite', 'mxlOpen'].sort());
     assert.deepEqual(parseVanessaControlReply('get_vanessa_automation_state', reply(fixture('state-idle.live.ru.md'))),
         { kind: 'state', state: 'idle', recording: false });
 });
@@ -171,6 +183,21 @@ test('breakpoint lists require matching count and valid one-based lines without 
     for (const text of ['# Точки останова\nКоличество: 2\n- 4', '# Точки останова\nКоличество: 1\n- 0', '# Точки останова\nКоличество: 2\n- 4\n- 4']) {
         assert.equal(parseVanessaControlReply('manage_breakpoints', reply(text)).kind, 'unknown');
     }
+});
+
+test('.47 breakpoint lists distinguish an empty editor cache from unavailable data', () => {
+    const captured = fs.readFileSync('test/fixtures/vanessa-control/1.2.043.47/breakpoints-empty.live.ru.md', 'utf8').replace(/\r\n/gu, '\n').trim();
+    const advisory = captured.slice(captured.indexOf('\n\nУчастники следующего прогона'));
+    const empty = '# Точки останова\n\nТочек останова нет (по данным редактора).';
+    const unavailable = '# Точки останова\n\nНет данных из редактора (обновятся при следующем обращении к редактору).';
+    assert.deepEqual(parseVanessaControlReply('manage_breakpoints', reply(captured)), { kind: 'breakpoints', lines: [] });
+    assert.deepEqual(parseVanessaControlReply('manage_breakpoints', reply(unavailable + advisory)), { kind: 'breakpointsUnavailable' });
+    assert.deepEqual(parseVanessaControlReply('manage_breakpoints', reply(empty + advisory + '\n\n## Точки останова в других вкладках\n- C:\\Own\\other.feature\n  - строка 7')), { kind: 'breakpoints', lines: [] });
+    assert.deepEqual(parseVanessaControlReply('manage_breakpoints', reply('# Точки останова\n\nКоличество: 2\n- 4\n- 12' + advisory.replace('): 0.', '): 2.'))), { kind: 'breakpoints', lines: [4, 12] });
+    assert.deepEqual(parseVanessaControlReply('manage_breakpoints', reply(empty + '\n\nНовое пояснение для пользователя.')), { kind: 'breakpoints', lines: [] });
+    assert.equal(parseVanessaControlReply('manage_breakpoints', reply(empty + '\n\nКоличество: 1\n- 7')).kind, 'unknown');
+    assert.equal(parseVanessaControlReply('manage_breakpoints', reply(empty + '\n\n- 7')).kind, 'unknown');
+    assert.equal(parseVanessaControlReply('manage_breakpoints', reply(unavailable.replace('Нет данных из редактора', 'Ошибка'))).kind, 'unknown');
 });
 
 test('only verified one-step completion confirms pass, and step status comes from a complete state snapshot', () => {

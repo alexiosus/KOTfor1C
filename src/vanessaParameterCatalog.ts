@@ -5,6 +5,7 @@ import { parseVanessaParameterDocumentation, parseVanessaParameterSources, type 
 import { getVanessaParameterAliases } from './vanessaLaunchJson';
 import { extractVanessaVersionFromChangelog } from './vanessaVersion';
 import { resolveWorkspaceOwnedPath } from './workspaceArtifactPath';
+import { getVanessaParameterPathField } from './yamlParameterPaths';
 
 export interface VanessaParameterCatalogSnapshot {
     definitions: readonly VanessaParameterDefinition[];
@@ -22,6 +23,7 @@ export function createVanessaParameterFieldDefinitions(definitions: readonly Van
     const fields = [...definitions, ...missing].map((entry, index) => ({
         keys: names(entry), keyOptions: [...new Set([entry.key, ...entry.aliases, ...getVanessaParameterAliases(entry.key)])],
         valueKind: entry.valueKind, aliases: entry.aliases,
+        pathField: getVanessaParameterPathField(entry.key, entry.valueKind),
         description: entry.description === (entry.aliases[0] ?? entry.key)
             ? VANESSA_PARAMETER_CATALOG.find(known => known.key === entry.key)?.description ?? entry.description : entry.description,
         availability: !authoritative ? 'unverified' as const : index < definitions.length ? 'supported' as const : 'unsupported' as const

@@ -265,6 +265,7 @@ test('managed full launch reuses normal infobase preparation and keeps the autho
             vscode: { EventEmitter: class {}, ProgressLocation: { Notification: 1 }, workspace: { workspaceFolders: [{ uri: { fsPath: root } }],
                 getConfiguration: () => ({ get: () => epf }) }, window: { withProgress: async (_options: unknown, work: () => Promise<unknown>) => work() } },
             './oneCPlatform.js': { resolveOneCPlatformForLaunch: async () => ({ clientExePath: platform }), resolveOneCDesignerExePath: () => platform },
+            './sharedStartupPlatform.js': { resolveSharedStartupPlatform: async () => ({ clientExePath: platform }) },
             './startupInfobase.js': { ensureSharedStartupInfobaseMcpReady: async () => { provisioned++; } },
             './infobaseManager.js': { updateManagedInfobaseMetadata: async () => undefined },
             './vanessaControlLaunch': { managedVanessaCommandParts }

@@ -363,10 +363,11 @@ async function runLibraryOperation<T>(services: UserStepCommandServices, title: 
     output.show(true);
     try {
         const result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (_progress, token) => {
-            const { resolveOneCDesignerExePath, resolveOneCPlatformForLaunch } = await import('./oneCPlatform.js');
+            const { resolveOneCDesignerExePath } = await import('./oneCPlatform.js');
+            const { resolveSharedStartupPlatform } = await import('./sharedStartupPlatform.js');
             const { ensureSharedStartupInfobaseReady } = await import('./startupInfobase.js');
             return operation({
-                pickPlatform: () => resolveOneCPlatformForLaunch(t, { title, placeHolder: t('Select 1C platform for the build') }),
+                pickPlatform: () => resolveSharedStartupPlatform(t),
                 ensureStartupInfobase: async clientExePath => {
                     const startup = await ensureSharedStartupInfobaseReady(services.context, clientExePath, {
                         showOutputPanel: false, progressTitle: t('Preparing startup infobase for user-step build')

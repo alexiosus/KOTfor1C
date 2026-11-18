@@ -29,6 +29,17 @@ function makeDefinition(options: {
     };
 }
 
+test('Russian keywords are interchangeable when a library definition starts with Затем', () => {
+    const definition = makeDefinition({ template: 'Затем я рисую стрелку от "Картинка1" до "$Координаты$"', parameters: [
+        { name: 'Картинка1', index: 0, source: 'snippet' }, { name: 'Координаты', index: 1, source: 'snippet' }
+    ] });
+    const matcher = compileProjectDefinitionMatcher(definition);
+    for (const keyword of ['Дано', 'Допустим', 'Когда', 'Тогда', 'Затем', 'Пусть', 'То', 'И', 'А', 'Но', 'Также', 'Иначе', 'Given', 'When', 'Then', 'And', 'But']) {
+        assert.ok(matcher.match(`${keyword} я рисую стрелку от "МояКартинка" до "$Точка$"`), keyword);
+    }
+    assert.equal(matcher.match('Дано я рисую другую стрелку от "Картинка" до "$Точка$"'), null);
+});
+
 test('normalizes line breaks and whitespace without changing the display template', () => {
     const template = '  И первая\r\n\tвторая   строка  ';
     const definition = makeDefinition({ template });

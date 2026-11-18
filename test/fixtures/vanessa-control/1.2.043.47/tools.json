@@ -1,0 +1,1236 @@
+{
+  "tools": [
+    {
+      "name": "get_all_steps_in_json_format",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "search_for_steps_by_keywords",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "search_name": {
+            "type": "string"
+          },
+          "exclude_name": {
+            "type": "string"
+          },
+          "search_description": {
+            "type": "string"
+          },
+          "exclude_description": {
+            "type": "string"
+          },
+          "search_type": {
+            "type": "string"
+          },
+          "exclude_type": {
+            "type": "string"
+          },
+          "loops_only": {
+            "type": "boolean"
+          },
+          "conditions_only": {
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "compact": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "get_current_date",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "get_vanessa_automation_state",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "check_syntax",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "filePath"
+        ]
+      }
+    },
+    {
+      "name": "open_feature_file",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "load_features",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "get_editor_state",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "includeContent": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "manage_editor",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "includeContent": {
+            "type": "boolean"
+          },
+          "includeDocument": {
+            "type": "boolean"
+          },
+          "includeTabs": {
+            "type": "boolean"
+          },
+          "index": {
+            "type": "integer"
+          },
+          "filePath": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "allowDuringRun": {
+            "type": "boolean"
+          },
+          "maxLength": {
+            "type": "integer"
+          },
+          "saveChanges": {
+            "type": "boolean"
+          },
+          "lineNumber": {
+            "type": "integer"
+          },
+          "line": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "select_scenario",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "select_step",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lineNumber": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lineNumber"
+        ]
+      }
+    },
+    {
+      "name": "get_active_window_data",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      }
+    },
+    {
+      "name": "get_window_list_testclient",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "window_management",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "window_title": {
+            "type": "string"
+          },
+          "navigation_link": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "get_form_analysis",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string"
+          },
+          "only_table": {
+            "type": "string"
+          },
+          "only_group": {
+            "type": "string"
+          },
+          "max_depth": {
+            "type": "number"
+          },
+          "only_visible": {
+            "type": "boolean"
+          },
+          "compact": {
+            "type": "boolean"
+          },
+          "include_menus": {
+            "type": "boolean"
+          },
+          "gherkin": {
+            "type": "boolean"
+          },
+          "gherkin_mode": {
+            "type": "string"
+          },
+          "legend": {
+            "type": "string"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "execute_step_from_text",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "stepText": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "stepText"
+        ]
+      }
+    },
+    {
+      "name": "execute_feature_step",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string"
+          },
+          "lineNumber": {
+            "type": "integer"
+          },
+          "reload": {
+            "type": "boolean"
+          },
+          "details": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "lineNumber"
+        ]
+      }
+    },
+    {
+      "name": "manage_test_client",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "profileName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "run_scenario",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "filePath": {
+            "type": "string"
+          },
+          "lineNumber": {
+            "type": "integer"
+          },
+          "wait": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "stop_scenario",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "get_test_results",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scenarioId": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "get_window_list_os",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "get_window_screenshot_os",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "window_title": {
+            "type": "string"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "color_mode": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "window_title"
+        ]
+      }
+    },
+    {
+      "name": "manage_variables",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "is_global": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "get_va_settings",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "match": {
+            "type": "string"
+          },
+          "group": {
+            "type": "string"
+          },
+          "path_prefix": {
+            "type": "string"
+          },
+          "keys": {
+            "type": "string"
+          },
+          "available_only": {
+            "type": "boolean"
+          },
+          "include_values": {
+            "type": "boolean"
+          },
+          "include_defaults": {
+            "type": "boolean"
+          },
+          "include_allowed_values": {
+            "type": "boolean"
+          },
+          "include_ui_state": {
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "format": {
+            "type": "string"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "manage_va_settings",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "file_path": {
+            "type": "string"
+          },
+          "parameters_json": {
+            "type": "string"
+          },
+          "base_path": {
+            "type": "string"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "preserve_ci_flags": {
+            "type": "boolean"
+          },
+          "allow_ci_flags": {
+            "type": "boolean"
+          },
+          "expected_current_value": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "type": "integer"
+          },
+          "format": {
+            "type": "string"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "manage_breakpoints",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "get_info_about_line_scenario",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lineNumber": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lineNumber"
+        ]
+      }
+    },
+    {
+      "name": "get_data_from_knowledge_base",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string"
+          },
+          "question_number": {
+            "type": "string"
+          },
+          "search_string": {
+            "type": "string"
+          },
+          "file_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "format"
+        ]
+      }
+    },
+    {
+      "name": "frequently_used_steps",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number"
+          },
+          "compact": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "manage_command_interface",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "group": {
+            "type": "string"
+          },
+          "returnFunctionPanel": {
+            "type": "boolean"
+          },
+          "returnLinks": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "get_extension_list",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "manage_test_client_profiles",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "synonym": {
+            "type": "string"
+          },
+          "infobase_path": {
+            "type": "string"
+          },
+          "additional_parameters": {
+            "type": "string"
+          },
+          "client_type": {
+            "type": "string"
+          },
+          "computer_name": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "get_environment_data",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "voice_notification",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "notification_type": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "notification_type"
+        ]
+      }
+    },
+    {
+      "name": "get_object_attributes",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "data_mode": {
+            "type": "string"
+          },
+          "attribute_name": {
+            "type": "string"
+          },
+          "tabular_section_name": {
+            "type": "string"
+          },
+          "only_filled": {
+            "type": "boolean"
+          },
+          "navigationLink": {
+            "type": "string"
+          },
+          "row_numbers": {
+            "type": "string"
+          },
+          "row_ranges": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "get_table_data",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "object_type": {
+            "type": "number"
+          },
+          "object_name": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "filter": {
+            "type": "string"
+          },
+          "date_start": {
+            "type": "string"
+          },
+          "date_end": {
+            "type": "string"
+          },
+          "name_filter": {
+            "type": "string"
+          },
+          "name_match_type": {
+            "type": "string"
+          },
+          "navigationLink": {
+            "type": "string"
+          },
+          "only_filled": {
+            "type": "boolean"
+          },
+          "data_mode": {
+            "type": "string"
+          },
+          "attribute_name": {
+            "type": "string"
+          },
+          "tabular_section_name": {
+            "type": "string"
+          },
+          "start_number": {
+            "type": "number"
+          },
+          "end_number": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "object_type"
+        ]
+      }
+    },
+    {
+      "name": "save_table_document_to_file",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "file_name": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "form_element_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_name",
+          "form_element_name"
+        ]
+      }
+    },
+    {
+      "name": "get_form_element_data",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "element_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_name"
+        ]
+      }
+    },
+    {
+      "name": "manage_form_elements",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "element_name": {
+            "type": "string"
+          },
+          "table_name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "expect_text": {
+            "type": "string"
+          },
+          "optional": {
+            "type": "boolean"
+          },
+          "hyperlink_title": {
+            "type": "string"
+          },
+          "hyperlink_index": {
+            "type": "number"
+          },
+          "tab_direction": {
+            "type": "string"
+          },
+          "exact_match": {
+            "type": "boolean"
+          },
+          "full_row": {
+            "type": "boolean"
+          },
+          "full": {
+            "type": "boolean"
+          },
+          "max_length": {
+            "type": "number"
+          },
+          "row_criteria": {
+            "type": "string"
+          },
+          "percent": {
+            "type": "number"
+          },
+          "area": {
+            "type": "string"
+          },
+          "order": {
+            "type": "string"
+          },
+          "menu_path": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "execute_form_actions",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "actions_json": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actions_json"
+        ]
+      }
+    },
+    {
+      "name": "user_actions_recording",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "capture_id": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "close_test_client",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "profileName": {
+            "type": "string"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "get_process_list_os",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "only_1c": {
+            "type": "boolean"
+          },
+          "filter": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "activate_process_os",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pid": {
+            "type": "number"
+          },
+          "window_title": {
+            "type": "string"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "manage_uiautomation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "pid": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "control_type": {
+            "type": "string"
+          },
+          "help_text": {
+            "type": "string"
+          },
+          "window_title": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "element_id": {
+            "type": "string"
+          },
+          "click_type": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "delay": {
+            "type": "number"
+          },
+          "keys": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string"
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          },
+          "effect_type": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "left": {
+            "type": "number"
+          },
+          "top": {
+            "type": "number"
+          },
+          "width": {
+            "type": "number"
+          },
+          "height": {
+            "type": "number"
+          },
+          "color": {
+            "type": "string"
+          },
+          "thickness": {
+            "type": "number"
+          },
+          "transparency": {
+            "type": "number"
+          },
+          "duration": {
+            "type": "number"
+          },
+          "frame_delay": {
+            "type": "number"
+          },
+          "font_name": {
+            "type": "string"
+          },
+          "font_size": {
+            "type": "number"
+          },
+          "font_color": {
+            "type": "number"
+          },
+          "background": {
+            "type": "number"
+          },
+          "radius": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "speak_text",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "array"
+          },
+          "no_play": {
+            "type": "boolean"
+          },
+          "wait": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    {
+      "name": "input_text_to_active_field",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "delay": {
+            "type": "number"
+          },
+          "activate_window": {
+            "type": "boolean"
+          },
+          "pid": {
+            "type": "number"
+          },
+          "window_title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    {
+      "name": "manage_clipboard",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "manage_app",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "cancel": {
+            "type": "boolean"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "filter_index": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "get_event_log_manager",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "get_event_log_test_client",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "find_form_elements",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "search_string": {
+            "type": "string"
+          },
+          "search_by": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "search_string"
+        ]
+      }
+    },
+    {
+      "name": "get_form_element_steps",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "element_name": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "table_name": {
+            "type": "string"
+          },
+          "table_scope": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      }
+    },
+    {
+      "name": "restart_vanessa",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "get_active_form_element",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "include_row_values": {
+            "type": "boolean"
+          },
+          "include_edit_text": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      }
+    }
+  ]
+}

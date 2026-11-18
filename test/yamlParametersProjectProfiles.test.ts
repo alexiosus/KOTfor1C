@@ -8,6 +8,7 @@ import * as activeProfiles from '../src/activeYamlParametersProfile';
 import * as defaults from '../src/yamlParameterDefaults';
 import * as compilerParameters from '../src/compilerBuildParameters';
 import * as compilerValueValidation from '../src/compilerBuildValueValidation';
+import * as parameterPaths from '../src/yamlParameterPaths';
 import * as vanessaCatalog from '../src/vanessaParameterCatalog';
 import type { YamlParametersManager, YamlParametersProfilesSummary } from '../src/yamlParametersManager';
 
@@ -49,7 +50,7 @@ function harness(root: string | undefined, secrets = new Map<string, string>(), 
         fs: { readFile: async (uri: { fsPath: string }) => fs.promises.readFile(uri.fsPath) }
     };
     vm.runInNewContext(compiled, { module, exports: module.exports, Buffer, console, process,
-        require: (specifier: string) => dependencies[specifier] ?? require(specifier) });
+        require: (specifier: string) => specifier === './yamlParameterPaths' ? parameterPaths : dependencies[specifier] ?? require(specifier) });
     const manager = module.exports.YamlParametersManager.getInstance({ subscriptions: [], secrets: {
         get: async (key: string) => secrets.get(key),
         store: async (key: string, value: string) => { secrets.set(key, value); writes.push(key); },

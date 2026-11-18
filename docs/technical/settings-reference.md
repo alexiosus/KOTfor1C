@@ -220,6 +220,36 @@ HTTPS URL индекса неизменяемых версионных ката�
 "https://raw.githubusercontent.com/alexiosus/KOTfor1C/step-catalogs/index.json"
 ```
 
+### Режим каталога шагов
+
+`kotTestToolkit.steps.catalogMode`
+
+Онлайн: использовать версионные каталоги из сети. Офлайн: использовать локальный каталог, а при его отсутствии автоматически создать из указанной поставки Vanessa, без доступа к интернету.
+
+Тип: `"string"`. Область: `resource`.
+
+Значение по умолчанию:
+
+```json
+"online"
+```
+
+Допустимые значения: `"online"`, `"offline"`.
+
+### Локальный каталог шагов Vanessa
+
+`kotTestToolkit.steps.localCatalogPath`
+
+Необязательный путь к готовому JSON каталога шагов Vanessa для офлайн-режима. Если путь не задан, KOT автоматически создаёт каталог из указанной поставки Vanessa. Для сетевых каталогов выберите онлайн-режим.
+
+Тип: `"string"`. Область: `machine-overridable`.
+
+Значение по умолчанию:
+
+```json
+""
+```
+
 ### Отключённые проверки
 
 `kotTestToolkit.diagnostics.ignoredCodes`
@@ -1246,6 +1276,22 @@ API-ключ подключенной LLM.
 ```json
 ".vscode/kot-runtime"
 ```
+
+### Открытие файлов MXL
+
+`kotTestToolkit.files.mxlOpeningMode`
+
+Способ открытия файлов MXL из сценариев, Библиотеки и проводника.
+
+Тип: `"string"`. Область: `resource`.
+
+Значение по умолчанию:
+
+```json
+"fileWorkshop"
+```
+
+Допустимые значения: `"fileWorkshop"`, `"platform"`.
 
 ### Программа 1С для работы с файлами
 

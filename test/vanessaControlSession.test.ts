@@ -10,6 +10,30 @@ import { prepareVanessaResultSources } from '../src/vanessaControlStepSources';
 
 const tools = JSON.parse(fs.readFileSync('test/fixtures/vanessa-control/1.2.043.45/tools.json', 'utf8')).tools;
 
+for (const version of ['1.2.043.45', '1.2.043.47']) {
+    test(`MXL opening through ${version} uses a text step without loading another feature and requires its own result`, async t => {
+        const path = await import('node:path'); const os = await import('node:os');
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-mxl-session-')); t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+        const resultPath = path.join(directory, 'result.json'); let acknowledge = false;
+        const wire = fake(async (name, args) => {
+            if (name === 'execute_step_from_text') {
+                assert.ok(String(args.stepText).startsWith('И я выполняю код встроенного языка\n'));
+                if (acknowledge) { fs.writeFileSync(resultPath, '{"opened":true}'); }
+                return { content: [{ type: 'text', text: 'Шаг выполнен успешно' }] };
+            }
+            return state();
+        });
+        wire.listTools = async () => JSON.parse(fs.readFileSync(`test/fixtures/vanessa-control/${version}/tools.json`, 'utf8')).tools;
+        const session = new VanessaControlSession(); await session.attach(wire, 'http://localhost:9876');
+        await assert.rejects(session.openMxlFile('C:\\Макет.mxl', resultPath), /confirm/u);
+        assert.equal(session.snapshot.status, 'ready'); acknowledge = true;
+        await session.openMxlFile('C:\\Макет.mxl', resultPath);
+        assert.equal(session.snapshot.status, 'ready'); assert.equal(session.snapshot.execution, undefined);
+        assert.ok(!wire.calls.some(name => ['open_feature_file', 'execute_feature_step', 'load_features', 'select_step'].includes(name)));
+        await session.detach();
+    });
+}
+
 test('in-flight requests expose a safe tool label until completion, without request arguments', async () => {
     const session = new VanessaControlSession(); let hold = false; let release!: () => void; let started!: () => void;
     const beginning = new Promise<void>(resolve => { started = resolve; });
@@ -18,7 +42,47 @@ test('in-flight requests expose a safe tool label until completion, without requ
     await session.attach(wire, 'http://localhost:9876'); hold = true;
     const pending = session.refreshState(); await beginning;
     assert.equal((session.snapshot as any).request?.tool, 'get_vanessa_automation_state');
+    assert.equal(session.snapshot.request?.background, true);
     release(); await pending; assert.equal((session.snapshot as any).request, undefined); await session.detach();
+});
+
+test('client list polling is marked as background without hiding the request from session observers', async () => {
+    const pending = deferred<{ content: Array<{ type: 'text'; text: string }> }>(); const started = deferred<void>();
+    const wire = fake(async name => {
+        if (name === 'manage_test_client_profiles') { started.resolve(); return pending.promise; }
+        return state();
+    });
+    const session = new VanessaControlSession(); await session.attach(wire, 'http://localhost:9876');
+    const reading = session.withTestClientControl(clients => clients.list()); await started.promise;
+    assert.deepEqual(session.snapshot.request, { tool: 'manage_test_client_profiles', count: 1, background: true });
+    pending.resolve({ content: [{ type: 'text', text: '# Список профилей клиентов тестирования\n\nПрофили не настроены. Добавьте профиль на вкладке \'Клиенты тестирования\' в настройках VA.' }] });
+    assert.deepEqual(await reading, []); assert.equal(session.snapshot.request, undefined); await session.detach();
+});
+
+test('recording status polling cannot replace foreground recording progress', async () => {
+    const stopped = deferred<ReturnType<typeof state>>(); const stopStarted = deferred<void>();
+    const status = deferred<ReturnType<typeof state>>(); const statusStarted = deferred<void>();
+    const recordingStatus = { content: [{ type: 'text' as const, text: '# Результат записи действий пользователя\n\n- Запись идёт: Нет\n- Есть завершённый результат: Нет\n' }] };
+    let holdStatus = false;
+    const wire = fake(async (name, args) => {
+        if (name === 'user_actions_recording') {
+            if (args.action === 'stop') { stopStarted.resolve(); return stopped.promise; }
+            if (holdStatus) { statusStarted.resolve(); return status.promise; }
+            return recordingStatus;
+        }
+        return state();
+    });
+    wire.listTools = async () => JSON.parse(fs.readFileSync('test/fixtures/vanessa-control/1.2.043.47/tools.json', 'utf8')).tools;
+    const session = new VanessaControlSession(); await session.attach(wire, 'http://localhost:9876');
+    const stopping = session.runFormTool('user_actions_recording', { action: 'stop' }); await stopStarted.promise;
+    holdStatus = true;
+    const polling = session.refreshState(); await statusStarted.promise;
+    assert.deepEqual(session.snapshot.request, { tool: 'user_actions_recording', count: 2, background: false });
+    stopped.resolve(recordingStatus);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(session.snapshot.request, { tool: 'user_actions_recording', count: 1, background: true });
+    status.resolve(recordingStatus); await Promise.all([stopping, polling]);
+    assert.equal(session.snapshot.status, 'ready'); assert.equal(session.snapshot.request, undefined); await session.detach();
 });
 const state = (running = false) => ({ content: [{ type: 'text' as const, text: fs.readFileSync('test/fixtures/vanessa-control/1.2.043.45/state-running.ru.md', 'utf8').replace('Выполнение сценариев: да', `Выполнение сценариев: ${running ? 'да' : 'нет'}`) }] });
 const capturedReply = (name: string) => ({ content: [{ type: 'text' as const, text: fs.readFileSync(`test/fixtures/vanessa-control/1.2.043.45/${name}`, 'utf8') }] });

@@ -6,6 +6,7 @@ import { readNativeScenarioMetadata } from './spprScenarioFiles';
 import { KotWorkspacePanel } from './kotWorkspacePanel';
 import { registerVanessaFormToolCommands } from './vanessaControlFormToolCommands';
 import { registerVanessaAuthoringCommands } from './vanessaControlAuthoringCommands';
+import { registerVanessaSettingsCommands } from './vanessaControlSettingsCommands';
 import { registerVanessaDiagnosticsCommands } from './vanessaControlDiagnosticsCommands';
 import { enrichFormExplorerSnapshot } from './formExplorerEnrichment';
 import { getFormExplorerSnapshotPath } from './formExplorerPaths';
@@ -30,6 +31,8 @@ import { promisify } from 'node:util';
 import { DriveCompletionProvider } from './completionProvider';
 import { DriveHoverProvider } from './hoverProvider';
 import { StepCatalogService } from './stepCatalogService';
+import { registerLocalStepCatalogCommands, generateConfiguredLocalStepCatalog } from './localStepCatalogCommands';
+import { registerSpprCompilerExportCommand } from './spprCompilerExportCommands';
 import { PhaseSwitcherProvider } from './phaseSwitcher';
 import { StandaloneFeatureService } from './standaloneFeatureService';
 import { registerVanessaControl } from './vanessaControlConnection';
@@ -46,10 +49,6 @@ import { createVanessaYamlControl } from './vanessaControlYamlCommands';
 import { registerVanessaYamlTrialCommand } from './vanessaControlYamlTrialCommands';
 import { ProjectFeatureTagCatalog } from './projectFeatureTags';
 import {
-    openMxlFileFromTextHandler,
-    openMxlFileFromExplorerHandler,
-    revealFileInExplorerHandler,
-    revealFileInOSHandler,
     openCurrentScenarioFilesFolderHandler,
     openSubscenarioHandler,
     openNestedScenarioFromFeatureHandler,
@@ -172,6 +171,8 @@ import {
 import { managedInfobaseRuntimeTracker } from './infobaseRuntimeTracker';
 import { StepLibraryFavoritesService } from './stepLibraryFavorites';
 import { deleteFileWithTrashFallback, ScenarioFilesService } from './scenarioFilesService';
+import { registerScenarioFileNavigation } from './scenarioFileNavigation';
+import { createScenarioFileOpener } from './mxlFileOpener';
 
 // Debounce mechanism to prevent double processing from VS Code auto-save
 const processingFiles = new Set<string>();
@@ -853,8 +854,11 @@ export async function activate(context: vscode.ExtensionContext) {
     const { YamlParametersManager } = await import('./yamlParametersManager.js');
     const initialProfile = await YamlParametersManager.getInstance(context).loadActiveProfileSnapshot();
     initializeScenarioScanRoot(context, initialProfile.buildParameters);
-    const stepCatalogService = new StepCatalogService(context, vscode);
+    const stepCatalogService = new StepCatalogService(context, vscode, generateConfiguredLocalStepCatalog);
+    kotWorkspacePanel.bindStepCatalogs(stepCatalogService);
     context.subscriptions.push(stepCatalogService);
+    registerLocalStepCatalogCommands(context, stepCatalogService);
+    registerSpprCompilerExportCommand(context);
     const activeProfileChangeEvent: vscode.Event<unknown> = listener => {
         let disposed = false;
         let subscription: vscode.Disposable | undefined;
@@ -952,6 +956,7 @@ export async function activate(context: vscode.ExtensionContext) {
         async path => { await (await loadInfobaseManagerPanel()).open(path, true); });
     registerVanessaVariableCommands(context, vanessaControlSession, uiTranslator);
     registerVanessaFormToolCommands(context, vanessaControlSession, vanessaControl.ensureConnected);
+    registerVanessaSettingsCommands(context, vanessaControlSession, vanessaControl.ensureConnected);
     registerVanessaAuthoringCommands(context, vanessaControlSession, vanessaControl.ensureConnected, async text => {
         const { translateVanessaFormSteps } = await import('./vanessaControlFormLanguage.js');
         const { getConfiguredScenarioLanguage } = await import('./gherkinLanguage.js');
@@ -964,6 +969,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const vanessaFormSource = new VanessaFormExplorerSource({
         completionEnabled: () => vscode.workspace.isTrusted !== false && vscode.workspace.getConfiguration('kotTestToolkit.vanessaControl').get<boolean>('formCompletions', true),
         snapshot: () => ({ generation: vanessaControlSession.snapshot.generation, ready: vanessaControlSession.snapshot.status === 'ready', busy: vanessaControlSession.busy,
+            elementStepsSupported: !!vanessaControlSession.snapshot.capabilities?.elementSteps?.supported,
             windowsSupported: !!vanessaControlSession.snapshot.capabilities?.formWindows.supported && !!vanessaControlSession.snapshot.capabilities?.formActivateWindow.supported,
             supported: !!vanessaControlSession.snapshot.capabilities?.formTree.supported && !!vanessaControlSession.snapshot.capabilities?.formWindow.supported && !!vanessaControlSession.snapshot.capabilities?.clientProfilesRead.supported }),
         run: (work, isCurrent) => vanessaControlSession.withFormControl(work, isCurrent),
@@ -1392,6 +1398,7 @@ export async function activate(context: vscode.ExtensionContext) {
         await projectDefinitionIndex.waitForIdle();
         await phaseSwitcherProvider.refreshFromExternalStateChange({ refreshCache: true });
     };
+    const openScenarioFile = createScenarioFileOpener(context, vanessaControlSession);
     const scenarioFilesService = new ScenarioFilesService({
         parseUri: value => vscode.Uri.parse(value),
         dirname: uri => (uri as vscode.Uri).with({
@@ -1412,7 +1419,7 @@ export async function activate(context: vscode.ExtensionContext) {
             })),
         isFileNotFound: error => error instanceof vscode.FileSystemError
             && error.code === 'FileNotFound',
-        openExternal: uri => vscode.env.openExternal(uri as vscode.Uri),
+        openExternal: uri => openScenarioFile(uri as vscode.Uri),
         openInEditor: async uri => {
             const document = await vscode.workspace.openTextDocument(uri as vscode.Uri);
             await vscode.window.showTextDocument(document, { preview: true });
@@ -1466,6 +1473,7 @@ export async function activate(context: vscode.ExtensionContext) {
     phaseSwitcherProvider.attachScenarioFilesService(scenarioFilesService);
     scenarioPropertiesEditor.panel.attachScenarioFilesService(scenarioFilesService);
     snapshotService.attachScenarioFilesService(scenarioFilesService);
+    registerScenarioFileNavigation(context, snapshotService, scenarioFilesService, openScenarioFile);
     const stepLibrarySidebarProvider = new StepLibrarySidebarProvider({
         translate: uiTranslator,
         extensionUri: context.extensionUri,
@@ -2468,16 +2476,11 @@ export async function activate(context: vscode.ExtensionContext) {
         'kotTestToolkit.checkAndFillScriptParameters', checkAndFillScenarioParametersHandler
     ));
     context.subscriptions.push(vscode.commands.registerCommand(
-        'kotTestToolkit.openMxlFileFromExplorer', (uri: vscode.Uri) => openMxlFileFromExplorerHandler(uri)
-    ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        'kotTestToolkit.openMxlFile', (editor, edit) => openMxlFileFromTextHandler(editor, edit, phaseSwitcherProvider)
-    ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        'kotTestToolkit.revealFileInExplorer', (editor, edit) => revealFileInExplorerHandler(editor, edit, phaseSwitcherProvider)
-    ));
-    context.subscriptions.push(vscode.commands.registerTextEditorCommand(
-        'kotTestToolkit.revealFileInOS', (editor, edit) => revealFileInOSHandler(editor, edit, phaseSwitcherProvider)
+        'kotTestToolkit.openMxlFileFromExplorer', async (uri: vscode.Uri) => {
+            if (!uri?.fsPath) { return; }
+            try { await openScenarioFile(uri); }
+            catch (error) { void vscode.window.showErrorMessage(vscode.l10n.t('Could not open the file: {0}', error instanceof Error ? error.message : String(error))); }
+        }
     ));
     context.subscriptions.push(vscode.commands.registerTextEditorCommand(
         'kotTestToolkit.openCurrentScenarioFilesFolder', editor => openCurrentScenarioFilesFolderHandler(editor)
@@ -2623,7 +2626,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.commands.registerCommand(
         'kotTestToolkit.openYamlParametersManager',
-        () => handleOpenYamlParametersManager(context)
+        (tab?: unknown) => handleOpenYamlParametersManager(context, tab)
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand(

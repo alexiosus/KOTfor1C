@@ -184,7 +184,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             const firstLineOriginal = lines[0].trim();
             let cleanedPattern = pattern.replace(/\r?\n\s*/g, ' ').trim();
             
-            const gherkinKeywords = /^(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+            const gherkinKeywords = /^(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Затем|То|Когда|Если|И|К тому же|Также|Допустим|Дано|Пусть|А|Иначе)\s+/i;
             const firstLineWithoutKeywords = firstLineOriginal.replace(gherkinKeywords, '');
 
             const placeholderRegex = PLACEHOLDER_REGEX;
@@ -231,7 +231,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
             const firstLineOriginal = lines[0].trim();
             let cleanedPattern = pattern.replace(/\r?\n\s*/g, ' ').trim();
 
-            const gherkinKeywords = /^(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+            const gherkinKeywords = /^(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Затем|То|Когда|Если|И|К тому же|Также|Допустим|Дано|Пусть|А|Иначе)\s+/i;
             const firstLineWithoutKeywords = firstLineOriginal.replace(gherkinKeywords, '');
 
             const placeholderRegex = PLACEHOLDER_REGEX;
@@ -266,7 +266,7 @@ export class DriveHoverProvider implements vscode.HoverProvider {
     }
 
     private stripGherkinKeyword(text: string): string {
-        const gherkinKeywords = /^(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Когда|Если|И|К тому же|Допустим)\s+/i;
+        const gherkinKeywords = /^(?:\*\s*)?(?:And|But|Then|When|Given|If|Но|Тогда|Затем|То|Когда|Если|И|К тому же|Также|Допустим|Дано|Пусть|А|Иначе)\s+/i;
         return text.trim().replace(gherkinKeywords, '').trim();
     }
 

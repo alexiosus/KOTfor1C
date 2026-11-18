@@ -3,8 +3,10 @@ import type { FormExplorerElementInfo, FormExplorerSnapshot } from './formExplor
 
 export interface VanessaFormIdentity { readonly client: string; readonly windowTitle: string; readonly formName: string }
 export interface VanessaFormWindows { readonly client: string; readonly titles: readonly string[] }
-export type VanessaFormTool = 'get_form_analysis' | 'get_form_element_data' | 'get_window_list_testclient' | 'window_management' | 'manage_form_elements';
+export type VanessaFormTool = 'get_form_analysis' | 'get_form_element_data' | 'get_window_list_testclient' | 'window_management' | 'manage_form_elements' | 'get_form_element_steps' | 'get_active_form_element';
 export interface VanessaFormPorts {
+    readonly supportsElementSteps?: boolean;
+    readonly supportsActiveElement?: boolean;
     identity(): Promise<VanessaFormIdentity>;
     request(tool: VanessaFormTool, args: Readonly<Record<string, unknown>>): Promise<unknown>;
     isCurrent?(): boolean;
@@ -101,14 +103,40 @@ export class VanessaRuntimeForms {
     constructor(private readonly ports: VanessaFormPorts) {}
     /** Background polling follows form changes; in-place structure changes require an explicit full read. */
     async refresh(snapshot: FormExplorerSnapshot): Promise<FormExplorerSnapshot> {
-        if (snapshot.source?.adapter === 'MCP' && snapshot.source.sessionId === stamp(await this.identity())) { return snapshot; }
+        if (snapshot.source?.adapter === 'MCP' && snapshot.source.sessionId === stamp(await this.identity())) { return this.activeElement(snapshot); }
         return this.read();
     }
     async read(): Promise<FormExplorerSnapshot> {
         const identity = await this.identity();
         const reply = await this.request('get_form_analysis', { format: 'elements', compact: false, only_visible: false });
         await this.checkIdentity(stamp(identity));
-        return parseVanessaFormTree(reply, identity, new Date().toISOString());
+        return this.activeElement(parseVanessaFormTree(reply, identity, new Date().toISOString()));
+    }
+    private async activeElement(snapshot: FormExplorerSnapshot): Promise<FormExplorerSnapshot> {
+        if (!this.ports.supportsActiveElement) { return snapshot; }
+        const text = vanessaFormReplyText(await this.request('get_active_form_element', {}));
+        const blocks = [...text.matchAll(/^```json\n([\s\S]*?)\n```/gmu)];
+        if (blocks.length !== 1) { throw unconfirmed(); }
+        let value: Record<string, unknown> | undefined;
+        try { value = record(JSON.parse(blocks[0][1])); } catch { throw unconfirmed(); }
+        if (!value || typeof value.state !== 'string') { throw unconfirmed(); }
+        if (record(value.form)?.name && record(value.form)?.name !== snapshot.form.name || value.window && value.window !== snapshot.form.windowTitle) { throw changed(); }
+        const name = record(value.column)?.name || record(value.element)?.name;
+        const table = record(value.table)?.name;
+        const matches: string[] = [];
+        const find = (rows: readonly FormExplorerElementInfo[], parent?: string) => {
+            for (const row of rows) {
+                const owner = row.kind === 'table' ? row.name : parent;
+                if (value?.state === 'focused' && typeof name === 'string' && row.name === name && (!table || owner === table)) { matches.push(row.path); }
+                find(row.children, owner);
+            }
+        };
+        find(snapshot.elements);
+        const path = matches.length === 1 ? matches[0] : undefined;
+        await this.checkIdentity(snapshot.source!.sessionId!);
+        const mark = (rows: FormExplorerElementInfo[]): FormExplorerElementInfo[] => rows.map(row => ({ ...row, active: row.path === path, children: mark(row.children) }));
+        if (path === snapshot.form.activeElementPath) { return snapshot; }
+        return { ...snapshot, generatedAt: new Date().toISOString(), form: { ...snapshot.form, activeElementPath: path }, elements: mark(snapshot.elements) };
     }
     async element(snapshot: FormExplorerSnapshot, path: string): Promise<FormExplorerSnapshot> {
         if (snapshot.source?.adapter !== 'MCP' || !snapshot.source.sessionId) { throw changed(); }
@@ -132,6 +160,21 @@ export class VanessaRuntimeForms {
         if (snapshot.source?.adapter !== 'MCP' || !snapshot.source.sessionId) { throw changed(); }
         await this.checkIdentity(snapshot.source.sessionId);
         const name = target.element.name!;
+        if (this.ports.supportsElementSteps) {
+            const inspected = await this.element(snapshot, path);
+            const before = formStepTarget(inspected, path)?.element;
+            if (!before) { throw changed(); }
+            const reply = vanessaFormReplyText(await this.request('get_form_element_steps', {
+                element_name: name, mode: 'suggestions', ...(target.table ? { table_name: target.table.name } : {})
+            }));
+            const text = formStepSection(reply, '## Шаги');
+            if (text === undefined) { throw unconfirmed(); }
+            await this.checkIdentity(snapshot.source.sessionId);
+            const confirmed = await this.element(inspected, path);
+            const element = formStepTarget(confirmed, path)?.element;
+            if (!element || formStepElementState(element) !== formStepElementState(before)) { throw changed(); }
+            return { text, cached: false, snapshot: confirmed };
+        }
         await this.request('manage_form_elements', target.table
             ? { action: 'activate_column', table_name: target.table.name, value: name }
             : { action: 'activate_header_element', element_name: name });

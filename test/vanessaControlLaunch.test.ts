@@ -4,7 +4,8 @@ import { managedVanessaCommandParts } from '../src/vanessaControlLaunch';
 import * as launch from '../src/vanessaControlLaunch';
 test('managed launch enables MCP/editor with an explicit loopback port and never starts the feature player', () => {
     assert.deepEqual(managedVanessaCommandParts(['ShowMainForm', 'UseEditor', 'VAParams=C:\\debug.json'], 9876),
-        ['ShowMainForm', 'UseEditor', 'VAParams=C:\\debug.json', 'runMcp', 'mcpPort=9876']);
+        ['ShowMainForm', 'UseEditor', 'VAParams=C:\\debug.json', 'DisableFirstRunHelper', 'runMcp', 'mcpPort=9876']);
+    assert.equal(managedVanessaCommandParts(['DisableFirstRunHelper=false'], 9876).filter(part => part.startsWith('DisableFirstRunHelper')).join(), 'DisableFirstRunHelper');
     for (const port of [0, -1, 65536, 1.5]) { assert.throws(() => managedVanessaCommandParts([], port)); }
     assert.throws(() => managedVanessaCommandParts(['StartFeaturePlayer'], 9876));
 });
