@@ -419,7 +419,7 @@ export class ScenarioPropertiesSession {
                 }
                 return;
             }
-            const actions = ['openSource', 'openFeature', 'openText', 'openSettings', 'openMetadata', 'copyPath', 'rename', 'changeCode', 'systemFunction', 'base', 'users', 'addSteps', 'aiDescription', 'changeGroup', 'newGroup', 'createSettings', 'addNested', 'openReference', 'fillParameters', 'fillNested', 'convertFormat', 'convertRole', 'run'];
+            const actions = ['openSource', 'openFeature', 'openText', 'openSettings', 'openMetadata', 'copyPath', 'rename', 'changeCode', 'systemFunction', 'base', 'users', 'addSteps', 'changeGroup', 'newGroup', 'createSettings', 'addNested', 'openReference', 'fillParameters', 'fillNested', 'convertFormat', 'convertRole', 'run'];
             if (action === 'copyPath' && ![this.sourceUri, this.state.selectedSettingsUri, this.state.metadata?.uri].includes(message.value as string)) { throw new Error('The property target is not bound to the selected test/settings.'); }
             if (!actions.includes(action)) { throw new Error('Unknown test properties action.'); }
             if (action === 'createSettings' && !this.state.canCreateSettings) { throw new Error('Run settings are available for main scenarios and processes.'); }

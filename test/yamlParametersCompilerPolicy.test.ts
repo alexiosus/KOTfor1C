@@ -1,3 +1,5 @@
+import * as nativeRedaction from '../src/vanessaControlRedaction';
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -31,6 +33,8 @@ function createManager(buildParameters: unknown[], showDriveFeatures = false, co
     vm.runInNewContext(compiled, {
         module: moduleObject, exports: moduleObject.exports, console: { ...console, error() {} }, Buffer, process,
         require: (specifier: string) => {
+            if (specifier === './vanessaControlRedaction') { return nativeRedaction; }
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === 'vscode') {
                 return { EventEmitter: class { event = () => ({ dispose() {} }); fire() {} dispose() {} },
                     workspace: { workspaceFolders: [{ uri: { fsPath: '/project' } }], getConfiguration: () => ({

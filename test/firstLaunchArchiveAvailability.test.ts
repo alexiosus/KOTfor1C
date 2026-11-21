@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -68,6 +69,7 @@ function loadAvailabilityHarness(options: {
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === 'vscode') {
                 return vscode;
             }

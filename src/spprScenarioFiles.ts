@@ -1,8 +1,11 @@
+import { kotWindow } from './kotInteraction';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { joinNativeSpprScenario, convertSpprScenarioFiles, type SpprScenarioFormat } from './spprScenarioFormat';
 import { waitForProjectLibraryIdle } from './projectLibraryStore';
 import type { ScenarioIdentityChangeResult } from './scenarioPropertyIdentity';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 const formatConverted = new vscode.EventEmitter<ScenarioIdentityChangeResult>();
 export const onDidConvertScenarioFormat = formatConverted.event;
@@ -93,9 +96,9 @@ export async function handleConvertScenarioFormat(uri?: vscode.Uri, targetFormat
             refreshCache: true,
             changedSourceUris: sourceFormat === target ? [] : ['scen.yaml', 'meta.yaml', 'scen.feature'].map(file => vscode.Uri.file(path.join(directory, file)).toString())
         });
-        if (!silent) { void vscode.window.showInformationMessage(vscode.l10n.t('SPPR scenario format converted successfully.')); }
+        if (!silent) { void kotUi.showInformationMessage(vscode.l10n.t('SPPR scenario format converted successfully.')); }
         return result;
     } catch (error) {
-        void vscode.window.showErrorMessage(vscode.l10n.t('Could not convert SPPR scenario format: {0}', error instanceof Error ? error.message : String(error)));
+        void kotUi.showErrorMessage(vscode.l10n.t('Could not convert SPPR scenario format: {0}', error instanceof Error ? error.message : String(error)));
     }
 }

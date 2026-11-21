@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -89,7 +90,7 @@ async function harness(t: test.TestContext) {
         const source = await fs.readFile(path.join(process.cwd(), 'src/projectDefinitionDeletion.ts'), 'utf8');
         const ts = require('typescript') as typeof import('typescript');
         vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
-            { module, exports: module.exports, Buffer, console, require: (name: string) => dependencies[name] ?? require(name) });
+            { module, exports: module.exports, Buffer, console, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? require(name)) });
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; } }
     return { api: module.exports, root, uri, open, deleted, confirmations, scan, host, context: { extensionUri: uri('/extension') },
         async write(name: string, text: string) { const file = path.join(root, name); await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, text); return uri(file); },

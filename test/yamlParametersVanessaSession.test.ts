@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,6 +18,7 @@ async function editor(fail = false) {
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/yamlParametersManager.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
     }).outputText, { module, exports: module.exports, require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
         if (name === 'vscode') { return { ViewColumn: { One: 1 }, Uri: { joinPath: () => ({}) },
             window: { createWebviewPanel: () => { creates++; return panel; }, showErrorMessage() {} },
             commands: { executeCommand: async (name: string, source: unknown) => { commands.push({ name, source }); if (fail) { throw new Error('Unavailable'); } } } }; }

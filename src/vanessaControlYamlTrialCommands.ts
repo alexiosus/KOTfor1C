@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import fs from 'node:fs/promises';
 import * as os from 'node:os';
@@ -10,6 +11,8 @@ import { nativeDocumentTextMatchesFileText } from './scenarioNativeDocumentSnaps
 import { sameVanessaFeaturePath, type VanessaControlFailure, type VanessaControlSession } from './vanessaControlSession';
 import type { VanessaFeatureDocument } from './vanessaControlFeature';
 import { VanessaExecutionHighlighter } from './vanessaControlHighlighting';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 /** Runtime fragments never replace the user's native YAML document. */
 export function registerVanessaYamlTrialCommand(context: vscode.ExtensionContext, session: VanessaControlSession,
@@ -63,7 +66,7 @@ export function registerVanessaYamlTrialCommand(context: vscode.ExtensionContext
         execute: async (file, trial, isCurrent) => {
             if (disposed || vscode.debug.activeDebugSession) { throw new Error('Stop the active debugger before controlling Vanessa manually.'); }
             if (!context.workspaceState.get('kotTestToolkit.vanessaControl.trialNotice', false)) {
-                void vscode.window.showInformationMessage(vscode.l10n.t('A step trial executes only the selected ordinary Vanessa step and its payload. Preceding preparation is skipped; current runtime variables and test clients are reused.'));
+                void kotUi.showInformationMessage(vscode.l10n.t('A step trial executes only the selected ordinary Vanessa step and its payload. Preceding preparation is skipped; current runtime variables and test clients are reused.'));
                 void context.workspaceState.update('kotTestToolkit.vanessaControl.trialNotice', true);
             }
             selected = { trial, file, generation: session.snapshot.generation };
@@ -92,9 +95,9 @@ export function registerVanessaYamlTrialCommand(context: vscode.ExtensionContext
                 if (!requested || active?.uri !== requested.uri || active.text !== requested.text || active.line !== requested.line) {
                     throw new Error('The active source or selection changed while connecting to Vanessa. Run the command again.');
                 }
-                await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Vanessa: try YAML step') }, () => control.run());
+                await kotUi.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Vanessa: try YAML step') }, () => control.run());
             }
-            catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? vscode.l10n.t(error.message) : vscode.l10n.t('Vanessa MCP command failed.')); }
+            catch (error) { void kotUi.showErrorMessage(error instanceof Error ? vscode.l10n.t(error.message) : vscode.l10n.t('Vanessa MCP command failed.')); }
         }),
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.runSelection', async () => {
             try {
@@ -117,9 +120,9 @@ export function registerVanessaYamlTrialCommand(context: vscode.ExtensionContext
                 const file = await ports.materialize(trial);
                 if (!isCurrent()) { throw new Error('The selected source changed. Select the steps again.'); }
                 selected = { trial, file, generation: session.snapshot.generation };
-                await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Vanessa: run selected steps') },
+                await kotUi.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Vanessa: run selected steps') },
                     () => session.run('runFromLine', file, trial.lineNumber, trial.featureText, isCurrent));
-            } catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? vscode.l10n.t(error.message) : vscode.l10n.t('Vanessa MCP command failed.')); }
+            } catch (error) { void kotUi.showErrorMessage(error instanceof Error ? vscode.l10n.t(error.message) : vscode.l10n.t('Vanessa MCP command failed.')); }
             finally { render(); }
         }), session.onDidChange(render), vscode.window.onDidChangeVisibleTextEditors(render), vscode.workspace.onDidChangeTextDocument(render),
         { dispose: () => { disposed = true; void directory?.then(root => fs.rm(root, { recursive: true, force: true })).catch(() => { /* Own transient files may already be gone. */ }); } });

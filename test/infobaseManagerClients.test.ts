@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -20,7 +21,7 @@ test('full manager binds client actions to an existing base and updates clients 
     };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/infobaseManagerPanel.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-    }).outputText, { module, exports: module.exports, require: (name: string) => dependencies[name] ?? {} });
+    }).outputText, { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? {}) });
     const service = { onDidInvalidate: noop, refresh: async () => { scans++; }, ensureReady: async () => { scans++; } };
     const panel = new module.exports.InfobaseManagerPanel({ workspaceState: { get: () => undefined } }, service, {
         service: { onDidChange: noop, stateFor: (base: string) => ({ rows: [], base }) },

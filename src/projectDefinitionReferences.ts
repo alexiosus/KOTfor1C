@@ -12,6 +12,7 @@ import type {
     ProjectDefinitionMatch,
     ProjectDefinitionView
 } from './projectDefinition';
+import { sameProjectDefinitionSource } from './projectDefinition';
 import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 
 const CALLABLE_LINE = /^\s*(?:\*\s*)?(?:К\s+тому\s+же|Затем|Пусть|То|А|Также|Иначе|Допустим|Given|When|Then|And|But|Если|Когда|Тогда|Но|И|If|Дано|Do|Цикл)\s+.+/iu;
@@ -293,6 +294,7 @@ export class ProjectDefinitionReferenceService {
                 item.extensions.forEach(extension => current.extensions.add(normalizeExtension(extension)));
                 merged.set(key, current);
             } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === 'ENOENT') { continue; } // An uncreated output/library root contains no references.
                 if (failOnScanError) { throw error; }
                 this.#options.log?.(`Cannot resolve reference search root ${item.path}: ${String(error)}`);
             }
@@ -473,7 +475,7 @@ function definitionContainsPosition(
     position: vscode.Position
 ): boolean {
     return [definition.definitionLocation, definition.implementationLocation].some(location =>
-        location?.uri === documentUri && positionWithinRange(position, location.range)
+        !!location && sameProjectDefinitionSource(location.uri, documentUri) && positionWithinRange(position, location.range)
     );
 }
 
@@ -509,11 +511,8 @@ export async function resolveProjectDefinitionIdsAtPosition(
         return resolution.matches.map(match => match.definition.id);
     }
 
-    const sameFile = view.all.filter(definition =>
-        definition.definitionLocation?.uri === documentUri
-        || definition.implementationLocation?.uri === documentUri
-    );
-    return sameFile.length === 1 ? [sameFile[0].id] : [];
+    const sameFile = await resolveProjectDefinitionIdsForDocument(document, resolver, token);
+    return sameFile.length === 1 ? sameFile : [];
 }
 
 export async function resolveProjectDefinitionIdsForDocument(
@@ -529,10 +528,15 @@ export async function resolveProjectDefinitionIdsForDocument(
         return [];
     }
     const documentUri = document.uri.toString();
+    const nativeSource = /(?:^|\/)scen\.feature$/u.test(documentUri)
+        ? await (await import('./spprScenarioFiles.js')).resolveScenarioSourceUris(document.uri) : undefined;
+    if (token.isCancellationRequested) { return []; }
+    const metadataUri = nativeSource?.format === 'native' ? nativeSource.metadataUri.toString() : undefined;
     return view.all
         .filter(definition =>
-            definition.definitionLocation?.uri === documentUri
-            || definition.implementationLocation?.uri === documentUri
+            [definition.definitionLocation, definition.implementationLocation].some(location =>
+                sameProjectDefinitionSource(location?.uri, documentUri)
+                || definition.kind === 'nestedScenario' && sameProjectDefinitionSource(location?.uri, metadataUri))
         )
         .map(definition => definition.id);
 }

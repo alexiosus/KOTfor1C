@@ -1,3 +1,5 @@
+import * as nativeRedaction from '../src/vanessaControlRedaction';
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,7 +33,7 @@ function harness(empty = false) {
     };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/yamlParametersManager.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-    }).outputText, { module, exports: module.exports, Buffer, console, require: (name: string) => dependencies[name] ?? require(name) });
+    }).outputText, { module, exports: module.exports, Buffer, console, require: (name: string) => name === './vanessaControlRedaction' ? nativeRedaction : (name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? require(name))) });
     return { manager: module.exports.YamlParametersManager.getInstance(context), initial, events, writes: () => writes,
         saved: () => stored, replace: (value: string) => { stored = value; } };
 }

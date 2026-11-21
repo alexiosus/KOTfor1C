@@ -13,7 +13,7 @@ import {
 
 async function root(t: test.TestContext): Promise<string> {
     const directory = await v3Fixture(fs.mkdtemp(path.join(os.tmpdir(), 'kot-project-library-')));
-    t.after(() => fs.rm(directory, { recursive: true, force: true }));
+    t.after(() => fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
     return directory;
 }
 

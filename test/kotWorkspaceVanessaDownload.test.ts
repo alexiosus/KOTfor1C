@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,6 +17,7 @@ function harness(mode: 'install' | 'cancel' | 'pending' = 'install', project = p
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/kotWorkspacePanel.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
     }).outputText, { module, exports: module.exports, process, AbortController, require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
         if (name === 'vscode') { return { CancellationTokenSource: class { token = {}; cancel() {} dispose() {} }, ProgressLocation: { Notification: 1 },
             workspace: { get isTrusted() { return trusted; }, workspaceFolders: [folder] }, window: {
                 withProgress: async (_options: unknown, work: Function) => work({ report() {} }, { onCancellationRequested: () => ({ dispose() {} }) }),

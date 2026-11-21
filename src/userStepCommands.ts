@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
@@ -17,6 +18,8 @@ import {
 import { buildUserStepLibrary, type UserStepLibraryBuildRequest, type UserStepLibraryBuildDependencies } from './userStepLibraryBuilder';
 import { dumpUserStepLibrary } from './userStepLibraryDump';
 import { findUserStepRootXml, inspectUserStepLibrary, recordUserStepSourceImport } from './userStepLibraryState';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export interface UserStepLibraryRoot {
     readonly path: string;
@@ -60,7 +63,7 @@ async function promptStep(
     seed: ExportScenarioCommandSeed,
     t: (key: string, ...args: string[]) => string
 ): Promise<Omit<UserStepSourceEditRequest, 'source' | 'documentVersion' | 'expectedVersion'> | undefined> {
-    const template = await vscode.window.showInputBox({
+    const template = await kotUi.showInputBox({
         title: t('User step template'),
         value: (seed.invocation ?? '').trim(),
         prompt: t('Enter the displayed Gherkin step including its keyword.'),
@@ -73,7 +76,7 @@ async function promptStep(
     const quoted = extractExportScenarioQuotedValues(template);
     const parameterNames: string[] = [];
     for (let index = 0; index < quoted.length; index++) {
-        const entered = await vscode.window.showInputBox({
+        const entered = await kotUi.showInputBox({
             title: t('User step parameter {0}', String(index + 1)),
             value: suggestedExportScenarioParameterName(quoted[index].value, index),
             prompt: t('Enter the BSL parameter name for quoted value "{0}".', quoted[index].value),
@@ -93,7 +96,7 @@ async function promptStep(
         }
         parameterNames.push(entered.trim());
     }
-    const implementationName = await vscode.window.showInputBox({
+    const implementationName = await kotUi.showInputBox({
         title: t('User step implementation name'),
         value: 'НовыйШаг',
         ignoreFocusOut: true,
@@ -104,14 +107,14 @@ async function promptStep(
     if (implementationName === undefined) {
         return undefined;
     }
-    const selectedKind = await vscode.window.showQuickPick([
+    const selectedKind = await kotUi.showQuickPick([
         { label: t('Procedure'), value: 'procedure' as const },
         { label: t('Function'), value: 'function' as const }
     ], { title: t('Implementation kind'), ignoreFocusOut: true });
     if (!selectedKind) {
         return undefined;
     }
-    const description = await vscode.window.showInputBox({
+    const description = await kotUi.showInputBox({
         title: t('User step description'),
         value: '',
         ignoreFocusOut: true
@@ -119,7 +122,7 @@ async function promptStep(
     if (description === undefined) {
         return undefined;
     }
-    const category = await vscode.window.showInputBox({
+    const category = await kotUi.showInputBox({
         title: t('User step category'),
         value: '',
         ignoreFocusOut: true
@@ -148,7 +151,7 @@ export async function createUserStepCommand(
         : vscode.window.activeTextEditor?.document.uri;
     const roots = await services.loadLibraryRoots(resource?.toString());
     if (roots.length === 0) {
-        vscode.window.showWarningMessage(t('No project library roots are configured in the active profile.'));
+        kotUi.showWarningMessage(t('No project library roots are configured in the active profile.'));
         return;
     }
     const snapshot = await services.index.ensureReady(resource);
@@ -194,7 +197,7 @@ export async function createUserStepCommand(
     if (selected.targetKind === 'new') {
         const selectedRoot = roots.length === 1
             ? { root: roots[0] }
-            : await vscode.window.showQuickPick(
+            : await kotUi.showQuickPick(
                 roots.map(root => ({ label: root.label, detail: root.path, root })),
                 { title: t('Select project library root'), ignoreFocusOut: true }
             );
@@ -202,10 +205,10 @@ export async function createUserStepCommand(
             return;
         }
         if (!selectedRoot.root.templateRoot) {
-            vscode.window.showErrorMessage(t('Vanessa TemplateEpfUF was not resolved from the active profile.'));
+            kotUi.showErrorMessage(t('Vanessa TemplateEpfUF was not resolved from the active profile.'));
             return;
         }
-        const libraryName = await vscode.window.showInputBox({
+        const libraryName = await kotUi.showInputBox({
             title: t('User-step library name'),
             value: 'CustomSteps',
             ignoreFocusOut: true,
@@ -250,7 +253,7 @@ export async function createUserStepCommand(
                 declaration.declarationRange.end.character
             ));
         }
-        vscode.window.showInformationMessage(t(
+        kotUi.showInformationMessage(t(
             'User-step source library created. Build target: {0}',
             created.targetEpfPath
         ));
@@ -275,7 +278,7 @@ export async function createUserStepCommand(
         expectedVersion: version
     });
     if (document.version !== plan.documentVersion) {
-        vscode.window.showWarningMessage(t('The user-step module changed. Run the command again.'));
+        kotUi.showWarningMessage(t('The user-step module changed. Run the command again.'));
         return;
     }
     const workspaceEdit = new vscode.WorkspaceEdit();
@@ -287,7 +290,7 @@ export async function createUserStepCommand(
         );
     }
     if (!await vscode.workspace.applyEdit(workspaceEdit)) {
-        vscode.window.showErrorMessage(t('Could not create the user step.'));
+        kotUi.showErrorMessage(t('Could not create the user step.'));
         return;
     }
     const updated = await vscode.workspace.openTextDocument(targetUri);
@@ -354,7 +357,7 @@ async function runLibraryOperation<T>(services: UserStepCommandServices, title: 
     const t = services.translate ?? ((message: string) => message);
     key = process.platform === 'win32' ? path.resolve(key).toLowerCase() : path.resolve(key);
     if (runningLibraries.has(key)) {
-        vscode.window.showWarningMessage(t('An operation is already running for this user-step library.'));
+        kotUi.showWarningMessage(t('An operation is already running for this user-step library.'));
         return undefined;
     }
     runningLibraries.add(key);
@@ -362,7 +365,7 @@ async function runLibraryOperation<T>(services: UserStepCommandServices, title: 
     services.context.subscriptions.push(output);
     output.show(true);
     try {
-        const result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (_progress, token) => {
+        const result = await kotUi.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (_progress, token) => {
             const { resolveOneCDesignerExePath } = await import('./oneCPlatform.js');
             const { resolveSharedStartupPlatform } = await import('./sharedStartupPlatform.js');
             const { ensureSharedStartupInfobaseReady } = await import('./startupInfobase.js');
@@ -394,7 +397,7 @@ async function runLibraryOperation<T>(services: UserStepCommandServices, title: 
         return result;
     } catch (error) {
         output.appendLine(String(error));
-        vscode.window.showErrorMessage(t('User-step library operation failed: {0}', String(error)));
+        kotUi.showErrorMessage(t('User-step library operation failed: {0}', String(error)));
         return undefined;
     } finally {
         runningLibraries.delete(key);
@@ -419,11 +422,11 @@ export async function buildUserStepLibraryCommand(raw: unknown, services: UserSt
         if (!state?.rootXmlPath || !state.targetEpfPath) {
             const root = matchingRoot(roots, definition.libraryRootUri) ?? roots[0];
             if (!root?.templateRoot || !definition.definitionLocation) {
-                vscode.window.showWarningMessage(t('Vanessa TemplateEpfUF was not resolved from the active profile.'));
+                kotUi.showWarningMessage(t('Vanessa TemplateEpfUF was not resolved from the active profile.'));
                 return false;
             }
             const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(definition.definitionLocation.uri));
-            const libraryName = await vscode.window.showInputBox({
+            const libraryName = await kotUi.showInputBox({
                 title: t('User-step library name'), value: path.basename(document.fileName, path.extname(document.fileName)), ignoreFocusOut: true,
                 validateInput: value => /^[\p{L}_][\p{L}\p{N}_]*$/u.test(value.trim()) ? undefined : t('Enter a valid BSL identifier.')
             });
@@ -455,8 +458,8 @@ export async function buildUserStepLibraryCommand(raw: unknown, services: UserSt
             choices.push({ label: path.basename(source.fsPath), description: t('Create EPF library…'), detail: source.fsPath,
                 definitionId: candidate.id, documentUri: location.uri });
         }
-        if (!choices.length) { vscode.window.showWarningMessage(t('No user-step source libraries were found. Create a library first.')); return false; }
-        const selected = await vscode.window.showQuickPick(choices, { title: t('Build user-step library'), ignoreFocusOut: true });
+        if (!choices.length) { kotUi.showWarningMessage(t('No user-step source libraries were found. Create a library first.')); return false; }
+        const selected = await kotUi.showQuickPick(choices, { title: t('Build user-step library'), ignoreFocusOut: true });
         if (selected?.definitionId) {
             return buildUserStepLibraryCommand({ definitionId: selected.definitionId, documentUri: selected.documentUri }, services);
         }
@@ -473,8 +476,8 @@ export async function buildUserStepLibraryCommand(raw: unknown, services: UserSt
     const result = await runLibraryOperation(services, t('Building user-step library...'), request.targetEpfPath,
         (dependencies, token) => buildUserStepLibrary(request!, dependencies, token));
     if (result?.kind !== 'success') { return false; }
-    vscode.window.showInformationMessage(t('User-step library built: {0}', result.targetEpfPath));
-    vscode.window.showInformationMessage(t('Reload the step libraries in the running Vanessa session to use the updated EPF.'));
+    kotUi.showInformationMessage(t('User-step library built: {0}', result.targetEpfPath));
+    kotUi.showInformationMessage(t('Reload the step libraries in the running Vanessa session to use the updated EPF.'));
     return true;
 }
 
@@ -484,22 +487,22 @@ export async function dumpUserStepLibraryCommand(raw: unknown, services: UserSte
     if (seed.definitionId && definition?.kind !== 'userStep') { return false; }
     let epfPath = definition?.userStepLibrary?.targetEpfPath;
     if (!epfPath) {
-        const selected = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { '1C': ['epf'] }, title: t('Select a user-step EPF library') });
+        const selected = await kotUi.showOpenDialog({ canSelectMany: false, filters: { '1C': ['epf'] }, title: t('Select a user-step EPF library') });
         epfPath = selected?.[0].fsPath;
     }
     if (!epfPath) { return false; }
-    if (!roots.length) { vscode.window.showWarningMessage(t('No project library roots are configured in the active profile.')); return false; }
-    const chosen = roots.length === 1 ? roots[0] : (await vscode.window.showQuickPick(roots.map(root => ({ label: root.label, detail: root.path, root })), {
+    if (!roots.length) { kotUi.showWarningMessage(t('No project library roots are configured in the active profile.')); return false; }
+    const chosen = roots.length === 1 ? roots[0] : (await kotUi.showQuickPick(roots.map(root => ({ label: root.label, detail: root.path, root })), {
         title: t('Select project library root'), ignoreFocusOut: true
     }))?.root;
     if (!chosen) { return false; }
-    const name = await vscode.window.showInputBox({ title: t('Source library directory name'), value: path.basename(epfPath, path.extname(epfPath)), ignoreFocusOut: true,
+    const name = await kotUi.showInputBox({ title: t('Source library directory name'), value: path.basename(epfPath, path.extname(epfPath)), ignoreFocusOut: true,
         validateInput: value => !value.trim() || /[\\/:*?"<>|]/u.test(value) || value.trim() === '.' || value.trim() === '..'
             ? t('Enter a valid directory name.') : undefined });
     if (!name) { return false; }
     const sourceDirectory = path.join(chosen.path, 'step_definitions-src', name.trim());
     if (await fs.promises.readdir(sourceDirectory).then(entries => entries.length > 0).catch(() => false)) {
-        vscode.window.showWarningMessage(t('Source directory already contains files. Choose a different name.'));
+        kotUi.showWarningMessage(t('Source directory already contains files. Choose a different name.'));
         return false;
     }
     const outside = roots.every(root => { const relative = path.relative(root.path, epfPath!); return path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`); });
@@ -507,13 +510,13 @@ export async function dumpUserStepLibraryCommand(raw: unknown, services: UserSte
         const imported = path.join(chosen.path, 'step_definitions', path.basename(epfPath));
         await fs.promises.mkdir(path.dirname(imported), { recursive: true });
         try { await fs.promises.copyFile(epfPath, imported, fs.constants.COPYFILE_EXCL); }
-        catch (error) { vscode.window.showErrorMessage(t('Could not import the EPF without replacing an existing library: {0}', String(error))); return false; }
+        catch (error) { kotUi.showErrorMessage(t('Could not import the EPF without replacing an existing library: {0}', String(error))); return false; }
         epfPath = imported;
     }
     const result = await runLibraryOperation(services, t('Dumping user-step library sources...'), epfPath,
         (dependencies, token) => dumpUserStepLibrary({ epfPath: epfPath!, sourceDirectory }, dependencies, token));
     if (result?.kind !== 'success') { return false; }
-    vscode.window.showInformationMessage(t('User-step library sources saved: {0}', sourceDirectory));
+    kotUi.showInformationMessage(t('User-step library sources saved: {0}', sourceDirectory));
     await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(result.rootXmlPath));
     return true;
 }

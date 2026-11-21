@@ -1,3 +1,5 @@
+import * as nativeRedaction from '../src/vanessaControlRedaction';
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -50,7 +52,7 @@ function harness(root: string | undefined, secrets = new Map<string, string>(), 
         fs: { readFile: async (uri: { fsPath: string }) => fs.promises.readFile(uri.fsPath) }
     };
     vm.runInNewContext(compiled, { module, exports: module.exports, Buffer, console, process,
-        require: (specifier: string) => specifier === './yamlParameterPaths' ? parameterPaths : dependencies[specifier] ?? require(specifier) });
+        require: (specifier: string) => specifier === './vanessaControlRedaction' ? nativeRedaction : (specifier === './kotInteraction' ? nativeInteraction : (specifier === './yamlParameterPaths' ? parameterPaths : dependencies[specifier] ?? require(specifier))) });
     const manager = module.exports.YamlParametersManager.getInstance({ subscriptions: [], secrets: {
         get: async (key: string) => secrets.get(key),
         store: async (key: string, value: string) => { secrets.set(key, value); writes.push(key); },
@@ -65,6 +67,50 @@ function legacyPayload() {
         additionalVanessaParameters: [{ key: 'КаталогиБиблиотек', value: '["/drive/libraries"]', overrideExisting: true }],
         globalVanessaVariables: [{ key: 'DriveMode', value: 'production', overrideExisting: true }] }] });
 }
+
+test('agent profiles use native storage, preserve omitted secrets and reject stale revisions and deleting the last profile', async () => {
+    const h = harness('/agent-profile-crud');
+    type View = { revision: string; activeProfileId: string; profiles: Array<{ id: string; name: string; buildParameters: Array<{ key: string; value?: string; hasSecret?: boolean }> }> };
+    const read = () => h.manager.apiProfiles('read') as Promise<View>;
+    let view = await read(); const originalId = view.activeProfileId;
+    await assert.rejects(h.manager.apiProfiles('delete', { expectedRevision: view.revision }), /one profile/);
+    view = await h.manager.apiProfiles('create', { expectedRevision: view.revision, name: 'Isolated tests' }) as View;
+    const createdId = view.activeProfileId; assert.notEqual(createdId, originalId);
+    const stale = view.revision;
+    view = await h.manager.apiProfiles('update', { expectedRevision: view.revision,
+        buildParameters: [{ key: 'Password', value: 'private-profile-password' }, { key: 'Extraparams', value: '/Len /VLen' }] }) as View;
+    assert.doesNotMatch(JSON.stringify(view), /private-profile-password/);
+    assert.equal(view.profiles.find(profile => profile.id === createdId)?.buildParameters.find(row => row.key === 'Password')?.hasSecret, true);
+    await assert.rejects(h.manager.apiProfiles('rename', { expectedRevision: stale, name: 'Stale' }), /Profiles changed/);
+    view = await h.manager.apiProfiles('update', { expectedRevision: view.revision, buildParameters: [{ key: 'Extraparams', value: '/Len /VLen_US' }] }) as View;
+    assert.equal((await h.manager.loadActiveProfileSnapshot()).buildParameters.find(row => row.key === 'Password')?.value, 'private-profile-password');
+    view = await h.manager.apiProfiles('duplicate', { expectedRevision: view.revision, name: 'Copy' }) as View;
+    assert.equal((await h.manager.loadActiveProfileSnapshot()).buildParameters.find(row => row.key === 'Password')?.value, 'private-profile-password');
+    view = await h.manager.apiProfiles('select', { expectedRevision: view.revision, profileId: originalId }) as View;
+    view = await h.manager.apiProfiles('rename', { expectedRevision: view.revision, profileId: createdId, name: 'Renamed' }) as View;
+    assert.equal(view.profiles.find(profile => profile.id === createdId)?.name, 'Renamed');
+    view = await h.manager.apiProfiles('delete', { expectedRevision: view.revision, profileId: createdId }) as View;
+    assert.equal(view.activeProfileId, originalId); assert.equal(view.profiles.some(profile => profile.id === createdId), false);
+});
+
+test('an agent launch update refuses a stale profile and a concurrent change queued before publication', async () => {
+    const h = harness('/agent-launch-guard');
+    await h.manager.saveParameters([{ key:'Extraparams', value:'/UC GodMode' }]);
+    const stale = await h.manager.loadActiveProfileSnapshot();
+    await h.manager.saveParameters([{ key:'Extraparams', value:'/Lru' }]);
+    await assert.rejects(h.manager.saveParameters([{ key:'Extraparams', value:'/Len' }], stale), /active build profile changed/);
+    const current = await h.manager.loadActiveProfileSnapshot();
+    let release!: () => void;
+    (h.manager as unknown as { parametersSaveQueue: Promise<void> }).parametersSaveQueue = new Promise(resolve => { release=resolve; });
+    const saving = h.manager.saveParameters([{ key:'Extraparams', value:'/Len' }], current);
+    await new Promise(resolve=>setImmediate(resolve));
+    const key=h.writes[0]; const changed=JSON.parse(h.secrets.get(key)!);
+    changed.profiles.push({id:'concurrent',name:'New profile',buildParameters:[],additionalVanessaParameters:[],globalVanessaVariables:[]});
+    h.secrets.set(key,JSON.stringify(changed));release();
+    await assert.rejects(saving,/Build profiles changed/);
+    assert.equal(JSON.parse(h.secrets.get(key)!).profiles.some((profile:{id:string})=>profile.id==='concurrent'),true);
+    assert.equal((await h.manager.loadActiveProfileSnapshot()).buildParameters.find(item=>item.key==='Extraparams')?.value,'/Lru');
+});
 
 test('a newly opened project never inherits the previous global profile or its three sections', async () => {
     const original = legacyPayload();

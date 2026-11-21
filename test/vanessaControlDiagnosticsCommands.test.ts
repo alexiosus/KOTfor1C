@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
@@ -14,6 +15,7 @@ function setup(attach = false) {
     const module = { exports: {} as any }; const ts = require('typescript') as typeof import('typescript');
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlDiagnosticsCommands.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText,
         { module, exports: module.exports, Buffer, AbortController, console, require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
             if (name.endsWith('DiagnosticArchive')) { return archive; }
             if (name.endsWith('NativeDocumentSnapshot')) { return snapshot; }
             if (name.endsWith('ControlDiagnostics')) { return { redactVanessaDiagnosticText: (text: string) => text }; }

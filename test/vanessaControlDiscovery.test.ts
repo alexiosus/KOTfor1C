@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
@@ -42,9 +43,9 @@ test('Windows launch lookup allows cold PowerShell startup and keeps process det
     let timeout = 0; const payload = { parametersPath: 'C:\\runtime\\debug-params\\one\\VAParams.json', startedAt: 123456 };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlDiscovery.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-    }).outputText, { module, exports: module.exports, URL, process: { platform: 'win32' }, require: (name: string) => name === 'node:child_process'
+    }).outputText, { module, exports: module.exports, URL, process: { platform: 'win32' }, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'node:child_process'
         ? { execFile: (_exe: string, _args: string[], options: { timeout: number }, done: (error: null, text: string) => void) => { timeout = options.timeout; done(null, JSON.stringify(payload)); } }
-        : { normalizeVanessaControlEndpoint: (endpoint: string) => endpoint } });
+        : { normalizeVanessaControlEndpoint: (endpoint: string) => endpoint }) });
     const result = await module.exports.localOneCLaunchParameters('http://127.0.0.1:9876/mcp');
     assert.deepEqual(JSON.parse(JSON.stringify(result)), payload);
     assert.ok(timeout >= 5000, 'measured cold PowerShell/CIM startup exceeded the previous 2-second limit');

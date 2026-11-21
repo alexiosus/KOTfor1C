@@ -50,6 +50,9 @@ interface RunRequest {
     readonly controller: AbortController;
     stopRequested: boolean;
     confirmedStop: boolean;
+    confirmedFailure?: boolean;
+    beforeRunId?: string;
+    observedRunId?: string;
     executing?: boolean;
 }
 export interface VanessaControlFailure {
@@ -338,6 +341,10 @@ export class VanessaControlSession {
                     const execution = this.value.execution;
                     let confirmed = execution;
                     if (execution && observed.featurePath && sameVanessaFeaturePath(execution.filePath, observed.featurePath) && observed.lineNumber) {
+                        if (observedRun && observedRun === this.runRequest && observed.state === 'running' &&
+                            observedRun.beforeRunId !== undefined && typeof structured?.runId === 'string' && structured.runId && structured.runId !== observedRun.beforeRunId) {
+                            observedRun.observedRunId = structured.runId;
+                        }
                         if (this.runRequest && observed.state === 'running' && observed.stepStatus === 'running') {
                             this.runningLines.add(observed.lineNumber);
                             confirmed = Object.freeze({ ...execution, currentLineNumber: observed.lineNumber });
@@ -351,11 +358,24 @@ export class VanessaControlSession {
                             confirmed = Object.freeze({ ...confirmed!, steps: Object.freeze([...(confirmed?.steps ?? []).filter(step => step.lineNumber !== observed.lineNumber),
                                 { lineNumber: observed.lineNumber, status: observed.stepStatus as 'passed' | 'failed' | 'stopped' }]) });
                         }
+                        if (observedRun && observedRun === this.runRequest && observed.state === 'idle' && observed.stepStatus === 'failed' &&
+                            observedRun.observedRunId && observedRun.observedRunId === structured?.runId && execution.mode !== 'oneStep') {
+                            const finished = await this.readResults(generation);
+                            if (observedRun === this.runRequest && finished?.runId === observedRun.observedRunId && finished.parsed.kind === 'failureResult' &&
+                                sameVanessaFeaturePath(execution.filePath, finished.parsed.featurePath) && finished.parsed.lineNumber === observed.lineNumber) {
+                                confirmed = Object.freeze({ ...confirmed!, status: 'failed', currentLineNumber: observed.lineNumber, ...(finished.steps.length ? { steps: Object.freeze(finished.steps) } : {}) });
+                                this.failureValue = Object.freeze({ generation, filePath: execution.filePath, lineNumber: observed.lineNumber,
+                                    message: safeFailureText(finished.message ?? 'Vanessa confirmed a failed step.'), ...finished.presentation });
+                                observedRun.confirmedFailure = true;
+                            }
+                        }
                     }
                     this.set({ ...this.value, observed: Object.freeze(observed), error: undefined,
                         execution: confirmed,
                         status: this.mutation ? this.value.status : observed.state === 'running' ? 'running' : 'ready' });
                     const request = this.runRequest;
+                    // .47 can publish a complete failure without answering run_scenario.
+                    if (request?.generation === generation && request.confirmedFailure) { request.controller.abort(); }
                     if (request?.generation === generation && request.stopRequested && confirmed?.status === 'stopped' && observed.state === 'idle') {
                         // Vanessa .45 can leave run_scenario unanswered after Stop. Only an
                         // observed terminal step from this run permits cancelling that POST.
@@ -422,6 +442,7 @@ export class VanessaControlSession {
                     this.executionSource = { generation, filePath, text: sourceText, resultMap };
                 }
                 const before = this.value.capabilities?.results.supported ? await this.readResults(generation) : undefined;
+                request.beforeRunId = before?.runId;
                 assertSource();
                 const source = sourceText === undefined ? undefined : { filePath, text: sourceText };
                 let stepFilePath = filePath;
@@ -531,6 +552,11 @@ export class VanessaControlSession {
                 const matches = observed?.featurePath && sameVanessaFeaturePath(filePath, observed.featurePath) &&
                     (mode !== 'oneStep' || observed.lineNumber === lineNumber);
                 const after = this.value.capabilities?.results.supported ? await this.readResults(generation) : undefined;
+                if ((mode === 'runFeature' || mode === 'runFromLine') && before?.runId !== undefined && (!after?.runId || after.runId === before.runId)) {
+                    this.failureValue = undefined;
+                    this.set({ ...this.value, execution: Object.freeze({ ...this.value.execution!, status: 'unknown', steps: undefined, currentLineNumber: undefined }) });
+                    throw new VanessaCommandRejectedError(safeFailureText(commandFailureText(result) ?? 'Vanessa did not confirm a new run. Refresh state before retrying.'));
+                }
                 if (matches && ['failed', 'pending'].includes(observed.stepStatus ?? '')) { status = 'failed'; }
                 if (after && matches && after.parsed.kind === 'runtimeResult' && after.parsed.status !== 'passed' &&
                     (after.hash !== before?.hash || ['failed', 'pending'].includes(observed.stepStatus ?? ''))) {
@@ -583,7 +609,7 @@ export class VanessaControlSession {
                     throw new VanessaCommandRejectedError(safeFailureText(commandFailureText(result) ?? 'Vanessa reported a tool error.'));
                 }
             } catch (error) {
-                if (!request.confirmedStop || this.value.generation !== generation) { throw error; }
+                if ((!request.confirmedStop && !request.confirmedFailure) || this.value.generation !== generation) { throw error; }
             } finally {
                 if (this.runRequest === request) { this.runRequest = undefined; }
             }
@@ -774,7 +800,8 @@ export class VanessaControlSession {
             this.checkGeneration(generation);
             const steps = source && execution ? mapVanessaStepResults(result, source.text, execution.mode === 'runFeature' ? 1 : execution.lineNumber, this.observedScenarioName, expanded, source.filePath)
                 .filter(step => execution.mode !== 'oneStep' || step.lineNumber === execution.lineNumber) : [];
-            return { hash: createHash('sha256').update(JSON.stringify(result)).digest('hex'), parsed, message, presentation, steps };
+            return { hash: createHash('sha256').update(JSON.stringify(result)).digest('hex'), parsed, message, presentation, steps,
+                runId: typeof structured?.runId === 'string' ? structured.runId : undefined };
         } catch {
             this.checkGeneration(generation);
             return undefined;

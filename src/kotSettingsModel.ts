@@ -29,7 +29,7 @@ export async function loadKotSettingsModel(extensionPath: string, russian: boole
         const item = labels.get(key);
         if (!item) { throw new Error(`Missing settings presentation: ${key}`); }
         return { ...schema, ...item, key, label: russian ? item.label : item.labelEn, configScope: schema.scope ?? 'window',
-            secret: key === 'kotTestToolkit.ai.apiKey', description: localize(schema.markdownDescription ?? schema.description),
+            description: localize(schema.markdownDescription ?? schema.description),
             hint: russian ? item.hint : undefined, optionLabels: russian ? item.optionLabels : item.optionLabelsEn,
             manager: settingsManagers[key] };
     });

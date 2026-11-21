@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -63,7 +64,7 @@ function fixture(dependencies: Record<string, unknown> = {}) {
     const module = { exports: {} as Record<string, any> };
     vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, {
         module, exports: module.exports, Buffer, console, process,
-        require: (name: string) => Object.hasOwn(dependencies, name) ? dependencies[name] : name === 'vscode' ? vscode : name === 'fs' ? fs : name === 'path' ? path : name === 'os' ? os
+        require: (name: string) => name === './kotInteraction' ? nativeInteraction : (Object.hasOwn(dependencies, name) ? dependencies[name] : name === 'vscode' ? vscode : name === 'fs' ? fs : name === 'path' ? path : name === 'os' ? os
             : name === './compilerArtifacts' ? artifacts : name === './scenarioCompilerSyntax' ? syntax
             : name === './compilerBuildParameters' ? parameters
             : name === './compilerBuildPreflight' ? preflight : name === './compilerBuildSourceSelection' ? sourceSelection
@@ -77,12 +78,24 @@ function fixture(dependencies: Record<string, unknown> = {}) {
             : name === './workspaceArtifactPath' ? artifactPaths
             : name === './vanessaControlSourceMapping' ? controlSourceMapping
             : name === './scenarioRuntimeIdentity' ? runtimeIdentity
-            : name === './deferredLoader' ? { createDeferredLoader: (factory: any) => factory } : {}
+            : name === './deferredLoader' ? { createDeferredLoader: (factory: any) => factory } : {})
     });
     const provider = Object.create(module.exports.PhaseSwitcherProvider.prototype);
     const scenario = (name: string, uid: string) => ({ name, uid, yamlFileUri: uri(path.join(root, `${name}.yaml`)), tabName: 'Smoke' });
     return { root, uri, shown, provider, scenario, vscode, notifications, previews, dispose: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
+
+test('compiler paths retain external absolute EPFs and resolve relative EPFs against the workspace', () => {
+    const f = fixture({ './scenarioScanRoot': { getScenarioScanRootPath: () => 'tests' } });
+    try {
+        const external = path.join(path.dirname(f.root), 'shared compiler', 'BuildScenarioBDD.epf');
+        let configured = external;
+        f.vscode.workspace.getConfiguration = () => ({ get: (key: string) => key === 'paths.buildScenarioBddEpf' ? configured : '' });
+        assert.equal(f.provider.getProjectPaths(f.uri(f.root)).buildScenarioBddEpf.fsPath, external);
+        configured = 'build/BuildScenarioBDD.epf';
+        assert.equal(f.provider.getProjectPaths(f.uri(f.root)).buildScenarioBddEpf.fsPath, path.join(f.root, configured));
+    } finally { f.dispose(); }
+});
 
 test('SPPR preflight blocks the actual build entry point before startup 1C, isolation or artifact clearing', async () => {
     const manager = { loadParameters: async () => [{ key: 'ScenarioFolder', value: '' }], validateCompilerBuildParameters: () => [],
@@ -142,7 +155,7 @@ test('opening an existing Windows report makes its links relative before showing
 
 test('compiler entry point respects the service-IB platform, stops on uncertain versions and certifies only restored unchanged inputs', async () => {
     for (const { platform, changed } of [
-        { platform: 'running', changed: false }, { platform: 'default', changed: true },
+        { platform: 'running', changed: false }, { platform: 'default', changed: true }, { platform: 'agent', changed: false },
         { platform: 'conflict', changed: false }, { platform: 'unavailable', changed: false }, { platform: 'cancelled', changed: false }
     ]) {
         let buildParameters: Array<{ key: string; value: string }> = [];
@@ -185,8 +198,8 @@ test('compiler entry point respects the service-IB platform, stops on uncertain 
                 hasAnyScenarioRunsInProgress: () => false, isMainScenario: () => true,
                 getOutputChannel: () => ({ clear() {}, appendLine: (text: string) => outputLines.push(text) }),
                 outputInfo: (_channel: unknown, text: string) => outputLines.push(text), outputError: (_channel: unknown, text: string) => outputLines.push(text), outputAdvanced() {},
-                ensureFreshScenarioCatalog: async () => catalog,
-                getMainScenarioSelectionSnapshotForBuild: async () => ({ enabledKeys: [key], disabledKeys: [], isolatedDisabledKeys: [], enabledNames: ['Main'], disabledNames: [], total: 1 }),
+                ensureFreshScenarioCatalog: async () => catalog, getMainScenariosFromCatalog: () => [info],
+                getMainScenarioSelectionSnapshotForBuild: async () => ({ enabledKeys: platform === 'agent' ? [] : [key], disabledKeys: platform === 'agent' ? [key] : [], isolatedDisabledKeys: [], enabledNames: ['Main'], disabledNames: [], total: 1 }),
                 buildScenarioFilterDecision: () => ({}), applyScenarioFilterToBuildParameters: (value: unknown) => value,
                 getProjectPaths: () => ({ buildScenarioBddEpf: f.uri(executable) }),
                 resolveBuildRuntimeRootUri: () => f.uri(path.join(f.root, 'runtime')),
@@ -214,7 +227,7 @@ test('compiler entry point respects the service-IB platform, stops on uncertain 
                     if (changed) { await fs.promises.writeFile(info.yamlFileUri.fsPath, source + '# changed during build\n'); }
                 }
             });
-            await f.provider._handleRunAssembleScriptTypeScript('1');
+            await f.provider._handleRunAssembleScriptTypeScript('1', platform === 'agent' ? [key] : undefined);
             assert.deepEqual(inspectedBases, [serviceBase]);
             if (platform === 'cancelled') {
                 assert.deepEqual(preparedPlatforms, []); assert.deepEqual(executedPlatforms, []); assert.deepEqual(events, []);
@@ -237,7 +250,7 @@ test('compiler entry point respects the service-IB platform, stops on uncertain 
                 const files = await compilerManifestStore.readCompilerBuildManifestArtifacts(output, manifest);
                 assert.ok(files.contents[0].featureContent.includes('And Delay 1'), 'fingerprint uses postprocessed output');
                 assert.ok(manifest.inputs.files.some(file => file.uri === f.uri(disabled).toString()), 'restored settings are included');
-                const captured = await f.provider.loadVanessaYamlControlBuild();
+                const captured = await f.provider.loadVanessaYamlControlBuild(platform === 'agent' ? [key] : undefined);
                 assert.equal(captured.manifest.inputs.digest, manifest.inputs.digest);
                 assert.equal(captured.outputRoot, output); assert.ok(Object.isFrozen(captured));
                 f.vscode.workspace.textDocuments.push({ uri: f.uri(disabled), isDirty: true });

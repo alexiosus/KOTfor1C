@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -6,6 +7,8 @@ import type { ScenarioPropertiesDocument } from './scenarioPropertiesSession';
 import type { Translator } from './localization';
 import type { TestInfo } from './types';
 import type { ScenarioIdentityChangeResult } from './scenarioPropertyIdentity';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export interface ScenarioPropertiesActionOptions {
     onDisplayOrderChanged?(): Promise<void>;
@@ -217,7 +220,7 @@ export function createScenarioPropertiesActions(
             && uidCounts.get(entry.uid.trim().toLowerCase()) === 1 && entry.yamlFileUri.toString() !== document.uri.toString()
             && entry.uid.trim().toLowerCase() !== currentUid && !existing.has(entry.uid.trim().toLowerCase()));
         if (!candidates.length) { throw new Error(t('No unique scenario definitions are available to add.')); }
-        const selected = await vscode.window.showQuickPick(candidates.map(entry => ({ label: entry.name, description: entry.scenarioCode || '',
+        const selected = await kotUi.showQuickPick(candidates.map(entry => ({ label: entry.name, description: entry.scenarioCode || '',
             detail: entry.yamlFileUri.fsPath, entry })), { title: t('Add nested scenario'), ignoreFocusOut: true });
         if (!selected) { return; }
         const fresh = await scanWorkspaceForScenarioCatalog(workspace);
@@ -262,7 +265,7 @@ export function createScenarioPropertiesActions(
         if (!info || document.uri.scheme !== 'file') { throw new Error(t('Choose a scenario or process in a project.')); }
         const environment = projectLibraryEnvironment();
         const owner = resolveProjectLibraryRoot(document.uri.fsPath, environment.workspaceRoots, environment.scanRoots);
-        const name = await vscode.window.showInputBox({ title: t('New group'), prompt: t('Enter group name'), ignoreFocusOut: true,
+        const name = await kotUi.showInputBox({ title: t('New group'), prompt: t('Enter group name'), ignoreFocusOut: true,
             validateInput: value => value.trim() && !/[\r\n\0]/u.test(value) ? undefined : t('Group name cannot be empty.') });
         if (!name?.trim()) { return; }
         if (/[\r\n\0]/u.test(name)) { throw new Error(t('Enter a single-line group name.')); }
@@ -343,8 +346,8 @@ export function createScenarioPropertiesActions(
             if (model.kind !== 'process') { throw new Error(t('Choose a process to add steps.')); }
             await execute('kotTestToolkit.addProcessSteps'); return;
         }
-        if (!['rename', 'changeCode', 'systemFunction', 'aiDescription'].includes(action)) { throw new Error(t('Unknown test properties action.')); }
-        if ((value !== undefined && ['rename', 'changeCode'].includes(action) || action === 'aiDescription') && document.isDirty) {
+        if (!['rename', 'changeCode', 'systemFunction'].includes(action)) { throw new Error(t('Unknown test properties action.')); }
+        if (value !== undefined && ['rename', 'changeCode'].includes(action) && document.isDirty) {
             assertCurrent(document, source, t);
             if (!await document.save()) { throw new Error(t('Could not save source before changing identity.')); }
             source = { uri: source.uri, text: document.getText(), version: document.version, dirty: document.isDirty };
@@ -375,8 +378,5 @@ export function createScenarioPropertiesActions(
         if (action === 'systemFunction') {
             await inRawEditor(document, source, t, async () => { await vscode.commands.executeCommand('kotTestToolkit.changeScenarioSystemFunctionFromEditor'); }); return;
         }
-        const { handleGenerateScenarioDescriptionWithAi } = await import('./scenarioAiDescription.js');
-        assertCurrent(document, source, t);
-        await inRawEditor(document, source, t, editor => handleGenerateScenarioDescriptionWithAi(editor));
     };
 }

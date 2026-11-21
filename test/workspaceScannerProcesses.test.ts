@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -40,6 +41,7 @@ test('scanner discovers named compiler YAML descriptors and skips settings and u
         vm.runInNewContext(compiled, {
             module: moduleObject, exports: moduleObject.exports, Buffer, process, performance, console,
             require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
                 switch (specifier) {
                     case 'vscode': return {
                         Uri: { file: makeUri },

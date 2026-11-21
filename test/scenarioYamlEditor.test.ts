@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,7 +20,7 @@ function harness(text: string, nativePair?: { metadataUri: unknown; scriptUri: u
         const ts = require('typescript') as typeof import('typescript');
         vm.runInNewContext(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
             compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-        }).outputText, { module, exports: module.exports, require: (name: string) => name === './spprScenarioFiles' ? { resolveScenarioSourceUris: async () => nativePair ? { format: 'native', ...nativePair } : undefined } : host });
+        }).outputText, { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === './spprScenarioFiles' ? { resolveScenarioSourceUris: async () => nativePair ? { format: 'native', ...nativePair } : undefined } : host) });
     }
     return { api: module.exports, document, editor, host, calls, opened };
 }

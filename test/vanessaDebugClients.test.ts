@@ -250,8 +250,10 @@ test('runtime JSON uses an ignored private directory and atomic private file, le
     assert.notEqual(runtime.path, sourcePath);
     assert.equal(fs.readFileSync(sourcePath, 'utf8'), original);
     assert.equal(JSON.parse(fs.readFileSync(runtime.path, 'utf8')).ExecuteScenarios, false);
-    assert.equal(fs.statSync(runtime.path).mode & 0o777, 0o600);
-    assert.equal(fs.statSync(path.dirname(runtime.path)).mode & 0o777, 0o700);
+    if (process.platform !== 'win32') {
+        assert.equal(fs.statSync(runtime.path).mode & 0o777, 0o600);
+        assert.equal(fs.statSync(path.dirname(runtime.path)).mode & 0o777, 0o700);
+    }
     assert.deepEqual(fs.readdirSync(path.dirname(runtime.path)), ['VAParams.json']);
     assert.equal(fs.readFileSync(path.join(root, 'runtime', 'debug-params', '.gitignore'), 'utf8').trim(), '*');
     await runtime.dispose();

@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -58,6 +59,7 @@ async function harness(t: TestContext) {
         const filename = path.join(process.cwd(), 'src', name + '.ts');
         const code = ts.transpileModule(syncFs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
         vm.runInNewContext(code, { module, exports: module.exports, Buffer, console, URL, require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             const key = specifier.replace(/\.js$/u, '');
             if (dependencies[key]) { return dependencies[key]; }
             if (key === './projectSystemFunctions') { return load('projectSystemFunctions'); }

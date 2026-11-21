@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -51,7 +52,7 @@ function fixture(options: { cancelSource?: boolean; cancelSave?: boolean; cancel
     const module = { exports: {} as { exportSpprCompilerFromInfobase(...args: unknown[]): Promise<string | undefined>; registerSpprCompilerExportCommand(context: unknown): void } };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/spprCompilerExportCommands.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
-    }).outputText, { module, exports: module.exports, process: { platform: 'win32', env: {} }, require: (name: string) => name.startsWith('node:') ? require(name) : mocks[name] });
+    }).outputText, { module, exports: module.exports, process: { platform: 'win32', env: {} }, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name.startsWith('node:') ? require(name) : mocks[name]) });
     const context = { extensionUri: Uri.file(path.resolve('.')), subscriptions: [] };
     module.exports.registerSpprCompilerExportCommand(context);
     return { draft: () => module.exports.exportSpprCompilerFromInfobase(context, folder, 'build/draft.epf'), palette: () => registered(),

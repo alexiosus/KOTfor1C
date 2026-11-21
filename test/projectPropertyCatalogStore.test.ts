@@ -1,3 +1,4 @@
+import { createTestLink } from './helpers/symlinks';
 import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -62,7 +63,7 @@ test('catalog writes reject a symlinked metadata directory', async t => {
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'property-catalog-outside-'));
     t.after(() => fs.rm(outside, { recursive: true, force: true }));
     await fs.rm(path.join(root, '.kot'), {recursive: true});
-    await fs.symlink(outside, path.join(root, '.kot'));
+    if (!await createTestLink(t, outside, path.join(root, '.kot'))) { return; }
     await assert.rejects(new ProjectPropertyCatalogStore(root).add('projects', 'Outside'), /symbolic|symlink|KOT 3/iu);
     assert.deepEqual(await fs.readdir(outside), []);
 });

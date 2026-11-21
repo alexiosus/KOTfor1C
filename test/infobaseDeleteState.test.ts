@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,6 +28,7 @@ for (const version2 of [false, true]) {
             compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
         }).outputText, { module, exports: module.exports, console, process, Buffer,
             require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
                 if (name === 'vscode') { return vscode; }
                 if (name === './oneCInfobaseConnection') { return connections; }
                 if (name === './localization') { return { getTranslator: async () => (message: string) => message }; }

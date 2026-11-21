@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { localFileUri } from './helpers/filePaths';
 import test from 'node:test';
 import { parseCompilerJUnit } from '../src/compilerArtifacts';
 import { aggregateCompilerJUnit, compilerReportLinkTarget, upgradeCompilerReportFileLinks, writeCompilerBuildReport } from '../src/compilerBuildReport';
@@ -226,7 +227,7 @@ test('preflight reports include each affected YAML line with the compiler restri
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-preflight-report-'));
     t.after(() => fs.rm(root, { recursive: true, force: true }));
     const target = path.join(root, 'report.md');
-    await writeCompilerBuildReport([], target, [], [{ code: 'compilerFormat', severity: 'warning', uri: 'file:///repo/scen.yaml', message: 'Format issues',
+    await writeCompilerBuildReport([], target, [], [{ code: 'compilerFormat', severity: 'warning', uri: localFileUri("/repo/scen.yaml"), message: 'Format issues',
         formatIssues: [{ kind: 'scalar', line: 18, startCharacter: 0, endCharacter: 1 }, { kind: 'indentation', line: 19, startCharacter: 0, endCharacter: 2 }] }]);
     const report = await fs.readFile(target, 'utf8');
     assert.match(report, /scen\.yaml#L19/); assert.match(report, /scen\.yaml#L20/);

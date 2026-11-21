@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,7 +25,7 @@ test('Create picker routes the process choice to its creation command', async ()
     }).outputText;
     const executed: string[] = [];
     const moduleObject = { exports: undefined as unknown };
-    vm.runInNewContext(compiled, {
+    vm.runInNewContext('const kotUi = vscode.window;\n' + compiled, {
         module: moduleObject, context: { extensionUri: '/extension' },
         getTranslator: async () => (message: string) => message,
         vscode: {
@@ -122,6 +123,7 @@ function loadCompilerSourceLookup() {
             window: { showTextDocument: () => assert.fail('Definition lookup must not show editors') }
         },
         require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
             assert.equal(name, './spprScenarioFiles.js');
             return { resolveScenarioSourceUris: async () => ({ scriptUri: uri('/repo/scen.feature') }), readScenarioSource: async () => yaml };
         }

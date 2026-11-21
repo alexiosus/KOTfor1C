@@ -1,9 +1,12 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
+import { localFileUri } from './helpers/filePaths';
 import { parseScenarioDescriptor } from '../src/scenarioDescriptor';
 import { applyPreparedFileWrites } from '../src/preparedFileWrites';
 import { findLinkedScenarioSettings } from '../src/scenarioPropertiesBindings';
@@ -17,11 +20,12 @@ function provider(deleteDefinition: (context: unknown, target: unknown) => Promi
     const source = fs.readFileSync(path.join(process.cwd(), 'src/phaseSwitcher.ts'), 'utf8');
     const module = { exports: {} as any };
     const errors: string[] = [];
-    const vscode = { EventEmitter: class {}, workspace: environment.workspace, Uri: { parse: (value: string) => ({ toString: () => value, fsPath: new URL(value).pathname }) }, window: { activeTextEditor: undefined,
+    const vscode = { EventEmitter: class {}, workspace: environment.workspace, Uri: { parse: (value: string) => ({ toString: () => value, fsPath: fileURLToPath(value) }) }, window: { activeTextEditor: undefined,
         showInformationMessage: () => {}, showErrorMessage: (message: string) => errors.push(message) } };
     vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
         { module, exports: module.exports, Buffer, console, process, setTimeout, clearTimeout, setInterval, clearInterval,
             require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
                 if (name === 'vscode') { return vscode; }
                 if (['fs', 'path', 'os'].includes(name)) { return require(name); }
                 const dependency = environment.modules?.[name.replace(/\.js$/u, '')];
@@ -48,7 +52,7 @@ function identityFixture(t: TestContext, options: { bom?: boolean; eol?: string;
     fs.mkdirSync(path.join(sourceDirectory, 'test'), { recursive: true });
     const file = path.join(sourceDirectory, 'scen.yaml');
     fs.writeFileSync(file, before);
-    const uri = { fsPath: file, toString: () => new URL(`file://${file}`).toString() };
+    const uri = { fsPath: file, toString: () => new URL(localFileUri(`${file}`)).toString() };
     const scenario = { name: 'Old', uid: 'scenario', scenarioCode: '001', yamlFileUri: uri };
     let nativeText = options.nativeText ?? sourceText.replace(/\n/gu, eol);
     const document = { uri, version: 1, isClosed: false, isDirty: options.dirty ?? false, getText: () => nativeText };
@@ -62,7 +66,7 @@ function identityFixture(t: TestContext, options: { bom?: boolean; eol?: string;
                 ? path.join(sourceDirectory, 'test', name === 'settings' ? '001.yaml' : 'Custom.yaml') : path.join(directory, name + '.yaml');
             const before = '\uFEFF' + text.replace(/\n/gu, '\r\n');
             fs.writeFileSync(file, before); related[name] = { file, before };
-            const resource = { fsPath: file, toString: () => new URL(`file://${file}`).toString() };
+            const resource = { fsPath: file, toString: () => new URL(localFileUri(`${file}`)).toString() };
             if (item) { catalog.push({ scenarioCode: '', ...item, yamlFileUri: resource }); }
             else { settings.push({ uri: resource.toString(), text: before }); }
             if (name === 'settings' && options.dirtyRelated) { textDocuments.push({ uri: resource, version: 1, isClosed: false, isDirty: true, getText: () => text }); }
@@ -75,7 +79,7 @@ function identityFixture(t: TestContext, options: { bom?: boolean; eol?: string;
     }
     const listeners = new Set<(event: { document: typeof document }) => void>();
     const writes: string[] = [];
-    const resource = (file: string) => ({ fsPath: file, toString: () => new URL(`file://${file}`).toString() });
+    const resource = (file: string) => ({ fsPath: file, toString: () => new URL(localFileUri(`${file}`)).toString() });
     class Edit {
         moves: { oldUri: typeof uri; newUri: typeof uri }[] = [];
         renameFile(oldUri: typeof uri, newUri: typeof uri) { this.moves.push({ oldUri, newUri }); }
@@ -242,30 +246,30 @@ test('identity changes acknowledge only the expected native reload rather than a
 
 test('a process rename uses its exact target even when its phase metadata has no group', async () => {
     const { result: subject } = provider();
-    const process = { kind: 'process', name: 'Process', yamlFileUri: { toString: () => 'file:///one/process.yaml' } };
+    const process = { kind: 'process', name: 'Process', yamlFileUri: { toString: () => localFileUri("/one/process.yaml") } };
     subject.resolveScenarioOperationTarget = async () => process;
     const calls: unknown[] = [];
     subject.renameScenario = async (target: unknown) => calls.push(['process', target]);
     subject.changeNestedScenarioName = async () => calls.push(['nested']);
-    await subject.renameScenarioTarget({ name: 'Process', uri: 'file:///one/process.yaml' });
-    assert.equal(JSON.stringify(calls), JSON.stringify([['process', { name: 'Process', uri: 'file:///one/process.yaml' }]]));
+    await subject.renameScenarioTarget({ name: 'Process', uri: localFileUri("/one/process.yaml") });
+    assert.equal(JSON.stringify(calls), JSON.stringify([['process', { name: 'Process', uri: localFileUri("/one/process.yaml") }]]));
 });
 
 test('inline scenario name/code are independent field mutations, rather than the legacy combined rename dialog', async () => {
     const { result: subject } = provider();
-    const scenario = { name: 'Main', yamlFileUri: { toString: () => 'file:///one/scen.yaml' } };
+    const scenario = { name: 'Main', yamlFileUri: { toString: () => localFileUri("/one/scen.yaml") } };
     subject.resolveScenarioOperationTarget = async () => scenario;
     const calls: unknown[] = [];
     subject.changeScenarioIdentityField = async (...args: unknown[]) => calls.push(args);
     subject.renameScenario = () => assert.fail('inline fields must not use the combined name/code dialog');
-    await subject.renameScenarioTarget({ name: 'Main', uri: 'file:///one/scen.yaml' }, 'New name', 'name');
-    await subject.renameScenarioTarget({ name: 'Main', uri: 'file:///one/scen.yaml' }, 'NEW_CODE', 'code');
+    await subject.renameScenarioTarget({ name: 'Main', uri: localFileUri("/one/scen.yaml") }, 'New name', 'name');
+    await subject.renameScenarioTarget({ name: 'Main', uri: localFileUri("/one/scen.yaml") }, 'NEW_CODE', 'code');
     assert.equal(JSON.stringify(calls), JSON.stringify([[scenario, 'name', 'New name'], [scenario, 'code', 'NEW_CODE']]));
 });
 
 test('shared deletion returns success only after runtime state and views refresh', async () => {
-    const target = { name: 'Process', uri: 'file:///one/process.yaml' };
-    const resource = { fsPath: '/one/process.yaml', toString: () => target.uri };
+    const target = { name: 'Process', uri: localFileUri("/one/process.yaml") };
+    const resource = { fsPath: path.resolve("/one/process.yaml"), toString: () => target.uri };
     const scenario = { kind: 'process', name: target.name, yamlFileUri: resource };
     const { result: subject } = provider(async (_context, request) => {
         assert.equal(JSON.stringify(request), JSON.stringify(target)); return { scenario, deletedUris: [resource] };
@@ -290,5 +294,5 @@ test('cancelled deletion leaves runtime and favorite state unchanged', async () 
     const { result: subject } = provider();
     subject.refreshTestCacheFromDisk = async () => assert.fail('cancelled deletion must not refresh or clean up state');
     assert.equal(typeof subject.deleteScenarioTarget, 'function');
-    assert.equal(await subject.deleteScenarioTarget({ name: 'Cancelled', uri: 'file:///one/scen.yaml' }), false);
+    assert.equal(await subject.deleteScenarioTarget({ name: 'Cancelled', uri: localFileUri("/one/scen.yaml") }), false);
 });

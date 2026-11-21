@@ -1,9 +1,12 @@
+import { kotWindow, assertKotPath } from './kotInteraction';
 import * as vscode from 'vscode';
 import path from 'node:path';
 import type { StepLibrarySnapshotService } from './stepLibrarySnapshotService';
 import type { StepLibraryItem } from './stepLibraryModel';
 import type { ScenarioFilesService } from './scenarioFilesService';
 import { collectScenarioFileReferences, fileReferenceAliases, fileReferencesOnLine, matchesFileReference, normalizeFileReference, type ScenarioFileReference } from './scenarioFileReferences';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 interface Candidate { relativePath: string; label: string; owner: string; item?: StepLibraryItem; uri?: vscode.Uri }
 interface LinkRequest extends ScenarioFileReference { source: string }
@@ -114,11 +117,11 @@ export class ScenarioFileNavigation implements vscode.DocumentLinkProvider, vsco
                 }
             }
         }
-        if (!resolved.size) { void vscode.window.showInformationMessage(vscode.l10n.t('No matching file was found. Place the cursor in a file name or select it.')); return; }
+        if (!resolved.size) { void kotUi.showInformationMessage(vscode.l10n.t('No matching file was found. Place the cursor in a file name or select it.')); return; }
         const rank = Math.min(...[...resolved.values()].map(row => row.rank));
         const candidates = [...resolved.values()].filter(row => row.rank === rank).sort((a, b) => a.uri.fsPath.localeCompare(b.uri.fsPath));
         if (candidates.length === 1) { return candidates[0].uri; }
-        return (await vscode.window.showQuickPick(candidates.map(row => ({ ...row, label: path.basename(row.uri.fsPath), description: row.label, detail: row.uri.fsPath })),
+        return (await kotUi.showQuickPick(candidates.map(row => ({ ...row, label: path.basename(row.uri.fsPath), description: row.label, detail: row.uri.fsPath })),
             { title: vscode.l10n.t('Choose a file to open'), matchOnDescription: true, ignoreFocusOut: true }))?.uri;
     }
     async fromEditor(argument?: unknown): Promise<vscode.Uri | undefined> {
@@ -145,10 +148,11 @@ export function registerScenarioFileNavigation(context: vscode.ExtensionContext,
     const navigation = new ScenarioFileNavigation(snapshots, files);
     const run = (action: 'open' | 'reveal' | 'os', argument?: unknown) => Promise.resolve().then(async () => {
         const uri = await navigation.fromEditor(argument); if (!uri) { return; }
+        await assertKotPath(uri.fsPath);
         if (action === 'open') {
             await openExternal(uri);
         } else { await vscode.commands.executeCommand(action === 'reveal' ? 'revealInExplorer' : 'revealFileInOS', uri); }
-    }).catch(error => { void vscode.window.showErrorMessage(vscode.l10n.t('Could not open the file: {0}', error instanceof Error ? error.message : String(error))); });
+    }).catch(error => { void kotUi.showErrorMessage(vscode.l10n.t('Could not open the file: {0}', error instanceof Error ? error.message : String(error))); });
     context.subscriptions.push(navigation,
         vscode.languages.registerDocumentLinkProvider([{ scheme: 'file', pattern: '**/*.feature' }, { scheme: 'file', pattern: '**/*.yaml' }, { scheme: 'file', pattern: '**/*.yml' }], navigation),
         vscode.commands.registerCommand('kotTestToolkit.openFile', argument => run('open', argument)),

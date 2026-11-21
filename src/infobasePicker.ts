@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -12,6 +13,8 @@ import {
     normalizeInfobaseReference,
     type OneCInfobaseConnection
 } from './oneCInfobaseConnection';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export interface LauncherInfobaseInfo {
     name: string;
@@ -558,7 +561,7 @@ export async function pickTargetInfobasePath(
         });
     }
 
-    const selection = await vscode.window.showQuickPick(quickPickItems, {
+    const selection = await kotUi.showQuickPick(quickPickItems, {
         placeHolder: options?.placeHolder || t('Choose target infobase for immediate extension install'),
         ignoreFocusOut: true
     });
@@ -574,7 +577,7 @@ export async function pickTargetInfobasePath(
         return selection.infobasePath;
     }
 
-    const manualPath = await vscode.window.showInputBox({
+    const manualPath = await kotUi.showInputBox({
         title: t('Enter target infobase path'),
         placeHolder: t('Example: C:\\\\Bases\\\\SalesBase'),
         ignoreFocusOut: true,

@@ -1,4 +1,7 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export class SettingsProvider {
     private static instance: SettingsProvider;
@@ -28,7 +31,7 @@ export class SettingsProvider {
                     await manager.openYamlParametersPanel();
                 } catch (error) {
                     console.error('[SettingsProvider] Error opening Compilation and run parameters:', error);
-                    vscode.window.showErrorMessage(
+                    kotUi.showErrorMessage(
                         vscode.l10n.t('Error opening Compilation and run parameters: {0}', String(error))
                     );
                 }

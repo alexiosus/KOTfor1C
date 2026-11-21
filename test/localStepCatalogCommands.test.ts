@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -53,7 +54,7 @@ function fixture(cancel = false) {
     const module = { exports: {} as { registerLocalStepCatalogCommands(context: unknown, catalogs: unknown): void; generateConfiguredLocalStepCatalog(resource: Uri): Promise<string> } };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/localStepCatalogCommands.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
-    }).outputText, { module, exports: module.exports, require: (name: string) => dependencies[name], TextDecoder, TextEncoder, AbortController });
+    }).outputText, { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name]), TextDecoder, TextEncoder, AbortController });
     module.exports.registerLocalStepCatalogCommands({ subscriptions: [] }, { refresh: async (resource: Uri) => { refreshes.push(resource); } });
     return { run: (resource?: unknown) => command(resource), automatic: () => module.exports.generateConfiguredLocalStepCatalog(folders[1].uri), folders, updates, writes, refreshes, errors, builds: () => builds };
 }

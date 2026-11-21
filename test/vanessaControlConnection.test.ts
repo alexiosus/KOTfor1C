@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
@@ -49,6 +50,7 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
         clearTimeout: (timer?: { active: boolean }) => { if (timer) { timer.active = false; } },
         setInterval: () => ({ unref() {} }), clearInterval() {},
         require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
             if (name === 'vscode') { return { l10n: { t: (text: string, ...args: unknown[]) => text.replace(/\{(\d+)\}/gu, (_token, index) => String(args[Number(index)])) }, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 1 },
                 workspace: { get isTrusted() { return trusted; }, getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'autoAttach' ? autoAttach : key === 'autoStart' ? startupOptions.autoStart ?? false : fallback }) },
                 window: { createStatusBarItem: () => status,
@@ -67,7 +69,9 @@ function harness(live: readonly string[], candidatePorts = [6000, 7000], autoAtt
             if (name === './vanessaControlDiscovery') { return { discoverVanessaControlEndpoints, localOneCListeningPorts: () => resolvePorts() }; }
             return require(name);
         } });
-    const register = module.exports.registerVanessaControl as (...args: unknown[]) => { ensureConnected(): Promise<boolean>; runLogPath(): string | undefined; session: Session; runFeature(request: Parameters<VanessaManagedRun['run']>[0]): ReturnType<VanessaManagedRun['run']> };
+    const register = module.exports.registerVanessaControl as (...args: unknown[]) => { ensureConnected(): Promise<boolean>; ensureAgentConnected(): Promise<boolean>;
+        manager(action: 'list' | 'connect' | 'start', endpoint?: string): Promise<unknown>;
+        runLogPath(): string | undefined; session: Session; runFeature(request: Parameters<VanessaManagedRun['run']>[0]): ReturnType<VanessaManagedRun['run']> };
     const control = register({ subscriptions, workspaceState: { get: (key: string, fallback: unknown) => state.get(key) ?? fallback,
         update: async (key: string, value: unknown) => { state.set(key, value); } }, secrets: { get: async () => undefined } },
     { managedRunLog: (port: number) => port === 8888 ? '/own/manager.log' : undefined,
@@ -223,6 +227,20 @@ test('startup does not choose between live sessions; an explicit action asks onc
     await h.startup(); assert.deepEqual(h.attached, []); assert.deepEqual(h.prompts, []);
     assert.equal(await h.ensureConnected(), true);
     assert.deepEqual(h.attached, [live[1]]); assert.deepEqual(h.prompts.map(items => Array.from(items)), [live]);
+});
+
+test('agent connections report ambiguity without opening a picker and accept an explicit discovered manager', async () => {
+    const live = ['http://127.0.0.1:6000/mcp', 'http://127.0.0.1:7000/mcp']; const h = harness(live);
+    await assert.rejects(h.ensureAgentConnected(), /kot_manager/); assert.deepEqual(h.prompts, []); assert.deepEqual(h.attached, []);
+    await h.manager('connect', live[1]); assert.deepEqual(h.attached, [live[1]]);
+    await assert.rejects(h.manager('connect', 'http://127.0.0.1:9999/mcp'), /available local endpoint/);
+    h.dispose();
+});
+
+test('agent connections prefer the single manager associated with this workspace', async () => {
+    const own = 'http://127.0.0.1:8888/mcp'; const h = harness(['http://127.0.0.1:6000/mcp', own], [6000, 8888]);
+    assert.equal(await h.ensureAgentConnected(), true); assert.deepEqual(h.attached, [own]); assert.deepEqual(h.prompts, []);
+    h.dispose();
 });
 
 test('detach cancels discovery and prevents a late result from attaching another session', async () => {

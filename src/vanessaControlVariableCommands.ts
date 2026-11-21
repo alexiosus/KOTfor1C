@@ -1,8 +1,11 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import { VanessaVariablesPanelModel, type VanessaVariableEdit } from './vanessaControlVariablesPanel';
 import { VanessaVariableControlError, type VanessaRuntimeVariable, type VanessaVariableScope } from './vanessaControlVariables';
 import type { VanessaControlSession } from './vanessaControlSession';
 import type { Translator } from './localization';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 const VIEW = 'kotTestToolkit.vanessaVariables';
 type VariableNode = { scope: VanessaVariableScope; variable?: VanessaRuntimeVariable; edit?: VanessaVariableEdit };
@@ -56,7 +59,7 @@ export function registerVanessaVariableCommands(context: vscode.ExtensionContext
     const changes = events.event(() => { view.message = messages[model.state.status]; });
     const report = async (work: () => Promise<unknown>) => {
         try { await work(); } catch (error) {
-            void vscode.window.showErrorMessage(t(error instanceof VanessaVariableControlError ? error.message : 'The Vanessa variable operation was not confirmed. Refresh the variables.'));
+            void kotUi.showErrorMessage(t(error instanceof VanessaVariableControlError ? error.message : 'The Vanessa variable operation was not confirmed. Refresh the variables.'));
         }
     };
     const write = async (node?: VariableNode) => {
@@ -64,23 +67,23 @@ export function registerVanessaVariableCommands(context: vscode.ExtensionContext
         if (!edit) {
             await model.refresh();
             const captured = model.beginEdit('local', '');
-            const scope = await vscode.window.showQuickPick((['local', 'global'] as const).map(value => ({ label: scopeLabel(value), value })), {
+            const scope = await kotUi.showQuickPick((['local', 'global'] as const).map(value => ({ label: scopeLabel(value), value })), {
                 title: t('New string variable'), ignoreFocusOut: true });
             if (!scope) { return; }
-            const name = await vscode.window.showInputBox({ title: t('Variable name'), ignoreFocusOut: true });
+            const name = await kotUi.showInputBox({ title: t('Variable name'), ignoreFocusOut: true });
             if (!name) { return; }
             edit = model.beginEdit(scope.value, name);
             if (edit.generation !== captured.generation || edit.lifetime !== captured.lifetime) {
                 throw new VanessaVariableControlError('The Vanessa session or variable panel changed. Refresh the variables.');
             }
         }
-        const value = await vscode.window.showInputBox({ title: t('Set string value: {0}', edit.name),
+        const value = await kotUi.showInputBox({ title: t('Set string value: {0}', edit.name),
             prompt: t('MCP returns a text representation without its 1C type. Replacing it stores a string.'),
             value: edit.expected ?? '', ignoreFocusOut: true });
         if (value === undefined) { return; }
         if (edit.expected !== undefined) {
             const replace = t('Replace with string');
-            if (await vscode.window.showWarningMessage(t('Replace the value of Vanessa variable "{0}" with a string?', edit.name), { modal: true }, replace) !== replace) { return; }
+            if (await kotUi.showWarningMessage(t('Replace the value of Vanessa variable "{0}" with a string?', edit.name), { modal: true }, replace) !== replace) { return; }
         }
         await model.set(edit, value);
     };
@@ -101,7 +104,7 @@ export function registerVanessaVariableCommands(context: vscode.ExtensionContext
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.variables.delete', (node?: VariableNode) => report(async () => {
             if (!node?.edit || !node.variable) { return; }
             const remove = t('Delete variable');
-            if (await vscode.window.showWarningMessage(t('Delete local variable "{0}"?', node.variable.name), { modal: true }, remove) === remove) { await model.delete(node.edit); }
+            if (await kotUi.showWarningMessage(t('Delete local variable "{0}"?', node.variable.name), { modal: true }, remove) === remove) { await model.delete(node.edit); }
         })));
     model.setVisible(view.visible);
     if (view.visible) { void model.refresh(); }

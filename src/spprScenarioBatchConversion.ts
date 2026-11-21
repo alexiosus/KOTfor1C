@@ -1,9 +1,12 @@
+import { kotWindow } from './kotInteraction';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { TestInfo } from './types';
 import type { Translator } from './localization';
 import { convertSpprScenarioFiles } from './spprScenarioFormat';
 import { waitForProjectLibraryIdle } from './projectLibraryStore';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 interface BatchOptions {
     documents?: () => readonly Pick<vscode.TextDocument, 'uri' | 'isDirty'>[];
@@ -96,7 +99,7 @@ export async function handleBatchScenarioFormatConversion(
     getScenarios: () => Promise<readonly TestInfo[]>, t: Translator
 ): Promise<ScenarioBatchConversionResult | undefined> {
     if (batchInProgress) {
-        void vscode.window.showInformationMessage(t('Scenario format conversion is already running.'));
+        void kotUi.showInformationMessage(t('Scenario format conversion is already running.'));
         return;
     }
     batchInProgress = true;
@@ -104,10 +107,10 @@ export async function handleBatchScenarioFormatConversion(
         const activeSource = vscode.window.activeTextEditor?.document.uri.toString();
         const candidates = legacyScenarioCandidates(await getScenarios());
         if (!candidates.length) {
-            void vscode.window.showInformationMessage(t('No YAML scenarios to convert were found in the project scenario catalog.'));
+            void kotUi.showInformationMessage(t('No YAML scenarios to convert were found in the project scenario catalog.'));
             return;
         }
-        const selected = await vscode.window.showQuickPick(candidates.map(scenario => ({
+        const selected = await kotUi.showQuickPick(candidates.map(scenario => ({
             label: scenario.name,
             description: vscode.workspace.asRelativePath(scenario.yamlFileUri),
             detail: scenario.hasTestSettings ? t('Main scenario') : t('Nested scenario'),
@@ -118,7 +121,7 @@ export async function handleBatchScenarioFormatConversion(
             canPickMany: true, ignoreFocusOut: true
         });
         if (!selected?.length) { return; }
-        const result = await vscode.window.withProgress({
+        const result = await kotUi.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: t('Converting YAML scenarios to feature + meta'), cancellable: true
         }, (progress, token) => convertLegacyScenarios(selected.map(item => item.scenario), {
@@ -154,7 +157,7 @@ export async function handleBatchScenarioFormatConversion(
         await vscode.window.showTextDocument(report, { preview: false });
         return result;
     } catch (error) {
-        void vscode.window.showErrorMessage(t('Could not complete batch scenario conversion: {0}', error instanceof Error ? error.message : String(error)));
+        void kotUi.showErrorMessage(t('Could not complete batch scenario conversion: {0}', error instanceof Error ? error.message : String(error)));
         return;
     } finally {
         batchInProgress = false;

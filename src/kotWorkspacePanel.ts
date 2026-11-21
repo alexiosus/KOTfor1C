@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import { projectFormat, type ProjectFormat } from './projectFormat';
 import { transitionProjectFormat3 } from './projectFormatTransition';
 import * as vscode from 'vscode';
@@ -19,6 +20,8 @@ import { detectInstalledOneCPlatforms, getConfiguredOneCPlatforms, saveConfigure
 import type { ProjectFileProgress } from './projectLibraryStore';
 import type { StepCatalogService } from './stepCatalogService';
 import type { LocalStepCatalogProgress } from './localStepCatalog';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 interface SetupDraft {
     route: 'new' | 'sppr' | 'vanessa' | 'legacy'; mode: 'sppr' | 'vanessa'; language: 'en' | 'ru'; format: 'native' | 'legacy';
@@ -100,14 +103,14 @@ export class KotWorkspacePanel implements vscode.Disposable {
     private async handleCloseDraft(): Promise<void> {
         const closing = this.drafts; const session = this.session!;
         const apply = this.t('Apply'); const discard = this.t('Discard'); const keep = this.t('Keep draft');
-        const answer = await vscode.window.showWarningMessage(this.t('KOT settings have unapplied changes.'), apply, keep, discard);
+        const answer = await kotUi.showWarningMessage(this.t('KOT settings have unapplied changes.'), apply, keep, discard);
         if (this.drafts !== closing) { return; }
         if (answer === discard) { this.drafts = []; }
         else if (answer === apply) {
             try { await session.apply(closing); this.drafts = []; }
             catch (error) {
                 if (error instanceof SettingsApplyError) { this.drafts = closing.filter(change => !error.applied.includes(`${change.folder}:${change.scope}:${change.key}`)); }
-                void vscode.window.showErrorMessage(this.t(error instanceof Error ? error.message : String(error)));
+                void kotUi.showErrorMessage(this.t(error instanceof Error ? error.message : String(error)));
             }
         }
     }
@@ -195,6 +198,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
             case 'applySetup': return this.applySetup(String(request.value ?? ''), request.id);
             case 'cancel': this.cancelled = true; return;
             case 'action': {
+                if (request.action === 'agent' && identity !== vscode.workspace.workspaceFolders?.[0]?.uri.toString()) { throw new Error(this.t('Open this project in its own window before connecting AI.')); }
                 if (['functions', 'numbering', 'parameters'].includes(request.action!)) { this.assertTrusted(); }
                 await vscode.commands.executeCommand(workspaceActions[request.action!]); return;
             }
@@ -221,7 +225,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
         if (!picker) { throw new Error('Unknown path setting'); }
         const directory = picker.pathKind === 'directory' || picker.pathKind === 'directories';
         const extension = picker.pathKind === 'feature' ? 'feature' : picker.pathKind === 'exe' ? 'exe' : picker.pathKind === 'json' ? 'json' : 'epf';
-        const selected = await vscode.window.showOpenDialog({ defaultUri: folder.uri, canSelectFiles: !directory, canSelectFolders: directory,
+        const selected = await kotUi.showOpenDialog({ defaultUri: folder.uri, canSelectFiles: !directory, canSelectFolders: directory,
             canSelectMany: false, openLabel: this.t('Select'), filters: directory ? undefined : { [extension.toUpperCase()]: [extension] } });
         return selected?.[0] ? portableSettingPath(folder.uri.fsPath, selected[0].fsPath, picker.pathPolicy ?? 'relative', request.scope ?? 'folder') : undefined;
     }
@@ -253,7 +257,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
         };
         try {
             const { listVanessaReleasePage, installVanessaRelease } = await import('./vanessaReleaseDownload.js');
-            return await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, cancellable: true,
+            return await kotUi.withProgress({ location: vscode.ProgressLocation.Notification, cancellable: true,
                 title: this.t('Download Vanessa Automation') }, async (progress, cancellation) => {
                 const cancelled = cancellation.onCancellationRequested(() => job.controller.abort());
                 if (cancellation.isCancellationRequested) { job.controller.abort(); }
@@ -263,7 +267,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
                         const loading = this.t('Loading official Vanessa releases…'); showProgress(loading); progress.report({ message: loading });
                         const loaded = await listVanessaReleasePage(page, job.controller.signal); releases.push(...loaded.releases);
                         if (!releases.length && !loaded.more) { throw new Error(this.t('No full Vanessa distributions were found in the official releases.')); }
-                        const chosen = await vscode.window.showQuickPick([
+                        const chosen = await kotUi.showQuickPick([
                             ...releases.map(release => ({ label: release.version, description: `${(release.size / 1024 / 1024).toFixed(1)} MB`, release })),
                             ...(loaded.more ? [{ label: this.t('Load older releases…'), release: undefined }] : [])
                         ], { title: this.t('Choose a Vanessa Automation version'), placeHolder: this.t('Full distributions from Pr-Mex/vanessa-automation'), ignoreFocusOut: true }, pickerCancellation.token);
@@ -363,7 +367,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
         const folder = this.folder(review.folder); const root = folder.uri.fsPath;
         this.applying = true;
         try {
-            return await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: this.t('Applying project setup…') }, async progress => {
+            return await kotUi.withProgress({ location: vscode.ProgressLocation.Notification, title: this.t('Applying project setup…') }, async progress => {
                 let lastLabel = ''; let lastTime = 0;
                 const report = (value: ProjectFileProgress) => {
                     const now = Date.now(); const changedStage = value.label !== lastLabel;
@@ -433,7 +437,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
         if (!progress?.complete) { throw new Error(this.t('Review the setup changes again.')); }
         if (this.preparingExecution) { throw new Error(this.t('Vanessa preparation is already in progress.')); }
         this.preparingExecution = true;
-        try { return await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: this.t('Preparing Vanessa…') }, async () => {
+        try { return await kotUi.withProgress({ location: vscode.ProgressLocation.Notification, title: this.t('Preparing Vanessa…') }, async () => {
             try {
                 const executionReady = await this.prepareExecution?.() ?? false;
                 await this.context.workspaceState.update(progressKey(identity), { ...progress, readiness: { ...progress.readiness, executionReady, executionError: '' } });
@@ -452,7 +456,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
         await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(folder.uri.fsPath, file))));
     }
     private async openWorkshop(): Promise<void> {
-        const parent = await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: this.t('Choose a parent folder for the workshop') });
+        const parent = await kotUi.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: this.t('Choose a parent folder for the workshop') });
         if (!parent?.[0]) { return; }
         const target = path.join(parent[0].fsPath, 'KOT-workshop');
         if (await fs.lstat(target).then(() => true, () => false)) { throw new Error(this.t('The workshop folder already exists. Choose another parent folder.')); }
@@ -473,7 +477,7 @@ export class KotWorkspacePanel implements vscode.Disposable {
         const override = vscode.workspace.getConfiguration('kotTestToolkit.localization').get<string>('languageOverride', 'System');
         const russian = override === 'Русский' || override === 'System' && vscode.env.language.startsWith('ru');
         const start = russian ? 'Настроить KOT' : 'Set up KOT'; const hide = russian ? 'Больше не предлагать' : 'Do not offer again';
-        const answer = await vscode.window.showInformationMessage(russian ? 'KOT: подготовим проект и покажем, где находятся основные инструменты?' : 'KOT: set up this project and find your way around the tools?', start, hide);
+        const answer = await kotUi.showInformationMessage(russian ? 'KOT: подготовим проект и покажем, где находятся основные инструменты?' : 'KOT: set up this project and find your way around the tools?', start, hide);
         if (answer === start) { await this.open('setup'); } else if (answer === hide) { await this.context.globalState.update('kot.setup.hideWelcome', true); }
     }
 }

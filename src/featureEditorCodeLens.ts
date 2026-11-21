@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import { getScenarioLanguageForDocument } from './gherkinLanguage';
 import { getTranslator, type Translator } from './localization';
@@ -9,6 +10,8 @@ import {
 import { normalizeFeatureTags } from './featureTags';
 import { parseStandaloneFeatureSource } from './standaloneFeatureModel';
 import { buildGherkinAnnotationCompletions, getGherkinStepAnnotationTarget, isGherkinHeaderAnnotationContext } from './gherkinAnnotations';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export interface ProjectAnnotationTags {
     getTags(resource: vscode.Uri, token: vscode.CancellationToken): Promise<readonly string[]>;
@@ -107,16 +110,16 @@ export async function editFeatureStructureCommand(rawTarget: unknown, translate:
                 { label: source.language === 'ru' ? 'Структура сценария' : 'Scenario Outline', scenarioKind: 'outline' }
             ];
             const chosen = directOptions?.scenarioKind ? forms.find(form => form.scenarioKind === directOptions.scenarioKind)
-                : await vscode.window.showQuickPick(forms, { title: translate('Add scenario'), ignoreFocusOut: true });
+                : await kotUi.showQuickPick(forms, { title: translate('Add scenario'), ignoreFocusOut: true });
             if (!chosen) { return; }
-            const name = directOptions?.scenarioTitle ?? await vscode.window.showInputBox({ title: translate('New scenario'),
+            const name = directOptions?.scenarioTitle ?? await kotUi.showInputBox({ title: translate('New scenario'),
                 prompt: translate('Scenario title'), ignoreFocusOut: true, validateInput: value => {
                     try { featureScenarioTitle(value); return undefined; } catch (error) { return translate((error as Error).message); }
                 } });
             if (name === undefined) { return; }
             options = { scenarioKind: chosen.scenarioKind, scenarioTitle: name };
         } else if (rawTarget.kind === 'tags') {
-            const tags = await vscode.window.showInputBox({
+            const tags = await kotUi.showInputBox({
                 title: translate('Feature / scenario tags'), prompt: translate('Enter tags separated by spaces, for example @Smoke @team.sales.'),
                 ignoreFocusOut: true, validateInput: value => {
                     try { normalizeFeatureTags(value.trim().split(/[ \t]+/u)); return undefined; }
@@ -134,13 +137,13 @@ export async function editFeatureStructureCommand(rawTarget: unknown, translate:
                 { label: translate('Variables table'), variableKind: 'table' },
                 { label: translate('Import variables from feature'), variableKind: 'import' }
             ];
-            const chosen = await vscode.window.showQuickPick(forms, { title: translate('Add Vanessa variable'), ignoreFocusOut: true });
+            const chosen = await kotUi.showQuickPick(forms, { title: translate('Add Vanessa variable'), ignoreFocusOut: true });
             if (!chosen) { return; }
             options = { variableKind: chosen.variableKind };
         } else if (rawTarget.kind === 'stepTag') {
             options = { stepLine: directOptions!.stepLine, stepTag: directOptions?.stepTag };
             if (!options.stepTag) {
-                const chosenTag = await vscode.window.showQuickPick(stepTags(translate), { title: translate('Step screenshot / video'), ignoreFocusOut: true });
+                const chosenTag = await kotUi.showQuickPick(stepTags(translate), { title: translate('Step screenshot / video'), ignoreFocusOut: true });
                 if (!chosenTag) { return; }
                 options = { ...options, stepTag: chosenTag.tag };
             }
@@ -151,9 +154,9 @@ export async function editFeatureStructureCommand(rawTarget: unknown, translate:
         const editor = await vscode.window.showTextDocument(document, { preview: false });
         if (document.version !== rawTarget.version) { throw new Error('The feature changed. Run the action again.'); }
         const applied = await editor.insertSnippet(new vscode.SnippetString(edit.snippet), new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end)), { keepWhitespace: true, undoStopBefore: true, undoStopAfter: true });
-        if (!applied) { vscode.window.showErrorMessage(translate('Could not update the feature.')); }
+        if (!applied) { kotUi.showErrorMessage(translate('Could not update the feature.')); }
     } catch (error) {
-        vscode.window.showErrorMessage(translate('Could not update the feature: {0}', translate(error instanceof Error ? error.message : String(error))));
+        kotUi.showErrorMessage(translate('Could not update the feature: {0}', translate(error instanceof Error ? error.message : String(error))));
     }
 }
 

@@ -1,4 +1,5 @@
-﻿import * as vscode from 'vscode';
+﻿import { kotWindow } from './kotInteraction';
+import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import type { TestInfo } from './types';
@@ -9,6 +10,8 @@ import { parseTestInfoFromScenarioSource, parseTestSettingsTarget, type ParsedTe
 import { loadProjectScenarioMetadata, resolveProjectLibraryRoot } from './projectLibraryMetadata';
 import { assertProjectMetadataSaved, loadSingleProjectScenario } from './projectLibraryIntegration';
 import type { ProjectFileProgress } from './projectLibraryStore';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 const SCENARIO_READ_CONCURRENCY = 32;
 const SCENARIO_DIRECTORY_CONCURRENCY = 16;
@@ -261,7 +264,7 @@ async function readScenarioDefinitions(
             throw error;
         }
         console.error('[WorkspaceScanner] Error scanning workspace:', error);
-        vscode.window.showErrorMessage(vscode.l10n.t('Error searching for scenario files.'));
+        kotUi.showErrorMessage(vscode.l10n.t('Error searching for scenario files.'));
         return [];
     }
 

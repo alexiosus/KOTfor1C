@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
@@ -5,6 +6,8 @@ import type { VanessaControlSession } from './vanessaControlSession';
 import { createVanessaDiagnosticArchive } from './vanessaControlDiagnosticArchive';
 import { redactVanessaDiagnosticText, type VanessaDiagnosticReport } from './vanessaControlDiagnostics';
 import { nativeDocumentTextMatchesFileText } from './scenarioNativeDocumentSnapshot';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 /** One explicit local report. No background log collection, source execution, or automatic upload. */
 export function registerVanessaDiagnosticsCommands(context: vscode.ExtensionContext, session: VanessaControlSession, ensureConnected: () => Promise<boolean>): void {
@@ -68,20 +71,20 @@ for(const image of state.images||[]){const img=document.createElement('img');img
             controller = own;
             const ownGeneration = session.snapshot.generation;
             const current = () => !!panel && !own.signal.aborted && ownGeneration === session.snapshot.generation;
-            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t(title), cancellable: true }, async (_progress, token) => {
+            await kotUi.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t(title), cancellable: true }, async (_progress, token) => {
                 const cancel = token.onCancellationRequested(() => own.abort());
                 try { if (token.isCancellationRequested) { own.abort(); } await work(own.signal, current); }
                 finally { cancel.dispose(); }
             });
         } catch (failure) {
-            if (!own.signal.aborted) { error = vscode.l10n.t(redactVanessaDiagnosticText(failure instanceof Error ? failure.message : 'The diagnostic request failed.')); void vscode.window.showErrorMessage(error); }
+            if (!own.signal.aborted) { error = vscode.l10n.t(redactVanessaDiagnosticText(failure instanceof Error ? failure.message : 'The diagnostic request failed.')); void kotUi.showErrorMessage(error); }
         } finally { if (controller === own) { controller = undefined; } busy = false; render(); }
     };
     const collect = () => run('Vanessa: collecting diagnostics…', async (signal, current) => {
         const value = await session.withDiagnosticControl(d => d.collect(options, signal)); if (current()) { report = value; }
     });
     const search = () => run('Vanessa: searching runtime steps…', async (signal, current) => {
-        const query = await vscode.window.showInputBox({ title: vscode.l10n.t('Search steps in the running Vanessa'), ignoreFocusOut: true });
+        const query = await kotUi.showInputBox({ title: vscode.l10n.t('Search steps in the running Vanessa'), ignoreFocusOut: true });
         if (!query || !current()) { return; }
         const text = await session.withDiagnosticControl(d => d.search(query, signal)); if (current()) { detail = { title: vscode.l10n.t('Runtime step search'), text }; }
     });
@@ -99,7 +102,7 @@ for(const image of state.images||[]){const img=document.createElement('img');img
     };
     const screenshot = () => run('Vanessa: capturing client window…', async (signal, current) => {
         const windows = await session.withDiagnosticControl(d => d.windows(signal));
-        const title = await vscode.window.showQuickPick([...windows.titles], { title: vscode.l10n.t('Select a test-client window'), ignoreFocusOut: true });
+        const title = await kotUi.showQuickPick([...windows.titles], { title: vscode.l10n.t('Select a test-client window'), ignoreFocusOut: true });
         if (!title || !current()) { return; }
         const image = await session.withDiagnosticControl(d => d.screenshot(windows, title, signal));
         if (current()) {
@@ -109,11 +112,11 @@ for(const image of state.images||[]){const img=document.createElement('img');img
     });
     const exportReport = () => run('Vanessa: exporting diagnostics…', async (_signal, current) => {
         if (!report) { return; }
-        const include = images.length ? await vscode.window.showQuickPick([
+        const include = images.length ? await kotUi.showQuickPick([
             { label: vscode.l10n.t('Report only'), include: false }, { label: vscode.l10n.t('Report and screenshots (images are not redacted)'), include: true }
         ], { title: vscode.l10n.t('Diagnostic package contents'), ignoreFocusOut: true }) : { include: false };
         if (!include || !current()) { return; }
-        const target = await vscode.window.showSaveDialog({ title: vscode.l10n.t('Export local diagnostic package'), filters: { ZIP: ['zip'] } });
+        const target = await kotUi.showSaveDialog({ title: vscode.l10n.t('Export local diagnostic package'), filters: { ZIP: ['zip'] } });
         if (!target || !current()) { return; }
         const data = await createVanessaDiagnosticArchive(report, images, include.include);
         if (current()) { await vscode.workspace.fs.writeFile(target, data); }

@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -28,7 +29,7 @@ test('detached launches track the mode from the first 1C argument', async () => 
     };
     vm.runInNewContext(source + '\nmodule.exports.launchOneCDetached = launchOneCDetached;', {
         module, exports: module.exports, process, console, Buffer,
-        require: (name: string) => dependencies[name] ?? (name.startsWith('node:') ? require(name) : {})
+        require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? (name.startsWith('node:') ? require(name) : {}))
     });
     const launch = (args: string[]) => module.exports.launchOneCDetached('/platform/1cv8', args,
         { appendLine() {} }, (message: string) => message, '/workspace/demo') as Promise<void>;
@@ -60,7 +61,7 @@ test('manager launches of the shared service IB use the shared policy even with 
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
     }).outputText + '\nmodule.exports.resolveManagedInfobaseLaunchPlatform = resolveManagedInfobaseLaunchPlatform; module.exports.maintenancePlatform = getManagedInfobaseConfiguredPlatformClientExePath;', {
         module, exports: module.exports, process, console, Buffer,
-        require: (name: string) => dependencies[name] ?? (name.startsWith('node:') ? require(name) : {})
+        require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? (name.startsWith('node:') ? require(name) : {}))
     });
     const resolve = module.exports.resolveManagedInfobaseLaunchPlatform;
     const selected = await resolve({}, service, (text: string) => text, 'Choose', { forcePlatformPicker: true, preferredOneCClientExePath: '/platform/other/1cv8c.exe' });

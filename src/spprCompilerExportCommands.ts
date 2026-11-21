@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import path from 'node:path';
 import { buildDirectSpawnCommand, runDirectProcess } from './directProcessLaunch';
@@ -12,6 +13,8 @@ import { ensureSharedStartupInfobaseReady } from './startupInfobase';
 import { portableSettingPath } from './kotSettingsPaths';
 import { exportSpprCompiler, SpprCompilerExportError } from './spprCompilerExport';
 import { redactVanessaDiagnosticText } from './vanessaControlRedaction';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 let exporting = false;
 const authenticationArgs = (auth: { username: string; password: string } | null) => auth?.username ? ['/N', auth.username, '/P', auth.password] : [];
@@ -29,12 +32,12 @@ export async function exportSpprCompilerFromInfobase(context: vscode.ExtensionCo
             allowedKinds: ['file', 'server'], placeHolder: t('Select the SPPR infobase containing the compiler') });
         if (!source) { return; }
         const configured = vscode.workspace.getConfiguration('kotTestToolkit', folder.uri).get<string>('paths.buildScenarioBddEpf', 'build/BuildScenarioBDD.epf');
-        const destination = await vscode.window.showSaveDialog({ title: t('Save the SPPR compiler'), filters: { EPF: ['epf'] },
+        const destination = await kotUi.showSaveDialog({ title: t('Save the SPPR compiler'), filters: { EPF: ['epf'] },
             defaultUri: vscode.Uri.file(path.resolve(folder.uri.fsPath, defaultPath?.trim() || configured)) });
         if (!destination) { return; }
         if (path.extname(destination.fsPath).toLowerCase() !== '.epf') { throw new Error(t('Select an .epf file for the SPPR compiler.')); }
         const portable = portableSettingPath(folder.uri.fsPath, destination.fsPath, 'project', 'folder');
-        const result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, cancellable: true,
+        const result = await kotUi.withProgress({ location: vscode.ProgressLocation.Notification, cancellable: true,
             title: t('Exporting the SPPR compiler…') }, async (progress, token) => {
             const file = getFileInfobasePath(source);
             const running = file ? await runningOneCInfobasePlatform(file) : undefined;
@@ -89,8 +92,8 @@ export function registerSpprCompilerExportCommand(context: vscode.ExtensionConte
             const exported = await exportSpprCompilerFromInfobase(context, folder);
             if (!exported) { return; }
             await vscode.workspace.getConfiguration('kotTestToolkit', folder.uri).update('paths.buildScenarioBddEpf', exported, vscode.ConfigurationTarget.Workspace);
-            void vscode.window.showInformationMessage(t('SPPR compiler exported: {0}', exported));
+            void kotUi.showInformationMessage(t('SPPR compiler exported: {0}', exported));
             return exported;
-        } catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error)); }
+        } catch (error) { void kotUi.showErrorMessage(error instanceof Error ? error.message : String(error)); }
     }));
 }

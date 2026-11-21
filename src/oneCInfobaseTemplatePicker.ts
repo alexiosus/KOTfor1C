@@ -1,9 +1,12 @@
+import { kotWindow } from './kotInteraction';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import * as vscode from 'vscode';
 import { decodeTemplateText, discoverInfobaseTemplates, parseTemplateLocations, type InfobaseTemplate } from './oneCInfobaseTemplates';
 import type { Translator } from './localization';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 async function templateRoots(): Promise<string[]> {
     const configured = vscode.workspace.getConfiguration('kotTestToolkit').get<string[]>('infobaseManager.templateDirectories', []);
@@ -21,16 +24,16 @@ async function templateRoots(): Promise<string[]> {
 export async function pickInstalledInfobaseTemplate(kind: InfobaseTemplate['kind'], t: Translator): Promise<InfobaseTemplate | undefined> {
     const roots = await templateRoots();
     while (true) {
-        const templates = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: t('Reading installed 1C templates...') },
+        const templates = await kotUi.withProgress({ location: vscode.ProgressLocation.Window, title: t('Reading installed 1C templates...') },
             () => discoverInfobaseTemplates(roots));
         const items = templates.filter(template => template.kind === kind).map(template => ({ label: template.name,
             description: template.version, detail: template.filePath, template }));
-        const picked = await vscode.window.showQuickPick([...items,
+        const picked = await kotUi.showQuickPick([...items,
             { label: `$(folder-opened) ${t('Choose template directory…')}`, description: '', detail: t('Choose a tmplts directory containing installed 1cv8.mft manifests.'), template: undefined }],
         { title: t(kind === 'demo' ? 'Demo infobase template' : 'Configuration template'), matchOnDescription: true, matchOnDetail: true, ignoreFocusOut: true });
         if (!picked) { return undefined; }
         if (picked.template) { return picked.template; }
-        const folders = await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false,
+        const folders = await kotUi.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false,
             title: t('Choose template directory…'), openLabel: t('Select folder') });
         if (!folders?.length) { return undefined; }
         const directory = folders[0].fsPath;

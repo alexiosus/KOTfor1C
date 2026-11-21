@@ -1,3 +1,4 @@
+import { createTestLink } from './helpers/symlinks';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -143,7 +144,7 @@ test('attachment rename rejects traversal, folders, symlinks, stale selections, 
     assert.equal(await f.service.renameFile(f.item, 'Data.csv'), 'cancelled');
     f.host.renameTo = 'Changed.csv';
     await assert.rejects(f.service.renameFile(f.item, 'Folder'), /file|regular/i);
-    await fs.symlink(path.join(f.directory, 'files/Data.csv'), path.join(f.directory, 'files/link.csv'));
+    if (!await createTestLink(t, path.join(f.directory, 'files/Data.csv'), path.join(f.directory, 'files/link.csv'))) { return; }
     await assert.rejects(f.service.renameFile(f.item, 'link.csv'), /symbolic/i);
     await assert.rejects(f.service.renameFile(f.item, 'Data.csv', () => false), /changed/i);
     assert.equal(await fs.readFile(path.join(f.directory, 'files/Data.csv'), 'utf8'), 'contents');

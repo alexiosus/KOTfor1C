@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -64,7 +65,7 @@ async function fixture(t: TestContext) {
     const module = { exports: {} as any }; const ts = require('typescript') as typeof import('typescript');
     vm.runInNewContext(ts.transpileModule(await fs.readFile('src/scenarioFileNavigation.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
-    }).outputText, { module, exports: module.exports, process, require: (name: string) => name === 'vscode' ? vscode : name === './scenarioFileReferences' ? references : require(name) });
+    }).outputText, { module, exports: module.exports, process, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? vscode : name === './scenarioFileReferences' ? references : require(name)) });
     const snapshots = { ensureReady: async () => ({ items }) };
     const files = { resolveAttachmentUri: async (item: any, relative: string) => Uri.file(path.join(item.root, relative)) };
     const navigation = new module.exports.ScenarioFileNavigation(snapshots, files); t.after(() => navigation.dispose());

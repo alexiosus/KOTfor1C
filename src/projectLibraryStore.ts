@@ -625,11 +625,12 @@ export class ProjectLibraryStore {
             await Promise.all(prepared.filter(item => item.temporary).map(item => fs.rm(item.temporary!, { force: true })));
         }
     }
-    ensureGroup(name: string, section: ProjectSection, preferredId?: string): Promise<ProjectGroup> {
+    ensureGroup(name: string, section: ProjectSection, preferredId?: string, checkCurrent?: (snapshot: ProjectLibrarySnapshot) => void): Promise<ProjectGroup> {
         return this.serial(async () => {
             const normalizedName = textField(name, 'group name').trim();
             if (!sections.includes(section)) { throw new Error('Unsupported group section'); }
             const loaded = await this.load();
+            checkCurrent?.(this.snapshot(loaded));
             const existing = loaded.groups.find(item => item.name === normalizedName && sameGroupFamily(item, [section]));
             if (existing) {
                 if (existing.sections.includes(section)) { return existing; }
@@ -646,10 +647,11 @@ export class ProjectLibraryStore {
             return created;
         });
     }
-    renameGroup(id: string, name: string): Promise<ProjectGroup> {
+    renameGroup(id: string, name: string, checkCurrent?: (snapshot: ProjectLibrarySnapshot) => void): Promise<ProjectGroup> {
         return this.serial(async () => {
             const loaded = await this.load();
             const existing = loaded.groups.find(item => item.id === id);
+            checkCurrent?.(this.snapshot(loaded));
             if (!existing) { throw new Error('Project group no longer exists'); }
             const normalizedName = textField(name, 'group name').trim();
             if (loaded.groups.some(item => item.id !== id && item.name === normalizedName && sameGroupFamily(item, existing.sections))) { throw new Error('A group with this name already exists'); }
@@ -659,9 +661,10 @@ export class ProjectLibraryStore {
             return updated;
         });
     }
-    deleteGroup(id: string): Promise<void> {
+    deleteGroup(id: string, checkCurrent?: (snapshot: ProjectLibrarySnapshot) => void): Promise<void> {
         return this.serial(async () => {
             const loaded = await this.load();
+            checkCurrent?.(this.snapshot(loaded));
             if (!loaded.groups.some(item => item.id === id)) { return; }
             loaded.groups = loaded.groups.filter(item => item.id !== id);
             const writes = this.groupsWrites(loaded);
@@ -671,7 +674,7 @@ export class ProjectLibraryStore {
             await this.commit(loaded, writes);
         });
     }
-    setMetadata(identity: ProjectEntityIdentity, patch: ProjectEntityMetadataPatch): Promise<void> {
+    setMetadata(identity: ProjectEntityIdentity, patch: ProjectEntityMetadataPatch, checkCurrent?: (metadata: ProjectEntityMetadata | undefined) => void): Promise<void> {
         return this.serial(async () => {
             const normalizedIdentity = portableIdentity(identity);
             const key = projectEntityKey(normalizedIdentity);
@@ -683,6 +686,7 @@ export class ProjectLibraryStore {
                 throw new ProjectLibraryStoreError(this.metadataFilePath(normalizedIdentity), 'Metadata identity does not match its source UID or kind');
             }
             const existing = loaded.records.get(key);
+            checkCurrent?.(existing?.metadata); // Check the caller's baseline inside the shared write queue.
             const merged: Record<string, unknown> = { ...existing?.metadata };
             for (const [field, value] of Object.entries(supplied)) {
                 if (field === 'order') { continue; }

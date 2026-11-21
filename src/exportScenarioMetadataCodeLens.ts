@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import { promises as fs } from 'node:fs';
 import * as vscode from 'vscode';
 import {
@@ -18,6 +19,8 @@ import { getScenarioLanguageForDocument } from './gherkinLanguage';
 import { getTranslator, type Translator } from './localization';
 import type { ProjectDefinition } from './projectDefinition';
 import type { ProjectDefinitionIndexProvider } from './projectDefinitionIndexService';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export interface ExportScenarioMetadataCommandServices {
     readonly index: ProjectDefinitionIndexProvider;
@@ -78,7 +81,7 @@ async function promptNewValue(
     initialValue: string,
     t: Translator
 ): Promise<string | undefined> {
-    const value = await vscode.window.showInputBox({
+    const value = await kotUi.showInputBox({
         title: t(INPUT_TITLES[kind]),
         value: initialValue,
         prompt: t('Enter the metadata value to add above the exported scenario.'),
@@ -183,7 +186,7 @@ export async function addExportScenarioMetadataCommand(
     const uri = vscode.Uri.parse(rawTarget.documentUri);
     const document = await vscode.workspace.openTextDocument(uri);
     if (document.version !== rawTarget.documentVersion) {
-        vscode.window.showWarningMessage(t('The export feature changed. Run the command again.'));
+        kotUi.showWarningMessage(t('The export feature changed. Run the command again.'));
         return;
     }
 
@@ -195,7 +198,7 @@ export async function addExportScenarioMetadataCommand(
         && candidate.declarationRange.start.character === rawTarget.scenarioStart.character
     );
     if (!scenario) {
-        vscode.window.showWarningMessage(t('The exported scenario is no longer available.'));
+        kotUi.showWarningMessage(t('The exported scenario is no longer available.'));
         return;
     }
 
@@ -210,7 +213,7 @@ export async function addExportScenarioMetadataCommand(
         return;
     }
     if (document.version !== rawTarget.documentVersion) {
-        vscode.window.showWarningMessage(t('The export feature changed. Run the command again.'));
+        kotUi.showWarningMessage(t('The export feature changed. Run the command again.'));
         return;
     }
 
@@ -230,10 +233,10 @@ export async function addExportScenarioMetadataCommand(
             );
         }
         if (!await vscode.workspace.applyEdit(edit)) {
-            vscode.window.showErrorMessage(t('Could not add export scenario metadata.'));
+            kotUi.showErrorMessage(t('Could not add export scenario metadata.'));
         }
     } catch (error) {
-        vscode.window.showErrorMessage(t('Could not add export scenario metadata: {0}', String(error)));
+        kotUi.showErrorMessage(t('Could not add export scenario metadata: {0}', String(error)));
     }
 }
 

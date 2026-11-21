@@ -1,4 +1,3 @@
-// Generated prototype snapshot of settings-map.json; does not store real configuration.
 window.KOT_SETTINGS_MODEL = {
   "version": 1,
   "status": "design-prototype",
@@ -34,14 +33,15 @@ window.KOT_SETTINGS_MODEL = {
       "description": "Данные формы и обновление элементов"
     },
     {
-      "id": "ai",
-      "title": "AI-помощь",
-      "description": "Подключение сервиса и параметры ответов"
-    },
-    {
       "id": "advanced",
       "title": "Дополнительные инструменты",
       "description": "Служебные папки и внешние программы"
+    },
+    {
+      "id": "agent",
+      "title": "Агент тестирования",
+      "description": "Выполнение, расследования и политика исправлений",
+      "titleEn": "Testing agent"
     }
   ],
   "settings": [
@@ -914,122 +914,6 @@ window.KOT_SETTINGS_MODEL = {
       "pathPolicy": "relative"
     },
     {
-      "key": "kotTestToolkit.ai.apiFormat",
-      "label": "Тип AI-сервиса",
-      "section": "ai",
-      "advanced": false,
-      "type": "string",
-      "default": "chatCompletions",
-      "description": "Формат HTTP API, через который расширение обращается к подключенной LLM.",
-      "preferredScope": "user",
-      "enum": [
-        "responses",
-        "chatCompletions"
-      ],
-      "hint": "Формат HTTP API, через который расширение обращается к подключенной LLM.",
-      "optionLabels": [
-        "OpenAI Responses API (`/responses`). Обычно предпочтителен для облачных моделей OpenAI.",
-        "OpenAI-compatible Chat Completions API (`/chat/completions`). Лучший дефолт для локальных провайдеров и прокси."
-      ]
-    },
-    {
-      "key": "kotTestToolkit.ai.baseUrl",
-      "label": "Адрес AI-сервиса",
-      "section": "ai",
-      "advanced": false,
-      "type": "string",
-      "default": "http://localhost:1234/v1",
-      "description": "Базовый URL подключенной LLM.\n\nПримеры для локальных серверов:\n- `http://localhost:11434/v1`\n- `http://127.0.0.1:1234/v1`\n\nПримеры для облачных провайдеров:\n- `https://api.openai.com/v1`\n- `https://generativelanguage.googleapis.com/v1beta/openai`",
-      "preferredScope": "user",
-      "hint": "Базовый URL подключенной LLM."
-    },
-    {
-      "key": "kotTestToolkit.ai.apiVersion",
-      "label": "Версия API сервиса",
-      "section": "ai",
-      "advanced": true,
-      "type": "string",
-      "default": "",
-      "description": "Версия API, добавляемая как `?api-version=...` к каждому URL запроса. Обязательна для Azure OpenAI.\n\nПримеры:\n- Chat Completions: `2024-12-01-preview`\n- Responses API: `2025-04-01-preview`\n\nДля стандартного OpenAI и локальных провайдеров оставьте пустым.",
-      "preferredScope": "user",
-      "hint": "Версия API, добавляемая как `?api-version=...` к каждому URL запроса."
-    },
-    {
-      "key": "kotTestToolkit.ai.apiKey",
-      "label": "Ключ доступа к AI-сервису",
-      "section": "ai",
-      "advanced": false,
-      "type": "string",
-      "default": "local",
-      "description": "API-ключ подключенной LLM.\n\nЗначение хранится в `settings.json` в открытом виде, поэтому по возможности используйте отдельный ключ с минимально необходимыми правами. Для локальных провайдеров, которые не проверяют авторизацию, достаточно любого непустого значения, например `local`.",
-      "preferredScope": "user",
-      "editor": "password",
-      "hint": "Ключ вашего AI-сервиса. Для него выберите область «Этот компьютер»."
-    },
-    {
-      "key": "kotTestToolkit.ai.model",
-      "label": "Модель",
-      "section": "ai",
-      "advanced": false,
-      "type": "string",
-      "default": "qwen3:4b",
-      "description": "Имя модели для генерации описаний сценариев.\n\nПо умолчанию задано имя легкой локальной модели для Ollama-совместимого сценария: `qwen3:4b`. При необходимости замените на точный id модели, который доступен у вашего локального или облачного провайдера.",
-      "preferredScope": "user",
-      "hint": "Имя модели для генерации описаний сценариев."
-    },
-    {
-      "key": "kotTestToolkit.ai.outputLanguage",
-      "label": "Язык ответов AI",
-      "section": "ai",
-      "advanced": false,
-      "type": "string",
-      "default": "ru",
-      "description": "Язык, на котором генерируется описание сценария.",
-      "preferredScope": "user",
-      "enum": [
-        "ru",
-        "en"
-      ],
-      "hint": "Язык, на котором генерируется описание сценария.",
-      "optionLabels": [
-        "Русский (`ru`)",
-        "Английский (`en`)"
-      ]
-    },
-    {
-      "key": "kotTestToolkit.ai.maxLineLength",
-      "label": "Длина строк в AI-описаниях",
-      "section": "ai",
-      "advanced": true,
-      "type": "number",
-      "default": 100,
-      "description": "Максимальная видимая длина строки для сгенерированного описания с учетом YAML-отступа.",
-      "preferredScope": "user",
-      "hint": "Максимальная видимая длина строки для сгенерированного описания с учетом YAML-отступа."
-    },
-    {
-      "key": "kotTestToolkit.ai.timeoutSeconds",
-      "label": "Время ожидания ответа AI",
-      "section": "ai",
-      "advanced": true,
-      "type": "number",
-      "default": 180,
-      "description": "Таймаут AI-запроса на генерацию описания в секундах.",
-      "preferredScope": "user",
-      "hint": "Таймаут AI-запроса на генерацию описания в секундах."
-    },
-    {
-      "key": "kotTestToolkit.ai.systemPrompt",
-      "label": "Дополнительные указания для AI",
-      "section": "ai",
-      "advanced": true,
-      "type": "string",
-      "default": "",
-      "description": "Необязательная замена встроенного system prompt, который расширение использует при генерации описания сценария в метаданных KOT.\n\nОставьте пустым, чтобы использовать встроенный prompt, заточенный под YAML-сценарии KOT/1C.",
-      "preferredScope": "user",
-      "hint": "Необязательная замена встроенного system prompt, который расширение использует при генерации описания сценария в метаданных KOT."
-    },
-    {
       "key": "kotTestToolkit.startupParams.parameters",
       "label": "Общие ключи запуска 1С",
       "section": "infobases",
@@ -1091,6 +975,157 @@ window.KOT_SETTINGS_MODEL = {
       "preferredScope": "folder",
       "hint": "Режим совместимости: перед компиляцией временно убирает настройки запуска выключенных тестов test/*.yaml, затем возвращает их. Обычно выключен; включайте только для старого рабочего процесса, которому нужен такой перенос.",
       "compatibility": true
+    },
+    {
+      "key": "kotTestToolkit.steps.catalogMode",
+      "label": "Режим каталога шагов",
+      "labelEn": "Step catalog mode",
+      "section": "editor",
+      "advanced": false,
+      "preferredScope": "folder",
+      "optionLabels": [
+        "Онлайн",
+        "Офлайн"
+      ],
+      "hint": "В офлайн-режиме недостающий каталог создаётся автоматически из указанной поставки Vanessa, без обращения в интернет.",
+      "type": "string",
+      "default": "online",
+      "description": "Онлайн: использовать версионные каталоги из сети. Офлайн: использовать локальный каталог, а при его отсутствии автоматически создать из указанной поставки Vanessa, без доступа к интернету.",
+      "enum": [
+        "online",
+        "offline"
+      ]
+    },
+    {
+      "key": "kotTestToolkit.steps.localCatalogPath",
+      "label": "Локальный каталог шагов Vanessa",
+      "labelEn": "Local Vanessa step catalog",
+      "section": "editor",
+      "advanced": true,
+      "preferredScope": "folder",
+      "pathKind": "json",
+      "pathPolicy": "relative",
+      "hint": "Необязательный путь к готовому JSON для офлайн-режима. Оставьте пустым, чтобы KOT автоматически создавал и использовал каталог из выбранной поставки Vanessa.",
+      "type": "string",
+      "default": "",
+      "description": "Необязательный путь к готовому JSON каталога шагов Vanessa для офлайн-режима. Если путь не задан, KOT автоматически создаёт каталог из указанной поставки Vanessa. Для сетевых каталогов выберите онлайн-режим."
+    },
+    {
+      "key": "kotTestToolkit.files.mxlOpeningMode",
+      "label": "Открытие файлов MXL",
+      "labelEn": "Open MXL files with",
+      "section": "advanced",
+      "advanced": false,
+      "optionLabels": [
+        "1С:Предприятие — работа с файлами",
+        "Платформа 1С"
+      ],
+      "optionLabelsEn": [
+        "1C:Enterprise — File Workshop",
+        "1C platform"
+      ],
+      "hint": "Выберите программу для открытия MXL из сценариев, Библиотеки и проводника VS Code. При поддержке API используется подключённая Vanessa, иначе — служебная база KOT.",
+      "type": "string",
+      "default": "fileWorkshop",
+      "description": "Способ открытия файлов MXL из сценариев, Библиотеки и проводника.",
+      "enum": [
+        "fileWorkshop",
+        "platform"
+      ]
+    },
+    {
+      "key": "kotTestToolkit.agent.enabled",
+      "label": "Подключать агента при открытии проекта",
+      "labelEn": "Start agent access when the project opens",
+      "section": "agent",
+      "advanced": false,
+      "preferredScope": "workspace",
+      "type": "boolean",
+      "default": false,
+      "description": "Запускать локальный MCP-сервер с авторизацией при открытии доверенного проекта."
+    },
+    {
+      "key": "kotTestToolkit.agent.allowExecution",
+      "label": "Разрешить выполнение и действия с базой",
+      "labelEn": "Allow execution and environment actions",
+      "section": "agent",
+      "advanced": false,
+      "preferredScope": "workspace",
+      "type": "boolean",
+      "default": true,
+      "description": "Разрешить подключённому агенту запускать тесты и выполнять явные действия с формами и окружением."
+    },
+    {
+      "key": "kotTestToolkit.agent.repairPolicy",
+      "label": "Автоматическое исправление исходников",
+      "labelEn": "Automatic source repairs",
+      "section": "agent",
+      "advanced": false,
+      "preferredScope": "workspace",
+      "optionLabels": [
+        "Согласовывать все изменения",
+        "Автоматически исправлять тесты",
+        "Автоматически исправлять тесты и конфигурацию"
+      ],
+      "optionLabelsEn": [
+        "Review every change",
+        "Automatically repair tests",
+        "Automatically repair tests and configuration"
+      ],
+      "type": "string",
+      "default": "tests",
+      "description": "Политика автоматических правок исходников. Изменения существующих проверок и управления выполнением требуют отдельного решения пользователя.",
+      "enum": [
+        "read-only",
+        "tests",
+        "all"
+      ]
+    },
+    {
+      "key": "kotTestToolkit.agent.allowedRoots",
+      "label": "Дополнительные доступные каталоги",
+      "labelEn": "Additional accessible roots",
+      "section": "agent",
+      "advanced": true,
+      "preferredScope": "workspace",
+      "pathKind": "directories",
+      "pathPolicy": "relative",
+      "type": "array",
+      "default": [],
+      "description": "Дополнительные локальные каталоги, доступные агенту, включая внешние архивы CI и исходники конфигурации."
+    },
+    {
+      "key": "kotTestToolkit.agent.clientProfileId",
+      "label": "Профиль пользователя тестовой базы",
+      "labelEn": "Test infobase user profile",
+      "section": "agent",
+      "advanced": true,
+      "preferredScope": "workspace",
+      "type": "string",
+      "default": "",
+      "description": "Идентификатор сохранённого профиля клиента KOT для учётных данных при подключении изолированного окружения."
+    },
+    {
+      "key": "kotTestToolkit.agent.runTimeoutMinutes",
+      "label": "Предельная длительность запуска, минуты",
+      "labelEn": "Maximum run duration, minutes",
+      "section": "agent",
+      "advanced": true,
+      "preferredScope": "workspace",
+      "type": "number",
+      "default": 120,
+      "description": "Предельная длительность запроса выполнения Vanessa в минутах. После изменения переподключите Vanessa."
+    },
+    {
+      "key": "kotTestToolkit.agent.maxRepairAttempts",
+      "label": "Число попыток исправления в расследовании",
+      "labelEn": "Repair attempts per investigation",
+      "section": "agent",
+      "advanced": true,
+      "preferredScope": "workspace",
+      "type": "integer",
+      "default": 3,
+      "description": "Максимальное число применённых исправлений в одном расследовании до запроса решения."
     }
   ]
 };

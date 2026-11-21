@@ -137,11 +137,11 @@ test('scenario metadata imports once, remains authoritative after source saves a
 });
 
 test('workspace root owns portable metadata and external test roots own theirs', () => {
-    assert.equal(resolveProjectLibraryRoot('/project/tests/a/scen.yaml', ['/project'], ['/project/tests']), '/project');
-    assert.equal(resolveProjectLibraryRoot('/external/tests/a/scen.yaml', ['/project'], ['/external/tests']), '/external/tests');
-    assert.throws(() => resolveProjectLibraryRoot('/elsewhere/a.yaml', ['/project'], ['/external/tests']));
-    assert.equal(resolveProjectEntityIdentity('/project/tests/a.feature', '/project', 'feature').relativePath, 'tests/a.feature');
-    assert.throws(() => resolveProjectEntityIdentity('/other/a.feature', '/project', 'feature'));
+    assert.equal(resolveProjectLibraryRoot(path.resolve("/project/tests/a/scen.yaml"), [path.resolve("/project")], [path.resolve("/project/tests")]), path.resolve("/project"));
+    assert.equal(resolveProjectLibraryRoot(path.resolve("/external/tests/a/scen.yaml"), [path.resolve("/project")], [path.resolve("/external/tests")]), path.resolve("/external/tests"));
+    assert.throws(() => resolveProjectLibraryRoot('/elsewhere/a.yaml', [path.resolve("/project")], [path.resolve("/external/tests")]));
+    assert.equal(resolveProjectEntityIdentity(path.resolve("/project/tests/a.feature"), path.resolve("/project"), 'feature').relativePath, 'tests/a.feature');
+    assert.throws(() => resolveProjectEntityIdentity('/other/a.feature', path.resolve("/project"), 'feature'));
 });
 
 test('shared deletion is not undone by legacy grouping on a later scan', async () => {

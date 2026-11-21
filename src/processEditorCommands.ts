@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -12,6 +13,8 @@ import type { ScenarioIdentityChangeResult } from './scenarioPropertyIdentity';
 import { createScenarioPropertiesHost } from './scenarioPropertiesPanel';
 import { findLinkedScenarioSettings } from './scenarioPropertiesBindings';
 import { projectLibraryEnvironment } from './projectLibraryIntegration';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 async function editorDocument(target: vscode.Uri | undefined, t: Translator): Promise<vscode.TextDocument> {
     const document = target ? await vscode.workspace.openTextDocument(target) : vscode.window.activeTextEditor?.document;
@@ -40,11 +43,11 @@ export async function openProcessTestSettingsFromEditor(context: vscode.Extensio
         if (descriptor.kind !== 'process' || !descriptor.uid) { throw new Error(t('Choose a process YAML descriptor.')); }
         const files = await linkedSettings(document);
         if (!files.length) { throw new Error(t('Run settings file was not found for process "{0}".', descriptor.name || '')); }
-        const selected = files.length === 1 ? files[0] : (await vscode.window.showQuickPick(files.map(uri => ({
+        const selected = files.length === 1 ? files[0] : (await kotUi.showQuickPick(files.map(uri => ({
             label: path.basename(uri.fsPath), detail: uri.fsPath, uri
         })), { title: t('Select process run settings'), ignoreFocusOut: true }))?.uri;
         if (selected) { await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(selected), { preview: false }); }
-    } catch (error) { await vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { await kotUi.showErrorMessage(error instanceof Error ? error.message : String(error)); }
 }
 
 export async function changeProcessIdentityFromEditor(
@@ -72,7 +75,7 @@ export async function changeProcessIdentityFromEditor(
             }
             return undefined;
         };
-        const next = directValue ?? await vscode.window.showInputBox({
+        const next = directValue ?? await kotUi.showInputBox({
             title: t(field === 'name' ? 'Rename process' : 'Change process code'),
             prompt: t(field === 'name' ? 'Enter new process name' : 'Enter new process numeric code'),
             value: initial, ignoreFocusOut: true, validateInput
@@ -124,7 +127,7 @@ export async function changeProcessIdentityFromEditor(
         return result;
     } catch (error) {
         if (directValue !== undefined) { throw error; }
-        await vscode.window.showErrorMessage(t('Could not edit process: {0}', error instanceof Error ? error.message : String(error)));
+        await kotUi.showErrorMessage(t('Could not edit process: {0}', error instanceof Error ? error.message : String(error)));
     }
 }
 
@@ -138,7 +141,7 @@ export async function changeProcessTestSettingsFromEditor(context: vscode.Extens
         const yaml = ScenarioYamlDocument.parse(source); yaml.requireValidForEdit();
         if (String(yaml.findFieldAtPath(['ТипФайла'])?.value).trim().toLowerCase() !== 'настройкапроцесса') { throw new Error(t('Choose process run settings YAML.')); }
         const catalog = await scanWorkspaceForScenarioCatalog(workspaceFor(document, t));
-        const selected = await vscode.window.showQuickPick(catalog.all.filter(info => info.kind === 'process' && info.uid).map(info => ({
+        const selected = await kotUi.showQuickPick(catalog.all.filter(info => info.kind === 'process' && info.uid).map(info => ({
             label: info.name, description: info.processCode, detail: info.relativePath, info
         })), { title: t('Change linked process'), ignoreFocusOut: true });
         if (!selected) { return; }
@@ -159,5 +162,5 @@ export async function changeProcessTestSettingsFromEditor(context: vscode.Extens
         const previous = catalog.all.filter(info => info.kind === 'process' && info.uid?.toLowerCase() === previousUid);
         await vscode.commands.executeCommand('kotTestToolkit._processSourceFilesChanged', [document.uri, definitions[0].yamlFileUri, ...previous.map(info => info.yamlFileUri)]);
         await vscode.commands.executeCommand('kotTestToolkit.refreshPhaseSwitcherFromCreate');
-    } catch (error) { await vscode.window.showErrorMessage(t('Could not edit process: {0}', error instanceof Error ? error.message : String(error))); }
+    } catch (error) { await kotUi.showErrorMessage(t('Could not edit process: {0}', error instanceof Error ? error.message : String(error))); }
 }

@@ -15,6 +15,7 @@ out/tools/**
 test/**
 artifacts/**
 tools/cleanTestOutput.cjs
+tools/runTests.cjs
 tools/step-catalog/**
 tsconfig.tools.json
 test/fixtures/step-catalog/**
@@ -23,6 +24,7 @@ tsconfig.json
 .git/**
 .gitignore
 *.vsix
+*.log
 **/.DS_Store
 **/Thumbs.db
 **/._*
@@ -36,6 +38,7 @@ tools/checkTestNumbering.cjs
 tools/updateVanessaParameterCatalog.cjs
 out/**
 !out/extension.js
+!out/agent-mcp.cjs
 
 # Design-only preview stays in the repository; the installed page lives in media/.
 docs/ux/**

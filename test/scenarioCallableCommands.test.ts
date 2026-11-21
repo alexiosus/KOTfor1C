@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import { v3Fixture } from './helpers/projectFormat';
 import * as projectFormatModule from '../src/projectFormat';
 import * as projectLegacyModule from '../src/projectLegacyMetadata';
@@ -79,7 +80,7 @@ async function harness(t: test.TestContext, native = false) {
             allowCrossFunctionUsage: true, userProfile: 'User', reportLevel1: 'Tests', nestedReportLevel2: 'Nested' }) }, './projectLibraryStore': { waitForProjectLibraryIdle: async () => undefined } };
     const ts = require('typescript') as typeof import('typescript'); const module = { exports: {} as any };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/scenarioCallableCommands.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
-        { module, exports: module.exports, require: (name: string) => dependencies[name] ?? require(name) });
+        { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? require(name)) });
     const services: any = { resolver: { ensureReady: async () => getView(), resolve: async (_uri: unknown, line: string, view = getView()) => matcher.resolveProjectInvocation(view, line) },
         references: { findReferences: async (id: string) => {
             const view = getView(); return [caller, ...(fs.existsSync(generated) ? [generated] : [])].flatMap(file => fs.readFileSync(file, 'utf8').split('\n').flatMap((line, index) => {

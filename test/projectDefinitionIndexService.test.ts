@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { localFileUri, virtualFilePath } from './helpers/filePaths';
 import type { ProjectDefinitionFileRecord } from '../src/projectDefinition';
 import {
     parseProjectDefinitionCache,
@@ -45,24 +46,24 @@ class MemoryFileSystem implements ProjectDefinitionFileSystem {
     blockedRealpath?: { path: string; gate: ReturnType<typeof deferred<void>> };
 
     setFile(filePath: string, content: string, mtimeMs = Date.now()): void {
-        this.files.set(path.posix.normalize(filePath), { content, mtimeMs });
+        this.files.set(virtualFilePath(filePath), { content, mtimeMs });
     }
 
     setRealpathAlias(aliasPath: string, physicalPath: string): void {
-        this.realpathAliases.set(path.posix.normalize(aliasPath), path.posix.normalize(physicalPath));
+        this.realpathAliases.set(virtualFilePath(aliasPath), virtualFilePath(physicalPath));
     }
 
     private physicalPath(filePath: string): string {
-        const normalized = path.posix.normalize(filePath);
+        const normalized = virtualFilePath(filePath);
         return this.realpathAliases.get(normalized) ?? normalized;
     }
 
     deleteFile(filePath: string): void {
-        this.files.delete(path.posix.normalize(filePath));
+        this.files.delete(virtualFilePath(filePath));
     }
 
     async readDirectory(directoryPath: string) {
-        const normalized = path.posix.normalize(directoryPath);
+        const normalized = virtualFilePath(directoryPath);
         this.directoryReads.push(normalized);
         this.activeDirectoryReads += 1;
         this.maxDirectoryReads = Math.max(this.maxDirectoryReads, this.activeDirectoryReads);
@@ -110,7 +111,7 @@ class MemoryFileSystem implements ProjectDefinitionFileSystem {
     }
 
     async realpath(value: string): Promise<string> {
-        if (this.blockedRealpath?.path === path.posix.normalize(value)) {
+        if (this.blockedRealpath?.path === virtualFilePath(value)) {
             await this.blockedRealpath.gate.promise;
         }
         return this.physicalPath(value);
@@ -219,7 +220,7 @@ function configuration(
     return {
         identity,
         workspaceFolderPath: '/workspace',
-        workspaceFolderUri: 'file:///workspace',
+        workspaceFolderUri: localFileUri("/workspace"),
         profileId,
         libraryRootPaths: [root],
         warnings: []
@@ -255,7 +256,7 @@ test('reuses exact cached records and reads only changed files', async () => {
     const first = createService(fileSystem, { cache });
     first.startProfile(configuration('active'));
     await first.waitForIdle();
-    const cachedFeature = first.getSnapshot()?.files.get('file:///workspace/active/export.feature');
+    const cachedFeature = first.getSnapshot()?.files.get(localFileUri("/workspace/active/export.feature"));
     assert.ok(cachedFeature);
     first.dispose();
 
@@ -282,9 +283,9 @@ test('routes an open file from an external configured library to its workspace p
     service.startProfile(configuration('active', root));
     await service.waitForIdle();
 
-    const snapshot = await service.ensureReady(`file://${featurePath}`);
+    const snapshot = await service.ensureReady(localFileUri(featurePath));
 
-    assert.equal(snapshot.workspaceFolderUri, 'file:///workspace');
+    assert.equal(snapshot.workspaceFolderUri, localFileUri("/workspace"));
     assert.deepEqual(snapshot.definitions.map(item => item.template), ['External export']);
 });
 
@@ -294,16 +295,16 @@ test('prefers workspace ownership over another workspace configured library root
     service.startProfile({
         ...configuration('workspace-a', '/workspace/a/libraries'),
         workspaceFolderPath: '/workspace/a',
-        workspaceFolderUri: 'file:///workspace/a'
+        workspaceFolderUri: localFileUri("/workspace/a")
     });
     service.startProfile({
         ...configuration('workspace-b', '/workspace/a/features'),
         workspaceFolderPath: '/workspace/b',
-        workspaceFolderUri: 'file:///workspace/b'
+        workspaceFolderUri: localFileUri("/workspace/b")
     });
     await service.waitForIdle();
 
-    const snapshot = await service.ensureReady('file:///workspace/a/features/open.feature');
+    const snapshot = await service.ensureReady(localFileUri("/workspace/a/features/open.feature"));
 
     assert.equal(snapshot.profileId, 'workspace-a');
 });
@@ -332,7 +333,7 @@ test('routes a physical library file when its configured root is a filesystem al
     service.startProfile(configuration('active', aliasRoot));
     await service.waitForIdle();
 
-    const snapshot = await service.ensureReady('file:///physical/libraries/Drive/open.feature');
+    const snapshot = await service.ensureReady(localFileUri("/physical/libraries/Drive/open.feature"));
 
     assert.equal(snapshot.profileId, 'active');
 });
@@ -414,7 +415,7 @@ test('scan and watcher retain the configured navigable alias while deduplicating
     await service.waitForIdle();
 
     assert.equal(service.getSnapshot()?.definitions.length, 1);
-    assert.equal(service.getSnapshot()?.definitions[0].definitionLocation?.uri, 'file:///alias/libraries/Drive/WaitWindowReadyForInput.feature');
+    assert.equal(service.getSnapshot()?.definitions[0].definitionLocation?.uri, localFileUri("/alias/libraries/Drive/WaitWindowReadyForInput.feature"));
     const callbacks = watches.callbacks.get(aliasRoot);
     assert.ok(callbacks);
 
@@ -428,7 +429,7 @@ test('scan and watcher retain the configured navigable alias while deduplicating
     );
     assert.deepEqual(
         [...(service.getSnapshot()?.files.keys() ?? [])],
-        ['file:///alias/libraries/Drive/WaitWindowReadyForInput.feature']
+        [localFileUri("/alias/libraries/Drive/WaitWindowReadyForInput.feature")]
     );
 });
 
@@ -574,7 +575,7 @@ test('ensureReady waits for the initial profile configuration already loading in
     let settled = false;
 
     service.start();
-    const ready = service.ensureReady(`file://${featurePath}`).then(
+    const ready = service.ensureReady(localFileUri(featurePath)).then(
         snapshot => ({ snapshot }),
         error => ({ error })
     ).finally(() => { settled = true; });
@@ -673,7 +674,7 @@ test('persistent cache round-trips valid records and rejects incompatible or mal
     try {
         const cache = new ProjectDefinitionCache(directory);
         const fileRecord: ProjectDefinitionFileRecord = {
-            uri: 'file:///workspace/a.feature',
+            uri: localFileUri("/workspace/a.feature"),
             size: 10,
             mtimeMs: 20,
             parserVersion: 'parser-v1',
@@ -708,7 +709,7 @@ test('persistent cache round-trips valid records and rejects incompatible or mal
             }]
         }), 'configuration-a', 'parser-v1'), null);
     } finally {
-        await fs.rm(directory, { recursive: true, force: true });
+        await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
 });
 
@@ -717,5 +718,5 @@ test('a full library refresh replaces files removed and added by a branch change
     const service=createService(files);service.startProfile(configuration('active'));await service.waitForIdle();
     files.deleteFile('/workspace/active/old.feature');files.setFile('/workspace/active/new.feature',exportFeature('New branch'),2);
     await service.refreshLibraries();
-    assert.deepEqual([...service.getSnapshot()!.files.keys()],['file:///workspace/active/new.feature']);service.dispose();
+    assert.deepEqual([...service.getSnapshot()!.files.keys()],[localFileUri("/workspace/active/new.feature")]);service.dispose();
 });

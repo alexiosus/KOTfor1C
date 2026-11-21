@@ -83,8 +83,8 @@
 | Обновить тесты | `kotTestToolkit.refreshPhaseSwitcher` |
 | Развернуть или свернуть все группы тестов | `kotTestToolkit.toggleTestManagerGroups` |
 | Развернуть или свернуть все группы библиотеки | `kotTestToolkit.toggleStepLibraryGroups` |
-| Открыть AI-отчёт по изменениям конфигурации | `kotTestToolkit.openConfigurationDiffReport` |
-| Открыть AI-ревью тестов | `kotTestToolkit.openTestReviewReport` |
+| Открыть сохранённый отчёт по изменениям конфигурации | `kotTestToolkit.openConfigurationDiffReport` |
+| Открыть сохранённое ревью тестов | `kotTestToolkit.openTestReviewReport` |
 | Открыть настройки расширения | `kotTestToolkit.openSettings` |
 | KOT - Запустить мост Исследователя форм (режим TestClient) | `kotTestToolkit.startFormExplorerBridge` |
 | KOT - Исправить проблемы сценария | `kotTestToolkit.fixScenarioIssues` |
@@ -100,9 +100,6 @@
 | KOT - Изменить имя главного сценария | `kotTestToolkit.renameScenarioFromEditor` |
 | KOT - Изменить код вложенного сценария | `kotTestToolkit.changeNestedScenarioCode` |
 | KOT - Изменить имя вложенного сценария | `kotTestToolkit.changeNestedScenarioName` |
-| KOT - Сгенерировать описание KOTМетаданные через AI | `kotTestToolkit.generateScenarioDescriptionWithAi` |
-| Сгенерировать AI-отчет по diff конфигурации для тестировщика | `kotTestToolkit.generateConfigurationDiffImpactReportWithAi` |
-| Сделать AI-ревью измененных тестов | `kotTestToolkit.reviewChangedTestsWithAi` |
 | KOT - Отслеживать прогон по логу для открытого feature | `kotTestToolkit.trackScenarioRunByFeatureLog` |
 | KOT - Переключить отслеживаемый прогон для открытого feature | `kotTestToolkit.switchTrackedScenarioRunForFeature` |
 | KOT - Остановить отслеживание прогонов для открытого feature | `kotTestToolkit.stopTrackedScenarioRunForFeature` |
@@ -133,7 +130,6 @@
 | Изменить код вложенного сценария | `kotTestToolkit.editorMenu.changeNestedScenarioCode` |
 | Заполнить секцию ВложенныеСценарии | `kotTestToolkit.editorMenu.checkAndFillNestedScenarios` |
 | Заполнить секцию ПараметрыСценария | `kotTestToolkit.editorMenu.checkAndFillScriptParameters` |
-| Сгенерировать описание KOTМетаданные через AI | `kotTestToolkit.editorMenu.generateScenarioDescriptionWithAi` |
 | Переименовать процесс | `kotTestToolkit.editorMenu.renameProcessFromEditor` |
 | Изменить код процесса | `kotTestToolkit.editorMenu.changeProcessCodeFromEditor` |
 | Открыть настройку запуска процесса | `kotTestToolkit.editorMenu.openProcessTestSettingsFromEditor` |
@@ -204,3 +200,11 @@
 | Выгрузить компилятор из СППР… | `kotTestToolkit.exportSpprCompiler` |
 | Настройки сеанса Vanessa | `kotTestToolkit.vanessaControl.settings` |
 | Получить проверки текущего элемента Vanessa | `kotTestToolkit.vanessaControl.elementChecks` |
+| Подключить ИИ-агента | `kotTestToolkit.agent.setup` |
+| Агент: запустить MCP-сервер и открыть настройки подключения | `kotTestToolkit.agent.start` |
+| Агент: остановить MCP-сервер | `kotTestToolkit.agent.stop` |
+| Агент: запустить тесты | `kotTestToolkit.agent.run` |
+| Агент: импортировать архив падения CI | `kotTestToolkit.agent.importCi` |
+| Агент: создать задачу тестирования стори | `kotTestToolkit.agent.story` |
+| Агент: открыть отчёт операции | `kotTestToolkit.agent.report` |
+| Агент: рассмотреть предложенное исправление | `kotTestToolkit.agent.approveRepair` |

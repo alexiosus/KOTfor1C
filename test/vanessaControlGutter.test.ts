@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -68,6 +69,7 @@ function harness(yamlCancelled = false) {
         const source = fs.readFileSync(path.join(process.cwd(), 'src', name + '.ts'), 'utf8');
         vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText,
             { module, exports: module.exports, Error, require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
                 if (name === 'vscode') { return vscode; }
                 if (name === 'node:fs/promises') { return { stat: async () => ({ isFile: () => true }), readFile: async () => text }; }
                 if (name === './vanessaControlFeature') { return feature; }

@@ -37,10 +37,10 @@
       "titleEn": "Form Explorer"
     },
     {
-      "id": "ai",
-      "title": "AI-помощь",
-      "description": "Подключение сервиса и параметры ответов",
-      "titleEn": "AI assistance"
+      "id": "agent",
+      "title": "Агент тестирования",
+      "description": "Выполнение, расследования и политика исправлений",
+      "titleEn": "Testing agent"
     },
     {
       "id": "advanced",
@@ -390,7 +390,10 @@
       "section": "editor",
       "advanced": false,
       "preferredScope": "folder",
-      "optionLabels": ["Онлайн", "Офлайн"],
+      "optionLabels": [
+        "Онлайн",
+        "Офлайн"
+      ],
       "hint": "В офлайн-режиме недостающий каталог создаётся автоматически из указанной поставки Vanessa, без обращения в интернет."
     },
     {
@@ -775,96 +778,6 @@
       "labelEn": "Additional 1C template folders"
     },
     {
-      "key": "kotTestToolkit.ai.apiFormat",
-      "label": "Тип AI-сервиса",
-      "section": "ai",
-      "advanced": false,
-      "preferredScope": "user",
-      "hint": "Формат HTTP API, через который расширение обращается к подключенной LLM.",
-      "optionLabels": [
-        "OpenAI Responses API (`/responses`). Обычно предпочтителен для облачных моделей OpenAI.",
-        "OpenAI-compatible Chat Completions API (`/chat/completions`). Лучший дефолт для локальных провайдеров и прокси."
-      ],
-      "labelEn": "AI service type"
-    },
-    {
-      "key": "kotTestToolkit.ai.baseUrl",
-      "label": "Адрес AI-сервиса",
-      "section": "ai",
-      "advanced": false,
-      "preferredScope": "user",
-      "hint": "Базовый URL подключенной LLM.",
-      "labelEn": "AI service URL"
-    },
-    {
-      "key": "kotTestToolkit.ai.apiVersion",
-      "label": "Версия API сервиса",
-      "section": "ai",
-      "advanced": true,
-      "preferredScope": "user",
-      "hint": "Необязательная версия API в параметре ?api-version=. Укажите только если её требует сервер. Для Azure OpenAI v1, стандартного OpenAI и локальных провайдеров оставьте пустым.",
-      "labelEn": "AI API version"
-    },
-    {
-      "key": "kotTestToolkit.ai.apiKey",
-      "label": "Ключ доступа к AI-сервису",
-      "section": "ai",
-      "advanced": false,
-      "preferredScope": "user",
-      "editor": "password",
-      "hint": "Ключ вашего AI-сервиса. Для него выберите область «Этот компьютер».",
-      "labelEn": "AI access key"
-    },
-    {
-      "key": "kotTestToolkit.ai.model",
-      "label": "Модель",
-      "section": "ai",
-      "advanced": false,
-      "preferredScope": "user",
-      "hint": "Имя модели для генерации описаний сценариев.",
-      "labelEn": "AI model"
-    },
-    {
-      "key": "kotTestToolkit.ai.outputLanguage",
-      "label": "Язык ответов AI",
-      "section": "ai",
-      "advanced": false,
-      "preferredScope": "user",
-      "hint": "Язык, на котором генерируется описание сценария.",
-      "optionLabels": [
-        "Русский (`ru`)",
-        "Английский (`en`)"
-      ],
-      "labelEn": "AI response language"
-    },
-    {
-      "key": "kotTestToolkit.ai.maxLineLength",
-      "label": "Длина строк в AI-описаниях",
-      "section": "ai",
-      "advanced": true,
-      "preferredScope": "user",
-      "hint": "Максимальная видимая длина строки для сгенерированного описания с учетом YAML-отступа.",
-      "labelEn": "AI description line length"
-    },
-    {
-      "key": "kotTestToolkit.ai.timeoutSeconds",
-      "label": "Время ожидания ответа AI",
-      "section": "ai",
-      "advanced": true,
-      "preferredScope": "user",
-      "hint": "Таймаут AI-запроса на генерацию описания в секундах.",
-      "labelEn": "AI response timeout"
-    },
-    {
-      "key": "kotTestToolkit.ai.systemPrompt",
-      "label": "Дополнительные указания для AI",
-      "section": "ai",
-      "advanced": true,
-      "preferredScope": "user",
-      "hint": "Необязательная замена встроенного system prompt, который расширение использует при генерации описания сценария в метаданных KOT.",
-      "labelEn": "Additional AI instructions"
-    },
-    {
       "key": "kotTestToolkit.startupParams.parameters",
       "label": "Общие ключи запуска 1С",
       "section": "infobases",
@@ -891,8 +804,14 @@
       "labelEn": "Open MXL files with",
       "section": "advanced",
       "advanced": false,
-      "optionLabels": ["1С:Предприятие — работа с файлами", "Платформа 1С"],
-      "optionLabelsEn": ["1C:Enterprise — File Workshop", "1C platform"],
+      "optionLabels": [
+        "1С:Предприятие — работа с файлами",
+        "Платформа 1С"
+      ],
+      "optionLabelsEn": [
+        "1C:Enterprise — File Workshop",
+        "1C platform"
+      ],
       "hint": "Выберите программу для открытия MXL из сценариев, Библиотеки и проводника VS Code. При поддержке API используется подключённая Vanessa, иначе — служебная база KOT."
     },
     {
@@ -926,6 +845,74 @@
       "hint": "Режим совместимости: при сборке временно переносить test/*.yaml отключённых сценариев во временный каталог ОС и возвращать после сборки.",
       "compatibility": true,
       "labelEn": "Exclude disabled tests by moving files"
+    },
+    {
+      "key": "kotTestToolkit.agent.enabled",
+      "label": "Подключать агента при открытии проекта",
+      "labelEn": "Start agent access when the project opens",
+      "section": "agent",
+      "advanced": false,
+      "preferredScope": "workspace"
+    },
+    {
+      "key": "kotTestToolkit.agent.allowExecution",
+      "label": "Разрешить выполнение и действия с базой",
+      "labelEn": "Allow execution and environment actions",
+      "section": "agent",
+      "advanced": false,
+      "preferredScope": "workspace"
+    },
+    {
+      "key": "kotTestToolkit.agent.repairPolicy",
+      "label": "Автоматическое исправление исходников",
+      "labelEn": "Automatic source repairs",
+      "section": "agent",
+      "advanced": false,
+      "preferredScope": "workspace",
+      "optionLabels": [
+        "Согласовывать все изменения",
+        "Автоматически исправлять тесты",
+        "Автоматически исправлять тесты и конфигурацию"
+      ],
+      "optionLabelsEn": [
+        "Review every change",
+        "Automatically repair tests",
+        "Automatically repair tests and configuration"
+      ]
+    },
+    {
+      "key": "kotTestToolkit.agent.allowedRoots",
+      "label": "Дополнительные доступные каталоги",
+      "labelEn": "Additional accessible roots",
+      "section": "agent",
+      "advanced": true,
+      "preferredScope": "workspace",
+      "pathKind": "directories",
+      "pathPolicy": "relative"
+    },
+    {
+      "key": "kotTestToolkit.agent.clientProfileId",
+      "label": "Профиль пользователя тестовой базы",
+      "labelEn": "Test infobase user profile",
+      "section": "agent",
+      "advanced": true,
+      "preferredScope": "workspace"
+    },
+    {
+      "key": "kotTestToolkit.agent.runTimeoutMinutes",
+      "label": "Предельная длительность запуска, минуты",
+      "labelEn": "Maximum run duration, minutes",
+      "section": "agent",
+      "advanced": true,
+      "preferredScope": "workspace"
+    },
+    {
+      "key": "kotTestToolkit.agent.maxRepairAttempts",
+      "label": "Число попыток исправления в расследовании",
+      "labelEn": "Repair attempts per investigation",
+      "section": "agent",
+      "advanced": true,
+      "preferredScope": "workspace"
     }
   ]
 }

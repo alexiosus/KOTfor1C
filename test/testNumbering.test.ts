@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -45,7 +46,7 @@ async function fixture(t: test.TestContext) {
     const source = fs.existsSync(sourcePath) ? fs.readFileSync(sourcePath, 'utf8') : 'export {};';
     const ts = require('typescript') as typeof import('typescript'); const module = { exports: {} };
     vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText,
-        { module, exports: module.exports, require: (name: string) => deps[name] ?? require(name), console, Buffer });
+        { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (deps[name] ?? require(name)), console, Buffer });
     // The real command uses VS Code; only host prompts/state and discovery are simulated here.
     const api = module.exports as {
         promptForNewTestCode(context: unknown, target: unknown, options: { prompt: string; initialValue?: string; numericOnly?: boolean }): Promise<{ code: string; author?: string; root: string; claim(): Promise<void> } | undefined>;

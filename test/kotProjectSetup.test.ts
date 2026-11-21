@@ -1,3 +1,4 @@
+import { createTestLink } from './helpers/symlinks';
 import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -24,7 +25,7 @@ test('setup discovery reads pairs once, separates export libraries and excludes 
     await f.put('libraries/steps.feature', '#language: en\n@ExportScenarios\nFeature: Library\nScenario: Shared\n    And Delay 1\n');
     await f.put('.vscode/kot-runtime/generated.feature', 'Feature: Generated\n');
     await f.put('node_modules/ignored.feature', 'Feature: Ignore\n');
-    await fs.symlink(path.join(f.root, 'tests'), path.join(f.root, 'alias'), 'dir');
+    if (!await createTestLink(t, path.join(f.root, 'tests'), path.join(f.root, 'alias'))) { return; }
     const before = await fs.readdir(path.join(f.root, 'tests/native'));
     const result = await inspectSetupProject(f.root);
     assert.equal(result.sppr.length, 1); assert.equal(result.features.length, 1); assert.equal(result.libraries.length, 1);

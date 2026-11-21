@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -53,7 +54,7 @@ function load(file: string, extra: Record<string, unknown> = {}): any {
     }
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'src', file), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-    }).outputText, { module, exports: module.exports, require: (name: string) => dependencies[name] ?? {}, console });
+    }).outputText, { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? {}), console });
     return module.exports;
 }
 
@@ -133,7 +134,7 @@ test('scenario header actions use shared main classification without legacy KOT 
     assert.ok(commands.includes('kotTestToolkit.renameScenarioFromEditor'));
     assert.ok(commands.includes('kotTestToolkit.openProjectMetadata'));
     assert.ok(commands.includes('kotTestToolkit.changeScenarioGroup'));
-    assert.ok(commands.includes('kotTestToolkit.generateScenarioDescriptionWithAi'));
+    assert.ok(!commands.includes('kotTestToolkit.generateScenarioDescriptionWithAi'));
     assert.ok(!commands.includes('kotTestToolkit.changeNestedScenarioName'));
 });
 
@@ -184,8 +185,7 @@ test('scenario header hints preserve main scenario and run settings actions with
         'kotTestToolkit.changeScenarioGroup',
         'kotTestToolkit.renameScenarioFromEditor',
         'kotTestToolkit.openProjectMetadata',
-        'kotTestToolkit.renameScenarioFromEditor',
-        'kotTestToolkit.generateScenarioDescriptionWithAi'
+        'kotTestToolkit.renameScenarioFromEditor'
     ]);
 
     const settings = 'ТипФайла: "НастройкаТеста"\nДанныеТеста:\n    UIDСценария: "scenario"\n';

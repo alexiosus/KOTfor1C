@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import type {
     ProjectDefinition,
@@ -7,6 +8,8 @@ import type {
 } from './projectDefinition';
 import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
 import { getFeatureNestedScenarioContextAtPosition } from './featureNestedScenarioUtils';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 function navigableLocation(definition: ProjectDefinition): ProjectDefinitionLocation | undefined {
     return definition.implementationLocation ?? definition.definitionLocation;
@@ -85,7 +88,7 @@ async function openLocation(location: ProjectDefinitionLocation): Promise<boolea
         return true;
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        vscode.window.showErrorMessage(vscode.l10n.t('Failed to open definition: {0}', message));
+        kotUi.showErrorMessage(vscode.l10n.t('Failed to open definition: {0}', message));
         return false;
     }
 }
@@ -170,13 +173,13 @@ export async function openProjectDefinitionHandler(
         if (location) {
             return openLocation(location);
         }
-        vscode.window.showInformationMessage(vscode.l10n.t('This definition has no project source location.'));
+        kotUi.showInformationMessage(vscode.l10n.t('This definition has no project source location.'));
         return false;
     }
 
     const location = capturedLocation(capturedLocationValue);
     if (!location) {
-        vscode.window.showInformationMessage(vscode.l10n.t('Project definition is no longer available.'));
+        kotUi.showInformationMessage(vscode.l10n.t('Project definition is no longer available.'));
         return false;
     }
     return openLocation(location);
@@ -195,7 +198,7 @@ export async function pickProjectDefinition(
         return openProjectDefinitionHandler(definitions[0].id, resourceUri, resolver);
     }
 
-    const picked = await vscode.window.showQuickPick(
+    const picked = await kotUi.showQuickPick(
         definitions.map(definition => ({
             label: definition.template,
             description: definition.sourceLabel,
@@ -236,7 +239,7 @@ export async function openScenarioDefinitionForInvocation(
     const definitions = scenarioDefinitions(await resolver.resolve(resourceUri, invocation));
     if (definitions.length === 0) {
         if (options.missingMessage) {
-            vscode.window.showInformationMessage(options.missingMessage);
+            kotUi.showInformationMessage(options.missingMessage);
         }
         return false;
     }

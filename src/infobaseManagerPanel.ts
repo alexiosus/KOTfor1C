@@ -1,4 +1,6 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
+import { createHash } from 'node:crypto';
 import {
     addInfobaseToLauncherInteractive,
     configureInfobaseStartupParametersInteractive,
@@ -28,6 +30,8 @@ import { managedInfobaseRuntimeTracker } from './infobaseRuntimeTracker';
 import { getTranslator } from './localization';
 import { normalizeInfobaseConnectionIdentity } from './oneCInfobaseConnection';
 import { type ConfiguredOneCPlatform, ensureOneCPlatformsCatalogInitialized } from './oneCPlatform';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 type InfobaseManagerSortMode = 'alphabetical' | 'lastOpened' | 'manual';
 
@@ -82,6 +86,23 @@ function escapeHtml(text: string): string {
 }
 
 export class InfobaseManagerPanel implements vscode.Disposable {
+    async apiPreferences(input?: { expectedRevision: string; sortMode?: InfobaseManagerSortMode; showHidden?: boolean; manualIds?: string[] }): Promise<unknown> {
+        this.infobases = [...(await this.managedInfobaseService.refresh()).infobases];
+        const ids = new Map(this.infobases.map(base => [this.normalizePathForCompare(base.infobasePath), base.id]));
+        const values = { sortMode: this.getSortMode(), showHidden: this.getShowHidden(), manualIds: this.buildReconciledManualOrder(this.infobases).map(key => ids.get(key)!) };
+        const revision = createHash('sha256').update(JSON.stringify(values)).digest('hex');
+        if (!input) { return { revision, ...values }; }
+        if (input.expectedRevision !== revision) { throw new Error('Infobase preferences changed. Read preferences again.'); }
+        if (input.sortMode !== undefined && !['alphabetical', 'lastOpened', 'manual'].includes(input.sortMode)) { throw new Error('Invalid infobase sort mode.'); }
+        if (input.manualIds && (input.manualIds.length !== ids.size || new Set(input.manualIds).size !== ids.size || input.manualIds.some(id => !values.manualIds.includes(id)))) { throw new Error('The manual order must contain every current infobase ID once.'); }
+        if (input.showHidden !== undefined) { await this.setShowHidden(input.showHidden); }
+        if (input.sortMode) { await this.setSortMode(input.sortMode); }
+        if (input.manualIds) {
+            const paths = new Map(this.infobases.map(base => [base.id, base.infobasePath]));
+            await this.setStoredManualOrder(input.manualIds.map(id => paths.get(id)!));
+        }
+        await this.postState(); return this.apiPreferences();
+    }
     public static readonly panelType = 'kotTestToolkit.infobaseManagerPanel';
 
     private panel: vscode.WebviewPanel | null = null;
@@ -408,7 +429,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
             this.lastError = message;
-            vscode.window.showErrorMessage(message);
+            kotUi.showErrorMessage(message);
         } finally {
             this.pendingAction = null;
             this.pendingInfobasePath = null;
@@ -492,7 +513,7 @@ export class InfobaseManagerPanel implements vscode.Disposable {
                 return;
             case 'addManual':
                 await this.executePanelAction(t('Adding infobase path...'), async () => {
-                    const selection = await vscode.window.showOpenDialog({
+                    const selection = await kotUi.showOpenDialog({
                         canSelectFiles: false,
                         canSelectFolders: true,
                         canSelectMany: false,

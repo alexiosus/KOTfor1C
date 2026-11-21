@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -8,6 +9,8 @@ import { resolveSharedStartupPlatform } from './sharedStartupPlatform';
 import { ensureSharedStartupInfobaseReady, getSharedStartupInfobasePaths } from './startupInfobase';
 import { buildFileInfobaseConnectionArgument } from './oneCInfobaseConnection';
 import { redactVanessaDiagnosticText } from './vanessaControlRedaction';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 function launch(executable: string, args: readonly string[]): Promise<{ exit: () => { code: number | null; signal: string | null } | undefined }> {
     return new Promise((resolve, reject) => {
@@ -41,7 +44,7 @@ export function createScenarioFileOpener(context: vscode.ExtensionContext, sessi
             await launch(executable, [uri.fsPath]); return true;
         }
         if (process.platform !== 'win32') { throw new Error(vscode.l10n.t('Opening MXL files through the 1C platform currently requires Windows.')); }
-        return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Opening MXL in 1C…') }, async progress => {
+        return kotUi.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Opening MXL in 1C…') }, async progress => {
             const paths = getSharedStartupInfobasePaths();
             if (!paths) { throw new Error(vscode.l10n.t('Open a workspace folder first.')); }
             const directory = path.join(paths.rootDirectory, 'mxl'); await fs.mkdir(directory, { recursive: true });

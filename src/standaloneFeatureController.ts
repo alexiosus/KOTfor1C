@@ -1,8 +1,11 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import { createFeature, generateFeatureJson } from './featureCreator';
 import { renameStandaloneFeatureTitle, renameStandaloneFeatureFile } from './featureRenameCommands';
 import type { StandaloneFeatureService } from './standaloneFeatureService';
 import type { StandaloneFeatureSnapshot } from './standaloneFeatureModel';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export type StandaloneFeatureAction =
     | 'createFeature' | 'createGroup' | 'renameGroup' | 'deleteGroup' | 'reorderGroup'
@@ -167,7 +170,7 @@ export class StandaloneFeatureController implements vscode.Disposable {
                     command: 'standaloneFeatureActionResult', action: message.action,
                     featureId: message.featureId, succeeded: false, message: errorText
                 });
-                await vscode.window.showErrorMessage(errorText);
+                await kotUi.showErrorMessage(errorText);
             }
         } finally {
             this.pending.delete(key);
@@ -180,7 +183,7 @@ export class StandaloneFeatureController implements vscode.Disposable {
     }
 
     private async groupName(current?: string): Promise<string | undefined> {
-        const answer = await vscode.window.showInputBox({
+        const answer = await kotUi.showInputBox({
             title: current === undefined ? t('New feature group') : t('Rename group'),
             prompt: t('Group name'), value: current ?? '',
             validateInput: value => value.trim() ? undefined : t('Enter a group name.')
@@ -212,7 +215,7 @@ export class StandaloneFeatureController implements vscode.Disposable {
                 }
             } else {
                 const deleteLabel = t('Delete group');
-                const confirmation = await vscode.window.showWarningMessage(
+                const confirmation = await kotUi.showWarningMessage(
                     t('Delete this group and move its features to Ungrouped?'), { modal: true }, deleteLabel
                 );
                 if (confirmation === deleteLabel) {
@@ -263,7 +266,7 @@ export class StandaloneFeatureController implements vscode.Disposable {
                 return;
             }
             case 'selectJson': {
-                const selected = await vscode.window.showOpenDialog({
+                const selected = await kotUi.showOpenDialog({
                     title: t('Select launch JSON'), canSelectMany: false,
                     canSelectFiles: true, canSelectFolders: false, filters: { JSON: ['json'] }
                 });
@@ -283,7 +286,7 @@ export class StandaloneFeatureController implements vscode.Disposable {
                 let groupId = message.groupId;
                 const choosingMembership = groupId === undefined;
                 if (groupId === undefined) {
-                    const choice = await vscode.window.showQuickPick([
+                    const choice = await kotUi.showQuickPick([
                         { label: t('Ungrouped'), groupId: '' },
                         ...this.catalog.getSnapshot().groups.map(group => ({ label: group.name, groupId: group.id }))
                     ], { title: t('Move feature'), placeHolder: t('Choose a destination group') });

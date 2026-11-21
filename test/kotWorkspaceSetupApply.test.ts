@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import * as projectSetupGateModule from '../src/projectSetupGate';
 import os from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -38,7 +39,7 @@ function fixture(root = '/project', scan?: () => Promise<void>) {
     const exports: Record<string, any> = {};
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'src/kotWorkspacePanel.ts'), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
-    }).outputText, { exports, require: (id: string) => id.startsWith('node:') ? nativeRequire(id) : mocks[id] ?? {}, console: { info() {} }, process, Error });
+    }).outputText, { exports, require: (id: string) => id === './kotInteraction' ? nativeInteraction : (id.startsWith('node:') ? nativeRequire(id) : mocks[id] ?? {}), console: { info() {} }, process, Error });
     const panel = new exports.KotWorkspacePanel({ workspaceState: { get: (key: string) => saved.get(key), update: async (key: string, value: unknown) => { saved.set(key, value); } } });
     panel.panel = { webview: { postMessage: async (message: typeof events[number]) => { events.push(message); } } };
     panel.review = { id: 'review', folder: uri.toString(), draft: { run: true, mode: 'sppr' }, filesApplied: true, settingsApplied: true, profileApplied: true, platformApplied: true };

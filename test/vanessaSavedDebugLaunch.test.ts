@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -13,6 +14,7 @@ import * as infobaseConnection from '../src/oneCInfobaseConnection';
 import * as standaloneFeatureLaunch from '../src/standaloneFeatureLaunch';
 import * as directProcessLaunch from '../src/directProcessLaunch';
 import * as processCommandDisplay from '../src/processCommandDisplay';
+import { loadSharedStartupPlatform } from './helpers/sharedStartupPlatformFixture';
 
 function fixture(t: TestContext) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-saved-debug-'));
@@ -51,7 +53,8 @@ function fixture(t: TestContext) {
     const module = { exports: {} as any };
     vm.runInNewContext(compiled, {
         module, exports: module.exports, Buffer, console, process, setImmediate, setTimeout, clearTimeout, setInterval, clearInterval,
-        require: (name: string) => {
+        require: function requireDependency(name: string): unknown {
+            if (name === './kotInteraction') { return nativeInteraction; }
             if (name === 'vscode') { return vscode; }
             if (name === 'child_process') { return processHost; }
             if (['fs', 'path', 'os', 'node:crypto'].includes(name)) { return require(name); }
@@ -64,8 +67,13 @@ function fixture(t: TestContext) {
             if (name === './directProcessLaunch') { return directProcessLaunch; }
             if (name === './processCommandDisplay') { return processCommandDisplay; }
             if (name === './deferredLoader') { return { createDeferredLoader: (factory: unknown) => factory }; }
-            if (name === './oneCPlatform.js') { return { resolveOneCPlatformForLaunch: async () => { platformSelections++; return { clientExePath: executable }; } }; }
-            if (name === './startupInfobase.js') { return { ensureSharedStartupInfobaseMcpReady: async () => undefined }; }
+            if (name === './oneCPlatform.js' || name === './oneCPlatform') { return { resolveOneCPlatformForLaunch: async () => { platformSelections++; return { clientExePath: executable }; } }; }
+            if (name === './sharedStartupPlatform.js') { return loadSharedStartupPlatform(requireDependency); }
+            if (name === './oneCInfobasePlatform') { return { runningOneCInfobasePlatform: async () => undefined }; }
+            if (name === './startupInfobase.js' || name === './startupInfobase') { return {
+                getSharedStartupInfobasePaths: () => ({ infobaseDirectory: path.join(root, 'service') }),
+                ensureSharedStartupInfobaseMcpReady: async () => undefined
+            }; }
             if (name === './infobaseManager.js') { return { updateManagedInfobaseMetadata: async () => undefined }; }
             return {};
         }
@@ -276,7 +284,8 @@ test('MCP runtime uses native library file search before VanessaExt is connected
     assert.equal(json.SearchingForFilesUsingTheVanessaExtComponent, false); assert.equal(json.useaddin, true);
     assert.equal(typeof json.ИмяФайлаЛогВыполненияСценариев, 'string');
     assert.ok(path.isAbsolute(json.ИмяФайлаЛогВыполненияСценариев));
-    assert.ok(json.ИмяФайлаЛогВыполненияСценариев.startsWith(f.root));
+    const logRelative = path.relative(f.root, json.ИмяФайлаЛогВыполненияСценариев);
+    assert.ok(logRelative && !logRelative.startsWith('..' + path.sep) && !path.isAbsolute(logRelative));
     assert.equal(json.ИмяФайлаЛогВыполненияСценариев, path.join(f.root, 'runtime', 'logs', 'vanessa-mcp-9876.log').replace(/\\/gu, '/'));
     const second = await f.provider.writeVanessaManualDebugJson({}, { mode: 'scenario', clients: [] }, 'other-feature', f.root, 9876);
     assert.equal(JSON.parse(fs.readFileSync(second, 'utf8')).ИмяФайлаЛогВыполненияСценариев, json.ИмяФайлаЛогВыполненияСценариев);

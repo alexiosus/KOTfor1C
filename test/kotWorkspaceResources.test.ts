@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
@@ -10,6 +11,7 @@ test('sidebar resource links open the fixed repository and the installed extensi
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/kotWorkspacePanel.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
     }).outputText, { module, exports: module.exports, process, require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
         if (name === 'vscode') { return { Uri: { parse: (uri: string) => uri, joinPath: (base: string, file: string) => `${base}/${file}` },
             workspace: { fs: { stat: async (uri: string) => { if (!uri.endsWith('/changelog.md')) { throw new Error('Not found'); } return {}; } } },
             env: { openExternal: async (uri: unknown) => { opened.push(uri); return true; } },

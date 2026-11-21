@@ -1,3 +1,6 @@
+import { nativeInteraction } from './helpers/kotInteraction';
+import { withKotInteraction } from '../src/kotInteraction';
+import { localFileUri } from './helpers/filePaths';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -14,6 +17,20 @@ import { ScenarioRelationshipIndex } from '../src/scenarioRelationshipIndex';
 import { findExportScenarioBuildCallers } from '../src/scenarioBuildDependencies';
 import { createProjectDefinitionView } from '../src/projectDefinition';
 import * as vanessaLaunchJson from '../src/vanessaLaunchJson';
+
+test('refreshing combined run artifacts validates every configured path before writing', async () => {
+    const Provider = loadPhaseSwitcherProvider({ fsPath: process.cwd() });
+    const provider = Object.create(Provider.prototype) as Record<string, any>;
+    provider.ensureFreshScenarioCatalog = provider.restoreScenarioBuildArtifactsFromDiskIfNeeded = async () => {};
+    provider._scenarioBuildArtifacts = new Map([['first', { jsonPath: 'first.json' }], ['denied', { jsonPath: 'denied.json' }]]);
+    provider.getCombinedScenarioJsonArtifactPath = (file: string) => file + '.combined';
+    let writes = 0; provider.ensureCombinedScenarioJsonArtifacts = async () => { writes++; };
+    const checked: unknown[] = [];
+    await assert.rejects(withKotInteraction({ token: {}, notify() {}, progress() {}, ask: async () => ({}),
+        resolvePath: async (file, create) => { checked.push([file, create]); if (file === 'denied.json') { throw new Error('Access denied'); } }
+    }, () => provider.refreshCombinedScenarioJsonArtifacts()), /Access denied/);
+    assert.equal(writes, 0); assert.deepEqual(checked, [['first.json', false], ['first.json.combined', true], ['denied.json', false]]);
+});
 
 function loadPhaseSwitcherProvider(workspaceUri: object, dependencies: Record<string, unknown> = {}): { prototype: object } {
     const ts = require(path.join(process.cwd(), 'node_modules', 'typescript')) as typeof import('typescript');
@@ -32,6 +49,7 @@ function loadPhaseSwitcherProvider(workspaceUri: object, dependencies: Record<st
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (Object.hasOwn(dependencies, specifier)) { return dependencies[specifier]; }
             if (specifier === 'vscode') {
                 return vscode;
@@ -67,7 +85,7 @@ function loadPhaseSwitcherProvider(workspaceUri: object, dependencies: Record<st
 }
 
 test('Test Manager requires linked launch settings independently of old groups and process kind', () => {
-    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' });
+    const Provider = loadPhaseSwitcherProvider({ fsPath: path.resolve("/workspace") });
     const provider = Object.create(Provider.prototype) as Record<string, any>;
     assert.equal(provider.isMainScenario({ name: 'Old group only', tabName: 'Smoke', hasTestSettings: false }), false);
     assert.equal(provider.isMainScenario({ name: 'Nested process', kind: 'process', tabName: 'Smoke', hasTestSettings: false }), false);
@@ -75,31 +93,31 @@ test('Test Manager requires linked launch settings independently of old groups a
 });
 
 test('saving a native nested script marks its compiled callers stale while leaving unrelated tests current', async () => {
-    const root = { scheme: 'file', fsPath: '/workspace', toString: () => 'file:///workspace' };
+    const root = { scheme: 'file', fsPath: path.resolve("/workspace"), toString: () => localFileUri("/workspace") };
     const Provider = loadPhaseSwitcherProvider(root, { './scenarioCatalog': { ScenarioDirectoryIndex },
-        './scenarioRelationshipIndex': { ScenarioRelationshipIndex }, './workspaceScanner': { resolveScanDirFsPath: () => '/workspace/tests' },
+        './scenarioRelationshipIndex': { ScenarioRelationshipIndex }, './workspaceScanner': { resolveScanDirFsPath: () => path.resolve("/workspace/tests") },
         './scenarioBuildDependencies': { findExportScenarioBuildCallers } });
     const provider = Object.create(Provider.prototype) as Record<string, any>;
-    const uri = (file: string) => ({ scheme: 'file', fsPath: file, toString: () => `file://${file}` });
-    const nested = { name: 'Nested', yamlFileUri: uri('/workspace/tests/nested/meta.yaml') };
-    const main = { name: 'Main', yamlFileUri: uri('/workspace/tests/main/scen.yaml'), nestedScenarioNames: ['Nested'] };
-    const unrelated = { name: 'Other', yamlFileUri: uri('/workspace/tests/other/scen.yaml') };
+    const uri = (file: string) => ({ scheme: 'file', fsPath: file, toString: () => localFileUri(`${file}`) });
+    const nested = { name: 'Nested', yamlFileUri: uri(path.resolve("/workspace/tests/nested/meta.yaml")) };
+    const main = { name: 'Main', yamlFileUri: uri(path.resolve("/workspace/tests/main/scen.yaml")), nestedScenarioNames: ['Nested'] };
+    const unrelated = { name: 'Other', yamlFileUri: uri(path.resolve("/workspace/tests/other/scen.yaml")) };
     const catalog = { all: [nested, main, unrelated], byUri: new Map([nested, main, unrelated].map(info => [info.yamlFileUri.toString(), info])),
         byName: new Map([nested, main, unrelated].map(info => [info.name, [info]])) };
-    Object.assign(provider, { getScanDirAbsolutePath: () => '/workspace/tests', isInCompilerScanRoots: (file: string) => file.startsWith('/workspace/tests/'),
+    Object.assign(provider, { getScanDirAbsolutePath: () => path.resolve("/workspace/tests"), isInCompilerScanRoots: (file: string) => file.startsWith(path.resolve("/workspace/tests/")),
         getScenarioCatalog: () => catalog, normalizeFsPathForComparison: (file: string) => file,
         _scenarioBuildArtifacts: new Map([main, unrelated].map(info => [info.yamlFileUri.toString(), {
             scenarioKey: info.yamlFileUri.toString(), scenarioName: info.name, sourceUri: info.yamlFileUri }])),
         _staleBuiltScenarioNames: new Set(), _scenarioExecutionStates: new Map(),
         getSharedArtifactKeys: (key: string) => [key], sendRunArtifactsStateToWebview() {} });
-    const script = uri('/workspace/tests/nested/scen.feature');
+    const script = uri(path.resolve("/workspace/tests/nested/scen.feature"));
     assert.equal(provider.shouldTrackUriForScenarioChange(script), true);
     await provider.handleScenarioSourceSaved({ uri: script });
     assert.deepEqual([...provider._staleBuiltScenarioNames], [main.yamlFileUri.toString()]);
-    assert.equal(provider.shouldTrackUriForScenarioChange(uri('/outside/scen.feature')), false);
+    assert.equal(provider.shouldTrackUriForScenarioChange(uri(path.resolve("/outside/scen.feature"))), false);
     // Libraries may be outside compiler roots and remain referenced at runtime.
     provider._staleBuiltScenarioNames.clear();
-    const exported = uri('/workspace/libraries/export.feature');
+    const exported = uri(path.resolve("/workspace/libraries/export.feature"));
     provider.setDefinitionReferenceServices({ resolver: { getView: async () => createProjectDefinitionView('export', [{
         id: 'export', kind: 'exportScenario', template: 'Export', normalizedTemplate: 'export', parameters: [], sourceLabel: 'export',
         definitionLocation: { uri: exported.toString(), range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } } }
@@ -109,8 +127,8 @@ test('saving a native nested script marks its compiled callers stale while leavi
 });
 
 test('generated feature Properties waits for source catalog before restoring artifact identities', async () => {
-    const root = { fsPath: '/workspace' };
-    const source = { toString: () => 'file:///workspace/process.yaml' };
+    const root = { fsPath: path.resolve("/workspace") };
+    const source = { toString: () => localFileUri("/workspace/process.yaml") };
     const Provider = loadPhaseSwitcherProvider(root, { vscode: { EventEmitter: class {},
         workspace: { getWorkspaceFolder: () => ({ uri: root }) }, Uri: { parse: (uri: string) => uri } } });
     const provider = Object.create(Provider.prototype) as Record<string, any>;
@@ -118,10 +136,10 @@ test('generated feature Properties waits for source catalog before restoring art
     provider._scenarioBuildArtifacts = new Map();
     provider.ensureFreshScenarioCatalog = async () => { ready = true; };
     provider.restoreScenarioBuildArtifactsFromDiskIfNeeded = async () => {
-        if (ready) { provider._scenarioBuildArtifacts.set('process', { featurePath: '/workspace/own.feature', sourceUri: source }); }
+        if (ready) { provider._scenarioBuildArtifacts.set('process', { featurePath: path.resolve("/workspace/own.feature"), sourceUri: source }); }
     };
     provider.normalizeFilePathForComparison = (value: string) => value.toLowerCase();
-    assert.equal(await provider.findSourceForCompiledFeature({ fsPath: '/workspace/own.feature' }), source.toString());
+    assert.equal(await provider.findSourceForCompiledFeature({ fsPath: path.resolve("/workspace/own.feature") }), source.toString());
 });
 
 test('managed Test Manager run keeps authored settings and reports the confirmed MCP outcome', async () => {
@@ -150,11 +168,11 @@ test('managed Test Manager run keeps authored settings and reports the confirmed
 test('Test Manager uses MCP by default while an explicit process setting keeps the compatibility launch', async () => {
     for (const configured of [undefined, 'process']) {
         let managed = 0; let processLaunch = 0;
-        const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' }, { vscode: { EventEmitter: class {},
-            workspace: { workspaceFolders: [{ uri: { fsPath: '/workspace' } }], getConfiguration: () => ({ get: (key: string, fallback?: unknown) => key === 'runVanessa.executionMode' ? configured ?? fallback : fallback }) },
+        const Provider = loadPhaseSwitcherProvider({ fsPath: path.resolve("/workspace") }, { vscode: { EventEmitter: class {},
+            workspace: { workspaceFolders: [{ uri: { fsPath: path.resolve("/workspace") } }], getConfiguration: () => ({ get: (key: string, fallback?: unknown) => key === 'runVanessa.executionMode' ? configured ?? fallback : fallback }) },
             window: { showInformationMessage() {}, showErrorMessage() {} } } });
         const provider = Object.create(Provider.prototype) as Record<string, any>;
-        const artifact = { scenarioKey: 'own', scenarioName: 'Own', featurePath: '/workspace/own.feature' };
+        const artifact = { scenarioKey: 'own', scenarioName: 'Own', featurePath: path.resolve("/workspace/own.feature") };
         Object.assign(provider, { _staleBuiltScenarioNames: new Set(), _scenarioLastLaunchContexts: new Map(), t: (key: string) => key,
             isScenarioRunInProgress: () => false, pruneScenarioBuildArtifactsByCache() {}, getScenarioBuildArtifact: () => artifact,
             resolveScenarioLaunchTarget: () => ({ targetPath: artifact.featurePath, targetKind: 'feature' }), getRunOutputChannel: () => ({ clear() {}, show() {} }),
@@ -169,10 +187,10 @@ test('Test Manager uses MCP by default while an explicit process setting keeps t
 });
 
 test('Run from a compiled feature resolves its YAML source before launching', async () => {
-    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' });
+    const Provider = loadPhaseSwitcherProvider({ fsPath: path.resolve("/workspace") });
     const provider = Object.create(Provider.prototype) as Record<string, any>;
-    const source = { toString: () => 'file:///workspace/scen.yaml' };
-    const generated = { fsPath: '/workspace/generated.feature', toString: () => 'file:///workspace/generated.feature' };
+    const source = { toString: () => localFileUri("/workspace/scen.yaml") };
+    const generated = { fsPath: path.resolve("/workspace/generated.feature"), toString: () => localFileUri("/workspace/generated.feature") };
     const scenario = { name: 'Own', yamlFileUri: source };
     const calls: unknown[] = [];
     provider.findSourceForCompiledFeature = async (uri: unknown) => { assert.equal(uri, generated); return source; };
@@ -180,12 +198,12 @@ test('Run from a compiled feature resolves its YAML source before launching', as
     provider.resolveScenarioRuntimeOperationTarget = async (target: unknown) => { calls.push(target); return scenario; };
     provider.runScenarioInVanessa = async (...args: unknown[]) => { calls.push(args); };
     await provider.runTestFromSource(generated);
-    assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ uri: 'file:///workspace/scen.yaml' }, ['Own', 'file:///workspace/scen.yaml']]);
+    assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ uri: localFileUri("/workspace/scen.yaml") }, ['Own', localFileUri("/workspace/scen.yaml")]]);
 });
 
 test('feature Run routes a source with no compiled owner to the standalone launch path', async () => {
-    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' }); const provider = Object.create(Provider.prototype) as Record<string, any>;
-    const uri = { fsPath: '/workspace/own.feature', toString: () => 'file:///workspace/own.feature' }; let called = false;
+    const Provider = loadPhaseSwitcherProvider({ fsPath: path.resolve("/workspace") }); const provider = Object.create(Provider.prototype) as Record<string, any>;
+    const uri = { fsPath: path.resolve("/workspace/own.feature"), toString: () => localFileUri("/workspace/own.feature") }; let called = false;
     provider.findSourceForCompiledFeature = async () => undefined;
     provider.resolveScenarioRuntimeOperationTarget = async () => undefined;
     provider.runStandaloneFeature = async (id: string) => { assert.equal(id, uri.toString()); called = true; };
@@ -193,24 +211,24 @@ test('feature Run routes a source with no compiled owner to the standalone launc
 });
 
 test('MCP full/from-line tracking tails the bound session log and finalizes after the last read', async () => {
-    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' }); const p = Object.create(Provider.prototype) as Record<string, any>;
-    const calls: unknown[] = []; const artifact = { scenarioKey: 'own', scenarioName: 'Own', featurePath: '/workspace/own.feature', jsonPath: '/workspace/own.json' };
+    const Provider = loadPhaseSwitcherProvider({ fsPath: path.resolve("/workspace") }); const p = Object.create(Provider.prototype) as Record<string, any>;
+    const calls: unknown[] = []; const artifact = { scenarioKey: 'own', scenarioName: 'Own', featurePath: path.resolve("/workspace/own.feature"), jsonPath: path.resolve("/workspace/own.json") };
     Object.assign(p, { _scenarioBuildArtifacts: new Map([['own', artifact]]), _mcpFeatureRuns: new Set(),
         _externalTrackedRunsByScenario: new Map(), _activeTrackedRunKeyByScenario: new Map([['own', 'previous']]), stopLiveRunLogWatcher() {},
-        normalizeFilePathForComparison: (value: string) => value, resolveVanessaLogPathFromJson: () => '/workspace/run.log',
+        normalizeFilePathForComparison: (value: string) => value, resolveVanessaLogPathFromJson: () => path.resolve("/workspace/run.log"),
         startFeatureStepTracker: (...args: unknown[]) => calls.push(args), pollFeatureStepTracker: async () => { calls.push('tail'); },
         finalizeRunningFeatureStepHighlight: () => calls.push('complete'), stopFeatureStepTracker: () => calls.push('stop'), clearRunningFeatureStepHighlight() {} });
-    await p.trackVanessaFeatureRun('/workspace/other.feature')(true); assert.deepEqual(calls, []);
-    const finish = p.trackVanessaFeatureRun(artifact.featurePath, '/workspace/run.log'); assert.equal(p._mcpFeatureRuns.has('own'), true);
+    await p.trackVanessaFeatureRun(path.resolve("/workspace/other.feature"))(true); assert.deepEqual(calls, []);
+    const finish = p.trackVanessaFeatureRun(artifact.featurePath, path.resolve("/workspace/run.log")); assert.equal(p._mcpFeatureRuns.has('own'), true);
     assert.equal(p._activeTrackedRunKeyByScenario.has('own'), false, 'an external watcher must not replace MCP progress');
-    await finish(true); assert.deepEqual(calls, [['own', 'Own', '/workspace/run.log', artifact.featurePath], 'tail', 'complete', 'stop']);
+    await finish(true); assert.deepEqual(calls, [['own', 'Own', path.resolve("/workspace/run.log"), artifact.featurePath], 'tail', 'complete', 'stop']);
 });
 
 test('Run from YAML Properties restores disk artifacts before launching after a restart', async () => {
-    const root = { fsPath: '/workspace' };
+    const root = { fsPath: path.resolve("/workspace") };
     const Provider = loadPhaseSwitcherProvider(root);
     const provider = Object.create(Provider.prototype) as Record<string, any>;
-    const source = { scheme: 'file', fsPath: '/workspace/scen.yaml', toString: () => 'file:///workspace/scen.yaml' };
+    const source = { scheme: 'file', fsPath: path.resolve("/workspace/scen.yaml"), toString: () => localFileUri("/workspace/scen.yaml") };
     let restored = false;
     provider.resolveScenarioRuntimeOperationTarget = async () => ({ name: 'Own', yamlFileUri: source });
     provider.restoreScenarioBuildArtifactsFromDiskIfNeeded = async (uri: unknown) => { assert.equal(uri, root); restored = true; };
@@ -219,16 +237,16 @@ test('Run from YAML Properties restores disk artifacts before launching after a 
 });
 
 test('MCP tracks an uncatalogued feature in the same session and retains whole-feature mode for the final log read', async () => {
-    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' }, { vscode: { EventEmitter: class {},
-        Uri: { file: (file: string) => ({ toString: () => `file://${file}` }) } } });
+    const Provider = loadPhaseSwitcherProvider({ fsPath: path.resolve("/workspace") }, { vscode: { EventEmitter: class {},
+        Uri: { file: (file: string) => ({ toString: () => localFileUri(`${file}`) }) } } });
     const provider = Object.create(Provider.prototype) as Record<string, any>; const seen: unknown[][] = [];
     Object.assign(provider, { _scenarioBuildArtifacts: new Map(), _standaloneFeatureArtifacts: new Map(), _mcpFeatureRuns: new Set(),
         _externalTrackedRunsByScenario: new Map(), _activeTrackedRunKeyByScenario: new Map(), stopLiveRunLogWatcher() {},
         normalizeFilePathForComparison: (file: string) => file, startFeatureStepTracker: (...args: unknown[]) => { seen.push(args); },
         pollFeatureStepTracker: async (key: string) => { assert.equal(provider._mcpFeatureRuns.has(key), true); },
         finalizeRunningFeatureStepHighlight() {}, clearRunningFeatureStepHighlight() {}, stopFeatureStepTracker() {} });
-    const finish = provider.trackVanessaFeatureRun('/workspace/new.feature', '/session.log');
-    assert.equal(seen[0][2], '/session.log'); assert.equal(seen[0][3], '/workspace/new.feature');
+    const finish = provider.trackVanessaFeatureRun(path.resolve("/workspace/new.feature"), '/session.log');
+    assert.equal(seen[0][2], '/session.log'); assert.equal(seen[0][3], path.resolve("/workspace/new.feature"));
     await finish(true); assert.equal(provider._mcpFeatureRuns.size, 0);
 });
 
@@ -292,10 +310,10 @@ test('managed full launch reuses normal infobase preparation and keeps the autho
 });
 
 test('compiler control capture follows the current profile, complete source folders and Test Manager selection', async () => {
-    const workspace = { fsPath: '/workspace', toString: () => 'file:///workspace' };
+    const workspace = { fsPath: path.resolve("/workspace"), toString: () => localFileUri("/workspace") };
     let captured: any;
     const profile = { id: 'default', name: 'Default', buildParameters: [
-        { key: 'ScenarioFolder', value: 'scenarios' }, { key: 'ProcessFolder', value: '/processes' },
+        { key: 'ScenarioFolder', value: 'scenarios' }, { key: 'ProcessFolder', value: path.resolve("/processes") },
         { key: 'ModelDbSettings', value: 'model.yml' }],
         additionalVanessaParameters: [{ key: 'custom', value: 'fixture-secret', valueKind: undefined }], globalVanessaVariables: [] };
     let active = profile;
@@ -309,8 +327,8 @@ test('compiler control capture follows the current profile, complete source fold
     provider.getProjectPaths = () => ({ buildScenarioBddEpf: { fsPath: '/tools/compiler.epf' } });
     provider.getMainScenarioSelectionSnapshotForBuild = async () => ({ enabledKeys: ['z', 'a'], disabledKeys: ['b'] });
     await provider.captureCompilerControlInputs(workspace);
-    assert.deepEqual([...captured.sourceRoots], ['/workspace/scenarios', '/processes']);
-    assert.equal(captured.modelDbSettingsPath, '/workspace/model.yml'); assert.equal(captured.compilerPath, '/tools/compiler.epf');
+    assert.deepEqual([...captured.sourceRoots], [path.resolve("/workspace/scenarios"), path.resolve("/processes")]);
+    assert.equal(captured.modelDbSettingsPath, path.resolve("/workspace/model.yml")); assert.equal(captured.compilerPath, '/tools/compiler.epf');
     assert.deepEqual([...captured.configuration.enabledKeys], ['a', 'z']);
     assert.deepEqual([...captured.configuration.disabledKeys], ['b']);
     assert.equal(captured.configuration.profile.additionalVanessaParameters[0].value, 'fixture-secret');
@@ -321,37 +339,37 @@ test('compiler control capture follows the current profile, complete source fold
 });
 
 test('Test Manager attachment search indexes source files for unbuilt scenarios under their stable keys', async () => {
-    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' });
+    const Provider = loadPhaseSwitcherProvider({ fsPath: path.resolve("/workspace") });
     const provider = Object.create(Provider.prototype) as Record<string, any>;
     const scenarios = ['first', 'second'].map(folder => ({
         name: 'Duplicate', tabName: 'Smoke', relativePath: folder,
-        yamlFileUri: { toString: () => `file:///workspace/${folder}/scen.yaml` }
+        yamlFileUri: { toString: () => localFileUri(`/workspace/${folder}/scen.yaml`) }
     }));
     provider.getMainScenariosFromCatalog = () => scenarios;
     provider.compiledScenarioFileItem = () => null;
     provider._scenarioFilesService = {
         listAttachmentPaths: async (item: { capturedLocation?: { uri: string } }) => {
-            if (item.capturedLocation?.uri === 'file:///workspace/first/scen.yaml') { return ['Fixtures/Input.xlsx']; }
-            if (item.capturedLocation?.uri === 'file:///workspace/second/scen.yaml') { return ['Other.csv']; }
+            if (item.capturedLocation?.uri === localFileUri("/workspace/first/scen.yaml")) { return ['Fixtures/Input.xlsx']; }
+            if (item.capturedLocation?.uri === localFileUri("/workspace/second/scen.yaml")) { return ['Other.csv']; }
             return [];
         }
     };
     const result = await provider.buildScenarioAttachmentSearchPaths();
     assert.deepEqual(JSON.parse(JSON.stringify(result)), {
-        'file:///workspace/first/scen.yaml': ['Fixtures/Input.xlsx'],
-        'file:///workspace/second/scen.yaml': ['Other.csv']
+        [localFileUri("/workspace/first/scen.yaml")]: ['Fixtures/Input.xlsx'],
+        [localFileUri("/workspace/second/scen.yaml")]: ['Other.csv']
     });
 });
 
 test('Test Manager shows its catalog before waiting for runtime artifacts or attachment indexing', async () => {
-    const workspace = { fsPath: '/workspace', toString: () => 'file:///workspace' };
+    const workspace = { fsPath: path.resolve("/workspace"), toString: () => localFileUri("/workspace") };
     const Provider = loadPhaseSwitcherProvider(workspace, {
         vscode: { EventEmitter: class {}, workspace: { workspaceFolders: [{ uri: workspace }], getConfiguration: () => ({ get: () => false }) }, window: {} },
         './yamlParametersManager.js': { YamlParametersManager: { getInstance: () => ({ getProfilesSummary: async () => [] }) } }
     });
     const provider = Object.create(Provider.prototype) as Record<string, any>;
     const messages: Array<Record<string, any>> = [];
-    const scenario = { name: 'Ready', yamlFileUri: { toString: () => 'file:///workspace/scen.yaml' } };
+    const scenario = { name: 'Ready', yamlFileUri: { toString: () => localFileUri("/workspace/scen.yaml") } };
     const webview = { postMessage: (message: Record<string, unknown>) => { messages.push(message); return Promise.resolve(true); } };
     let release!: () => void;
     const slowWork = new Promise<void>(resolve => { release = resolve; });
@@ -379,7 +397,7 @@ test('Test Manager shows its catalog before waiting for runtime artifacts or att
 });
 
 test('run artifact notifications skip identical snapshots but resend changes and a new webview', () => {
-    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' });
+    const Provider = loadPhaseSwitcherProvider({ fsPath: path.resolve("/workspace") });
     const provider = Object.create(Provider.prototype) as Record<string, any>; const sent: any[] = [];
     let status = 'running'; let published = 0;
     provider.publishScenarioArtifactChanges = () => { published++; };
@@ -393,7 +411,7 @@ test('run artifact notifications skip identical snapshots but resend changes and
 });
 
 test('Test Manager ignores an older attachment-search response after a newer invalidation', async () => {
-    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' });
+    const Provider = loadPhaseSwitcherProvider({ fsPath: path.resolve("/workspace") });
     const provider = Object.create(Provider.prototype) as Record<string, any>;
     const sent: unknown[] = [];
     provider._view = { webview: { postMessage: async (message: unknown) => sent.push(message) } };
@@ -413,21 +431,21 @@ test('Test Manager ignores an older attachment-search response after a newer inv
 });
 
 test('scenario rename moves adjacent metadata before publishing the refreshed catalog', async () => {
-    const from = { fsPath: '/workspace/tests/old/scen.yaml', toString: () => 'file:///workspace/tests/old/scen.yaml' };
-    const to = { fsPath: '/workspace/tests/new/scen.yaml', toString: () => 'file:///workspace/tests/new/scen.yaml' };
+    const from = { fsPath: path.resolve("/workspace/tests/old/scen.yaml"), toString: () => localFileUri("/workspace/tests/old/scen.yaml") };
+    const to = { fsPath: path.resolve("/workspace/tests/new/scen.yaml"), toString: () => localFileUri("/workspace/tests/new/scen.yaml") };
     const info = { name: 'Sales', uid: 'sales', yamlFileUri: from };
     const calls: string[] = [];
     const guard = () => undefined;
-    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' }, {
+    const Provider = loadPhaseSwitcherProvider({ fsPath: path.resolve("/workspace") }, {
         './projectLibraryIntegration': {
-            projectLibraryEnvironment: () => ({ workspaceRoots: ['/workspace'], scanRoots: ['/workspace/tests'] }),
+            projectLibraryEnvironment: () => ({ workspaceRoots: [path.resolve("/workspace")], scanRoots: [path.resolve("/workspace/tests")] }),
             assertProjectMetadataSaved: guard
         },
         './projectLibraryMetadata': { remapProjectScenarioMetadata: async (previous: unknown, next: { yamlFileUri: unknown }, roots: string[], scans: string[], beforeWrite: unknown) => {
             assert.equal(previous, info);
             assert.equal(next.yamlFileUri, to);
-            assert.equal(JSON.stringify(roots), '["/workspace"]');
-            assert.equal(JSON.stringify(scans), '["/workspace/tests"]');
+            assert.deepEqual(roots, [path.resolve('/workspace')]);
+            assert.deepEqual(scans, [path.resolve('/workspace/tests')]);
             assert.equal(beforeWrite, guard);
             calls.push('metadata');
         } }
@@ -451,16 +469,16 @@ test('scenario rename moves adjacent metadata before publishing the refreshed ca
 
 
 test('Library scenario and group rename use the selected target without requiring an active editor', async () => {
-    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' });
+    const Provider = loadPhaseSwitcherProvider({ fsPath: path.resolve("/workspace") });
     const provider = Object.create(Provider.prototype) as Record<string, any>;
     const calls: unknown[] = [];
-    const scenario = { name: 'Selected', yamlFileUri: { toString: () => 'file:///selected/scen.yaml' }, tabName: 'Smoke' };
+    const scenario = { name: 'Selected', yamlFileUri: { toString: () => localFileUri("/selected/scen.yaml") }, tabName: 'Smoke' };
     provider.resolveScenarioOperationTarget = async () => scenario;
     provider.isMainScenario = () => false;
     provider.changeNestedScenarioName = async (target: unknown) => calls.push(['nested', target]);
     provider.renameScenario = async (target: unknown) => calls.push(['main', target]);
     provider.renameGroup = async (name: string) => calls.push(['group', name]);
-    const target = { name: 'Selected', uri: 'file:///selected/scen.yaml' };
+    const target = { name: 'Selected', uri: localFileUri("/selected/scen.yaml") };
     await provider.renameScenarioTarget(target);
     provider.isMainScenario = () => true;
     await provider.renameScenarioTarget(target);
@@ -470,7 +488,7 @@ test('Library scenario and group rename use the selected target without requirin
 });
 
 test('manual Test Manager refresh rescans catalog and compiled artifacts by default', async () => {
-    const workspaceUri = { fsPath: '/workspace', toString: () => 'file:///workspace' };
+    const workspaceUri = { fsPath: path.resolve("/workspace"), toString: () => localFileUri("/workspace") };
     const Provider = loadPhaseSwitcherProvider(workspaceUri);
     const provider = Object.create(Provider.prototype) as Record<string, any>;
     const calls: string[] = [];
@@ -501,11 +519,11 @@ test('manual Test Manager refresh rescans catalog and compiled artifacts by defa
 });
 
 test('conversion refresh marks transitive callers stale using the old graph and current artifact keys', async () => {
-    const workspaceUri = { fsPath: '/workspace', toString: () => 'file:///workspace' };
+    const workspaceUri = { fsPath: path.resolve("/workspace"), toString: () => localFileUri("/workspace") };
     const Provider = loadPhaseSwitcherProvider(workspaceUri);
     const provider = Object.create(Provider.prototype) as Record<string, any>;
-    const source = { scheme: 'file', fsPath: '/workspace/nested/scen.yaml' };
-    const oldKey = 'file:///workspace/main/scen.yaml'; const newKey = 'file:///workspace/main/meta.yaml';
+    const source = { scheme: 'file', fsPath: path.resolve("/workspace/nested/scen.yaml") };
+    const oldKey = localFileUri("/workspace/main/scen.yaml"); const newKey = localFileUri("/workspace/main/meta.yaml");
     const main = { scenarioKey: oldKey, scenarioName: 'Main', featurePath: '/build/main.feature' };
     const unrelated = { scenarioKey: 'other', scenarioName: 'Other', featurePath: '/build/other.feature' };
     provider._scenarioBuildArtifacts = new Map([[oldKey, main], ['other', unrelated]]);
@@ -542,7 +560,7 @@ test('artifact refresh avoids hash evaluation and build-root watcher is debounce
 });
 
 test('artifact watcher ignores derived combined JSON while retaining real compiler inputs and attachments', () => {
-    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' });
+    const Provider = loadPhaseSwitcherProvider({ fsPath: path.resolve("/workspace") });
     const provider = Object.create(Provider.prototype) as Record<string, any>;
     const uri = (file: string, scheme = 'file') => ({ fsPath: file, scheme });
     for (const file of ['/build/own.combined.json', '/build/OWN.COMBINED.JSON', '/build/Файлы/own.combined.json']) {
@@ -617,7 +635,7 @@ test('artifact integration rescans external artifacts without pre-build hashing'
 });
 
 test('an unchanged disk rescan preserves stale state until the compiled artifact changes', async () => {
-    const workspaceUri = { fsPath: '/workspace', toString: () => 'file:///workspace' };
+    const workspaceUri = { fsPath: path.resolve("/workspace"), toString: () => localFileUri("/workspace") };
     const Provider = loadPhaseSwitcherProvider(workspaceUri);
     const provider = Object.create(Provider.prototype) as Record<string, any>;
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kot-stale-rescan-'));
@@ -625,10 +643,10 @@ test('an unchanged disk rescan preserves stale state until the compiled artifact
     fs.writeFileSync(featurePath, 'Feature: Scenario A\n');
 
     try {
-        const scenarioKey = 'file:///workspace/ScenarioA/scen.yaml';
+        const scenarioKey = localFileUri("/workspace/ScenarioA/scen.yaml");
         const sourceUri = {
             scheme: 'file',
-            fsPath: '/workspace/ScenarioA/scen.yaml',
+            fsPath: path.resolve("/workspace/ScenarioA/scen.yaml"),
             toString: () => scenarioKey
         };
         const scenario = { name: 'Scenario A', yamlFileUri: sourceUri };
@@ -678,10 +696,10 @@ test('an unchanged disk rescan preserves stale state until the compiled artifact
 });
 
 test('artifacts restored after extension restart are stale until rebuilt', async () => {
-    const workspaceUri = { fsPath: '/workspace', toString: () => 'file:///workspace' };
+    const workspaceUri = { fsPath: path.resolve("/workspace"), toString: () => localFileUri("/workspace") };
     const Provider = loadPhaseSwitcherProvider(workspaceUri);
     const provider = Object.create(Provider.prototype) as Record<string, any>;
-    const scenarioKey = 'file:///workspace/ScenarioA/scen.yaml';
+    const scenarioKey = localFileUri("/workspace/ScenarioA/scen.yaml");
 
     provider._startupArtifactsRestoreAttempted = false;
     provider._scenarioBuildArtifacts = new Map();
@@ -704,17 +722,17 @@ test('artifacts restored after extension restart are stale until rebuilt', async
 });
 
 test('MCP tracking follows the connected manager log instead of a different artifact launch log', async () => {
-    const Provider = loadPhaseSwitcherProvider({ fsPath: '/workspace' });
+    const Provider = loadPhaseSwitcherProvider({ fsPath: path.resolve("/workspace") });
     const provider = Object.create(Provider.prototype) as Record<string, any>;
     const seen: unknown[][] = [];
-    Object.assign(provider, { _scenarioBuildArtifacts: new Map([['own', { scenarioKey: 'own', scenarioName: 'Own', featurePath: '/workspace/own.feature', jsonPath: '/artifact.json' }]]),
+    Object.assign(provider, { _scenarioBuildArtifacts: new Map([['own', { scenarioKey: 'own', scenarioName: 'Own', featurePath: path.resolve("/workspace/own.feature"), jsonPath: '/artifact.json' }]]),
         _standaloneFeatureArtifacts: new Map(), _mcpFeatureRuns: new Set(),
         _externalTrackedRunsByScenario: new Map(), _activeTrackedRunKeyByScenario: new Map(), stopLiveRunLogWatcher() {},
         normalizeFilePathForComparison: (file: string) => file, resolveVanessaLogPathFromJson: () => '/wrong-artifact.log',
         startFeatureStepTracker: (...args: unknown[]) => { seen.push(args); }, pollFeatureStepTracker: async () => {},
         finalizeRunningFeatureStepHighlight() {}, clearRunningFeatureStepHighlight() {}, stopFeatureStepTracker() {} });
-    const finish = provider.trackVanessaFeatureRun('/workspace/own.feature', '/connected-manager.log');
+    const finish = provider.trackVanessaFeatureRun(path.resolve("/workspace/own.feature"), '/connected-manager.log');
     assert.equal(seen[0][2], '/connected-manager.log'); await finish(true);
-    seen.length = 0; await provider.trackVanessaFeatureRun('/workspace/own.feature')(true);
+    seen.length = 0; await provider.trackVanessaFeatureRun(path.resolve("/workspace/own.feature"))(true);
     assert.equal(seen.length, 0, 'an unverified artifact JSON must not substitute for the current manager log');
 });

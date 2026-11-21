@@ -3,6 +3,17 @@ import test from 'node:test';
 import fs from 'node:fs';
 import { VanessaRuntimeDiagnostics, redactVanessaDiagnosticText, type VanessaDiagnosticPorts } from '../src/vanessaControlDiagnostics';
 const reply = (text: string) => ({ content: [{ type: 'text', text }] });
+
+test('completed-run diagnostics read JSON and reject foreign results without changing the test client', async () => {
+    let foreign = false; const calls: string[] = []; const file = 'C:\\test.feature';
+    const runtime = new VanessaRuntimeDiagnostics({ isCurrent: () => true, supported: () => true, request: async (tool, args) => {
+        calls.push(tool); assert.equal(args.format, 'json');
+        return reply(JSON.stringify({ schemaVersion: '1.1', ok: true, runId: foreign ? 'foreign' : 'own', isRunning: false,
+            currentFeature: { fullPath: file }, featurePath: file, status: 'success', isComplete: true, steps: [{ lineNumber: 4, status: 'success' }] }));
+    } });
+    await runtime.completedRun(file, 'own'); foreign = true; await assert.rejects(runtime.completedRun(file, 'own'));
+    assert.deepEqual(calls, ['get_test_results', 'get_vanessa_automation_state', 'get_test_results', 'get_vanessa_automation_state']);
+});
 test('diagnostics omit credential-bearing lines, connection keys, bearer tokens and encoded secrets', () => {
     const privateLines = ['Pwd="private";', '{"password":"private"}', 'Authorization: Bearer private', '/N User /P"private"',
         'https://user:private@host/path', 'https://host/?access_token=private', 'api_key=private', 'Пароль = "private"',

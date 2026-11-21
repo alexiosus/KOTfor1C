@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
@@ -16,7 +17,7 @@ function harness() {
     const ts = require('typescript') as typeof import('typescript'); const module = { exports: {} as any };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlSettingsReport.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-    }).outputText, { module, exports: module.exports, require: (name: string) => name === 'vscode' ? vscode : require(name) });
+    }).outputText, { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? vscode : require(name)) });
     const view = new module.exports.VanessaSettingsReport({ extensionUri: 'extension' }, { onDidChange: (callback: typeof connection) => { connection = callback; return { dispose() {} }; } });
     const pageId = () => /pageId:'([^']+)'/u.exec(panel.webview.html)![1];
     return { view, panel, close: () => close(), changed: () => connection(), creates: () => creates,

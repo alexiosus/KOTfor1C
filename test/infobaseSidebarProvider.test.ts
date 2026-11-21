@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -109,6 +110,7 @@ function createHarness(initial: ManagedInfobaseSnapshot = snapshot(1, [record('o
         module: moduleObject,
         exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === './vanessaControlClients') { return runtimeClients; }
             if (specifier === 'vscode') { return vscode; }
             if (specifier === './infobaseSidebarModel') { return sidebarModel; }

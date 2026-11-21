@@ -47,7 +47,7 @@ export class VanessaControlHttpTransport implements VanessaControlTransport {
         const generation = this.generation;
         await closing;
         if (this.generation !== generation) { throw new VanessaControlTransportError('disconnected'); }
-        const client = new Client({ name: 'kot-test-toolkit', version: '3.0.0' }, {
+        const client = new Client({ name: 'kot-test-toolkit', version: '3.1.0' }, {
             versionNegotiation: { mode: 'legacy' }, listMaxPages: 64
         });
         const connection: Connection = { client, lifetime: new AbortController(), ready: false };
@@ -96,7 +96,7 @@ export class VanessaControlHttpTransport implements VanessaControlTransport {
     async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal, onProgress?: (value: VanessaControlProgress) => void): Promise<CallToolResult> {
         const connection = this.requireConnection();
         const timeout = ['run_scenario', 'execute_feature_step'].includes(name) ? this.timeoutMs
-            : ['manage_test_client', 'close_test_client', 'get_form_analysis'].includes(name) ? Math.min(this.timeoutMs, 120_000) : Math.min(this.timeoutMs, 30_000);
+            : ['manage_test_client', 'close_test_client', 'get_form_analysis', 'open_feature_file', 'load_features'].includes(name) ? Math.min(this.timeoutMs, 120_000) : Math.min(this.timeoutMs, 30_000);
         return this.request(connection, signal, combined => connection.client.callTool({ name, arguments: args },
             { signal: combined, timeout, onprogress: onProgress ? value => {
                 if (combined.aborted || this.connection !== connection || !Number.isFinite(value.progress) || value.progress < 0) { return; }

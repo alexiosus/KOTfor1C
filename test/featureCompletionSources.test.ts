@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -61,7 +62,7 @@ function loadModule(fileName: string, dependencies: Record<string, unknown>): Re
     ).outputText, {
         module: moduleObject,
         exports: moduleObject.exports,
-        require: (specifier: string) => dependencies[specifier] ?? {},
+        require: (specifier: string) => specifier === './kotInteraction' ? nativeInteraction : (dependencies[specifier] ?? {}),
         console: { log: () => undefined, warn: () => undefined }
     });
     return moduleObject.exports;

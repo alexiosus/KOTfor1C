@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import { buildInfobaseSidebarModel, type InfobaseSidebarModel } from './infobaseSidebarModel';
 import type { ManagedInfobaseRecord } from './infobaseManager';
@@ -6,6 +7,8 @@ import type { InfobaseRuntimeTrackerLike } from './infobaseRuntimeTracker';
 import type { VanessaInfobaseClients } from './vanessaInfobaseClients';
 import { VanessaClientControlError, formatVanessaClientError } from './vanessaControlClients';
 import type { Translator } from './localization';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export type InfobaseMaintenanceAction =
     | 'vanessaClients'
@@ -494,7 +497,7 @@ export class InfobaseSidebarProvider implements vscode.WebviewViewProvider, vsco
 
     private async postError(error: unknown): Promise<void> {
         const message = errorMessage(error);
-        void vscode.window.showErrorMessage(message);
+        void kotUi.showErrorMessage(message);
         await this.view?.webview.postMessage({ command: 'error', message, retainItems: this.model !== null });
     }
 

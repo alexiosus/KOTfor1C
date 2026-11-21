@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import { getTranslator, type Translator } from './localization';
 import type { ProjectDefinitionResolver } from './projectDefinitionResolver';
@@ -12,6 +13,8 @@ import { parseScenarioDescriptor } from './scenarioDescriptor';
 import { updateScenarioCategoryInMetadataContent } from './scenarioYamlMutations';
 import { persistProjectMetadata, projectedProjectScenario } from './projectLibraryIntegration';
 import { migrateLegacyPhaseSwitcherMetadata } from './phaseSwitcherMetadata';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export interface ScenarioCategoryCommandServices {
     readonly resolver: ProjectDefinitionResolver;
@@ -45,7 +48,7 @@ async function promptNewCategory(
     initialValue: string,
     translate: Translator
 ): Promise<string | undefined> {
-    const value = await vscode.window.showInputBox({
+    const value = await kotUi.showInputBox({
         title: translate('Nested scenario category'),
         value: initialValue,
         prompt: translate('Enter a category for the nested scenario.'),
@@ -135,11 +138,11 @@ export async function setScenarioCategoryCommand(
     const uri = vscode.Uri.parse(rawTarget.documentUri);
     const document = await vscode.workspace.openTextDocument(uri);
     if (document.version !== rawTarget.documentVersion) {
-        vscode.window.showWarningMessage(translate('The scenario changed. Run the command again.'));
+        kotUi.showWarningMessage(translate('The scenario changed. Run the command again.'));
         return;
     }
     if (!categoryAction(document, translate)) {
-        vscode.window.showWarningMessage(translate('The nested scenario is no longer available.'));
+        kotUi.showWarningMessage(translate('The nested scenario is no longer available.'));
         return;
     }
 
@@ -150,7 +153,7 @@ export async function setScenarioCategoryCommand(
         return;
     }
     if (document.version !== rawTarget.documentVersion) {
-        vscode.window.showWarningMessage(translate('The scenario changed. Run the command again.'));
+        kotUi.showWarningMessage(translate('The scenario changed. Run the command again.'));
         return;
     }
 
@@ -171,10 +174,10 @@ export async function setScenarioCategoryCommand(
             mutation.content
         );
         if (!await vscode.workspace.applyEdit(edit)) {
-            vscode.window.showErrorMessage(translate('Could not update the scenario category.'));
+            kotUi.showErrorMessage(translate('Could not update the scenario category.'));
         }
     } catch (error) {
-        vscode.window.showErrorMessage(translate(
+        kotUi.showErrorMessage(translate(
             'Could not update the scenario category: {0}',
             String(error)
         ));

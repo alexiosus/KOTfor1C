@@ -762,6 +762,78 @@ test('confirmed idle Broken after Stop cancels only the pending run request and 
     await session.select('C:\\Tests\\sales.feature', 14);
 });
 
+for (const mode of ['runFeature', 'runFromLine'] as const) {
+for (const rejection of ['modal dialog', 'syntax preflight']) {
+test(`a rejected .47 ${mode} cannot adopt a previous failure with the same runId: ${rejection}`, async () => {
+    const file = 'C:\\Tests\\own.feature';
+    const json = (data: Record<string, unknown>) => ({ content:[{type:'text' as const,text:JSON.stringify({schemaVersion:'1.1',...data})}] });
+    const wire = fake(async name => {
+        if (name === 'run_scenario') { return {isError:true,content:[{type:'text',text: rejection === 'modal dialog'
+            ? 'ACTION_FAILED: Cannot start while a modal dialog is open.'
+            : 'ACTION_FAILED: Обнаружены ошибки проверки синтаксиса файла: known edited step.'}]}; }
+        if (name === 'get_test_results') { return json({ok:true,isRunning:false,isComplete:true,runId:'previous',status:'failed',featurePath:file,failedStep:{lineNumber:8},steps:[{lineNumber:8,status:'failed'}],error:{message:'Previous failure'}}); }
+        if (name === 'get_vanessa_automation_state') { return json({ok:true,isRunning:false,runId:'previous',currentFeature:{fullPath:file},currentStep:{lineNumber:8,status:'failed'}}); }
+        return {content:[]};
+    });
+    wire.listTools = async () => JSON.parse(fs.readFileSync('test/fixtures/vanessa-control/1.2.043.47/tools.live.json','utf8')).tools;
+    const session = new VanessaControlSession();await session.attach(wire,'http://localhost:9876');
+    await assert.rejects(session.run(mode,file,8), rejection === 'modal dialog' ? /modal dialog/ : /синтаксиса/);
+    assert.equal(wire.calls.filter(name => name === 'run_scenario').length, 1, 'a rejected launch is never automatically replayed');
+    assert.equal(session.snapshot.execution?.status,'unknown');assert.equal(session.failure,undefined);
+    assert.equal(session.snapshot.runActive,false);assert.equal(wire.closes,0);
+});
+}
+}
+
+for (const mismatch of ['none', 'fresh', 'unobserved', 'old run', 'other results', 'other feature'] as const) {
+test(`a pending .47 run settles only on its own complete failure: ${mismatch}`, async () => {
+    const file = 'C:\\Tests\\own.feature';
+    const json = (data: Record<string, unknown>) => ({ content: [{ type: 'text' as const, text: JSON.stringify({ schemaVersion: '1.1', ...data }) }] });
+    let running = false; let started = false; let runId = 'owned'; let resultRunId = 'owned'; let observedFile = file;
+    let runSignal: AbortSignal | undefined;
+    const beginning = deferred<void>();
+    const wire = fake(async (name, _args, signal) => {
+        if (name === 'run_scenario') {
+            runSignal = signal; started = true; beginning.resolve();
+            return new Promise((_resolve, reject) => signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }));
+        }
+        if (name === 'get_vanessa_automation_state') {
+            return json({ ok: true, isRunning: running, runId, currentFeature: { fullPath: observedFile },
+                currentStep: { lineNumber: running ? 3 : 8, status: running ? 'running' : 'failed' } });
+        }
+        if (name === 'get_test_results') {
+            if (!started) { return json({ ok: false, runId: mismatch === 'fresh' ? '' : 'previous', isRunning: false }); }
+            return json({ ok: true, runId: resultRunId, isRunning: false, isComplete: true, status: 'failed', featurePath: file,
+                failedStep: { lineNumber: 8 }, steps: [{ lineNumber: 8, status: 'failed' }], error: { message: 'Hidden control' } });
+        }
+        return { content: [] };
+    });
+    wire.listTools = async () => JSON.parse(fs.readFileSync('test/fixtures/vanessa-control/1.2.043.47/tools.live.json', 'utf8')).tools;
+    const session = new VanessaControlSession(); await session.attach(wire, 'http://localhost:9876');
+    const executing = session.run('runFeature', file, 1); await beginning.promise;
+    if (mismatch === 'old run') { runId = 'previous'; }
+    if (mismatch !== 'unobserved') { running = true; await session.refreshState(); }
+    if (mismatch === 'other results') { resultRunId = 'foreign'; }
+    if (mismatch === 'other feature') { observedFile = 'C:\\Tests\\foreign.feature'; }
+    running = false; await session.refreshState();
+    assert.equal(runSignal?.aborted, mismatch === 'none' || mismatch === 'fresh');
+    if (mismatch !== 'none' && mismatch !== 'fresh') {
+        assert.equal(session.snapshot.runActive, true, 'unrelated evidence must not release the pending run');
+        runId = resultRunId = 'owned'; observedFile = file;
+        running = true; await session.refreshState(); running = false; await session.refreshState();
+    }
+    await executing;
+    assert.equal(session.snapshot.execution?.status, 'failed');
+    assert.equal(session.snapshot.execution?.currentLineNumber, 8);
+    assert.equal(session.failure?.message, 'Hidden control');
+    assert.equal(session.snapshot.runActive, false);
+    assert.equal(session.snapshot.status, 'ready');
+    await session.withTestClientControl(async () => undefined);
+    assert.equal(wire.closes, 0, 'the shared MCP connection remains usable');
+    await session.detach();
+});
+}
+
 test('short failures are reconciled against source-bound history, while unrelated history remains unknown', async () => {
     const history = fs.readFileSync('test/fixtures/vanessa-control/1.2.043.45/results-failed.live.ru.md', 'utf8');
     let recorded = ''; let iteration = 0;

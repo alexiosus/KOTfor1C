@@ -32,7 +32,7 @@ class Element {
     querySelector(): null { return null; }
 }
 
-async function fixture(setup: boolean | 'editor' | 'settings' | 'inspection' = false, editorDraft: Record<string, unknown> = {}) {
+async function fixture(setup: boolean | 'editor' | 'settings' | 'inspection' = false, editorDraft: Record<string, unknown> = {}, savedState: Record<string, unknown> = {}) {
     const roots = ['content', 'notice', 'brand', 'navigation', 'section-navigation', 'section-select', 'navigation-actions'].map(id => new Element(id));
     const find = (id: string, elements = roots): Element | undefined => elements.find(node => node.id === id) ?? elements.map(node => find(id, node.children)).find(Boolean);
     let receive!: (event: { data: unknown }) => void;
@@ -41,10 +41,10 @@ async function fixture(setup: boolean | 'editor' | 'settings' | 'inspection' = f
     const document = { getElementById: find, addEventListener() {}, querySelector: () => workbench };
     vm.runInNewContext(fs.readFileSync(path.join(process.cwd(), 'media/kotWorkspace.js'), 'utf8'), {
         document, window: { addEventListener: (_name: string, callback: typeof receive) => { receive = callback; } },
-        acquireVsCodeApi: () => ({ getState: () => ({}), setState() {}, postMessage: (message: typeof messages[number]) => messages.push(message) })
+        acquireVsCodeApi: () => ({ getState: () => savedState, setState() {}, postMessage: (message: typeof messages[number]) => messages.push(message) })
     });
     const flush = async () => { await new Promise(resolve => setImmediate(resolve)); };
-    const model = { strings: {}, settings: [], sections: [{ id: 'editor', title: 'Editor' }] };
+    const model = { strings: {}, settings: [], sections: [{ id: 'editor', title: 'Editor' }, { id: 'agent', title: 'Testing agent' }] };
     if (setup === 'editor' || setup === 'settings' || setup === 'inspection') {
         const local = { key: 'kotTestToolkit.steps.localCatalogPath', section: 'editor', label: 'Local Vanessa step catalog',
             type: 'string', default: '', description: 'Offline steps', pathKind: 'json' };
@@ -77,6 +77,20 @@ async function fixture(setup: boolean | 'editor' | 'settings' | 'inspection' = f
     return { click, respond, messages, notice: find('notice')!, content: find('content')!, workbench, find,
         send: async (data: unknown) => { receive({ data }); await flush(); } };
 }
+
+test('AI connection button invokes the registered setup action without asking for JSON', async () => {
+    const h = await fixture('settings');
+    void h.find('connect-ai')!.onclick!();
+    const request = h.messages.find(message => message.type === 'action');
+    assert.equal((request as unknown as { action: string }).action, 'agent');
+    await h.respond(request!.id);
+});
+
+test('restoring the removed AI settings section opens the testing agent section', async () => {
+    const h = await fixture('settings', {}, { section: 'ai' });
+    assert.equal(h.find('section-select')!.value, 'agent');
+    assert.ok(h.find('connect-ai'));
+});
 
 test('editor setup offers an online/offline switch and persists the choice without launching a generator dialog', async () => {
     const h = await fixture('editor', { run: true, vanessa: 'local/vanessa-automation.epf' });

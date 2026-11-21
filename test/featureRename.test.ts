@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,7 +33,7 @@ function api(): {
         };
         vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, 'utf8'), {
             compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-        }).outputText, { module: moduleObject, exports: moduleObject.exports, require: (name: string) => dependencies[name] });
+        }).outputText, { module: moduleObject, exports: moduleObject.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name]) });
     }
     assert.equal(typeof (moduleObject.exports as any).planFeatureTitleRename, 'function', 'feature rename is implemented');
     return moduleObject.exports as ReturnType<typeof api>;

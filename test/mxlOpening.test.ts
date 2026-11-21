@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -41,6 +42,7 @@ async function fixture(t: TestContext) {
         window: { withProgress: async (_options: unknown, work: Function) => work({ report: (value: { message: string }) => progress.push(value.message) }) } };
     const module = { exports: {} as any }; const ts = require('typescript') as typeof import('typescript');
     const requireDependency = (name: string): unknown => {
+        if (name === './kotInteraction') { return nativeInteraction; }
         if (name === './sharedStartupPlatform') { return sharedPlatform; }
         if (name === 'vscode') { return vscode; }
         if (name === './mxlOpening') { return { readMxlOpeningResult }; }

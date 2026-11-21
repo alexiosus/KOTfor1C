@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -44,6 +45,7 @@ function harness(action: string, options: { cancel?: boolean; changeSession?: bo
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlSettingsCommands.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
     }).outputText, { module, exports: module.exports, TextDecoder, require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
         if (name === 'vscode') { return vscode; }
         if (name === './vanessaControlSettingsReport') { return { VanessaSettingsReport: class {
             show(report: any) { reports.push(report); }

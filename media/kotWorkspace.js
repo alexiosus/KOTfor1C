@@ -67,6 +67,8 @@
         $('section-navigation').innerHTML=sections.map(section=>'<button data-section="'+section.id+'" class="section-button '+(section.id===state.section?'selected':'')+'">'+escape(section.title)+'</button>').join('');
         $('section-navigation').querySelectorAll('[data-section]').forEach(button=>button.onclick=()=>{state.section=button.dataset.section;state.query='';persist();render();});
         $('navigation-actions').innerHTML='<button id="start-setup" class="text-button">'+t('Start project setup')+'…</button><button id="native-settings" class="text-button">'+t('Open VS Code Settings')+'</button><button id="repository-link" class="text-button">'+t('Project GitHub')+'</button><button id="changelog-link" class="text-button">'+t('Changelog')+'</button>';
+        $('navigation-actions').insertAdjacentHTML('afterbegin','<button id="connect-ai" class="text-button">'+t('Connect AI')+'…</button>');
+        $('connect-ai').onclick=()=>task('Connecting AI to KOT…',()=>rpc('action',{action:'agent'}));
         $('start-setup').onclick=startSetup;
         $('native-settings').onclick=()=>rpc('openNative');
         $('repository-link').onclick=()=>task('Opening repository…',()=>rpc('openRepository'));
@@ -495,6 +497,9 @@
             if(message.error){const error=new Error(message.error);error.applied=message.applied;pending.reject(error);}else pending.resolve(message.data);
         }else if(message.type==='boot'){
             boot=message;state.folder=boot.folders.some(folder=>folder.id===state.folder)?state.folder:boot.folder;state.scope=state.folder?state.scope:'user';
+            if(!boot.model.sections.some(section=>section.id===state.section)){
+                state.section=boot.model.sections.find(section=>section.id==='agent')?.id||boot.model.sections[0]?.id||'editor';
+            }
             state.view=boot.view;state.setupOpen=boot.view==='setup';
             if(boot.progress?.draft){state.setup=boot.progress.draft;state.step=boot.progress.complete?0:boot.progress.step;state.readiness=boot.progress.readiness;}
             for(const change of boot.drafts||[])drafts.set(draftId(change.folder,change.scope,change.key),change);

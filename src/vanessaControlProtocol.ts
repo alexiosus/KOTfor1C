@@ -37,7 +37,7 @@ export function readVanessaStructuredReply(value: unknown): Record<string, unkno
     const reply = object(value);
     if (reply?.isError || !Array.isArray(reply?.content) || reply.content.length !== 1) { return; }
     const block = object(reply.content[0]);
-    if (block?.type !== 'text' || typeof block.text !== 'string' || block.text.length > 1_000_000) { return; }
+    if (block?.type !== 'text' || typeof block.text !== 'string' || block.text.length > 16 * 1024 * 1024) { return; }
     try {
         const data = object(JSON.parse(block.text));
         return data?.schemaVersion === '1.1' && typeof data.ok === 'boolean' ? data : undefined;
@@ -190,7 +190,7 @@ export function parseVanessaControlReply(tool: string, value: unknown): VanessaC
         }
         return { kind: 'unknown' };
     }
-    if (tool === 'run_scenario' && /^## Результат выполнения сценариев: все сценарии выполнены успешно\n\n(?:Имя сценария: [^\n]+\nРезультат прохождения сценария: Success\n?)+$/u.test(text)) {
+    if (tool === 'run_scenario' && /^## Результат выполнения сценариев: все сценарии выполнены успешно\n(?:Идентификатор прогона: [\da-fA-F]{8}(?:-[\da-fA-F]{4}){3}-[\da-fA-F]{12}\n)?\n(?:Имя сценария: [^\n]+\nРезультат прохождения сценария: Success\n?)+$/u.test(text)) {
         return { kind: 'runResult', status: 'passed', scenarioCount: [...text.matchAll(/^Результат прохождения сценария: Success$/gmu)].length };
     }
     if (tool === 'get_test_results' && text.startsWith('# Результаты тестов\n')) {

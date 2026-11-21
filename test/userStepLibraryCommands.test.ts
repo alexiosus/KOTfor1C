@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -10,6 +11,7 @@ import * as builder from '../src/userStepLibraryBuilder';
 import * as dump from '../src/userStepLibraryDump';
 import * as state from '../src/userStepLibraryState';
 import { ProjectDefinitionIndexService } from '../src/projectDefinitionIndexService';
+import { loadSharedStartupPlatform } from './helpers/sharedStartupPlatformFixture';
 
 async function harness(t: { after(fn: () => Promise<void>): void }) {
     const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'kot-epf-command-'));
@@ -50,7 +52,9 @@ async function harness(t: { after(fn: () => Promise<void>): void }) {
         vscode: host, './userStepCreator': creator, './userStepLibraryBuilder': builder,
         './userStepLibraryDump': dump, './userStepLibraryState': state,
         './oneCPlatform.js': { resolveOneCDesignerExePath: () => 'designer.exe', resolveOneCPlatformForLaunch: async () => ({ clientExePath: 'client.exe' }) },
-        './startupInfobase.js': { ensureSharedStartupInfobaseReady: async () => ({ infobaseDirectory: root, authentication: null }) },
+        './startupInfobase.js': { getSharedStartupInfobasePaths: () => ({ infobaseDirectory: root }),
+            ensureSharedStartupInfobaseReady: async () => ({ infobaseDirectory: root, authentication: null }) },
+        './oneCInfobasePlatform': { runningOneCInfobasePlatform: async () => undefined },
         './directProcessLaunch': {
             buildDirectSpawnCommand: (_executable: string, args: string[]) => ({ args }),
             runDirectProcess: async ({ args }: { args: string[] }) => {
@@ -66,11 +70,12 @@ async function harness(t: { after(fn: () => Promise<void>): void }) {
             }
         }
     };
+    modules['./sharedStartupPlatform.js'] = loadSharedStartupPlatform(name => modules[name] ?? modules[name + '.js'] ?? (name.startsWith('node:') ? require(name) : {}));
     const ts = require(path.join(process.cwd(), 'node_modules/typescript')) as typeof import('typescript');
     const module = { exports: {} as Record<string, any> };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/userStepCommands.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-    }).outputText, { module, exports: module.exports, process, require: (id: string) => modules[id] ?? (id.startsWith('node:') ? require(id) : {}) });
+    }).outputText, { module, exports: module.exports, process, require: (id: string) => id === './kotInteraction' ? nativeInteraction : (modules[id] ?? (id.startsWith('node:') ? require(id) : {})) });
     const indexedDefinitions = new Map([['step', definition]]);
     const services = { context: { subscriptions: [] }, index: { ensureReady: async () => ({ byId: indexedDefinitions }) },
         loadLibraryRoots: async () => [{ path: library, uri: uri(library).toString(), templateRoot: template }],

@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
@@ -47,6 +48,7 @@ test('path dialogs use the right field type and keep cancellation without changi
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/yamlParametersManager.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
     }).outputText, { module, exports: module.exports, require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
         if (name === 'vscode') { return { Uri: { file: (fsPath: string) => ({ fsPath }) }, window: {
             showQuickPick: async (items: any[]) => items[1],
             showOpenDialog: async (options: any) => { dialogs.push(options); return selection; },

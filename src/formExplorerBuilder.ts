@@ -1,3 +1,4 @@
+import { kotWindow, assertKotPath } from './kotInteraction';
 import * as cp from 'node:child_process';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
@@ -12,6 +13,8 @@ import {
 import { buildFileInfobaseConnectionArgument } from './oneCInfobaseConnection';
 import { resolveOneCDesignerExePath } from './oneCPlatform';
 import { formatProcessCommandForDisplay } from './processCommandDisplay';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 const OUTPUT_CHANNEL_NAME = 'KOT Form Explorer Build';
 const BUILDER_INFOBASE_DIRECTORY_NAME = 'builder-infobase';
@@ -426,6 +429,8 @@ export async function ensureFormExplorerBuilderInfobaseReady(
         );
     }
 
+    await assertKotPath(builderPaths.configurationSourceDirectory);
+    await assertKotPath(builderPaths.generatedArtifactsDirectory, true);
     const operationKey = `${builderPaths.builderInfobaseDirectory}:${builderPaths.configurationSourceDirectory}`;
     const existingOperation = activeEnsureOperations.get(operationKey);
     if (existingOperation) {
@@ -450,7 +455,7 @@ export async function ensureFormExplorerBuilderInfobaseReady(
             return execute();
         }
 
-        return vscode.window.withProgress(
+        return kotUi.withProgress(
             {
                 location: vscode.ProgressLocation.Notification,
                 title: options.progressTitle || t('Preparing KOT Form Explorer builder infobase...'),

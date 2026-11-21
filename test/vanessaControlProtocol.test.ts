@@ -8,6 +8,14 @@ const fixture = (name: string) => fs.readFileSync(path.join(process.cwd(), 'test
 const tools = () => JSON.parse(fixture('tools.json')).tools;
 const reply = (text: string) => ({ content: [{ type: 'text', text }] });
 
+test('completed long-run JSON above one megabyte is parsed locally while oversized replies remain bounded', () => {
+    const text = JSON.stringify({ schemaVersion: '1.1', ok: true, isRunning: false, isComplete: true, status: 'success',
+        steps: Array.from({ length: 6000 }, (_, index) => ({ lineNumber: index + 1, name: 'A'.repeat(160), status: 'success' })) });
+    assert.ok(text.length > 1_000_000);
+    assert.deepEqual(parseVanessaControlReply('get_test_results', reply(text)), { kind: 'runtimeResult', status: 'passed' });
+    assert.equal(parseVanessaControlReply('get_test_results', reply(text.replace('A'.repeat(160), 'A'.repeat(17 * 1024 * 1024)))) .kind, 'unknown');
+});
+
 test('a captured failed run with skipped rows retains its source-bound failure', () => {
     const text = fixture('results-failed-skipped.live.ru.md');
     assert.deepEqual(parseVanessaControlReply('get_test_results', reply(text)), {
@@ -222,6 +230,10 @@ test('the exact live editor-loaded response is ready for selection but never a p
 test('a run passes only with complete scenario outcomes, never its success heading alone', () => {
     const complete = fixture('run-passed.live.ru.md').trim();
     assert.deepEqual(parseVanessaControlReply('run_scenario', reply(complete)), { kind: 'runResult', status: 'passed', scenarioCount: 1 });
+    const withRunId = complete.replace('\n\n', '\nИдентификатор прогона: 4e77a1a5-8f8f-413b-b3a7-608d1dccc245\n\n');
+    assert.deepEqual(parseVanessaControlReply('run_scenario', reply(withRunId)), { kind: 'runResult', status: 'passed', scenarioCount: 1 });
+    assert.equal(parseVanessaControlReply('run_scenario', reply(withRunId.replace('Success', 'Running'))).kind, 'unknown');
+    assert.equal(parseVanessaControlReply('run_scenario', reply(withRunId.split('\n\n')[0])).kind, 'unknown');
     assert.equal(parseVanessaControlReply('run_scenario', reply(fixture('run-stopped.live.ru.md'))).kind, 'unknown', 'the actual breakpoint response also has a success heading');
     for (const text of [complete.split('\n\n')[0], complete.replace('Success', 'Running'), complete + '\nТекст ошибки: failure',
         complete.replace('Результат прохождения сценария: Success', '')]) {

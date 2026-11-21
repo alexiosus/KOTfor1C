@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { localFileUri } from './helpers/filePaths';
 import { buildScenarioCatalog, type ScenarioCatalog, type ScenarioCatalogProvider } from '../src/scenarioCatalog';
 import {
     ScenarioRelationshipService,
@@ -24,11 +27,16 @@ test('source identity accepts VS Code drive encoding without conflating differen
     assert.equal(sameProjectDefinitionSource('file://one/share/exports.feature', 'file://two/share/exports.feature'), false);
 });
 
+function fixtureFileUri(file: string): string {
+    const resolved = path.resolve(file);
+    return localFileUri(process.platform === 'win32' ? resolved.toLocaleLowerCase() : resolved);
+}
+
 function uri(fsPath: string): FakeUri {
     return {
         scheme: 'file',
-        fsPath,
-        toString: () => `file://${fsPath}`
+        fsPath: path.resolve(fsPath),
+        toString: () => fixtureFileUri(fsPath)
     };
 }
 
@@ -130,7 +138,7 @@ function createHarness(
                 findReferencesForDefinitions: async (definitionIds: readonly string[]) => new Map(
                     definitionIds.map(id => [id, projectDefinitions.references.get(id) ?? []])
                 ),
-                createUri: (value: string) => uri(value.replace(/^file:\/\//u, '')) as TestInfo['yamlFileUri']
+                createUri: (value: string) => uri(fileURLToPath(value)) as TestInfo['yamlFileUri']
             }
         } : {})
     };
@@ -173,10 +181,10 @@ test('projects the cached catalog for the active editor without forcing a scan',
     assert.equal(harness.ensureCalls(), 0);
     assert.equal(states.length, 1);
     assert.equal(states[0].currentLabel, 'Nested');
-    assert.deepEqual(states[0].currentScenarioKeys, ['file:///repo/Nested/scen.yaml']);
-    assert.deepEqual(states[0].affectedMainScenarioKeys, ['file:///repo/Main/scen.yaml']);
+    assert.deepEqual(states[0].currentScenarioKeys, [fixtureFileUri("/repo/Nested/scen.yaml")]);
+    assert.deepEqual(states[0].affectedMainScenarioKeys, [fixtureFileUri("/repo/Main/scen.yaml")]);
     assert.deepEqual(states[0].relationships, [{
-        scenarioKey: 'file:///repo/Main/scen.yaml',
+        scenarioKey: fixtureFileUri("/repo/Main/scen.yaml"),
         incomingDistance: 1
     }]);
 });
@@ -184,19 +192,19 @@ test('projects the cached catalog for the active editor without forcing a scan',
 test('connects standalone features to exports in both directions without YAML ownership or basename collisions', async () => {
     const exported: ProjectDefinition = {
         id: 'export:login', kind: 'exportScenario', template: 'And shared login', normalizedTemplate: 'And shared login',
-        parameters: [], sourceLabel: 'Exports', definitionLocation: { uri: 'file:///library/export.feature',
+        parameters: [], sourceLabel: 'Exports', definitionLocation: { uri: fixtureFileUri("/library/export.feature"),
             range: { start: { line: 2, character: 0 }, end: { line: 2, character: 16 } } }
     };
     const view = { identity: 'exports', all: [exported], byId: new Map([[exported.id, exported]]), byNormalizedTemplate: new Map() };
     const features: StandaloneFeatureSnapshot = { revision: 1, groups: [], features: [
-        { id: 'file:///external/Features/same.feature', uri: 'file:///external/Features/same.feature', name: 'same', title: 'Authored login', relativePath: 'Features/same.feature', language: 'en', groupId: '', order: 0 },
-        { id: 'file:///external/Other/same.feature', uri: 'file:///external/Other/same.feature', name: 'same', title: 'Unrelated', relativePath: 'Other/same.feature', language: 'en', groupId: '', order: 1 }
+        { id: fixtureFileUri("/external/Features/same.feature"), uri: fixtureFileUri("/external/Features/same.feature"), name: 'same', title: 'Authored login', relativePath: 'Features/same.feature', language: 'en', groupId: '', order: 0 },
+        { id: fixtureFileUri("/external/Other/same.feature"), uri: fixtureFileUri("/external/Other/same.feature"), name: 'same', title: 'Unrelated', relativePath: 'Other/same.feature', language: 'en', groupId: '', order: 1 }
     ] };
     const references = new Map([[exported.id, [{ uri: uri('/external/Features/same.feature') }]]]);
     const h = createHarness(buildScenarioCatalog([]), { view, references }, undefined, features);
     h.service.handleActiveEditorChanged(uri('/library/export.feature') as TestInfo['yamlFileUri']);
     await new Promise<void>(resolve => setImmediate(resolve));
-    assert.deepEqual(h.service.getState().relationships, [{ scenarioKey: 'file:///external/Features/same.feature', incomingDistance: 1 }]);
+    assert.deepEqual(h.service.getState().relationships, [{ scenarioKey: fixtureFileUri("/external/Features/same.feature"), incomingDistance: 1 }]);
     assert.deepEqual(h.service.getState().affectedMainScenarioKeys, []);
     references.set(exported.id, []);
     h.refreshStandalone();
@@ -205,7 +213,7 @@ test('connects standalone features to exports in both directions without YAML ow
     references.set(exported.id, [{ uri: uri('/external/Features/same.feature') }]);
     h.service.handleActiveEditorChanged(uri('/external/Features/same.feature') as TestInfo['yamlFileUri']);
     await new Promise<void>(resolve => setImmediate(resolve));
-    assert.deepEqual(h.service.getState().currentScenarioKeys, ['file:///external/Features/same.feature']);
+    assert.deepEqual(h.service.getState().currentScenarioKeys, [fixtureFileUri("/external/Features/same.feature")]);
     assert.equal(h.service.getState().currentLabel, 'Authored login');
     assert.deepEqual(h.service.getState().definitionRelationships, [{ definitionId: exported.id, outgoingDistance: 1 }]);
     h.replaceStandalone({ ...features, revision: 2, features: [features.features[1]] });
@@ -217,7 +225,7 @@ test('connects standalone features to exports in both directions without YAML ow
 });
 
 test('normalizes editor URI encoding to the standalone catalog identity', () => {
-    const id = 'file:///external/Features/login:one.feature';
+    const id = fixtureFileUri("/external/Features/login:one.feature");
     const h = createHarness(buildScenarioCatalog([]), undefined, undefined, {
         revision: 1, groups: [], features: [{
             id, uri: id, name: 'login:one', title: 'Login', relativePath: 'Features/login:one.feature',
@@ -240,17 +248,17 @@ test('uses the directory index only as a fallback for auxiliary scenario files',
 
     assert.deepEqual(
         harness.service.getState().currentScenarioKeys,
-        ['file:///repo/Nested/scen.yaml']
+        [fixtureFileUri("/repo/Nested/scen.yaml")]
     );
     assert.equal(harness.service.getState().currentLabel, 'Nested');
 });
 
 test('treats a compiled feature URI as an alias of its main scenario', () => {
-    const mainKey = 'file:///repo/Main/scen.yaml';
+    const mainKey = fixtureFileUri("/repo/Main/scen.yaml");
     const harness = createHarness(
         relationshipCatalog(),
         undefined,
-        activeUri => activeUri.fsPath === '/runtime/Main.feature' ? [mainKey] : []
+        activeUri => activeUri.fsPath === path.resolve('/runtime/Main.feature') ? [mainKey] : []
     );
 
     harness.service.handleActiveEditorChanged(
@@ -259,7 +267,7 @@ test('treats a compiled feature URI as an alias of its main scenario', () => {
 
     assert.deepEqual(harness.service.getState().currentScenarioKeys, [mainKey]);
     assert.deepEqual(harness.service.getState().relationships, [{
-        scenarioKey: 'file:///repo/Nested/scen.yaml',
+        scenarioKey: fixtureFileUri("/repo/Nested/scen.yaml"),
         outgoingDistance: 1
     }]);
     assert.equal(harness.service.getState().currentLabel, 'Main');
@@ -302,12 +310,12 @@ test('disabling Test Manager highlighting retains the shared relationship projec
 
     assert.equal(harness.service.getState().enabled, false);
     assert.equal(harness.service.getState().currentLabel, 'Nested');
-    assert.deepEqual(harness.service.getState().currentScenarioKeys, ['file:///repo/Nested/scen.yaml']);
+    assert.deepEqual(harness.service.getState().currentScenarioKeys, [fixtureFileUri("/repo/Nested/scen.yaml")]);
     assert.deepEqual(harness.service.getState().relationships, [{
-        scenarioKey: 'file:///repo/Main/scen.yaml',
+        scenarioKey: fixtureFileUri("/repo/Main/scen.yaml"),
         incomingDistance: 1
     }]);
-    assert.deepEqual(harness.service.getState().affectedMainScenarioKeys, ['file:///repo/Main/scen.yaml']);
+    assert.deepEqual(harness.service.getState().affectedMainScenarioKeys, [fixtureFileUri("/repo/Main/scen.yaml")]);
     assert.deepEqual(harness.service.getState().affectedPhaseNames, ['Accounting']);
     assert.deepEqual(harness.updates, [{
         key: 'phaseSwitcher.highlightAffectedMainScenarios',
@@ -325,7 +333,7 @@ test('connects export definitions to callers when editor and index URI encodings
         parameters: [],
         sourceLabel: 'Project exports',
         definitionLocation: {
-            uri: 'file:///library/exports.feature',
+            uri: fixtureFileUri("/library/exports.feature"),
             range: {
                 start: { line: 3, character: 0 },
                 end: { line: 3, character: 24 }
@@ -347,22 +355,22 @@ test('connects export definitions to callers when editor and index URI encodings
         references: new Map([[exportDefinition.id, [{ uri: uri('/repo/Nested/scen.yaml') }]]])
     });
 
-    harness.service.handleActiveEditorChanged({ ...uri('/library/exports.feature'), toString: () => 'file:///library/%65xports.feature' } as TestInfo['yamlFileUri']);
+    harness.service.handleActiveEditorChanged({ ...uri('/library/exports.feature'), toString: () => fixtureFileUri("/library/exports.feature") } as TestInfo['yamlFileUri']);
     await new Promise<void>(resolve => setImmediate(resolve));
     await new Promise<void>(resolve => setImmediate(resolve));
 
     assert.deepEqual(harness.service.getState().currentDefinitionIds, [exportDefinition.id]);
     assert.deepEqual(harness.service.getState().relationships, [
-        { scenarioKey: 'file:///repo/Nested/scen.yaml', incomingDistance: 1 },
-        { scenarioKey: 'file:///repo/Main/scen.yaml', incomingDistance: 2 }
+        { scenarioKey: fixtureFileUri("/repo/Nested/scen.yaml"), incomingDistance: 1 },
+        { scenarioKey: fixtureFileUri("/repo/Main/scen.yaml"), incomingDistance: 2 }
     ]);
-    assert.deepEqual(harness.service.getState().affectedMainScenarioKeys, ['file:///repo/Main/scen.yaml']);
+    assert.deepEqual(harness.service.getState().affectedMainScenarioKeys, [fixtureFileUri("/repo/Main/scen.yaml")]);
 
     harness.service.handleActiveEditorChanged(uri('/repo/Nested/scen.yaml') as TestInfo['yamlFileUri']);
     await new Promise<void>(resolve => setImmediate(resolve));
     await new Promise<void>(resolve => setImmediate(resolve));
 
-    assert.deepEqual(harness.service.getState().currentScenarioKeys, ['file:///repo/Nested/scen.yaml']);
+    assert.deepEqual(harness.service.getState().currentScenarioKeys, [fixtureFileUri("/repo/Nested/scen.yaml")]);
     assert.deepEqual(harness.service.getState().definitionRelationships, [{
         definitionId: exportDefinition.id,
         outgoingDistance: 1

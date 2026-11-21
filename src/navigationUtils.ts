@@ -1,7 +1,10 @@
-﻿import * as vscode from 'vscode';
+﻿import { kotWindow } from './kotInteraction';
+import * as vscode from 'vscode';
 import { scanWorkspaceForScenarioCatalog } from './workspaceScanner';
 import { resolveScenarioByName, type ScenarioCatalog } from './scenarioCatalog';
 import type { TestInfo } from './types';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 /**
  * Разрешает имя сценария через каталог и предлагает выбрать файл при дублировании.
@@ -12,7 +15,7 @@ async function pickScenarioDefinition(
     name: string,
     definitions: readonly TestInfo[]
 ): Promise<TestInfo | undefined> {
-    const picked = await vscode.window.showQuickPick(
+    const picked = await kotUi.showQuickPick(
         definitions.map(scenario => ({
             label: scenario.relativePath || scenario.name,
             description: scenario.scenarioCode || scenario.uid,

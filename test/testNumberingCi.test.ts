@@ -1,3 +1,4 @@
+import { createTestLink } from './helpers/symlinks';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -45,7 +46,7 @@ test('CI reports malformed YAML and does not follow symbolic links', async t => 
     assert.equal(h.run().status, 1);
     await fs.rm(path.join(h.definitions, 'broken.yaml'));
     await h.write('one.yaml', 'ДанныеСценария:\n    Код: "000012001"\n');
-    await fs.symlink(path.join(h.definitions, 'one.yaml'), path.join(h.definitions, 'alias.yaml'));
+    if (!await createTestLink(t, path.join(h.definitions, 'one.yaml'), path.join(h.definitions, 'alias.yaml'))) { return; }
     assert.equal(h.run().status, 0);
 });
 

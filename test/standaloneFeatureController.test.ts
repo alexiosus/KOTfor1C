@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -62,6 +63,7 @@ function loadController() {
     vm.runInNewContext(compiled, {
         module: moduleObject, exports: moduleObject.exports,
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === 'vscode') { return vscode; }
             if (specifier === './featureCreator') {
                 return {

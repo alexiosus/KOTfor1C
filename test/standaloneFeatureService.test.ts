@@ -1,3 +1,4 @@
+import { createTestLink } from './helpers/symlinks';
 import * as projectFormatModule from '../src/projectFormat';
 import * as projectLegacyModule from '../src/projectLegacyMetadata';
 import { v3Fixture } from './helpers/projectFormat';
@@ -21,6 +22,8 @@ import * as projectLibraryStore from '../src/projectLibraryStore';
 import * as projectLibraryMetadata from '../src/projectLibraryMetadata';
 import * as projectEntityDisplayOrder from '../src/projectEntityDisplayOrder';
 import * as projectGroupDisplayOrder from '../src/projectGroupDisplayOrder';
+
+const featureUri = (file: string) => pathToFileURL(process.platform === "win32" ? path.resolve(file).toLocaleLowerCase() : path.resolve(file));
 
 // The real filesystem service runs in Node; only its optional VS Code adapter is unavailable there.
 function loadService(): typeof CatalogService {
@@ -63,15 +66,15 @@ test('standalone personal group order survives rename and shared content drag ke
     const walked: string[] = [];
     fs.readdir = (async (...args: Parameters<typeof fs.readdir>) => { walked.push(String(args[0])); return readdir(...args); }) as typeof fs.readdir;
     try {
-        await service.moveFeature(pathToFileURL(b).href, '', pathToFileURL(a).href, { projectRoot: h.root(), revision: snapshot.revision });
+        await service.moveFeature(featureUri(b).href, '', featureUri(a).href, { projectRoot: h.root(), revision: snapshot.revision });
     } finally { fs.readdir = readdir; }
     assert.ok(walked.every(directory => ['metadata', 'groups', 'history'].some(name => directory === path.join(h.root(), '.kot', name))), walked.join('\n'));
-    assert.deepEqual(service.getSnapshot().features.map(feature => feature.id), [pathToFileURL(b).href, pathToFileURL(a).href]);
+    assert.deepEqual(service.getSnapshot().features.map(feature => feature.id), [featureUri(b).href, featureUri(a).href]);
     const metadata = await new projectLibraryStore.ProjectLibraryStore(h.root()).read();
     assert.equal(metadata.metadata['feature:b.feature'].order, 0);
     assert.equal(metadata.metadata['feature:a.feature'].order, 1);
-    await assert.rejects(service.moveFeature(pathToFileURL(a).href, second.id, undefined, { projectRoot: h.root(), revision: snapshot.revision }), /changed/u);
-    await assert.rejects(service.moveFeature(pathToFileURL(a).href, second.id, undefined, { projectRoot: '/foreign', revision: service.getSnapshot().revision }), /another project/u);
+    await assert.rejects(service.moveFeature(featureUri(a).href, second.id, undefined, { projectRoot: h.root(), revision: snapshot.revision }), /changed/u);
+    await assert.rejects(service.moveFeature(featureUri(a).href, second.id, undefined, { projectRoot: '/foreign', revision: service.getSnapshot().revision }), /another project/u);
 });
 
 test('standalone personal order isolates copied stable group IDs in separate project owners', async t => {
@@ -94,7 +97,7 @@ test('standalone personal order isolates copied stable group IDs in separate pro
     assert.deepEqual(reordered.groups.filter(group => group.projectRoot === secondRoot).map(group => group.id), [first.id, second.id]);
     assert.equal(await groupsText(firstRoot), beforeFirst);
     assert.equal(await groupsText(secondRoot), beforeSecond);
-    await assert.rejects(service.moveFeature(pathToFileURL(firstFile).href, first.id, undefined, { projectRoot: secondRoot, revision: reordered.revision }), /another project/u);
+    await assert.rejects(service.moveFeature(featureUri(firstFile).href, first.id, undefined, { projectRoot: secondRoot, revision: reordered.revision }), /another project/u);
 });
 
 test('standalone drag creates adjacent placement for a feature discovered after the project was imported', async t => {
@@ -105,7 +108,7 @@ test('standalone drag creates adjacent placement for a feature discovered after 
     const added = await h.write('new.feature');
     const snapshot = await service.refresh();
     await assert.rejects(fs.stat(`${added}.kot.yml`), { code: 'ENOENT' });
-    await service.moveFeature(pathToFileURL(added).href, group.id, undefined, { projectRoot: h.root(), revision: snapshot.revision });
+    await service.moveFeature(featureUri(added).href, group.id, undefined, { projectRoot: h.root(), revision: snapshot.revision });
     const shared = await new projectLibraryStore.ProjectLibraryStore(h.root()).read();
     assert.equal(shared.metadata['feature:new.feature'].groupId, group.id);
     assert.equal(shared.metadata['feature:new.feature'].order, 0);
@@ -257,8 +260,8 @@ test('discovers independent features with URI identity and excludes compiled and
     const snapshot = await service.ensureReady();
 
     assert.deepEqual(snapshot.features.map(feature => feature.relativePath), ['mixed.feature', 'one/login.feature', 'two/login.feature']);
-    const russian = service.find(pathToFileURL(first).toString());
-    const english = service.find(pathToFileURL(second).toString());
+    const russian = service.find(featureUri(first).toString());
+    const english = service.find(featureUri(second).toString());
     assert.equal(russian?.title, 'Вход клиента');
     assert.equal(russian?.language, 'ru');
     assert.equal(russian?.name, 'login');
@@ -270,7 +273,7 @@ test('discovers independent features with URI identity and excludes compiled and
     assert.equal(russian?.id, russian?.uri);
     assert.ok(snapshot.features.every(feature => feature.groupId === ''));
 
-    service.setCompiledFeaturePaths([pathToFileURL(first).toString()]);
+    service.setCompiledFeaturePaths([featureUri(first).toString()]);
     assert.deepEqual((await service.ensureReady()).features.map(feature => feature.relativePath), ['mixed.feature', 'two/login.feature', 'generated.feature']);
 });
 
@@ -278,7 +281,7 @@ test('persists empty groups and file moves and order without rewriting test file
     const h = await harness(t);
     const files = await Promise.all(['a.feature', 'b.feature', 'c.feature'].map(relative => h.write(relative)));
     const contents = await Promise.all(files.map(file => fs.readFile(file, 'utf8')));
-    const [a, b, c] = files.map(file => pathToFileURL(file).toString());
+    const [a, b, c] = files.map(file => featureUri(file).toString());
     const service = h.createService();
     await service.ensureReady();
     const group = await service.createGroup(' Smoke ');
@@ -305,7 +308,7 @@ test('persists empty groups and file moves and order without rewriting test file
 test('keeps organization through temporary file loss and validates move targets', async t => {
     const h = await harness(t);
     const file = await h.write('checkout.feature');
-    const id = pathToFileURL(file).toString();
+    const id = featureUri(file).toString();
     const service = h.createService();
     const group = await service.createGroup('Checkout');
     await service.moveFeature(id, group.id);
@@ -321,8 +324,8 @@ test('keeps organization through temporary file loss and validates move targets'
 
 test('keeps explicit JSON separate for same filenames and falls back when it disappears', async t => {
     const h = await harness(t);
-    const one = pathToFileURL(await h.write('one/login.feature')).toString();
-    const two = pathToFileURL(await h.write('two/login.feature')).toString();
+    const one = featureUri(await h.write('one/login.feature')).toString();
+    const two = featureUri(await h.write('two/login.feature')).toString();
     const adjacent = await h.write('one/login.json', '{}');
     const selected = await h.write('profiles/custom.json', '{}');
     const service = h.createService();
@@ -371,20 +374,20 @@ test('renaming into a previously deleted filename preserves the source placement
     await service.ensureReady();
     const currentGroup = await service.createGroup('Current');
     const previousGroup = await service.createGroup('Previous');
-    await service.moveFeature(pathToFileURL(source).toString(), currentGroup.id);
-    await service.moveFeature(pathToFileURL(destination).toString(), previousGroup.id);
+    await service.moveFeature(featureUri(source).toString(), currentGroup.id);
+    await service.moveFeature(featureUri(destination).toString(), previousGroup.id);
     const currentJson = path.join(h.root(), 'current.json');
     const previousJson = path.join(h.root(), 'previous.json');
     await fs.writeFile(currentJson, '{}');
     await fs.writeFile(previousJson, '{}');
-    await service.setLaunchJson(pathToFileURL(source).toString(), currentJson);
-    await service.setLaunchJson(pathToFileURL(destination).toString(), previousJson);
-    const before = service.find(pathToFileURL(source).toString())!;
+    await service.setLaunchJson(featureUri(source).toString(), currentJson);
+    await service.setLaunchJson(featureUri(destination).toString(), previousJson);
+    const before = service.find(featureUri(source).toString())!;
     await fs.unlink(destination);
     await service.refresh();
     await fs.rename(source, destination);
     const renamed = await nextSnapshot(service, () => h.rename(source, destination));
-    const entry = renamed.features.find(feature => feature.id === pathToFileURL(destination).toString())!;
+    const entry = renamed.features.find(feature => feature.id === featureUri(destination).toString())!;
     assert.equal(entry.groupId, currentGroup.id);
     assert.equal(entry.order, before.order);
     assert.equal(entry.jsonPath, currentJson);
@@ -396,15 +399,15 @@ test('file and directory rename events preserve group order and explicit JSON as
     const json = await h.write('profiles/login.json', '{}');
     const service = h.createService();
     const group = await service.createGroup('Smoke');
-    await service.moveFeature(pathToFileURL(file).toString(), group.id);
-    await service.setLaunchJson(pathToFileURL(file).toString(), json);
+    await service.moveFeature(featureUri(file).toString(), group.id);
+    await service.setLaunchJson(featureUri(file).toString(), json);
     const originalSidecar = `${file}.kot.yml`;
     const originalMetadata = await fs.readFile(originalSidecar, 'utf8');
     const renamed = path.join(h.root(), 'one/session.feature');
     await fs.rename(file, renamed);
     assert.equal(await fs.readFile(originalSidecar, 'utf8'), originalMetadata);
     let snapshot = await nextSnapshot(service, () => h.rename(file, renamed));
-    assert.equal(snapshot.features[0].id, pathToFileURL(renamed).toString());
+    assert.equal(snapshot.features[0].id, featureUri(renamed).toString());
     assert.equal(snapshot.features[0].groupId, group.id);
     assert.equal(snapshot.features[0].jsonPath, json);
     await assert.rejects(fs.stat(originalSidecar), { code: 'ENOENT' });
@@ -428,7 +431,7 @@ test('a deleted shared group is not recreated when moving a feature with its adj
     const file = await h.write('one/login.feature');
     const service = h.createService();
     const group = await service.createGroup('Deleted smoke');
-    await service.moveFeature(pathToFileURL(file).toString(), group.id);
+    await service.moveFeature(featureUri(file).toString(), group.id);
     await new projectLibraryStore.ProjectLibraryStore(h.root()).deleteGroup(group.id);
     const from = path.join(h.root(), 'one');
     const to = path.join(h.root(), 'two');
@@ -446,7 +449,7 @@ test('source-only renames preserve dirty adjacent metadata until it is saved', a
     const source = await h.write('login.feature');
     const service = h.createService();
     const group = await service.createGroup('Smoke');
-    await service.moveFeature(pathToFileURL(source).toString(), group.id);
+    await service.moveFeature(featureUri(source).toString(), group.id);
     const oldSidecar = `${source}.kot.yml`;
     const content = await fs.readFile(oldSidecar, 'utf8');
     const destination = path.join(h.root(), 'session.feature');
@@ -464,7 +467,7 @@ test('source-only renames never overwrite invalid destination sidecars', async t
     const source = await h.write('login.feature');
     const service = h.createService();
     const group = await service.createGroup('Smoke');
-    await service.moveFeature(pathToFileURL(source).toString(), group.id);
+    await service.moveFeature(featureUri(source).toString(), group.id);
     const oldSidecar = `${source}.kot.yml`;
     const original = await fs.readFile(oldSidecar, 'utf8');
     const destination = path.join(h.root(), 'session.feature');
@@ -481,15 +484,15 @@ test('source-only renames never overwrite invalid destination sidecars', async t
 test('does not follow symbolic directory loops or duplicate feature aliases', async t => {
     const h = await harness(t);
     const file = await h.write('safe/checkout.feature');
-    await fs.symlink(h.root(), path.join(h.root(), 'safe/loop'), 'dir');
-    await fs.symlink(file, path.join(h.root(), 'alias.feature'), 'file');
+    if (!await createTestLink(t, h.root(), path.join(h.root(), 'safe/loop'))) { return; }
+    if (!await createTestLink(t, file, path.join(h.root(), 'alias.feature'))) { return; }
     const snapshot = await h.createService().ensureReady();
     assert.deepEqual(snapshot.features.map(feature => feature.relativePath), ['safe/checkout.feature']);
 });
 
 test('watches an explicit JSON outside the test root and refreshes its availability', async t => {
     const h = await harness(t);
-    const id = pathToFileURL(await h.write('checkout.feature')).toString();
+    const id = featureUri(await h.write('checkout.feature')).toString();
     const externalJson = path.join(h.temp, 'external-profile.json');
     await fs.writeFile(externalJson, '{}');
     const service = h.createService();
@@ -545,7 +548,7 @@ test('an exclusion change while saving a move cannot republish the compiled arti
         return rename(from, to);
     };
     try {
-        const moving = service.moveFeature(pathToFileURL(compiled).toString(), group.id);
+        const moving = service.moveFeature(featureUri(compiled).toString(), group.id);
         await started;
         service.setCompiledFeaturePaths([compiled]);
         release();
@@ -558,8 +561,8 @@ test('an exclusion change while saving a move cannot republish the compiled arti
 
 test('equivalent encoded file URIs share lookup, group moves, JSON association and persisted placement', async t => {
     const h = await harness(t);
-    const id = pathToFileURL(await h.write('test:name.feature')).toString();
-    const encoded = id.replace('test:name.feature', 'test%3Aname.feature');
+    const id = featureUri(await h.write('test name.feature')).toString();
+    const encoded = id.replace('test%20name.feature', 'test name.feature');
     const json = await h.write('profiles/launch.json', '{}');
     const service = h.createService();
     const group = await service.createGroup('Smoke');
@@ -588,10 +591,10 @@ test('shares portable groups and ordering across cloned roots while keeping laun
     const service = source.createService();
     const group = await service.createGroup('Shared smoke');
     const empty = await service.createGroup('Empty shared group');
-    await service.moveFeature(pathToFileURL(files[1]).toString(), group.id);
-    await service.moveFeature(pathToFileURL(files[0]).toString(), group.id);
+    await service.moveFeature(featureUri(files[1]).toString(), group.id);
+    await service.moveFeature(featureUri(files[0]).toString(), group.id);
     const json = await source.write('local-profile.json', '{}');
-    await service.setLaunchJson(pathToFileURL(files[0]).toString(), json);
+    await service.setLaunchJson(featureUri(files[0]).toString(), json);
 
     const clone = await harness(t);
     await fs.cp(source.root(), clone.root(), { recursive: true });
@@ -607,7 +610,7 @@ test('shares portable groups and ordering across cloned roots while keeping laun
     assert.ok(!JSON.stringify(shared).includes('jsonPath'), 'launch selection stays outside the shared object');
     const local = source.state.get('kotTestToolkit.standaloneFeatures') as { groups?: unknown; placements: Record<string, unknown> };
     assert.equal(local.groups, undefined);
-    assert.deepEqual(local.placements[pathToFileURL(files[0]).toString()], { jsonPath: json });
+    assert.deepEqual(local.placements[featureUri(files[0]).toString()], { jsonPath: json });
     await fs.stat(`${files[0]}.kot.yml`);
     await fs.stat(path.join(clone.root(), 'a.feature.kot.yml'));
     await assert.rejects(fs.stat(path.join(source.root(), '.kot', 'metadata')), { code: 'ENOENT' });
@@ -616,7 +619,7 @@ test('shares portable groups and ordering across cloned roots while keeping laun
 test('imports legacy local organization once and does not revive deleted shared groups', async t => {
     const h = await harness(t);
     const file = await h.write('smoke.feature');
-    const id = pathToFileURL(file).toString();
+    const id = featureUri(file).toString();
     const legacy = { groups: [{ id: 'legacy-smoke', name: 'Old smoke' }], placements: { [id]: { groupId: 'legacy-smoke', order: 7 } } };
     h.state.set('kotTestToolkit.standaloneFeatures', legacy);
     const service = h.createService();
@@ -631,7 +634,7 @@ test('imports legacy local organization once and does not revive deleted shared 
 
 test('refreshes shared Git edits and refuses a move into a group deleted by another tester', async t => {
     const h = await harness(t);
-    const id = pathToFileURL(await h.write('smoke.feature')).toString();
+    const id = featureUri(await h.write('smoke.feature')).toString();
     const service = h.createService();
     const group = await service.createGroup('Smoke');
     await service.moveFeature(id, group.id);
@@ -654,7 +657,7 @@ test('does not scan feature files inside project metadata storage', async t => {
 
 test('keeps project objects above a contained test root and watches that shared directory', async t => {
     const h = await harness(t);
-    const id = pathToFileURL(await h.write('smoke.feature')).toString();
+    const id = featureUri(await h.write('smoke.feature')).toString();
     const service = h.createService(h.temp);
     const group = await service.createGroup('Workspace smoke');
     await service.moveFeature(id, group.id);
@@ -669,7 +672,7 @@ test('keeps project objects above a contained test root and watches that shared 
 test('workspace sidecar edits refresh standalone organization and dispose their scoped watcher', async t => {
     const h = await harness(t);
     const source = await h.write('smoke.feature');
-    const id = pathToFileURL(source).toString();
+    const id = featureUri(source).toString();
     const service = h.createService(h.temp);
     const group = await service.createGroup('Workspace smoke');
     const store = new projectLibraryStore.ProjectLibraryStore(h.temp);
@@ -705,7 +708,7 @@ test('moving between independent project groups with the same name uses the dest
     const service = h.createService();
     await service.ensureReady();
 
-    await service.moveFeature(pathToFileURL(secondFile).toString(), firstGroup.id);
+    await service.moveFeature(featureUri(secondFile).toString(), firstGroup.id);
 
     const secondAfter = await secondStore.read();
     assert.deepEqual(secondAfter.groups, [{ ...secondGroup }]);
@@ -713,8 +716,8 @@ test('moving between independent project groups with the same name uses the dest
         groupId: secondGroup.id, order: 0, description: 'Second project'
     });
     assert.deepEqual((await firstStore.read()).metadata, firstBefore.metadata);
-    assert.equal(service.find(pathToFileURL(firstFile).toString())?.groupId, firstGroup.id);
-    assert.equal(service.find(pathToFileURL(secondFile).toString())?.groupId, secondGroup.id);
+    assert.equal(service.find(featureUri(firstFile).toString())?.groupId, firstGroup.id);
+    assert.equal(service.find(featureUri(secondFile).toString())?.groupId, secondGroup.id);
 });
 
 test('nested project roots keep source discovery and legacy sidecar imports with their owner', async t => {
@@ -738,8 +741,8 @@ test('nested project roots keep source discovery and legacy sidecar imports with
     const snapshot = await h.createService().ensureReady();
 
     assert.deepEqual(snapshot.features.map(feature => [feature.id, feature.relativePath, feature.groupId, feature.order]), [
-        [pathToFileURL(outerFile).toString(), 'outer.feature', outerGroup.id, 3],
-        [pathToFileURL(nestedFile).toString(), 'inner.feature', nestedGroup.id, 7]
+        [featureUri(outerFile).toString(), 'outer.feature', outerGroup.id, 3],
+        [featureUri(nestedFile).toString(), 'inner.feature', nestedGroup.id, 7]
     ]);
     assert.equal(await fs.readFile(`${nestedFile}.kot.yml`, 'utf8'), nestedSidecar);
     assert.deepEqual(Object.keys((await outerStore.read()).metadata), ['feature:outer.feature']);
@@ -791,7 +794,7 @@ test('a directory move between projects rebinds carried sidecars and local JSON 
     await firstStore.setMetadata(sourceIdentity, { groupId: sourceGroup.id, order: 7, description: 'Carried source description' });
     const service = h.createService();
     await service.ensureReady();
-    await service.setLaunchJson(pathToFileURL(firstFile).toString(), json);
+    await service.setLaunchJson(featureUri(firstFile).toString(), json);
     await fs.stat(`${firstFile}.kot.yml`);
     const from = path.join(firstRoot, 'source');
     const to = path.join(secondRoot, 'moved');
@@ -848,7 +851,7 @@ test('cross-project directory moves keep missing source groups deleted despite c
 
 test('dirty project metadata blocks organization writes while local launch JSON remains editable', async t => {
     const h = await harness(t);
-    const id = pathToFileURL(await h.write('smoke.feature')).toString();
+    const id = featureUri(await h.write('smoke.feature')).toString();
     const json = await h.write('profile.json', '{}');
     const service = h.createService();
     const group = await service.createGroup('Smoke');
@@ -868,7 +871,7 @@ test('dirty project metadata blocks organization writes while local launch JSON 
 
 test('dirty project metadata prevents the initial legacy import without clearing its local organization', async t => {
     const h = await harness(t);
-    const id = pathToFileURL(await h.write('smoke.feature')).toString();
+    const id = featureUri(await h.write('smoke.feature')).toString();
     const legacy = { groups: [{ id: 'legacy', name: 'Legacy' }], placements: { [id]: { groupId: 'legacy', order: 7 } } };
     h.state.set('kotTestToolkit.standaloneFeatures', legacy);
     h.setProjectMetadataDirty(h.root());
@@ -913,7 +916,7 @@ test('creating a group from feature Properties writes it to that feature project
     await v3Fixture(secondRoot); const file = path.join(secondRoot, 'other.feature');
     await fs.writeFile(file, 'Feature: Other\nScenario: Ready\n'); h.changeRoots([firstRoot, secondRoot]);
     const service = h.createService(); await service.ensureReady();
-    const group = await service.createGroupForFeature(pathToFileURL(file).toString(), 'From Properties');
+    const group = await service.createGroupForFeature(featureUri(file).toString(), 'From Properties');
     assert.deepEqual([...service.getSnapshot().ordering!.groupRoots[group.id]], [secondRoot]);
     assert.match(await groupsText(secondRoot), /From Properties/u);
 });
@@ -925,5 +928,5 @@ test('native SPPR scen.feature stays with its metadata instead of appearing as a
     const standalone = await h.write('ordinary/scen.feature');
     await fs.writeFile(path.join(path.dirname(standalone), 'meta.yaml'), 'Other: "configuration"\n');
     const snapshot = await h.createService().ensureReady();
-    assert.deepEqual(snapshot.features.map(feature => feature.uri), [pathToFileURL(standalone).href]);
+    assert.deepEqual(snapshot.features.map(feature => feature.uri), [featureUri(standalone).href]);
 });

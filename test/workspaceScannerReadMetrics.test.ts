@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -97,6 +98,7 @@ test('scanner overlaps 32 descriptor reads and reports read diagnostics', async 
         performance: { now: () => clockMs },
         console: { log: (message: string) => logs.push(message) },
         require: (specifier: string) => {
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             switch (specifier) {
                 case 'vscode': return vscode;
                 case 'fs': return fakeFs;

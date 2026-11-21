@@ -2,6 +2,12 @@
 
 This software incorporates components from the following third-party software.
 
+## smol-toml
+
+- **Project/version:** [squirrelchat/smol-toml](https://github.com/squirrelchat/smol-toml), `1.9.1`.
+- **Use:** validate project Codex configuration while preserving existing settings and comments during KOT connection setup.
+- **License:** BSD-3-Clause; the complete upstream notice is included in [third-party/smol-toml/LICENSE](third-party/smol-toml/LICENSE).
+
 ## 1c-neurofish onec-client-mcp-devkit
 
 - **Authors/project:** [1c-neurofish and contributors](https://github.com/1c-neurofish/onec-client-mcp-devkit).

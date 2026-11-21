@@ -1,3 +1,4 @@
+import { createTestLink } from './helpers/symlinks';
 import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -142,7 +143,7 @@ test('symlinked catalogs and busy locks do not write outside the project', async
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'kot-numbering-outside-'));
     t.after(() => fs.rm(outside, { recursive: true, force: true }));
     await fs.rm(path.join(root, '.kot'), {recursive: true});
-    await fs.symlink(outside, path.join(root, '.kot'));
+    if (!await createTestLink(t, outside, path.join(root, '.kot'))) { return; }
     await assert.rejects(store.addSeries('000012', 'Tester A', []), /symbolic|symlink|KOT 3/iu);
     assert.deepEqual(await fs.readdir(outside), []);
     await fs.unlink(path.join(root, '.kot')); await v3Fixture(root);

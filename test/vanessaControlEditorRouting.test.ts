@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,8 +28,8 @@ test('feature control keeps the visible native source when Properties has focus 
         commands: { registerCommand: (name: string, handler: (...args: unknown[]) => Promise<void>) => { handlers.set(name, handler); return noop(); }, executeCommand: noop } };
     const module = { exports: {} as any }; const ts = require('typescript');
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlCommands.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText,
-        { module, exports: module.exports, Error, require: (name: string) => name === 'vscode' ? vscode : name.endsWith('Highlighting')
-            ? { VanessaExecutionHighlighter: class { render() {} } } : name.endsWith('Feature') ? feature : name.endsWith('Yaml') ? yaml : require(name) });
+        { module, exports: module.exports, Error, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? vscode : name.endsWith('Highlighting')
+            ? { VanessaExecutionHighlighter: class { render() {} } } : name.endsWith('Feature') ? feature : name.endsWith('Yaml') ? yaml : require(name)) });
     const session = { snapshot: { status: 'ready', capabilities: { oneStep: { supported: true }, editorContent: { supported: true }, openFeature: { supported: true } } },
         onDidChange: noop, run: async (...args: unknown[]) => { calls.push(args.slice(0, 3)); } };
     module.exports.registerVanessaControlCommands({ subscriptions: [], workspaceState: { get: () => true } }, session);
@@ -58,6 +59,7 @@ test('YAML F11 uses a direct step trial even when a compiled map exists; compile
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join('src', 'vanessaControlCommands.ts'), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText,
     { module, exports: module.exports, Error, require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
         if (name === 'vscode') { return vscode; }
         if (name === './vanessaControlFeature') { return feature; }
         if (name === './vanessaControlYaml') { return yaml; }
@@ -88,9 +90,9 @@ test('a late failed-step error updates its hover without repainting unrelated fa
         commands: { registerCommand: noop, executeCommand: noop } };
     const module = { exports: {} as any }; const ts = require('typescript');
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/vanessaControlCommands.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
-        { module, exports: module.exports, require: (name: string) => name === 'vscode' ? vscode : name.endsWith('Highlighting')
+        { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? vscode : name.endsWith('Highlighting')
             ? { VanessaExecutionHighlighter: class { render() {} renderMany(_editor: unknown, lines: any[]) { painted.push(lines); } } }
-            : name.endsWith('Feature') ? feature : yaml });
+            : name.endsWith('Feature') ? feature : yaml) });
     module.exports.registerVanessaControlCommands({ subscriptions: [] }, session, undefined, undefined, undefined,
         (failure: any) => ({ value: 'Rich failure: ' + failure.message + (failure.details ?? '') }));
     assert.equal(painted.length, 1);

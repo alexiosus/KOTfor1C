@@ -1,3 +1,5 @@
+import * as nativeRedaction from '../src/vanessaControlRedaction';
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,6 +26,8 @@ test('retrieves a frozen selected profile without changing active selection, sec
     vm.runInNewContext(compiled, {
         module: moduleObject, exports: moduleObject.exports, console, Buffer,
         require: (specifier: string) => {
+            if (specifier === './vanessaControlRedaction') { return nativeRedaction; }
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === 'vscode') { return { EventEmitter: class { event = () => ({ dispose() {} }); fire() {} dispose() {} }, workspace: { getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback }) } }; }
             if (specifier === './appContext') { return { getExtensionUri: () => ({ fsPath: '/extension' }) }; }
             if (specifier === './scenarioScanRoot') { return { updateScenarioScanRoot: async () => { rootUpdates++; }, getScenarioScanRootPath: () => 'tests/' }; }
@@ -69,6 +73,8 @@ test('profile picker opens immediately and selected tables update before the art
     vm.runInNewContext(compiled, {
         module: moduleObject, exports: moduleObject.exports, console, Buffer,
         require: (specifier: string) => {
+            if (specifier === './vanessaControlRedaction') { return nativeRedaction; }
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === 'vscode') { return {
                 EventEmitter: class { event = () => ({ dispose() {} }); fire() {} dispose() {} }, QuickPickItemKind: { Separator: -1 },
                 env: { language: 'en' }, l10n: { t: (value: string) => value },
@@ -136,6 +142,8 @@ test('a profile selection cannot be overwritten by an earlier autosave finishing
     vm.runInNewContext(compiled, {
         module: moduleObject, exports: moduleObject.exports, console, Buffer,
         require: (specifier: string) => {
+            if (specifier === './vanessaControlRedaction') { return nativeRedaction; }
+            if (specifier === './kotInteraction') { return nativeInteraction; }
             if (specifier === 'vscode') { return { EventEmitter: class { event = () => ({ dispose() {} }); fire() {} dispose() {} }, workspace: { getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback }) } }; }
             if (specifier === './appContext') { return { getExtensionUri: () => ({ fsPath: '/extension' }) }; }
             if (specifier === './scenarioScanRoot') { return { updateScenarioScanRoot: async () => false, getScenarioScanRootPath: () => 'tests/' }; }
@@ -167,8 +175,8 @@ test('concurrent setup profile creation retains both new profiles and all existi
         './etalonBases': { getDefaultModelDbSettingsValue: () => 'model.yaml' }, './yamlParameterDefaults': defaults,
         './compilerBuildParameters': compilerParameters, './compilerBuildValueValidation': compilerValueValidation, './yamlParameterPaths': parameterPaths, './activeYamlParametersProfile': activeProfiles };
     vm.runInNewContext(compiled, { module: moduleObject, exports: moduleObject.exports, console, Buffer,
-        require: (specifier: string) => specifier === 'vscode' ? { EventEmitter: class { event = () => ({ dispose() {} }); fire() {} },
-            workspace: { getConfiguration: () => ({ get: (_: string, fallback?: unknown) => fallback }) }, commands: { executeCommand: async () => undefined } } : dependencies[specifier] ?? require(specifier) });
+        require: (specifier: string) => specifier === './vanessaControlRedaction' ? nativeRedaction : (specifier === './kotInteraction' ? nativeInteraction : (specifier === 'vscode' ? { EventEmitter: class { event = () => ({ dispose() {} }); fire() {} },
+            workspace: { getConfiguration: () => ({ get: (_: string, fallback?: unknown) => fallback }) }, commands: { executeCommand: async () => undefined } } : dependencies[specifier] ?? require(specifier))) });
     const Constructor = moduleObject.exports.YamlParametersManager as { getInstance(context: unknown): { createSetupProfile(name: string, rows: unknown[]): Promise<string> } };
     const manager = Constructor.getInstance({ subscriptions: [], secrets: { get: async () => saved, store: async (_key: string, value: string) => { saved = value; } } });
     await Promise.all([manager.createSetupProfile('First', [{ key: 'TestFolder', value: 'first' }]), manager.createSetupProfile('Second', [{ key: 'TestFolder', value: 'second' }])]);

@@ -25,7 +25,7 @@ function harness(source: string, autoMigrate = false) {
     const errors: unknown[] = [];
     const uri = { scheme: 'file', fsPath: '/repo/tests/scen.yaml', toString: () => 'file:///repo/tests/scen.yaml' };
     const document = {
-        uri, languageId: 'yaml', fileName: uri.fsPath, text: source,
+        uri, languageId: 'yaml', fileName: uri.fsPath, text: source, isDirty: false,
         getText() { return this.text; }, positionAt(offset: number) { return { offset }; },
         async save() { saves++; return true; }
     };
@@ -35,7 +35,7 @@ function harness(source: string, autoMigrate = false) {
     }
     const savedSnapshots = new Map();
     const state = {
-        permitsNativeScenario: () => false, ...phaseMetadata, console: { ...console, error: (...values: unknown[]) => { errors.push(values); } },
+        permitsNativeScenario: () => false, hasKotInteraction: () => false, assertKotPath: async (_file: string) => {}, ...phaseMetadata, console: { ...console, error: (...values: unknown[]) => { errors.push(values); } },
         context: { extensionUri: {} }, setTimeout, clearTimeout,
         isScenarioYamlFile: () => true, isMainScenarioDocument: () => true, hasProjectMetadata: () => false,
         buildScenarioSaveSnapshot: () => ({}), calculateScenarioDirtyFlags: () => ({}),
@@ -60,6 +60,7 @@ function harness(source: string, autoMigrate = false) {
                     { report() {} }, { onCancellationRequested: () => ({ dispose() {} }) })
             },
             workspace: {
+                textDocuments: [document],
                 workspaceFolders: [{ uri: { scheme: 'file', fsPath: '/repo' } }],
                 getConfiguration: () => ({ get: (key: string) => key === 'editor.autoMigrateScenarioYamlOnSave' && autoMigrate || key === 'editor.autoEnsureKotMetadataForMainScenarios' || key === 'editor.enableLegacyMetadataMigrationForMainScenarios' }),
                 openTextDocument: async () => document,
@@ -70,11 +71,38 @@ function harness(source: string, autoMigrate = false) {
     const compiled = ts.transpileModule(`({ save: ${save.getText(sourceFile)}, repair: ${repair.getText(sourceFile)} })`, {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
     }).outputText;
-    const handlers = vm.runInNewContext(compiled, state) as { save(document: unknown): Promise<void>; repair(mode: 'all'): Promise<void> };
-    return { document, errors, savedSnapshots, handlers, saves: () => saves };
+    const handlers = vm.runInNewContext('const kotUi = vscode.window;\n' + compiled, state) as { save(document: unknown): Promise<void>; repair(mode: 'all'): Promise<void> };
+    return { document, errors, savedSnapshots, handlers, state, saves: () => saves };
 }
 
 const scenario = 'ТипФайла: "Сценарий"\nДанныеСценария:\n    Имя: "Sales"\n    UID: "sales"\nПараметрыСценария:\nВложенныеСценарии:\nТекстСценария: |\n    #language: en\n    And I open a form\n';
+
+test('agent batch repair refuses dirty or disallowed sources before any write', async () => {
+    const h = harness(scenario); h.state.hasKotInteraction = () => true; h.document.isDirty = true;
+    await assert.rejects(h.handlers.repair('all'), /Save affected/); assert.equal(h.saves(), 0);
+    h.document.isDirty = false; h.state.assertKotPath = async () => { throw new Error('outside configured roots'); };
+    await assert.rejects(h.handlers.repair('all'), /outside configured/); assert.equal(h.saves(), 0);
+});
+
+test('batch cancellation propagates from native progress and returns actual partial counts', async () => {
+    const h = harness(scenario);
+    h.state.vscode.window.withProgress = async (_options, work) => work({ report() {} }, { onCancellationRequested: (cancel: () => void) => { cancel(); return { dispose() {} }; } });
+    const result = await h.handlers.repair('all') as unknown as { cancelled: boolean; changed: number; failed: number };
+    assert.equal(result.cancelled, true); assert.equal(result.changed, 0); assert.equal(result.failed, 0); assert.equal(h.saves(), 0);
+});
+
+test('native editor commands await asynchronous handlers and skip missing editors', async () => {
+    const ts = require('typescript') as typeof import('typescript');
+    const source = ts.createSourceFile('extension.ts', fs.readFileSync('src/extension.ts', 'utf8'), ts.ScriptTarget.ES2022, true);
+    const declaration = source.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === 'registerScenarioEditorCommand')!;
+    const commands = new Map<string, () => Promise<unknown>>(); const window: { activeTextEditor?: object } = { activeTextEditor: {} };
+    const register = vm.runInNewContext(ts.transpileModule(declaration.getText(source) + '\nregisterScenarioEditorCommand;', { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText,
+        { vscode: { window, commands: { registerCommand: (id: string, work: () => Promise<unknown>) => { commands.set(id, work); return {}; } } } });
+    let complete: (() => void) | undefined; let calls = 0;
+    register('editor.command', async (editor: unknown, edit: unknown) => { calls++; assert.equal(editor, window.activeTextEditor); assert.equal(edit, undefined); await new Promise<void>(resolve => { complete = resolve; }); return 'saved'; });
+    const running = commands.get('editor.command')!(); assert.equal(calls, 1); complete!(); assert.equal(await running, 'saved');
+    window.activeTextEditor = undefined; assert.equal(await commands.get('editor.command')!(), undefined); assert.equal(calls, 1);
+});
 
 for (const action of ['save', 'repair'] as const) {
     test(`${action} leaves a source without inline metadata intact even with legacy insertion settings enabled`, async () => {

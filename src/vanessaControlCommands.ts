@@ -1,9 +1,12 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import fs from 'node:fs/promises';
 import { VanessaFeatureControl, isExecutableFeatureLine, type VanessaFeatureDocument } from './vanessaControlFeature';
 import type { VanessaControlFailure, VanessaControlSession } from './vanessaControlSession';
 import { isExecutableYamlControlLine, type VanessaYamlControl } from './vanessaControlYaml';
 import { VanessaExecutionHighlighter } from './vanessaControlHighlighting';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 /** Manual feature commands share the attached session; ordinary F5/debug launches stay independent. */
 export function registerVanessaControlCommands(context: vscode.ExtensionContext, session: VanessaControlSession, yamlControl?: VanessaYamlControl,
@@ -56,7 +59,7 @@ export function registerVanessaControlCommands(context: vscode.ExtensionContext,
         const execution = snapshot.execution;
         if (session.failure && session.failure !== reportedFailure) {
             reportedFailure = session.failure;
-            void vscode.window.showErrorMessage(vscode.l10n.t('Step failed: {0}', session.failure.message));
+            void kotUi.showErrorMessage(vscode.l10n.t('Step failed: {0}', session.failure.message));
         }
         for (const editor of vscode.window.visibleTextEditors) {
             const matches = execution && session.executionMatchesSource(editor.document.uri.fsPath, textOf(editor.document));
@@ -86,11 +89,11 @@ export function registerVanessaControlCommands(context: vscode.ExtensionContext,
         execute: async (mode, filePath, line) => {
             if (vscode.debug.activeDebugSession) { throw new Error(vscode.l10n.t('Stop the active debugger before controlling Vanessa manually.')); }
             if (!context.workspaceState.get('kotTestToolkit.vanessaControl.preparationNotice', false)) {
-                void vscode.window.showInformationMessage(vscode.l10n.t('Manual execution skips preceding steps and preparation. Existing Vanessa variables and test clients are reused.'));
+                void kotUi.showInformationMessage(vscode.l10n.t('Manual execution skips preceding steps and preparation. Existing Vanessa variables and test clients are reused.'));
                 void context.workspaceState.update('kotTestToolkit.vanessaControl.preparationNotice', true);
             }
             executedSource = current();
-            return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification,
+            return kotUi.withProgress({ location: vscode.ProgressLocation.Notification,
                 title: mode === 'oneStep' ? vscode.l10n.t('Vanessa: execute one step') : vscode.l10n.t('Vanessa: run from this step') }, async progress => {
                 let subscription: { dispose(): void } | undefined;
                 let finish: ((passed: boolean) => Promise<void>) | undefined;
@@ -115,7 +118,7 @@ export function registerVanessaControlCommands(context: vscode.ExtensionContext,
                     });
                     const execution = session.snapshot.execution;
                     if (execution?.status === 'passed' && execution.nextLineNumber && execution.nextLineNumber < line) {
-                        void vscode.window.showInformationMessage(vscode.l10n.t('Vanessa selected an earlier line. Automatic loop traversal is unavailable for this runtime; select the next step manually.'));
+                        void kotUi.showInformationMessage(vscode.l10n.t('Vanessa selected an earlier line. Automatic loop traversal is unavailable for this runtime; select the next step manually.'));
                     }
                     return execution?.status === 'passed' && !vscode.debug.activeDebugSession ? execution.nextLineNumber : undefined;
                 } finally { await finish?.(session.snapshot.execution?.status === 'passed'); subscription?.dispose(); update(); }
@@ -143,7 +146,7 @@ export function registerVanessaControlCommands(context: vscode.ExtensionContext,
             }
             else { await control.run(mode); }
         }
-        catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? vscode.l10n.t(error.message) : vscode.l10n.t('Vanessa MCP command failed.')); }
+        catch (error) { void kotUi.showErrorMessage(error instanceof Error ? vscode.l10n.t(error.message) : vscode.l10n.t('Vanessa MCP command failed.')); }
     };
     context.subscriptions.push(decoration,
         vscode.commands.registerCommand('kotTestToolkit.vanessaControl.oneStep', (target?: vscode.Uri) => run('oneStep', false, target)),

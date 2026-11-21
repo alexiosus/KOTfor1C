@@ -1,3 +1,5 @@
+import { nativeInteraction } from './helpers/kotInteraction';
+import { createTestLink } from './helpers/symlinks';
 import * as projectFormatModule from '../src/projectFormat';
 import * as projectLegacyModule from '../src/projectLegacyMetadata';
 import { v3Fixture } from './helpers/projectFormat';
@@ -111,13 +113,13 @@ async function harness(t: test.TestContext, options: { dedicated?: boolean; bom?
     vm.runInNewContext(ts.transpileModule(await fs.readFile(path.join(process.cwd(), 'src/scenarioPropertiesPanel.ts'), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
     }).outputText, { module: nativeProperties, exports: nativeProperties.exports, Buffer, console, setTimeout, clearTimeout,
-        require: (name: string) => propertiesDependencies[name] ?? require(name) });
+        require: (name: string) => name === './kotInteraction' ? nativeInteraction : (propertiesDependencies[name] ?? require(name)) });
     dependencies['./scenarioPropertiesPanel'] = nativeProperties.exports;
     dependencies['./scenarioPropertiesBindings'] = bindings;
     const module = { exports: {} as any };
     const source = await fs.readFile(path.join(process.cwd(), 'src/processEditorCommands.ts'), 'utf8');
     vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
-        { module, exports: module.exports, Buffer, console, require: (name: string) => dependencies[name] ?? require(name) });
+        { module, exports: module.exports, Buffer, console, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? require(name)) });
     return { api: module.exports, target, parent, settings, active, opened, errors, host, open, root, scenarioRoot, processRoot, environment, uri, context: { extensionUri: uri('/extension') },
         setInput(value: string | undefined) { input = value; }, mutateDuringPick(callback: () => void) { mutate = callback; } };
 }
@@ -255,7 +257,7 @@ test('process identity discovery excludes settings owned by another workspace or
     const foreign = path.join(otherRoot, '001.yml');
     const before = await fs.readFile(h.settings.fsPath, 'utf8');
     await fs.writeFile(foreign, before);
-    await fs.symlink(otherRoot, path.join(h.root, 'linked-project'), 'dir');
+    if (!await createTestLink(t, otherRoot, path.join(h.root, 'linked-project'))) { return; }
     await h.api.changeProcessIdentityFromEditor(h.context, 'name', h.target, 'Renamed');
     assert.match(await fs.readFile(h.settings.fsPath, 'utf8'), /ПроцессНаименование: "Renamed"/u);
     assert.equal(await fs.readFile(foreign, 'utf8'), before);

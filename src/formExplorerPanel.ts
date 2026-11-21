@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import type { VanessaFormExplorerSource } from './vanessaControlFormSource';
 import { formStepContext, formStepTarget, type VanessaFormStepResult } from './vanessaControlFormSteps';
 import * as vscode from 'vscode';
@@ -33,6 +34,8 @@ import {
     ensureOneCPlatformsCatalogInitialized,
     normalizeOneCClientExePath
 } from './oneCPlatform';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 type AdapterMode = 'auto' | 'manual' | 'unknown' | 'mcp';
 type PendingOperationKind = 'refresh' | 'table' | 'locator' | 'start';
@@ -506,7 +509,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         const snapshotPath = this.getEffectiveSnapshotPath();
         if (!snapshotPath) {
             const t = await getTranslator(this.context.extensionUri);
-            vscode.window.showWarningMessage(t('Snapshot path is not configured.'));
+            kotUi.showWarningMessage(t('Snapshot path is not configured.'));
             return;
         }
 
@@ -516,7 +519,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         } catch (error) {
             const t = await getTranslator(this.context.extensionUri);
             const message = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(t('Failed to open snapshot file: {0}', message));
+            kotUi.showErrorMessage(t('Failed to open snapshot file: {0}', message));
         }
     }
 
@@ -524,7 +527,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         const snapshotPath = this.getEffectiveSnapshotPath();
         if (!snapshotPath) {
             const t = await getTranslator(this.context.extensionUri);
-            vscode.window.showWarningMessage(t('Snapshot path is not configured.'));
+            kotUi.showWarningMessage(t('Snapshot path is not configured.'));
             return;
         }
 
@@ -534,7 +537,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         } catch (error) {
             const t = await getTranslator(this.context.extensionUri);
             const message = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(t('Failed to reveal snapshot file: {0}', message));
+            kotUi.showErrorMessage(t('Failed to reveal snapshot file: {0}', message));
         }
     }
 
@@ -556,7 +559,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         } catch (error) {
             const t = await getTranslator(this.context.extensionUri);
             const message = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(t('Failed to open source location: {0}', message));
+            kotUi.showErrorMessage(t('Failed to open source location: {0}', message));
         }
     }
 
@@ -1178,7 +1181,7 @@ export class FormExplorerPanel implements vscode.Disposable {
         const modeRequestPath = this.getAdapterModeRequestPath();
         const requestContextPath = this.getAdapterRequestContextPath();
         if (!modeRequestPath) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 t('Form Explorer generated artifacts directory is not configured. Set kotTestToolkit.formExplorer.generatedArtifactsDirectory.')
             );
             return false;
@@ -1198,7 +1201,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             await fs.promises.writeFile(modeRequestPath, `${requestCode}\n`, 'utf8');
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(t('Failed to write Form Explorer mode request: {0}', message));
+            kotUi.showErrorMessage(t('Failed to write Form Explorer mode request: {0}', message));
             return false;
         }
 
@@ -1280,7 +1283,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             this.pendingOperation = null;
             this.lastError = previousError;
             await this.postState();
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 t('Form Explorer session is still running. Close the current 1C windows first.')
             );
             return;
@@ -1381,7 +1384,7 @@ export class FormExplorerPanel implements vscode.Disposable {
             { label: vscode.l10n.t('Vanessa MCP'), value: 'mcp' },
             { label: vscode.l10n.t('Snapshot bridge'), value: 'snapshot' }
         ];
-        const selected = await vscode.window.showQuickPick(items, { title: vscode.l10n.t('Form Explorer data source') });
+        const selected = await kotUi.showQuickPick(items, { title: vscode.l10n.t('Form Explorer data source') });
         if (selected) { await vscode.workspace.getConfiguration('kotTestToolkit.formExplorer').update('source', selected.value, vscode.ConfigurationTarget.Workspace); }
     }
 
@@ -1393,10 +1396,10 @@ export class FormExplorerPanel implements vscode.Disposable {
         this.choosingClientWindow = true;
         try {
             await this.postState();
-            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Vanessa: selecting client window…') }, async () => {
+            await kotUi.withProgress({ location: vscode.ProgressLocation.Notification, title: vscode.l10n.t('Vanessa: selecting client window…') }, async () => {
                 const windows = await source.windows();
                 if (!windows || !current()) { return; }
-                const title = await vscode.window.showQuickPick([...windows.titles], { title: vscode.l10n.t('Select an internal test-client window'), ignoreFocusOut: true });
+                const title = await kotUi.showQuickPick([...windows.titles], { title: vscode.l10n.t('Select an internal test-client window'), ignoreFocusOut: true });
                 if (!title || !current()) { return; }
                 const snapshot = await source.activateWindow(windows, title);
                 if (!current()) { return; }

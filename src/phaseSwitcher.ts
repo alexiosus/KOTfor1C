@@ -1,3 +1,4 @@
+import { kotWindow, assertKotPath } from './kotInteraction';
 import { projectFormat } from './projectFormat';
 ﻿import * as vscode from 'vscode';
 import * as cp from 'child_process';
@@ -56,6 +57,7 @@ import type { ActiveYamlParametersProfile, YamlParameter } from './yamlParameter
 import { selectCompilerBuildSources, type CompilerBuildSource } from './compilerBuildSourceSelection';
 import { collectCompilerBuildPreflightIssues, type CompilerBuildPreflightIssue } from './compilerBuildPreflight';
 import { captureCompilerBuildInputs, invalidateCompilerBuildManifest, publishCompilerBuildManifest, readCompilerBuildManifest, readCompilerBuildManifestArtifacts, type CompilerBuildCapturedInputs } from './compilerBuildManifestStore';
+import { fingerprintCompilerBuildArtifact, verifyCompilerBuildManifest } from './compilerBuildManifest';
 import { prepareCompilerControlMappingContext } from './vanessaControlSourceMapping';
 import type { VanessaYamlBuild } from './vanessaControlYaml';
 import { getScenarioCallKeyword, getScenarioLanguageForDocument } from './gherkinLanguage';
@@ -149,6 +151,8 @@ import { collectDisabledProcessSettingsFiles, collectDisabledScenarioSettingsFil
 import { parseCompilerSourceMap, findCompilerSourceLocation, extractCompilerFeatureScenarioUids, extractCompilerFeatureProcessCodes, parseCompilerJUnit } from './compilerArtifacts';
 import { canEmbedCompilerProcess } from './compilerProcesses';
 import { getCompilerScenarioBody } from './scenarioCompilerSyntax';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 const loadInfobaseManager = createDeferredLoader(
     () => import('./infobaseManager.js')
@@ -1536,7 +1540,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this.t('Failed to restore {0} temporarily moved test file(s).', String(restoreFailures.length)),
                 new Error(restoreFailures.join('\n'))
             );
-            vscode.window.showWarningMessage(warningMessage);
+            kotUi.showWarningMessage(warningMessage);
             return restoreFailures.length;
         }
 
@@ -1875,7 +1879,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     }
                 }
             } catch (error) {
-                vscode.window.showErrorMessage(this.t('Could not move project metadata: {0}', error instanceof Error ? error.message : String(error)));
+                kotUi.showErrorMessage(this.t('Could not move project metadata: {0}', error instanceof Error ? error.message : String(error)));
                 this.invalidateScenarioCatalog();
                 return;
             }
@@ -3166,7 +3170,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const returnAction = this.t('Return to running step');
         const keepUnlockedAction = this.t('Keep scroll unlocked');
-        void vscode.window.showInformationMessage(
+        void kotUi.showInformationMessage(
             this.t('Auto-follow for running step is unlocked while you scroll.'),
             returnAction,
             keepUnlockedAction
@@ -4232,7 +4236,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
         const runStatus = this.getSelectedRunStatusForScenario(runtimeKey);
         if (runStatus !== 'running') {
-            vscode.window.showInformationMessage(
+            kotUi.showInformationMessage(
                 this.t('Scenario "{0}" is not running. Live log is unavailable.', scenarioName)
             );
             return;
@@ -4240,7 +4244,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const runLogPath = this.getSelectedRunLogPathForScenario(runtimeKey)?.trim();
         if (!runLogPath) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('Run log path is not available for scenario "{0}".', scenarioName)
             );
             return;
@@ -4701,13 +4705,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             uri = typeof target === 'string' ? vscode.Uri.parse(target) : target;
         } catch {
             if (!options?.silent) {
-                vscode.window.showWarningMessage(this.t('Could not parse scenario URI for favorites.'));
+                kotUi.showWarningMessage(this.t('Could not parse scenario URI for favorites.'));
             }
             return false;
         }
         if (!uri || uri.scheme !== 'file' || !this.shouldTrackUriForCache(uri)) {
             if (!options?.silent) {
-                vscode.window.showWarningMessage(this.t('Only scenario files can be added to favorites.'));
+                kotUi.showWarningMessage(this.t('Only scenario files can be added to favorites.'));
             }
             return false;
         }
@@ -4719,7 +4723,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             : await this.buildFavoriteEntryFromScenarioUri(uri);
         if (!nextEntry) {
             if (!options?.silent) {
-                vscode.window.showWarningMessage(this.t('Scenario file is not indexed yet. Refresh cache and try again.'));
+                kotUi.showWarningMessage(this.t('Scenario file is not indexed yet. Refresh cache and try again.'));
             }
             return false;
         }
@@ -4744,7 +4748,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         if (!options?.silent) {
-            vscode.window.showInformationMessage(
+            kotUi.showInformationMessage(
                 this.t('Scenario "{0}" was added to favorites.', nextEntry.name)
             );
         }
@@ -4784,7 +4788,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         await this.refreshActiveScenarioFavoriteContext();
         if (!options?.silent) {
             if (options?.showUndo === false) {
-                void vscode.window.showInformationMessage(
+                void kotUi.showInformationMessage(
                     this.t('Scenario "{0}" was removed from favorites.', removed.name)
                 );
             } else {
@@ -4816,14 +4820,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private async showFavoriteRemovedWithUndoNotification(removed: FavoriteScenarioEntry): Promise<void> {
         const undoLabel = this.t('Undo');
-        const selectedAction = await vscode.window.showInformationMessage(
+        const selectedAction = await kotUi.showInformationMessage(
             this.t('Scenario "{0}" was removed from favorites.', removed.name),
             undoLabel
         );
 
         if (selectedAction === undoLabel) {
             await this.restoreFavoriteEntry(removed);
-            void vscode.window.showInformationMessage(
+            void kotUi.showInformationMessage(
                 this.t('Scenario "{0}" was restored to favorites.', removed.name)
             );
         }
@@ -4832,33 +4836,33 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     public async addActiveScenarioToFavorites(): Promise<void> {
         const activeDocument = vscode.window.activeTextEditor?.document;
         if (!activeDocument || !isScenarioYamlFile(activeDocument)) {
-            vscode.window.showWarningMessage(this.t('Open a scenario YAML file to manage favorites.'));
+            kotUi.showWarningMessage(this.t('Open a scenario YAML file to manage favorites.'));
             return;
         }
 
         const added = await this.addScenarioToFavoritesByUri(activeDocument.uri);
         if (!added) {
-            vscode.window.showWarningMessage(this.t('Scenario file is not indexed yet. Refresh cache and try again.'));
+            kotUi.showWarningMessage(this.t('Scenario file is not indexed yet. Refresh cache and try again.'));
         }
     }
 
     public async removeActiveScenarioFromFavorites(): Promise<void> {
         const activeDocument = vscode.window.activeTextEditor?.document;
         if (!activeDocument || !isScenarioYamlFile(activeDocument)) {
-            vscode.window.showWarningMessage(this.t('Open a scenario YAML file to manage favorites.'));
+            kotUi.showWarningMessage(this.t('Open a scenario YAML file to manage favorites.'));
             return;
         }
 
         const removed = await this.removeScenarioFromFavoritesByUri(activeDocument.uri);
         if (!removed) {
-            vscode.window.showInformationMessage(this.t('Scenario is not in favorites.'));
+            kotUi.showInformationMessage(this.t('Scenario is not in favorites.'));
         }
     }
 
     public async toggleFavoriteForActiveScenario(): Promise<void> {
         const activeDocument = vscode.window.activeTextEditor?.document;
         if (!activeDocument || !isScenarioYamlFile(activeDocument)) {
-            vscode.window.showWarningMessage(this.t('Open a scenario YAML file to manage favorites.'));
+            kotUi.showWarningMessage(this.t('Open a scenario YAML file to manage favorites.'));
             return;
         }
 
@@ -4877,7 +4881,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     public async showFavoriteScenariosPicker(): Promise<void> {
         const favorites = await this.synchronizeFavoriteEntriesWithCache();
         if (favorites.length === 0) {
-            vscode.window.showInformationMessage(this.t('No favorite scenarios yet.'));
+            kotUi.showInformationMessage(this.t('No favorite scenarios yet.'));
             return;
         }
 
@@ -4919,7 +4923,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             quickPick.items = makeItems(currentEntries);
             if (currentEntries.length === 0) {
                 quickPick.hide();
-                vscode.window.showInformationMessage(this.t('No favorite scenarios yet.'));
+                kotUi.showInformationMessage(this.t('No favorite scenarios yet.'));
             }
         });
 
@@ -4935,7 +4939,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const document = await vscode.workspace.openTextDocument(uri);
                 await vscode.window.showTextDocument(document, { preview: false });
             } catch (error: any) {
-                vscode.window.showErrorMessage(
+                kotUi.showErrorMessage(
                     this.t('Failed to open favorite scenario file: {0}', error?.message || String(error))
                 );
             }
@@ -4951,35 +4955,35 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     public async changeNestedScenarioCodeForActiveEditor(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
-            vscode.window.showWarningMessage(this.t('No active editor.'));
+            kotUi.showWarningMessage(this.t('No active editor.'));
             return;
         }
 
         const document = editor.document;
         if (!isScenarioYamlFile(document)) {
-            vscode.window.showWarningMessage(this.t('Open a scenario YAML file to change nested scenario code.'));
+            kotUi.showWarningMessage(this.t('Open a scenario YAML file to change nested scenario code.'));
             return;
         }
 
         const catalog = await this.ensureFreshScenarioCatalog();
         if (catalog.all.length === 0) {
-            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
+            kotUi.showWarningMessage(this.t('No scenarios found in cache.'));
             return;
         }
 
         const scenarioInfo = this.findScenarioByUriInCache(document.uri);
         if (!scenarioInfo) {
-            vscode.window.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
+            kotUi.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
             return;
         }
 
         if (this.isMainScenario(scenarioInfo)) {
-            vscode.window.showWarningMessage(this.t('Changing code from editor is available for nested scenarios only.'));
+            kotUi.showWarningMessage(this.t('Changing code from editor is available for nested scenarios only.'));
             return;
         }
 
         if (document.isDirty) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('Save modified scenario file before changing nested scenario code for "{0}".', scenarioInfo.name)
             );
             return;
@@ -4987,7 +4991,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const currentCode = (scenarioInfo.scenarioCode || '').trim();
         if (!currentCode) {
-            vscode.window.showWarningMessage(this.t('Scenario "{0}" has no code in ДанныеСценария.', scenarioInfo.name));
+            kotUi.showWarningMessage(this.t('Scenario "{0}" has no code in ДанныеСценария.', scenarioInfo.name));
             return;
         }
 
@@ -4998,7 +5002,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 .filter(code => code.length > 0 && code !== currentCodeLower)
         );
 
-        const newCodeRaw = await vscode.window.showInputBox({
+        const newCodeRaw = await kotUi.showInputBox({
             title: this.t('Change nested scenario code'),
             prompt: this.t('Enter scenario numeric code (digits only)'),
             value: currentCode,
@@ -5038,7 +5042,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             !this.areUrisEqual(scenarioDirectoryUri, targetScenarioDirectoryUri) &&
             fs.existsSync(targetScenarioDirectoryPath)
         ) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('Rename target already exists: {0}', targetScenarioDirectoryPath)
             );
             return;
@@ -5056,13 +5060,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 newCode
             );
         } catch (error: any) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Failed to change nested scenario code for "{0}": {1}', scenarioInfo.name, error?.message || String(error))
             );
             return;
         }
         if (!updatedScenarioContent.changed) {
-            vscode.window.showWarningMessage(this.t('No files were updated for scenario "{0}".', scenarioInfo.name));
+            kotUi.showWarningMessage(this.t('No files were updated for scenario "{0}".', scenarioInfo.name));
             return;
         }
 
@@ -5097,7 +5101,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     console.error('[PhaseSwitcherProvider] Failed to rollback nested scenario directory rename:', rollbackError);
                 }
             }
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Failed to change nested scenario code for "{0}": {1}', scenarioInfo.name, error?.message || String(error))
             );
             return;
@@ -5136,7 +5140,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.handleActiveEditorChanged(vscode.window.activeTextEditor);
         this.sendRelationshipStateToWebview();
 
-        vscode.window.showInformationMessage(
+        kotUi.showInformationMessage(
             this.t(
                 'Nested scenario "{0}" code was changed from "{1}" to "{2}". Updated files: {3}.',
                 scenarioInfo.name,
@@ -5150,20 +5154,20 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     public async changeNestedScenarioNameForActiveEditor(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
-            vscode.window.showWarningMessage(this.t('No active editor.'));
+            kotUi.showWarningMessage(this.t('No active editor.'));
             return;
         }
 
         const document = editor.document;
         if (!isScenarioYamlFile(document)) {
-            vscode.window.showWarningMessage(this.t('Open a scenario YAML file to change nested scenario name.'));
+            kotUi.showWarningMessage(this.t('Open a scenario YAML file to change nested scenario name.'));
             return;
         }
 
         const catalog = await this.ensureFreshScenarioCatalog();
         const scenarioInfo = catalog.byUri.get(document.uri.toString());
         if (!scenarioInfo) {
-            vscode.window.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
+            kotUi.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
             return;
         }
         await this.changeNestedScenarioName({ name: scenarioInfo.name, uri: document.uri.toString() });
@@ -5173,23 +5177,23 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const catalog = await this.ensureFreshScenarioCatalog();
         if (catalog.all.length === 0) {
-            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
+            kotUi.showWarningMessage(this.t('No scenarios found in cache.'));
             return;
         }
 
         const scenarioInfo = await this.resolveScenarioOperationTarget(target, { requireUnambiguousName: true });
         if (!scenarioInfo) {
-            vscode.window.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
+            kotUi.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
             return;
         }
 
         if (this.isMainScenario(scenarioInfo)) {
-            vscode.window.showWarningMessage(this.t('Changing name from editor is available for nested scenarios only.'));
+            kotUi.showWarningMessage(this.t('Changing name from editor is available for nested scenarios only.'));
             return;
         }
 
         if (vscode.workspace.textDocuments.some(document => document.isDirty && this.areUrisEqual(document.uri, scenarioInfo.yamlFileUri))) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('Save modified scenario file before changing nested scenario name for "{0}".', scenarioInfo.name)
             );
             return;
@@ -5197,7 +5201,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const currentName = (scenarioInfo.name || '').trim();
         if (!currentName) {
-            vscode.window.showWarningMessage(this.t('Scenario "{0}" has no name in ДанныеСценария.', scenarioInfo.name));
+            kotUi.showWarningMessage(this.t('Scenario "{0}" has no name in ДанныеСценария.', scenarioInfo.name));
             return;
         }
 
@@ -5208,7 +5212,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 .filter(name => name.length > 0 && name !== currentLowerName)
         );
 
-        const newNameRaw = await vscode.window.showInputBox({
+        const newNameRaw = await kotUi.showInputBox({
             title: this.t('Change nested scenario name'),
             prompt: this.t('Enter new nested scenario name'),
             value: currentName,
@@ -5239,7 +5243,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
         const scenarioUris = Array.from(uniqueScenarioUris.values());
         if (scenarioUris.length === 0) {
-            vscode.window.showWarningMessage(this.t('No scenarios found in cache.'));
+            kotUi.showWarningMessage(this.t('No scenarios found in cache.'));
             return;
         }
 
@@ -5248,7 +5252,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             openDoc.isDirty && trackedScenarioUriKeys.has(openDoc.uri.toString())
         );
         if (dirtyTrackedDocuments.length > 0) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('Save all modified scenario YAML files before changing nested scenario name "{0}".', currentName)
             );
             return;
@@ -5296,14 +5300,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 }
             }
         } catch (error: any) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Failed to change nested scenario name for "{0}": {1}', currentName, error?.message || String(error))
             );
             return;
         }
 
         if (changedFiles === 0) {
-            vscode.window.showWarningMessage(this.t('No files were updated for scenario "{0}".', currentName));
+            kotUi.showWarningMessage(this.t('No files were updated for scenario "{0}".', currentName));
             return;
         }
 
@@ -5332,7 +5336,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.handleActiveEditorChanged(vscode.window.activeTextEditor);
         this.sendRelationshipStateToWebview();
 
-        vscode.window.showInformationMessage(
+        kotUi.showInformationMessage(
             this.t(
                 'Nested scenario "{0}" was renamed to "{1}". Updated files: {2}. Calls updated: {3}. Nested sections updated: {4}.',
                 currentName,
@@ -5491,13 +5495,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const paths = resolution.scenarios
                 .map(item => item.relativePath || item.yamlFileUri.fsPath)
                 .join('\n');
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 `${this.t('Action cancelled: scenario "{0}" resolves to multiple files:', target.name)}\n${paths}`
             );
             return null;
         }
 
-        vscode.window.showWarningMessage(
+        kotUi.showWarningMessage(
             this.t('Scenario "{0}" was not found or its file identity is stale.', target.name)
         );
         return null;
@@ -5517,13 +5521,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const paths = resolution.scenarios
                 .map(item => item.relativePath || item.yamlFileUri.fsPath)
                 .join('\n');
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 `${this.t('Action cancelled: scenario "{0}" resolves to multiple files:', displayName)}\n${paths}`
             );
             return null;
         }
 
-        vscode.window.showWarningMessage(
+        kotUi.showWarningMessage(
             this.t('Scenario "{0}" was not found or its file identity is stale.', displayName)
         );
         return null;
@@ -5658,14 +5662,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         featureId = feature.id;
         if (this._preparingStandaloneFeatureRuns.has(featureId) || this.isScenarioRunInProgress(feature.name, featureId)) { return; }
         if (this._isBuildInProgress) {
-            vscode.window.showWarningMessage(this.t('Please wait for the current build to finish.'));
+            kotUi.showWarningMessage(this.t('Please wait for the current build to finish.'));
             return;
         }
         this._preparingStandaloneFeatureRuns.add(featureId);
         try {
             let jsonPath = feature.jsonPath;
             if (jsonPath && fs.existsSync(jsonPath)) {
-                const chosen = await vscode.window.showQuickPick([
+                const chosen = await kotUi.showQuickPick([
                     { label: this.t('Use existing launch JSON'), description: jsonPath, action: 'existing' },
                     { label: this.t('Generate launch JSON from a profile'), action: 'generate' },
                     { label: this.t('Choose another launch JSON'), action: 'select' }
@@ -5673,7 +5677,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 if (!chosen) { return; }
                 if (chosen.action === 'generate') { jsonPath = undefined; }
                 if (chosen.action === 'select') {
-                    const picked = await vscode.window.showOpenDialog({
+                    const picked = await kotUi.showOpenDialog({
                         canSelectMany: false, filters: { JSON: ['json'] },
                         title: this.t('Choose launch JSON')
                     });
@@ -5702,7 +5706,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             artifact.combinedJsonPath = await this.prepareStandaloneFeatureLaunchJson(artifact);
             await this.runScenarioInVanessa(feature.name, featureId);
         } catch (error) {
-            vscode.window.showErrorMessage(this.t('Unable to run feature: {0}', error instanceof Error ? error.message : String(error)));
+            kotUi.showErrorMessage(this.t('Unable to run feature: {0}', error instanceof Error ? error.message : String(error)));
         } finally {
             this._preparingStandaloneFeatureRuns.delete(featureId);
         }
@@ -5727,20 +5731,20 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     public async renameScenarioForActiveEditor(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
-            vscode.window.showWarningMessage(this.t('No active editor.'));
+            kotUi.showWarningMessage(this.t('No active editor.'));
             return;
         }
 
         const document = editor.document;
         if (!isScenarioYamlFile(document) && !isProcessYamlFile(document)) {
-            vscode.window.showWarningMessage(this.t('Open a scenario YAML file to rename scenario.'));
+            kotUi.showWarningMessage(this.t('Open a scenario YAML file to rename scenario.'));
             return;
         }
 
         const catalog = await this.ensureFreshScenarioCatalog();
         const scenarioInfo = catalog.byUri.get(document.uri.toString());
         if (!scenarioInfo) {
-            vscode.window.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
+            kotUi.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
             return;
         }
 
@@ -5761,20 +5765,20 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     public async openMainScenarioTestSettingsForActiveEditor(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
-            vscode.window.showWarningMessage(this.t('No active editor.'));
+            kotUi.showWarningMessage(this.t('No active editor.'));
             return;
         }
 
         const document = editor.document;
         if (!isScenarioYamlFile(document) && !isProcessYamlFile(document)) {
-            vscode.window.showWarningMessage(this.t('Open a scenario YAML file to open run settings.'));
+            kotUi.showWarningMessage(this.t('Open a scenario YAML file to open run settings.'));
             return;
         }
 
         const catalog = await this.ensureFreshScenarioCatalog();
         const scenarioInfo = catalog.byUri.get(document.uri.toString());
         if (!scenarioInfo) {
-            vscode.window.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
+            kotUi.showWarningMessage(this.t('Scenario for active file was not found in cache.'));
             return;
         }
 
@@ -5848,7 +5852,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
             await this.refreshFromExternalStateChange({ refreshCache: false });
         } catch (error) {
-            vscode.window.showWarningMessage(this.t('Could not change library order: {0}', error instanceof Error ? error.message : String(error)));
+            kotUi.showWarningMessage(this.t('Could not change library order: {0}', error instanceof Error ? error.message : String(error)));
         }
     }
 
@@ -5867,22 +5871,22 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const store = createProjectLibraryStore(root, env.workspaceRoots, env.scanRoots, assertProjectMetadataSaved);
         const groups = (projectFormat(root).kind === 'v3' ? await store.readGroups() : getCachedProjectLibrarySnapshot(root)?.groups ?? [])
             .filter(group => group.sections.includes(section));
-        const selected = await vscode.window.showQuickPick([
+        const selected = await kotUi.showQuickPick([
             { label: this.t('Ungrouped'), id: '', create: false },
             ...groups.map(group => ({ label: group.name, id: group.id, create: false })), { label: this.t('New group…'), id: '', create: true }
         ], { title: this.t('Choose a group'), ignoreFocusOut: true });
         if (!selected) { return; }
         let groupId = selected.id;
         if (selected.create) {
-            const name = await vscode.window.showInputBox({ title: this.t('New group'), prompt: this.t('Enter group name'),
+            const name = await kotUi.showInputBox({ title: this.t('New group'), prompt: this.t('Enter group name'),
                 ignoreFocusOut: true, validateInput: value => value.trim() ? null : this.t('Group name cannot be empty.') });
             if (!name?.trim()) { return; }
             groupId = (await store.ensureGroup(name.trim(), section)).id;
         } else if (groupId) {
             const local = (projectFormat(root).kind === 'v3' ? await store.readGroups() : getCachedProjectLibrarySnapshot(root)?.groups ?? []).find(group => group.id === groupId);
-            if (!local || local.name !== selected.label) { vscode.window.showWarningMessage(this.t('The group changed. Refresh the panel and try again.')); return; }
+            if (!local || local.name !== selected.label) { kotUi.showWarningMessage(this.t('The group changed. Refresh the panel and try again.')); return; }
         }
-        if (document.version !== version) { vscode.window.showWarningMessage(this.t('The scenario changed. Run the command again.')); return; }
+        if (document.version !== version) { kotUi.showWarningMessage(this.t('The scenario changed. Run the command again.')); return; }
         if (!await persistProjectMetadata(document, { groupId })) { return; }
         const catalog = this.getScenarioCatalog();
         if (catalog) {
@@ -5894,7 +5898,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     private async createScenarioGroup(section: ProjectSection): Promise<void> {
-        const name = await vscode.window.showInputBox({ title: this.t('New group'), prompt: this.t('Enter group name'),
+        const name = await kotUi.showInputBox({ title: this.t('New group'), prompt: this.t('Enter group name'),
             ignoreFocusOut: true, validateInput: value => value.trim() ? null : this.t('Group name cannot be empty.') });
         if (!name?.trim()) { return; }
         try {
@@ -5909,7 +5913,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             await createProjectLibraryStore(root, env.workspaceRoots, env.scanRoots, assertProjectMetadataSaved).ensureGroup(name.trim(), section);
             await this.refreshFromExternalStateChange({ refreshCache: true });
         } catch (error) {
-            vscode.window.showErrorMessage(this.t('Could not create group: {0}', error instanceof Error ? error.message : String(error)));
+            kotUi.showErrorMessage(this.t('Could not create group: {0}', error instanceof Error ? error.message : String(error)));
         }
     }
 
@@ -5919,20 +5923,20 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const env = projectLibraryEnvironment();
         const groups = await this.getProjectScenarioGroups();
         const group = groups.find(item => groupId ? item.id === groupId && item.name === groupName.trim() : item.name === groupName.trim());
-        if (!group) { vscode.window.showWarningMessage(this.t('The group changed. Refresh the panel and try again.')); return; }
+        if (!group) { kotUi.showWarningMessage(this.t('The group changed. Refresh the panel and try again.')); return; }
         const roots = new Set([...env.workspaceRoots, ...env.scanRoots.map(root => resolveProjectLibraryRoot(root, env.workspaceRoots, env.scanRoots))]);
         const targets: string[] = [];
         for (const root of roots) {
             if ((await createProjectLibraryStore(root, env.workspaceRoots, env.scanRoots, assertProjectMetadataSaved).read()).groups.some(value => value.id === group.id && value.name === group.name)) { targets.push(root); }
         }
-        const name = await vscode.window.showInputBox({ title: this.t('Rename group'), prompt: this.t('Enter new group name'),
+        const name = await kotUi.showInputBox({ title: this.t('Rename group'), prompt: this.t('Enter new group name'),
             value: group.name, ignoreFocusOut: true, validateInput: value => value.trim() ? null : this.t('Group name cannot be empty.') });
         if (!name?.trim() || name.trim() === group.name) { return; }
         try {
             await renameProjectLibraryGroup(group.id, group.name, name.trim(), targets, assertProjectMetadataSaved, env.scanRoots);
             if (targets.length) { await this.refreshFromExternalStateChange({ refreshCache: true }); }
         } catch (error) {
-            vscode.window.showErrorMessage(this.t('Failed to rename group "{0}": {1}', group.name, error instanceof Error ? error.message : String(error)));
+            kotUi.showErrorMessage(this.t('Failed to rename group "{0}": {1}', group.name, error instanceof Error ? error.message : String(error)));
         }
     }
 
@@ -5968,7 +5972,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const currentLowerName = trimmedScenarioName.toLowerCase();
         const currentLowerCode = (scenarioInfo.scenarioCode || '').trim().toLowerCase();
 
-        const newScenarioNameRaw = await vscode.window.showInputBox({
+        const newScenarioNameRaw = await kotUi.showInputBox({
             title: this.t('Rename scenario'),
             prompt: this.t('Enter new scenario name'),
             value: trimmedScenarioName,
@@ -6046,7 +6050,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const directoryWillBeRenamed = isMainScenario && !this.areUrisEqual(scenarioDirectoryUri, targetScenarioDirectoryUri);
         if (directoryWillBeRenamed && fs.existsSync(targetScenarioDirectory)) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('Rename target already exists: {0}', targetScenarioDirectory)
             );
             return;
@@ -6057,7 +6061,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 mainTestFileRename.toFileName
             );
             if (fs.existsSync(targetTestFilePath)) {
-                vscode.window.showWarningMessage(
+                kotUi.showWarningMessage(
                     this.t('Rename target already exists: {0}', targetTestFilePath)
                 );
                 return;
@@ -6069,7 +6073,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             document.isDirty && involvedUris.some(uri => this.areUrisEqual(uri, document.uri))
         );
         if (dirtyDocuments.length > 0) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('Save modified files before renaming scenario "{0}".', trimmedScenarioName)
             );
             return;
@@ -6113,7 +6117,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 nextScenarioCode
             );
         } catch (error: any) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Failed to rename scenario "{0}": {1}', trimmedScenarioName, error?.message || String(error))
             );
             return;
@@ -6184,7 +6188,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const displayedError = rollbackErrors.length > 0
                 ? new AggregateError([error, ...rollbackErrors], 'Rename rollback was incomplete')
                 : error;
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t(
                     'Failed to rename scenario "{0}": {1}',
                     trimmedScenarioName,
@@ -6195,7 +6199,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         if (changedFiles === 0) {
-            vscode.window.showWarningMessage(this.t('No files were updated for scenario "{0}".', trimmedScenarioName));
+            kotUi.showWarningMessage(this.t('No files were updated for scenario "{0}".', trimmedScenarioName));
             return;
         }
 
@@ -6232,7 +6236,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         this.handleActiveEditorChanged(vscode.window.activeTextEditor);
         this.sendRelationshipStateToWebview();
 
-        vscode.window.showInformationMessage(
+        kotUi.showInformationMessage(
             this.t('Scenario "{0}" was renamed to "{1}". Updated files: {2}.', trimmedScenarioName, newScenarioName, String(changedFiles))
         );
     }
@@ -6254,13 +6258,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         if (!this.isMainScenario(scenarioInfo)) {
-            vscode.window.showWarningMessage(this.t('Open run settings is available for main scenarios only.'));
+            kotUi.showWarningMessage(this.t('Open run settings is available for main scenarios only.'));
             return;
         }
 
         const testConfigUri = this.resolveMainScenarioTestConfigUri(scenarioInfo);
         if (!testConfigUri) {
-            vscode.window.showWarningMessage(this.t('Run settings file was not found for scenario "{0}".', trimmedScenarioName));
+            kotUi.showWarningMessage(this.t('Run settings file was not found for scenario "{0}".', trimmedScenarioName));
             return;
         }
 
@@ -6268,7 +6272,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const document = await vscode.workspace.openTextDocument(testConfigUri);
             await vscode.window.showTextDocument(document, { preview: false });
         } catch (error: any) {
-            vscode.window.showErrorMessage(this.t('Failed to open run settings file: {0}', error?.message || String(error)));
+            kotUi.showErrorMessage(this.t('Failed to open run settings file: {0}', error?.message || String(error)));
         }
     }
 
@@ -6289,10 +6293,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             if (this._view?.visible) { await this._sendInitialState(this._view.webview); }
             this.handleActiveEditorChanged(vscode.window.activeTextEditor);
             this.sendRelationshipStateToWebview();
-            vscode.window.showInformationMessage(this.t('Definition "{0}" was deleted.', result.scenario.name));
+            kotUi.showInformationMessage(this.t('Definition "{0}" was deleted.', result.scenario.name));
             return true;
         } catch (error) {
-            await vscode.window.showErrorMessage(this.t('Failed to delete definition: {0}', error instanceof Error ? error.message : String(error)));
+            await kotUi.showErrorMessage(this.t('Failed to delete definition: {0}', error instanceof Error ? error.message : String(error)));
             return false;
         }
     }
@@ -6376,7 +6380,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private async requestBuildCancellation(): Promise<void> {
         if (!this._isBuildInProgress) {
-            vscode.window.showInformationMessage(this.t('No build is currently running.'));
+            kotUi.showInformationMessage(this.t('No build is currently running.'));
             return;
         }
 
@@ -6435,6 +6439,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return;
         }
 
+        for (const artifact of this._scenarioBuildArtifacts.values()) {
+            if (artifact.jsonPath) {
+                await assertKotPath(artifact.jsonPath);
+                await assertKotPath(this.getCombinedScenarioJsonArtifactPath(artifact.jsonPath), true);
+            }
+        }
         await this.ensureCombinedScenarioJsonArtifacts(workspaceRootUri.fsPath);
         this.sendRunArtifactsStateToWebview();
     }
@@ -6482,13 +6492,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     public async openScenarioInVanessaManualFromCommandPalette(): Promise<void> {
         if (this._isBuildInProgress) {
-            vscode.window.showWarningMessage(this.t('Please wait for the current build to finish.'));
+            kotUi.showWarningMessage(this.t('Please wait for the current build to finish.'));
             return;
         }
 
         this.pruneScenarioBuildArtifactsByCache();
         if (this._scenarioBuildArtifacts.size === 0) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('No build artifacts found. Build tests first in current session.')
             );
             return;
@@ -6533,7 +6543,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             };
         });
 
-        const picked = await vscode.window.showQuickPick(quickPickItems, {
+        const picked = await kotUi.showQuickPick(quickPickItems, {
             title: this.t('Open scenario in Vanessa (manual debug)'),
             placeHolder: this.t('Select scenario for Vanessa manual debug session.'),
             matchOnDescription: true,
@@ -6548,7 +6558,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     public async openVanessaFromSidebar(): Promise<void> {
-        const mode = await vscode.window.showQuickPick([
+        const mode = await kotUi.showQuickPick([
             {
                 label: this.t('Run test (auto close)'),
                 description: this.t('Runs the selected scenario and waits for completion.'),
@@ -6600,14 +6610,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private async editVanessaDebugClients(initial?: VanessaDebugClientSelection): Promise<VanessaDebugClientSelection | null> {
         const { configureVanessaDebugClientSelection } = await import('./vanessaDebugClientConfiguration.js');
         const ui: DebugClientConfigurationUi = {
-            pick: async (title, items) => vscode.window.showQuickPick([...items], { title, ignoreFocusOut: true }),
-            input: async options => vscode.window.showInputBox({
+            pick: async (title, items) => kotUi.showQuickPick([...items], { title, ignoreFocusOut: true }),
+            input: async options => kotUi.showInputBox({
                 title: options.title, value: options.value, password: options.password,
                 prompt: options.prompt, validateInput: options.validate, ignoreFocusOut: true
             }),
             folder: async current => {
                 const filePath = current ? getFileInfobasePath(current) : undefined;
-                const picked = await vscode.window.showOpenDialog({
+                const picked = await kotUi.showOpenDialog({
                     title: this.t('Choose file infobase folder'), canSelectFolders: true, canSelectFiles: false,
                     canSelectMany: false, defaultUri: filePath ? vscode.Uri.file(filePath) : undefined
                 });
@@ -6626,7 +6636,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     public async configureVanessaDebugClients(): Promise<void> {
         if (!vscode.workspace.workspaceFolders?.length) {
-            vscode.window.showErrorMessage(this.t('Project folder must be opened.'));
+            kotUi.showErrorMessage(this.t('Project folder must be opened.'));
             return;
         }
         const store = this.getVanessaDebugClientStore();
@@ -6635,25 +6645,25 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         try { initial = await store.load(); }
         catch {
             catalogUnavailable = true;
-            vscode.window.showWarningMessage(this.t('Saved debug clients could not be loaded. Configure them again.'));
+            kotUi.showWarningMessage(this.t('Saved debug clients could not be loaded. Configure them again.'));
         }
         try {
             const selected = await this.editVanessaDebugClients(initial);
             if (!selected) { return; }
             if (catalogUnavailable) {
                 const replace = this.t('Replace unavailable saved catalog');
-                const confirmed = await vscode.window.showWarningMessage(this.t(
+                const confirmed = await kotUi.showWarningMessage(this.t(
                     'Replace all unavailable saved clients with the {0} re-entered clients? Other local catalog users and the previous Debug selection will be removed; live Vanessa clients are unchanged.', String(selected.clients.length)
                 ), { modal: true }, replace);
                 if (confirmed !== replace) { return; }
                 await store.replaceUnavailableCatalog(selected);
             } else { await store.save(selected); }
-            vscode.window.showInformationMessage(selected.mode === 'clients'
+            kotUi.showInformationMessage(selected.mode === 'clients'
                 ? this.t('Saved {0} Vanessa debug clients. They will be reused for manual debug.', String(selected.clients.length))
                 : this.t('Manual debug will use scenario client parameters.'));
         } catch {
             // SecretStorage errors may contain sensitive payloads. Never send them to logs or the webview.
-            vscode.window.showErrorMessage(this.t('Could not save Vanessa debug clients. Check secure storage and client settings.'));
+            kotUi.showErrorMessage(this.t('Could not save Vanessa debug clients. Check secure storage and client settings.'));
         }
     }
 
@@ -6662,7 +6672,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const { resolveVanessaDebugClientSelection } = await import('./vanessaDebugClientConfiguration.js');
             return await resolveVanessaDebugClientSelection(this.getVanessaDebugClientStore(), () => this.editVanessaDebugClients());
         } catch {
-            vscode.window.showErrorMessage(this.t('Saved debug clients could not be loaded. Configure them again.'));
+            kotUi.showErrorMessage(this.t('Saved debug clients could not be loaded. Configure them again.'));
             return null;
         }
     }
@@ -6718,13 +6728,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private async pickScenarioForVanessaRun(): Promise<void> {
         if (this._isBuildInProgress) {
-            vscode.window.showWarningMessage(this.t('Please wait for the current build to finish.'));
+            kotUi.showWarningMessage(this.t('Please wait for the current build to finish.'));
             return;
         }
 
         this.pruneScenarioBuildArtifactsByCache();
         if (this._scenarioBuildArtifacts.size === 0) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('No build artifacts found. Build tests first in current session.')
             );
             return;
@@ -6769,7 +6779,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             };
         });
 
-        const picked = await vscode.window.showQuickPick(quickPickItems, {
+        const picked = await kotUi.showQuickPick(quickPickItems, {
             title: this.t('Open Vanessa'),
             placeHolder: this.t('Select scenario for Vanessa run session.'),
             matchOnDescription: true,
@@ -6809,6 +6819,49 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    /** Programmatic compilation uses an explicit selection without changing sidebar checkboxes. */
+    public async agentSelection(expected?: Record<string, boolean>, changes?: Record<string, boolean>): Promise<Record<string, boolean>> {
+        await this.ensureFreshScenarioCatalog();
+        const current = await this.getMainScenarioSelectionStates();
+        if (!changes) { return current; }
+        if (JSON.stringify(current) !== JSON.stringify(expected)) { throw new Error('Test selection changed. Read it again.'); }
+        if (Object.entries(changes).some(([key, value]) => !Object.hasOwn(current, key) || typeof value !== 'boolean')) { throw new Error('Choose current main-test IDs and boolean selection values.'); }
+        await this.updateMainScenarioSelectionStates(changes);
+        await this.refreshFromExternalStateChange({ refreshCache: false });
+        return this.getMainScenarioSelectionStates();
+    }
+
+    /** Programmatic compilation uses an explicit selection without changing sidebar checkboxes. */
+    public async buildAgentSources(sources: readonly vscode.Uri[]): Promise<void> {
+        const catalog = await this.ensureFreshScenarioCatalog();
+        const keys = sources.map(source => source.toString());
+        if (!keys.length || keys.some(key => !catalog.byUri.has(key))) { throw new Error('Select saved SPPR root sources from the project catalog.'); }
+        if (!await this._handleRunAssembleScriptTypeScript('false', keys)) { throw new Error('SPPR compilation did not complete successfully. Read the compiler report.'); }
+    }
+
+    public get agentBuildBusy(): boolean { return this._isBuildInProgress; }
+    public async cancelAgentBuild(): Promise<void> { await this.requestBuildCancellation(); }
+
+    /** Resolve a current exact artifact; a stale map cannot identify a continuation line. */
+    public async agentCompiledFeature(source: vscode.Uri, selection?: readonly string[]): Promise<{ filePath: string; text: string; jsonPath?: string; sourceMap: VanessaYamlBuild }> {
+        const build = await this.loadVanessaYamlControlBuild(selection);
+        if (!build) { throw new Error('Compile SPPR sources before an agent run.'); }
+        const resources = await this.getCompiledScenarioResources(source);
+        const catalog = await this.ensureFreshScenarioCatalog();
+        const scenario = catalog.byUri.get(source.toString());
+        const compiled = scenario && resources.get(getScenarioRuntimeKey(scenario));
+        if (!compiled?.featureUri) { throw new Error('No compiled feature for this source.'); }
+        if (verifyCompilerBuildManifest(build.manifest, build.inputs, build.artifacts.map(item =>
+            fingerprintCompilerBuildArtifact(item.worker, item.feature, item.featureContent, item.sourceMap, item.sourceMapContent))) !== 'fresh') {
+            throw new Error('Compiler inputs or artifacts changed. Rebuild before an agent run.');
+        }
+        const filePath = vscode.Uri.parse(compiled.featureUri).fsPath;
+        const text = await fs.promises.readFile(filePath, 'utf8');
+        const artifact = build.artifacts.find(item => this.normalizeFilePathForComparison(path.join(build.outputRoot, ...item.feature.split('/'))) === this.normalizeFilePathForComparison(filePath));
+        if (!artifact || artifact.featureContent !== text) { throw new Error('Compiled feature changed. Rebuild before running.'); }
+        return { filePath, text, jsonPath: scenario && this._scenarioBuildArtifacts.get(getScenarioRuntimeKey(scenario))?.jsonPath, sourceMap: build };
+    }
+
     /** .45 exposes only the last scenario's results; the existing log supplies confirmed intervening steps. */
     public trackVanessaFeatureRun(filePath: string, sessionRunLogPath?: string): (passed: boolean) => Promise<void> {
         const artifact = [...(this._scenarioBuildArtifacts?.values() ?? []), ...(this._standaloneFeatureArtifacts?.values() ?? [])]
@@ -6835,13 +6888,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
     private async openVanessaStandaloneDebug(mcpPort?: number, background = false): Promise<boolean> {
         if (this._isBuildInProgress) {
-            vscode.window.showWarningMessage(this.t('Please wait for the current build to finish.'));
+            kotUi.showWarningMessage(this.t('Please wait for the current build to finish.'));
             return false;
         }
 
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder) {
-            vscode.window.showErrorMessage(this.t('Project folder must be opened.'));
+            kotUi.showErrorMessage(this.t('Project folder must be opened.'));
             return false;
         }
 
@@ -6857,7 +6910,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const oneCPath = selectedPlatform.clientExePath;
         if (!fs.existsSync(oneCPath)) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('1C:Enterprise client file not found at path: {0}', oneCPath)
             );
             return false;
@@ -6873,7 +6926,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         if (mcpPort !== undefined) {
             const { ensureSharedStartupInfobaseMcpReady } = await loadStartupInfobase();
-            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification,
+            await kotUi.withProgress({ location: vscode.ProgressLocation.Notification,
                 title: this.t('Preparing Vanessa MCP components…') },
                 () => ensureSharedStartupInfobaseMcpReady(this._context, oneCPath, startupInfobase));
         }
@@ -6881,7 +6934,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const vanessaEpfSetting = (config.get<string>('runVanessa.vanessaEpfPath') || '').trim();
         if (!vanessaEpfSetting) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Path to Vanessa Automation EPF is not specified in settings.'),
                 this.t('Open Settings')
             ).then(selection => {
@@ -6893,7 +6946,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
         const vanessaEpfPath = this.resolvePathFromWorkspaceSetting(vanessaEpfSetting, workspaceRootPath);
         if (!fs.existsSync(vanessaEpfPath)) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Vanessa Automation EPF file not found at path: {0}', vanessaEpfPath),
                 this.t('Open Settings')
             ).then(selection => {
@@ -6948,7 +7001,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             );
             started = true;
             if (mcpPort !== undefined) { this.rememberManagedVanessaRunLog(mcpPort, launchJsonPath, workspaceRootPath); }
-            vscode.window.showInformationMessage(this.t('Vanessa standalone debug session started.'));
+            kotUi.showInformationMessage(this.t('Vanessa standalone debug session started.'));
             this.outputInfo(outputChannel, this.t('Vanessa standalone debug session started.'));
         } catch (error: any) {
             const errorMessage = error?.message || String(error);
@@ -6957,7 +7010,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this.t('Failed to open Vanessa standalone debug session: {0}', errorMessage),
                 error
             );
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Failed to open Vanessa standalone debug session: {0}', errorMessage)
             );
         } finally {
@@ -7490,7 +7543,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                             await vscode.window.showTextDocument(doc, { preview: false });
                         } catch (error: any) {
                             console.error(`[PhaseSwitcherProvider] Error opening scenario file: ${error.message || error}`);
-                            vscode.window.showErrorMessage(this.t('Failed to open scenario file: {0}', error.message || error));
+                            kotUi.showErrorMessage(this.t('Failed to open scenario file: {0}', error.message || error));
                         }
                     }
                     return;
@@ -7678,7 +7731,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders || workspaceFolders.length === 0) {
-            vscode.window.showErrorMessage(this.t('Please open a project folder.'));
+            kotUi.showErrorMessage(this.t('Please open a project folder.'));
             webview.postMessage({ command: 'loadInitialState', error: this.t('Project folder is not open') });
             webview.postMessage({ command: 'updateStatus', text: this.t('Error: Project folder is not open') });
             this.invalidateScenarioCatalog(true);
@@ -7694,7 +7747,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 catalog = await this.ensureFreshScenarioCatalog();
             } catch (scanError: any) {
                 console.error("[PhaseSwitcherProvider:_sendInitialState] Error during cache refresh:", scanError);
-                vscode.window.showErrorMessage(this.t('Error scanning scenario files: {0}', scanError.message || scanError));
+                kotUi.showErrorMessage(this.t('Error scanning scenario files: {0}', scanError.message || scanError));
                 this.invalidateScenarioCatalog(true);
                 catalog = null;
             }
@@ -7855,7 +7908,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         } catch (error: any) {
             const message = error?.message || String(error);
             const openOutput = this.t('Open Output');
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Failed to prepare shared startup infobase: {0}', message),
                 openOutput
             ).then(selection => {
@@ -7959,7 +8012,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             : null;
 
         return {
-            buildScenarioBddEpf: vscode.Uri.joinPath(workspaceRootUri, config.get<string>('paths.buildScenarioBddEpf') || 'build/BuildScenarioBDD.epf'),
+            buildScenarioBddEpf: vscode.Uri.file(resolveCompilerPath(config.get<string>('paths.buildScenarioBddEpf') || 'build/BuildScenarioBDD.epf', workspaceRootUri.fsPath)),
             yamlSourceDirectory: path.isAbsolute(getScenarioScanRootPath())
                 ? getScenarioScanRootPath()
                 : path.join(workspaceRootUri.fsPath, getScenarioScanRootPath()),
@@ -8287,7 +8340,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this.outputError(outputChannel, `${entry.name || entry.suiteName}: ${entry.message || entry.details}`);
             }
             const count = Math.max(failed.length, report.summary.failures + report.summary.errors);
-            if (count && showNotification) { vscode.window.showErrorMessage(this.t('Build failed with {0} compilation error(s):', String(count))); }
+            if (count && showNotification) { kotUi.showErrorMessage(this.t('Build failed with {0} compilation error(s):', String(count))); }
             return count;
         } catch (error: any) {
             this.outputError(outputChannel, this.t('Error checking build errors: {0}', error?.message || String(error)), error);
@@ -8325,7 +8378,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         }
         if (!reportPath || !fs.existsSync(reportPath)) {
-            vscode.window.showInformationMessage(this.t('Build report is not available. Compile tests first.'));
+            kotUi.showInformationMessage(this.t('Build report is not available. Compile tests first.'));
             return;
         }
         const source = await fs.promises.readFile(reportPath, 'utf8');
@@ -8335,7 +8388,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     }
 
     /** Command-time I/O only; session status polling never scans the YAML corpus. */
-    public async loadVanessaYamlControlBuild(): Promise<VanessaYamlBuild | undefined> {
+    public async loadVanessaYamlControlBuild(agentSelection?: readonly string[]): Promise<VanessaYamlBuild | undefined> {
         if (this._isBuildInProgress) { throw new Error('Please wait for the current build to finish.'); }
         const root = vscode.workspace.workspaceFolders?.[0]?.uri;
         if (!root) { return undefined; }
@@ -8346,7 +8399,9 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const manifest = await readCompilerBuildManifest(outputRoot);
         if (!manifest) { return undefined; }
         try {
-            const captured = await this.captureCompilerControlInputs(root, profile);
+            const selection = agentSelection ? projectScenarioBuildSelection(this.getMainScenariosFromCatalog(),
+                Object.fromEntries(this.getMainScenariosFromCatalog().map(info => [getScenarioRuntimeKey(info), agentSelection.includes(getScenarioRuntimeKey(info))]))) : undefined;
+            const captured = await this.captureCompilerControlInputs(root, profile, selection);
             const sourceUris = new Set(captured.inputs.files.map(file => file.uri));
             if (vscode.workspace.textDocuments.some(document => document.isDirty && sourceUris.has(document.uri.toString()))) {
                 throw new Error('Save YAML sources and dependencies before controlling Vanessa.');
@@ -8441,15 +8496,16 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async _handleRunAssembleScriptTypeScript(recordGLValue: string): Promise<void> {
+    private async _handleRunAssembleScriptTypeScript(recordGLValue: string, agentSelection?: readonly string[]): Promise<boolean> {
+        let succeeded = false;
         const methodStartLog = "[PhaseSwitcherProvider:_handleRunAssembleScriptTypeScript]";
         if (this._isBuildInProgress) {
-            vscode.window.showWarningMessage(this.t('Please wait for the current build to finish.'));
-            return;
+            kotUi.showWarningMessage(this.t('Please wait for the current build to finish.'));
+            return false;
         }
         if (this.hasAnyScenarioRunsInProgress()) {
-            vscode.window.showWarningMessage(this.t('Cannot start build while scenario run is in progress.'));
-            return;
+            kotUi.showWarningMessage(this.t('Cannot start build while scenario run is in progress.'));
+            return false;
         }
         console.log(`${methodStartLog} Starting with RecordGL=${recordGLValue}`);
         const outputChannel = this.getOutputChannel();
@@ -8463,10 +8519,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         const webview = this._view?.webview;
-        if (!webview) {
+        if (!webview && !agentSelection) {
             console.error(`${methodStartLog} Cannot run script, view is not available.`);
-            vscode.window.showErrorMessage(this.t('Failed to run assembly: Panel is not active.'));
-            return;
+            kotUi.showErrorMessage(this.t('Failed to run assembly: Panel is not active.'));
+            return false;
         }
 
         const sendStatus = (text: string, enableControls: boolean = false, target: 'main' | 'assemble' = 'assemble') => {
@@ -8493,7 +8549,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         sendStatus(this.t('Building tests in progress...'), false, 'assemble');
 
         try {
-            await vscode.window.withProgress({
+            await kotUi.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: this.t('Building .feature files'),
             cancellable: true
@@ -8526,7 +8582,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const baseBuildParameters = buildProfile.buildParameters.map(item => ({ ...item }));
                 const parameterErrors = yamlParametersManager.validateCompilerBuildParameters(baseBuildParameters);
                 if (parameterErrors.length) { throw new Error(this.t('SPPR build parameters are invalid: {0}', parameterErrors.join('; '))); }
-                const selectionSnapshot = await this.getMainScenarioSelectionSnapshotForBuild();
+                const mainScenarios = agentSelection ? this.getMainScenariosFromCatalog() : [];
+                const selectionSnapshot = agentSelection ? projectScenarioBuildSelection(mainScenarios,
+                    Object.fromEntries(mainScenarios.map(info => [getScenarioRuntimeKey(info), agentSelection.includes(getScenarioRuntimeKey(info))])))
+                    : await this.getMainScenarioSelectionSnapshotForBuild();
                 const catalog = await this.ensureFreshScenarioCatalog();
                 const selectionValidation = validateEnabledScenarioKeys(catalog, selectionSnapshot.enabledKeys.filter(key => catalog.byUri.get(key)?.kind !== 'process'));
                 if (selectionValidation.kind === 'ambiguous') {
@@ -8535,7 +8594,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         selectionValidation.name
                     );
                     this.outputError(outputChannel, message);
-                    vscode.window.showErrorMessage(message);
+                    kotUi.showErrorMessage(message);
                     sendStatus(message, true, 'assemble');
                     return;
                 }
@@ -8577,7 +8636,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 if (!oneCExePath) { sendStatus(this.t('Build error.'), true, 'assemble'); return; }
                 if (!fs.existsSync(oneCExePath)) {
                     sendStatus(this.t('Build error.'), true, 'assemble');
-                    vscode.window.showErrorMessage(this.t('1C:Enterprise client file not found at path: {0}', oneCExePath));
+                    kotUi.showErrorMessage(this.t('1C:Enterprise client file not found at path: {0}', oneCExePath));
                     return;
                 }
                 const startupInfobase = await this.ensureSharedStartupInfobaseReady(oneCExePath,
@@ -8832,7 +8891,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 if (!hasErrors && junitReport && controlInputsBefore) {
                     const before = controlInputsBefore.inputs;
                     finalizeControlManifest = async () => {
-                        const after = await this.captureCompilerControlInputs(workspaceRootUri);
+                        const after = await this.captureCompilerControlInputs(workspaceRootUri, undefined, agentSelection ? selectionSnapshot : undefined);
                         const manifest = await publishCompilerBuildManifest(outputRoot, { before, after: after.inputs, successful: !this._buildCancellationRequested,
                             workers: jobs.map(job => ({ worker: job.index, prefix: jobs.length > 1 ? `part-${job.index}` : '' })) });
                         this.outputInfo(outputChannel, this.t(manifest ? 'YAML step control manifest saved.'
@@ -8865,7 +8924,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         buttons.push(this.t('Open Error File'));
                     }
                     
-                    vscode.window.showWarningMessage(
+                    kotUi.showWarningMessage(
                         this.t('Build completed: {0} successful, {1} errors.', featureFiles.length.toString(), errorCount.toString()),
                         ...buttons
                     ).then(selection => {
@@ -8895,7 +8954,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         buttons.push(this.t('Open Error File'));
                     }
                     
-                    vscode.window.showErrorMessage(
+                    kotUi.showErrorMessage(
                         this.t('Build failed: {0} errors.', errorCount.toString()),
                         ...buttons
                     ).then(selection => {
@@ -8906,11 +8965,12 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         }
                     });
                 } else if (!hasErrors && scenariosBuilt) {
+                    succeeded = true;
                     // No errors and scenarios built - perfect success
                     this.sendRunArtifactsStateToWebview();
                     this.outputInfo(outputChannel, this.t('Build process completed successfully with {0} scenario(s).', featureFiles.length.toString()));
                     sendStatus(this.t('Tests successfully built.'), true, 'assemble'); 
-                vscode.window.showInformationMessage(
+                kotUi.showInformationMessage(
                         this.t('Build completed: {0} successful.', featureFiles.length.toString()),
                         openFeatureButtonLabel,
                         this.t('Open folder')
@@ -8927,7 +8987,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     // No errors but no scenarios built either (strange case)
                     this.outputInfo(outputChannel, this.t('Build process completed but no scenarios were found.'));
                     sendStatus(this.t('Build completed - no scenarios found.'), true, 'assemble');
-                    vscode.window.showWarningMessage(this.t('Build completed but no scenarios were found.'));
+                    kotUi.showWarningMessage(this.t('Build completed but no scenarios were found.'));
                 }
 
             } catch (error: any) {
@@ -8935,7 +8995,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 if (this.isBuildCancelledError(error)) {
                     this.outputInfo(outputChannel, this.t('Build cancelled.'));
                     sendStatus(this.t('Build cancelled.'), true, 'assemble');
-                    vscode.window.showInformationMessage(this.t('Build cancelled by user.'));
+                    kotUi.showInformationMessage(this.t('Build cancelled by user.'));
                     return;
                 }
 
@@ -8947,7 +9007,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 const logFileMatch = errorMessage.match(/См\. лог:\s*(.*)/);
                 if (logFileMatch && logFileMatch[1]) {
                     const logFilePath = logFileMatch[1].trim();
-                    vscode.window.showErrorMessage(this.t('Build error.'), this.t('Open log'))
+                    kotUi.showErrorMessage(this.t('Build error.'), this.t('Open log'))
                         .then(selection => {
                             if (selection === this.t('Open log')) {
                                 vscode.workspace.openTextDocument(vscode.Uri.file(logFilePath)).then(doc => {
@@ -8956,7 +9016,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                             }
                         });
                 } else {
-                    vscode.window.showErrorMessage(this.t('Build error: {0}. See Output.', errorMessage));
+                    kotUi.showErrorMessage(this.t('Build error: {0}. See Output.', errorMessage));
                 }
                 
                 sendStatus(this.t('Build error.'), true, 'assemble'); 
@@ -8968,7 +9028,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                         temporarilyMovedLegacyFiles,
                         outputChannel
                     );
-                    if (restoreFailures > 0) { finalizeControlManifest = undefined; }
+                    if (restoreFailures > 0) { finalizeControlManifest = undefined; succeeded = false; }
                     if (movedCount > 0 && restoreFailures === 0) {
                         const message = disabledTestFileMoveMode === 'legacy'
                             ? this.t(
@@ -8999,6 +9059,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this._view.webview.postMessage({ command: 'buildStateChanged', inProgress: false });
             }
         }
+        return succeeded;
     }
 
     private async execute1CProcess( 
@@ -9915,7 +9976,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     ): { targetKind: 'feature' | 'json'; targetPath: string } | null {
         const template = vscode.workspace.getConfiguration('kotTestToolkit').get<string>('runVanessa.commandTemplate')?.trim();
         if (!artifact.jsonPath && !artifact.combinedJsonPath && !template) {
-            if (showWarnings) { vscode.window.showWarningMessage(this.t('This build contains feature files only. Enable CreateJson or configure a Vanessa command template to run it.')); }
+            if (showWarnings) { kotUi.showWarningMessage(this.t('This build contains feature files only. Enable CreateJson or configure a Vanessa command template to run it.')); }
             return null;
         }
         const primaryKind = preferredKind || this.getRunVanessaLaunchMode();
@@ -9929,7 +9990,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 targetKind = 'feature';
                 targetPath = artifact.featurePath;
                 if (showWarnings) {
-                    vscode.window.showWarningMessage(
+                    kotUi.showWarningMessage(
                         this.t('JSON artifact for "{0}" was not found. Falling back to feature file.', scenarioName)
                     );
                 }
@@ -9937,7 +9998,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 targetKind = 'json';
                 targetPath = artifact.combinedJsonPath || artifact.jsonPath;
                 if (showWarnings) {
-                    vscode.window.showWarningMessage(
+                    kotUi.showWarningMessage(
                         this.t('Feature artifact for "{0}" was not found. Falling back to json file.', scenarioName)
                     );
                 }
@@ -9946,7 +10007,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         if (!targetPath) {
             if (showWarnings) {
-                vscode.window.showWarningMessage(this.t('No launchable artifact found for scenario "{0}".', scenarioName));
+                kotUi.showWarningMessage(this.t('No launchable artifact found for scenario "{0}".', scenarioName));
             }
             return null;
         }
@@ -9977,10 +10038,10 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             .sort((left, right) => left.label.localeCompare(right.label)
                 || (left.description ?? '').localeCompare(right.description ?? ''));
         if (scenarioItems.length === 0) {
-            vscode.window.showWarningMessage(this.t('No scenarios loaded in Test Manager'));
+            kotUi.showWarningMessage(this.t('No scenarios loaded in Test Manager'));
             return;
         }
-        const scenarioPick = await vscode.window.showQuickPick(scenarioItems, {
+        const scenarioPick = await kotUi.showQuickPick(scenarioItems, {
             placeHolder: this.t('Select scenario')
         });
         if (!scenarioPick) {
@@ -9995,7 +10056,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             { label: 'idle-ready',       description: this.t('Run button, no status (built, not run)') },
             { label: 'idle-no-button',   description: this.t('No run button (not built)') },
         ];
-        const statePick = await vscode.window.showQuickPick(stateItems, {
+        const statePick = await kotUi.showQuickPick(stateItems, {
             placeHolder: this.t('Select demo state for: {0}', scenarioPick.label)
         });
         if (!statePick) {
@@ -10993,7 +11054,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         retryMode: boolean
     ): Promise<VanessaInfobaseAuthentication | undefined> {
         const defaultUsername = (initialAuthentication?.username || '').trim() || 'Administrator';
-        const username = await vscode.window.showInputBox({
+        const username = await kotUi.showInputBox({
             title: retryMode
                 ? this.t('Infobase authentication failed. Enter infobase login')
                 : this.t('Enter infobase login'),
@@ -11005,7 +11066,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return undefined;
         }
 
-        const password = await vscode.window.showInputBox({
+        const password = await kotUi.showInputBox({
             title: this.t('Enter infobase password'),
             placeHolder: this.t('Password can be empty'),
             value: initialAuthentication?.password || '',
@@ -11153,7 +11214,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             ? path.win32.basename(targetInfobasePath)
             : path.basename(targetInfobasePath);
         const defaultName = scenarioName.trim() || defaultBaseName || 'KOT Infobase';
-        const input = await vscode.window.showInputBox({
+        const input = await kotUi.showInputBox({
             title: this.t('Enter name for new infobase in 1C launcher'),
             value: defaultName,
             ignoreFocusOut: true,
@@ -11214,7 +11275,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         scenarioName: string,
         targetInfobasePath: string
     ): Promise<boolean | undefined> {
-        const selection = await vscode.window.showQuickPick(
+        const selection = await kotUi.showQuickPick(
             [
                 {
                     label: this.t('Keep current infobase contents'),
@@ -11334,7 +11395,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             actionKey: 'restoreAnother'
         });
 
-        const selection = await vscode.window.showQuickPick(quickPickItems, {
+        const selection = await kotUi.showQuickPick(quickPickItems, {
             title: this.t('Restore infobase from DT for "{0}"?', scenarioName),
             placeHolder: this.t('Choose whether to restore the selected infobase from DT before launch.'),
             ignoreFocusOut: true
@@ -11353,7 +11414,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             ? vscode.Uri.file(preferredDtPath)
             : vscode.workspace.workspaceFolders?.[0]?.uri;
 
-        const pickedFile = await vscode.window.showOpenDialog({
+        const pickedFile = await kotUi.showOpenDialog({
             canSelectFiles: true,
             canSelectFolders: false,
             canSelectMany: false,
@@ -11376,7 +11437,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         targetInfobasePath: string
     ): Promise<VanessaInfobasePreparationPlan['updateConfiguration'] | null | undefined> {
         const configuredSourceDirectory = this.resolveConfiguredFormExplorerConfigurationSourceDirectory(workspaceRootPath);
-        const selection = await vscode.window.showQuickPick(
+        const selection = await kotUi.showQuickPick(
             [
                 {
                     label: this.t('No configuration update'),
@@ -11414,7 +11475,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (selection.actionKey === 'sourceDirectory') {
             if (!configuredSourceDirectory) {
                 const openSettings = this.t('Open Settings');
-                void vscode.window.showErrorMessage(
+                void kotUi.showErrorMessage(
                     this.t('Form Explorer configuration source directory is not configured or not found. Set kotTestToolkit.formExplorer.configurationSourceDirectory.'),
                     openSettings
                 ).then(chosen => {
@@ -11431,7 +11492,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             };
         }
 
-        const pickedFile = await vscode.window.showOpenDialog({
+        const pickedFile = await kotUi.showOpenDialog({
             canSelectFiles: true,
             canSelectFolders: false,
             canSelectMany: false,
@@ -11518,7 +11579,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             }
         );
 
-        const selection = await vscode.window.showQuickPick(quickPickItems, {
+        const selection = await kotUi.showQuickPick(quickPickItems, {
             title: this.t('Choose target infobase for Vanessa run of "{0}"', scenarioName),
             placeHolder: this.t('Select an existing infobase or create a new one for this launch.'),
             ignoreFocusOut: true
@@ -11557,7 +11618,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const targetFileInfobasePath = getFileInfobasePath(targetInfobasePath);
         const hostCanAccessTargetFileInfobase = !!(targetFileInfobasePath && isHostAccessibleFileInfobasePath(targetFileInfobasePath));
         if (selection.source !== 'create' && targetFileInfobasePath && hostCanAccessTargetFileInfobase && !fs.existsSync(targetFileInfobasePath)) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Target infobase path does not exist: {0}', targetInfobasePath)
             );
             return null;
@@ -11603,7 +11664,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         if ((selection.source === 'create' || recreateExistingInfobase) && !restoreDtPath && !updateConfiguration) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 selection.source === 'create'
                     ? this.t('New infobase would be empty. Choose DT restore or configuration update before launch.')
                     : this.t('Recreated infobase would be empty. Choose DT restore or configuration update before launch.')
@@ -11789,7 +11850,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             });
         }
 
-        await vscode.window.withProgress(
+        await kotUi.withProgress(
             {
                 location: vscode.ProgressLocation.Notification,
                 title: this.t('Preparing target infobase for Vanessa...'),
@@ -11891,7 +11952,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             rawJson = fs.readFileSync(jsonLaunchPath, 'utf8');
             parsedJson = JSON.parse(rawJson);
         } catch {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Could not parse Vanessa launch JSON for "{0}".', scenarioName)
             );
             return null;
@@ -11908,7 +11969,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 && infobaseKeys.has(String(candidate.pointer.at(-1)).toLowerCase()))
             : discoveredCandidates;
         if (candidates.length === 0 && !this._standaloneFeatureArtifacts?.has(scenarioKey)) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Vanessa launch JSON for "{0}" does not contain launch infobase settings. Fill LaunchDBFolder, TestClientDBPath, InfobasePath or TestClientDB in the build parameters and rebuild tests.', scenarioName)
             );
             return null;
@@ -11948,7 +12009,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         if (!parsedJson || typeof parsedJson !== 'object' || Array.isArray(parsedJson)) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('Could not apply selected infobase because Vanessa launch JSON could not be parsed.')
             );
             return null;
@@ -12031,7 +12092,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             scenarioInfobasePath = this.collectVanessaInfobaseCandidates(parsedJson)[0]?.extractedPath
                 || startupInfobasePath;
         } catch {
-            vscode.window.showErrorMessage(this.t('Could not parse Vanessa launch JSON for safe manual debug.'));
+            kotUi.showErrorMessage(this.t('Could not parse Vanessa launch JSON for safe manual debug.'));
             return null;
         }
 
@@ -12063,7 +12124,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const keepOpen = manualDebug || managed;
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder) {
-            vscode.window.showErrorMessage(this.t('Project folder must be opened.'));
+            kotUi.showErrorMessage(this.t('Project folder must be opened.'));
             return 'skipped';
         }
 
@@ -12079,7 +12140,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const oneCPath = selectedPlatform.clientExePath;
         if (!fs.existsSync(oneCPath)) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('1C:Enterprise client file not found at path: {0}', oneCPath)
             );
             return 'skipped';
@@ -12089,7 +12150,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         if (!manualDebug) {
             oneCDesignerPath = resolveOneCDesignerExePath(oneCPath) || undefined;
             if (!oneCDesignerPath || !fs.existsSync(oneCDesignerPath)) {
-                vscode.window.showErrorMessage(
+                kotUi.showErrorMessage(
                     this.t('1C Designer executable was not found next to client path: {0}', oneCPath)
                 );
                 return 'skipped';
@@ -12106,14 +12167,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         if (managed) {
             const { ensureSharedStartupInfobaseMcpReady } = await loadStartupInfobase();
-            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: this.t('Preparing Vanessa MCP components…') },
+            await kotUi.withProgress({ location: vscode.ProgressLocation.Notification, title: this.t('Preparing Vanessa MCP components…') },
                 () => ensureSharedStartupInfobaseMcpReady(this._context, oneCPath, startupInfobase));
         }
 
         const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const vanessaEpfSetting = (config.get<string>('runVanessa.vanessaEpfPath') || '').trim();
         if (!vanessaEpfSetting) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Path to Vanessa Automation EPF is not specified in settings.'),
                 this.t('Open Settings')
             ).then(selection => {
@@ -12125,7 +12186,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
         const vanessaEpfPath = this.resolvePathFromWorkspaceSetting(vanessaEpfSetting, workspaceRootPath);
         if (!fs.existsSync(vanessaEpfPath)) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Vanessa Automation EPF file not found at path: {0}', vanessaEpfPath),
                 this.t('Open Settings')
             ).then(selection => {
@@ -12139,13 +12200,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const jsonLaunchPath = artifact.combinedJsonPath || artifact.jsonPath
             || (targetKind === 'json' ? targetPath : '');
         if (!jsonLaunchPath) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('Built-in Vanessa launcher requires JSON artifact for "{0}". Switch launch mode to json or set command template.', scenarioName)
             );
             return 'skipped';
         }
         if (!fs.existsSync(jsonLaunchPath)) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('JSON launch file not found at path: {0}', jsonLaunchPath)
             );
             return 'skipped';
@@ -12292,19 +12353,19 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         scenarioKey?: ScenarioRuntimeKey
     ): Promise<void> {
         if (this._isBuildInProgress) {
-            vscode.window.showWarningMessage(this.t('Please wait for the current build to finish.'));
+            kotUi.showWarningMessage(this.t('Please wait for the current build to finish.'));
             return;
         }
 
         if (this.isScenarioRunInProgress(scenarioName, scenarioKey)) {
-            vscode.window.showWarningMessage(this.t('Scenario "{0}" is already running.', scenarioName));
+            kotUi.showWarningMessage(this.t('Scenario "{0}" is already running.', scenarioName));
             return;
         }
 
         this.pruneScenarioBuildArtifactsByCache();
         const artifact = this.getScenarioBuildArtifact(scenarioName, scenarioKey);
         if (!artifact || (!artifact.featurePath && !artifact.jsonPath)) {
-            vscode.window.showWarningMessage(this.t('No build artifacts found for scenario "{0}". Build tests first.', scenarioName));
+            kotUi.showWarningMessage(this.t('No build artifacts found for scenario "{0}". Build tests first.', scenarioName));
             return;
         }
 
@@ -12321,7 +12382,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         if (this._staleBuiltScenarioNames.has(artifact.scenarioKey)) {
             const continueOpen = this.t('Open anyway');
-            const selection = await vscode.window.showWarningMessage(
+            const selection = await kotUi.showWarningMessage(
                 this.t('Artifacts for "{0}" may be outdated because related scenarios changed after build.', scenarioName),
                 { modal: true },
                 continueOpen
@@ -12334,7 +12395,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const commandTemplate = (config.get<string>('runVanessa.commandTemplate') || '').trim();
         if (commandTemplate) {
-            vscode.window.showInformationMessage(
+            kotUi.showInformationMessage(
                 this.t('Manual debug open uses built-in Vanessa launcher and ignores runVanessa.commandTemplate.')
             );
         }
@@ -12349,14 +12410,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 { manualDebug: true }
             );
             if (launchStatus === 'started') {
-                vscode.window.showInformationMessage(
+                kotUi.showInformationMessage(
                     this.t('Vanessa manual debug session started for scenario "{0}".', scenarioName)
                 );
                 const outputChannel = this.getRunOutputChannel();
                 this.outputInfo(outputChannel, this.t('Vanessa manual debug session started for scenario "{0}".', scenarioName));
             } else if (launchStatus === 'skipped') {
                 await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(launchTarget.targetPath));
-                vscode.window.showInformationMessage(
+                kotUi.showInformationMessage(
                     this.t('Built-in launch was skipped. Opened {0} artifact for "{1}".', launchTarget.targetKind, scenarioName)
                 );
             }
@@ -12368,7 +12429,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                 this.t('Failed to open Vanessa manual debug session for "{0}": {1}', scenarioName, errorMessage),
                 error
             );
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Failed to open Vanessa manual debug session for "{0}": {1}', scenarioName, errorMessage)
             );
         }
@@ -12519,7 +12580,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     public async trackScenarioRunByActiveFeatureEditor(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor || editor.document.uri.scheme !== 'file' || path.extname(editor.document.uri.fsPath).toLowerCase() !== '.feature') {
-            vscode.window.showWarningMessage(this.t('Open a feature file to use this command.'));
+            kotUi.showWarningMessage(this.t('Open a feature file to use this command.'));
             return;
         }
 
@@ -12541,7 +12602,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     public async switchTrackedRunByActiveFeatureEditor(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor || editor.document.uri.scheme !== 'file' || path.extname(editor.document.uri.fsPath).toLowerCase() !== '.feature') {
-            vscode.window.showWarningMessage(this.t('Open a feature file to use this command.'));
+            kotUi.showWarningMessage(this.t('Open a feature file to use this command.'));
             return;
         }
 
@@ -12562,7 +12623,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     public async stopTrackedRunByActiveFeatureEditor(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor || editor.document.uri.scheme !== 'file' || path.extname(editor.document.uri.fsPath).toLowerCase() !== '.feature') {
-            vscode.window.showWarningMessage(this.t('Open a feature file to use this command.'));
+            kotUi.showWarningMessage(this.t('Open a feature file to use this command.'));
             return;
         }
 
@@ -12573,7 +12634,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const trackedRuns = this.getTrackedRunsMapForScenario(trackingSession.sessionKey);
         if (!trackedRuns || trackedRuns.size === 0) {
-            vscode.window.showInformationMessage(
+            kotUi.showInformationMessage(
                 this.t('No tracked runs are active for "{0}".', trackingSession.displayName)
             );
             return;
@@ -12581,7 +12642,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         this.clearTrackedRunLogWatchersForScenario(trackingSession.sessionKey);
         this.sendRunArtifactsStateToWebview();
-        vscode.window.showInformationMessage(
+        kotUi.showInformationMessage(
             this.t('Stopped tracked runs for "{0}".', trackingSession.displayName)
         );
     }
@@ -12589,14 +12650,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     public async trackScenarioRunByActiveLogEditor(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor || editor.document.uri.scheme !== 'file' || path.extname(editor.document.uri.fsPath).toLowerCase() !== '.log') {
-            vscode.window.showWarningMessage(this.t('Open a log file to use this command.'));
+            kotUi.showWarningMessage(this.t('Open a log file to use this command.'));
             return;
         }
 
         const runLogPath = editor.document.uri.fsPath;
         const parsed = this.parseTrackingSessionFromLogFile(runLogPath);
         if (!parsed) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('No Feature path found in log header. Use feature context menu command instead.')
             );
             return;
@@ -12696,7 +12757,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
     private async promptRunLogPathForTracking(displayName: string): Promise<string | undefined> {
         const chooseFileLabel = this.t('Choose log file');
         const manualPathLabel = this.t('Enter log path manually');
-        const source = await vscode.window.showQuickPick(
+        const source = await kotUi.showQuickPick(
             [
                 {
                     label: chooseFileLabel,
@@ -12720,7 +12781,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         if (source.source === 'file') {
-            const selected = await vscode.window.showOpenDialog({
+            const selected = await kotUi.showOpenDialog({
                 canSelectFiles: true,
                 canSelectFolders: false,
                 canSelectMany: false,
@@ -12734,7 +12795,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             return selected[0].fsPath;
         }
 
-        const manualValue = await vscode.window.showInputBox({
+        const manualValue = await kotUi.showInputBox({
             title: this.t('Track scenario run by log for "{0}"', displayName),
             prompt: this.t('Enter absolute or workspace-relative path to run log file.'),
             placeHolder: this.t('Example: .vscode/kot-runtime/vanessa/myScenario.log'),
@@ -12786,7 +12847,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         if (!fs.existsSync(runLogPath)) {
-            vscode.window.showWarningMessage(this.t('Run log file not found at path: {0}', runLogPath));
+            kotUi.showWarningMessage(this.t('Run log file not found at path: {0}', runLogPath));
             return false;
         }
 
@@ -12794,11 +12855,11 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         try {
             stat = fs.statSync(runLogPath);
         } catch {
-            vscode.window.showWarningMessage(this.t('Run log file not found at path: {0}', runLogPath));
+            kotUi.showWarningMessage(this.t('Run log file not found at path: {0}', runLogPath));
             return false;
         }
         if (!stat.isFile()) {
-            vscode.window.showWarningMessage(this.t('Selected path is not a file: {0}', runLogPath));
+            kotUi.showWarningMessage(this.t('Selected path is not a file: {0}', runLogPath));
             return false;
         }
 
@@ -12809,7 +12870,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             sessionKey
         })) {
             const continueAction = this.t('Track anyway');
-            const selection = await vscode.window.showWarningMessage(
+            const selection = await kotUi.showWarningMessage(
                 this.t('Run log file name does not match feature name for scenario "{0}".', displayName),
                 { modal: true, detail: runLogPath },
                 continueAction
@@ -12977,7 +13038,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         if (items.length === 0) {
-            vscode.window.showInformationMessage(
+            kotUi.showInformationMessage(
                 this.t('No tracked runs are available for scenario "{0}".', displayName)
             );
             return;
@@ -13033,14 +13094,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         if (!runLogPath) {
-            vscode.window.showInformationMessage(
+            kotUi.showInformationMessage(
                 this.t('No run log is available yet for scenario "{0}".', scenarioName)
             );
             return;
         }
 
         if (!fs.existsSync(runLogPath)) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('Run log file not found at path: {0}', runLogPath)
             );
             return;
@@ -13054,7 +13115,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const outputChannel = this.getRunOutputChannel();
             this.outputInfo(outputChannel, this.t('Opened run log for scenario "{0}".', scenarioName));
         } catch (error: any) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Failed to open run log file "{0}": {1}', runLogPath, error?.message || String(error))
             );
         }
@@ -13090,7 +13151,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             && await this.openCompilerSourceAtFeatureLine(failedStep.featurePath, failedStep.featureLineNumber)) { return; }
         const nestedScenarioName = await this.getFailedNestedScenarioName(normalizedName, scenarioKey);
         if (!nestedScenarioName) {
-            vscode.window.showInformationMessage(
+            kotUi.showInformationMessage(
                 this.t('Failed nested scenario is not available for scenario "{0}".', normalizedName)
             );
             return;
@@ -13114,7 +13175,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             editor.revealRange(lineRange, vscode.TextEditorRevealType.InCenter);
             return true;
         } catch (error: any) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Failed to open feature file "{0}": {1}', featurePath, error?.message || String(error))
             );
             return false;
@@ -13197,14 +13258,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const artifact = this.getScenarioBuildArtifact(scenarioName, scenarioKey);
         const featurePath = artifact?.featurePath?.trim();
         if (!featurePath) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('Feature artifact is not available for scenario "{0}". Build tests first.', scenarioName)
             );
             return;
         }
 
         if (!fs.existsSync(featurePath)) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('Feature file not found at path: {0}', featurePath)
             );
             return;
@@ -13222,7 +13283,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         const artifact = this.getScenarioBuildArtifact(scenarioName, scenarioKey);
         if (!artifact?.jsonPath) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('JSON artifact is not available for scenario "{0}". Build tests first.', scenarioName)
             );
             return;
@@ -13244,14 +13305,14 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         }
 
         if (!jsonPath) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('Combined JSON artifact is not available for scenario "{0}". Rebuild tests first.', scenarioName)
             );
             return;
         }
 
         if (!fs.existsSync(jsonPath)) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('JSON file not found at path: {0}', jsonPath)
             );
             return;
@@ -13261,7 +13322,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             const document = await vscode.workspace.openTextDocument(vscode.Uri.file(jsonPath));
             await vscode.window.showTextDocument(document, { preview: false });
         } catch (error: any) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Failed to open JSON file "{0}": {1}', jsonPath, error?.message || String(error))
             );
         }
@@ -13277,7 +13338,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const targetUri = await findFileByName(normalizedName, catalog);
         if (!targetUri) {
             if ((catalog.byName.get(normalizedName)?.length || 0) <= 1) {
-                vscode.window.showInformationMessage(this.t('File for "{0}" not found.', normalizedName));
+                kotUi.showInformationMessage(this.t('File for "{0}" not found.', normalizedName));
             }
             return false;
         }
@@ -13288,7 +13349,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
             return true;
         } catch (error: any) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 this.t('Failed to open file: {0}', error?.message || String(error))
             );
             return false;
@@ -13309,13 +13370,13 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         const featureLineNumber = failedHighlight?.featureLineNumber;
 
         if (!featurePath || !featureLineNumber) {
-            vscode.window.showInformationMessage(
+            kotUi.showInformationMessage(
                 this.t('Failed step location is not available for scenario "{0}".', scenarioName)
             );
             return null;
         }
         if (!fs.existsSync(featurePath)) {
-            vscode.window.showWarningMessage(
+            kotUi.showWarningMessage(
                 this.t('Feature file not found at path: {0}', featurePath)
             );
             return null;
@@ -13389,7 +13450,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
             actions.push(openRunLogAction);
         }
 
-        const selection = await vscode.window.showErrorMessage(
+        const selection = await kotUi.showErrorMessage(
             this.t('Failed to launch Vanessa for "{0}": {1}', scenarioName, errorMessage),
             ...actions
         );
@@ -13435,19 +13496,19 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
         scenarioKey?: ScenarioRuntimeKey
     ): Promise<void> {
         if (this._isBuildInProgress) {
-            vscode.window.showWarningMessage(this.t('Please wait for the current build to finish.'));
+            kotUi.showWarningMessage(this.t('Please wait for the current build to finish.'));
             return;
         }
 
         if (this.isScenarioRunInProgress(scenarioName, scenarioKey)) {
-            vscode.window.showWarningMessage(this.t('Scenario "{0}" is already running.', scenarioName));
+            kotUi.showWarningMessage(this.t('Scenario "{0}" is already running.', scenarioName));
             return;
         }
 
         this.pruneScenarioBuildArtifactsByCache();
         const artifact = this.getScenarioBuildArtifact(scenarioName, scenarioKey);
         if (!artifact || (!artifact.featurePath && !artifact.jsonPath)) {
-            vscode.window.showWarningMessage(this.t('No build artifacts found for scenario "{0}". Build tests first.', scenarioName));
+            kotUi.showWarningMessage(this.t('No build artifacts found for scenario "{0}". Build tests first.', scenarioName));
             return;
         }
 
@@ -13460,7 +13521,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
         if (this._staleBuiltScenarioNames.has(artifact.scenarioKey)) {
             const continueRun = this.t('Run anyway');
-            const selection = await vscode.window.showWarningMessage(
+            const selection = await kotUi.showWarningMessage(
                 this.t('Artifacts for "{0}" may be outdated because related scenarios changed after build.', scenarioName),
                 { modal: true },
                 continueRun
@@ -13507,21 +13568,21 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
                     if (outcome === 'failed') { throw new Error(this.t('Vanessa reported a failed test. Inspect the highlighted step for details.')); }
                     this.setScenarioExecutionState(scenarioName, outcome === 'passed' ? 'passed' : 'idle',
                         outcome === 'passed' ? this.t('Last run passed') : undefined, undefined, artifact.scenarioKey);
-                    if (outcome === 'unknown') { vscode.window.showWarningMessage(this.t('The MCP run result is not confirmed. Inspect Vanessa before running again.')); }
-                    else if (outcome === 'stopped') { vscode.window.showInformationMessage(this.t('Execution stopped. Vanessa remains open; use Control Vanessa to continue from a confirmed breakpoint.')); }
+                    if (outcome === 'unknown') { kotUi.showWarningMessage(this.t('The MCP run result is not confirmed. Inspect Vanessa before running again.')); }
+                    else if (outcome === 'stopped') { kotUi.showInformationMessage(this.t('Execution stopped. Vanessa remains open; use Control Vanessa to continue from a confirmed breakpoint.')); }
                     return;
                 }
                 const launchStatus = await this.runScenarioInVanessaBuiltIn(scenarioName, targetKind, targetPath, artifact);
                 if (launchStatus === 'started') {
                     this.setScenarioExecutionState(scenarioName, 'passed', this.t('Last run passed'), runLogPath, artifact.scenarioKey);
                     this.outputInfo(outputChannel, this.t('Scenario run finished successfully: "{0}"', scenarioName));
-                    vscode.window.showInformationMessage(
+                    kotUi.showInformationMessage(
                         this.t('Vanessa launch completed for scenario "{0}".', scenarioName)
                     );
                 } else if (launchStatus === 'skipped') {
                     this.setScenarioExecutionState(scenarioName, 'idle', undefined, undefined, artifact.scenarioKey);
                     await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(targetPath));
-                    vscode.window.showInformationMessage(
+                    kotUi.showInformationMessage(
                         this.t('Built-in launch was skipped. Opened {0} artifact for "{1}".', targetKind, scenarioName)
                     );
                 } else {
@@ -13604,7 +13665,7 @@ export class PhaseSwitcherProvider implements vscode.WebviewViewProvider {
 
             this.setScenarioExecutionState(scenarioName, 'passed', this.t('Last run passed'), effectiveRunLogPath, artifact.scenarioKey);
             this.outputInfo(outputChannel, this.t('Scenario run finished successfully: "{0}"', scenarioName));
-            vscode.window.showInformationMessage(
+            kotUi.showInformationMessage(
                 this.t('Vanessa launch completed for scenario "{0}".', scenarioName)
             );
         } catch (error: any) {

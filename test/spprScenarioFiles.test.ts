@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,10 +7,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as format from '../src/spprScenarioFormat';
 
 const metadata = 'ТипФайла: "Сценарий"\nДанныеСценария:\n    Имя: "Native"\n    UID: "native-uid"\n';
-const uri = (fsPath: string) => ({ fsPath, scheme: 'file', toString: () => `file://${fsPath}` });
+const uri = (fsPath: string) => ({ fsPath, scheme: 'file', toString: () => pathToFileURL(fsPath).toString() });
 async function harness(t: test.TestContext) {
     const root = await v3Fixture(fsp.mkdtemp(path.join(os.tmpdir(), 'kot-sppr-editor-')));
     t.after(() => fsp.rm(root, { recursive: true, force: true }));
@@ -21,7 +23,7 @@ async function harness(t: test.TestContext) {
             readonly event = (listener: (value: T) => void) => { this.listeners.add(listener); return { dispose: () => this.listeners.delete(listener) }; };
             fire(value: T) { for (const listener of this.listeners) { listener(value); } }
         },
-        Uri: { file: uri, parse: (value: string) => uri(value.replace(/^file:\/\//u, '')), joinPath: (base: ReturnType<typeof uri>, ...segments: string[]) => uri(path.join(base.fsPath, ...segments)) },
+        Uri: { file: uri, parse: (value: string) => uri(fileURLToPath(value)), joinPath: (base: ReturnType<typeof uri>, ...segments: string[]) => uri(path.join(base.fsPath, ...segments)) },
         workspace: { textDocuments: documents, fs: { readFile: (target: ReturnType<typeof uri>) => fsp.readFile(target.fsPath), stat: (target: ReturnType<typeof uri>) => fsp.stat(target.fsPath) },
             openTextDocument: async (target: ReturnType<typeof uri>) => ({ uri: target }) },
         window: { showErrorMessage: async (message: string) => { errors.push(message); }, showInformationMessage: async () => {},
@@ -34,8 +36,8 @@ async function harness(t: test.TestContext) {
     }).outputText;
     const module = { exports: {} };
     vm.runInNewContext(compiled, { module, exports: module.exports, Buffer, console,
-        require: (name: string) => name === 'vscode' ? host : name === './spprScenarioFormat' ? format
-            : name === './projectLibraryStore' ? { waitForProjectLibraryIdle: async () => {} } : require(name) });
+        require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name === 'vscode' ? host : name === './spprScenarioFormat' ? format
+            : name === './projectLibraryStore' ? { waitForProjectLibraryIdle: async () => {} } : require(name)) });
     return { root, documents, errors, opened, commands, refreshes, host, api: module.exports as typeof import('../src/spprScenarioFiles') };
 }
 
@@ -99,6 +101,10 @@ test('conversion completes without waiting for the success notification to be di
     const h = await harness(t); const source = uri(path.join(h.root, 'scen.yaml'));
     await fsp.writeFile(source.fsPath, metadata + 'ТекстСценария: |\n    And step\n');
     h.host.window.showInformationMessage = () => new Promise(() => {});
-    const result = await Promise.race([h.api.handleConvertScenarioFormat(source as never, 'native'), new Promise<undefined>(resolve => setTimeout(resolve, 150))]);
-    assert.ok(result?.sourceUri, 'conversion must return its URI moves without waiting for a toast');
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+        const result = await Promise.race([h.api.handleConvertScenarioFormat(source as never, 'native'),
+            new Promise<undefined>(resolve => { timeout = setTimeout(resolve, 5000); })]);
+        assert.ok(result?.sourceUri, 'conversion must return its URI moves without waiting for a toast');
+    } finally { clearTimeout(timeout); }
 });

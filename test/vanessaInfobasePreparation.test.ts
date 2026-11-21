@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -37,6 +38,7 @@ function preparationFixture(t: TestContext, selections: string[]) {
     }).outputText, {
         module, exports: module.exports, Buffer, console, process, setTimeout, clearTimeout, setInterval, clearInterval,
         require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
             if (name === 'vscode') { return vscode; }
             if (['fs', 'path', 'os'].includes(name)) { return require(name); }
             if (name === './oneCInfobaseConnection') { return infobaseConnection; }

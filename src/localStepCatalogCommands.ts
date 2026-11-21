@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import path from 'node:path';
 import { findLocalStepCategoryEpfs, generateLocalStepCatalog, localStepCatalogNeedsUpgrade, type LocalStepCatalogProgress } from './localStepCatalog';
@@ -5,6 +6,8 @@ import { withLocalStepTemplate } from './localStepCatalogDump';
 import { buildDirectSpawnCommand, runDirectProcess } from './directProcessLaunch';
 import { extractVanessaVersionFromChangelog, normalizeVanessaVersion } from './vanessaVersion';
 import type { StepCatalogService } from './stepCatalogService';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 /** No pickers: offline mode uses the configured distribution and the default installed platform. */
 export async function generateConfiguredLocalStepCatalog(resource: vscode.Uri, onProgress?: (value: LocalStepCatalogProgress) => void): Promise<string> {
@@ -33,7 +36,7 @@ export async function generateConfiguredLocalStepCatalog(resource: vscode.Uri, o
         if (!platform) { throw new Error(vscode.l10n.t('No 1C platforms are configured. Configure them in settings or open the platform manager.')); }
         executable = resolveOneCDesignerExePath(platform.clientExePath);
     }
-    const catalog = await vscode.window.withProgress({ title: vscode.l10n.t('Generating the local Vanessa step catalog…'), location: vscode.ProgressLocation.Notification }, async (progress, token) => {
+    const catalog = await kotUi.withProgress({ title: vscode.l10n.t('Generating the local Vanessa step catalog…'), location: vscode.ProgressLocation.Notification }, async (progress, token) => {
         const generate = (template?: string, sources?: string) => generateLocalStepCatalog(root, version!, undefined, hasSources ? undefined : template, sources ? [sources] : []);
         return !executable ? generate() : withLocalStepTemplate(hasSources ? undefined : path.join(root, 'locales', 'Steps.epf'), executable,
             (args, cwd) => runDirectProcess(buildDirectSpawnCommand(executable!, args), { cwd, token }), token, generate, sourceEpfs,
@@ -62,13 +65,13 @@ export function registerLocalStepCatalogCommands(context: vscode.ExtensionContex
             if (!workspace) { throw new Error(vscode.l10n.t('Open a workspace folder first.')); }
             const config = vscode.workspace.getConfiguration('kotTestToolkit', workspace.uri);
             const epf = config.get<string>('runVanessa.vanessaEpfPath', 'tools/vanessa/vanessa-automation.epf');
-            const folders = await vscode.window.showOpenDialog({ title: vscode.l10n.t('Select the local Vanessa distribution folder'),
+            const folders = await kotUi.showOpenDialog({ title: vscode.l10n.t('Select the local Vanessa distribution folder'),
                 canSelectFiles: false, canSelectFolders: true, canSelectMany: false, defaultUri: vscode.Uri.file(path.dirname(path.resolve(workspace.uri.fsPath, epf))) });
             if (!folders?.[0]) { return; }
             const root = folders[0].fsPath;
             let detected: string | null = null;
             try { detected = extractVanessaVersionFromChangelog(new TextDecoder().decode(await vscode.workspace.fs.readFile(vscode.Uri.file(path.join(root, 'docs', 'Changelog.md'))))); } catch { /* Ask for a version for source-only distributions. */ }
-            const version = await vscode.window.showInputBox({ title: vscode.l10n.t('Vanessa version for the local step catalog'),
+            const version = await kotUi.showInputBox({ title: vscode.l10n.t('Vanessa version for the local step catalog'),
                 value: detected ?? config.get<string>('steps.vanessaVersion', ''), ignoreFocusOut: true,
                 validateInput: value => normalizeVanessaVersion(value) ? undefined : vscode.l10n.t('Enter a four-component Vanessa version.') });
             if (version === undefined) { return; }
@@ -83,7 +86,7 @@ export function registerLocalStepCatalogCommands(context: vscode.ExtensionContex
                 if (!platform) { return; }
                 executable = resolveOneCDesignerExePath(platform.clientExePath);
             }
-            const catalog = await vscode.window.withProgress({ title: vscode.l10n.t('Generating the local Vanessa step catalog…'),
+            const catalog = await kotUi.withProgress({ title: vscode.l10n.t('Generating the local Vanessa step catalog…'),
                 location: vscode.ProgressLocation.Notification, cancellable: true }, async (progress, token) => {
                 const controller = new AbortController(); const disposable = token.onCancellationRequested(() => controller.abort());
                 if (token.isCancellationRequested) { controller.abort(); }
@@ -96,7 +99,7 @@ export function registerLocalStepCatalogCommands(context: vscode.ExtensionContex
                 finally { disposable.dispose(); }
             });
             if (!catalog) { return; }
-            const destination = await vscode.window.showSaveDialog({ title: vscode.l10n.t('Save the local Vanessa step catalog'),
+            const destination = await kotUi.showSaveDialog({ title: vscode.l10n.t('Save the local Vanessa step catalog'),
                 defaultUri: vscode.Uri.joinPath(workspace.uri, '.kot', 'step-catalogs', `${catalog.vanessaVersion}.json`), filters: { JSON: ['json'] } });
             if (!destination) { return; }
             await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(destination.fsPath)));
@@ -105,11 +108,11 @@ export function registerLocalStepCatalogCommands(context: vscode.ExtensionContex
             await config.update('steps.catalogMode', 'offline', vscode.ConfigurationTarget.WorkspaceFolder);
             if (config.get<string>('steps.vanessaVersion', '').trim()) { await config.update('steps.vanessaVersion', catalog.vanessaVersion, vscode.ConfigurationTarget.WorkspaceFolder); }
             await catalogs.refresh(resource ?? workspace.uri);
-            void vscode.window.showInformationMessage(vscode.l10n.t('Local Vanessa catalog generated: {0} steps. Offline catalog enabled for this workspace.', catalog.steps.length));
+            void kotUi.showInformationMessage(vscode.l10n.t('Local Vanessa catalog generated: {0} steps. Offline catalog enabled for this workspace.', catalog.steps.length));
             return destination.fsPath;
         } catch (error) {
             if (error instanceof Error && error.name === 'AbortError') { return; }
-            void vscode.window.showErrorMessage(vscode.l10n.t('Could not generate the local catalog. Select a Vanessa distribution containing locales/Steps.epf or its XML sources. {0}', error instanceof Error ? error.message : ''));
+            void kotUi.showErrorMessage(vscode.l10n.t('Could not generate the local catalog. Select a Vanessa distribution containing locales/Steps.epf or its XML sources. {0}', error instanceof Error ? error.message : ''));
         } finally { working = false; }
     }));
 }

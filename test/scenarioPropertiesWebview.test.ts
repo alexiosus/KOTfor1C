@@ -513,7 +513,9 @@ test('properties form hides identifiers and edits identity through revision-guar
     assert.deepEqual(h.messages.at(-1), { command: 'edit', documentUri: current.source.uri, documentVersion: 3, edit: { section: 'ДанныеСценария', field: 'Имя', value: 'Changed' } });
     h.state(current);
     for (const name of ['base', 'users', 'newGroup']) { assert.equal(h.action(name), undefined); }
-    for (const name of ['aiDescription', 'openText', 'save', 'pin']) {
+    assert.equal(h.action('aiDescription'), undefined);
+    assert.equal(h.field('description')?.value, 'Existing description');
+    for (const name of ['openText', 'save', 'pin']) {
         const action = h.action(name); assert.ok(action, name);
         action.fire('click');
         assert.deepEqual(h.messages.at(-1), { command: 'action', action: name });

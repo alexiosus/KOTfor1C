@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import * as standaloneFeatureModel from '../src/standaloneFeatureModel';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -64,7 +65,7 @@ function harness(text: string, fileName = 'order.feature', projectTags: readonly
         const moduleObject = { exports: {} as Record<string, any> };
         vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'src', file), 'utf8'), {
             compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-        }).outputText, { module: moduleObject, exports: moduleObject.exports, require: (specifier: string) => dependencies[specifier], console, Buffer });
+        }).outputText, { module: moduleObject, exports: moduleObject.exports, require: (specifier: string) => specifier === './kotInteraction' ? nativeInteraction : (dependencies[specifier]), console, Buffer });
         return moduleObject.exports;
     };
     dependencies['./gherkinLanguage'] = load('gherkinLanguage.ts');

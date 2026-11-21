@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import { v3Fixture } from './helpers/projectFormat';
 import * as projectSetupGate from '../src/projectSetupGate';
 import assert from 'node:assert/strict';
@@ -21,7 +22,11 @@ async function waitFor(condition: () => boolean | Promise<boolean>) {
 
 async function fixture(t: test.TestContext, multiRoot = false, savedWorkspace = false) {
     const base = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'kot-native-catalog-controller-'));
-    t.after(() => fs.promises.rm(base, { recursive: true, force: true }));
+    const services: Array<{ dispose(): void }> = [];
+    t.after(async () => {
+        services.forEach(service => service.dispose());
+        await fs.promises.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 25 });
+    });
     const uri = (fsPath: string) => ({ scheme: 'file', fsPath, toString: () => `file://${fsPath}` });
     const roots = multiRoot ? [path.join(base, 'first'), path.join(base, 'second')] : [base];
     for (const root of roots) { await fs.promises.mkdir(root, { recursive: true }); await v3Fixture(root); }
@@ -85,14 +90,14 @@ async function fixture(t: test.TestContext, multiRoot = false, savedWorkspace = 
         './workspaceScanner': { scanWorkspaceForScenarioCatalog: async () => ({ all: [] }) },
         './localization': { getTranslator: async () => (message: string, ...args: string[]) => message.replace(/\{(\d+)\}/g, (_, index) => args[Number(index)] ?? '') } };
     vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText,
-        { module, exports: module.exports, require: (name: string) => deps[name] ?? require(name), console, setTimeout, clearTimeout, structuredClone });
+        { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (deps[name] ?? require(name)), console, setTimeout, clearTimeout, structuredClone });
     const api = module.exports as { registerNativeProjectCatalogSettings(context: unknown, provider?: unknown): Promise<{ dispose(): void }> };
     const start = async (provider?: unknown) => {
         assert.equal(typeof api.registerNativeProjectCatalogSettings, 'function');
         const service = await api.registerNativeProjectCatalogSettings({ extensionUri: uri(process.cwd()), workspaceState: {
             get: (key: string) => baseline.get(key), update: async (key: string, value: unknown) => { baseline.set(key, value); }
         } }, provider);
-        t.after(() => service.dispose()); return service;
+        services.push(service); return service;
     };
     const change = async (key: string, value: unknown, scope: number | 'workspace' | 'user' = 0) => {
         const values = scope === 'user' ? globalConfig : scope === 'workspace' ? workspaceConfig : configs[scope];
@@ -143,7 +148,7 @@ test('native key/value tables edit series authors and system function names with
 test('Git catalog changes refresh native controls without feedback loops', async t => {
     const h = await fixture(t); await h.store.add('projects', 'Initial'); await h.start();
     await h.store.add('projects', 'From Git'); h.watchers[0].change?.();
-    await new Promise(resolve => setTimeout(resolve, 180));
+    await waitFor(() => (h.config.get('catalogs.projects') as string[] | undefined)?.includes('From Git') ?? false);
     assert.deepEqual(JSON.parse(JSON.stringify(h.config.get('catalogs.projects'))), ['Initial', 'From Git']);
     const writes = h.updates.length; await new Promise(resolve => setTimeout(resolve, 120));
     assert.equal(h.updates.length, writes); assert.deepEqual(h.errors, []);

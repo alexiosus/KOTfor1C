@@ -1,3 +1,4 @@
+import path from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { SettingsDraftSession, type ConfigurationLayers, type SettingsAdapter } from '../src/kotSettingsSession';
@@ -75,9 +76,9 @@ test('picker paths use the chosen project root, respect Windows boundaries and k
     assert.equal(portableSettingPath('C:\\Work\\Second', 'c:\\work\\Second\\libraries', 'relative', 'folder', 'win32'), 'libraries');
     assert.equal(portableSettingPath('C:\\Work\\Second', 'C:\\Work\\Second-copy\\lib', 'relative', 'folder', 'win32'), 'C:\\Work\\Second-copy\\lib');
     assert.equal(portableSettingPath('C:\\Work\\Second', 'D:\\Vanessa\\va.epf', 'relative', 'folder', 'win32'), 'D:\\Vanessa\\va.epf');
-    assert.equal(portableSettingPath('/second', '/second/lib', 'relative', 'user'), '/second/lib');
-    assert.throws(() => portableSettingPath('/second', '/first/compiler.epf', 'project', 'folder'), /inside/i);
-    assert.equal(portableSettingPath('/second', '/second', 'relative', 'folder'), '.');
+    assert.equal(portableSettingPath(path.resolve("/second"), path.resolve("/second/lib"), 'relative', 'user'), path.resolve("/second/lib"));
+    assert.throws(() => portableSettingPath(path.resolve("/second"), path.resolve("/first/compiler.epf"), 'project', 'folder'), /inside/i);
+    assert.equal(portableSettingPath(path.resolve("/second"), path.resolve("/second"), 'relative', 'folder'), '.');
 });
 
 test('a batch may change two scopes of the same setting without conflicting with its own first write', async () => {

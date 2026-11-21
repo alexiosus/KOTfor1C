@@ -3,7 +3,7 @@ export { redactVanessaDiagnosticText } from './vanessaControlRedaction';
 import { vanessaFormReplyText } from './vanessaControlForms';
 import { parseVanessaClientProfiles } from './vanessaControlClients';
 import { createHash } from 'node:crypto';
-import { sameVanessaFeaturePath } from './vanessaControlProtocol';
+import { sameVanessaFeaturePath, readVanessaStructuredReply, parseVanessaControlReply } from './vanessaControlProtocol';
 
 export type VanessaDiagnosticTool = 'get_vanessa_automation_state' | 'get_environment_data' | 'manage_test_client_profiles' | 'get_test_results'
     | 'get_event_log_manager' | 'get_event_log_test_client' | 'search_for_steps_by_keywords' | 'check_syntax' | 'get_window_list_os' | 'get_window_screenshot_os';
@@ -22,6 +22,18 @@ export class VanessaDiagnosticError extends Error {}
 /** Explicit bounded reads; never poll logs, retain raw responses or turn unknown prose into a pass. */
 export class VanessaRuntimeDiagnostics {
     constructor(private readonly ports: VanessaDiagnosticPorts) {}
+    async completedRun(filePath: string, runId: string): Promise<unknown> {
+        const results = await this.raw('get_test_results', { format: 'json' });
+        const state = await this.raw('get_vanessa_automation_state', { format: 'json' });
+        const data = readVanessaStructuredReply(results); const observed = readVanessaStructuredReply(state);
+        const parsed = parseVanessaControlReply('get_test_results', results);
+        const feature = observed?.currentFeature as { fullPath?: string } | undefined;
+        if (parsed.kind !== 'runtimeResult' || parsed.status !== 'passed' || data?.runId !== runId || observed?.runId !== runId || observed?.isRunning !== false ||
+            typeof data?.featurePath !== 'string' || !sameVanessaFeaturePath(filePath, data.featurePath) || !feature?.fullPath || !sameVanessaFeaturePath(filePath, feature.fullPath)) {
+            throw new VanessaDiagnosticError('No matching completed successful run is available. Preserve unknown status and investigate the evidence.');
+        }
+        return { state, results };
+    }
     private current(signal?: AbortSignal) {
         signal?.throwIfAborted();
         if (!this.ports.isCurrent()) { throw new VanessaDiagnosticError('The Vanessa session changed. Collect diagnostics again.'); }

@@ -1,4 +1,5 @@
-﻿import * as vscode from 'vscode';
+﻿import { kotWindow } from './kotInteraction';
+import * as vscode from 'vscode';
 import { getTranslator } from './localization';
 import { getExtensionUri } from './appContext';
 import * as path from 'path';
@@ -25,6 +26,8 @@ import {
 } from './projectDefinitionReferences';
 import JSZip = require('jszip');
 
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
+
 function isAmbiguousScenarioName(catalog: ScenarioCatalog | null, name: string): boolean {
     return (catalog?.byName.get(name)?.length || 0) > 1;
 }
@@ -46,11 +49,11 @@ export async function openCurrentScenarioFilesFolderHandler(textEditor: vscode.T
     try {
         const folderStats = await fs.promises.stat(filesFolderPath);
         if (!folderStats.isDirectory()) {
-            vscode.window.showInformationMessage(t('Files folder for current scenario was not found: {0}', filesFolderPath));
+            kotUi.showInformationMessage(t('Files folder for current scenario was not found: {0}', filesFolderPath));
             return;
         }
     } catch {
-        vscode.window.showInformationMessage(t('Files folder for current scenario was not found: {0}', filesFolderPath));
+        kotUi.showInformationMessage(t('Files folder for current scenario was not found: {0}', filesFolderPath));
         return;
     }
 
@@ -64,12 +67,12 @@ export async function openCurrentScenarioFilesFolderHandler(textEditor: vscode.T
  */
 export async function openSubscenarioHandler(
     textEditor: vscode.TextEditor,
-    edit: vscode.TextEditorEdit,
+    edit: vscode.TextEditorEdit | undefined,
     definitionResolver: ProjectDefinitionResolver
 ) {
     const t = await getTranslator(getExtensionUri());
     
-    await vscode.window.withProgress({
+    await kotUi.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: t('Searching for scenario files...'),
         cancellable: false
@@ -127,7 +130,7 @@ export async function openSubscenarioHandler(
  */
 export async function openNestedScenarioFromFeatureHandler(
     textEditor: vscode.TextEditor,
-    edit: vscode.TextEditorEdit,
+    edit: vscode.TextEditorEdit | undefined,
     definitionResolver: ProjectDefinitionResolver
 ): Promise<void> {
     const t = await getTranslator(getExtensionUri());
@@ -138,7 +141,7 @@ export async function openNestedScenarioFromFeatureHandler(
 
     const context = getFeatureNestedScenarioContextAtPosition(document, textEditor.selection.active);
     if (!context) {
-        vscode.window.showInformationMessage(t('Nested scenario call not found at current cursor position.'));
+        kotUi.showInformationMessage(t('Nested scenario call not found at current cursor position.'));
         return;
     }
 
@@ -189,11 +192,11 @@ export async function findCurrentFileReferencesHandler(
     const t = await getTranslator(getExtensionUri());
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
-        vscode.window.showWarningMessage(t('No active editor.'));
+        kotUi.showWarningMessage(t('No active editor.'));
         return;
     }
 
-    await vscode.window.withProgress({
+    await kotUi.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: t('Searching for scenario references...'),
         cancellable: true
@@ -208,7 +211,7 @@ export async function findCurrentFileReferencesHandler(
             return;
         }
         if (definitionIds.length === 0) {
-            vscode.window.showInformationMessage(t('Project definition not found at the current position.'));
+            kotUi.showInformationMessage(t('Project definition not found for the current file.'));
             return;
         }
 
@@ -243,7 +246,7 @@ export async function findCurrentFileReferencesHandler(
         }
         const locations = Array.from(locationsByKey.values());
         if (locations.length === 0) {
-            vscode.window.showInformationMessage(t('References to "{0}" not found.', targetName));
+            kotUi.showInformationMessage(t('References to "{0}" not found.', targetName));
             return;
         }
 
@@ -270,7 +273,7 @@ export async function findCurrentFileReferencesHandler(
         }
         progress.report({ increment: 25, message: t('Select reference to open') });
 
-        const pickedItem = await vscode.window.showQuickPick(quickPickItems, {
+        const pickedItem = await kotUi.showQuickPick(quickPickItems, {
             matchOnDescription: true,
             matchOnDetail: true,
             placeHolder: t('References to "{0}":', targetName)
@@ -286,7 +289,7 @@ export async function findCurrentFileReferencesHandler(
             });
         } catch (error) {
             console.error('[Cmd:findCurrentFileReferences] Error opening picked location:', error);
-            vscode.window.showErrorMessage(t('Failed to open location.'));
+            kotUi.showErrorMessage(t('Failed to open location.'));
         }
     });
 }
@@ -296,7 +299,7 @@ export async function findCurrentFileReferencesHandler(
  * Вставляет в конец блока "ВложенныеСценарии:" без пустых строк между элементами.
  * Если выделена строка вида "And ИмяСценария", пытается заполнить UID и Имя из найденного сценария.
  */
-export async function insertNestedScenarioRefHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit, phaseSwitcherProvider: PhaseSwitcherProvider) {
+export async function insertNestedScenarioRefHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit | undefined, phaseSwitcherProvider: PhaseSwitcherProvider) {
     const document = textEditor.document;
     const text = document.getText();
 
@@ -361,7 +364,7 @@ export async function insertNestedScenarioRefHandler(textEditor: vscode.TextEdit
     } catch (error) {
         const t = await getTranslator(getExtensionUri());
         const message = error instanceof Error ? error.message : String(error);
-        vscode.window.showErrorMessage(t('Could not edit scenario YAML because its structure is invalid: {0}', message));
+        kotUi.showErrorMessage(t('Could not edit scenario YAML because its structure is invalid: {0}', message));
         return;
     }
 
@@ -378,7 +381,7 @@ export async function insertNestedScenarioRefHandler(textEditor: vscode.TextEdit
             '\tUIDВложенныйСценарий: "${uidValue}"\n' +
             '\tИмяСценария: "${nameValue}"\n${finalCursor}'
         );
-        textEditor.insertSnippet(snippet);
+        await textEditor.insertSnippet(snippet);
     }
 }
 
@@ -386,14 +389,14 @@ export async function insertNestedScenarioRefHandler(textEditor: vscode.TextEdit
  * Обработчик команды вставки параметра сценария.
  * Вставляет в конец блока "ПараметрыСценария:" без пустых строк между элементами.
  */
-export async function insertScenarioParamHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+export async function insertScenarioParamHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit | undefined) {
     const document = textEditor.document;
 
     // Проверяем, что это файл сценария YAML
     const { isScenarioYamlFile } = await import('./yamlValidator.js');
     if (!isScenarioYamlFile(document)) {
         const t = await getTranslator(getExtensionUri());
-        vscode.window.showWarningMessage(t('This command is only available for scenario YAML files.'));
+        kotUi.showWarningMessage(t('This command is only available for scenario YAML files.'));
         return;
     }
 
@@ -411,7 +414,7 @@ export async function insertScenarioParamHandler(textEditor: vscode.TextEditor, 
     } catch (error) {
         const t = await getTranslator(getExtensionUri());
         const message = error instanceof Error ? error.message : String(error);
-        vscode.window.showErrorMessage(t('Could not edit scenario YAML because its structure is invalid: {0}', message));
+        kotUi.showErrorMessage(t('Could not edit scenario YAML because its structure is invalid: {0}', message));
         return;
     }
 
@@ -429,38 +432,39 @@ export async function insertScenarioParamHandler(textEditor: vscode.TextEditor, 
 /**
  * Обработчик команды вставки нового UID.
  */
-export async function insertUidHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+export async function insertUidHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit | undefined) {
     const document = textEditor.document;
     
     // Проверяем, что это файл сценария YAML
     const { isScenarioYamlFile } = await import('./yamlValidator.js');
     if (!isScenarioYamlFile(document)) {
         const t = await getTranslator(getExtensionUri());
-        vscode.window.showWarningMessage(t('This command is only available for scenario YAML files.'));
+        kotUi.showWarningMessage(t('This command is only available for scenario YAML files.'));
         return;
     }
     
     try {
         const newUid = uuidv4();
-        textEditor.edit(editBuilder => {
+        const success = await textEditor.edit(editBuilder => {
             textEditor.selections.forEach(selection => {
                 editBuilder.replace(selection, newUid);
             });
-        }).then(success => { if (!success) { const p = getTranslator(getExtensionUri()); Promise.resolve(p).then(tt => vscode.window.showErrorMessage(tt('Failed to insert UID.'))); } });
-    } catch (error: any) { const p = getTranslator(getExtensionUri()); Promise.resolve(p).then(tt => vscode.window.showErrorMessage(tt('Error generating UID: {0}', error.message || String(error)))); }
+        });
+        if (!success) { kotUi.showErrorMessage((await getTranslator(getExtensionUri()))('Failed to insert UID.')); }
+    } catch (error: any) { const p = getTranslator(getExtensionUri()); Promise.resolve(p).then(tt => kotUi.showErrorMessage(tt('Error generating UID: {0}', error.message || String(error)))); }
 }
 
 /**
  * Обработчик команды замены табов на пробелы в YAML файлах.
  */
-export async function replaceTabsWithSpacesYamlHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+export async function replaceTabsWithSpacesYamlHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit | undefined) {
     const document = textEditor.document;
     
     // Проверяем, что это файл сценария YAML
     const { isScenarioYamlFile } = await import('./yamlValidator.js');
     if (!isScenarioYamlFile(document)) {
         const t = await getTranslator(getExtensionUri());
-        vscode.window.showWarningMessage(t('This command is only available for scenario YAML files.'));
+        kotUi.showWarningMessage(t('This command is only available for scenario YAML files.'));
         return;
     }
     
@@ -479,10 +483,10 @@ export async function replaceTabsWithSpacesYamlHandler(textEditor: vscode.TextEd
             editBuilder.replace(fullRange, newText);
         });
         const t2 = await getTranslator(getExtensionUri());
-        vscode.window.showInformationMessage(t2('Tabs replaced with 4 spaces.'));
+        kotUi.showInformationMessage(t2('Tabs replaced with 4 spaces.'));
     } else {
         const t2 = await getTranslator(getExtensionUri());
-        vscode.window.showInformationMessage(t2('No tabs found in the document.'));
+        kotUi.showInformationMessage(t2('No tabs found in the document.'));
     }
 }
 
@@ -571,7 +575,7 @@ export function shouldRefillNestedScenariosSection(documentText: string): boolea
 /**
  * Обработчик команды проверки и заполнения вложенных сценариев.
  */
-export async function checkAndFillNestedScenariosHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit, phaseSwitcherProvider: PhaseSwitcherProvider) {
+export async function checkAndFillNestedScenariosHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit | undefined, phaseSwitcherProvider: PhaseSwitcherProvider) {
     if (/(?:^|[\\/])scen\.feature$/u.test(textEditor.document.fileName)) {
         const source = await (await import('./spprScenarioFiles.js')).resolveScenarioSourceUris(textEditor.document.uri);
         if (source?.format === 'native') {
@@ -586,7 +590,7 @@ export async function checkAndFillNestedScenariosHandler(textEditor: vscode.Text
     const { isScenarioYamlFile } = await import('./yamlValidator.js');
     if (!isScenarioYamlFile(document)) {
         const t = await getTranslator(getExtensionUri());
-        vscode.window.showWarningMessage(t('This command is only available for scenario YAML files.'));
+        kotUi.showWarningMessage(t('This command is only available for scenario YAML files.'));
         return;
     }
     
@@ -643,7 +647,7 @@ function parseDefinedScenarioParameters(documentText: string): string[] {
 /**
  * Обработчик команды проверки и заполнения параметров сценария.
  */
-export async function checkAndFillScenarioParametersHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) {
+export async function checkAndFillScenarioParametersHandler(textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit | undefined) {
     if (/(?:^|[\\/])scen\.feature$/u.test(textEditor.document.fileName)) {
         const source = await (await import('./spprScenarioFiles.js')).resolveScenarioSourceUris(textEditor.document.uri);
         if (source?.format === 'native') {
@@ -658,7 +662,7 @@ export async function checkAndFillScenarioParametersHandler(textEditor: vscode.T
     const { isScenarioYamlFile } = await import('./yamlValidator.js');
     if (!isScenarioYamlFile(document)) {
         const t = await getTranslator(getExtensionUri());
-        vscode.window.showWarningMessage(t('This command is only available for scenario YAML files.'));
+        kotUi.showWarningMessage(t('This command is only available for scenario YAML files.'));
         return;
     }
     
@@ -677,7 +681,7 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
 
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
-        vscode.window.showErrorMessage(t('Workspace is not open.'));
+        kotUi.showErrorMessage(t('Workspace is not open.'));
         return;
     }
     const workspaceRoot = workspaceFolders[0].uri;
@@ -691,13 +695,13 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
             const xmlContent = Buffer.from(xmlContentBytes).toString('utf-8');
             const versionMatch = xmlContent.match(/<Version>([^<]+)<\/Version>/);
             if (!versionMatch || !versionMatch[1]) {
-                vscode.window.showErrorMessage(t('Could not find <Version> tag in cf/Configuration.xml.'));
+                kotUi.showErrorMessage(t('Could not find <Version> tag in cf/Configuration.xml.'));
                 return;
             }
             version = versionMatch[1];
             console.log(`[Cmd:createFirstLaunchZip] Found version: ${version}`);
         } catch (error) {
-            vscode.window.showErrorMessage(t('Could not read cf/Configuration.xml file.'));
+            kotUi.showErrorMessage(t('Could not read cf/Configuration.xml file.'));
             return;
         }
 
@@ -706,7 +710,7 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
         const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const firstLaunchFolderPath = (config.get<string>('paths.firstLaunchFolder') || '').trim();
         if (!firstLaunchFolderPath) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 t('FirstLaunch folder path is not specified in settings.'),
                 t('Open Settings')
             ).then(selection => {
@@ -724,7 +728,7 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
         try {
             await vscode.workspace.fs.stat(firstLaunchFolderUri);
         } catch {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 t('FirstLaunch folder not found at path: {0}', firstLaunchFolderUri.fsPath),
                 t('Open Settings')
             ).then(selection => {
@@ -735,7 +739,7 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
             return;
         }
 
-        await vscode.window.withProgress({
+        await kotUi.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: t('Building FirstLaunch.zip'),
             cancellable: false
@@ -807,7 +811,7 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
                 defaultSaveFolder = workspaceRoot;
             }
 
-            const saveUri = await vscode.window.showSaveDialog({
+            const saveUri = await kotUi.showSaveDialog({
                 defaultUri: vscode.Uri.joinPath(defaultSaveFolder, 'first_launch.zip'),
                 filters: {
                     'Zip archives': ['zip']
@@ -821,7 +825,7 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
                 console.log(`[Cmd:createFirstLaunchZip] Archive saved to ${saveUri.fsPath}`);
 
                 // Показываем уведомление с кнопкой
-                vscode.window.showInformationMessage(
+                kotUi.showInformationMessage(
                     t('FirstLaunch.zip archive successfully saved'),
                     t('Open directory')
                 ).then(selection => {
@@ -832,13 +836,13 @@ export async function handleCreateFirstLaunchZip(context: vscode.ExtensionContex
                 });
             } else {
                 console.log("[Cmd:createFirstLaunchZip] Save dialog cancelled.");
-                vscode.window.showInformationMessage(t('Archive saving cancelled.'));
+                kotUi.showInformationMessage(t('Archive saving cancelled.'));
             }
         });
 
     } catch (error: any) {
         console.error("[Cmd:createFirstLaunchZip] Error:", error);
-        vscode.window.showErrorMessage(t('Error creating FirstLaunch.zip: {0}', error.message || error));
+        kotUi.showErrorMessage(t('Error creating FirstLaunch.zip: {0}', error.message || error));
     }
 }
 
@@ -878,7 +882,7 @@ export async function clearAndFillNestedScenarios(
         const scenariosToAdd: { name: string; uid: string }[] = [];
         const ambiguousCalls: string[] = [];
         if (!scenarioCatalog) {
-            vscode.window.showErrorMessage(t('Nested scenarios were not updated because the scenario catalog is unavailable.'));
+            kotUi.showErrorMessage(t('Nested scenarios were not updated because the scenario catalog is unavailable.'));
             return false;
         }
         for (const calledName of calledScenariosInOrder) {
@@ -896,7 +900,7 @@ export async function clearAndFillNestedScenarios(
         }
 
         if (ambiguousCalls.length > 0) {
-            vscode.window.showErrorMessage(
+            kotUi.showErrorMessage(
                 `${t('Nested scenarios were not updated because some names resolve to multiple files:')}\n${ambiguousCalls.join('\n')}`
             );
             return false;
@@ -924,7 +928,7 @@ export async function clearAndFillNestedScenarios(
             sectionEdit = getSectionBodyReplacement(fullText, 'ВложенныеСценарии', itemsToInsertString);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(t('Could not edit scenario YAML because its structure is invalid: {0}', message));
+            kotUi.showErrorMessage(t('Could not edit scenario YAML because its structure is invalid: {0}', message));
             return false;
         }
         if (!sectionEdit) {
@@ -956,7 +960,7 @@ export async function clearAndFillNestedScenarios(
     if (silent) {
         return await progressHandler(null);
     } else {
-        return await vscode.window.withProgress({
+        return await kotUi.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: t('Filling nested scenarios...'),
             cancellable: false
@@ -1144,7 +1148,7 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
             sectionEdit = getSectionBodyReplacement(fullText, PARAM_SECTION_KEY, itemsToInsertString);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(t('Could not edit scenario YAML because its structure is invalid: {0}', message));
+            kotUi.showErrorMessage(t('Could not edit scenario YAML because its structure is invalid: {0}', message));
             return false;
         }
         if (!sectionEdit) {
@@ -1188,7 +1192,7 @@ export async function clearAndFillScenarioParameters(document: vscode.TextDocume
     if (silent) {
         return await progressHandler(null);
     } else {
-        return await vscode.window.withProgress({
+        return await kotUi.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: t('Filling scenario parameters...'),
             cancellable: false
@@ -1389,6 +1393,6 @@ export async function handleOpenYamlParametersManager(context: vscode.ExtensionC
         await manager.openYamlParametersPanel(tab === 'additional' ? 'additional' : 'build');
     } catch (error) {
         console.error('[Cmd:openYamlParametersManager] Error:', error);
-        vscode.window.showErrorMessage(t('Error opening Compilation and run parameters: {0}', String(error)));
+        kotUi.showErrorMessage(t('Error opening Compilation and run parameters: {0}', String(error)));
     }
 }

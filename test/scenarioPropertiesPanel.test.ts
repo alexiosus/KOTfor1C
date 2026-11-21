@@ -1,3 +1,5 @@
+import { nativeInteraction } from './helpers/kotInteraction';
+import { createTestLink } from './helpers/symlinks';
 import * as projectFormatModule from '../src/projectFormat';
 import * as projectLegacyModule from '../src/projectLegacyMetadata';
 import { v3Fixture } from './helpers/projectFormat';
@@ -63,7 +65,11 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 
 async function harness(t: test.TestContext, initialSource = false, translate?: (message: string, ...args: string[]) => string) {
     const root = await v3Fixture(fsp.mkdtemp(path.join(os.tmpdir(), 'kot-properties-panel-')));
-    t.after(() => fsp.rm(root, { recursive: true, force: true }));
+    let disposePanel = () => {};
+    t.after(async () => {
+        disposePanel();
+        await fsp.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 25 });
+    });
     const yamlRoot = path.join(root, 'tests'); const processRoot = path.join(root, 'processes');
     await fsp.mkdir(yamlRoot); await fsp.mkdir(processRoot); await fsp.mkdir(path.join(root, '.kot'), { recursive: true });
     await fsp.mkdir(path.join(root, '.kot/groups'));
@@ -188,7 +194,7 @@ async function harness(t: test.TestContext, initialSource = false, translate?: (
         if (fs.existsSync(sourceFile)) {
             vm.runInNewContext(ts.transpileModule(fs.readFileSync(sourceFile, 'utf8'), {
                 compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
-            }).outputText, { module, exports: module.exports, require: (name: string) => name in dependencies ? dependencies[name] : require(name),
+            }).outputText, { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (name in dependencies ? dependencies[name] : require(name)),
                 Buffer, URL, console, setTimeout, clearTimeout, TextDecoder, TextEncoder });
         }
         return module.exports;
@@ -217,7 +223,7 @@ async function harness(t: test.TestContext, initialSource = false, translate?: (
         host.window.activeTextEditor = editor; host.window.visibleTextEditors = [editor];
     }
     const panel = api.ScenarioPropertiesPanel ? new api.ScenarioPropertiesPanel(context, textEditor, options) : undefined;
-    t.after(() => panel?.dispose());
+    disposePanel = () => panel?.dispose();
     return { root, yamlRoot, processRoot, sourceUri, settingsUri, native, panel, api, host, documents, panels, watchers, visible,
         textOpens, actions, saved, writes, openDocument, convertScenarioFormat: spprFiles.handleConvertScenarioFormat,
         get viewOptions() { return viewOptions; }, changed, savedEvent, active, visibleEditorsChanged, viewCommands, renamed, deleted, created, rootsChanged,
@@ -376,7 +382,7 @@ test('cached candidate discovery stays in configured owner roots and direct sour
     }
     const nested = path.join(h.yamlRoot, 'nested-project'); await fsp.mkdir(nested); h.addOwner(nested);
     await fsp.writeFile(path.join(nested, 'other-owner.yaml'), settingsText());
-    await fsp.symlink(outside, path.join(h.yamlRoot, 'symlink'));
+    if (!await createTestLink(t, outside, path.join(h.yamlRoot, 'symlink'))) { return; }
     const source = await h.native.readDocument(sourceUri.toString());
     let linked = bindings.findLinkedScenarioSettings(source, await h.native.listSettings(source));
     assert.deepEqual(Array.from(linked, item => path.basename(Uri.parse(item.uri).fsPath)).sort(), ['direct.yml', 'test.yml']);
@@ -572,7 +578,7 @@ test('filesystem creation and root changes invalidate settings inventory without
 test('renamed selected sources remap a pinned session and reopen exact native text identity', async t => {
     const h = await harness(t); const panel = await h.open();
     await panel.receive.fire({ command: 'action', action: 'pin' });
-    const next = h.sourceUri.with({ path: path.join(h.yamlRoot, 'renamed.yaml') });
+    const next = Uri.file(path.join(h.yamlRoot, 'renamed.yaml'));
     await fsp.rename(h.sourceUri.fsPath, next.fsPath);
     const document = await h.openDocument(h.sourceUri); document.uri = next;
     await h.renamed.fire({ files: [{ oldUri: h.sourceUri, newUri: next }] });
@@ -647,7 +653,7 @@ test('initial multiple linked settings require explicit selection and keep it du
     await fsp.writeFile(second.fsPath, settingsText()); const panel = await h.open();
     assert.equal(panel.state().settings.length, 2); assert.equal(panel.state().selectedSettingsUri, null);
     await panel.receive.fire({ command: 'action', action: 'selectSettings', value: second.toString() });
-    const next = h.sourceUri.with({ path: path.join(h.yamlRoot, 'renamed.yaml') });
+    const next = Uri.file(path.join(h.yamlRoot, 'renamed.yaml'));
     await fsp.rename(h.sourceUri.fsPath, next.fsPath); (await h.openDocument(h.sourceUri)).uri = next;
     await h.renamed.fire({ files: [{ oldUri: h.sourceUri, newUri: next }] });
     assert.equal(panel.state().selectedSettingsUri, second.toString()); assert.equal(panel.state().source.uri, next.toString());
@@ -657,7 +663,7 @@ test('open dirty YAML reached through a symlink is excluded from candidate overl
     const h = await harness(t); assert.ok(h.native);
     const outside = path.join(h.root, 'outside'); await fsp.mkdir(outside);
     await fsp.writeFile(path.join(outside, 'linked.yaml'), settingsText());
-    await fsp.symlink(outside, path.join(h.yamlRoot, 'linked-directory'));
+    if (!await createTestLink(t, outside, path.join(h.yamlRoot, 'linked-directory'))) { return; }
     await h.edit(Uri.file(path.join(h.yamlRoot, 'linked-directory/linked.yaml')), settingsText().replace('Sales test', 'Dirty linked'));
     const source = await h.native.readDocument(h.sourceUri.toString());
     const linked = bindings.findLinkedScenarioSettings(source, await h.native.listSettings(source));
@@ -935,7 +941,7 @@ test('initial test/ discovery excludes symlinks and settings owned by another so
     await fsp.unlink(h.settingsUri.fsPath);
     await fsp.writeFile(path.join(directory, 'other.yaml'), settingsText('another'));
     const elsewhere = path.join(h.root, 'elsewhere.yaml'); await fsp.writeFile(elsewhere, settingsText());
-    await fsp.symlink(elsewhere, path.join(directory, 'linked.yaml'));
+    if (!await createTestLink(t, elsewhere, path.join(directory, 'linked.yaml'))) { return; }
     const source = await h.native.readDocument(h.sourceUri.toString());
     assert.equal(bindings.findLinkedScenarioSettings(source, await h.native.listInitialSettings(source)).length, 0);
 });

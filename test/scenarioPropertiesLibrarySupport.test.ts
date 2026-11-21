@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,7 +26,7 @@ function harness(exported = false) {
         './featurePropertiesModel': featureModel, './featureEditorActions': featureActions, './exportScenarioParser': exportParser };
     const ts = require('typescript'); const module = { exports: {} as typeof import('../src/scenarioPropertiesLibrarySupport') };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/scenarioPropertiesLibrarySupport.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText,
-        { module, exports: module.exports, require: (name: string) => deps[name] ?? require(name) });
+        { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (deps[name] ?? require(name)) });
     const feature = { id: uri, groupId: '', uri };
     const support = module.exports.createPropertiesLibrarySupport({
         favoriteItems: async () => { loads++; return [{ id: 'standaloneFeature#' + uri, sourceGroup: 'standalone', capturedLocation: { uri } }] as any; },

@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,7 +33,7 @@ test('native parameter picker supports searchable source keys, alias deduplicati
         } } };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/yamlParametersManager.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-    }).outputText, { module, exports: module.exports, console, require: (name: string) => dependencies[name] ?? {} });
+    }).outputText, { module, exports: module.exports, console, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name] ?? {}) });
     const manager = Object.create(module.exports.YamlParametersManager.prototype);
     manager.t = (message: string) => message;
     manager.loadActiveProfileSnapshot = async () => ({ buildParameters: [{ key: 'VanessaFolder', value: '/tools/vanessa' }] });

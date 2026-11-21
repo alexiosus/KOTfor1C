@@ -1,3 +1,4 @@
+import { createTestLink } from './helpers/symlinks';
 import { v3Fixture } from './helpers/projectFormat';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -139,7 +140,7 @@ test('sidecar discovery ignores symlinks and generated/runtime dependency direct
         await write(directory, `${subdirectory}/wrong.yaml.kot.yml`, 'invalid: [');
     }
     await write(external, 'wrong.yaml.kot.yml', 'invalid: [');
-    await fs.symlink(external, path.join(directory, 'linked'), 'dir');
+    if (!await createTestLink(t, external, path.join(directory, 'linked'))) { return; }
     assert.deepEqual((await new ProjectLibraryStore(directory).read()).metadata, {});
 });
 
@@ -272,7 +273,7 @@ test('source identity changes during migration preserve central metadata without
 test('new metadata cannot be written through a symbolic link to another project', async t => {
     const directory = await root(t);
     const outside = await root(t);
-    await fs.symlink(outside, path.join(directory, 'tests'), 'dir');
+    if (!await createTestLink(t, outside, path.join(directory, 'tests'))) { return; }
     await assert.rejects(new ProjectLibraryStore(directory).setMetadata(scenario, { description: 'Do not escape' }), /symlink/i);
     assert.deepEqual((await fs.readdir(outside)).filter(name => name !== '.kot'), []);
 });

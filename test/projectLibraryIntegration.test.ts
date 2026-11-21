@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import * as projectFormatModule from '../src/projectFormat';
 import * as projectLegacyModule from '../src/projectLegacyMetadata';
 import { v3Fixture } from './helpers/projectFormat';
@@ -62,28 +63,28 @@ function harness(root: string, external = path.join(root, 'tests'), waitForIdle 
     const module = { exports: {} as typeof import('../src/projectLibraryIntegration') };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'src/projectLibraryIntegration.ts'), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
-    }).outputText, { module, exports: module.exports, require: (name: string) => dependencies[name], console, process, setTimeout, clearTimeout });
+    }).outputText, { module, exports: module.exports, require: (name: string) => name === './kotInteraction' ? nativeInteraction : (dependencies[name]), console, process, setTimeout, clearTimeout });
     return { api: module.exports, documents, opened, watchers,
         changeRoots: () => rootsChanged?.(), changeFolders: () => foldersChanged?.() };
 }
 
 test('dirty adjacent metadata and central groups block writes, while source and other project editors do not', () => {
-    const h = harness('/repo');
-    for (const file of ['/repo/tests/scen.yaml.kot.yml', '/repo/tests/UPPER.yaml.KOT.YML', '/repo/.kot/groups/smoke.yml']) {
+    const h = harness(path.resolve("/repo"));
+    for (const file of [path.resolve("/repo/tests/scen.yaml.kot.yml"), path.resolve("/repo/tests/UPPER.yaml.KOT.YML"), path.resolve("/repo/.kot/groups/smoke.yml")]) {
         h.documents.splice(0, h.documents.length, { uri: uri(file), isDirty: true });
-        assert.throws(() => h.api.assertProjectMetadataSaved('/repo'), /Save project metadata/);
+        assert.throws(() => h.api.assertProjectMetadataSaved(path.resolve("/repo")), /Save project metadata/);
     }
     h.documents.splice(0, h.documents.length,
-        { uri: uri('/repo/tests/scen.yaml'), isDirty: true },
-        { uri: uri('/repo/tests/scen.yaml.kot.yml'), isDirty: false },
+        { uri: uri(path.resolve("/repo/tests/scen.yaml")), isDirty: true },
+        { uri: uri(path.resolve("/repo/tests/scen.yaml.kot.yml")), isDirty: false },
         { uri: uri('/repo-other/tests/scen.yaml.kot.yml'), isDirty: true });
-    assert.doesNotThrow(() => h.api.assertProjectMetadataSaved('/repo'));
+    assert.doesNotThrow(() => h.api.assertProjectMetadataSaved(path.resolve("/repo")));
 });
 
 test('metadata watcher coalesces migration events until the active transaction finishes', async t => {
     let release!: () => void;
     const pending = new Promise<void>(resolve => { release = resolve; });
-    const h = harness('/repo', '/repo/tests', () => pending);
+    const h = harness(path.resolve("/repo"), path.resolve("/repo/tests"), () => pending);
     const context = { subscriptions: [] as Array<{ dispose(): void }> };
     t.after(() => context.subscriptions.forEach(value => value.dispose()));
     let refreshes = 0;
@@ -98,22 +99,22 @@ test('metadata watcher coalesces migration events until the active transaction f
 });
 
 test('ordering guards only the affected source editors while metadata edits remain independently guarded', () => {
-    const h = harness('/repo');
-    h.documents.push({ uri: uri('/repo/tests/a.yaml'), isDirty: true }, { uri: uri('/repo/tests/b.feature'), isDirty: true });
-    assert.throws(() => (h.api as any).assertProjectOrderingSourcesSaved(['/repo/tests/a.yaml']), /Save changed test sources/u);
-    assert.throws(() => (h.api as any).assertProjectOrderingSourcesSaved(['/repo/tests/b.feature']), /Save changed test sources/u);
-    assert.doesNotThrow(() => (h.api as any).assertProjectOrderingSourcesSaved(['/repo/tests/c.yaml']));
+    const h = harness(path.resolve("/repo"));
+    h.documents.push({ uri: uri(path.resolve("/repo/tests/a.yaml")), isDirty: true }, { uri: uri(path.resolve("/repo/tests/b.feature")), isDirty: true });
+    assert.throws(() => (h.api as any).assertProjectOrderingSourcesSaved([path.resolve("/repo/tests/a.yaml")]), /Save changed test sources/u);
+    assert.throws(() => (h.api as any).assertProjectOrderingSourcesSaved([path.resolve("/repo/tests/b.feature")]), /Save changed test sources/u);
+    assert.doesNotThrow(() => (h.api as any).assertProjectOrderingSourcesSaved([path.resolve("/repo/tests/c.yaml")]));
 });
 
 test('Git sidecar and group changes refresh both owning roots and reconfigure watches with project roots', async t => {
-    const h = harness('/repo', '/external-tests');
+    const h = harness(path.resolve("/repo"), path.resolve("/external-tests"));
     const context = { subscriptions: [] as Array<{ dispose(): void }> };
     t.after(() => context.subscriptions.forEach(value => value.dispose()));
     let refreshes = 0;
     h.api.watchProjectLibrary(context as Parameters<typeof h.api.watchProjectLibrary>[0], () => { refreshes++; });
     assert.deepEqual(h.watchers.filter(watcher => !['HEAD','index','packed-refs','refs/heads/**'].includes(watcher.pattern)).map(value => [value.root, value.pattern]), [
-        ['/repo', '.kot/**/*.{yaml,yml}'], ['/repo', '**/*.kot.yml'],
-        ['/external-tests', '.kot/**/*.{yaml,yml}'], ['/external-tests', '**/*.kot.yml']
+        [path.resolve("/repo"), '.kot/**/*.{yaml,yml}'], [path.resolve("/repo"), '**/*.kot.yml'],
+        [path.resolve("/external-tests"), '.kot/**/*.{yaml,yml}'], [path.resolve("/external-tests"), '**/*.kot.yml']
     ]);
     h.watchers[0].change?.(); h.watchers[1].create?.(); h.watchers[3].delete?.();
     await new Promise(resolve => setTimeout(resolve, 150));
@@ -125,7 +126,7 @@ test('Git sidecar and group changes refresh both owning roots and reconfigure wa
 });
 
 test('Git checkout events request a full library rescan while ordinary metadata events do not', async t => {
-    const h=harness('/repo');const context={subscriptions:[] as Array<{dispose():void}>};
+    const h=harness(path.resolve("/repo"));const context={subscriptions:[] as Array<{dispose():void}>};
     t.after(()=>context.subscriptions.forEach(value=>value.dispose()));const fullRefreshes:boolean[]=[];
     h.api.watchProjectLibrary(context as any,full=>{fullRefreshes.push(!!full);});
     h.watchers.find(watcher=>watcher.pattern==='HEAD')!.change?.();

@@ -4,7 +4,8 @@ export const workspaceActions: Readonly<Record<string, string>> = {
     library: 'kotTestToolkit.openStepLibrary', manager: 'kotTestToolkit.phaseSwitcherView.focus',
     infobases: 'kotTestToolkit.openInfobaseManager', properties: 'kotTestToolkit.scenarioProperties.focus',
     variables: 'kotTestToolkit.vanessaVariables.focus', parameters: 'kotTestToolkit.openYamlParametersManager',
-    platforms: 'kotTestToolkit.managePlatforms', functions: 'kotTestToolkit.manageSystemFunctions', numbering: 'kotTestToolkit.manageTestNumbering'
+    platforms: 'kotTestToolkit.managePlatforms', functions: 'kotTestToolkit.manageSystemFunctions', numbering: 'kotTestToolkit.manageTestNumbering',
+    agent: 'kotTestToolkit.agent.setup'
 };
 export interface KotWorkspaceRequest {
     id: string; type: string; folder?: string; scope?: SettingsScope; key?: string; action?: string; value?: unknown; data?: unknown;

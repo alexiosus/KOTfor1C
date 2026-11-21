@@ -1,3 +1,4 @@
+import { nativeInteraction } from './helpers/kotInteraction';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,6 +14,7 @@ function manager() {
     vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/yamlParametersManager.ts', 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
     }).outputText, { module, exports: module.exports, console, require: (name: string) => {
+            if (name === './kotInteraction') { return nativeInteraction; }
         if (name === './vanessaLaunchJson.js') { return launch; }
         if (['fs', 'path'].includes(name)) { return require(name); }
         return {};

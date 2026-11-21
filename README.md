@@ -20,7 +20,7 @@
 
 KOT помогает писать сценарии СППР и Vanessa Automation: подсказывает шаги и параметры, открывает вложенные вызовы, собирает тесты и связывает редактор с работающей Vanessa. Свойства теста, библиотека шагов, информационные базы и результаты доступны в одном рабочем пространстве.
 
-[Начать работу](docs/QUICK_START.md) · [Учебная мастерская](examples/kot-workshop/README.md) · [Все документы](#все-документы) · [Изменения 3.0.0](CHANGELOG.md) · [История проекта на Infostart](https://infostart.ru/1c/articles/2834110/)
+[Начать работу](docs/QUICK_START.md) · [Учебная мастерская](examples/kot-workshop/README.md) · [Все документы](#все-документы) · [Изменения 3.1.0](CHANGELOG.md) · [История проекта на Infostart](https://infostart.ru/1c/articles/2834110/)
 
 ![Редактор feature, Менеджер тестов и свойства в KOT 3.0.0](docs/assets/workspace.png)
 
@@ -48,7 +48,8 @@ KOT помогает писать сценарии СППР и Vanessa Automatio
 | Разобраться с ошибкой | Цвет строк, текст ошибки, переменные, журналы и диагностический пакет | [Диагностика](docs/guides/diagnostics-and-quick-fix.md) |
 | Подготовить окружение | Базы, платформы, клиенты тестирования, DT/CF, шаблоны и эталонные состояния | [Информационные базы](docs/guides/infobase-manager.md) |
 | Работать в команде | Общие группы, каталоги и серии номеров в Git; личное состояние отдельно | [Общие данные проекта](docs/guides/shared-project-library.md) |
-| Использовать ИИ | Описание сценария, отчёт по изменениям конфигурации и ревью изменённых тестов | [AI-инструменты](docs/guides/ai-description.md) |
+| Использовать ИИ | Расследование падений, запуск и исправление тестов, стори, планы и ревью | [ИИ-оператор тестирования](docs/guides/ai-agent.md) |
+| Подключить ИИ-агента | Запуск и исследование ошибок, архивы CI, выделенные базы, правки и проверка стори через MCP | [ИИ-оператор](docs/guides/ai-agent.md) |
 
 ## Выберите свой маршрут
 
@@ -147,13 +148,13 @@ https://github.com/user-attachments/assets/eaa3e411-c519-40f0-ac45-1028396db667
 | Компилировать СППР | Windows, платформа 1С и совместимая обработка компилятора СППР |
 | Выполнять тесты | Windows, платформа 1С, Vanessa Automation и тестовая база |
 | Управлять работающей Vanessa | Сеанс с совместимыми MCP-инструментами; KOT умеет подготовить собственный управляемый сеанс |
-| Использовать AI | Доступный OpenAI-совместимый сервис; подключается отдельно |
+| Использовать ИИ | Codex, Claude Code или другой локальный MCP-клиент; мастер **Подключить ИИ** готовит подключение к KOT |
 
 [Установка и подготовка окружения](docs/SETUP.md) · [Совместимость и ограничения](docs/technical/compatibility.md)
 
 Справочники поставщиков: [компилятор СППР на ИТС](https://its.1c.ru/db/sppr2doc#content:124:hdoc), [JSON-параметры Vanessa](https://pr-mex.github.io/vanessa-automation/dev/JsonParams/JsonParamsRU/), [программа работы с файлами 1С для MXL](https://v8.1c.ru/static/1s-predpriyatie-rabota-s-faylami/).
 
-Документация описывает **3.0.0**. Сверяйте её с версией установленного расширения. Локальные операции 1С на macOS/Linux пока не являются поддержанным сценарием KOT.
+Документация описывает **3.1.0**. Сверяйте её с версией установленного расширения. Локальные операции 1С на macOS/Linux пока не являются поддержанным сценарием KOT.
 
 <a id="статус-и-ограничения"></a>
 
@@ -222,8 +223,7 @@ https://github.com/user-attachments/assets/eaa3e411-c519-40f0-ac45-1028396db667
   - [Диагностика и исправление ошибок](docs/guides/diagnostics-and-quick-fix.md)
   - [Сохранённый набор клиентов для отдельного запуска](docs/guides/vanessa-debug-clients.md)
 - **AI-инструменты**
-  - [Описание сценария, анализ изменений и ревью тестов](docs/guides/ai-description.md)
-  - [Подключение AI-сервиса: примеры настроек](docs/guides/ai-connections.md)
+  - [Прежние ИИ-функции и сохранённые отчёты](docs/guides/ai-description.md)
 - **Учебная мастерская**
   - [Открыть мастерскую и выбрать упражнение](examples/kot-workshop/README.md)
   - [1. Осмотритесь в KOT](examples/kot-workshop/guide/01-interface.md)
@@ -245,7 +245,7 @@ https://github.com/user-attachments/assets/eaa3e411-c519-40f0-ac45-1028396db667
   - [Контракт компилятора и запуска](docs/technical/compiler.md)
   - [Выполнение и MCP Vanessa](docs/technical/execution-and-mcp.md)
   - [Каталоги шагов и определений](docs/technical/step-catalogs.md)
-  - [AI: контекст запросов и отчёты](docs/technical/ai-data.md)
+  - [ИИ: данные и сохранённые отчёты](docs/technical/ai-data.md)
   - [Архитектура KOT](docs/technical/architecture.md)
   - [Обработка документа и добавление возможностей](docs/technical/contributing-workflows.md)
   - [Подготовленный DT служебной базы](docs/technical/startup-template.md)

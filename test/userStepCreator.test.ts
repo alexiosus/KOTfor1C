@@ -58,18 +58,18 @@ function applyPlan(source: string, plan: UserStepSourceEditPlan): string {
 
 test('resolves Vanessa TemplateEpfUF from active-profile aliases and EPF fallback', () => {
     assert.equal(resolveVanessaTemplateRoot({
-        workspaceFolderPath: '/repo',
+        workspaceFolderPath: path.resolve("/repo"),
         buildParameters: [{ key: 'VanessaFolder', value: 'tools/vanessa' }]
-    }), path.join('/repo', 'tools/vanessa', 'lib', 'TemplateEpfUF'));
+    }), path.join(path.resolve("/repo"), 'tools/vanessa', 'lib', 'TemplateEpfUF'));
     assert.equal(resolveVanessaTemplateRoot({
-        workspaceFolderPath: '/repo',
-        buildParameters: [{ key: 'VanessaPath', value: '/opt/vanessa/vanessa-automation.epf' }]
-    }), path.join('/opt/vanessa', 'lib', 'TemplateEpfUF'));
+        workspaceFolderPath: path.resolve("/repo"),
+        buildParameters: [{ key: 'VanessaPath', value: path.resolve("/opt/vanessa/vanessa-automation.epf") }]
+    }), path.join(path.resolve("/opt/vanessa"), 'lib', 'TemplateEpfUF'));
     assert.equal(resolveVanessaTemplateRoot({
-        workspaceFolderPath: '/repo',
+        workspaceFolderPath: path.resolve("/repo"),
         buildParameters: [],
         configuredVanessaEpfPath: 'vendor/vanessa/vanessa-automation.epf'
-    }), path.join('/repo', 'vendor/vanessa', 'lib', 'TemplateEpfUF'));
+    }), path.join(path.resolve("/repo"), 'vendor/vanessa', 'lib', 'TemplateEpfUF'));
 });
 
 test('creates a source-first library from Vanessa metadata without requiring a 1C platform', async t => {

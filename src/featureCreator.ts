@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -7,6 +8,8 @@ import { resolveScenarioScanRootFsPath } from './scenarioScanRoot';
 import { renderFeatureTemplate, validateFeatureTitle } from './featureTemplate';
 import { buildStandaloneFeatureLaunchJson, parseStandaloneFeatureLaunchJson } from './standaloneFeatureLaunch';
 import { YamlParametersManager } from './yamlParametersManager';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export interface CreateFeatureOptions {
     readonly destinationUri?: vscode.Uri;
@@ -60,19 +63,19 @@ export async function createFeature(context: vscode.ExtensionContext, options: C
         }
         const config = vscode.workspace.getConfiguration('kotTestToolkit');
         const language = options.language ?? getConfiguredScenarioLanguage(config);
-        const featureTitle = options.featureTitle ?? await vscode.window.showInputBox({
+        const featureTitle = options.featureTitle ?? await kotUi.showInputBox({
             title: t('New feature'), prompt: t('Feature title'), ignoreFocusOut: true,
             validateInput: value => { const error = validateFeatureTitle(value); return error ? t(error) : undefined; }
         });
         if (featureTitle === undefined) { return undefined; }
-        const scenarioTitle = options.scenarioTitle ?? await vscode.window.showInputBox({
+        const scenarioTitle = options.scenarioTitle ?? await kotUi.showInputBox({
             title: t('New feature'), prompt: t('First scenario title'), value: featureTitle.trim(), ignoreFocusOut: true,
             validateInput: value => { const error = validateFeatureTitle(value); return error ? t(error) : undefined; }
         });
         if (scenarioTitle === undefined) { return undefined; }
         let tags = options.tags;
         if (!tags) {
-            const choice = await vscode.window.showQuickPick([
+            const choice = await kotUi.showQuickPick([
                 { label: t('Standard feature'), tags: [] as string[] },
                 { label: t('Draft feature (@Draft)'), description: t('Adds the draft tag.'), tags: ['Draft'] }
             ], { title: t('Feature tags'), ignoreFocusOut: true });
@@ -86,7 +89,7 @@ export async function createFeature(context: vscode.ExtensionContext, options: C
             : undefined;
         const text = renderFeatureTemplate({ featureTitle, scenarioTitle, language, template, tags });
         const root = resolveScenarioScanRootFsPath(workspace.uri);
-        const target = options.destinationUri ?? await vscode.window.showSaveDialog({
+        const target = options.destinationUri ?? await kotUi.showSaveDialog({
             title: t('Save feature'), defaultUri: vscode.Uri.file(path.join(root, safeFeatureFilename(featureTitle))),
             filters: { [t('Vanessa feature files')]: ['feature'] }
         });
@@ -104,7 +107,7 @@ export async function createFeature(context: vscode.ExtensionContext, options: C
         const message = (error as NodeJS.ErrnoException).code === 'EEXIST'
             ? t('Feature already exists. Choose another filename.')
             : error instanceof Error ? error.message : String(error);
-        await vscode.window.showErrorMessage(t('Could not create feature: {0}', message));
+        await kotUi.showErrorMessage(t('Could not create feature: {0}', message));
         return undefined;
     }
 }
@@ -118,7 +121,7 @@ export async function generateFeatureJson(context: vscode.ExtensionContext, feat
         }
         const manager = YamlParametersManager.getInstance(context);
         const summary = await manager.getProfilesSummary();
-        const selected = await vscode.window.showQuickPick(summary.profiles.map(profile => ({
+        const selected = await kotUi.showQuickPick(summary.profiles.map(profile => ({
             ...profile, label: profile.name, description: profile.id === summary.activeProfileId ? t('Current') : undefined
         })), { title: t('Parameter profile for feature JSON'), ignoreFocusOut: true });
         if (!selected) { return undefined; }
@@ -133,7 +136,7 @@ export async function generateFeatureJson(context: vscode.ExtensionContext, feat
         }
         if (previousText !== undefined) {
             const replace = t('Replace JSON');
-            const confirmation = await vscode.window.showWarningMessage(t('Replace existing feature JSON at {0}? Custom settings will be retained.', outputPath), { modal: true }, replace);
+            const confirmation = await kotUi.showWarningMessage(t('Replace existing feature JSON at {0}? Custom settings will be retained.', outputPath), { modal: true }, replace);
             if (confirmation !== replace) { return undefined; }
         }
         const workspace = vscode.workspace.getWorkspaceFolder(featureUri) ?? vscode.workspace.workspaceFolders?.[0];
@@ -157,7 +160,7 @@ export async function generateFeatureJson(context: vscode.ExtensionContext, feat
         await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(result));
         return result;
     } catch (error) {
-        await vscode.window.showErrorMessage(t('Could not generate feature JSON: {0}', error instanceof Error ? error.message : String(error)));
+        await kotUi.showErrorMessage(t('Could not generate feature JSON: {0}', error instanceof Error ? error.message : String(error)));
         return undefined;
     }
 }

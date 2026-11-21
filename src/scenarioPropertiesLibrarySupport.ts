@@ -1,3 +1,4 @@
+import { kotWindow } from './kotInteraction';
 import path from 'node:path';
 import * as vscode from 'vscode';
 import type { StepLibraryItem } from './stepLibraryModel';
@@ -7,6 +8,8 @@ import { FeaturePropertiesController, type FeaturePropertiesHost } from './featu
 import { FEATURE_EDITOR_COMMAND, type FeatureEditorActionKind } from './featureEditorActions';
 import { readFeatureProperties, type FeaturePropertiesDocument } from './featurePropertiesModel';
 import { parseExportScenarios } from './exportScenarioParser';
+
+const kotUi = kotWindow?.(vscode.window) ?? vscode.window;
 
 export interface PropertiesLibrarySupport {
     favorite(uri: string): { canFavorite: boolean; favorite: boolean };
@@ -81,14 +84,14 @@ export function createPropertiesLibrarySupport(options: Options): PropertiesLibr
                 if (!feature) { throw new Error('This action requires a standalone feature test.'); }
                 if (action === 'group') {
                     if (value === '__new__') {
-                        const name = await vscode.window.showInputBox({ title: vscode.l10n.t('New group'), ignoreFocusOut: true });
+                        const name = await kotUi.showInputBox({ title: vscode.l10n.t('New group'), ignoreFocusOut: true });
                         if (!name?.trim()) { return; }
                         // Use the destination project's store, rather than the first workspace root.
                         const group = await options.standalone.createGroupForFeature(feature.id, name);
                         await options.standalone.moveFeature(feature.id, group.id);
                     } else { await options.standalone.moveFeature(feature.id, value ?? ''); }
                 } else if (action === 'chooseJson') {
-                    const selected = await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: false,
+                    const selected = await kotUi.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: false,
                         defaultUri: vscode.Uri.file(path.dirname(uri.fsPath)), filters: { JSON: ['json'] } });
                     if (selected?.[0]) { await options.standalone.setLaunchJson(feature.id, selected[0].fsPath); }
                 } else if (action === 'generateJson') { await vscode.commands.executeCommand('kotTestToolkit.generateFeatureJson', uri); }
@@ -108,7 +111,7 @@ async function renameScenario(document: FeaturePropertiesDocument, line: number,
         await options.renameExport(vscode.Uri.parse(document.uri, true), line); return;
     }
     const scenario = model.scenarios.find(item => item.line === line)!;
-    const name = await vscode.window.showInputBox({ title: vscode.l10n.t('Rename scenario'), value: scenario.title, ignoreFocusOut: true,
+    const name = await kotUi.showInputBox({ title: vscode.l10n.t('Rename scenario'), value: scenario.title, ignoreFocusOut: true,
         validateInput: value => !value.trim() || /[\r\n\0]/u.test(value) ? vscode.l10n.t('The name must be a non-empty single line.') : undefined });
     if (name === undefined || name.trim() === scenario.title) { return; }
     const current = await documents.readDocument(document.uri);

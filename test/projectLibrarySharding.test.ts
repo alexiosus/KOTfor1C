@@ -80,7 +80,7 @@ test('failed group deletion restores the group and changed memberships', async t
     await f.store.ensureGroup('One', 'main', 'one');
     await f.store.setMetadata(f.identity, { groupId: 'one' });
     const before = await files(f.root); const unlink = fs.unlink;
-    fs.unlink = async file => { if (String(file).endsWith('/groups/one.yml')) { throw new Error('Simulated deletion failure'); } return unlink(file); };
+    fs.unlink = async file => { if (String(file) === path.join(f.root, '.kot/groups/one.yml')) { throw new Error('Simulated deletion failure'); } return unlink(file); };
     try { await assert.rejects(f.store.deleteGroup('one'), /Simulated deletion failure/u); }
     finally { fs.unlink = unlink; }
     assert.deepEqual(await files(f.root), before);
